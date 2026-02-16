@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#8BC34A">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <title>TangleClaw</title>
+  <style>
+    :root {
+      --primary: #8BC34A;
+      --primary-bright: #9CCC65;
+      --primary-dark: #558B2F;
+      --chrome: #C0C0C0;
+      --bg: #000000;
+      --card-bg: #0D0D0D;
+      --elevated-bg: #1A1A1A;
+      --danger: #EF5350;
+      --danger-dark: #C62828;
+      --text: #E8E8E8;
+      --text-muted: #777;
+      --root-accent: #4a9eff;
+      --amber: #FFA726;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      min-height: 100dvh;
+      -webkit-tap-highlight-color: transparent;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      padding: 20px 20px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--elevated-bg);
+    }
+
+    .header-logo {
+      width: 96px;
+      height: 96px;
+      object-fit: contain;
+    }
+
+    .header-wordmark {
+      height: 32px;
+      object-fit: contain;
+    }
+
+    .header-text .subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── Host Dashboard ── */
+    .dashboard {
+      border-bottom: 1px solid var(--elevated-bg);
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .dashboard.collapsed { max-height: 0; }
+    .dashboard.expanded { max-height: 200px; }
+
+    .dashboard-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-bottom: 1px solid var(--elevated-bg);
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .dashboard-toggle:active { color: var(--primary); }
+    .dashboard-toggle .arrow { transition: transform 0.3s; }
+    .dashboard-toggle .arrow.up { transform: rotate(180deg); }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      padding: 12px 16px;
+      background: var(--bg);
+    }
+
+    .stat-card {
+      text-align: center;
+      padding: 8px 4px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .stat-bar {
+      height: 3px;
+      background: var(--elevated-bg);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+
+    .stat-bar-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+
+    .stat-bar-fill.warn { background: var(--amber); }
+    .stat-bar-fill.crit { background: var(--danger); }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--elevated-bg);
+      background: var(--bg);
+    }
+
+    .session-count {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .session-count span { color: var(--primary); font-weight: 600; }
+
+    .toolbar-buttons { display: flex; gap: 8px; }
+
+    .toolbar-btn {
+      background: none;
+      border: 1px solid #333;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .toolbar-btn:active {
+      background: var(--elevated-bg);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .toolbar-btn.create {
+      color: var(--primary);
+      border-color: var(--primary-dark);
+    }
+
+    .toolbar-btn.create:active {
+      background: var(--primary-dark);
+      color: var(--bg);
+    }
+
+    /* ── Project Cards ── */
+    .projects {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      max-width: 1200px;
+      margin: 0 auto;
+      align-items: start;
+    }
+
+    @media (min-width: 500px) {
+      .projects { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (min-width: 800px) {
+      .projects { grid-template-columns: 1fr 1fr 1fr; }
+    }
+
+    @media (min-width: 1100px) {
+      .projects { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    }
+
+    .project-card {
+      background: var(--card-bg);
+      border: 1px solid var(--elevated-bg);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+
+    .project-card.has-session { border-color: rgba(139, 195, 74, 0.25); }
+    .project-card.root-entry {
+      background: #060d14;
+      border-color: #1a3a5a;
+      grid-column: 1 / -1;
+    }
+
+    .card-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      min-height: 52px;
+      transition: background 0.15s;
+    }
+
+    .card-link:active { background: rgba(139, 195, 74, 0.05); }
+    .root-entry .card-link:active { background: rgba(74, 158, 255, 0.05); }
+
+    .card-left {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .project-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .root-label {
+      font-size: 11px;
+      color: var(--root-accent);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .git-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      color: var(--primary-dark);
+      background: rgba(139, 195, 74, 0.08);
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .git-dirty {
+      color: var(--amber);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .card-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      margin-left: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      flex-shrink: 0;
+      animation: breathe 2.5s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      0%, 100% { background: var(--primary); box-shadow: 0 0 8px var(--primary); }
+      50% { background: var(--primary-dark); box-shadow: 0 0 2px var(--primary-dark); }
+    }
+
+    .status-dot.attached {
+      animation: breathe-bright 2s ease-in-out infinite;
+    }
+
+    @keyframes breathe-bright {
+      0%, 100% { background: var(--primary-bright); box-shadow: 0 0 10px var(--primary-bright); }
+      50% { background: var(--primary-dark); box-shadow: 0 0 2px var(--primary-dark); }
+    }
+
+    .status-dot.idle {
+      animation: breathe 3s ease-in-out infinite;
+    }
+
+    .window-count {
+      font-size: 11px;
+      color: var(--primary);
+      background: rgba(139, 195, 74, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* Card action buttons (peek, info) */
+    .card-actions {
+      display: flex;
+      gap: 2px;
+      margin-left: 4px;
+    }
+
+    .card-action-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      font-size: 14px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+
+    .card-action-btn:active { color: var(--primary); }
+
+    /* Expandable details */
+    .card-details {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.25s ease;
+      border-top: 0 solid var(--elevated-bg);
+    }
+
+    .card-details.open {
+      max-height: 300px;
+      border-top-width: 1px;
+    }
+
+    .details-inner {
+      padding: 10px 16px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .detail-label { color: var(--text-muted); }
+    .detail-value { color: var(--text); }
+
+    /* Quick commands */
+    .quick-commands {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .quick-cmd-btn {
+      background: var(--elevated-bg);
+      border: 1px solid #333;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+
+    .quick-cmd-btn:active {
+      background: var(--primary-dark);
+      color: var(--text);
+      border-color: var(--primary);
+    }
+
+    .quick-cmd-btn.flash {
+      background: var(--primary);
+      color: var(--bg);
+      border-color: var(--primary);
+    }
+
+    /* ── Kill button (inline) ── */
+    .card-action-btn.kill-btn {
+      color: var(--text-muted);
+    }
+
+    .card-action-btn.kill-btn:active,
+    .card-action-btn.kill-btn:hover {
+      color: var(--danger);
+    }
+
+    .card-action-btn.kill-btn.confirm {
+      color: var(--danger);
+    }
+
+    /* ── Kill Session (Mobile swipe) ── */
+    .swipe-container {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .swipe-content {
+      transition: transform 0.2s ease;
+    }
+
+    .swipe-kill {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 80px;
+      background: var(--danger);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .swipe-kill.confirm {
+      background: var(--danger-dark);
+    }
+
+    @media (hover: hover) {
+      .swipe-kill { display: none; }
+    }
+
+    /* ── Peek Drawer ── */
+    .peek-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s;
+    }
+
+    .peek-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .peek-drawer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--card-bg);
+      border-top: 1px solid var(--elevated-bg);
+      border-radius: 16px 16px 0 0;
+      z-index: 101;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+      max-height: 50vh;
+      overflow-y: auto;
+    }
+
+    .peek-drawer.open { transform: translateY(0); }
+
+    .peek-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--elevated-bg);
+    }
+
+    .peek-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .peek-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .peek-content {
+      padding: 12px 16px 24px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .peek-content.empty {
+      color: var(--text-muted);
+      font-style: italic;
+      font-family: inherit;
+    }
+
+    /* ── Create Project Modal ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 200;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    @media (min-width: 500px) {
+      .modal-overlay.open { align-items: center; }
+    }
+
+    .modal {
+      background: var(--card-bg);
+      border: 1px solid var(--elevated-bg);
+      border-radius: 16px 16px 0 0;
+      width: 100%;
+      max-width: 460px;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 24px 20px;
+    }
+
+    @media (min-width: 500px) {
+      .modal { border-radius: 16px; }
+    }
+
+    .modal h2 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .form-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid #333;
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .form-input:focus { border-color: var(--primary); }
+
+    .form-textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid #333;
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      outline: none;
+      resize: vertical;
+      min-height: 80px;
+      transition: border-color 0.15s;
+    }
+
+    .form-textarea:focus { border-color: var(--primary); }
+
+    .form-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .form-check input[type="checkbox"] {
+      accent-color: var(--primary);
+      width: 18px;
+      height: 18px;
+    }
+
+    .form-reveal {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.25s ease;
+      padding-left: 26px;
+    }
+
+    .form-reveal.open { max-height: 300px; }
+
+    .template-picker {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .template-opt {
+      padding: 6px 14px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .template-opt.selected {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: rgba(139, 195, 74, 0.08);
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .btn-primary {
+      flex: 1;
+      background: var(--primary);
+      color: var(--bg);
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-primary:active { background: var(--primary-bright); }
+    .btn-primary:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-cancel {
+      background: var(--elevated-bg);
+      color: var(--text-muted);
+      border: 1px solid #333;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    .btn-cancel:active { background: #222; }
+
+    /* ── AI Engine Dropdown ── */
+    .engine-select {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .engine-dropdown {
+      background: var(--bg);
+      border: 1px solid #333;
+      color: var(--text);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      outline: none;
+    }
+
+    .engine-dropdown option { background: var(--bg); }
+
+    .coming-soon {
+      font-size: 9px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* ── Multi-Agent Window List ── */
+    .window-list {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .window-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    .window-item:active { color: var(--primary); }
+    .window-item .win-num { color: var(--primary); font-weight: 600; }
+    .window-item .win-active { color: var(--primary-bright); }
+
+    .add-agent-btn {
+      margin-top: 6px;
+      background: var(--elevated-bg);
+      border: 1px dashed #444;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    /* ── Loading / Error States ── */
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .error {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--danger);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <img src="/logo-icon.png" alt="" class="header-logo">
+    <div class="header-text">
+      <img src="/logo-text.png" alt="TangleClaw" class="header-wordmark">
+      <div class="subtitle">Cursatory Remote Access</div>
+    </div>
+  </div>
+
+  <!-- Dashboard Toggle -->
+  <div class="dashboard-toggle" id="dashboard-toggle" onclick="toggleDashboard()" title="Toggle system stats">
+    <span>System</span>
+    <span class="arrow" id="dashboard-arrow">&#9660;</span>
+  </div>
+
+  <!-- Host Dashboard -->
+  <div class="dashboard collapsed" id="dashboard">
+    <div class="dashboard-grid" id="dashboard-grid">
+      <div class="stat-card">
+        <div class="stat-label">CPU</div>
+        <div class="stat-value" id="stat-cpu">--</div>
+        <div class="stat-sub" id="stat-cpu-sub"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Memory</div>
+        <div class="stat-value" id="stat-mem">--</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="stat-mem-bar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Disk</div>
+        <div class="stat-value" id="stat-disk">--</div>
+        <div class="stat-bar"><div class="stat-bar-fill" id="stat-disk-bar" style="width:0%"></div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="stat-uptime">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="session-count" id="session-count"></div>
+    <div class="toolbar-buttons">
+      <button class="toolbar-btn create" onclick="openCreateModal()" title="Create new project">+ Create</button>
+      <button class="toolbar-btn" onclick="loadProjects()" title="Refresh project list">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Project List -->
+  <div id="app" class="loading">Loading projects...</div>
+
+  <!-- Peek Drawer -->
+  <div class="peek-overlay" id="peek-overlay" onclick="closePeek()"></div>
+  <div class="peek-drawer" id="peek-drawer">
+    <div class="peek-header">
+      <span class="peek-title" id="peek-title">Session Peek</span>
+      <button class="peek-close" onclick="closePeek()">&times;</button>
+    </div>
+    <div class="peek-content" id="peek-content"></div>
+  </div>
+
+  <!-- Create Project Modal -->
+  <div class="modal-overlay" id="create-modal">
+    <div class="modal">
+      <h2>Create Project</h2>
+      <div class="form-group">
+        <label>Project Name</label>
+        <input type="text" class="form-input" id="create-name" placeholder="my-project" autocomplete="off" autocapitalize="none">
+      </div>
+      <div class="form-group">
+        <label class="form-check" onclick="toggleReveal('git-options')">
+          <input type="checkbox" id="create-git"> Initialize git repo
+        </label>
+        <div class="form-reveal" id="git-options"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-check" onclick="toggleReveal('claude-options')">
+          <input type="checkbox" id="create-claude"> Create CLAUDE.md
+        </label>
+        <div class="form-reveal" id="claude-options">
+          <textarea class="form-textarea" id="create-claude-content" placeholder="Instructions for Claude Code..."></textarea>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-check" onclick="toggleReveal('template-options')">
+          <input type="checkbox" id="create-template"> Use template
+        </label>
+        <div class="form-reveal" id="template-options">
+          <div class="template-picker" id="template-picker">
+            <div class="template-opt selected" data-template="blank" onclick="selectTemplate(this)">Blank</div>
+            <div class="template-opt" data-template="node" onclick="selectTemplate(this)">Node.js</div>
+            <div class="template-opt" data-template="python" onclick="selectTemplate(this)">Python</div>
+            <div class="template-opt" data-template="rust" onclick="selectTemplate(this)">Rust</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-buttons">
+        <button class="btn-cancel" onclick="closeCreateModal()">Cancel</button>
+        <button class="btn-primary" id="create-submit" onclick="createProject()">Create &amp; Open</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kill Confirm Modal -->
+  <div class="modal-overlay" id="kill-modal">
+    <div class="modal" style="max-width:340px; text-align:center;">
+      <h2>Kill Session</h2>
+      <p style="color:var(--text-muted); font-size:14px; margin-bottom:20px;">
+        End <strong style="color:var(--text)" id="kill-session-name"></strong>?<br>
+        This will terminate all processes in the session.
+      </p>
+      <div class="modal-buttons" style="justify-content:center;">
+        <button class="btn-cancel" onclick="closeKillModal()">Cancel</button>
+        <button class="btn-primary" style="background:var(--danger); flex:none; padding:12px 24px;" onclick="executeKill()">Kill Session</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──
+    let config = { ttydPort: 3100, quickCommands: [], engines: {} };
+    let dashboardExpanded = window.matchMedia('(min-width: 500px)').matches;
+    let pendingKillSession = null;
+
+    // ── Init ──
+    async function init() {
+      try {
+        const res = await fetch('/api/config');
+        config = await res.json();
+      } catch {}
+
+      if (dashboardExpanded) {
+        document.getElementById('dashboard').classList.replace('collapsed', 'expanded');
+        document.getElementById('dashboard-arrow').classList.add('up');
+      }
+
+      loadProjects();
+      loadSystem();
+
+      // Register service worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+    }
+
+    // ── Dashboard ──
+    function toggleDashboard() {
+      dashboardExpanded = !dashboardExpanded;
+      const el = document.getElementById('dashboard');
+      const arrow = document.getElementById('dashboard-arrow');
+      if (dashboardExpanded) {
+        el.classList.replace('collapsed', 'expanded');
+        arrow.classList.add('up');
+        loadSystem();
+      } else {
+        el.classList.replace('expanded', 'collapsed');
+        arrow.classList.remove('up');
+      }
+    }
+
+    async function loadSystem() {
+      if (!dashboardExpanded) return;
+      try {
+        const res = await fetch('/api/system');
+        const s = await res.json();
+
+        document.getElementById('stat-cpu').textContent = s.cpu.load1.toFixed(1);
+        document.getElementById('stat-cpu-sub').textContent = `${s.cpu.load5.toFixed(1)} / ${s.cpu.load15.toFixed(1)}`;
+
+        document.getElementById('stat-mem').textContent = `${s.memory.pct}%`;
+        const memBar = document.getElementById('stat-mem-bar');
+        memBar.style.width = s.memory.pct + '%';
+        memBar.className = 'stat-bar-fill' + (s.memory.pct > 90 ? ' crit' : s.memory.pct > 70 ? ' warn' : '');
+
+        document.getElementById('stat-disk').textContent = `${s.disk.pct}%`;
+        const diskBar = document.getElementById('stat-disk-bar');
+        diskBar.style.width = s.disk.pct + '%';
+        diskBar.className = 'stat-bar-fill' + (s.disk.pct > 90 ? ' crit' : s.disk.pct > 80 ? ' warn' : '');
+
+        document.getElementById('stat-uptime').textContent = s.uptime;
+      } catch {}
+    }
+
+    // ── Projects ──
+    async function loadProjects() {
+      const app = document.getElementById('app');
+      const countEl = document.getElementById('session-count');
+
+      try {
+        const res = await fetch('/api/projects');
+        const projects = await res.json();
+
+        const activeSessions = projects.filter(p => p.hasSession && !p.isRoot).length;
+        countEl.innerHTML = `<span>${activeSessions}</span> active session${activeSessions !== 1 ? 's' : ''}`;
+
+        if (projects.length === 0) {
+          app.className = 'error';
+          app.textContent = 'No projects found.';
+          return;
+        }
+
+        app.className = 'projects';
+        const host = window.location.hostname;
+
+        app.innerHTML = projects.map(p => renderCard(p, host)).join('');
+
+        // Attach swipe handlers on mobile
+        if (!window.matchMedia('(hover: hover)').matches) {
+          document.querySelectorAll('.swipe-container').forEach(initSwipe);
+        }
+      } catch (err) {
+        app.className = 'error';
+        app.textContent = 'Failed to load projects. Is the server running?';
+      }
+    }
+
+    function renderCard(p, host) {
+      const arg = p.isRoot ? '__root__' : p.name;
+      const url = `/session/${encodeURIComponent(arg)}`;
+      const now = Math.floor(Date.now() / 1000);
+      const isIdle = p.hasSession && p.lastActivity && (now - p.lastActivity) > 60;
+
+      let cls = 'project-card';
+      if (p.hasSession) cls += ' has-session';
+      if (p.isRoot) cls += ' root-entry';
+
+      // Status indicators
+      let statusHtml = '';
+      if (p.hasSession) {
+        let dotCls = 'status-dot';
+        let dotTitle = 'Active session';
+        if (isIdle) { dotCls += ' idle'; dotTitle = 'Session idle'; }
+        else if (p.attached) { dotCls += ' attached'; dotTitle = 'Session attached'; }
+
+        statusHtml = `
+          <div class="card-right">
+            ${p.windows > 1 ? `<span class="window-count" title="${p.windows} windows">${p.windows}w</span>` : ''}
+            <div class="${dotCls}" title="${dotTitle}"></div>
+          </div>`;
+      }
+
+      // Git badge
+      let gitHtml = '';
+      if (p.git) {
+        const gitTip = p.git.dirty ? `Branch: ${p.git.branch}, ${p.git.dirty} uncommitted change${p.git.dirty > 1 ? 's' : ''}` : `Branch: ${p.git.branch}`;
+        gitHtml = `<span class="git-badge" title="${escAttr(gitTip)}">${escHtml(p.git.branch || '?')}${p.git.dirty ? `<span class="git-dirty">*${p.git.dirty}</span>` : ''}</span>`;
+      }
+
+      // Action buttons
+      let actionsHtml = '';
+      if (p.hasSession && !p.isRoot) {
+        actionsHtml = `
+          <div class="card-actions">
+            <button class="card-action-btn" onclick="event.preventDefault();event.stopPropagation();openPeek('${escAttr(p.sessionName)}')" title="Peek">&#128065;</button>
+            <button class="card-action-btn info-btn" onclick="event.preventDefault();event.stopPropagation();toggleDetails('details-${escAttr(p.sessionName)}')" title="Info">&#9432;</button>
+            <button class="card-action-btn kill-btn" onclick="event.preventDefault();event.stopPropagation();confirmKill(this,'${escAttr(p.sessionName)}')" title="Kill session">&times;</button>
+          </div>`;
+      }
+
+      // (kill button is inline in card-actions now)
+
+      // Details panel
+      let detailsHtml = '';
+      if (!p.isRoot) {
+        const engineName = getEngineName(p.name);
+        let detailRows = '';
+        if (p.hasSession) {
+          if (p.created) {
+            const uptimeSec = now - p.created;
+            detailRows += `<div class="detail-row"><span class="detail-label">Uptime</span><span class="detail-value">${formatDuration(uptimeSec)}</span></div>`;
+          }
+          if (p.lastActivity) {
+            const idleSec = now - p.lastActivity;
+            detailRows += `<div class="detail-row"><span class="detail-label">Idle</span><span class="detail-value">${formatDuration(idleSec)}</span></div>`;
+          }
+        }
+        if (p.git && p.git.lastCommitAge) {
+          detailRows += `<div class="detail-row"><span class="detail-label">Last commit</span><span class="detail-value">${escHtml(p.git.lastCommitAge)}</span></div>`;
+        }
+
+        // Engine selector
+        let engineHtml = `<div class="engine-select"><select class="engine-dropdown" onchange="setEngine('${escAttr(p.name)}',this.value)">`;
+        for (const [key, eng] of Object.entries(config.engines || {})) {
+          const sel = key === (config.projectEngines?.[p.name] || config.defaultEngine || 'claude') ? ' selected' : '';
+          const disabled = eng.comingSoon ? ' disabled' : '';
+          engineHtml += `<option value="${key}"${sel}${disabled}>${escHtml(eng.label)}${eng.comingSoon ? ' (Coming Soon)' : ''}</option>`;
+        }
+        engineHtml += `</select></div>`;
+
+        // Window list for multi-window sessions
+        let windowListHtml = '';
+        if (p.hasSession && p.windows > 1) {
+          windowListHtml = `<div class="window-list" id="winlist-${escAttr(p.sessionName)}"></div>`;
+        }
+
+        // Quick commands
+        let quickCmdHtml = '';
+        if (p.hasSession) {
+          const cmds = config.quickCommands || [];
+          if (cmds.length > 0) {
+            quickCmdHtml = `<div class="quick-commands">${cmds.map(c =>
+              `<button class="quick-cmd-btn" onclick="sendQuickCmd(this,'${escAttr(p.sessionName)}',${escAttr(JSON.stringify(c.command))})" title="Send: ${escAttr(c.command)}">${escHtml(c.label)}</button>`
+            ).join('')}</div>`;
+          }
+        }
+
+        // Add Agent button (scaffolding)
+        let addAgentHtml = '';
+        if (p.hasSession) {
+          addAgentHtml = `<button class="add-agent-btn" disabled title="Multi-agent support coming soon">+ Add Agent (Coming Soon)</button>`;
+        }
+
+        detailsHtml = `
+          <div class="card-details" id="details-${escAttr(p.sessionName)}">
+            <div class="details-inner">
+              ${detailRows}
+              ${engineHtml}
+              ${windowListHtml}
+              ${quickCmdHtml}
+              ${addAgentHtml}
+            </div>
+          </div>`;
+      }
+
+      // Swipe container for mobile kill
+      const linkContent = `
+        <div class="card-left">
+          ${p.isRoot ? '<span class="root-label">Root</span>' : ''}
+          <span class="project-name">${escHtml(p.name)}</span>
+          ${gitHtml}
+        </div>
+        ${statusHtml}
+        ${actionsHtml}`;
+
+      if (p.hasSession && !p.isRoot) {
+        return `
+          <div class="${cls}">
+            <div class="swipe-container" data-session="${escAttr(p.sessionName)}">
+              <div class="swipe-kill" onclick="confirmKillMobile(this,'${escAttr(p.sessionName)}')">Kill</div>
+              <div class="swipe-content">
+                <a href="${url}" class="card-link">${linkContent}</a>
+              </div>
+            </div>
+            ${detailsHtml}
+          </div>`;
+      }
+
+      return `
+        <div class="${cls}">
+          <a href="${url}" class="card-link">${linkContent}</a>
+          ${detailsHtml}
+        </div>`;
+    }
+
+    // ── Swipe to Kill (Mobile) ──
+    function initSwipe(container) {
+      const content = container.querySelector('.swipe-content');
+      let startX = 0, currentX = 0, swiping = false;
+
+      container.addEventListener('touchstart', e => {
+        startX = e.touches[0].clientX;
+        currentX = 0;
+        swiping = true;
+        content.style.transition = 'none';
+      }, { passive: true });
+
+      container.addEventListener('touchmove', e => {
+        if (!swiping) return;
+        const diff = startX - e.touches[0].clientX;
+        currentX = Math.max(0, Math.min(80, diff));
+        content.style.transform = `translateX(-${currentX}px)`;
+      }, { passive: true });
+
+      container.addEventListener('touchend', () => {
+        swiping = false;
+        content.style.transition = 'transform 0.2s ease';
+        if (currentX > 40) {
+          content.style.transform = 'translateX(-80px)';
+        } else {
+          content.style.transform = 'translateX(0)';
+        }
+      });
+    }
+
+    function confirmKillMobile(btn, sessionName) {
+      openKillModal(sessionName);
+    }
+
+    function confirmKill(btn, sessionName) {
+      openKillModal(sessionName);
+    }
+
+    function openKillModal(sessionName) {
+      pendingKillSession = sessionName;
+      document.getElementById('kill-session-name').textContent = sessionName;
+      document.getElementById('kill-modal').classList.add('open');
+    }
+
+    function closeKillModal() {
+      pendingKillSession = null;
+      document.getElementById('kill-modal').classList.remove('open');
+    }
+
+    async function executeKill() {
+      if (!pendingKillSession) return;
+      const name = pendingKillSession;
+      closeKillModal();
+      try {
+        await fetch(`/api/sessions/${encodeURIComponent(name)}/kill`, { method: 'POST' });
+        loadProjects();
+      } catch {}
+    }
+
+    // ── Peek ──
+    async function openPeek(sessionName) {
+      const overlay = document.getElementById('peek-overlay');
+      const drawer = document.getElementById('peek-drawer');
+      const title = document.getElementById('peek-title');
+      const content = document.getElementById('peek-content');
+
+      title.textContent = sessionName;
+      content.textContent = 'Loading...';
+      content.className = 'peek-content';
+      overlay.classList.add('open');
+      drawer.classList.add('open');
+
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionName)}/peek`);
+        const data = await res.json();
+        if (data.lines && data.lines.trim()) {
+          content.textContent = data.lines;
+        } else {
+          content.textContent = 'No output captured';
+          content.className = 'peek-content empty';
+        }
+      } catch {
+        content.textContent = 'Failed to peek session';
+        content.className = 'peek-content empty';
+      }
+    }
+
+    function closePeek() {
+      document.getElementById('peek-overlay').classList.remove('open');
+      document.getElementById('peek-drawer').classList.remove('open');
+    }
+
+    // ── Card Details Toggle ──
+    function toggleDetails(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('open');
+    }
+
+    // ── Quick Commands ──
+    async function sendQuickCmd(btn, sessionName, command) {
+      try {
+        await fetch(`/api/sessions/${encodeURIComponent(sessionName)}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+        btn.classList.add('flash');
+        setTimeout(() => btn.classList.remove('flash'), 400);
+      } catch {}
+    }
+
+    // ── AI Engine ──
+    function getEngineName(projectName) {
+      return config.projectEngines?.[projectName] || config.defaultEngine || 'claude';
+    }
+
+    async function setEngine(projectName, engine) {
+      // Save to config
+      try {
+        config.projectEngines = config.projectEngines || {};
+        config.projectEngines[projectName] = engine;
+      } catch {}
+    }
+
+    // ── Create Project ──
+    function openCreateModal() {
+      document.getElementById('create-modal').classList.add('open');
+      document.getElementById('create-name').value = '';
+      document.getElementById('create-git').checked = false;
+      document.getElementById('create-claude').checked = false;
+      document.getElementById('create-template').checked = false;
+      document.getElementById('create-claude-content').value = '';
+      document.querySelectorAll('.form-reveal').forEach(el => el.classList.remove('open'));
+      document.querySelectorAll('.template-opt').forEach(el => el.classList.remove('selected'));
+      document.querySelector('.template-opt[data-template="blank"]').classList.add('selected');
+      setTimeout(() => document.getElementById('create-name').focus(), 100);
+    }
+
+    function closeCreateModal() {
+      document.getElementById('create-modal').classList.remove('open');
+    }
+
+    function toggleReveal(id) {
+      const el = document.getElementById(id);
+      // Use setTimeout so the checkbox change is processed first
+      setTimeout(() => {
+        const checkbox = el.previousElementSibling?.querySelector('input[type="checkbox"]')
+          || el.closest('.form-group')?.querySelector('input[type="checkbox"]');
+        if (checkbox && checkbox.checked) {
+          el.classList.add('open');
+        } else {
+          el.classList.remove('open');
+        }
+      }, 0);
+    }
+
+    function selectTemplate(el) {
+      document.querySelectorAll('.template-opt').forEach(o => o.classList.remove('selected'));
+      el.classList.add('selected');
+    }
+
+    async function createProject() {
+      const name = document.getElementById('create-name').value.trim();
+      if (!name) return;
+
+      const btn = document.getElementById('create-submit');
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+
+      const body = { name };
+      if (document.getElementById('create-git').checked) body.gitInit = true;
+      if (document.getElementById('create-claude').checked) {
+        body.claudeMd = document.getElementById('create-claude-content').value || '# Project Instructions\n';
+      }
+      if (document.getElementById('create-template').checked) {
+        const sel = document.querySelector('.template-opt.selected');
+        if (sel) body.template = sel.dataset.template;
+      }
+
+      try {
+        const res = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to create project');
+          btn.disabled = false;
+          btn.textContent = 'Create & Open';
+          return;
+        }
+        closeCreateModal();
+        // Open the new project in session wrapper
+        window.location.href = `/session/${encodeURIComponent(name)}`;
+      } catch {
+        alert('Failed to create project');
+        btn.disabled = false;
+        btn.textContent = 'Create & Open';
+      }
+    }
+
+    // ── Helpers ──
+    function formatDuration(sec) {
+      if (sec < 60) return `${sec}s`;
+      const m = Math.floor(sec / 60);
+      if (m < 60) return `${m}m`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ${m % 60}m`;
+      const d = Math.floor(h / 24);
+      return `${d}d ${h % 24}h`;
+    }
+
+    function escHtml(s) {
+      if (!s) return '';
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function escAttr(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Auto-refresh ──
+    init();
+    setInterval(() => {
+      loadProjects();
+      loadSystem();
+    }, 10000);
+  </script>
+</body>
+</html>
