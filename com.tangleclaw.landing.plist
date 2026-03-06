@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tangleclaw.landing</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>/Users/jasonvaughan/Documents/Projects/TangleClaw/server.js</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/jasonvaughan/bin:/Users/jasonvaughan/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/jasonvaughan</string>
+        <key>TANGLECLAW_PAGE_PORT</key>
+        <string>3101</string>
+        <key>TANGLECLAW_TTYD_PORT</key>
+        <string>3100</string>
+    </dict>
+    <key>UserName</key>
+    <string>jasonvaughan</string>
+    <key>GroupName</key>
+    <string>staff</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>/Users/jasonvaughan/Documents/Projects/TangleClaw</string>
+    <key>StandardOutPath</key>
+    <string>/Users/jasonvaughan/Library/Logs/tangleclaw-landing.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jasonvaughan/Library/Logs/tangleclaw-landing.log</string>
+</dict>
+</plist>
