@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+._*
+
+# Logs
+*.log
+
+# Runtime config (machine-specific)
+# ~/.tangleclaw/ is outside repo, but just in case
+config.local.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code local settings
+.claude/
+
+# PDFs (spec docs, not source code)
+*.pdf
+
+# Node (even though we have zero deps, prevent accidents)
+node_modules/
+
+# Backup files
+*.bak
+*.orig
