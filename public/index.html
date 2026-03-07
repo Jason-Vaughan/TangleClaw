@@ -66,8 +66,8 @@
     }
 
     .header-version {
-      font-size: 9px;
-      color: #555;
+      font-size: 10px;
+      color: #777;
       margin-top: 2px;
       letter-spacing: 0.5px;
     }
@@ -265,13 +265,15 @@
       min-width: 0;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
     .project-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      max-width: 100%;
     }
 
     .root-label {
@@ -300,6 +302,20 @@
       color: var(--amber);
       font-size: 10px;
       font-weight: 600;
+    }
+
+    .prawduct-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 9px;
+      color: #b39ddb;
+      background: rgba(179, 157, 219, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .card-right {
@@ -1096,6 +1112,12 @@
         gitHtml = `<span class="git-badge" title="${escAttr(gitTip)}">${escHtml(p.git.branch || '?')}${p.git.dirty ? `<span class="git-dirty">*${p.git.dirty}</span>` : ''}</span>`;
       }
 
+      // Prawduct phase badge
+      let prawductHtml = '';
+      if (p.prawduct) {
+        prawductHtml = `<span class="prawduct-badge" title="Prawduct: ${escAttr(p.prawduct)} phase">${escHtml(p.prawduct)}</span>`;
+      }
+
       // Action buttons
       let actionsHtml = '';
       if (p.hasSession && !p.isRoot) {
@@ -1178,6 +1200,7 @@
           ${p.isRoot ? '<span class="root-label">Root</span>' : ''}
           <span class="project-name">${escHtml(p.name)}</span>
           ${gitHtml}
+          ${prawductHtml}
         </div>
         ${statusHtml}
         ${actionsHtml}`;

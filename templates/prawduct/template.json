@@ -1,0 +1,8 @@
+{
+  "name": "Prawduct",
+  "description": "Structured product development with discovery, planning, building, and reflection phases",
+  "icon": "prawduct",
+  "tags": ["prawduct", "product", "structured"],
+  "builtin": false,
+  "init": "python3 /Users/jasonvaughan/Documents/Projects/prawduct-test/prawduct/tools/prawduct-init.py \"{{PROJECT_PATH}}\" --name \"{{PROJECT_NAME}}\" --json"
+}
