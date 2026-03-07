@@ -833,6 +833,38 @@
       opacity: 0.5;
     }
 
+    .project-manage {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #222;
+    }
+
+    .manage-btn {
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid #333;
+      background: var(--elevated-bg);
+      color: var(--text-muted);
+      min-height: 44px;
+    }
+
+    .manage-btn.delete-btn {
+      color: var(--danger);
+      border-color: rgba(239, 83, 80, 0.3);
+    }
+
+    .manage-btn.delete-btn:active {
+      background: rgba(239, 83, 80, 0.15);
+    }
+
+    .manage-btn.rename-btn:active {
+      background: rgba(139, 195, 74, 0.1);
+    }
+
     /* ── Loading / Error States ── */
     .loading {
       text-align: center;
@@ -976,6 +1008,47 @@
       <div class="modal-buttons" style="justify-content:center;">
         <button class="btn-cancel" onclick="closeKillModal()">Cancel</button>
         <button class="btn-primary" style="background:var(--danger); flex:none; padding:12px 24px;" onclick="executeKill()">Kill Session</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div class="modal-overlay" id="delete-modal">
+    <div class="modal" style="max-width:380px; text-align:center;">
+      <h2>Delete Project</h2>
+      <p style="color:var(--text-muted); font-size:14px; margin-bottom:12px;">
+        Permanently delete <strong style="color:var(--danger)" id="delete-project-name"></strong>?
+      </p>
+      <p style="color:var(--text-muted); font-size:12px; margin-bottom:16px;">
+        This will remove the entire project directory and kill any active session. This cannot be undone.
+      </p>
+      <div id="delete-pw-section" style="display:none; margin-bottom:16px;">
+        <input class="form-input" id="delete-password" type="password" placeholder="Enter deletion password" autocomplete="off" style="text-align:center;">
+      </div>
+      <div class="modal-buttons" style="justify-content:center;">
+        <button class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+        <button class="btn-primary" style="background:var(--danger); flex:none; padding:12px 24px;" id="delete-btn" onclick="executeDelete()">Delete Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div class="modal-overlay" id="rename-modal">
+    <div class="modal" style="max-width:380px;">
+      <h2>Rename Project</h2>
+      <p style="color:var(--text-muted); font-size:13px; margin-bottom:12px;">
+        Renaming <strong style="color:var(--text)" id="rename-old-name"></strong>
+      </p>
+      <div class="form-group">
+        <label class="form-label">NEW NAME</label>
+        <input class="form-input" id="rename-new-name" type="text" placeholder="new-project-name" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <p style="color:var(--text-muted); font-size:11px; margin-bottom:16px;">
+        Any active session will be killed. Letters, numbers, hyphens, and underscores only.
+      </p>
+      <div class="modal-buttons">
+        <button class="btn-cancel" onclick="closeRenameModal()">Cancel</button>
+        <button class="btn-primary" onclick="executeRename()">Rename</button>
       </div>
     </div>
   </div>
@@ -1182,6 +1255,12 @@
           addAgentHtml = `<button class="add-agent-btn" disabled title="Multi-agent support coming soon">+ Add Agent (Coming Soon)</button>`;
         }
 
+        const projectManageHtml = `
+          <div class="project-manage">
+            <button class="manage-btn rename-btn" onclick="event.stopPropagation();openRenameModal('${escAttr(p.name)}')" title="Rename project">Rename</button>
+            <button class="manage-btn delete-btn" onclick="event.stopPropagation();confirmDeleteProject('${escAttr(p.name)}')" title="Delete project">Delete</button>
+          </div>`;
+
         detailsHtml = `
           <div class="card-details" id="details-${escAttr(p.sessionName)}">
             <div class="details-inner">
@@ -1190,6 +1269,7 @@
               ${windowListHtml}
               ${quickCmdHtml}
               ${addAgentHtml}
+              ${projectManageHtml}
             </div>
           </div>`;
       }
@@ -1282,6 +1362,100 @@
         await fetch(`/api/sessions/${encodeURIComponent(name)}/kill`, { method: 'POST' });
         loadProjects();
       } catch {}
+    }
+
+    // ── Delete Project ──
+    let pendingDeleteProject = null;
+
+    function confirmDeleteProject(name) {
+      pendingDeleteProject = name;
+      document.getElementById('delete-project-name').textContent = name;
+      document.getElementById('delete-password').value = '';
+
+      const pwSection = document.getElementById('delete-pw-section');
+      if (config.deleteProtected) {
+        pwSection.style.display = 'block';
+      } else {
+        pwSection.style.display = 'none';
+      }
+
+      document.getElementById('delete-modal').classList.add('open');
+      if (config.deleteProtected) {
+        setTimeout(() => document.getElementById('delete-password').focus(), 100);
+      }
+    }
+
+    function closeDeleteModal() {
+      pendingDeleteProject = null;
+      document.getElementById('delete-modal').classList.remove('open');
+    }
+
+    async function executeDelete() {
+      if (!pendingDeleteProject) return;
+      const name = pendingDeleteProject;
+      const password = document.getElementById('delete-password').value;
+      closeDeleteModal();
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error || 'Delete failed');
+          return;
+        }
+        loadProjects();
+      } catch {
+        alert('Delete failed');
+      }
+    }
+
+    // ── Rename Project ──
+    let pendingRenameProject = null;
+
+    function openRenameModal(name) {
+      pendingRenameProject = name;
+      document.getElementById('rename-old-name').textContent = name;
+      document.getElementById('rename-new-name').value = name;
+      document.getElementById('rename-modal').classList.add('open');
+      setTimeout(() => {
+        const input = document.getElementById('rename-new-name');
+        input.focus();
+        input.select();
+      }, 100);
+    }
+
+    function closeRenameModal() {
+      pendingRenameProject = null;
+      document.getElementById('rename-modal').classList.remove('open');
+    }
+
+    async function executeRename() {
+      if (!pendingRenameProject) return;
+      const oldName = pendingRenameProject;
+      const newName = document.getElementById('rename-new-name').value.trim();
+      if (!newName || newName === oldName) {
+        closeRenameModal();
+        return;
+      }
+      closeRenameModal();
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(oldName)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newName }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error || 'Rename failed');
+          return;
+        }
+        loadProjects();
+      } catch {
+        alert('Rename failed');
+      }
     }
 
     // ── Peek ──
