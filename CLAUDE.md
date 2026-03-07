@@ -46,6 +46,7 @@ TangleClaw/
     activity.js          # Append-only JSON Lines activity log
     projects.js          # Project discovery, enrichment, and creation with templates
     session.js           # Session wrapper page renderer
+    uploads.js           # File upload save/list (project-specific or global)
   public/
     index.html           # Single-file UI (~1380 lines, all CSS + JS inline)
     sw.js                # Service worker (cache-first static, network-first API)
@@ -54,6 +55,15 @@ TangleClaw/
     logo-icon.png        # Serpent icon
     logo-text.png        # "TangleClaw" wordmark
     icons/               # PWA icons (192, 512, apple-touch-icon)
+  templates/
+    blank/               # Empty project (just template.json)
+    node/                # Node.js starter (package.json.tmpl, index.js)
+    python/              # Python starter (main.py, requirements.txt)
+    rust/                # Rust starter (src/main.rs, cargo init fallback)
+    [custom]/            # Drop a folder with template.json to add templates
+  hooks/
+    pre-commit           # Enforces version.json bump on every commit
+  version.json           # Semantic version (major.minor.patch)
   com.tangleclaw.*.plist # launchd plist templates
 ```
 
@@ -76,10 +86,15 @@ TangleClaw/
 | POST | `/api/projects` | Create new project (body: `{name, gitInit, claudeMd, template}`) |
 | GET | `/api/config` | Get config from `~/.tangleclaw/config.json` |
 | GET | `/api/system` | macOS system stats (CPU, RAM, disk, uptime) |
+| GET | `/api/templates` | List available project templates |
+| GET | `/api/templates/:id` | Template detail with file list |
 | GET | `/api/activity` | Recent activity log entries |
 | POST | `/api/sessions/:name/kill` | Kill a tmux session |
 | GET | `/api/sessions/:name/peek` | Last lines of terminal output |
 | POST | `/api/sessions/:name/send` | Send command to session (body: `{command}`) |
+| POST | `/api/upload` | Upload file (body: `{name, data, project?}`) |
+| GET | `/api/uploads` | List uploads (`?project=` for project-specific) |
+| GET | `/api/version` | Get app version from `version.json` |
 
 ## Routes
 
@@ -100,6 +115,8 @@ TangleClaw/
 - **Services**: User-level LaunchAgents in `~/Library/LaunchAgents/` (start at login, no sudo needed)
 - **Ports**: 3100 (ttyd), 3101 (landing page)
 - **Git-clean CLAUDE.md**: This file is checked into the repo. Keep it generic — no usernames, machine names, personal preferences, or identity sentries. User-specific context belongs in Claude Code auto-memory (`~/.claude/projects/*/memory/`) which is gitignored.
+- **File-based templates**: Project templates live in `templates/`. Each template is a directory with a `template.json` manifest and files to copy. Use `{{PROJECT_NAME}}` for substitution. Files ending in `.tmpl` have the extension stripped on copy. Templates with an `init` command in `template.json` try that first, falling back to file copy.
+- **Versioning**: Semantic versioning in `version.json`. Every commit MUST include a version bump (enforced by pre-commit hook in `hooks/`). Patch for fixes, minor for features, major for breaking changes. Version displayed in UI header and session wrapper banner.
 
 ---
 
@@ -170,8 +187,8 @@ lsof -i :3100 -i :3101 -P -n
 tail -f ~/Library/Logs/tangleclaw-landing.log
 tail -f ~/Library/Logs/tangleclaw-ttyd.log
 
-# Run tests
-node --test test/
+# Run tests (49 tests across 17 suites)
+node --test 'test/*.test.js'
 ```
 
 ---

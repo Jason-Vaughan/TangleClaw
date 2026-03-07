@@ -65,6 +65,13 @@
       margin-top: 4px;
     }
 
+    .header-version {
+      font-size: 9px;
+      color: #555;
+      margin-top: 2px;
+      letter-spacing: 0.5px;
+    }
+
     /* ── Host Dashboard ── */
     .dashboard {
       border-bottom: 1px solid var(--elevated-bg);
@@ -673,6 +680,50 @@
       background: rgba(139, 195, 74, 0.08);
     }
 
+    .template-custom-section {
+      margin-top: 8px;
+    }
+
+    .template-custom-select {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .template-custom-select:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+
+    .template-detail {
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid #222;
+      border-radius: 6px;
+      background: var(--bg);
+      font-size: 12px;
+    }
+    .template-detail-header {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 6px;
+    }
+    .template-detail-files {
+      color: var(--text-muted);
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .template-detail-files .file-entry {
+      padding: 1px 0;
+    }
+
     .modal-buttons {
       display: flex;
       gap: 10px;
@@ -790,6 +841,7 @@
     <div class="header-text">
       <img src="/logo-text.png" alt="TangleClaw" class="header-wordmark">
       <div class="subtitle">Cursatory Remote Access</div>
+      <div class="header-version" id="header-version"></div>
     </div>
   </div>
 
@@ -829,7 +881,7 @@
     <div class="session-count" id="session-count"></div>
     <div class="toolbar-buttons">
       <button class="toolbar-btn create" onclick="openCreateModal()" title="Create new project">+ Create</button>
-      <button class="toolbar-btn" onclick="loadProjects()" title="Refresh project list">Refresh</button>
+<button class="toolbar-btn" onclick="loadProjects()" title="Refresh project list">Refresh</button>
     </div>
   </div>
 
@@ -874,10 +926,19 @@
         </label>
         <div class="form-reveal" id="template-options">
           <div class="template-picker" id="template-picker">
-            <div class="template-opt selected" data-template="blank" onclick="selectTemplate(this)">Blank</div>
-            <div class="template-opt" data-template="node" onclick="selectTemplate(this)">Node.js</div>
-            <div class="template-opt" data-template="python" onclick="selectTemplate(this)">Python</div>
-            <div class="template-opt" data-template="rust" onclick="selectTemplate(this)">Rust</div>
+            <!-- Builtin pill buttons populated dynamically -->
+          </div>
+          <div class="template-custom-section" id="template-custom-section" style="display:none;">
+            <select class="template-custom-select" id="template-custom-select" onchange="selectCustomTemplate(this)">
+              <option value="">More templates...</option>
+            </select>
+          </div>
+          <div class="template-detail" id="template-detail" style="display:none;">
+            <div class="template-detail-header">
+              <strong id="template-detail-name"></strong>
+              <span class="muted" id="template-detail-desc"></span>
+            </div>
+            <div class="template-detail-files" id="template-detail-files"></div>
           </div>
         </div>
       </div>
@@ -923,6 +984,8 @@
 
       loadProjects();
       loadSystem();
+      loadTemplates();
+      loadVersion();
 
       // Register service worker
       if ('serviceWorker' in navigator) {
@@ -1263,6 +1326,90 @@
       } catch {}
     }
 
+    // ── Version ──
+    async function loadVersion() {
+      try {
+        const res = await fetch('/api/version');
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('header-version').textContent = 'v' + data.version;
+        }
+      } catch {}
+    }
+
+    // ── Templates ──
+    let _templates = [];
+
+    async function loadTemplates() {
+      try {
+        const res = await fetch('/api/templates');
+        if (res.ok) _templates = await res.json();
+      } catch {}
+      renderTemplatePicker();
+    }
+
+    function renderTemplatePicker() {
+      const picker = document.getElementById('template-picker');
+      const customSection = document.getElementById('template-custom-section');
+      const customSelect = document.getElementById('template-custom-select');
+
+      const builtins = _templates.filter(t => t.builtin);
+      const custom = _templates.filter(t => !t.builtin);
+
+      picker.innerHTML = builtins.map(t =>
+        `<div class="template-opt${t.id === 'blank' ? ' selected' : ''}" data-template="${t.id}" onclick="selectTemplate(this)" title="${t.description}">${t.name}</div>`
+      ).join('');
+
+      if (custom.length > 0) {
+        customSelect.innerHTML = '<option value="">More templates...</option>' +
+          custom.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        customSection.style.display = 'block';
+      } else {
+        customSection.style.display = 'none';
+      }
+    }
+
+    async function selectTemplate(el) {
+      document.querySelectorAll('.template-opt').forEach(o => o.classList.remove('selected'));
+      el.classList.add('selected');
+      document.getElementById('template-custom-select').value = '';
+
+      await showTemplateDetail(el.dataset.template);
+    }
+
+    function selectCustomTemplate(select) {
+      document.querySelectorAll('.template-opt').forEach(o => o.classList.remove('selected'));
+      const templateId = select.value;
+      if (!templateId) {
+        document.getElementById('template-detail').style.display = 'none';
+        return;
+      }
+      showTemplateDetail(templateId);
+    }
+
+    async function showTemplateDetail(templateId) {
+      const detail = document.getElementById('template-detail');
+
+      if (templateId === 'blank' || !templateId) {
+        detail.style.display = 'none';
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/templates/${templateId}`);
+        if (!res.ok) { detail.style.display = 'none'; return; }
+        const data = await res.json();
+
+        document.getElementById('template-detail-name').textContent = data.name;
+        document.getElementById('template-detail-desc').textContent = data.description;
+        document.getElementById('template-detail-files').innerHTML =
+          data.files.map(f => `<div class="file-entry">${f}</div>`).join('');
+        detail.style.display = 'block';
+      } catch {
+        detail.style.display = 'none';
+      }
+    }
+
     // ── Create Project ──
     function openCreateModal() {
       document.getElementById('create-modal').classList.add('open');
@@ -1272,8 +1419,8 @@
       document.getElementById('create-template').checked = false;
       document.getElementById('create-claude-content').value = '';
       document.querySelectorAll('.form-reveal').forEach(el => el.classList.remove('open'));
-      document.querySelectorAll('.template-opt').forEach(el => el.classList.remove('selected'));
-      document.querySelector('.template-opt[data-template="blank"]').classList.add('selected');
+      document.getElementById('template-detail').style.display = 'none';
+      renderTemplatePicker();
       setTimeout(() => document.getElementById('create-name').focus(), 100);
     }
 
@@ -1283,7 +1430,6 @@
 
     function toggleReveal(id) {
       const el = document.getElementById(id);
-      // Use setTimeout so the checkbox change is processed first
       setTimeout(() => {
         const checkbox = el.previousElementSibling?.querySelector('input[type="checkbox"]')
           || el.closest('.form-group')?.querySelector('input[type="checkbox"]');
@@ -1293,11 +1439,6 @@
           el.classList.remove('open');
         }
       }, 0);
-    }
-
-    function selectTemplate(el) {
-      document.querySelectorAll('.template-opt').forEach(o => o.classList.remove('selected'));
-      el.classList.add('selected');
     }
 
     async function createProject() {
@@ -1314,8 +1455,13 @@
         body.claudeMd = document.getElementById('create-claude-content').value || '# Project Instructions\n';
       }
       if (document.getElementById('create-template').checked) {
-        const sel = document.querySelector('.template-opt.selected');
-        if (sel) body.template = sel.dataset.template;
+        const customVal = document.getElementById('template-custom-select').value;
+        if (customVal) {
+          body.template = customVal;
+        } else {
+          const sel = document.querySelector('.template-opt.selected');
+          if (sel) body.template = sel.dataset.template;
+        }
       }
 
       try {
@@ -1332,7 +1478,6 @@
           return;
         }
         closeCreateModal();
-        // Open the new project in session wrapper
         window.location.href = `/session/${encodeURIComponent(name)}`;
       } catch {
         alert('Failed to create project');

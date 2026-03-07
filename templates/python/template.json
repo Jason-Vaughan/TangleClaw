@@ -1,0 +1,7 @@
+{
+  "name": "Python",
+  "description": "Python project with main.py and requirements.txt",
+  "icon": "python",
+  "tags": ["python"],
+  "builtin": true
+}

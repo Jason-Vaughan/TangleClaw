@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Pre-commit hook: enforce version.json is updated in every commit.
+# Install: cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Or: git config core.hooksPath hooks
+#
+
+# Get list of staged files (excluding deletions)
+STAGED=$(git diff --cached --name-only --diff-filter=d)
+
+# If nothing staged, let git handle it
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Check if version.json is among the staged files
+if echo "$STAGED" | grep -q '^version\.json$'; then
+  # version.json is being updated — good
+  exit 0
+fi
+
+echo ""
+echo "ERROR: version.json was not updated."
+echo ""
+echo "Every commit must include a version bump in version.json."
+echo "  Current version: $(cat version.json | grep version | sed 's/[^0-9.]//g')"
+echo ""
+echo "  Patch (bug fix):     x.y.Z"
+echo "  Minor (new feature): x.Y.0"
+echo "  Major (breaking):    X.0.0"
+echo ""
+echo "Update version.json and stage it, then commit again."
+echo ""
+exit 1

@@ -1,0 +1,7 @@
+{
+  "name": "Node.js",
+  "description": "Node.js project with package.json and entry point",
+  "icon": "js",
+  "tags": ["javascript", "node"],
+  "builtin": true
+}

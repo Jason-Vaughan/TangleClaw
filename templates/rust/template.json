@@ -1,0 +1,8 @@
+{
+  "name": "Rust",
+  "description": "Rust project with cargo init or manual main.rs",
+  "icon": "rust",
+  "tags": ["rust"],
+  "builtin": true,
+  "init": "cargo init \"{{PROJECT_PATH}}\""
+}
