@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# commit-msg hook: auto-update CHANGELOG.md with the commit message.
+# Reads the version from version.json, uses the commit message as the summary,
+# and inserts/updates the entry for that version in CHANGELOG.md.
+#
+
+CHANGELOG="CHANGELOG.md"
+VERSION=$(cat version.json 2>/dev/null | grep '"version"' | sed 's/[^0-9.]//g')
+MSG_FILE="$1"
+
+if [ -z "$VERSION" ] || [ ! -f "$MSG_FILE" ]; then
+  exit 0
+fi
+
+if [ ! -f "$CHANGELOG" ]; then
+  exit 0
+fi
+
+# Read the first line of the commit message (skip blank lines, Co-Authored-By, etc.)
+SUMMARY=$(head -1 "$MSG_FILE" | sed 's/^[[:space:]]*//')
+
+if [ -z "$SUMMARY" ]; then
+  exit 0
+fi
+
+DATE=$(date +%Y-%m-%d)
+HEADER="## [$VERSION] — $DATE"
+
+# Check if this version already has an entry
+if grep -qF "## [$VERSION]" "$CHANGELOG"; then
+  # Append the summary as a bullet under the existing version header
+  sed -i '' "/## \[$VERSION\]/a\\
+- $SUMMARY
+" "$CHANGELOG"
+else
+  # Insert a new version block after the first "## [" line (or after the title if none)
+  # Find line number of first version entry
+  FIRST_ENTRY=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1)
+  if [ -n "$FIRST_ENTRY" ]; then
+    # Insert before the first existing entry
+    sed -i '' "${FIRST_ENTRY}i\\
+${HEADER}\\
+\\
+- ${SUMMARY}\\
+" "$CHANGELOG"
+  else
+    # No existing entries — append after the title line
+    echo "" >> "$CHANGELOG"
+    echo "$HEADER" >> "$CHANGELOG"
+    echo "" >> "$CHANGELOG"
+    echo "- $SUMMARY" >> "$CHANGELOG"
+  fi
+fi
+
+# Stage the updated changelog into this commit
+git add "$CHANGELOG"
+
+exit 0
