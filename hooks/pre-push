@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+# Pre-push hook: automatically push all tags alongside commits.
+# This ensures version tags created by the post-commit hook always
+# reach the remote without needing --tags.
+#
+
+# Read the remote and URL being pushed to (provided by git on stdin)
+remote="$1"
+
+# Push all tags to the remote
+git push "$remote" --tags --no-verify >/dev/null 2>&1
+
+# Always allow the push to proceed
+exit 0
