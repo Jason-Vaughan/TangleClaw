@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.4.2] — 2026-03-07
+
+- Add commit-msg hook to auto-update CHANGELOG.md on every commit
+
 ## [2.4.0] — 2026-03-07
 
 ### Added

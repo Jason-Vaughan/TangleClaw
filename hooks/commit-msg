@@ -38,11 +38,12 @@ else
   # Find line number of first version entry
   FIRST_ENTRY=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1)
   if [ -n "$FIRST_ENTRY" ]; then
-    # Insert before the first existing entry
+    # Insert before the first existing entry (with trailing blank line)
     sed -i '' "${FIRST_ENTRY}i\\
 ${HEADER}\\
 \\
 - ${SUMMARY}\\
+
 " "$CHANGELOG"
   else
     # No existing entries — append after the title line
