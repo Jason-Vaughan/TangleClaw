@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# Post-commit hook: auto-tag commits with the version from version.json.
+# Creates a lightweight tag (e.g. v2.1.0) pointing to the new commit.
+# If the tag already exists (no version bump), it moves the tag to the latest commit.
+#
+
+VERSION=$(cat version.json 2>/dev/null | grep '"version"' | sed 's/[^0-9.]//g')
+
+if [ -z "$VERSION" ]; then
+  exit 0
+fi
+
+TAG="v${VERSION}"
+
+# Create or move the tag to the current commit
+git tag -f "$TAG" HEAD >/dev/null 2>&1
