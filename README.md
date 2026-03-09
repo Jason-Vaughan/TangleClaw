@@ -19,7 +19,11 @@ TangleClaw turns a headless Mac into a project workstation you can access from a
 - **Peek at terminal output** without opening a session — check if a long-running task finished
 - **Send quick commands** (git status, ls, etc.) to running sessions from the project list
 - **Kill sessions** with swipe-to-kill on mobile or a confirmation modal on desktop
-- **Create new projects** from the UI with optional git init, CLAUDE.md, and language templates
+- **Create new projects** from the UI with optional git init, CLAUDE.md, and language templates (including Prawduct structured development)
+- **Rename or delete projects** with password-protected deletion support
+- **Upload files** to projects directly from the session wrapper banner
+- **Copy terminal text** via Select mode — toggles tmux mouse off for native browser text selection
+- **Track project versions** — reads `version.json` or `package.json` and displays on cards and session banner
 
 ## Architecture
 
@@ -49,6 +53,9 @@ When you open a project, you don't get raw ttyd — you get a wrapper page with:
 
 - **Back button** to return to the dashboard
 - **Status indicator** (green breathing dot = active, red = disconnected)
+- **Version display** — project version (from `version.json`/`package.json`) or TangleClaw version
+- **Select button** to toggle tmux mouse off for native text selection and copy (auto-reverts after 30s)
+- **Upload button** to upload files to the project directory
 - **Peek button** to view the last few lines of terminal output
 - **Kill button** with confirmation modal to end the session
 
@@ -58,7 +65,7 @@ The ttyd terminal fills the rest of the viewport. On iPhone, this feels like a n
 
 The main landing page shows every directory in `~/Documents/Projects/` as a card:
 
-- **Project name** with git branch badge and dirty file indicator
+- **Project name** with version badge, git branch badge, dirty file indicator, and Prawduct phase badge
 - **Session status** — green dot if a tmux session is running, with breathing animation
 - **Window count** badge when multiple tmux windows exist (multi-agent)
 - **Expandable details** panel: session uptime, idle time, last commit age, AI engine selector, quick commands, window list
@@ -82,7 +89,7 @@ The `+ Create` button in the toolbar opens a modal with:
 - **Project name** (alphanumeric, hyphens, underscores)
 - **Initialize git repo** (optional)
 - **Create CLAUDE.md** with custom content (optional)
-- **Language template**: Blank, Node.js, Python, or Rust — scaffolds starter files
+- **Language template**: Blank, Node.js, Python, Rust, or Prawduct — builtin pills plus dropdown for custom templates
 
 After creation, the browser navigates directly to the new project's session wrapper.
 
@@ -102,10 +109,20 @@ All endpoints return JSON.
 | `POST` | `/api/projects` | Create a new project directory (body: `{name, gitInit, claudeMd, template}`) |
 | `GET` | `/api/config` | Read runtime config |
 | `GET` | `/api/system` | macOS system stats (CPU, memory, disk, uptime) |
+| `GET` | `/api/templates` | List available project templates |
+| `GET` | `/api/templates/:id` | Template detail with file list |
 | `GET` | `/api/activity` | Recent activity log entries |
 | `POST` | `/api/sessions/:name/kill` | Kill a tmux session by name |
 | `GET` | `/api/sessions/:name/peek` | Capture the last 5 lines of a session's terminal output |
 | `POST` | `/api/sessions/:name/send` | Send a command to a running session (body: `{command}`) |
+| `POST` | `/api/upload` | Upload file (body: `{name, data, project?}`) |
+| `GET` | `/api/uploads` | List uploads (`?project=` for project-specific) |
+| `DELETE` | `/api/projects/:name` | Delete project (body: `{password}` if protected) |
+| `PATCH` | `/api/projects/:name` | Rename project (body: `{newName}`) |
+| `POST` | `/api/tmux/mouse` | Toggle tmux mouse mode for Select/copy (body: `{on: bool}`) |
+| `GET` | `/api/clipboard` | Get tmux clipboard text (JSON) |
+| `GET` | `/api/clipboard/view` | Clipboard text as standalone HTML page |
+| `GET` | `/api/version` | Get app version from `version.json` |
 
 ### Other Routes
 
@@ -127,8 +144,9 @@ TangleClaw/
     git.js                         # Per-project git info with 10s cache
     config.js                      # Read/write ~/.tangleclaw/config.json
     activity.js                    # Append-only JSON Lines activity log
-    projects.js                    # Project discovery + creation with templates
+    projects.js                    # Project discovery, creation, rename, delete
     session.js                     # Session wrapper page renderer
+    uploads.js                     # File upload save/list (project-specific or global)
   public/
     index.html                     # Single-file UI (~1380 lines, CSS + JS inline)
     sw.js                          # Service worker (PWA offline support)
@@ -137,6 +155,18 @@ TangleClaw/
     logo-icon.png                  # Serpent icon
     logo-text.png                  # "TangleClaw" wordmark
     icons/                         # PWA icons (192, 512, apple-touch-icon)
+  templates/
+    blank/                         # Empty project template
+    node/                          # Node.js starter (package.json, index.js)
+    python/                        # Python starter (main.py, requirements.txt)
+    rust/                          # Rust starter (src/main.rs, cargo init)
+    prawduct/                      # Prawduct structured development (init command)
+  hooks/
+    pre-commit                     # Enforces version.json bump on every commit
+    post-commit                    # Auto-tags commits with version
+    commit-msg                     # Auto-updates CHANGELOG.md with commit summary
+  version.json                     # Semantic version (major.minor.patch)
+  CHANGELOG.md                     # Auto-maintained changelog
   com.tangleclaw.landing.plist     # launchd plist for landing page server
   com.tangleclaw.ttyd.plist        # launchd plist for ttyd
 ```
@@ -149,17 +179,32 @@ TangleClaw/
 - Node.js (no npm install needed — zero dependencies)
 - tmux
 - [ttyd](https://github.com/nicedoc/ttyd) (web terminal)
+- [PortHub](https://github.com/ishayoyo/porthub) (port registry — prevents conflicts across projects)
 - A VPN or other network access to the machine
 
 ### Install
 
-1. Clone this repo:
+1. Install PortHub (port registry):
+
+   ```bash
+   npm i -g porthub
+   porthub start --daemon --port 8080
+   ```
+
+2. Clone this repo:
 
    ```bash
    git clone https://github.com/Jason-Vaughan/tangle-claw.git ~/Documents/Projects/TangleClaw
    ```
 
-2. Create the helper scripts:
+3. Register TangleClaw's ports:
+
+   ```bash
+   porthub lease 3100 --service "ttyd" --project "TangleClaw" --permanent
+   porthub lease 3101 --service "landing-page" --project "TangleClaw" --permanent
+   ```
+
+4. Create the helper scripts:
 
    ```bash
    # ~/bin/project-session — creates/attaches tmux sessions, launches AI engine
@@ -167,7 +212,7 @@ TangleClaw/
    chmod +x ~/bin/project-session ~/bin/start-ttyd
    ```
 
-3. Install the launchd plists (edit paths to match your system first):
+5. Install the launchd plists (edit paths to match your system first):
 
    ```bash
    cp com.tangleclaw.landing.plist ~/Library/LaunchAgents/
@@ -176,7 +221,7 @@ TangleClaw/
    launchctl load ~/Library/LaunchAgents/com.tangleclaw.ttyd.plist
    ```
 
-4. Open `http://localhost:3101` (or your machine's hostname/IP over VPN)
+6. Open `http://localhost:3101` (or your machine's hostname/IP over VPN)
 
 ### Service Management
 
@@ -230,6 +275,7 @@ Runtime config lives at `~/.tangleclaw/config.json`:
 - **Same-origin ttyd proxy**: Safari blocks WebSocket connections from iframes on different ports. The landing page server reverse-proxies `/terminal/*` to ttyd, keeping everything on one origin.
 - **LaunchAgents over LaunchDaemons**: LaunchDaemons run as root and don't inherit user TCC permissions. LaunchAgents inherit the user's permissions and just work.
 - **PWA support**: Web app manifest + service worker enable "Add to Home Screen" on iOS for a native-app feel.
+- **PortHub integration**: All ports (3100 ttyd, 3101 landing page) are registered with [PortHub](https://github.com/ishayoyo/porthub) as permanent leases. This prevents port conflicts across projects on the same machine.
 
 ## Multi-Agent Support
 

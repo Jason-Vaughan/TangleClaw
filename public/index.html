@@ -302,6 +302,19 @@
       font-weight: 600;
     }
 
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 9px;
+      color: var(--text-muted);
+      background: rgba(119, 119, 119, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-family: monospace;
+    }
+
     .prawduct-badge {
       display: inline-flex;
       align-items: center;
@@ -1183,6 +1196,12 @@
         gitHtml = `<span class="git-badge" title="${escAttr(gitTip)}">${escHtml(p.git.branch || '?')}${p.git.dirty ? `<span class="git-dirty">*${p.git.dirty}</span>` : ''}</span>`;
       }
 
+      // Project version badge
+      let versionHtml = '';
+      if (p.version) {
+        versionHtml = `<span class="version-badge" title="Version ${escAttr(p.version)}">v${escHtml(p.version)}</span>`;
+      }
+
       // Prawduct phase badge
       let prawductHtml = '';
       if (p.prawduct) {
@@ -1277,6 +1296,7 @@
         <div class="card-left">
           ${p.isRoot ? '<span class="root-label">Root</span>' : ''}
           <span class="project-name">${escHtml(p.name)}</span>
+          ${versionHtml}
           ${gitHtml}
           ${prawductHtml}
         </div>

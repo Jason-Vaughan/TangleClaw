@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.4.3] — 2026-03-07
+
+- Fix changelog spacing in commit-msg hook
+
 ## [2.4.2] — 2026-03-07
 
 - Add commit-msg hook to auto-update CHANGELOG.md on every commit

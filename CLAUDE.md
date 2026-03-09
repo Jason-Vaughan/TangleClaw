@@ -31,6 +31,7 @@
 |------|---------|
 | `CLAUDE.md` | This file — project context, rules, learnings |
 | `README.md` | Public-facing project documentation |
+| `CHANGELOG.md` | Auto-maintained version changelog |
 | `WISHLIST.md` | Deferred feature ideas |
 
 ### Code Structure
@@ -63,7 +64,10 @@ TangleClaw/
     [custom]/            # Drop a folder with template.json to add templates
   hooks/
     pre-commit           # Enforces version.json bump on every commit
+    post-commit          # Auto-tags commits with version from version.json
+    commit-msg           # Auto-updates CHANGELOG.md with commit summary
   version.json           # Semantic version (major.minor.patch)
+  CHANGELOG.md           # Auto-maintained changelog (updated by commit-msg hook)
   com.tangleclaw.*.plist # launchd plist templates
 ```
 
@@ -74,6 +78,7 @@ TangleClaw/
 | `~/bin/start-ttyd` | Shell script: starts ttyd with correct flags |
 | `~/.tangleclaw/config.json` | Runtime config (engines, quick commands) |
 | `~/.tangleclaw/activity.log` | Activity log (JSON Lines) |
+| `~/.tangleclaw/clipboard` | tmux copy-pipe target (for Select mode copy) |
 | `~/Library/LaunchAgents/com.tangleclaw.*.plist` | Installed copies of launchd plists |
 
 ---
@@ -94,6 +99,11 @@ TangleClaw/
 | POST | `/api/sessions/:name/send` | Send command to session (body: `{command}`) |
 | POST | `/api/upload` | Upload file (body: `{name, data, project?}`) |
 | GET | `/api/uploads` | List uploads (`?project=` for project-specific) |
+| DELETE | `/api/projects/:name` | Delete project (body: `{password}` if protected) |
+| PATCH | `/api/projects/:name` | Rename project (body: `{newName}`) |
+| POST | `/api/tmux/mouse` | Toggle tmux mouse mode (body: `{on: bool}`) |
+| GET | `/api/clipboard` | Get tmux clipboard text (JSON) |
+| GET | `/api/clipboard/view` | Clipboard text as standalone HTML page |
 | GET | `/api/version` | Get app version from `version.json` |
 
 ## Routes
@@ -113,10 +123,13 @@ TangleClaw/
 - **Single-file UI**: `public/index.html` contains all CSS + JS inline
 - **Config**: Runtime config at `~/.tangleclaw/config.json`, activity log at `~/.tangleclaw/activity.log`
 - **Services**: User-level LaunchAgents in `~/Library/LaunchAgents/` (start at login, no sudo needed)
-- **Ports**: 3100 (ttyd), 3101 (landing page)
+- **Ports**: 3100 (ttyd), 3101 (landing page) — registered with PortHub as permanent leases
+- **PortHub (MANDATORY for all projects)**: All port assignments MUST be registered with [PortHub](https://github.com/ishayoyo/porthub) (`npm i -g porthub`). This applies to TangleClaw itself AND every project managed through TangleClaw, regardless of template (including Prawduct). Before assigning or changing any port, run `porthub status` to check for conflicts. Register with `porthub lease <port> --service "<name>" --project "<ProjectName>" --permanent`. When scaffolding a new project that uses ports, register them immediately. When reviewing existing projects, check for unregistered ports and register them.
 - **Git-clean CLAUDE.md**: This file is checked into the repo. Keep it generic — no usernames, machine names, personal preferences, or identity sentries. User-specific context belongs in Claude Code auto-memory (`~/.claude/projects/*/memory/`) which is gitignored.
 - **File-based templates**: Project templates live in `templates/`. Each template is a directory with a `template.json` manifest and files to copy. Use `{{PROJECT_NAME}}` for substitution. Files ending in `.tmpl` have the extension stripped on copy. Templates with an `init` command in `template.json` try that first, falling back to file copy.
-- **Versioning**: Semantic versioning in `version.json`. Every commit MUST include a version bump (enforced by pre-commit hook in `hooks/`). Patch for fixes, minor for features, major for breaking changes. Version displayed in UI header and session wrapper banner.
+- **Versioning**: Semantic versioning in `version.json`. Every commit MUST include a version bump (enforced by pre-commit hook). Patch for fixes, minor for features, major for breaking changes. Post-commit auto-tags, commit-msg auto-updates `CHANGELOG.md`. Version displayed in UI header, project cards, and session wrapper banner (project version if available, TangleClaw version as fallback).
+- **Select mode for copy**: Session wrapper has a Select button that toggles tmux mouse off, allowing native browser text selection and copy. Auto-reverts after 30s. Uses `/api/tmux/mouse` endpoint.
+- **Password-protected delete**: Project deletion can be gated by `deletePassword` in `~/.tangleclaw/config.json`. Config endpoint strips the password, exposes only `deleteProtected: bool`.
 
 ---
 
@@ -213,6 +226,22 @@ When working on this project, document discoveries as they happen — don't batc
 - Things already documented in this file
 - Obvious Node.js/stdlib knowledge
 
+### Documentation Parity Protocol (MANDATORY)
+
+**When adding, removing, or changing any feature, the following docs MUST be updated in the same commit:**
+
+1. **`CLAUDE.md`** — Update API endpoints table, code structure tree, key conventions, or external files if affected
+2. **`README.md`** — Update feature list, API table, file structure, session wrapper description, or project card description if affected
+3. **`CHANGELOG.md`** — Auto-updated by commit-msg hook (no manual action needed)
+
+**Checklist for every feature change:**
+- New API endpoint? → Add to both CLAUDE.md and README.md API tables
+- New file in lib/, public/, templates/, hooks/? → Add to both code structure trees
+- New external file (in ~/.tangleclaw/)? → Add to CLAUDE.md external files table
+- New session wrapper button/feature? → Update README.md session wrapper section
+- New project card badge/feature? → Update README.md project dashboard section
+- New convention or gotcha? → Add to CLAUDE.md key conventions
+
 ### Update Protocol:
 
 1. Add findings to the Learnings Log section below
@@ -239,4 +268,4 @@ When working on this project, document discoveries as they happen — don't batc
 
 ---
 
-*Last Updated: 2026-03-06*
+*Last Updated: 2026-03-08*
