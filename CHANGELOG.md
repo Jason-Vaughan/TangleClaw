@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.6.0] — 2026-03-09
+
+- Add command bar to session wrapper for mobile-friendly input
+
 ## [2.5.0] — 2026-03-08
 
 - Add project version badges, PortHub integration, and doc parity protocol
