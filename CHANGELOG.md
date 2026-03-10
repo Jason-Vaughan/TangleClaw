@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.5.0] — 2026-03-08
+
+- Add project version badges, PortHub integration, and doc parity protocol
+
 ## [2.4.3] — 2026-03-07
 
 - Fix changelog spacing in commit-msg hook
