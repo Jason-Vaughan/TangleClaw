@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.7.0] — 2026-03-09
+
+- Move version display: TC version under logo, project version next to name
+
 ## [2.6.0] — 2026-03-09
 
 - Add command bar to session wrapper for mobile-friendly input
