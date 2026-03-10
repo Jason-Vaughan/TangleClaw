@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.8.0] — 2026-03-09
+
+- Add settings menu with prompt chime notification
+
 ## [2.7.0] — 2026-03-09
 
 - Move version display: TC version under logo, project version next to name

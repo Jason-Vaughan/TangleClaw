@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tangleclaw-v2';
+const CACHE_NAME = 'tangleclaw-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -28,8 +28,8 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Network-first for API calls
-  if (url.pathname.startsWith('/api/')) {
+  // Network-first for API calls and session pages (dynamically rendered)
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/session/')) {
     event.respondWith(
       fetch(event.request).catch(() =>
         new Response(JSON.stringify({ error: 'offline' }), {
