@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.11.0] — 2026-03-11
+
+- Add session wrap, client-side chime polling, and settings enhancements
+
 ## [2.10.1] — 2026-03-09
 
 - Fix false chime triggers with sustained activity thresholds
