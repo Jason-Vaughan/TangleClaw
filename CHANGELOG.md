@@ -2,6 +2,10 @@
 
 All notable changes to TangleClaw are documented here.
 
+## [2.10.1] — 2026-03-09
+
+- Fix false chime triggers with sustained activity thresholds
+
 ## [2.10.0] — 2026-03-09
 
 - Move chime detection server-side with SSE push to all clients
