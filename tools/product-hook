@@ -1,0 +1,938 @@
+#!/usr/bin/env python3
+"""
+product-hook — Session governance for Prawduct products.
+
+Enforces two structural gates:
+1. Reflection: files modified -> reflection must be captured before session end
+2. Critic review: code built against a plan -> independent review must happen
+
+Also triggers framework sync on session start (best-effort).
+
+Usage (in .claude/settings.json):
+  python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear
+  python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def get_project_dir() -> Path:
+    """Get the project directory from CLAUDE_PROJECT_DIR or cwd."""
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def get_prawduct_dir(project_dir: Path) -> Path:
+    return project_dir / ".prawduct"
+
+
+# =============================================================================
+# Sync trigger (best-effort on session start)
+# =============================================================================
+
+
+def try_sync(project_dir: Path) -> None:
+    """Attempt to run framework sync. Silently does nothing on any failure.
+
+    If CLAUDE.md is updated, prints a note to stderr instructing the model
+    to re-read it — the file was updated on disk but the system prompt has
+    the old content.
+    """
+    try:
+        manifest_path = project_dir / ".prawduct" / "sync-manifest.json"
+        if not manifest_path.is_file():
+            return
+
+        manifest = json.loads(manifest_path.read_text())
+        fw_source = os.environ.get("PRAWDUCT_FRAMEWORK_DIR") or manifest.get("framework_source", "")
+
+        # Fall back to sibling ../prawduct if configured source not found
+        if not fw_source or not Path(fw_source).is_dir():
+            sibling = (project_dir.parent / "prawduct").resolve()
+            if sibling.is_dir():
+                fw_source = str(sibling)
+
+        if not fw_source:
+            return
+
+        sync_script = Path(fw_source) / "tools" / "prawduct-sync.py"
+        if not sync_script.is_file():
+            return
+
+        result = subprocess.run(
+            [sys.executable, str(sync_script), str(project_dir), "--framework-dir", fw_source, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                sync_result = json.loads(result.stdout)
+                actions = sync_result.get("actions", [])
+                notes = sync_result.get("notes", [])
+                if actions:
+                    print(f"Framework sync: {', '.join(actions)}")
+                for note in notes:
+                    print(f"  * {note}")
+                if any("CLAUDE.md" in a for a in actions):
+                    print(
+                        "IMPORTANT: CLAUDE.md was updated by framework sync. "
+                        "Re-read CLAUDE.md now to pick up the latest instructions."
+                    )
+            except json.JSONDecodeError:
+                pass
+    except Exception as e:
+        print(f"NOTE: Framework sync failed: {e}", file=sys.stderr)
+        # Best-effort — never block session start
+
+
+# =============================================================================
+# Git helpers
+# =============================================================================
+
+
+def git_status_output(project_dir: Path) -> str | None:
+    """Return raw `git status --porcelain` output, or None on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            cwd=str(project_dir),
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except Exception:
+        return None
+
+
+def git_has_changes(project_dir: Path) -> str:
+    """Check if there are uncommitted changes. Returns first changed file or empty string."""
+    output = git_status_output(project_dir)
+    if output is None:
+        return ""
+    lines = output.strip().splitlines()
+    return lines[0] if lines else ""
+
+
+def git_has_session_changes(project_dir: Path) -> str:
+    """Check if uncommitted changes differ from session baseline.
+
+    Compares current git status to the baseline captured at session start.
+    Returns first new changed file or empty string. Falls back to
+    git_has_changes if no baseline exists (backward compat).
+    """
+    prawduct_dir = get_prawduct_dir(project_dir)
+    baseline_path = prawduct_dir / ".session-git-baseline"
+
+    if not baseline_path.is_file():
+        return git_has_changes(project_dir)
+
+    current = git_status_output(project_dir)
+    if current is None:
+        return ""
+
+    baseline = baseline_path.read_text()
+    baseline_lines = set(baseline.strip().splitlines())
+    current_lines = current.strip().splitlines()
+
+    for line in current_lines:
+        if line not in baseline_lines:
+            return line
+
+    return ""
+
+
+def git_has_code_changes(project_dir: Path) -> bool:
+    """Check if non-.prawduct files were modified."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            cwd=str(project_dir),
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        for line in result.stdout.strip().splitlines():
+            # Extract the file path (last field after status indicators)
+            parts = line.split()
+            if not parts:
+                continue
+            filepath = parts[-1]
+            if not filepath.startswith(".prawduct/"):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+# =============================================================================
+# Staleness Scan (v5: content-based artifact freshness)
+# =============================================================================
+
+
+def _count_test_functions(project_dir: Path) -> int:
+    """Count test functions across the project (heuristic). Returns 0 if none found."""
+    count = 0
+    skip_dirs = {".prawduct", "node_modules", ".git", "__pycache__", "venv", ".venv", ".tox"}
+
+    for root, dirs, files in os.walk(project_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            fpath = Path(root) / fname
+            # Python test files
+            if (fname.startswith("test_") or fname.endswith("_test.py")) and fname.endswith(".py"):
+                try:
+                    content = fpath.read_text()
+                    count += len(re.findall(r"^\s*def test_", content, re.MULTILINE))
+                except Exception:
+                    pass
+            # JS/TS test files
+            elif fname.endswith((".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.js", ".spec.ts")):
+                try:
+                    content = fpath.read_text()
+                    count += len(re.findall(r"\b(?:it|test)\s*\(", content))
+                except Exception:
+                    pass
+    return count
+
+
+def _extract_dependency_names(dep_file: Path) -> list[str]:
+    """Extract package names from dependency files."""
+    try:
+        content = dep_file.read_text()
+    except Exception:
+        return []
+
+    name = dep_file.name
+
+    if name == "requirements.txt":
+        deps = []
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-"):
+                continue
+            match = re.match(r"([a-zA-Z0-9][a-zA-Z0-9._-]*)", line)
+            if match:
+                deps.append(match.group(1).lower())
+        return deps
+
+    if name == "package.json":
+        try:
+            data = json.loads(content)
+            deps = list(data.get("dependencies", {}).keys())
+            deps += list(data.get("devDependencies", {}).keys())
+            return deps
+        except (json.JSONDecodeError, AttributeError):
+            return []
+
+    return []
+
+
+def staleness_scan(project_dir: Path) -> list[str]:
+    """Lightweight content-based staleness checks. Returns list of warnings."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+    findings: list[str] = []
+
+    state_path = prawduct_dir / "project-state.yaml"
+    if not state_path.is_file():
+        return findings
+
+    try:
+        state_content = state_path.read_text()
+    except Exception:
+        return findings
+
+    # 1. Test count divergence
+    test_count_match = re.search(r"test_count:\s*(\d+)", state_content)
+    documented_count = int(test_count_match.group(1)) if test_count_match else 0
+    if documented_count > 0:
+        actual_count = _count_test_functions(project_dir)
+        if actual_count > 0:
+            threshold = max(5, int(documented_count * 0.1))
+            if abs(actual_count - documented_count) > threshold:
+                findings.append(f"test count: documented {documented_count}, found ~{actual_count}")
+
+    # 2. Architecture coverage
+    source_root_match = re.search(r"source_root:\s*[\"']?([^\"'\n#]+)", state_content)
+    source_root = None
+    if source_root_match:
+        val = source_root_match.group(1).strip().strip("\"'")
+        if val and val != "null":
+            source_root = val
+
+    arch_path = prawduct_dir / "artifacts" / "architecture.md"
+    if source_root and arch_path.is_file():
+        try:
+            arch_content = arch_path.read_text()
+            src_dir = project_dir / source_root
+            if src_dir.is_dir():
+                unmentioned = []
+                for d in sorted(src_dir.iterdir()):
+                    if d.is_dir() and not d.name.startswith((".", "__")):
+                        if d.name not in arch_content:
+                            unmentioned.append(d.name)
+                if unmentioned:
+                    findings.append(
+                        f"architecture: {', '.join(unmentioned[:3])} in {source_root}/ not in architecture.md"
+                    )
+        except Exception:
+            pass
+
+    # 3. Dependency coverage
+    dep_manifest = prawduct_dir / "artifacts" / "dependency-manifest.md"
+    if dep_manifest.is_file():
+        try:
+            manifest_content = dep_manifest.read_text().lower()
+            for dep_file_name in ["requirements.txt", "package.json"]:
+                dep_file = project_dir / dep_file_name
+                if dep_file.is_file():
+                    dep_names = _extract_dependency_names(dep_file)
+                    missing = [d for d in dep_names if d.lower() not in manifest_content]
+                    if missing:
+                        preview = ", ".join(missing[:3])
+                        more = f" +{len(missing) - 3} more" if len(missing) > 3 else ""
+                        findings.append(
+                            f"dependencies: {len(missing)} in {dep_file_name} not in manifest ({preview}{more})"
+                        )
+        except Exception:
+            pass
+
+    return findings
+
+
+# =============================================================================
+# Session Briefing (v5: structured context for SessionStart)
+# =============================================================================
+
+
+def _get_product_name(prawduct_dir: Path) -> str:
+    """Extract product name from project-state.yaml."""
+    state_path = prawduct_dir / "project-state.yaml"
+    if not state_path.is_file():
+        return "Unknown"
+    try:
+        content = state_path.read_text()
+        in_identity = False
+        for line in content.splitlines():
+            if "product_identity:" in line:
+                in_identity = True
+            elif in_identity and line.strip().startswith("name:"):
+                val = line.split(":", 1)[1].strip().strip("\"'")
+                if val and val != "null" and not val.startswith("{{"):
+                    return val
+                break
+            elif in_identity and not line.startswith(" ") and line.strip():
+                break
+    except Exception:
+        pass
+    return "Unknown"
+
+
+def _get_work_in_progress(prawduct_dir: Path) -> str:
+    """Extract work in progress description from project-state.yaml."""
+    state_path = prawduct_dir / "project-state.yaml"
+    if not state_path.is_file():
+        return "none active"
+    try:
+        content = state_path.read_text()
+        in_wip = False
+        wip: dict[str, str] = {}
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("work_in_progress:"):
+                in_wip = True
+            elif in_wip and line.startswith("  ") and ":" in line:
+                key, _, val = line.strip().partition(":")
+                val = val.strip().strip("\"'")
+                if val and val != "null":
+                    wip[key.strip()] = val
+            elif in_wip and not line.startswith(" ") and line.strip():
+                break
+
+        if wip.get("description"):
+            parts = [wip["description"]]
+            qualifiers = []
+            if wip.get("size"):
+                qualifiers.append(wip["size"])
+            if wip.get("type"):
+                qualifiers.append(wip["type"])
+            if qualifiers:
+                parts.append(f"({', '.join(qualifiers)})")
+            return " ".join(parts)
+    except Exception:
+        pass
+    return "none active"
+
+
+def assemble_session_briefing(project_dir: Path, staleness: list[str]) -> str:
+    """Assemble session briefing text. Target: <400 tokens."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+    lines = ["== SESSION BRIEFING =="]
+
+    # Project identity + work in progress
+    project_name = _get_product_name(prawduct_dir)
+    work_desc = _get_work_in_progress(prawduct_dir)
+    lines.append(f"Project: {project_name} | Work: {work_desc}")
+
+    # Staleness warnings
+    if staleness:
+        for s in staleness:
+            lines.append(f"Stale: {s}")
+
+    # Relevant learnings
+    learnings_path = prawduct_dir / "learnings.md"
+    if learnings_path.is_file():
+        try:
+            learnings_content = learnings_path.read_text()
+            rules = []
+            for line in learnings_content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- ") and any(
+                    stripped[2:].startswith(w) for w in ["When ", "Always ", "Never ", "If "]
+                ):
+                    rules.append(stripped[2:])
+            if rules:
+                shown = rules[-3:]
+                lines.append(f"Learnings ({len(rules)} active, showing {len(shown)}):")
+                for r in shown:
+                    if len(r) > 100:
+                        r = r[:97] + "..."
+                    lines.append(f"  - {r}")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Subagent Briefing (v5: governance context for delegated agents)
+# =============================================================================
+
+
+def _extract_critical_rules(project_dir: Path) -> list[str]:
+    """Extract Critical Rules bullet points from the project's CLAUDE.md.
+
+    Falls back to a minimal hardcoded set if extraction fails.
+    """
+    fallback = [
+        "- Write tests alongside code, never after.",
+        "- Never weaken a test to make it pass. Fix the code, not the test.",
+        "- Never silently drop a requirement. If you can't implement it, say so.",
+        "- Never catch broad exceptions without logging and re-raising.",
+        "- Run the full test suite before finishing work.",
+        "- When changes cross boundaries (API, database, IPC), verify consumers.",
+    ]
+    claude_md = project_dir / "CLAUDE.md"
+    if not claude_md.is_file():
+        return fallback
+    try:
+        content = claude_md.read_text()
+        # Find Critical Rules section
+        in_section = False
+        rules: list[str] = []
+        for line in content.splitlines():
+            if line.strip().startswith("## Critical Rules"):
+                in_section = True
+                continue
+            if in_section and line.strip().startswith("## "):
+                break
+            if in_section and line.strip().startswith("- **"):
+                rules.append(line.strip())
+        return rules if rules else fallback
+    except Exception:
+        return fallback
+
+
+def generate_subagent_briefing(project_dir: Path) -> None:
+    """Generate .prawduct/.subagent-briefing.md for subagent governance."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+    if not prawduct_dir.is_dir():
+        return
+
+    project_name = _get_product_name(prawduct_dir)
+    rules = _extract_critical_rules(project_dir)
+
+    sections = [
+        f"# Subagent Briefing — {project_name}\n",
+        "Read this file before starting work. It contains project-specific governance rules.\n",
+        "## Governance Rules\n",
+        *[r for r in rules],
+        "",
+    ]
+
+    # Project preferences
+    prefs_path = prawduct_dir / "artifacts" / "project-preferences.md"
+    if prefs_path.is_file():
+        try:
+            prefs = prefs_path.read_text().strip()
+            if prefs and "- **Language**:\n" not in prefs:
+                sections.append("## Project Preferences\n")
+                lines = prefs.splitlines()
+                summary_lines = []
+                past_header = False
+                for line in lines:
+                    if line.startswith("# "):
+                        past_header = True
+                        continue
+                    if past_header:
+                        summary_lines.append(line)
+                    if len(summary_lines) > 30:
+                        summary_lines.append("(see full file for details)")
+                        break
+                sections.append("\n".join(summary_lines).strip() + "\n")
+        except Exception:
+            pass
+
+    # Active learnings
+    learnings_path = prawduct_dir / "learnings.md"
+    if learnings_path.is_file():
+        try:
+            learnings = learnings_path.read_text().strip()
+            if learnings:
+                sections.append("## Active Learnings\n")
+                sections.append(learnings + "\n")
+        except Exception:
+            pass
+
+    (prawduct_dir / ".subagent-briefing.md").write_text("\n".join(sections))
+
+
+# =============================================================================
+# Compliance Canary (v5: lightweight failure detection at session end)
+# =============================================================================
+
+
+def _get_session_changed_files(project_dir: Path) -> list[str]:
+    """Get files changed since session start. Returns list of file paths."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+    current = git_status_output(project_dir)
+    if current is None:
+        return []
+
+    baseline_path = prawduct_dir / ".session-git-baseline"
+    baseline_lines: set[str] = set()
+    if baseline_path.is_file():
+        baseline_lines = set(baseline_path.read_text().strip().splitlines())
+
+    changed = []
+    for line in current.strip().splitlines():
+        if line and line not in baseline_lines:
+            parts = line.split()
+            if parts:
+                filepath = parts[-1]
+                changed.append(filepath)
+    return changed
+
+
+def _is_source_file(filepath: str) -> bool:
+    """Check if a filepath looks like a source code file (not test, not config)."""
+    p = Path(filepath)
+    suffix = p.suffix
+
+    if suffix not in (".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb", ".swift", ".kt", ".c", ".cpp", ".h"):
+        return False
+
+    name = p.name
+    if name.startswith("test_") or name.endswith(("_test.py", ".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.js", ".spec.ts")):
+        return False
+
+    if filepath.startswith(".prawduct/"):
+        return False
+
+    return True
+
+
+def _is_test_file(filepath: str) -> bool:
+    """Check if a filepath looks like a test file."""
+    name = Path(filepath).name
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or name.endswith(("_test.py", ".test.js", ".test.ts", ".test.jsx", ".test.tsx", ".spec.js", ".spec.ts"))
+    )
+
+
+def _is_dependency_file(filepath: str) -> bool:
+    """Check if a filepath is a dependency declaration file."""
+    name = Path(filepath).name
+    return name in ("requirements.txt", "package.json", "Pipfile", "pyproject.toml", "Cargo.toml", "go.mod", "Gemfile")
+
+
+def _check_broad_exceptions(project_dir: Path, source_files: list[str]) -> list[str]:
+    """Check if changed source files contain broad exception patterns."""
+    # Language-specific patterns for overly broad exception handling
+    patterns = {
+        ".py": r"except\s+(?:Exception|BaseException)\s*(?::|,|as\b)",
+        ".js": r"catch\s*\([^)]*\)\s*\{\s*\}",
+        ".jsx": r"catch\s*\([^)]*\)\s*\{\s*\}",
+        ".ts": r"catch\s*\([^)]*\)\s*\{\s*\}",
+        ".tsx": r"catch\s*\([^)]*\)\s*\{\s*\}",
+        ".go": r"_\s*=\s*\w+\.(?:\w+)\(",  # _ = foo.Bar() — ignored errors
+    }
+    flagged = []
+    for filepath in source_files:
+        full_path = project_dir / filepath
+        if not full_path.is_file():
+            continue
+        suffix = Path(filepath).suffix
+        pattern = patterns.get(suffix)
+        if not pattern:
+            continue
+        try:
+            content = full_path.read_text()
+            if re.search(pattern, content):
+                flagged.append(filepath)
+        except Exception:
+            pass
+    return flagged
+
+
+def compliance_canary(project_dir: Path) -> list[str]:
+    """Lightweight compliance checks at session end. Returns informational findings."""
+    findings: list[str] = []
+    changed = _get_session_changed_files(project_dir)
+
+    if not changed:
+        return findings
+
+    source_changed = [f for f in changed if _is_source_file(f)]
+    test_changed = [f for f in changed if _is_test_file(f)]
+    dep_changed = [f for f in changed if _is_dependency_file(f)]
+
+    # 1. Code changed but no tests
+    if source_changed and not test_changed:
+        preview = ", ".join(source_changed[:3])
+        findings.append(
+            f"CANARY: {len(source_changed)} source file(s) changed but no test files modified. Changed: {preview}"
+        )
+
+    # 2. Dependency file changed without manifest update
+    if dep_changed:
+        prawduct_dir = get_prawduct_dir(project_dir)
+        manifest_path = prawduct_dir / "artifacts" / "dependency-manifest.md"
+        dep_manifest_in_changes = any(f.endswith("dependency-manifest.md") for f in changed)
+        if manifest_path.is_file() and not dep_manifest_in_changes:
+            findings.append(
+                f"CANARY: Dependency file(s) changed ({', '.join(dep_changed)}) "
+                f"but dependency-manifest.md was not updated."
+            )
+
+    # 3. Broad exception handling in changed source files
+    broad_except_files = _check_broad_exceptions(project_dir, source_changed)
+    if broad_except_files:
+        findings.append(
+            f"CANARY: Broad exception handling detected in: {', '.join(broad_except_files)}. "
+            f"Verify exceptions are specific and include logging/re-raising."
+        )
+
+    return findings
+
+
+# =============================================================================
+# clear command
+# =============================================================================
+
+
+def cmd_clear(project_dir: Path) -> int:
+    """Reset session state and trigger sync."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+
+    # Preserve previous session's reflection before clearing
+    reflected = prawduct_dir / ".session-reflected"
+    if reflected.is_file():
+        content = reflected.read_text().strip()
+        if content:
+            log = prawduct_dir / "reflections.md"
+            separator = "\n\n---\n\n" if log.is_file() and log.read_text().strip() else ""
+            with open(log, "a") as f:
+                f.write(f"{separator}{content}\n")
+
+    # Remove session files
+    for name in (".session-reflected", ".session-start", ".session-git-baseline"):
+        f = prawduct_dir / name
+        if f.is_file():
+            f.unlink()
+
+    # Create session start timestamp and git baseline
+    if prawduct_dir.is_dir():
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (prawduct_dir / ".session-start").write_text(stamp)
+
+        # Capture git status baseline for session-scoped change detection
+        baseline = git_status_output(project_dir)
+        if baseline is not None:
+            (prawduct_dir / ".session-git-baseline").write_text(baseline)
+
+    # Agent-facing messages go to stdout (SessionStart hooks show stdout to the model).
+    # stderr is only visible to the user in the terminal, not to the agent.
+
+    # Warn if learnings.md is oversized
+    learnings_path = prawduct_dir / "learnings.md"
+    if learnings_path.is_file():
+        try:
+            size = learnings_path.stat().st_size
+            if size > 8000:  # ~3000 tokens ≈ ~8KB
+                print(
+                    f"NOTE: .prawduct/learnings.md is {size // 1024}KB — recommend pruning to ~3,000 tokens.\n"
+                    f"  Keep concise rules in learnings.md; move detailed root cause analysis to learnings-detail.md."
+                )
+        except Exception:
+            pass
+
+    # Warn if project-state.yaml is oversized
+    state_path = prawduct_dir / "project-state.yaml"
+    if state_path.is_file():
+        try:
+            size = state_path.stat().st_size
+            if size > 40000:  # ~10K tokens ≈ ~40KB
+                print(
+                    f"NOTE: .prawduct/project-state.yaml is {size // 1024}KB — recommend compacting.\n"
+                    f"  Completed build plan chunks: keep only id, name, status (remove deliverables/acceptance_criteria).\n"
+                    f"  Test history: keep only the current count, remove per-chunk history.\n"
+                    f"  Change log: keep the last ~10 entries, remove older ones (git has the history)."
+                )
+        except Exception:
+            pass
+
+    # Check for missing or unfilled project-preferences.md
+    prefs_path = prawduct_dir / "artifacts" / "project-preferences.md"
+    prefs_missing = not prefs_path.is_file()
+    prefs_unfilled = False
+    if not prefs_missing:
+        try:
+            content = prefs_path.read_text()
+            # Template has empty fields like "- **Language**:\n" — filled has content after colon
+            prefs_unfilled = "- **Language**:\n" in content
+        except Exception:
+            pass
+
+    if prefs_missing or prefs_unfilled:
+        # Only warn if there's source code (not a brand-new project)
+        has_code = any(
+            f.suffix in (".py", ".js", ".ts", ".go", ".rs", ".java", ".rb", ".swift", ".kt", ".c", ".cpp", ".h")
+            for f in project_dir.rglob("*")
+            if f.is_file() and ".prawduct" not in f.parts and "node_modules" not in f.parts
+        )
+        if has_code:
+            print(
+                "CRITICAL: You MUST create .prawduct/artifacts/project-preferences.md before doing anything else.\n"
+                "  Infer preferences from the codebase (config files, test patterns, code style, existing conventions)\n"
+                "  and create it with sections: Language & Runtime, Code Style, Testing, Architecture Patterns, Tooling.\n"
+                "  This file is read before writing any code — it tells every session how this project's code should be written.\n"
+                "  Do this NOW, before responding to the user."
+            )
+
+    # Trigger framework sync (best-effort)
+    try_sync(project_dir)
+
+    # v5: Staleness scan + session briefing + subagent briefing
+    if prawduct_dir.is_dir():
+        try:
+            staleness = staleness_scan(project_dir)
+            briefing = assemble_session_briefing(project_dir, staleness)
+            print(briefing)
+        except Exception as e:
+            print(f"NOTE: Session briefing failed: {e}", file=sys.stderr)
+
+        try:
+            generate_subagent_briefing(project_dir)
+        except Exception as e:
+            print(f"NOTE: Subagent briefing generation failed: {e}", file=sys.stderr)
+
+    return 0
+
+
+# =============================================================================
+# stop command
+# =============================================================================
+
+
+def validate_critic_findings(findings_path: Path) -> bool:
+    """Validate that critic findings JSON has required structure.
+
+    Requires: non-empty files_reviewed list, findings list where each entry
+    has goal/severity/summary, and a non-empty summary string.
+    """
+    try:
+        data = json.loads(findings_path.read_text())
+        # Must have a findings list
+        findings = data.get("findings")
+        if not isinstance(findings, list):
+            return False
+        # Must have non-empty files_reviewed
+        files_reviewed = data.get("files_reviewed")
+        if not isinstance(files_reviewed, list) or not files_reviewed:
+            return False
+        # Each finding must have goal, severity, and summary
+        for finding in findings:
+            if not isinstance(finding, dict):
+                return False
+            for field in ("goal", "severity", "summary"):
+                val = finding.get(field)
+                if not isinstance(val, str) or not val.strip():
+                    return False
+        # Must have a non-empty summary
+        summary = data.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _has_build_plan_in_state(prawduct_dir: Path) -> bool:
+    """Check if project-state.yaml contains a build plan with chunks.
+
+    Uses string matching rather than YAML parsing for speed and zero dependencies.
+    Intentionally returns True for completed build plans (chunks: []) — any repo
+    that has gone through build planning should get Critic review on code changes.
+    """
+    state_path = prawduct_dir / "project-state.yaml"
+    if not state_path.is_file():
+        return False
+    try:
+        # Light check: look for build_plan with chunks rather than parsing full YAML
+        content = state_path.read_text()
+        return (content.startswith("build_plan:") or "\nbuild_plan:" in content) and (
+            content.startswith("  chunks:") or "\n  chunks:" in content
+        )
+    except Exception:
+        return False
+
+
+def cmd_stop(project_dir: Path) -> int:
+    """Check governance gates before session end."""
+    prawduct_dir = get_prawduct_dir(project_dir)
+
+    # Skip if no .prawduct directory
+    if not prawduct_dir.is_dir():
+        return 0
+
+    blockers: list[str] = []
+    canary_findings: list[str] = []
+
+    # v5: Compliance canary (informational)
+    try:
+        canary_findings = compliance_canary(project_dir)
+    except Exception:
+        pass  # Never block session end due to canary failure
+
+    # Check for changes (session-scoped: only new changes since session start)
+    has_changes = git_has_session_changes(project_dir)
+
+    # Gate 1: Reflection
+    reflected_file = prawduct_dir / ".session-reflected"
+    reflection_exists = reflected_file.is_file()
+    reflection_sufficient = False
+    if reflection_exists:
+        try:
+            content = reflected_file.read_text().strip()
+            # Require at least ~50 chars to avoid empty/token reflections
+            reflection_sufficient = len(content) >= 50
+        except Exception:
+            pass
+
+    if has_changes and not reflection_sufficient:
+        blockers.append(
+            "REFLECTION: Files were modified but no session reflection was captured.\n"
+            "  Write your reflection to .prawduct/.session-reflected. This is a narrative of what\n"
+            "  happened this session: what changed, what surprised you, what the methodology helped\n"
+            "  or hindered. It gets archived to reflections.md automatically on next session start.\n"
+            "\n"
+            "  If this session produced a durable lesson (a rule future sessions should follow),\n"
+            "  also add it to .prawduct/learnings.md. Learnings are concise standing rules;\n"
+            "  the session reflection is the story behind them.\n"
+        )
+
+    # Gate 2: Critic review (only when building against a plan)
+    has_build_plan = (prawduct_dir / "artifacts" / "build-plan.md").is_file() or _has_build_plan_in_state(prawduct_dir)
+    if has_changes and has_build_plan:
+        if git_has_code_changes(project_dir):
+            needs_review = True
+
+            # Check if critic findings exist and are from this session
+            critic_findings = prawduct_dir / ".critic-findings.json"
+            session_start_file = prawduct_dir / ".session-start"
+            if critic_findings.is_file() and session_start_file.is_file():
+                try:
+                    session_start = session_start_file.read_text().strip()
+                    findings_mtime = datetime.fromtimestamp(
+                        critic_findings.stat().st_mtime, tz=timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                    if findings_mtime > session_start:
+                        # Mtime check passed — validate content
+                        if validate_critic_findings(critic_findings):
+                            needs_review = False
+                except Exception:
+                    pass  # Any error means we need review
+
+            if needs_review:
+                blockers.append(
+                    "CRITIC REVIEW: Code was modified with an active build plan but no Critic review was recorded this session.\n"
+                    "  Invoke the Critic as a separate agent (Task tool) for independent review before ending.\n"
+                    "  The Critic should read .prawduct/critic-review.md for its review instructions.\n"
+                    "  After review, record findings to .prawduct/.critic-findings.json\n"
+                )
+
+    # Report blockers or exit clean
+    if blockers:
+        print("", file=sys.stderr)
+        print("BLOCKED — resolve before ending session:", file=sys.stderr)
+        print("", file=sys.stderr)
+        for blocker in blockers:
+            print(blocker, file=sys.stderr)
+        # Include canary findings in stderr so model sees them alongside blockers
+        if canary_findings:
+            print("COMPLIANCE CANARY (address if possible):", file=sys.stderr)
+            for f in canary_findings:
+                print(f"  {f}", file=sys.stderr)
+            print("", file=sys.stderr)
+        return 2
+
+    # No blockers — print canary to stderr (visible in verbose mode only)
+    if canary_findings:
+        print("", file=sys.stderr)
+        print("COMPLIANCE CANARY (informational):", file=sys.stderr)
+        for f in canary_findings:
+            print(f"  {f}", file=sys.stderr)
+
+    return 0
+
+
+# =============================================================================
+# main
+# =============================================================================
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("Usage: product-hook {clear|stop}", file=sys.stderr)
+        return 1
+
+    command = sys.argv[1]
+    project_dir = get_project_dir()
+
+    if command == "clear":
+        return cmd_clear(project_dir)
+    elif command == "stop":
+        return cmd_stop(project_dir)
+    else:
+        print("Usage: product-hook {clear|stop}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
