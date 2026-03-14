@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# TangleClaw pre-commit hook — runs the test suite.
+# Install: cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+echo "Running test suite..."
+node --test 'test/*.test.js'
+echo "All tests passed."

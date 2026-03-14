@@ -1,0 +1,33 @@
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "command": "claude",
+  "interactionModel": "session",
+  "configFormat": {
+    "filename": "CLAUDE.md",
+    "syntax": "markdown",
+    "generator": "claude-md"
+  },
+  "coAuthorFormat": "Co-Authored-By: {name} <{email}>",
+  "commands": [
+    { "label": "Compact", "input": "/compact", "description": "Compress context" },
+    { "label": "Clear", "input": "/clear", "description": "Clear conversation" },
+    { "label": "Review", "input": "/review", "description": "Review recent changes" }
+  ],
+  "detection": {
+    "strategy": "which",
+    "target": "claude"
+  },
+  "launch": {
+    "shellCommand": "claude",
+    "args": [],
+    "env": {}
+  },
+  "persistent": null,
+  "capabilities": {
+    "supportsSlashCommands": true,
+    "supportsPrimePrompt": true,
+    "supportsConfigFile": true,
+    "supportsCoAuthor": true
+  }
+}

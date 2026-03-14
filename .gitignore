@@ -8,3 +8,12 @@
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
 __pycache__/
+
+# Uploads (user-specific)
+.uploads/
+
+# Node
+node_modules/
+
+# TangleClaw runtime (user-specific, not in repo)
+# ~/.tangleclaw/ is the runtime data directory

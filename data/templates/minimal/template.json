@@ -1,0 +1,36 @@
+{
+  "id": "minimal",
+  "name": "Minimal",
+  "description": "Core rules only — changelog, JSDoc, tests, wrap protocol, PortHub. No methodology-specific workflow.",
+  "type": "methodology",
+  "version": "1.0.0",
+  "phases": [],
+  "statusContract": {
+    "command": null,
+    "parse": null,
+    "field": null,
+    "badge": "status",
+    "colorMap": {}
+  },
+  "detection": {
+    "strategy": "file",
+    "target": ".tangleclaw/project.json"
+  },
+  "wrap": {
+    "command": null,
+    "steps": ["learnings-capture", "commit"],
+    "captureFields": ["summary"]
+  },
+  "prime": {
+    "format": "markdown",
+    "sections": ["active-learnings", "last-session-summary"],
+    "maxTokens": 2000
+  },
+  "defaultRules": {},
+  "actions": [],
+  "init": {
+    "directories": [".tangleclaw"],
+    "files": {},
+    "postInit": null
+  }
+}

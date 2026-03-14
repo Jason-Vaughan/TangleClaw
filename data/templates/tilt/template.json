@@ -1,0 +1,76 @@
+{
+  "id": "tilt",
+  "name": "TiLT",
+  "description": "Identity-first development with trust signals and sentry verification.",
+  "type": "methodology",
+  "version": "1.0.0",
+  "phases": [
+    {
+      "id": "setup",
+      "name": "Setup",
+      "description": "Configure identity sentries and trust signals",
+      "weight": "deep",
+      "offerContextReset": false
+    },
+    {
+      "id": "development",
+      "name": "Development",
+      "description": "Build with identity verification active",
+      "weight": "normal",
+      "offerContextReset": true
+    },
+    {
+      "id": "review",
+      "name": "Review",
+      "description": "Verify trust signals and identity compliance",
+      "weight": "focused",
+      "offerContextReset": false
+    }
+  ],
+  "statusContract": {
+    "command": "cat .tilt/status.json 2>/dev/null",
+    "parse": "json",
+    "field": "status",
+    "badge": "status",
+    "colorMap": {
+      "setup": "blue",
+      "active": "green",
+      "review": "yellow"
+    }
+  },
+  "detection": {
+    "strategy": "directory",
+    "target": ".tilt"
+  },
+  "wrap": {
+    "command": null,
+    "steps": [
+      "learnings-capture",
+      "commit"
+    ],
+    "captureFields": [
+      "summary"
+    ]
+  },
+  "prime": {
+    "format": "markdown",
+    "sections": [
+      "methodology-rules",
+      "current-phase",
+      "active-learnings",
+      "last-session-summary"
+    ],
+    "maxTokens": 3000
+  },
+  "defaultRules": {
+    "identitySentry": true
+  },
+  "actions": [],
+  "init": {
+    "directories": [".tilt"],
+    "files": {
+      ".tilt/status.json": "{\"status\": \"setup\", \"sentries\": []}\n"
+    },
+    "postInit": null
+  }
+}
