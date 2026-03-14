@@ -101,3 +101,13 @@ When compacting, preserve: what's being built, current work and governance level
 **Before starting discovery**, read `INTAKE-BRIEF.md` in the project root. It contains comprehensive pre-discovery context compiled from TangleClaw v2 development, a cross-project methodology analysis of 7 projects, and architectural decisions already confirmed with the user. The full methodology comparison is at `~/Documents/Projects/prawduct-test/methodology-comparison.md`.
 
 Discovery should confirm and deepen — not re-discover from scratch. The intake brief gives you a massive head start.
+
+## Documentation and Changelog Rules
+
+This project is built for distribution. User-facing documentation must stay current with the code.
+
+- **When code changes affect user-visible behavior**, update the relevant docs in `docs/` (user guide, methodology guide, engine guide, configuration reference) in the same session.
+- **Every code-changing session must update CHANGELOG.md** with a traceable entry under the current version. Entries should describe what changed from the user's perspective, not internal implementation details.
+- **README.md must stay accurate.** If a session changes setup steps, project structure, prerequisites, or commands — update the README.
+- **New features require docs before the session ends.** If you add a feature, API endpoint, config option, or CLI behavior, document it. Undocumented features don't ship.
+- **The Critic should verify doc currency.** When reviewing medium+ work, check that docs/ and CHANGELOG.md reflect the changes made.
