@@ -54,6 +54,13 @@ fi
 TMUX_PATH="$(which tmux)"
 green "  tmux ($TMUX_PATH)"
 
+# PortHub (optional — TangleClaw manages ports directly)
+if command -v porthub &>/dev/null; then
+  green "  porthub ($(which porthub)) — existing leases will be imported"
+else
+  yellow "  porthub not found (optional — TangleClaw manages ports directly)"
+fi
+
 # Build PATH for launchd plists — include Homebrew prefix if present
 LAUNCHD_PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [ -d "/opt/homebrew/bin" ]; then

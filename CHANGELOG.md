@@ -2,6 +2,24 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [Unreleased]
+
+### Added — Chunk 10: PortHub Deep Integration
+
+- **Embedded port lease management**: Port leases are now stored in TangleClaw's SQLite database (`port_leases` table) instead of depending on the external PortHub daemon. Leases survive server restarts.
+- **Port lease API**: Four new endpoints — `GET /api/ports` (list all, grouped by project), `POST /api/ports/lease` (create/renew), `POST /api/ports/release` (release), `POST /api/ports/heartbeat` (extend TTL leases).
+- **Landing page ports panel**: Collapsible "Ports" section between system stats and toolbar. Shows all leases grouped by project with port number, service name, and type badge (permanent/TTL). Auto-refreshes every 30 seconds.
+- **Server bootstrap/shutdown**: TangleClaw registers its own infrastructure ports (ttyd, server) on startup and releases them on shutdown. Periodic expiration timer cleans up stale TTL leases.
+- **PortHub guide for AI assistants**: `data/porthub-guide.md` is automatically injected into generated CLAUDE.md files when the `porthubRegistration` core rule is active.
+- **One-time migration**: On first startup with an empty leases table, existing leases are imported from the old PortHub daemon (if available).
+- **Install script update**: PortHub CLI is now shown as an optional prerequisite (not required).
+- **18 new tests** (563 total): Store-level port lease CRUD, porthub module rewrite, API endpoint tests, engine guide injection tests.
+
+### Changed
+
+- `lib/porthub.js` rewritten from shell-out to store-backed operations. No longer depends on the `porthub` CLI for runtime port management.
+- Schema version bumped to 2 (v1→v2 migration adds `port_leases` table).
+
 ## [3.0.0] — 2026-03-14
 
 Full rewrite of TangleClaw from a tmux session manager into a methodology-aware AI development orchestration platform.

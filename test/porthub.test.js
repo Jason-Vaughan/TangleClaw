@@ -1,175 +1,131 @@
 'use strict';
 
-const { describe, it, before, mock } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const child_process = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { setLevel } = require('../lib/logger');
 
-describe('porthub', () => {
-  let porthub;
+setLevel('error');
 
-  before(() => {
-    porthub = require('../lib/porthub');
+const store = require('../lib/store');
+const porthub = require('../lib/porthub');
+
+describe('porthub (store-backed)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-porthub-'));
+    store._setBasePath(tmpDir);
+    store.init();
   });
 
-  describe('isAvailable', () => {
-    it('returns a boolean', () => {
-      const result = porthub.isAvailable();
-      assert.equal(typeof result, 'boolean');
+  afterEach(() => {
+    porthub.stopExpirationTimer();
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('registerPort / releasePort', () => {
+    it('registers a port using the store', () => {
+      const result = porthub.registerPort(8080, 'my-project', 'dev-server');
+      assert.equal(result.success, true);
+      assert.equal(result.error, null);
+
+      const lease = store.portLeases.get(8080);
+      assert.ok(lease);
+      assert.equal(lease.project, 'my-project');
+      assert.equal(lease.service, 'dev-server');
+    });
+
+    it('releases a port from the store', () => {
+      porthub.registerPort(9090, 'test', 'api');
+      const result = porthub.releasePort(9090);
+      assert.equal(result.success, true);
+      assert.equal(store.portLeases.get(9090), null);
     });
   });
 
-  describe('registerPort', () => {
-    it('returns result with success and error fields', () => {
-      const result = porthub.registerPort(9999, 'test-project', 'test-service');
-      assert.equal(typeof result.success, 'boolean');
-      assert.ok(result.error === null || typeof result.error === 'string');
-    });
-  });
-
-  describe('releasePort', () => {
-    it('returns result with success field', () => {
-      const result = porthub.releasePort(9999);
-      assert.equal(typeof result.success, 'boolean');
-    });
-  });
-
-  describe('registerPorts', () => {
+  describe('registerPorts / releasePorts', () => {
     it('handles multiple ports', () => {
       const result = porthub.registerPorts({ dev: 8080, api: 8081 }, 'test-project');
-      assert.ok(typeof result.registered === 'object');
-      assert.ok(Array.isArray(result.errors));
+      assert.deepEqual(result.registered, { dev: 8080, api: 8081 });
+      assert.equal(result.errors.length, 0);
     });
-  });
 
-  describe('releasePorts', () => {
-    it('handles multiple ports', () => {
+    it('releases multiple ports', () => {
+      porthub.registerPorts({ dev: 8080, api: 8081 }, 'test-project');
       const result = porthub.releasePorts({ dev: 8080, api: 8081 });
-      assert.ok(Array.isArray(result.released));
-      assert.ok(Array.isArray(result.errors));
+      assert.deepEqual(result.released, [8080, 8081]);
+      assert.equal(result.errors.length, 0);
     });
   });
 
   describe('checkPort', () => {
-    it('returns availability info', () => {
+    it('returns available for unleased port', () => {
       const result = porthub.checkPort(9999);
-      assert.equal(typeof result.available, 'boolean');
+      assert.equal(result.available, true);
+      assert.equal(result.leasedBy, null);
     });
 
-    it('assumes available when PortHub unavailable', () => {
-      if (!porthub.isAvailable()) {
-        const result = porthub.checkPort(9999);
-        assert.equal(result.available, true);
-        assert.equal(result.leasedBy, null);
-      }
-    });
-  });
-
-  describe('graceful degradation', () => {
-    it('registerPort returns error string when unavailable', () => {
-      if (!porthub.isAvailable()) {
-        const result = porthub.registerPort(8080, 'test', 'dev');
-        assert.equal(result.success, false);
-        assert.ok(result.error.includes('not available'));
-      }
-    });
-
-    it('releasePort returns error string when unavailable', () => {
-      if (!porthub.isAvailable()) {
-        const result = porthub.releasePort(8080);
-        assert.equal(result.success, false);
-        assert.ok(result.error.includes('not available'));
-      }
-    });
-
-    it('isDaemonRunning returns false when unavailable', () => {
-      if (!porthub.isAvailable()) {
-        assert.equal(porthub.isDaemonRunning(), false);
-      }
+    it('returns unavailable for leased port', () => {
+      porthub.registerPort(5000, 'blocker', 'web');
+      const result = porthub.checkPort(5000);
+      assert.equal(result.available, false);
+      assert.equal(result.leasedBy, 'blocker');
     });
   });
 
-  describe('command construction (mocked)', () => {
-    it('registerPort constructs correct lease command', (t) => {
-      const calls = [];
-      t.mock.method(child_process, 'execSync', (cmd, opts) => {
-        calls.push(cmd);
-        if (cmd.includes('which porthub')) return '/usr/local/bin/porthub\n';
-        if (cmd.includes('porthub lease')) return 'Leased\n';
-        return '';
-      });
-
-      // Re-require to pick up mock — or call directly since isAvailable uses execSync
-      const result = porthub.registerPort(8080, 'my-project', 'dev-server');
-
-      // Find the lease command
-      const leaseCmd = calls.find((c) => c.includes('porthub lease'));
-      if (leaseCmd) {
-        assert.ok(leaseCmd.includes('8080'), 'Command should include port');
-        assert.ok(leaseCmd.includes('my-project'), 'Command should include project name');
-        assert.ok(leaseCmd.includes('dev-server'), 'Command should include service');
-        assert.ok(leaseCmd.includes('--permanent'), 'Command should include permanent flag');
-      }
-
-      t.mock.restoreAll();
+  describe('getLeases / getLeasesForProject', () => {
+    it('returns all leases', () => {
+      porthub.registerPort(3000, 'A', 'svc1');
+      porthub.registerPort(4000, 'B', 'svc2');
+      const leases = porthub.getLeases();
+      assert.equal(leases.length, 2);
     });
 
-    it('releasePort constructs correct release command', (t) => {
-      const calls = [];
-      t.mock.method(child_process, 'execSync', (cmd) => {
-        calls.push(cmd);
-        if (cmd.includes('which porthub')) return '/usr/local/bin/porthub\n';
-        if (cmd.includes('porthub release')) return 'Released\n';
-        return '';
-      });
-
-      porthub.releasePort(9090);
-
-      const releaseCmd = calls.find((c) => c.includes('porthub release'));
-      if (releaseCmd) {
-        assert.ok(releaseCmd.includes('9090'), 'Command should include port');
-      }
-
-      t.mock.restoreAll();
+    it('returns leases for a specific project', () => {
+      porthub.registerPort(3000, 'A', 'svc1');
+      porthub.registerPort(3001, 'A', 'svc2');
+      porthub.registerPort(4000, 'B', 'svc3');
+      const leases = porthub.getLeasesForProject('A');
+      assert.equal(leases.length, 2);
     });
+  });
 
-    it('registerPort with permanent=false omits --permanent', (t) => {
-      const calls = [];
-      t.mock.method(child_process, 'execSync', (cmd) => {
-        calls.push(cmd);
-        if (cmd.includes('which porthub')) return '/usr/local/bin/porthub\n';
-        if (cmd.includes('porthub lease')) return 'Leased\n';
-        return '';
-      });
+  describe('bootstrap', () => {
+    it('registers infrastructure ports', () => {
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
 
-      porthub.registerPort(8080, 'test', 'svc', { permanent: false });
+      const ttyd = store.portLeases.get(3100);
+      assert.ok(ttyd);
+      assert.equal(ttyd.project, 'TangleClaw');
+      assert.equal(ttyd.service, 'ttyd');
 
-      const leaseCmd = calls.find((c) => c.includes('porthub lease'));
-      if (leaseCmd) {
-        assert.ok(!leaseCmd.includes('--permanent'), 'Should not include --permanent');
-      }
-
-      t.mock.restoreAll();
+      const server = store.portLeases.get(3101);
+      assert.ok(server);
+      assert.equal(server.project, 'TangleClaw');
+      assert.equal(server.service, 'server');
     });
+  });
 
-    it('registerPort escapes special characters in project name', (t) => {
-      const calls = [];
-      t.mock.method(child_process, 'execSync', (cmd) => {
-        calls.push(cmd);
-        if (cmd.includes('which porthub')) return '/usr/local/bin/porthub\n';
-        if (cmd.includes('porthub lease')) return 'Leased\n';
-        return '';
-      });
+  describe('shutdown', () => {
+    it('releases infrastructure ports', () => {
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      porthub.shutdown({ ttydPort: 3100, serverPort: 3101 });
 
-      porthub.registerPort(8080, 'project$name', 'dev');
+      assert.equal(store.portLeases.get(3100), null);
+      assert.equal(store.portLeases.get(3101), null);
+    });
+  });
 
-      const leaseCmd = calls.find((c) => c.includes('porthub lease'));
-      if (leaseCmd) {
-        // $ should be escaped
-        assert.ok(!leaseCmd.includes('project$name'), 'Dollar sign should be escaped');
-        assert.ok(leaseCmd.includes('project\\$name'), 'Dollar sign should be backslash-escaped');
-      }
-
-      t.mock.restoreAll();
+  describe('expiration timer', () => {
+    it('starts and stops without error', () => {
+      porthub.startExpirationTimer();
+      porthub.startExpirationTimer(); // idempotent
+      porthub.stopExpirationTimer();
+      porthub.stopExpirationTimer(); // idempotent
     });
   });
 });

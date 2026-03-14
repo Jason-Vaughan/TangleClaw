@@ -178,9 +178,26 @@ Methodology templates define project workflow. See the [Methodology Guide](metho
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
-**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `schema_version`
+**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`
 
-Current schema version: **1**
+Current schema version: **2**
+
+### Port Leases Table
+
+The `port_leases` table stores all managed port assignments. TangleClaw is the authoritative port registry — leases survive restarts.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `port` | INTEGER (PK) | Port number |
+| `project` | TEXT | Project name |
+| `service` | TEXT | Service description (e.g., "ttyd", "server") |
+| `status` | TEXT | `active`, `expired`, or `permanent` |
+| `permanent` | INTEGER | 1 for permanent leases, 0 for TTL-based |
+| `ttl_ms` | INTEGER | TTL in milliseconds (null for permanent) |
+| `expires_at` | TEXT | ISO 8601 expiration time |
+| `last_heartbeat` | TEXT | Last heartbeat timestamp |
+| `description` | TEXT | Optional description |
+| `auto_renew` | INTEGER | 1 if auto-renew on heartbeat |
 
 ## API Overview
 
@@ -213,6 +230,10 @@ TangleClaw exposes 24 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/sessions/:project/wrap` | POST | Trigger wrap |
 | `/api/sessions/:project/peek` | GET | Peek at output |
 | `/api/sessions/:project/history` | GET | Session history |
+| `/api/ports` | GET | List all port leases |
+| `/api/ports/lease` | POST | Create or renew a port lease |
+| `/api/ports/release` | POST | Release a port lease |
+| `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
 | `/api/activity` | GET | Activity log |
 | `/api/tmux/mouse/:session` | GET | Get mouse mode |
 | `/api/tmux/mouse` | POST | Set mouse mode |

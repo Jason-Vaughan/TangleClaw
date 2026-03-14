@@ -11,6 +11,7 @@ const tmux = require('./lib/tmux');
 const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const porthub = require('./lib/porthub');
 
 const log = createLogger('server');
 
@@ -384,6 +385,63 @@ route('POST', '/api/tmux/mouse', (_req, res, _params, body) => {
   } catch (err) {
     return errorResponse(res, 404, err.message, 'NOT_FOUND');
   }
+});
+
+// GET /api/ports — List all port leases
+route('GET', '/api/ports', (_req, res) => {
+  const leases = porthub.getLeases();
+  const grouped = {};
+  for (const lease of leases) {
+    if (!grouped[lease.project]) grouped[lease.project] = [];
+    grouped[lease.project].push(lease);
+  }
+  jsonResponse(res, 200, {
+    totalLeases: leases.length,
+    leases,
+    grouped
+  });
+});
+
+// POST /api/ports/lease — Create or renew a lease
+route('POST', '/api/ports/lease', (_req, res, _params, body) => {
+  if (!body || !body.port || !body.project || !body.service) {
+    return errorResponse(res, 400, 'port, project, and service are required', 'BAD_REQUEST');
+  }
+  try {
+    const lease = store.portLeases.lease({
+      port: body.port,
+      project: body.project,
+      service: body.service,
+      permanent: body.permanent || false,
+      ttlMs: body.ttl || null,
+      description: body.description || null,
+      autoRenew: body.autoRenew || false
+    });
+    jsonResponse(res, 201, lease);
+  } catch (err) {
+    return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+  }
+});
+
+// POST /api/ports/release — Release a lease
+route('POST', '/api/ports/release', (_req, res, _params, body) => {
+  if (!body || !body.port) {
+    return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
+  }
+  store.portLeases.release(body.port);
+  jsonResponse(res, 200, { ok: true, port: body.port });
+});
+
+// POST /api/ports/heartbeat — Heartbeat a lease
+route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
+  if (!body || !body.port) {
+    return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
+  }
+  const lease = store.portLeases.heartbeat(body.port);
+  if (!lease) {
+    return errorResponse(res, 404, `No lease found for port ${body.port}`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, lease);
 });
 
 // GET /api/projects
@@ -942,6 +1000,10 @@ if (require.main === module) {
     setLevel(config.logLevel);
   }
 
+  // Bootstrap port management
+  porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: config.serverPort || 3101 });
+  porthub.startExpirationTimer();
+
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
   const server = createServer();
 
@@ -955,6 +1017,8 @@ if (require.main === module) {
   // Graceful shutdown
   const shutdown = () => {
     log.info('Shutting down');
+    porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: config.serverPort || 3101 });
+    porthub.stopExpirationTimer();
     server.close();
     store.close();
     process.exit(0);
