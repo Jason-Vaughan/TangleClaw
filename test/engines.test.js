@@ -266,5 +266,28 @@ describe('engines', () => {
       assert.ok(content.includes('identity') || content.includes('sentry'));
       assert.ok(content.includes('docs'));
     });
+
+    it('should include PortHub guide when porthubRegistration rule is active', () => {
+      const config = {
+        rules: {
+          core: { porthubRegistration: true }
+        }
+      };
+      const content = engines._generateClaudeMd(config, null);
+      assert.ok(content.includes('Port Management'), 'Should include PortHub guide header');
+      assert.ok(content.includes('Never hardcode ports'), 'Should include guide rules');
+      assert.ok(content.includes('Port Ranges Convention'), 'Should include port ranges');
+    });
+
+    it('should exclude PortHub guide when porthubRegistration rule is disabled', () => {
+      const config = {
+        rules: {
+          core: { porthubRegistration: false }
+        }
+      };
+      const content = engines._generateClaudeMd(config, null);
+      assert.ok(!content.includes('Port Management'), 'Should not include PortHub guide');
+      assert.ok(!content.includes('Never hardcode ports'), 'Should not include guide rules');
+    });
   });
 });

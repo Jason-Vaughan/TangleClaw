@@ -106,6 +106,51 @@ function toggleStats() {
   toggle.setAttribute('aria-expanded', state.statsOpen);
 }
 
+// ── Ports Toggle ──
+
+function togglePorts() {
+  state.portsOpen = !state.portsOpen;
+  const grid = document.getElementById('portsGrid');
+  const arrow = document.querySelector('#portsToggle .arrow');
+  const toggle = document.getElementById('portsToggle');
+  grid.classList.toggle('open', state.portsOpen);
+  arrow.classList.toggle('open', state.portsOpen);
+  toggle.setAttribute('aria-expanded', state.portsOpen);
+}
+
+function renderPorts() {
+  const grid = document.getElementById('portsGrid');
+  if (state.ports.length === 0) {
+    grid.innerHTML = '<div class="ports-empty">No port leases</div>';
+    return;
+  }
+
+  // Group by project
+  const grouped = {};
+  for (const lease of state.ports) {
+    if (!grouped[lease.project]) grouped[lease.project] = [];
+    grouped[lease.project].push(lease);
+  }
+
+  let html = '';
+  for (const [project, leases] of Object.entries(grouped)) {
+    html += `<div class="port-group">`;
+    html += `<div class="port-group-name">${esc(project)}</div>`;
+    for (const lease of leases) {
+      const typeClass = lease.permanent ? 'port-type-permanent' : 'port-type-ttl';
+      const typeLabel = lease.permanent ? 'permanent' : 'TTL';
+      html += `<div class="port-lease">
+        <span class="port-number">${lease.port}</span>
+        <span class="port-service">${esc(lease.service)}</span>
+        <span class="port-type ${typeClass}">${typeLabel}</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  grid.innerHTML = html;
+}
+
 // ── Filter Toggle ──
 
 function toggleFilter() {
@@ -369,6 +414,10 @@ const $ = (id) => document.getElementById(id);
 $('statsToggle').addEventListener('click', toggleStats);
 $('statsToggle').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStats(); }
+});
+$('portsToggle').addEventListener('click', togglePorts);
+$('portsToggle').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePorts(); }
 });
 $('filterBtn').addEventListener('click', toggleFilter);
 $('newBtn').addEventListener('click', openCreateDrawer);

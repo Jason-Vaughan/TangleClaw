@@ -14,7 +14,9 @@ const state = {
   activeTag: null,
   allTags: [],
   connected: true,
-  statsOpen: false
+  statsOpen: false,
+  ports: [],
+  portsOpen: false
 };
 
 // ── API Helpers ──
@@ -124,6 +126,14 @@ function formatUptime(seconds) {
   if (d > 0) return `${d}d ${h}h`;
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+async function loadPorts() {
+  const data = await api('/api/ports');
+  if (!data) return;
+  state.ports = data.leases || [];
+  document.getElementById('portsCount').textContent = `${state.ports.length} lease${state.ports.length !== 1 ? 's' : ''}`;
+  renderPorts();
 }
 
 async function loadEngines() {
@@ -263,9 +273,10 @@ function esc(str) {
 async function init() {
   await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
   await loadProjects();
-  await loadStats();
+  await Promise.all([loadStats(), loadPorts()]);
   maybeShowFilter();
   setInterval(loadStats, 30000);
+  setInterval(loadPorts, 30000);
   setInterval(loadProjects, 10000);
 }
 

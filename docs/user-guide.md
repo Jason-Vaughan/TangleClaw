@@ -53,6 +53,16 @@ The landing page is your dashboard for managing projects and launching sessions.
 
 The header shows the TangleClaw logo, version, and a collapsible system stats panel (CPU, Memory, Disk, Uptime). Tap the stats area to expand or collapse it.
 
+### Ports Panel
+
+Below the system stats, there's a collapsible **Ports** panel. Tap it to see all active port leases grouped by project. Each lease shows:
+
+- **Port number** — the assigned port (e.g., 3100)
+- **Service** — what the port is used for (e.g., "ttyd", "server")
+- **Type badge** — "permanent" for infrastructure ports, "TTL" for time-limited leases
+
+TangleClaw manages port assignments directly in its SQLite database. Leases survive server restarts (unlike the old PortHub daemon). The panel auto-refreshes every 30 seconds.
+
 ### Toolbar
 
 - **Session count**: Shows how many active sessions are running
