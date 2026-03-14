@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# TangleClaw post-commit hook — tags version from version.json on main branch.
+# Install: cp hooks/post-commit .git/hooks/post-commit && chmod +x .git/hooks/post-commit
+
+set -euo pipefail
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$BRANCH" != "main" ]; then
+  exit 0
+fi
+
+if [ ! -f version.json ]; then
+  exit 0
+fi
+
+VERSION="$(node -e "process.stdout.write(require('./version.json').version)")"
+
+if [ -z "$VERSION" ]; then
+  exit 0
+fi
+
+TAG="v${VERSION}"
+
+# Only tag if this version isn't already tagged
+if ! git tag -l "$TAG" | grep -q "$TAG"; then
+  git tag "$TAG"
+  echo "Tagged: $TAG"
+fi

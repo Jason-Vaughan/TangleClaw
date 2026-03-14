@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="AI Development Orchestration Platform">
+  <title>TangleClaw</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/logo-icon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body>
+
+  <!-- Connection toast -->
+  <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <svg class="header-logo" viewBox="0 0 96 96" aria-label="TangleClaw serpent logo" role="img">
+      <circle cx="48" cy="48" r="44" fill="none" stroke="#8BC34A" stroke-width="2"/>
+      <path d="M30 60 Q38 28 48 36 Q58 44 52 56 Q46 68 58 62 Q70 56 66 44 Q62 32 48 28"
+            fill="none" stroke="#8BC34A" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="42" cy="34" r="2.5" fill="#8BC34A"/>
+    </svg>
+    <h1 class="header-title">TANGLECLAW</h1>
+    <p class="header-subtitle">AI Development Orchestration</p>
+    <span id="version" class="header-version"></span>
+  </header>
+
+  <!-- System Stats Toggle -->
+  <div class="stats-toggle" id="statsToggle" role="button" tabindex="0"
+       aria-expanded="false" aria-controls="statsGrid">
+    <span>System</span>
+    <span class="arrow" aria-hidden="true">&#9660;</span>
+  </div>
+
+  <!-- System Stats Grid -->
+  <div id="statsGrid" class="stats-grid" aria-label="System resource usage">
+    <div class="stat-card">
+      <div class="stat-label">CPU</div>
+      <div class="stat-value" id="statCpu">--</div>
+      <div class="stat-bar"><div class="stat-bar-fill" id="statCpuBar"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Memory</div>
+      <div class="stat-value" id="statMem">--</div>
+      <div class="stat-bar"><div class="stat-bar-fill" id="statMemBar"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Disk</div>
+      <div class="stat-value" id="statDisk">--</div>
+      <div class="stat-bar"><div class="stat-bar-fill" id="statDiskBar"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value" id="statUptime">--</div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <nav class="toolbar" aria-label="Project controls">
+    <div class="toolbar-left">
+      <span class="session-count" id="sessionCount" aria-live="polite">0 active</span>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn btn-icon" id="filterBtn" aria-label="Toggle filter"
+              aria-expanded="false" aria-controls="filterSection">
+        &#128269;
+      </button>
+      <button class="btn btn-primary" id="newBtn" aria-label="Create new project">+ New</button>
+    </div>
+  </nav>
+
+  <!-- Filter Section -->
+  <section id="filterSection" class="filter-section hidden" aria-label="Project filter">
+    <div class="filter-input-wrap">
+      <input type="text" class="filter-input" id="filterInput"
+             placeholder="Filter projects..." autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="filter-clear hidden" id="filterClear" aria-label="Clear filter">&times;</button>
+    </div>
+  </section>
+
+  <!-- Tag Pills -->
+  <div class="tag-row hidden" id="tagRow" role="toolbar" aria-label="Filter by tag"></div>
+
+  <!-- Main Content -->
+  <main id="projectsContainer" aria-label="Projects">
+    <div class="cards-grid" id="cardsGrid"></div>
+  </main>
+
+  <!-- Create Project Drawer -->
+  <div class="drawer-backdrop" id="createBackdrop"></div>
+  <aside class="drawer" id="createDrawer" role="dialog" aria-label="Create project" aria-modal="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="drawer-header">
+      <h2 class="drawer-title" id="createTitle">New Project</h2>
+      <button class="btn btn-small btn-icon" id="createClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="steps-row" id="createSteps">
+      <div class="step-dot active"></div>
+      <div class="step-dot"></div>
+      <div class="step-dot"></div>
+    </div>
+    <div class="drawer-body" id="createBody"></div>
+  </aside>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-backdrop" id="deleteModal">
+    <div class="modal-content" role="dialog" aria-label="Delete project" aria-modal="true">
+      <h3 class="modal-title">Delete Project</h3>
+      <p class="modal-text" id="deleteText"></p>
+      <div class="form-group hidden" id="deletePasswordGroup">
+        <label class="form-label" for="deletePassword">Password</label>
+        <input type="password" class="password-input" id="deletePassword" autocomplete="off">
+      </div>
+      <div id="deleteError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="deleteCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="deleteConfirmBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wrap Confirmation Modal -->
+  <div class="modal-backdrop" id="wrapModal">
+    <div class="modal-content" role="dialog" aria-label="Wrap session" aria-modal="true">
+      <h3 class="modal-title">Wrap Session</h3>
+      <p class="modal-text" id="wrapText"></p>
+      <div class="form-group hidden" id="wrapPasswordGroup">
+        <label class="form-label" for="wrapPassword">Password</label>
+        <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
+      </div>
+      <div id="wrapError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="wrapCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="wrapConfirmBtn">Wrap</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-content" role="dialog" aria-label="Project settings" aria-modal="true"
+         style="max-width:400px">
+      <h3 class="modal-title" id="settingsTitle">Settings</h3>
+      <div id="settingsBody"></div>
+      <div class="modal-actions">
+        <button class="btn" id="settingsCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/landing.js"></script>
+  <script src="/ui.js"></script>
+</body>
+</html>

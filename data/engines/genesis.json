@@ -1,0 +1,29 @@
+{
+  "id": "genesis",
+  "name": "Genesis",
+  "command": null,
+  "interactionModel": "persistent",
+  "configFormat": {
+    "filename": null,
+    "syntax": null,
+    "generator": null
+  },
+  "coAuthorFormat": null,
+  "commands": [],
+  "detection": {
+    "strategy": "custom",
+    "target": null
+  },
+  "launch": null,
+  "persistent": {
+    "connectCommand": null,
+    "healthCheck": null,
+    "apiEndpoint": null
+  },
+  "capabilities": {
+    "supportsSlashCommands": false,
+    "supportsPrimePrompt": false,
+    "supportsConfigFile": false,
+    "supportsCoAuthor": false
+  }
+}

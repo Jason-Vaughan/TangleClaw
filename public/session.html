@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>TangleClaw — Session</title>
+  <link rel="stylesheet" href="/session.css">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/logo-icon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body>
+
+  <!-- Connection toast -->
+  <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+  <!-- Banner -->
+  <header class="banner" id="banner">
+    <div class="banner-row">
+      <a href="/" class="banner-back" aria-label="Back to projects">&larr;</a>
+      <svg class="banner-logo" viewBox="0 0 96 96" aria-hidden="true">
+        <circle cx="48" cy="48" r="44" fill="none" stroke="#8BC34A" stroke-width="2"/>
+        <path d="M30 60 Q38 28 48 36 Q58 44 52 56 Q46 68 58 62 Q70 56 66 44 Q62 32 48 28"
+              fill="none" stroke="#8BC34A" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="42" cy="34" r="2.5" fill="#8BC34A"/>
+      </svg>
+      <span class="banner-sep" aria-hidden="true">|</span>
+      <span class="banner-name" id="bannerName">--</span>
+      <span class="banner-version" id="bannerVersion"></span>
+      <span class="status-dot" id="statusDot" title="Connected"></span>
+      <span class="banner-engine" id="bannerEngine"></span>
+    </div>
+    <div class="banner-actions">
+      <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
+              aria-expanded="false" aria-controls="commandBar">Cmd</button>
+      <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
+      <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;</button>
+      <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
+      <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
+    </div>
+  </header>
+
+  <!-- Session Ended Bar -->
+  <div class="session-ended hidden" id="sessionEnded">
+    <span>Session ended</span>
+    <a href="/" class="btn btn-primary btn-small">Back to Projects</a>
+    <span class="countdown" id="countdown"></span>
+  </div>
+
+  <!-- Command Bar -->
+  <div class="command-bar hidden" id="commandBar">
+    <div class="command-input-row">
+      <input type="text" class="command-input" id="commandInput"
+             placeholder="Type a command..." autocomplete="off"
+             autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="command-send" id="commandSend">Send</button>
+    </div>
+    <div class="command-pills" id="commandPills" role="toolbar" aria-label="Quick commands"></div>
+  </div>
+
+  <!-- Terminal Viewport -->
+  <div class="terminal-viewport" id="terminalViewport">
+    <iframe id="terminalFrame" class="terminal-frame" title="Terminal session"></iframe>
+  </div>
+
+  <!-- Peek Drawer -->
+  <div class="drawer-backdrop" id="peekBackdrop"></div>
+  <aside class="peek-drawer" id="peekDrawer" role="dialog" aria-label="Terminal peek" aria-modal="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="peek-header">
+      <span class="peek-title" id="peekTitle">Peek</span>
+      <div class="peek-actions">
+        <button class="banner-btn" id="peekRefresh" aria-label="Refresh peek">&#8635;</button>
+        <button class="banner-btn" id="peekClose" aria-label="Close peek">&times;</button>
+      </div>
+    </div>
+    <pre class="peek-content" id="peekContent"></pre>
+  </aside>
+
+  <!-- Settings Modal -->
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-content settings-content" role="dialog" aria-label="Session settings" aria-modal="true">
+      <h3 class="modal-title">Session Settings</h3>
+      <div id="settingsBody">
+        <div class="form-group">
+          <label class="form-label">Chime</label>
+          <div class="toggle-row">
+            <span class="toggle-label">Play sound when idle</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="chimeToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="form-hint">Chime plays when terminal output stops changing</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="pollInterval">Poll interval</label>
+          <select class="form-select" id="pollInterval">
+            <option value="2000">2s</option>
+            <option value="3000">3s</option>
+            <option value="5000" selected>5s</option>
+            <option value="10000">10s</option>
+            <option value="15000">15s</option>
+            <option value="30000">30s</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="settingsEngine">Engine</label>
+          <select class="form-select" id="settingsEngine"></select>
+          <div class="form-hint">Takes effect on next session</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Methodology</label>
+          <div class="settings-info" id="settingsMethodology">--</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">tmux Mouse</label>
+          <div class="toggle-row">
+            <span class="toggle-label">Enable mouse mode</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="mouseToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="settingsCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kill Confirm Modal -->
+  <div class="modal-backdrop" id="killModal">
+    <div class="modal-content" role="dialog" aria-label="Kill session" aria-modal="true">
+      <h3 class="modal-title">Kill Session</h3>
+      <p class="modal-text" id="killText"></p>
+      <div class="form-group hidden" id="killPasswordGroup">
+        <label class="form-label" for="killPassword">Password</label>
+        <input type="password" class="password-input" id="killPassword" autocomplete="off">
+      </div>
+      <div id="killError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="killCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="killConfirmBtn">Kill</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wrap Confirm Modal -->
+  <div class="modal-backdrop" id="wrapModal">
+    <div class="modal-content" role="dialog" aria-label="Wrap session" aria-modal="true">
+      <h3 class="modal-title">Wrap Session</h3>
+      <p class="modal-text" id="wrapText"></p>
+      <div class="form-group hidden" id="wrapPasswordGroup">
+        <label class="form-label" for="wrapPassword">Password</label>
+        <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
+      </div>
+      <div id="wrapError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="wrapCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="wrapConfirmBtn">Wrap</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/session.js"></script>
+</body>
+</html>

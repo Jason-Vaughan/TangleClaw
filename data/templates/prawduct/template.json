@@ -1,0 +1,86 @@
+{
+  "id": "prawduct",
+  "name": "Prawduct",
+  "description": "Structured governance with discovery, planning, building, and independent Critic review.",
+  "type": "methodology",
+  "version": "1.0.0",
+  "phases": [
+    {
+      "id": "discovery",
+      "name": "Discovery",
+      "description": "Understand the problem space",
+      "weight": "deep",
+      "offerContextReset": false
+    },
+    {
+      "id": "planning",
+      "name": "Planning",
+      "description": "Design the solution",
+      "weight": "deep",
+      "offerContextReset": true
+    },
+    {
+      "id": "building",
+      "name": "Building",
+      "description": "Implement the solution",
+      "weight": "normal",
+      "offerContextReset": true
+    }
+  ],
+  "statusContract": {
+    "command": "cat .prawduct/project-state.yaml | head -20",
+    "parse": "yaml-field",
+    "field": "work_in_progress.description",
+    "badge": "phase",
+    "colorMap": {
+      "discovery": "blue",
+      "planning": "yellow",
+      "building": "green"
+    }
+  },
+  "detection": {
+    "strategy": "directory",
+    "target": ".prawduct"
+  },
+  "wrap": {
+    "command": null,
+    "steps": [
+      "version-bump",
+      "changelog-update",
+      "learnings-capture",
+      "next-session-prime",
+      "commit"
+    ],
+    "captureFields": [
+      "summary",
+      "nextSteps",
+      "learnings"
+    ]
+  },
+  "prime": {
+    "format": "markdown",
+    "sections": [
+      "methodology-rules",
+      "current-phase",
+      "active-learnings",
+      "last-session-summary",
+      "project-state"
+    ],
+    "maxTokens": 4000
+  },
+  "defaultRules": {
+    "independentCritic": true,
+    "docsParity": true,
+    "decisionFramework": true
+  },
+  "actions": [
+    { "label": "Run Critic", "command": "invoke-critic", "confirm": false }
+  ],
+  "init": {
+    "directories": [".prawduct", ".prawduct/artifacts"],
+    "files": {
+      ".prawduct/project-state.yaml": "# Project State\n\nwork_in_progress:\n  description: null\n  size: null\n  type: null\n"
+    },
+    "postInit": null
+  }
+}

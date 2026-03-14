@@ -95,3 +95,9 @@ The Critic receives goals and signals (files changed, work type, work size) and 
 When compacting, preserve: what's being built, current work and governance level, unresolved issues, instruction to re-read CLAUDE.md and learnings.md, Critic review requirement, reflection requirement, in-progress learnings. Do NOT inline full file contents — summarize what was learned and reference file paths for re-reading.
 
 <!-- PRAWDUCT:END -->
+
+## Project-Specific Instructions
+
+**Before starting discovery**, read `INTAKE-BRIEF.md` in the project root. It contains comprehensive pre-discovery context compiled from TangleClaw v2 development, a cross-project methodology analysis of 7 projects, and architectural decisions already confirmed with the user. The full methodology comparison is at `~/Documents/Projects/prawduct-test/methodology-comparison.md`.
+
+Discovery should confirm and deepen — not re-discover from scratch. The intake brief gives you a massive head start.

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# TangleClaw commit-msg hook — validates commit message format.
+# Install: cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+
+set -euo pipefail
+
+MSG_FILE="$1"
+FIRST_LINE="$(head -n 1 "$MSG_FILE")"
+
+if [ -z "$FIRST_LINE" ]; then
+  echo "ERROR: Commit message must not be empty."
+  exit 1
+fi
+
+if [ "${#FIRST_LINE}" -gt 72 ]; then
+  echo "ERROR: First line of commit message must be 72 characters or fewer (got ${#FIRST_LINE})."
+  exit 1
+fi

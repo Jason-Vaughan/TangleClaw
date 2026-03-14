@@ -1,0 +1,33 @@
+{
+  "id": "aider",
+  "name": "Aider",
+  "command": "aider",
+  "interactionModel": "session",
+  "configFormat": {
+    "filename": ".aider.conf.yml",
+    "syntax": "yaml",
+    "generator": "aider-yaml"
+  },
+  "coAuthorFormat": "Co-Authored-By: {name} <{email}>",
+  "commands": [
+    { "label": "Add File", "input": "/add", "description": "Add file to context" },
+    { "label": "Drop File", "input": "/drop", "description": "Remove file from context" },
+    { "label": "Undo", "input": "/undo", "description": "Undo last change" }
+  ],
+  "detection": {
+    "strategy": "which",
+    "target": "aider"
+  },
+  "launch": {
+    "shellCommand": "aider",
+    "args": [],
+    "env": {}
+  },
+  "persistent": null,
+  "capabilities": {
+    "supportsSlashCommands": true,
+    "supportsPrimePrompt": true,
+    "supportsConfigFile": true,
+    "supportsCoAuthor": true
+  }
+}
