@@ -34,7 +34,16 @@ On first launch, TangleClaw creates `~/.tangleclaw/` with:
 - `engines/` — engine profile JSON files
 - `tangleclaw.db` — SQLite database for runtime state
 
-Open http://localhost:3101 in your browser. You'll see the landing page with system stats and an empty project list.
+Open http://localhost:3101 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration:
+
+1. **Welcome** — overview of what TangleClaw does
+2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
+3. **Detect Projects** — scans the directory for existing projects (git repos, methodology markers) and lets you select which to attach
+4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
+5. **Preferences** — default methodology, delete protection password, idle chime toggle
+6. **Confirm** — summary of all selections, then "Complete Setup"
+
+You can **skip the wizard** at any step — it will use sensible defaults. The wizard only appears once; subsequent launches go straight to the landing page.
 
 ### PWA Installation (Mobile)
 

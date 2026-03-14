@@ -167,7 +167,27 @@
     </div>
   </div>
 
+  <!-- Setup Wizard Overlay -->
+  <div class="setup-overlay" id="setupOverlay" role="dialog" aria-label="First-run setup wizard" aria-modal="true">
+    <div class="setup-container">
+      <div class="setup-header">
+        <h1 class="setup-title">Setup</h1>
+        <button class="btn btn-small" id="setupSkipBtn" onclick="wizardSkip()">Skip</button>
+      </div>
+      <div class="steps-row" id="setupSteps">
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+      </div>
+      <div class="setup-body" id="setupBody"></div>
+    </div>
+  </div>
+
   <script src="/landing.js"></script>
   <script src="/ui.js"></script>
+  <script src="/setup.js"></script>
 </body>
 </html>
