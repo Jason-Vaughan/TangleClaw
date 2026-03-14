@@ -272,9 +272,21 @@ function esc(str) {
 
 async function init() {
   await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
+
+  // Check for first-run setup wizard
+  if (typeof checkSetupWizard === 'function' && checkSetupWizard()) {
+    // Wizard is showing — don't load projects or start polling yet.
+    // Wizard dismissal will trigger loadProjects().
+    return;
+  }
+
   await loadProjects();
   await Promise.all([loadStats(), loadPorts()]);
   maybeShowFilter();
+  startPolling();
+}
+
+function startPolling() {
   setInterval(loadStats, 30000);
   setInterval(loadPorts, 30000);
   setInterval(loadProjects, 10000);

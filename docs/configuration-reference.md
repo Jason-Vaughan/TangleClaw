@@ -28,6 +28,7 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | `theme` | string | `"dark"` | UI theme: `"dark"`, `"light"`, `"high-contrast"` |
 | `chimeEnabled` | boolean | `true` | Play audio chime when session goes idle |
 | `peekMode` | string | `"drawer"` | Peek UI mode: `"drawer"`, `"modal"`, `"alert"` |
+| `setupComplete` | boolean | `false` | Whether the first-run wizard has been completed. Set to `true` automatically for existing installs that lack this field. |
 
 ### Default Quick Commands
 

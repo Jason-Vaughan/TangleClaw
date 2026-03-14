@@ -304,7 +304,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
-    'chimeEnabled', 'peekMode'
+    'chimeEnabled', 'peekMode', 'setupComplete'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -324,6 +324,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
     if (key === 'peekMode' && !validPeekModes.includes(value)) {
       return errorResponse(res, 400, `peekMode must be one of: ${validPeekModes.join(', ')}`, 'BAD_REQUEST');
+    }
+    if (key === 'setupComplete' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'setupComplete must be a boolean', 'BAD_REQUEST');
     }
 
     if (key === 'serverPort' || key === 'ttydPort') {
@@ -347,6 +350,158 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   redacted.deleteProtected = hasPassword;
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
+});
+
+// POST /api/setup/scan — Scan a directory for existing projects
+route('POST', '/api/setup/scan', (_req, res, _params, body) => {
+  if (!body || typeof body.directory !== 'string') {
+    return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
+  }
+
+  const dir = projects.resolveProjectsDir(body.directory);
+
+  if (!fs.existsSync(dir)) {
+    return errorResponse(res, 400, `Directory does not exist: ${body.directory}`, 'BAD_REQUEST');
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(dir);
+  } catch (err) {
+    return errorResponse(res, 400, `Cannot access directory: ${err.message}`, 'BAD_REQUEST');
+  }
+  if (!stat.isDirectory()) {
+    return errorResponse(res, 400, `Path is not a directory: ${body.directory}`, 'BAD_REQUEST');
+  }
+
+  // Scan for projects in the specified directory
+  const detected = [];
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    return errorResponse(res, 400, `Failed to read directory: ${err.message}`, 'BAD_REQUEST');
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+
+    const dirPath = path.join(dir, entry.name);
+
+    // Detect methodology
+    const detectedMethodology = methodologies.detect(dirPath);
+
+    // Check for git
+    let gitInfo = null;
+    try {
+      const git = require('./lib/git');
+      gitInfo = git.getInfo(dirPath);
+    } catch {
+      // Not a git repo or git not available
+    }
+
+    // Check for TangleClaw config
+    const hasTangleclawConfig = fs.existsSync(path.join(dirPath, '.tangleclaw', 'project.json'));
+
+    // Include if it has any project markers (methodology, git, or tangleclaw config)
+    if (detectedMethodology || (gitInfo && gitInfo.branch) || hasTangleclawConfig) {
+      detected.push({
+        name: entry.name,
+        path: dirPath,
+        methodology: detectedMethodology ? detectedMethodology.id : null,
+        hasTangleclawConfig,
+        git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null
+      });
+    }
+  }
+
+  jsonResponse(res, 200, { projects: detected });
+});
+
+// POST /api/setup/complete — Batch setup: update config + attach projects
+route('POST', '/api/setup/complete', (_req, res, _params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+
+  const config = store.config.load();
+  const warnings = [];
+
+  // Update config fields
+  if (body.projectsDir && typeof body.projectsDir === 'string') {
+    config.projectsDir = body.projectsDir;
+  }
+  if (body.defaultEngine && typeof body.defaultEngine === 'string') {
+    config.defaultEngine = body.defaultEngine;
+  }
+  if (body.defaultMethodology && typeof body.defaultMethodology === 'string') {
+    config.defaultMethodology = body.defaultMethodology;
+  }
+  if (body.deletePassword !== undefined) {
+    if (body.deletePassword && typeof body.deletePassword === 'string') {
+      config.deletePassword = projects.hashPassword(body.deletePassword);
+    } else {
+      config.deletePassword = null;
+    }
+  }
+  if (typeof body.chimeEnabled === 'boolean') {
+    config.chimeEnabled = body.chimeEnabled;
+  }
+
+  // Mark setup as complete
+  config.setupComplete = true;
+  store.config.save(config);
+
+  // Attach selected projects
+  const attached = [];
+  if (Array.isArray(body.projects)) {
+    for (const proj of body.projects) {
+      if (!proj || !proj.name || !proj.path) continue;
+
+      // Skip if already registered
+      const existing = store.projects.getByName(proj.name);
+      if (existing) {
+        warnings.push(`Project "${proj.name}" already registered, skipped`);
+        continue;
+      }
+
+      // Register in SQLite
+      try {
+        const engineId = config.defaultEngine || 'claude-code';
+        const methodologyId = proj.methodology || config.defaultMethodology || 'minimal';
+
+        store.projects.create({
+          name: proj.name,
+          path: proj.path,
+          engine: engineId,
+          methodology: methodologyId,
+          tags: [],
+          ports: {}
+        });
+
+        // Write per-project config if none exists
+        const projConfigPath = path.join(proj.path, '.tangleclaw', 'project.json');
+        if (!fs.existsSync(projConfigPath)) {
+          const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
+          projConfig.engine = engineId;
+          projConfig.methodology = methodologyId;
+          store.projectConfig.save(proj.path, projConfig);
+        }
+
+        attached.push(proj.name);
+      } catch (err) {
+        warnings.push(`Failed to attach "${proj.name}": ${err.message}`);
+      }
+    }
+  }
+
+  jsonResponse(res, 200, {
+    ok: true,
+    setupComplete: true,
+    attached,
+    warnings
+  });
 });
 
 // GET /api/system

@@ -346,15 +346,15 @@ describe('projects', () => {
     });
   });
 
-  describe('_resolveProjectsDir', () => {
+  describe('resolveProjectsDir', () => {
     it('expands tilde to home directory', () => {
-      const result = projects._resolveProjectsDir('~/Documents');
+      const result = projects.resolveProjectsDir('~/Documents');
       assert.ok(result.startsWith(process.env.HOME));
       assert.ok(result.endsWith('/Documents'));
     });
 
     it('returns absolute paths unchanged', () => {
-      const result = projects._resolveProjectsDir('/absolute/path');
+      const result = projects.resolveProjectsDir('/absolute/path');
       assert.equal(result, '/absolute/path');
     });
   });
