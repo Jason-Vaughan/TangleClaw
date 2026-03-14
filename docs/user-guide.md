@@ -1,0 +1,263 @@
+# TangleClaw User Guide
+
+This guide walks you through using TangleClaw — from first launch to managing AI development sessions on your projects.
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js 22+** — required for `node:sqlite` and `node:test`
+- **ttyd** — browser-based terminal emulator (`brew install ttyd`)
+- **tmux** — terminal multiplexer (`brew install tmux`)
+- At least one AI engine installed (e.g., `claude`, `codex`, or `aider`)
+
+### Installation
+
+```bash
+git clone <repo-url> ~/Documents/Projects/TangleClaw-v3
+cd ~/Documents/Projects/TangleClaw-v3
+./deploy/install.sh
+```
+
+The install script verifies prerequisites, generates launchd plists, loads the services, and runs a health check. On success, you'll see:
+
+- **Landing page**: http://localhost:3101
+- **Terminal (ttyd)**: http://localhost:3100
+
+Both services auto-restart on crash via launchd KeepAlive.
+
+### First Run
+
+On first launch, TangleClaw creates `~/.tangleclaw/` with:
+
+- `config.json` — global configuration (editable)
+- `engines/` — engine profile JSON files
+- `tangleclaw.db` — SQLite database for runtime state
+
+Open http://localhost:3101 in your browser. You'll see the landing page with system stats and an empty project list.
+
+### PWA Installation (Mobile)
+
+TangleClaw works as a Progressive Web App:
+
+- **iPhone Safari**: Tap Share → "Add to Home Screen"
+- **Android Chrome**: Tap the three-dot menu → "Add to Home screen"
+
+This gives you a full-screen app experience with no browser chrome.
+
+## The Landing Page
+
+The landing page is your dashboard for managing projects and launching sessions.
+
+### Header
+
+The header shows the TangleClaw logo, version, and a collapsible system stats panel (CPU, Memory, Disk, Uptime). Tap the stats area to expand or collapse it.
+
+### Toolbar
+
+- **Session count**: Shows how many active sessions are running
+- **Filter**: Opens the search/filter panel
+- **+ New**: Opens the create project drawer
+
+### Project Cards
+
+Each project is displayed as a card showing:
+
+- **Name** — the project directory name
+- **Engine badge** — which AI engine is selected (e.g., "Claude Code")
+- **Methodology badge** — which methodology template is active (e.g., "Prawduct")
+- **Status badge** — current methodology status (color-coded by phase)
+- **Git info** — branch, dirty state, last commit age
+- **Session indicator** — whether a session is currently active
+- **Action buttons** — Launch, Settings, Delete
+
+### Searching and Filtering
+
+Use the search bar to filter projects by name. Tag pills appear below the search bar — tap a tag to filter projects with that tag.
+
+### Creating a Project
+
+Tap **+ New** to open the create project drawer:
+
+1. **Name** — enter a project name (letters, numbers, hyphens, underscores only)
+2. **Engine** — select an AI engine from the dropdown
+3. **Methodology** — choose a methodology template
+4. **Tags** — optional tags for organization
+
+The project is created in your configured `projectsDir` (default: `~/Documents/Projects`). TangleClaw scaffolds the project directory, initializes the methodology, registers ports with PortHub (if available), and generates the engine-specific config file.
+
+### Deleting a Project
+
+Tap the delete button on a project card. If a `deletePassword` is configured, you'll need to enter it. Deletion releases registered ports and removes the project from TangleClaw's database. The project directory itself is preserved on disk.
+
+### Auto-Detection of Existing Projects
+
+TangleClaw automatically detects existing projects in your `projectsDir` that have:
+
+- A `.tangleclaw/project.json` file
+- A methodology marker directory (`.prawduct/`, `.tilt/`)
+
+These appear on the landing page without manual setup.
+
+## Sessions
+
+Sessions are the core of TangleClaw — they're how you interact with AI engines on your projects.
+
+### Launching a Session
+
+Tap the **Launch** button on a project card. TangleClaw:
+
+1. Generates a prime prompt from methodology state, active learnings, and last session summary
+2. Creates a tmux session
+3. Launches the selected AI engine inside it
+4. Injects the prime prompt (if the engine supports it)
+5. Redirects you to the session wrapper
+
+### The Session Wrapper
+
+The session wrapper is your interface to the running AI session.
+
+#### Banner
+
+The top banner shows:
+
+- **Back link** — return to the landing page
+- **Project name** and **version**
+- **Status dot** — green (connected), red (disconnected), with a breathing animation
+- **Engine badge** — which engine is running
+
+#### Terminal Viewport
+
+The terminal fills the main area, showing the ttyd-powered terminal where your AI engine is running. Interact with it directly — type commands, paste text, scroll output.
+
+#### Command Bar
+
+Below the terminal, the command bar lets you inject commands without touching the terminal:
+
+- Type a command and tap **Send** (or press Enter)
+- **Quick command pills** appear below the input — tap to inject common commands
+- Engine-specific slash commands are included as pills (e.g., `/compact`, `/review` for Claude Code)
+- Commands are sent to the tmux session via `send-keys`
+
+#### Peek
+
+Tap **Peek** to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update.
+
+#### Chime System
+
+When enabled, TangleClaw plays an audio chime when the terminal goes idle (no new output for a configured period). This tells you the AI has finished working.
+
+- Uses Web Audio API for reliable mobile playback
+- Toggle via the Settings modal
+- Works on both iOS and Android
+
+#### Settings
+
+The settings modal lets you configure:
+
+- **Chime toggle** — enable/disable idle chime
+- **Poll interval** — how often to check session status (2s–30s)
+- **Engine selector** — switch engine for next session
+- **Methodology info** — current methodology and phase
+- **Mouse mode** — toggle tmux mouse mode on/off
+
+#### Wrapping a Session
+
+Tap **Wrap** to trigger the methodology-defined wrap skill. This:
+
+1. Executes the wrap steps defined in the methodology template
+2. Captures session output (summary, next steps, learnings)
+3. Records the wrap in the database
+4. Ends the session
+5. Redirects to the landing page after a countdown
+
+If a `deletePassword` is configured, you'll need to enter it to wrap.
+
+#### Killing a Session
+
+Tap **Kill** to forcefully terminate a session without wrapping. Use this when a session is stuck or you don't need wrap data. Password required if configured.
+
+### Session History
+
+Each project maintains a session history showing:
+
+- Start time and duration
+- Engine used
+- Session status (wrapped, killed, crashed)
+- Wrap summary (if wrapped)
+
+## Mobile Tips
+
+### iPhone Safari
+
+- Use PWA mode (Add to Home Screen) for the best experience
+- The command bar appears above the keyboard when focused
+- Touch targets are 44px minimum for comfortable tapping
+- Safe area insets are respected for notch/home indicator
+
+### Android (Pixel Fold 9)
+
+- Works in both folded and unfolded configurations
+- Chrome PWA mode supported
+- Scroll behavior is fixed (v2 bug resolved)
+
+### Touch Patterns
+
+- **Tap** — buttons, pills, cards
+- **Swipe down** — pull to refresh on landing page
+- **Drag** — peek drawer handle to resize
+- **Long press** — not used (avoids conflicts with browser gestures)
+
+## Troubleshooting
+
+### Server Won't Start
+
+```bash
+# Check if Node 22+ is available
+node --version
+
+# Check service status
+launchctl list | grep tangleclaw
+
+# View server logs
+tail -50 ~/Library/Logs/tangleclaw-server.log
+
+# Health check
+curl -s http://localhost:3101/api/health | python3 -m json.tool
+```
+
+### Terminal Not Connecting
+
+```bash
+# Check ttyd is running
+launchctl list | grep ttyd
+
+# View ttyd logs
+tail -50 ~/Library/Logs/tangleclaw-ttyd.log
+
+# Test ttyd directly
+curl -s http://localhost:3100
+```
+
+### Session Won't Launch
+
+- Verify the selected engine is installed: check the engine badge on the landing page (shows "available" or "not found")
+- Check tmux is running: `tmux ls`
+- Check server logs for error details
+
+### Chime Not Working on Mobile
+
+- Tap anywhere on the page first — browsers require user interaction before playing audio
+- Check the chime toggle in session settings
+- Verify your device isn't in silent mode (iOS)
+
+### Resetting TangleClaw
+
+To reset all configuration and state:
+
+```bash
+rm -rf ~/.tangleclaw
+launchctl kill SIGTERM gui/$(id -u)/com.tangleclaw.server
+```
+
+TangleClaw will recreate the default config on next start.

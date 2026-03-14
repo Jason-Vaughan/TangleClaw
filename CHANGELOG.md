@@ -18,10 +18,11 @@ Full rewrite of TangleClaw from a tmux session manager into a methodology-aware 
 - **PortHub integration**: Auto-register ports on project create, auto-release on delete. Graceful degradation when PortHub is unavailable.
 - **Learning capture**: Learnings stored per-project with auto-promotion from provisional to active. Re-indexed for faster session starts. Surfaced in prime prompt.
 - **v2 project auto-detection**: Existing projects with `.tangleclaw/project.json` or methodology markers (`.prawduct/`, `.tilt/`) are auto-detected.
-- **API**: 22 endpoints covering projects, sessions, engines, methodologies, system, config, health, activity, and tmux mouse control.
+- **API**: 24 endpoints covering projects, sessions, engines, methodologies, system, config, health, activity, and tmux mouse control.
 - **Deployment**: launchd plists, install script with prerequisite checking, idempotent reload.
 - **Git hooks**: pre-commit (test suite), commit-msg (format validation), post-commit (version tagging).
 - **500+ tests**: Full test coverage across all modules using `node:test`. Zero external test dependencies.
+- **User documentation**: User guide, methodology guide, engine guide, and configuration reference in `docs/`. Covers getting started, UI walkthrough, custom template/engine creation, all config fields, and mobile setup.
 
 ### Changed
 
