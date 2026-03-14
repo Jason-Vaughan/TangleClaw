@@ -32,6 +32,13 @@ The install script:
 
 Access the landing page at **http://localhost:3101**.
 
+## Documentation
+
+- **[User Guide](docs/user-guide.md)** — Getting started, UI walkthrough, mobile setup, troubleshooting
+- **[Methodology Guide](docs/methodology-guide.md)** — Built-in templates, creating custom methodologies, rules
+- **[Engine Guide](docs/engine-guide.md)** — Built-in engines, creating custom engine profiles
+- **[Configuration Reference](docs/configuration-reference.md)** — All config fields, JSON schemas, API overview
+
 ## Configuration
 
 Global config lives at `~/.tangleclaw/config.json` (auto-created on first run).
@@ -46,6 +53,8 @@ Key settings:
 
 Engine profiles: `~/.tangleclaw/engines/*.json`
 Methodology templates: `~/.tangleclaw/templates/`
+
+See the [Configuration Reference](docs/configuration-reference.md) for all fields, types, and defaults.
 
 ## Development
 
@@ -87,6 +96,7 @@ data/
 test/                  # Test files (node:test)
 deploy/                # launchd plists and install script
 hooks/                 # Git hooks (reference, not auto-installed)
+docs/                  # User documentation
 ```
 
 ### Architecture
