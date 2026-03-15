@@ -49,14 +49,29 @@ body {
 
 /* ── Header ── */
 .header {
-  text-align: center;
-  padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px;
 }
 .header-logo {
-  width: 96px;
-  height: 96px;
-  display: block;
-  margin: 0 auto 8px;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.header-text {
+  flex: 1;
+  min-width: 0;
+}
+.header-text-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.header-wordmark {
+  height: 24px;
+  object-fit: contain;
 }
 .header-title {
   font-size: 20px;
@@ -65,7 +80,7 @@ body {
   letter-spacing: 1px;
 }
 .header-subtitle {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -100,7 +115,7 @@ body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  padding: 0 16px 12px;
+  padding: 0 16px;
   max-height: 0;
   overflow: hidden;
   transition: max-height 0.3s ease, padding 0.3s ease;
@@ -108,6 +123,7 @@ body {
 .stats-grid.open {
   max-height: 200px;
   padding-top: 4px;
+  padding-bottom: 12px;
 }
 .stat-card {
   background: var(--card-bg);
@@ -260,8 +276,13 @@ body {
 }
 .session-count {
   font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.count-num {
   color: var(--primary);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 15px;
 }
 .toolbar-right {
   display: flex;
@@ -392,30 +413,60 @@ body {
 
 /* ── Project Cards Grid ── */
 .cards-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  padding: 8px 16px 120px;
-}
-@media (min-width: 500px) {
-  .cards-grid { grid-template-columns: repeat(2, 1fr); }
-}
-@media (min-width: 800px) {
-  .cards-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (min-width: 1100px) {
-  .cards-grid { grid-template-columns: repeat(4, 1fr); }
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 16px 120px;
 }
 
-/* ── Project Card ── */
+/* ── Root Panel ── */
+.root-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #060d14;
+  border: 1px solid #1a3a5a;
+  border-radius: var(--radius-btn);
+  margin-bottom: 4px;
+}
+.root-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--root-accent);
+  background: rgba(74, 158, 255, 0.15);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+}
+.root-path {
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.root-count {
+  font-size: 11px;
+  color: var(--root-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Project Card (compact row) ── */
 .project-card {
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
-  border-radius: var(--radius-card);
-  padding: 14px;
+  border-radius: var(--radius-btn);
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background 0.15s;
   position: relative;
+}
+.project-card.compact {
+  padding: 0;
 }
 .project-card:active { border-color: #444; }
 .project-card:focus-visible {
@@ -425,20 +476,19 @@ body {
 .project-card.has-session {
   border-left: 3px solid var(--primary);
 }
-.project-card.root-entry {
-  grid-column: 1 / -1;
-  border-left: 3px solid var(--root-accent);
+.project-card.unregistered {
+  opacity: 0.6;
 }
 
-.card-header {
+.card-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  padding: 6px 12px;
+  min-height: 44px;
 }
 .card-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -446,126 +496,104 @@ body {
   flex: 1;
   min-width: 0;
 }
-.git-badge {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: monospace;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.git-dirty {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--amber);
-}
-
-.card-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.engine-pill, .methodology-pill, .status-pill {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-}
-.engine-pill {
-  background: rgba(139, 195, 74, 0.15);
-  color: var(--primary);
-}
-.engine-pill[data-engine="codex"] {
-  background: rgba(66, 165, 245, 0.15);
-  color: var(--engine-codex);
-}
-.engine-pill[data-engine="aider"] {
-  background: rgba(171, 71, 188, 0.15);
-  color: var(--engine-aider);
-}
-.engine-pill[data-engine="genesis"] {
-  background: rgba(255, 112, 67, 0.15);
-  color: var(--engine-genesis);
-}
-.methodology-pill {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
-}
-.status-pill {
-  font-weight: 500;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-}
-.status-green { background: rgba(139, 195, 74, 0.15); color: var(--primary); }
-.status-blue { background: rgba(74, 158, 255, 0.15); color: var(--root-accent); }
-.status-yellow { background: rgba(255, 167, 38, 0.15); color: var(--amber); }
-.status-red { background: rgba(239, 83, 80, 0.15); color: var(--danger); }
-
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-.card-tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  background: var(--elevated-bg);
+.card-name-muted {
   color: var(--text-muted);
 }
 
-.card-session-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--primary);
-}
-.card-session-dot {
+/* ── Status Dot ── */
+.status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--primary);
+  background: #333;
   flex-shrink: 0;
+}
+.status-dot.active {
+  background: var(--primary);
   animation: breathe-card 2s ease-in-out infinite;
+}
+.status-dot.unregistered {
+  background: transparent;
+  border: 1px solid var(--text-muted);
 }
 @keyframes breathe-card {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
-.card-session-text {
-  font-weight: 500;
-}
-.card-version {
-  font-size: 11px;
-  font-family: 'SF Mono', 'Menlo', monospace;
-  color: var(--text-muted);
-  background: var(--elevated-bg);
-  padding: 1px 6px;
+
+/* ── Compact Badges ── */
+.badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
   border-radius: var(--radius-pill);
+  white-space: nowrap;
   flex-shrink: 0;
 }
-
-.card-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
+.badge-version {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  background: var(--elevated-bg);
+  color: var(--text-muted);
 }
-.card-actions .btn:first-child { flex: 1; font-size: 12px; min-height: 44px; }
-.btn-icon-small {
-  min-width: 44px;
-  max-width: 44px;
+.badge-git {
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.badge-meth {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  font-size: 9px;
+}
+.git-dirty {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+/* ── Card Row Actions ── */
+.card-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.btn-compact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.btn-compact:active { background: var(--elevated-bg); }
+.btn-launch {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.btn-launch:active { background: var(--primary-dark); color: #fff; }
+.btn-attach {
+  border-color: var(--root-accent);
+  color: var(--root-accent);
+}
+.btn-attach:active { background: rgba(74, 158, 255, 0.2); }
+.btn-icon-tiny {
+  min-width: 32px;
+  max-width: 32px;
   padding: 4px;
-  font-size: 14px;
+  font-size: 12px;
 }
 .btn-danger-subtle {
   color: var(--text-muted);
@@ -575,6 +603,65 @@ body {
   color: var(--danger);
   border-color: var(--danger);
 }
+
+/* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
+@media (pointer: coarse) {
+  .btn-compact { min-height: 44px; }
+  .btn-icon-tiny { min-width: 44px; max-width: 44px; min-height: 44px; }
+  .card-row { min-height: 48px; }
+}
+
+/* ── Card Detail Expansion ── */
+.card-detail {
+  padding: 12px 16px;
+  background: var(--elevated-bg);
+  border-top: 1px solid #222;
+}
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.detail-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+.detail-value {
+  color: var(--text);
+  text-align: right;
+}
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+/* Legacy compat — keep old classes that may be referenced */
+.engine-pill, .methodology-pill, .status-pill {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.engine-pill {
+  background: rgba(139, 195, 74, 0.15);
+  color: var(--primary);
+}
+.methodology-pill {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+.status-green { background: rgba(139, 195, 74, 0.15); color: var(--primary); }
+.status-blue { background: rgba(74, 158, 255, 0.15); color: var(--root-accent); }
+.status-yellow { background: rgba(255, 167, 38, 0.15); color: var(--amber); }
+.status-red { background: rgba(239, 83, 80, 0.15); color: var(--danger); }
 
 /* ── Card Peek Panel ── */
 .card-peek {

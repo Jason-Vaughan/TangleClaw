@@ -465,6 +465,12 @@ route('POST', '/api/setup/complete', (_req, res, _params, body) => {
     for (const proj of body.projects) {
       if (!proj || !proj.name || !proj.path) continue;
 
+      // Validate path exists and is a directory before registering
+      if (!fs.existsSync(proj.path) || !fs.statSync(proj.path).isDirectory()) {
+        warnings.push(`Skipped "${proj.name}": path does not exist or is not a directory`);
+        continue;
+      }
+
       // Skip if already registered
       const existing = store.projects.getByName(proj.name);
       if (existing) {
@@ -474,7 +480,7 @@ route('POST', '/api/setup/complete', (_req, res, _params, body) => {
 
       // Register in SQLite
       try {
-        const engineId = config.defaultEngine || 'claude-code';
+        const engineId = config.defaultEngine || 'claude';
         const methodologyId = proj.methodology || config.defaultMethodology || 'minimal';
 
         store.projects.create({
@@ -621,8 +627,39 @@ route('GET', '/api/projects', (req, res) => {
   if (query.methodology) options.methodology = query.methodology;
   if (query.engine) options.engine = query.engine;
 
-  const list = projects.listProjects(options);
+  const list = projects.listAllProjects(options);
   jsonResponse(res, 200, { projects: list });
+});
+
+// POST /api/projects/attach — Attach an existing filesystem directory as a project
+route('POST', '/api/projects/attach', (_req, res, _params, body) => {
+  if (!body || !body.name) {
+    return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
+  }
+
+  const result = projects.attachProject(body.name);
+  if (!result.project) {
+    const firstError = result.errors[0] || 'Attach failed';
+    const code = firstError.includes('already registered') ? 'CONFLICT' : 'BAD_REQUEST';
+    return errorResponse(res, code === 'CONFLICT' ? 409 : 400, firstError, code);
+  }
+
+  const response = {
+    id: result.project.id,
+    name: result.project.name,
+    path: result.project.path,
+    engine: result.project.engine,
+    methodology: result.project.methodology,
+    tags: result.project.tags,
+    registered: true,
+    createdAt: result.project.createdAt
+  };
+
+  if (result.errors.length > 0) {
+    response.warnings = result.errors;
+  }
+
+  jsonResponse(res, 201, response);
 });
 
 // GET /api/projects/:name
@@ -689,7 +726,7 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
     }
 
     const detectedMethodology = methodologies.detect(projPath);
-    const engineId = config.defaultEngine || 'claude-code';
+    const engineId = config.defaultEngine || 'claude';
     const methodologyId = detectedMethodology ? detectedMethodology.id : (config.defaultMethodology || null);
 
     try {

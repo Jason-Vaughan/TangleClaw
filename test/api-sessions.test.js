@@ -85,7 +85,7 @@ describe('api-sessions', () => {
     store.projects.create({
       name: 'api-sess-test',
       path: projDir,
-      engine: 'claude-code',
+      engine: 'claude',
       methodology: 'minimal'
     });
 
@@ -133,7 +133,7 @@ describe('api-sessions', () => {
       for (let i = 0; i < 3; i++) {
         const s = store.sessions.start({
           projectId: project.id,
-          engineId: 'claude-code',
+          engineId: 'claude',
           tmuxSession: `hist-${i}`
         });
         store.sessions.wrap(s.id, `Wrap ${i}`);

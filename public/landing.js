@@ -14,7 +14,7 @@ const state = {
   activeTag: null,
   allTags: [],
   connected: true,
-  statsOpen: false,
+  statsOpen: true,
   ports: [],
   portsOpen: false
 };
@@ -103,7 +103,7 @@ async function loadStats() {
   setStatValue('statCpu', `${Math.round(cpuPct)}%`, cpuPct, 'statCpuBar');
   setStatValue('statMem', `${Math.round(memPct)}%`, memPct, 'statMemBar');
   setStatValue('statDisk', `${Math.round(diskPct)}%`, diskPct, 'statDiskBar');
-  document.getElementById('statUptime').textContent = formatUptime(data.uptime);
+  document.getElementById('statUptime').textContent = data.uptimeFormatted || formatUptime(data.uptime);
 }
 
 function setStatValue(valueId, text, pct, barId) {
@@ -199,8 +199,9 @@ function toggleTag(tag) {
 
 // ── Project Actions ──
 
-function navigateToSession(name) {
-  window.location.href = `/session/${encodeURIComponent(name)}`;
+function navigateToSession(name, opts) {
+  const suffix = opts && opts.launched ? '?launched=1' : '';
+  window.location.href = `/session/${encodeURIComponent(name)}${suffix}`;
 }
 
 async function launchProject(name) {
@@ -209,7 +210,7 @@ async function launchProject(name) {
     return navigateToSession(name);
   }
   const data = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
-  if (data) navigateToSession(name);
+  if (data) navigateToSession(name, { launched: true });
 }
 
 function wrapProject(name) {

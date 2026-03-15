@@ -26,7 +26,7 @@ describe('store.projects', () => {
       const project = store.projects.create({
         name: 'test-project',
         path: '/tmp/test-project',
-        engine: 'claude-code',
+        engine: 'claude',
         methodology: 'minimal',
         tags: ['node'],
         ports: { dev: 8080 }
@@ -35,7 +35,7 @@ describe('store.projects', () => {
       assert.ok(project.id);
       assert.equal(project.name, 'test-project');
       assert.equal(project.path, '/tmp/test-project');
-      assert.equal(project.engineId, 'claude-code');
+      assert.equal(project.engineId, 'claude');
       assert.equal(project.methodology, 'minimal');
       assert.deepEqual(project.tags, ['node']);
       assert.deepEqual(project.ports, { dev: 8080 });
@@ -72,7 +72,7 @@ describe('store.projects', () => {
         name: 'defaults-test',
         path: '/tmp/defaults-test'
       });
-      assert.equal(project.engineId, 'claude-code');
+      assert.equal(project.engineId, 'claude');
       assert.equal(project.methodology, 'minimal');
     });
   });
@@ -116,9 +116,9 @@ describe('store.projects', () => {
     });
 
     it('filters by engine', () => {
-      const list = store.projects.list({ engine: 'claude-code' });
+      const list = store.projects.list({ engine: 'claude' });
       for (const p of list) {
-        assert.equal(p.engineId, 'claude-code');
+        assert.equal(p.engineId, 'claude');
       }
     });
 
@@ -220,7 +220,7 @@ describe('store.activity', () => {
       projectId: 1,
       sessionId: null,
       eventType: 'session.started',
-      detail: { engine: 'claude-code' }
+      detail: { engine: 'claude' }
     });
 
     const entries = store.activity.query({ eventType: 'session.started' });

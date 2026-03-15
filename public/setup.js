@@ -35,7 +35,7 @@ function checkSetupWizard() {
  */
 function showWizard() {
   wizard.projectsDir = state.config ? state.config.projectsDir || '~/Documents/Projects' : '~/Documents/Projects';
-  wizard.defaultEngine = state.config ? state.config.defaultEngine || 'claude-code' : 'claude-code';
+  wizard.defaultEngine = state.config ? state.config.defaultEngine || 'claude' : 'claude';
   wizard.defaultMethodology = state.config ? state.config.defaultMethodology || 'minimal' : 'minimal';
   wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.engines = state.engines || [];

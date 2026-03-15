@@ -42,7 +42,7 @@ describe('store', () => {
 
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       assert.equal(config.serverPort, 3101);
-      assert.equal(config.defaultEngine, 'claude-code');
+      assert.equal(config.defaultEngine, 'claude');
     });
 
     it('should not overwrite existing config.json', () => {
@@ -84,7 +84,7 @@ describe('store', () => {
       store.init();
 
       const engines = fs.readdirSync(path.join(tmpDir, 'engines'));
-      assert.ok(engines.includes('claude-code.json'), 'Should have claude-code profile');
+      assert.ok(engines.includes('claude.json'), 'Should have claude profile');
       assert.ok(engines.includes('codex.json'), 'Should have codex profile');
       assert.ok(engines.includes('aider.json'), 'Should have aider profile');
       assert.ok(engines.includes('genesis.json'), 'Should have genesis profile');
@@ -133,7 +133,7 @@ describe('store', () => {
       it('should return config merged with defaults', () => {
         const config = store.config.load();
         assert.equal(config.serverPort, 3101);
-        assert.equal(config.defaultEngine, 'claude-code');
+        assert.equal(config.defaultEngine, 'claude');
         assert.equal(config.theme, 'dark');
       });
 
@@ -194,16 +194,16 @@ describe('store', () => {
         const engines = store.engines.list();
         assert.ok(engines.length >= 4, 'Should have at least 4 engine profiles');
         const ids = engines.map((e) => e.id);
-        assert.ok(ids.includes('claude-code'));
+        assert.ok(ids.includes('claude'));
         assert.ok(ids.includes('codex'));
       });
     });
 
     describe('get', () => {
       it('should return engine by id', () => {
-        const engine = store.engines.get('claude-code');
+        const engine = store.engines.get('claude');
         assert.ok(engine);
-        assert.equal(engine.id, 'claude-code');
+        assert.equal(engine.id, 'claude');
         assert.equal(engine.name, 'Claude Code');
       });
 

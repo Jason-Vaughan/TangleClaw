@@ -116,14 +116,27 @@ The project is created in your configured `projectsDir` (default: `~/Documents/P
 
 Tap the delete button on a project card. If a `deletePassword` is configured, you'll need to enter it. Deletion releases registered ports and removes the project from TangleClaw's database. The project directory itself is preserved on disk.
 
+### Attaching Existing Projects
+
+TangleClaw shows ALL directories in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
+
+Tap **Attach** to register a directory as a TangleClaw project. This:
+- Reads any existing `.tangleclaw/project.json` for engine and methodology settings
+- Detects methodology from directory markers (`.prawduct/`, `.tilt/`)
+- Registers the project in the database
+- Creates a `.tangleclaw/project.json` if one doesn't exist
+
+You can also attach projects in bulk during the first-run setup wizard, or via the API: `POST /api/projects/attach { "name": "project-dir-name" }`.
+
 ### Auto-Detection of Existing Projects
 
-TangleClaw automatically detects existing projects in your `projectsDir` that have:
+During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:
 
 - A `.tangleclaw/project.json` file
 - A methodology marker directory (`.prawduct/`, `.tilt/`)
+- A git repository
 
-These appear on the landing page without manual setup.
+These are offered for batch attachment during setup.
 
 ## Sessions
 

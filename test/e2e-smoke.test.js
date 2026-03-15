@@ -98,7 +98,7 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     // Create
     const createRes = await request('/api/projects', {
       method: 'POST',
-      body: { name: 'e2e-lifecycle', engine: 'claude-code', methodology: 'minimal', tags: ['smoke'] }
+      body: { name: 'e2e-lifecycle', engine: 'claude', methodology: 'minimal', tags: ['smoke'] }
     });
     assert.equal(createRes.status, 201);
     assert.equal(createRes.data.name, 'e2e-lifecycle');
@@ -131,7 +131,7 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     const res = await request('/api/engines');
     assert.equal(res.status, 200);
     assert.ok(res.data.engines.length > 0);
-    assert.ok(res.data.engines.some(e => e.id === 'claude-code'));
+    assert.ok(res.data.engines.some(e => e.id === 'claude'));
   });
 
   it('methodology list is non-empty and methodologies have expected fields', async () => {
@@ -147,5 +147,23 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     assert.ok(res.data.cpu.cores > 0);
     assert.ok(res.data.memory.total > 0);
     assert.ok(res.data.uptime >= 0);
+    assert.ok(typeof res.data.uptimeFormatted === 'string');
+  });
+
+  it('session status for freshly created project returns inactive', async () => {
+    // Create a project
+    await request('/api/projects', {
+      method: 'POST',
+      body: { name: 'e2e-status-test', engine: 'claude' }
+    });
+
+    // Immediately check status — should be inactive, not error
+    const statusRes = await request('/api/sessions/e2e-status-test/status');
+    assert.equal(statusRes.status, 200);
+    assert.equal(statusRes.data.active, false);
+    assert.equal(statusRes.data.project, 'e2e-status-test');
+
+    // Cleanup
+    await request('/api/projects/e2e-status-test', { method: 'DELETE', body: { deleteFiles: true } });
   });
 });

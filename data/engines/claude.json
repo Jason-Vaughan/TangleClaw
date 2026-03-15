@@ -1,5 +1,5 @@
 {
-  "id": "claude-code",
+  "id": "claude",
   "name": "Claude Code",
   "command": "claude",
   "interactionModel": "session",

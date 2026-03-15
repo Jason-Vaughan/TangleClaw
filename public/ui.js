@@ -24,41 +24,139 @@ function renderProjects() {
     return;
   }
 
-  grid.innerHTML = filtered.map(renderCard).join('');
+  // Root directory panel
+  const rootHtml = renderRootPanel();
+  grid.innerHTML = rootHtml + filtered.map(renderCard).join('');
+}
+
+function renderRootPanel() {
+  if (!state.config || !state.config.projectsDir) return '';
+  const totalCount = state.projects.length;
+  const registered = state.projects.filter(p => p.registered !== false).length;
+  return `<div class="root-panel">
+    <span class="root-label">ROOT</span>
+    <span class="root-path">${esc(state.config.projectsDir)}</span>
+    <span class="root-count">${registered} registered / ${totalCount} total</span>
+  </div>`;
 }
 
 function renderCard(project) {
+  // Unregistered project — show muted style with Attach button
+  if (project.registered === false) {
+    return renderUnregisteredCard(project);
+  }
+
   const hasSession = project.session && project.session.active;
   const sessionClass = hasSession ? ' has-session' : '';
+  const n = esc(project.name);
+
+  const versionBadge = project.git && project.git.latestTag
+    ? `<span class="badge badge-version">${esc(project.git.latestTag)}</span>`
+    : '';
 
   const gitBadge = project.git
-    ? `<span class="git-badge">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty" title="Uncommitted changes"></span>' : ''}</span>`
+    ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
     : '';
 
-  const version = project.version
-    ? `<span class="card-version">${esc(project.version)}</span>`
+  const methBadge = project.methodology
+    ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
     : '';
 
-  const sessionIndicator = hasSession
-    ? `<div class="card-session-row"><span class="card-session-dot"></span><span class="card-session-text">${esc(project.session.status || 'running')}${project.session.uptime ? ' \u2022 ' + esc(project.session.uptime) : ''}</span></div>`
-    : '';
+  const statusDot = hasSession
+    ? `<span class="status-dot active" title="Session active"></span>`
+    : `<span class="status-dot" title="No active session"></span>`;
 
-  return `<article class="project-card${sessionClass}" tabindex="0" role="link"
-    onclick="navigateToSession('${esc(project.name)}')"
-    onkeydown="if(event.key==='Enter')navigateToSession('${esc(project.name)}')">
-    <div class="card-header">
-      <span class="card-name" title="${esc(project.name)}">${esc(project.name)}</span>
+  return `<article class="project-card compact${sessionClass}" tabindex="0"
+    onclick="toggleCardDetail('${n}')" onkeydown="if(event.key==='Enter')toggleCardDetail('${n}')">
+    <div class="card-row">
+      ${statusDot}
+      <span class="card-name" title="${n}">${n}</span>
+      ${versionBadge}
       ${gitBadge}
-      ${version}
-    </div>
-    ${sessionIndicator}
-    <div class="card-actions">
-      <button class="btn btn-primary btn-small" onclick="event.stopPropagation(); launchProject('${esc(project.name)}')">${hasSession ? 'Open' : 'Launch'}</button>
-      ${hasSession ? `<button class="btn btn-small btn-icon-small" onclick="event.stopPropagation(); openPeekFromCard('${esc(project.name)}')" aria-label="Peek" title="Peek">&#128065;</button>` : ''}
-      <button class="btn btn-small btn-icon-small" onclick="event.stopPropagation(); openSettings('${esc(project.name)}')" aria-label="Settings" title="Settings">&#9881;</button>
-      <button class="btn btn-small btn-icon-small btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${esc(project.name)}')" aria-label="Delete" title="Delete">&times;</button>
+      ${methBadge}
+      <span class="card-row-actions">
+        <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
+        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
+        <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings('${n}')" title="Info">i</button>
+        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete">&times;</button>
+      </span>
     </div>
   </article>`;
+}
+
+function renderUnregisteredCard(project) {
+  const n = esc(project.name);
+  const gitBadge = project.git
+    ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
+    : '';
+
+  const methBadge = project.methodology
+    ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
+    : '';
+
+  return `<article class="project-card compact unregistered" tabindex="0">
+    <div class="card-row">
+      <span class="status-dot unregistered"></span>
+      <span class="card-name card-name-muted" title="${n}">${n}</span>
+      ${gitBadge}
+      ${methBadge}
+      <span class="card-row-actions">
+        <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject('${n}')">Attach</button>
+      </span>
+    </div>
+  </article>`;
+}
+
+function toggleCardDetail(name) {
+  const cards = document.querySelectorAll('.project-card');
+  for (const card of cards) {
+    const nameEl = card.querySelector('.card-name');
+    if (!nameEl || nameEl.textContent !== name) continue;
+
+    const existing = card.querySelector('.card-detail');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+
+    // Close other open details
+    document.querySelectorAll('.card-detail').forEach(el => el.remove());
+
+    const project = state.projects.find(p => p.name === name);
+    if (!project) return;
+
+    const detail = document.createElement('div');
+    detail.className = 'card-detail';
+
+    const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
+    const methInfo = project.methodology ? `${esc(project.methodology.name)}${project.methodology.phase ? ' — ' + esc(project.methodology.phase) : ''}` : 'No methodology';
+    const sessionInfo = project.session && project.session.active
+      ? `Active since ${esc(project.session.startedAt || '')}`
+      : 'No active session';
+    const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
+    const gitInfo = project.git ? `${esc(project.git.branch)}${project.git.dirty ? ' (dirty)' : ''}` : 'Not a git repo';
+
+    detail.innerHTML = `
+      <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
+      <div class="detail-row"><span class="detail-label">Methodology</span><span class="detail-value">${methInfo}</span></div>
+      <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
+      <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
+      <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
+      <div class="detail-actions">
+        <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${esc(name)}')">Settings</button>
+        <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${esc(name)}')">Delete</button>
+      </div>`;
+
+    card.appendChild(detail);
+    return;
+  }
+}
+
+async function attachProject(name) {
+  const data = await apiMutate('/api/projects/attach', 'POST', { name });
+  if (data) {
+    await loadProjects();
+  }
 }
 
 async function openPeekFromCard(name) {
@@ -104,7 +202,8 @@ async function openPeekFromCard(name) {
 
 function renderSessionCount() {
   const active = state.projects.filter(p => p.session && p.session.active).length;
-  document.getElementById('sessionCount').textContent = `${active} active`;
+  const el = document.getElementById('sessionCount');
+  el.innerHTML = `<span class="count-num">${active}</span> active session${active !== 1 ? 's' : ''}`;
 }
 
 function renderTagRow() {
@@ -482,9 +581,17 @@ async function submitCreate() {
     return;
   }
 
+  // Show warnings from methodology init or other partial failures
+  if (result.warnings && result.warnings.length > 0) {
+    const toast = document.getElementById('toast');
+    toast.textContent = `Warning: ${result.warnings.join('; ')}`;
+    toast.className = 'toast toast-warn visible';
+    setTimeout(() => { toast.classList.remove('visible'); }, 8000);
+  }
+
   closeCreateDrawer();
   await loadProjects();
-  navigateToSession(createData.name);
+  navigateToSession(createData.name, { launched: false });
 }
 
 // ── Import Banner ──
