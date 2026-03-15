@@ -221,9 +221,14 @@ body {
   color: var(--primary);
   min-width: 48px;
 }
+.port-project {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
 .port-service {
   flex: 1;
-  color: var(--text);
+  color: var(--text-muted);
 }
 .port-type {
   font-size: 10px;
@@ -517,12 +522,96 @@ body {
   color: var(--text-muted);
 }
 
+.card-session-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--primary);
+}
+.card-session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  flex-shrink: 0;
+  animation: breathe-card 2s ease-in-out infinite;
+}
+@keyframes breathe-card {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.card-session-text {
+  font-weight: 500;
+}
+.card-version {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--text-muted);
+  background: var(--elevated-bg);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
 .card-actions {
   display: flex;
   gap: 6px;
   margin-top: 8px;
 }
-.card-actions .btn { flex: 1; font-size: 12px; min-height: 44px; }
+.card-actions .btn:first-child { flex: 1; font-size: 12px; min-height: 44px; }
+.btn-icon-small {
+  min-width: 44px;
+  max-width: 44px;
+  padding: 4px;
+  font-size: 14px;
+}
+.btn-danger-subtle {
+  color: var(--text-muted);
+  border-color: var(--elevated-bg);
+}
+.btn-danger-subtle:active {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── Card Peek Panel ── */
+.card-peek {
+  margin-top: 8px;
+  border-top: 1px solid var(--elevated-bg);
+  padding-top: 8px;
+}
+.card-peek-content {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #ccc;
+  background: #000;
+  border-radius: var(--radius-btn);
+  padding: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Import Banner ── */
+.import-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(139, 195, 74, 0.1);
+  border-bottom: 1px solid var(--primary-dark);
+  font-size: 13px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.import-banner span:first-child {
+  flex: 1;
+  min-width: 0;
+}
 
 /* ── Empty State ── */
 .empty-state {
@@ -694,6 +783,56 @@ body {
   margin-top: 4px;
 }
 .form-input.invalid { border-color: var(--danger); }
+
+/* ── Methodology Picker ── */
+.meth-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.meth-pill {
+  padding: 8px 16px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--elevated-bg);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.meth-pill:active { background: var(--elevated-bg); }
+.meth-pill.selected {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(139, 195, 74, 0.08);
+}
+.meth-detail {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--elevated-bg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.meth-detail-name {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.meth-detail-desc {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.meth-detail-phases {
+  margin-top: 6px;
+  color: var(--primary);
+  font-size: 12px;
+}
 
 /* ── Template/Step Cards in Drawer ── */
 .template-option {

@@ -60,7 +60,11 @@ The landing page is your dashboard for managing projects and launching sessions.
 
 ### Header
 
-The header shows the TangleClaw logo, version, and a collapsible system stats panel (CPU, Memory, Disk, Uptime). Tap the stats area to expand or collapse it.
+The header shows the TangleClaw logo (served from `public/logo.png`, with app icons in `public/icons/`), version, and a collapsible system stats panel (CPU, Memory, Disk, Uptime). Tap the stats area to expand or collapse it.
+
+### PortHub Lease Import Banner
+
+If TangleClaw detects an existing PortHub installation with active leases that haven't been imported yet, a banner appears at the top of the landing page offering to import those leases into TangleClaw's built-in port registry. This is a one-time migration convenience — once imported, TangleClaw manages ports directly.
 
 ### Ports Panel
 
@@ -80,15 +84,18 @@ TangleClaw manages port assignments directly in its SQLite database. Leases surv
 
 ### Project Cards
 
-Each project is displayed as a card showing:
+Projects are displayed as compact cards. Each card shows:
 
 - **Name** — the project directory name
+- **Version badge** — the project's current version (if available), shown as a subtle badge
 - **Engine badge** — which AI engine is selected (e.g., "Claude Code")
 - **Methodology badge** — which methodology template is active (e.g., "Prawduct")
 - **Status badge** — current methodology status (color-coded by phase)
 - **Git info** — branch, dirty state, last commit age
-- **Session indicator** — whether a session is currently active
-- **Action buttons** — Launch, Settings, Delete
+- **Session indicator** — a green breathing dot when a session is active
+- **Peek icon** — an eye icon to quickly peek at session output without entering the session wrapper
+- **Delete button** — a subtle "x" on the card (password required if configured)
+- **Launch** — tap the card or launch button to enter the session
 
 ### Searching and Filtering
 
@@ -161,6 +168,14 @@ Below the terminal, the command bar lets you inject commands without touching th
 #### Peek
 
 Tap **Peek** to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update.
+
+#### Select
+
+Tap **Select** to temporarily enable text selection in the terminal. This toggles tmux mouse mode off so you can select and copy text from the terminal output using normal touch/click-drag gestures. After 30 seconds, mouse mode automatically reverts to its previous state, so you don't have to remember to switch it back.
+
+#### Upload
+
+Tap **Upload** to send a file into the project directory. A file picker opens where you can choose any file (up to 15 MB). For image files, a preview is shown before confirming. The file is base64-encoded and sent via `POST /api/upload`. On success, the upload path is displayed so you can reference it when talking to the AI assistant (e.g., "look at `uploads/screenshot.png`"). Uploaded files are stored in the project's working directory under a managed location.
 
 #### Chime System
 

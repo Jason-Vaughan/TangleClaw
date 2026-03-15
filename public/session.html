@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/session.css">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo-icon.png">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 </head>
 <body>
 
@@ -21,12 +21,7 @@
   <header class="banner" id="banner">
     <div class="banner-row">
       <a href="/" class="banner-back" aria-label="Back to projects">&larr;</a>
-      <svg class="banner-logo" viewBox="0 0 96 96" aria-hidden="true">
-        <circle cx="48" cy="48" r="44" fill="none" stroke="#8BC34A" stroke-width="2"/>
-        <path d="M30 60 Q38 28 48 36 Q58 44 52 56 Q46 68 58 62 Q70 56 66 44 Q62 32 48 28"
-              fill="none" stroke="#8BC34A" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="42" cy="34" r="2.5" fill="#8BC34A"/>
-      </svg>
+      <img class="banner-logo" src="/icons/icon-192.png" alt="" width="28" height="28">
       <span class="banner-sep" aria-hidden="true">|</span>
       <span class="banner-name" id="bannerName">--</span>
       <span class="banner-version" id="bannerVersion"></span>
@@ -34,6 +29,8 @@
       <span class="banner-engine" id="bannerEngine"></span>
     </div>
     <div class="banner-actions">
+      <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
+      <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
       <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
               aria-expanded="false" aria-controls="commandBar">Cmd</button>
       <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
@@ -129,6 +126,31 @@
       </div>
       <div class="modal-actions">
         <button class="btn" id="settingsCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload Modal -->
+  <div class="modal-backdrop" id="uploadModal">
+    <div class="modal-content upload-content" role="dialog" aria-label="Upload file" aria-modal="true">
+      <h3 class="modal-title">Upload File</h3>
+      <div class="form-group">
+        <label class="form-label" for="uploadFile">Choose file</label>
+        <input type="file" class="upload-file-input" id="uploadFile"
+               accept=".png,.jpg,.jpeg,.gif,.pdf,.md,.txt,.json,.yaml,.yml">
+      </div>
+      <div class="upload-preview hidden" id="uploadPreview">
+        <img id="uploadPreviewImg" class="upload-preview-img" alt="Preview">
+      </div>
+      <div class="upload-result hidden" id="uploadResult">
+        <div class="upload-result-label">Tell your AI assistant:</div>
+        <code class="upload-result-path" id="uploadResultPath"></code>
+      </div>
+      <div class="upload-history" id="uploadHistory"></div>
+      <div id="uploadError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="uploadCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="uploadSubmitBtn" disabled>Upload</button>
       </div>
     </div>
   </div>

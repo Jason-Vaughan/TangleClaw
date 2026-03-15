@@ -35,20 +35,12 @@ function renderCard(project) {
     ? `<span class="git-badge">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty" title="Uncommitted changes"></span>' : ''}</span>`
     : '';
 
-  const engineId = project.engine ? project.engine.id : '';
-  const engineName = project.engine ? project.engine.name : '';
-  const methName = project.methodology ? project.methodology.name : '';
-
-  const statusBadge = project.status
-    ? `<span class="status-pill status-${esc(project.status.color || 'green')}">${esc(project.status.badge || '')}</span>`
+  const version = project.version
+    ? `<span class="card-version">${esc(project.version)}</span>`
     : '';
 
-  const tagsHtml = (project.tags || []).map(t =>
-    `<span class="card-tag">${esc(t)}</span>`
-  ).join('');
-
-  const wrapBtn = hasSession
-    ? `<button class="btn btn-small" onclick="event.stopPropagation(); wrapProject('${esc(project.name)}')">Wrap</button>`
+  const sessionIndicator = hasSession
+    ? `<div class="card-session-row"><span class="card-session-dot"></span><span class="card-session-text">${esc(project.session.status || 'running')}${project.session.uptime ? ' \u2022 ' + esc(project.session.uptime) : ''}</span></div>`
     : '';
 
   return `<article class="project-card${sessionClass}" tabindex="0" role="link"
@@ -57,20 +49,57 @@ function renderCard(project) {
     <div class="card-header">
       <span class="card-name" title="${esc(project.name)}">${esc(project.name)}</span>
       ${gitBadge}
+      ${version}
     </div>
-    <div class="card-pills">
-      ${engineName ? `<span class="engine-pill" data-engine="${esc(engineId)}">${esc(engineName)}</span>` : ''}
-      ${methName ? `<span class="methodology-pill">${esc(methName)}</span>` : ''}
-      ${statusBadge}
-    </div>
-    ${tagsHtml ? `<div class="card-tags">${tagsHtml}</div>` : ''}
+    ${sessionIndicator}
     <div class="card-actions">
       <button class="btn btn-primary btn-small" onclick="event.stopPropagation(); launchProject('${esc(project.name)}')">${hasSession ? 'Open' : 'Launch'}</button>
-      ${wrapBtn}
-      <button class="btn btn-small btn-icon" onclick="event.stopPropagation(); openSettings('${esc(project.name)}')" aria-label="Settings">&#9881;</button>
-      <button class="btn btn-small btn-icon btn-danger" onclick="event.stopPropagation(); openDelete('${esc(project.name)}')" aria-label="Delete">&#128465;</button>
+      ${hasSession ? `<button class="btn btn-small btn-icon-small" onclick="event.stopPropagation(); openPeekFromCard('${esc(project.name)}')" aria-label="Peek" title="Peek">&#128065;</button>` : ''}
+      <button class="btn btn-small btn-icon-small" onclick="event.stopPropagation(); openSettings('${esc(project.name)}')" aria-label="Settings" title="Settings">&#9881;</button>
+      <button class="btn btn-small btn-icon-small btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${esc(project.name)}')" aria-label="Delete" title="Delete">&times;</button>
     </div>
   </article>`;
+}
+
+async function openPeekFromCard(name) {
+  const project = state.projects.find(p => p.name === name);
+  if (!project || !project.session || !project.session.active) return;
+
+  // Toggle existing peek panel
+  const existingPeek = document.querySelector(`.card-peek[data-project="${CSS.escape(name)}"]`);
+  if (existingPeek) {
+    existingPeek.remove();
+    return;
+  }
+
+  // Close any other open peeks
+  document.querySelectorAll('.card-peek').forEach(el => el.remove());
+
+  // Find the card and insert peek panel after the actions
+  const cards = document.querySelectorAll('.project-card');
+  let targetCard = null;
+  for (const card of cards) {
+    if (card.querySelector('.card-name') && card.querySelector('.card-name').textContent === name) {
+      targetCard = card;
+      break;
+    }
+  }
+  if (!targetCard) return;
+
+  const peekEl = document.createElement('div');
+  peekEl.className = 'card-peek';
+  peekEl.setAttribute('data-project', name);
+  peekEl.innerHTML = '<pre class="card-peek-content">Loading\u2026</pre>';
+  targetCard.appendChild(peekEl);
+
+  const data = await api(`/api/sessions/${encodeURIComponent(name)}/peek?lines=15`);
+  const contentEl = peekEl.querySelector('.card-peek-content');
+  if (data && data.lines) {
+    contentEl.textContent = data.lines.join('\n');
+    contentEl.scrollTop = contentEl.scrollHeight;
+  } else {
+    contentEl.textContent = 'No output available';
+  }
 }
 
 function renderSessionCount() {
@@ -141,6 +170,7 @@ function renderPorts() {
       const typeLabel = lease.permanent ? 'permanent' : 'TTL';
       html += `<div class="port-lease">
         <span class="port-number">${lease.port}</span>
+        <span class="port-project">${esc(project)}</span>
         <span class="port-service">${esc(lease.service)}</span>
         <span class="port-type ${typeClass}">${typeLabel}</span>
       </div>`;
@@ -179,9 +209,12 @@ function openDelete(name) {
   deleteTarget = name;
   const modal = document.getElementById('deleteModal');
   document.getElementById('deleteText').innerHTML =
-    `Are you sure you want to delete <strong>${esc(name)}</strong>? This will unregister it from TangleClaw.`;
+    `Permanently delete <strong style="color:var(--danger)">${esc(name)}</strong>?`;
   document.getElementById('deleteError').classList.add('hidden');
   document.getElementById('deletePassword').value = '';
+  document.getElementById('deleteConfirmInput').value = '';
+  document.getElementById('deleteConfirmInput').placeholder = name;
+  document.getElementById('deleteConfirmBtn').disabled = true;
 
   const pwGroup = document.getElementById('deletePasswordGroup');
   if (state.config && state.config.deleteProtected) {
@@ -190,6 +223,12 @@ function openDelete(name) {
     pwGroup.classList.add('hidden');
   }
   modal.classList.add('open');
+  setTimeout(() => document.getElementById('deleteConfirmInput').focus(), 100);
+}
+
+function onDeleteConfirmInput() {
+  const val = document.getElementById('deleteConfirmInput').value.trim();
+  document.getElementById('deleteConfirmBtn').disabled = val !== deleteTarget;
 }
 
 function closeDelete() {
@@ -199,6 +238,9 @@ function closeDelete() {
 
 async function confirmDelete() {
   if (!deleteTarget) return;
+  const confirmVal = document.getElementById('deleteConfirmInput').value.trim();
+  if (confirmVal !== deleteTarget) return;
+
   const pw = document.getElementById('deletePassword').value;
   const body = { deleteFiles: false };
   if (pw) body.password = pw;
@@ -228,9 +270,11 @@ function openSettings(name) {
     `<option value="${esc(e.id)}" ${e.id === (project.engine ? project.engine.id : '') ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
   ).join('');
 
-  const methOpts = state.methodologies.map(m =>
-    `<option value="${esc(m.id)}" ${m.id === (project.methodology ? project.methodology.id : '') ? 'selected' : ''}>${esc(m.name)}</option>`
-  ).join('');
+  const currentMeth = project.methodology ? project.methodology.id : 'none';
+  const methOpts = `<option value="none" ${currentMeth === 'none' ? 'selected' : ''}>None</option>` +
+    state.methodologies.map(m =>
+      `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}</option>`
+    ).join('');
 
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
@@ -259,9 +303,10 @@ function closeSettings() {
 
 async function saveSettings() {
   if (!settingsTarget) return;
+  const methVal = document.getElementById('settingsMethodology').value;
   const body = {
     engine: document.getElementById('settingsEngine').value,
-    methodology: document.getElementById('settingsMethodology').value,
+    methodology: methVal === 'none' ? null : methVal,
     tags: document.getElementById('settingsTags').value.split(',').map(t => t.trim()).filter(Boolean)
   };
 
@@ -280,7 +325,7 @@ function openCreateDrawer() {
   createData = {
     name: '',
     engine: state.config ? state.config.defaultEngine || '' : '',
-    methodology: state.config ? state.config.defaultMethodology || '' : '',
+    methodology: state.config ? state.config.defaultMethodology || 'none' : 'none',
     tags: ''
   };
   renderCreateStep();
@@ -318,17 +363,30 @@ function renderCreateStep() {
     const engineOpts = state.engines.map(e =>
       `<option value="${esc(e.id)}" ${e.id === createData.engine ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
     ).join('');
-    const methOpts = state.methodologies.map(m =>
-      `<option value="${esc(m.id)}" ${m.id === createData.methodology ? 'selected' : ''}>${esc(m.name)} — ${esc(m.description || '')}</option>`
-    ).join('');
+    const methPills = state.methodologies.map(m => {
+      const sel = m.id === createData.methodology ? ' selected' : '';
+      return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}</div>`;
+    }).join('');
+    const selMeth = createData.methodology && createData.methodology !== 'none'
+      ? state.methodologies.find(m => m.id === createData.methodology) : null;
+    const detailHtml = selMeth
+      ? `<div class="meth-detail">
+           <div class="meth-detail-name">${esc(selMeth.name)}</div>
+           <div class="meth-detail-desc">${esc(selMeth.description || '')}</div>
+           ${selMeth.phases && selMeth.phases.length ? `<div class="meth-detail-phases">Phases: ${selMeth.phases.map(p => esc(typeof p === 'string' ? p : p.id || p.name)).join(' → ')}</div>` : ''}
+         </div>` : '';
     body.innerHTML = `
       <div class="form-group">
         <label class="form-label" for="createEngine">Engine</label>
         <select class="form-select" id="createEngine">${engineOpts}</select>
       </div>
       <div class="form-group">
-        <label class="form-label" for="createMethodology">Methodology</label>
-        <select class="form-select" id="createMethodology">${methOpts}</select>
+        <label class="form-label">Methodology <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
+        <div class="meth-picker">
+          <div class="meth-pill${!createData.methodology || createData.methodology === 'none' ? ' selected' : ''}" data-id="none" onclick="selectMethodology('none')">None</div>
+          ${methPills}
+        </div>
+        <div id="methDetail">${detailHtml}</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn" style="flex:1" onclick="createBack()">Back</button>
@@ -345,7 +403,7 @@ function renderCreateStep() {
       <div class="form-group">
         <div style="padding:12px;background:var(--elevated-bg);border-radius:6px;font-size:13px">
           <div><strong>${esc(createData.name)}</strong></div>
-          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)} &middot; Methodology: ${esc(createData.methodology)}</div>
+          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)}${createData.methodology && createData.methodology !== 'none' ? ` &middot; Methodology: ${esc(createData.methodology)}` : ''}</div>
         </div>
       </div>
       <div id="createError" class="form-error hidden" role="alert"></div>
@@ -353,6 +411,27 @@ function renderCreateStep() {
         <button class="btn" style="flex:1" onclick="createBack()">Back</button>
         <button class="btn btn-primary" style="flex:1" id="createSubmitBtn" onclick="submitCreate()">Create</button>
       </div>`;
+  }
+}
+
+function selectMethodology(id) {
+  createData.methodology = id;
+  // Re-render just the picker state without full step re-render
+  document.querySelectorAll('.meth-pill').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === id);
+  });
+  const detailEl = document.getElementById('methDetail');
+  if (id && id !== 'none') {
+    const m = state.methodologies.find(x => x.id === id);
+    if (m) {
+      detailEl.innerHTML = `<div class="meth-detail">
+        <div class="meth-detail-name">${esc(m.name)}</div>
+        <div class="meth-detail-desc">${esc(m.description || '')}</div>
+        ${m.phases && m.phases.length ? `<div class="meth-detail-phases">Phases: ${m.phases.map(p => esc(typeof p === 'string' ? p : p.id || p.name)).join(' → ')}</div>` : ''}
+      </div>`;
+    }
+  } else {
+    detailEl.innerHTML = '';
   }
 }
 
@@ -368,7 +447,7 @@ function createNext() {
     createData.name = name;
   } else if (createStep === 1) {
     createData.engine = document.getElementById('createEngine').value;
-    createData.methodology = document.getElementById('createMethodology').value;
+    // methodology already set via selectMethodology()
   }
   createStep++;
   renderCreateStep();
@@ -390,7 +469,7 @@ async function submitCreate() {
   const result = await apiMutate('/api/projects', 'POST', {
     name: createData.name,
     engine: createData.engine,
-    methodology: createData.methodology,
+    methodology: createData.methodology === 'none' ? null : createData.methodology,
     tags
   });
 
@@ -406,6 +485,43 @@ async function submitCreate() {
   closeCreateDrawer();
   await loadProjects();
   navigateToSession(createData.name);
+}
+
+// ── Import Banner ──
+
+function renderImportBanner(importable) {
+  if (sessionStorage.getItem('importBannerDismissed')) return;
+  // Don't render duplicate banners
+  if (document.getElementById('importBanner')) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'importBanner';
+  banner.className = 'import-banner';
+  banner.innerHTML = `<span>${importable.length} project${importable.length > 1 ? 's' : ''} found in port leases not registered in TangleClaw.</span>
+    <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify(importable)))})">Import All</button>
+    <button class="btn btn-small" onclick="dismissImportBanner()">&times;</button>`;
+
+  const toolbar = document.querySelector('.toolbar');
+  if (toolbar) {
+    toolbar.parentNode.insertBefore(banner, toolbar);
+  }
+}
+
+function dismissImportBanner() {
+  sessionStorage.setItem('importBannerDismissed', 'true');
+  const el = document.getElementById('importBanner');
+  if (el) el.remove();
+}
+
+async function importLeaseProjects(namesJson) {
+  const names = JSON.parse(namesJson);
+  const result = await apiMutate('/api/projects/import', 'POST', { names });
+  if (result && result.warnings && result.warnings.length) {
+    console.warn('Import warnings:', result.warnings);
+  }
+  sessionStorage.setItem('importBannerDismissed', 'true');
+  dismissImportBanner();
+  await loadProjects();
 }
 
 // ── Event Bindings ──
@@ -424,6 +540,7 @@ $('newBtn').addEventListener('click', openCreateDrawer);
 $('createClose').addEventListener('click', closeCreateDrawer);
 $('createBackdrop').addEventListener('click', closeCreateDrawer);
 $('deleteCancelBtn').addEventListener('click', closeDelete);
+$('deleteConfirmInput').addEventListener('input', onDeleteConfirmInput);
 $('deleteConfirmBtn').addEventListener('click', confirmDelete);
 $('wrapCancelBtn').addEventListener('click', closeWrapModal);
 $('wrapConfirmBtn').addEventListener('click', confirmWrap);

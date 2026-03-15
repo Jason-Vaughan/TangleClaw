@@ -202,7 +202,7 @@ The `port_leases` table stores all managed port assignments. TangleClaw is the a
 
 ## API Overview
 
-TangleClaw exposes 24 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
+TangleClaw exposes 26 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
 
 ```json
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
@@ -236,5 +236,28 @@ TangleClaw exposes 24 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/ports/release` | POST | Release a port lease |
 | `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
 | `/api/activity` | GET | Activity log |
+| `/api/upload` | POST | Upload a file to a project directory (15 MB limit) |
+| `/api/uploads` | GET | List uploads for a project (`?project=name`) |
 | `/api/tmux/mouse/:session` | GET | Get mouse mode |
 | `/api/tmux/mouse` | POST | Set mouse mode |
+
+### Per-Route Body Size Limits
+
+The server enforces per-route body size limits rather than a single global limit. Most API routes use the default JSON body limit, while the upload endpoint allows larger payloads to accommodate base64-encoded files.
+
+| Route | Max Body Size | Notes |
+|-------|--------------|-------|
+| `POST /api/upload` | 15 MB | Accommodates base64-encoded files (overhead ~33% over raw file size) |
+| All other routes | Default (100 KB) | Standard JSON payloads |
+
+These limits are configured in `server.js` using per-route middleware.
+
+### Upload System
+
+The upload system (`lib/uploads.js`) allows files to be sent into project directories from the session wrapper UI.
+
+- **Endpoint**: `POST /api/upload` — accepts a JSON body with `project`, `filename`, and `data` (base64-encoded file content)
+- **Endpoint**: `GET /api/uploads?project=name` — lists previously uploaded files for a project
+- **Size limit**: 15 MB per upload (enforced by route-level body size middleware)
+- **File type allowlist**: Only files with permitted extensions are accepted: `.png`, `.jpg`, `.jpeg`, `.gif`, `.pdf`, `.md`, `.txt`, `.json`, `.yaml`, `.yml`. Attempts to upload disallowed file types are rejected with a 400 error
+- **Storage**: Uploaded files are saved to the project's `.uploads/` directory with timestamped filenames (e.g., `20260314-143022-screenshot.png`). The response includes the full file path so it can be referenced in AI assistant conversations

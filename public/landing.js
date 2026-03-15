@@ -154,7 +154,7 @@ async function loadConfig() {
 async function loadProjects() {
   const data = await api('/api/projects');
   if (!data) return;
-  state.projects = data.projects || [];
+  state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   collectTags();
   renderProjects();
   renderSessionCount();
@@ -270,6 +270,28 @@ function esc(str) {
 
 // ── Initialization ──
 
+/**
+ * Check if any port leases reference projects not registered in TangleClaw.
+ * If found, render an import notification banner.
+ */
+function checkPortImports() {
+  if (!state.ports.length || !state.projects.length) return;
+
+  const registeredNames = new Set(state.projects.map(p => p.name));
+  const leaseProjects = new Set(state.ports.map(l => l.project));
+
+  const importable = [];
+  for (const name of leaseProjects) {
+    if (!registeredNames.has(name)) {
+      importable.push(name);
+    }
+  }
+
+  if (importable.length > 0) {
+    renderImportBanner(importable);
+  }
+}
+
 async function init() {
   await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
 
@@ -282,6 +304,7 @@ async function init() {
 
   await loadProjects();
   await Promise.all([loadStats(), loadPorts()]);
+  checkPortImports();
   maybeShowFilter();
   startPolling();
 }
