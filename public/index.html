@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo-icon.png">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 </head>
 <body>
 
@@ -20,12 +20,7 @@
 
   <!-- Header -->
   <header class="header">
-    <svg class="header-logo" viewBox="0 0 96 96" aria-label="TangleClaw serpent logo" role="img">
-      <circle cx="48" cy="48" r="44" fill="none" stroke="#8BC34A" stroke-width="2"/>
-      <path d="M30 60 Q38 28 48 36 Q58 44 52 56 Q46 68 58 62 Q70 56 66 44 Q62 32 48 28"
-            fill="none" stroke="#8BC34A" stroke-width="3" stroke-linecap="round"/>
-      <circle cx="42" cy="34" r="2.5" fill="#8BC34A"/>
-    </svg>
+    <img class="header-logo" src="/logo.png" alt="TangleClaw" width="96" height="96">
     <h1 class="header-title">TANGLECLAW</h1>
     <p class="header-subtitle">AI Development Orchestration</p>
     <span id="version" class="header-version"></span>
@@ -123,16 +118,21 @@
   <!-- Delete Confirmation Modal -->
   <div class="modal-backdrop" id="deleteModal">
     <div class="modal-content" role="dialog" aria-label="Delete project" aria-modal="true">
-      <h3 class="modal-title">Delete Project</h3>
+      <h3 class="modal-title" style="color:var(--danger)">Delete Project</h3>
       <p class="modal-text" id="deleteText"></p>
+      <p class="modal-text" style="font-size:12px;color:var(--text-muted);margin-top:8px">This will remove the project from TangleClaw and kill any active session. <strong style="color:var(--danger)">This cannot be undone.</strong></p>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label" for="deleteConfirmInput">Type the project name to confirm</label>
+        <input type="text" class="form-input" id="deleteConfirmInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="">
+      </div>
       <div class="form-group hidden" id="deletePasswordGroup">
-        <label class="form-label" for="deletePassword">Password</label>
+        <label class="form-label" for="deletePassword">Deletion password</label>
         <input type="password" class="password-input" id="deletePassword" autocomplete="off">
       </div>
       <div id="deleteError" class="form-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" id="deleteCancelBtn">Cancel</button>
-        <button class="btn btn-danger" id="deleteConfirmBtn">Delete</button>
+        <button class="btn btn-danger" id="deleteConfirmBtn" disabled>Delete Project</button>
       </div>
     </div>
   </div>

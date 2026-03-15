@@ -12,6 +12,7 @@ const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
 const porthub = require('./lib/porthub');
+const uploads = require('./lib/uploads');
 
 const log = createLogger('server');
 
@@ -39,8 +40,10 @@ const routes = [];
  * @param {string} method - HTTP method
  * @param {string} pattern - URL pattern (supports :param segments)
  * @param {Function} handler - (req, res, params, body) => void
+ * @param {object} [options] - Optional route config
+ * @param {number} [options.maxBodySize] - Override MAX_BODY_SIZE for this route
  */
-function route(method, pattern, handler) {
+function route(method, pattern, handler, options) {
   const paramNames = [];
   const regexStr = pattern.replace(/:([^/]+)/g, (_, name) => {
     paramNames.push(name);
@@ -50,7 +53,8 @@ function route(method, pattern, handler) {
     method: method.toUpperCase(),
     regex: new RegExp(`^${regexStr}$`),
     paramNames,
-    handler
+    handler,
+    options: options || {}
   });
 }
 
@@ -58,7 +62,7 @@ function route(method, pattern, handler) {
  * Match a request to a route.
  * @param {string} method - HTTP method
  * @param {string} pathname - URL path
- * @returns {{ handler: Function, params: object }|null}
+ * @returns {{ handler: Function, params: object, options: object }|null}
  */
 function matchRoute(method, pathname) {
   for (const r of routes) {
@@ -69,7 +73,7 @@ function matchRoute(method, pathname) {
       r.paramNames.forEach((name, i) => {
         params[name] = decodeURIComponent(match[i + 1]);
       });
-      return { handler: r.handler, params };
+      return { handler: r.handler, params, options: r.options || {} };
     }
   }
   return null;
@@ -108,9 +112,11 @@ function errorResponse(res, status, message, code) {
 /**
  * Parse JSON request body with size limit.
  * @param {http.IncomingMessage} req
+ * @param {number} [maxSize] - Override default max body size
  * @returns {Promise<object|null>}
  */
-function parseBody(req) {
+function parseBody(req, maxSize) {
+  const limit = maxSize || MAX_BODY_SIZE;
   return new Promise((resolve, reject) => {
     if (req.method === 'GET' || req.method === 'HEAD') {
       return resolve(null);
@@ -122,7 +128,7 @@ function parseBody(req) {
 
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_SIZE && !rejected) {
+      if (size > limit && !rejected) {
         rejected = true;
         // Resume and discard remaining data so the response can be sent
         req.resume();
@@ -578,6 +584,12 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
   }
 });
 
+// POST /api/ports/sync — Sync leases from old PortHub daemon
+route('POST', '/api/ports/sync', (_req, res) => {
+  const result = porthub.syncFromDaemon();
+  jsonResponse(res, 200, { ok: true, imported: result.imported });
+});
+
 // POST /api/ports/release — Release a lease
 route('POST', '/api/ports/release', (_req, res, _params, body) => {
   if (!body || !body.port) {
@@ -650,6 +662,62 @@ route('POST', '/api/projects', (_req, res, _params, body) => {
   }
 
   jsonResponse(res, 201, response);
+});
+
+// POST /api/projects/import — Register existing project directories
+route('POST', '/api/projects/import', (_req, res, _params, body) => {
+  if (!body || !Array.isArray(body.names) || body.names.length === 0) {
+    return errorResponse(res, 400, 'names array is required', 'BAD_REQUEST');
+  }
+
+  const config = store.config.load();
+  const projectsDir = projects.resolveProjectsDir(config.projectsDir);
+  const imported = [];
+  const warnings = [];
+
+  for (const name of body.names) {
+    const existing = store.projects.getByName(name);
+    if (existing) {
+      warnings.push(`"${name}" already registered`);
+      continue;
+    }
+
+    const projPath = path.join(projectsDir, name);
+    if (!fs.existsSync(projPath) || !fs.statSync(projPath).isDirectory()) {
+      warnings.push(`"${name}" directory not found in ${projectsDir}`);
+      continue;
+    }
+
+    const detectedMethodology = methodologies.detect(projPath);
+    const engineId = config.defaultEngine || 'claude-code';
+    const methodologyId = detectedMethodology ? detectedMethodology.id : (config.defaultMethodology || null);
+
+    try {
+      store.projects.create({
+        name,
+        path: projPath,
+        engine: engineId,
+        methodology: methodologyId,
+        tags: [],
+        ports: {}
+      });
+
+      // Write per-project config if none exists
+      const projConfigPath = path.join(projPath, '.tangleclaw', 'project.json');
+      if (!fs.existsSync(projConfigPath)) {
+        const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
+        projConfig.engine = engineId;
+        projConfig.methodology = methodologyId;
+        store.projectConfig.save(projPath, projConfig);
+      }
+
+      imported.push(name);
+    } catch (err) {
+      warnings.push(`Failed to import "${name}": ${err.message}`);
+    }
+  }
+
+  jsonResponse(res, 200, { imported, warnings });
 });
 
 // DELETE /api/projects/:name
@@ -928,6 +996,51 @@ route('GET', '/api/activity', (req, res) => {
   jsonResponse(res, 200, { entries: enriched });
 });
 
+// POST /api/upload — Upload a file to a project's .uploads/ directory
+route('POST', '/api/upload', (_req, res, _params, body) => {
+  if (!body || !body.project || !body.filename || !body.data) {
+    return errorResponse(res, 400, 'project, filename, and data are required', 'BAD_REQUEST');
+  }
+
+  const project = projects.getProject(body.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${body.project}" not found`, 'NOT_FOUND');
+  }
+
+  if (!fs.existsSync(project.path)) {
+    return errorResponse(res, 400, 'Project directory not found on disk', 'BAD_REQUEST');
+  }
+
+  try {
+    const result = uploads.saveUpload(project.path, body.filename, body.data);
+    jsonResponse(res, 201, result);
+  } catch (err) {
+    if (err.message.includes('not allowed')) {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    log.error('Upload failed', { error: err.message });
+    return errorResponse(res, 500, err.message, 'INTERNAL_ERROR');
+  }
+}, { maxBodySize: 15 * 1024 * 1024 });
+
+// GET /api/uploads — List uploads for a project
+route('GET', '/api/uploads', (req, res) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+
+  if (!query.project) {
+    return errorResponse(res, 400, 'project query parameter is required', 'BAD_REQUEST');
+  }
+
+  const project = projects.getProject(query.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${query.project}" not found`, 'NOT_FOUND');
+  }
+
+  const list = uploads.listUploads(project.path);
+  jsonResponse(res, 200, { uploads: list });
+});
+
 // GET /api/tmux/mouse/:session
 route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
   try {
@@ -1072,7 +1185,7 @@ async function handleRequest(req, res) {
     }
 
     try {
-      const body = await parseBody(req);
+      const body = await parseBody(req, matched.options.maxBodySize);
       await matched.handler(req, res, matched.params, body);
     } catch (err) {
       if (err.status) {
@@ -1189,4 +1302,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery };
+module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE };

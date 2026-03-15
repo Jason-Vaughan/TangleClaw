@@ -570,6 +570,156 @@ function updateChimeIndicator() {
   }
 }
 
+// ── Select Mode ──
+
+let selectTimer = null;
+
+/**
+ * Toggle text selection mode by flipping tmux mouse.
+ * On mobile: mouse ON = select mode (allows native text selection).
+ * On desktop: mouse OFF = select mode (allows native text selection).
+ */
+async function toggleSelect() {
+  const isMobile = 'ontouchstart' in window;
+  const btn = document.getElementById('selectBtn');
+
+  if (selectTimer) {
+    // Already in select mode — revert
+    clearTimeout(selectTimer);
+    selectTimer = null;
+    btn.textContent = 'Select';
+    btn.classList.remove('select-active');
+    // Restore original mouse state
+    await apiMutate('/api/tmux/mouse', 'POST', {
+      session: projectName,
+      on: isMobile ? false : sessionState.mouseOn
+    });
+    return;
+  }
+
+  // Enter select mode
+  btn.textContent = 'Done';
+  btn.classList.add('select-active');
+  await apiMutate('/api/tmux/mouse', 'POST', {
+    session: projectName,
+    on: isMobile ? true : false
+  });
+
+  // Auto-revert after 30 seconds
+  selectTimer = setTimeout(async () => {
+    selectTimer = null;
+    btn.textContent = 'Select';
+    btn.classList.remove('select-active');
+    await apiMutate('/api/tmux/mouse', 'POST', {
+      session: projectName,
+      on: isMobile ? false : sessionState.mouseOn
+    });
+  }, 30000);
+}
+
+// ── Upload Modal ──
+
+let uploadFileData = null;
+let uploadFileName = null;
+
+/**
+ * Open the upload modal and load recent uploads.
+ */
+async function openUploadModal() {
+  uploadFileData = null;
+  uploadFileName = null;
+  document.getElementById('uploadFile').value = '';
+  document.getElementById('uploadPreview').classList.add('hidden');
+  document.getElementById('uploadResult').classList.add('hidden');
+  document.getElementById('uploadError').classList.add('hidden');
+  document.getElementById('uploadSubmitBtn').disabled = true;
+  document.getElementById('uploadModal').classList.add('open');
+
+  // Load recent uploads
+  const data = await api(`/api/uploads?project=${encodeURIComponent(projectName)}`);
+  const historyEl = document.getElementById('uploadHistory');
+  if (data && data.uploads && data.uploads.length > 0) {
+    historyEl.innerHTML = '<div class="upload-history-title">Recent uploads</div>' +
+      data.uploads.slice(0, 5).map(u =>
+        `<div class="upload-history-item"><code>${esc(u.name)}</code><span class="upload-history-size">${formatSize(u.size)}</span></div>`
+      ).join('');
+  } else {
+    historyEl.innerHTML = '';
+  }
+}
+
+function closeUploadModal() {
+  document.getElementById('uploadModal').classList.remove('open');
+}
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  uploadFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    // Extract base64 from data URL
+    const dataUrl = ev.target.result;
+    uploadFileData = dataUrl.split(',')[1];
+
+    // Show preview for images
+    const previewEl = document.getElementById('uploadPreview');
+    const imgEl = document.getElementById('uploadPreviewImg');
+    if (file.type.startsWith('image/')) {
+      imgEl.src = dataUrl;
+      previewEl.classList.remove('hidden');
+    } else {
+      previewEl.classList.add('hidden');
+    }
+
+    document.getElementById('uploadSubmitBtn').disabled = false;
+    document.getElementById('uploadResult').classList.add('hidden');
+    document.getElementById('uploadError').classList.add('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+async function submitUpload() {
+  if (!uploadFileData || !uploadFileName) return;
+
+  const btn = document.getElementById('uploadSubmitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  const result = await apiMutate('/api/upload', 'POST', {
+    project: projectName,
+    filename: uploadFileName,
+    data: uploadFileData
+  });
+
+  btn.textContent = 'Upload';
+
+  if (!result) {
+    document.getElementById('uploadError').textContent = 'Upload failed.';
+    document.getElementById('uploadError').classList.remove('hidden');
+    btn.disabled = false;
+    return;
+  }
+
+  // Show result path
+  const resultEl = document.getElementById('uploadResult');
+  document.getElementById('uploadResultPath').textContent = result.path;
+  resultEl.classList.remove('hidden');
+
+  // Reset for next upload
+  uploadFileData = null;
+  uploadFileName = null;
+  document.getElementById('uploadFile').value = '';
+  document.getElementById('uploadPreview').classList.add('hidden');
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 // ── Kill Modal ──
 
 /**
@@ -677,11 +827,21 @@ function bindEvents() {
   const $ = (id) => document.getElementById(id);
 
   // Banner buttons
+  $('selectBtn').addEventListener('click', toggleSelect);
+  $('uploadBtn').addEventListener('click', openUploadModal);
   $('cmdBtn').addEventListener('click', toggleCommandBar);
   $('peekBtn').addEventListener('click', openPeek);
   $('settingsBtn').addEventListener('click', openSettings);
   $('wrapBtn').addEventListener('click', openWrapModal);
   $('killBtn').addEventListener('click', openKillModal);
+
+  // Upload modal
+  $('uploadFile').addEventListener('change', handleFileSelect);
+  $('uploadCancelBtn').addEventListener('click', closeUploadModal);
+  $('uploadSubmitBtn').addEventListener('click', submitUpload);
+  $('uploadModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeUploadModal();
+  });
 
   // Command bar
   $('commandSend').addEventListener('click', () => {
