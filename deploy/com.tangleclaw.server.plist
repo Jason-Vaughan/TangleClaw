@@ -23,6 +23,8 @@
     <dict>
         <key>PATH</key>
         <string>__LAUNCHD_PATH__</string>
+        <key>TANGLECLAW_PORT</key>
+        <string>3102</string>
     </dict>
 </dict>
 </plist>

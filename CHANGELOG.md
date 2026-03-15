@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Aider config generation silently failing**: The Aider engine profile declared generator `"aider-yaml"` but the code switch case expected `"aider-conf"`, causing `generateConfig('aider', ...)` to return `null`. Aider projects now get properly generated `.aider.conf.yml` files.
+
+### Changed — Deployment
+
+- **Server port changed to 3102**: Deploy template and install script now set `TANGLECLAW_PORT=3102` via launchd environment variable, avoiding conflict with v1 on port 3101. The application code default remains 3101 but is overridden at the deployment layer.
+
 ### Fixed — Post-Chunk Polish
 
 - **Stats panel not fully collapsing**: System stats toggle left 12px of padding visible when collapsed, showing partial stat card outlines. Bottom padding now only applies when the panel is open.
