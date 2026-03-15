@@ -6,7 +6,7 @@
   "configFormat": {
     "filename": ".aider.conf.yml",
     "syntax": "yaml",
-    "generator": "aider-yaml"
+    "generator": "aider-conf"
   },
   "coAuthorFormat": "Co-Authored-By: {name} <{email}>",
   "commands": [

@@ -1305,11 +1305,10 @@ if (require.main === module) {
     setLevel(config.logLevel);
   }
 
-  // Bootstrap port management
-  porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: config.serverPort || 3101 });
-  porthub.startExpirationTimer();
-
+  // Bootstrap port management — resolve actual port (env var takes precedence)
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
+  porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: port });
+  porthub.startExpirationTimer();
   const server = createServer();
 
   server.listen(port, () => {
@@ -1322,7 +1321,7 @@ if (require.main === module) {
   // Graceful shutdown
   const shutdown = () => {
     log.info('Shutting down');
-    porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: config.serverPort || 3101 });
+    porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: port });
     porthub.stopExpirationTimer();
     server.close();
     store.close();

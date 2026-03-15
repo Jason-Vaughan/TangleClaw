@@ -233,6 +233,15 @@ describe('engines', () => {
       );
       assert.ok(content.includes('verbose: true'));
     });
+
+    it('should generate aider config via public API (regression: generator name mismatch)', () => {
+      const content = engines.generateConfig('aider', {
+        rules: { core: {}, extensions: {} }
+      });
+      assert.ok(content !== null, 'generateConfig("aider") must not return null — check profile generator matches switch case');
+      assert.ok(typeof content === 'string');
+      assert.ok(content.length > 0);
+    });
   });
 
   describe('_generateClaudeMd', () => {

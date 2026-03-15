@@ -128,7 +128,7 @@ sleep 2
 
 HEALTH_STATUS=""
 for i in 1 2 3 4 5; do
-  HEALTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3101/api/health 2>/dev/null || true)"
+  HEALTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3102/api/health 2>/dev/null || true)"
   if [ "$HEALTH_STATUS" = "200" ] || [ "$HEALTH_STATUS" = "503" ]; then
     break
   fi
@@ -147,7 +147,7 @@ echo "======================================"
 green "TangleClaw v3 installed successfully!"
 echo "======================================"
 echo ""
-echo "  Landing page:  http://localhost:3101"
+echo "  Landing page:  http://localhost:3102"
 echo "  Terminal:       http://localhost:3100"
 echo ""
 echo "  Logs:           tail -f ~/Library/Logs/tangleclaw-server.log"
