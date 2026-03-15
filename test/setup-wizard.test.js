@@ -207,7 +207,7 @@ describe('Setup Wizard', () => {
 
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: projectsDir,
-        defaultEngine: 'claude-code',
+        defaultEngine: 'claude',
         defaultMethodology: 'minimal',
         chimeEnabled: false
       });
@@ -288,6 +288,38 @@ describe('Setup Wizard', () => {
     it('should return 400 for non-object body', async () => {
       const { status } = await request(server, 'POST', '/api/setup/complete', null);
       assert.equal(status, 400);
+    });
+
+    it('should skip projects with non-existent paths', async () => {
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projects: [
+          { name: 'phantom-proj', path: '/tmp/definitely-does-not-exist-' + Date.now() }
+        ]
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.attached.length, 0, 'Should not attach phantom project');
+      assert.ok(data.warnings.some(w => w.includes('phantom-proj')), 'Should have warning about skipped project');
+
+      // Verify it wasn't registered
+      assert.equal(store.projects.getByName('phantom-proj'), null);
+    });
+
+    it('should handle duplicates gracefully in the same batch', async () => {
+      const projDir = path.join(projectsDir, 'dup-batch-test');
+      fs.mkdirSync(projDir, { recursive: true });
+
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projects: [
+          { name: 'dup-batch-test', path: projDir },
+          { name: 'dup-batch-test', path: projDir }
+        ]
+      });
+
+      assert.equal(status, 200);
+      // First should succeed, second should be skipped
+      assert.equal(data.attached.filter(n => n === 'dup-batch-test').length, 1);
+      assert.ok(data.warnings.some(w => w.includes('already registered')));
     });
   });
 });

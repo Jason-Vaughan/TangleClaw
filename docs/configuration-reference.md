@@ -20,7 +20,7 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 |-------|------|---------|-------------|
 | `serverPort` | number | `3101` | Landing page HTTP server port |
 | `ttydPort` | number | `3100` | ttyd terminal emulator port |
-| `defaultEngine` | string | `"claude-code"` | Default engine for new projects |
+| `defaultEngine` | string | `"claude"` | Default engine for new projects |
 | `defaultMethodology` | string | `"minimal"` | Default methodology for new projects |
 | `projectsDir` | string | `"~/Documents/Projects"` | Root directory for managed projects |
 | `deletePassword` | string\|null | `null` | Password for destructive operations (hashed via scrypt when saved) |

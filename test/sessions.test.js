@@ -52,7 +52,7 @@ describe('sessions', () => {
       const project = store.projects.create({
         name: 'prime-test',
         path: projDir,
-        engine: 'claude-code',
+        engine: 'claude',
         methodology: 'minimal'
       });
       projectId = project.id;
@@ -60,7 +60,7 @@ describe('sessions', () => {
 
     it('generates a prime prompt with project name', () => {
       const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude-code');
+      const engine = store.engines.get('claude');
       const prompt = sessions.generatePrimePrompt(project, engine);
 
       assert.ok(prompt.includes('prime-test'));
@@ -69,7 +69,7 @@ describe('sessions', () => {
 
     it('includes methodology info when template exists', () => {
       const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude-code');
+      const engine = store.engines.get('claude');
 
       // Set methodology to one with phases
       store.projects.update(project.id, { methodology: 'minimal' });
@@ -81,7 +81,7 @@ describe('sessions', () => {
 
     it('includes active learnings', () => {
       const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude-code');
+      const engine = store.engines.get('claude');
 
       store.learnings.create({
         projectId: project.id,
@@ -96,12 +96,12 @@ describe('sessions', () => {
 
     it('includes last session summary', () => {
       const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude-code');
+      const engine = store.engines.get('claude');
 
       // Create and wrap a session in the store
       const session = store.sessions.start({
         projectId: project.id,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'prime-wrap-test'
       });
       store.sessions.wrap(session.id, 'Completed chunk 4 with 108 tests');
@@ -156,6 +156,7 @@ describe('sessions', () => {
 
   describe('getSessionStatus (no active session)', () => {
     let sessions;
+    const tmux = require('../lib/tmux');
 
     before(() => {
       sessions = require('../lib/sessions');
@@ -173,6 +174,23 @@ describe('sessions', () => {
       assert.equal(status.project, 'prime-test');
       assert.ok(status.lastSession);
       assert.equal(status.lastSession.status, 'wrapped');
+    });
+
+    it('returns active+untracked when tmux session exists but DB has no active record', () => {
+      // Mock tmux.hasSession to return true for prime-test
+      const originalHasSession = tmux.hasSession;
+      tmux.hasSession = (name) => name === 'prime-test';
+      try {
+        // prime-test has a wrapped (not active) DB session, but tmux says it exists
+        const status = sessions.getSessionStatus('prime-test');
+        assert.ok(status);
+        assert.equal(status.active, true);
+        assert.equal(status.untracked, true);
+        assert.equal(status.tmuxSession, 'prime-test');
+        assert.equal(status.engine, null);
+      } finally {
+        tmux.hasSession = originalHasSession;
+      }
     });
   });
 

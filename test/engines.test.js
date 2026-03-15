@@ -177,9 +177,9 @@ describe('engines', () => {
     });
 
     it('should return profile with availability for existing engine', () => {
-      const result = engines.getWithAvailability('claude-code');
+      const result = engines.getWithAvailability('claude');
       assert.ok(result !== null);
-      assert.equal(result.id, 'claude-code');
+      assert.equal(result.id, 'claude');
       assert.ok(typeof result.available === 'boolean');
     });
   });
@@ -203,7 +203,7 @@ describe('engines', () => {
       };
       const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
 
-      const content = engines.generateConfig('claude-code', projectConfig, template);
+      const content = engines.generateConfig('claude', projectConfig, template);
       assert.ok(content);
       assert.ok(content.includes('CLAUDE.md'));
       assert.ok(content.includes('Core Rules'));

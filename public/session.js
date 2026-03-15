@@ -24,7 +24,8 @@ const sessionState = {
   idleCount: 0,
   commandHistory: [],
   ended: false,
-  mouseOn: false
+  mouseOn: false,
+  launchGraceRemaining: 0
 };
 
 // ── Storage Helpers ──
@@ -204,7 +205,15 @@ async function pollStatus() {
   sessionState.session = data;
 
   if (!data.active && !sessionState.ended) {
+    // Grace period after fresh launch — tmux may not be queryable yet
+    if (sessionState.launchGraceRemaining > 0) {
+      sessionState.launchGraceRemaining--;
+      return; // Skip this poll, try again next cycle
+    }
     handleSessionEnded(data);
+  } else if (data.active && sessionState.launchGraceRemaining > 0) {
+    // Session came up — clear remaining grace
+    sessionState.launchGraceRemaining = 0;
   }
 
   // Idle detection for chime
@@ -896,6 +905,12 @@ async function initSession() {
   sessionState.chimeEnabled = loadSetting('chime', false);
   sessionState.pollInterval = loadSetting('pollInterval', 5000);
   sessionState.commandHistory = loadSetting('cmdHistory', []);
+
+  // Set grace period if just launched (avoids false "session ended" on race)
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('launched') === '1') {
+    sessionState.launchGraceRemaining = 3;
+  }
 
   bindEvents();
 

@@ -81,4 +81,28 @@ describe('git', () => {
       assert.equal(info, null);
     });
   });
+
+  describe('latestTag', () => {
+    it('should include latestTag in getInfo result', () => {
+      const info = git.getInfo(path.join(__dirname, '..'));
+      assert.ok(info !== null);
+      // latestTag is either a string (if tags exist) or null
+      assert.ok(info.latestTag === null || typeof info.latestTag === 'string');
+    });
+
+    it('should return null latestTag for repo with no tags', () => {
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const { execSync } = require('node:child_process');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'git-test-'));
+      try {
+        execSync('git init && git commit --allow-empty -m "init"', { cwd: tmp, encoding: 'utf8' });
+        const info = git._fetchInfo(tmp);
+        assert.ok(info !== null);
+        assert.equal(info.latestTag, null);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
 });

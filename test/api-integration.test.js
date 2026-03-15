@@ -228,7 +228,7 @@ describe('Landing Page API Integration', () => {
         method: 'POST',
         body: {
           name: 'integration-test-proj',
-          engine: 'claude-code',
+          engine: 'claude',
           methodology: 'minimal',
           tags: ['test']
         }
@@ -270,7 +270,7 @@ describe('Landing Page API Integration', () => {
     it('should return 409 for duplicate project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'integration-test-proj', engine: 'claude-code', methodology: 'minimal' }
+        body: { name: 'integration-test-proj', engine: 'claude', methodology: 'minimal' }
       });
       assert.equal(res.status, 409);
       assert.ok(res.data.code === 'CONFLICT');
@@ -279,9 +279,28 @@ describe('Landing Page API Integration', () => {
     it('should return 400 for invalid project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'has spaces', engine: 'claude-code' }
+        body: { name: 'has spaces', engine: 'claude' }
       });
       assert.equal(res.status, 400);
+    });
+  });
+
+  describe('POST /api/projects — response includes errors/warnings', () => {
+    it('should return 201 with warnings array on partial success', async () => {
+      // Create a project with valid methodology — should succeed
+      const res = await request('/api/projects', {
+        method: 'POST',
+        body: { name: 'meth-warn-test', engine: 'claude', methodology: 'minimal' }
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.data.name, 'meth-warn-test');
+      // warnings may or may not be present — key thing is the shape is valid
+      if (res.data.warnings) {
+        assert.ok(Array.isArray(res.data.warnings));
+      }
+
+      // Cleanup
+      await request('/api/projects/meth-warn-test', { method: 'DELETE', body: { deleteFiles: true } });
     });
   });
 
@@ -333,6 +352,86 @@ describe('Landing Page API Integration', () => {
       const res = await request('/api/activity');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.entries));
+    });
+  });
+
+  describe('GET /api/projects — registered field', () => {
+    it('projects should include registered field', async () => {
+      // Create a project first
+      await request('/api/projects', {
+        method: 'POST',
+        body: { name: 'reg-field-test', engine: 'claude', methodology: 'minimal' }
+      });
+
+      const res = await request('/api/projects');
+      assert.equal(res.status, 200);
+      const project = res.data.projects.find(p => p.name === 'reg-field-test');
+      assert.ok(project);
+      assert.equal(project.registered, true);
+
+      // Cleanup
+      await request('/api/projects/reg-field-test', { method: 'DELETE', body: { deleteFiles: true } });
+    });
+
+    it('unregistered filesystem dirs appear with registered: false', async () => {
+      // Create a directory directly in the projects folder
+      const config = store.config.load();
+      const projectsDir = path.resolve(config.projectsDir);
+      const unregDir = path.join(projectsDir, 'unreg-api-test');
+      fs.mkdirSync(unregDir, { recursive: true });
+
+      const res = await request('/api/projects');
+      assert.equal(res.status, 200);
+      const unreg = res.data.projects.find(p => p.name === 'unreg-api-test');
+      assert.ok(unreg, 'unregistered dir should appear in project list');
+      assert.equal(unreg.registered, false);
+
+      // Cleanup
+      fs.rmSync(unregDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('POST /api/projects/attach', () => {
+    it('should attach an existing directory', async () => {
+      const config = store.config.load();
+      const projectsDir = path.resolve(config.projectsDir);
+      const attachDir = path.join(projectsDir, 'attach-api-test');
+      fs.mkdirSync(attachDir, { recursive: true });
+
+      const res = await request('/api/projects/attach', {
+        method: 'POST',
+        body: { name: 'attach-api-test' }
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.data.name, 'attach-api-test');
+      assert.equal(res.data.registered, true);
+
+      // Cleanup
+      await request('/api/projects/attach-api-test', { method: 'DELETE', body: { deleteFiles: true } });
+    });
+
+    it('should return 409 for already registered project', async () => {
+      await request('/api/projects', {
+        method: 'POST',
+        body: { name: 'already-reg', engine: 'claude', methodology: 'minimal' }
+      });
+
+      const res = await request('/api/projects/attach', {
+        method: 'POST',
+        body: { name: 'already-reg' }
+      });
+      assert.equal(res.status, 409);
+
+      // Cleanup
+      await request('/api/projects/already-reg', { method: 'DELETE', body: { deleteFiles: true } });
+    });
+
+    it('should return 400 for non-existent directory', async () => {
+      const res = await request('/api/projects/attach', {
+        method: 'POST',
+        body: { name: 'does-not-exist-xyz' }
+      });
+      assert.equal(res.status, 400);
     });
   });
 

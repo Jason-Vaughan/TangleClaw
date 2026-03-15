@@ -76,6 +76,84 @@ describe('system', () => {
     });
   });
 
+  describe('formatUptime', () => {
+    it('should format days and hours', () => {
+      assert.equal(system.formatUptime(3 * 86400 + 2 * 3600), '3d 2h');
+    });
+
+    it('should format hours and minutes', () => {
+      assert.equal(system.formatUptime(5 * 3600 + 30 * 60), '5h 30m');
+    });
+
+    it('should format minutes only', () => {
+      assert.equal(system.formatUptime(12 * 60), '12m');
+    });
+
+    it('should show 0m for zero seconds', () => {
+      assert.equal(system.formatUptime(0), '0m');
+    });
+
+    it('should return -- for non-number', () => {
+      assert.equal(system.formatUptime(null), '--');
+      assert.equal(system.formatUptime(undefined), '--');
+      assert.equal(system.formatUptime('abc'), '--');
+    });
+
+    it('should show 1d 0h for exactly one day', () => {
+      assert.equal(system.formatUptime(86400), '1d 0h');
+    });
+  });
+
+  describe('_parseVmStat', () => {
+    it('should parse vm_stat output into byte values', () => {
+      const vmStatOutput = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               12345.
+Pages active:                            100000.
+Pages inactive:                           50000.
+Pages speculative:                         1000.
+Pages throttled:                              0.
+Pages wired down:                         80000.
+Pages purgeable:                           5000.
+"Translation faults":                  99999999.
+Pages copy-on-write:                    1234567.
+Pages zero filled:                     12345678.
+Pages reactivated:                       123456.
+Pages purged:                             12345.
+File-backed pages:                        60000.
+Anonymous pages:                          90000.
+Pages stored in compressor:              200000.
+Pages occupied by compressor:             40000.
+Decompressions:                          123456.
+Compressions:                            234567.
+Pageins:                                 345678.
+Pageouts:                                    12.
+Swapins:                                      0.
+Swapouts:                                     0.`;
+
+      const result = system._parseVmStat(vmStatOutput, 16384);
+      assert.equal(result.active, 100000 * 16384);
+      assert.equal(result.wired, 80000 * 16384);
+      assert.equal(result.compressed, 40000 * 16384);
+      assert.equal(result.free, 12345 * 16384);
+    });
+
+    it('should return zeroes for empty output', () => {
+      const result = system._parseVmStat('', 4096);
+      assert.equal(result.active, 0);
+      assert.equal(result.wired, 0);
+      assert.equal(result.compressed, 0);
+      assert.equal(result.free, 0);
+    });
+  });
+
+  describe('getStats uptimeFormatted', () => {
+    it('should include uptimeFormatted field', () => {
+      const stats = system.getStats();
+      assert.ok(typeof stats.uptimeFormatted === 'string');
+      assert.notEqual(stats.uptimeFormatted, '--');
+    });
+  });
+
   describe('_calculateCpuUsage', () => {
     it('should calculate usage percentage', () => {
       const cpus = [

@@ -37,7 +37,7 @@ describe('store.sessions (write methods)', () => {
     it('creates a session with status active', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'sess-test',
         primePrompt: '# Hello',
         methodologyPhase: 'building'
@@ -45,7 +45,7 @@ describe('store.sessions (write methods)', () => {
 
       assert.ok(session.id);
       assert.equal(session.projectId, projectId);
-      assert.equal(session.engineId, 'claude-code');
+      assert.equal(session.engineId, 'claude');
       assert.equal(session.tmuxSession, 'sess-test');
       assert.equal(session.status, 'active');
       assert.equal(session.primePrompt, '# Hello');
@@ -56,7 +56,7 @@ describe('store.sessions (write methods)', () => {
 
     it('rejects missing projectId', () => {
       assert.throws(() => {
-        store.sessions.start({ engineId: 'claude-code' });
+        store.sessions.start({ engineId: 'claude' });
       }, /projectId and engineId are required/);
     });
 
@@ -83,7 +83,7 @@ describe('store.sessions (write methods)', () => {
     it('sets status to wrapped with summary', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'wrap-test'
       });
 
@@ -97,7 +97,7 @@ describe('store.sessions (write methods)', () => {
     it('logs session.wrapped activity', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'wrap-log-test'
       });
 
@@ -111,7 +111,7 @@ describe('store.sessions (write methods)', () => {
     it('handles null summary', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'wrap-null-test'
       });
 
@@ -125,7 +125,7 @@ describe('store.sessions (write methods)', () => {
     it('sets status to killed', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'kill-test'
       });
 
@@ -138,7 +138,7 @@ describe('store.sessions (write methods)', () => {
     it('logs session.killed activity', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'kill-log-test'
       });
 
@@ -154,7 +154,7 @@ describe('store.sessions (write methods)', () => {
     it('sets status to crashed', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'crash-test'
       });
 
@@ -166,7 +166,7 @@ describe('store.sessions (write methods)', () => {
     it('logs session.crashed activity', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'crash-log-test'
       });
 
@@ -182,7 +182,7 @@ describe('store.sessions (write methods)', () => {
     it('returns null after session is wrapped', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'active-wrap-test'
       });
       store.sessions.wrap(session.id, 'done');

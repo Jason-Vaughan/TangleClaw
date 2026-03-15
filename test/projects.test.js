@@ -346,6 +346,92 @@ describe('projects', () => {
     });
   });
 
+  describe('listAllProjects', () => {
+    it('includes both registered and unregistered projects', () => {
+      // Create an unregistered directory
+      fs.mkdirSync(path.join(projectsDir, 'unregistered-proj'), { recursive: true });
+
+      const all = projects.listAllProjects();
+      const registered = all.filter(p => p.registered === true);
+      const unregistered = all.filter(p => p.registered === false);
+
+      assert.ok(registered.length > 0, 'Should have registered projects');
+      assert.ok(unregistered.some(p => p.name === 'unregistered-proj'), 'Should include unregistered dir');
+    });
+
+    it('unregistered projects have expected shape', () => {
+      const all = projects.listAllProjects();
+      const unreg = all.find(p => p.name === 'unregistered-proj');
+      assert.ok(unreg);
+      assert.equal(unreg.registered, false);
+      assert.equal(unreg.engine, null);
+      assert.equal(unreg.session, null);
+      assert.deepEqual(unreg.tags, []);
+      assert.ok('path' in unreg);
+    });
+
+    it('results are sorted by name', () => {
+      const all = projects.listAllProjects();
+      for (let i = 1; i < all.length; i++) {
+        assert.ok(all[i - 1].name.toLowerCase() <= all[i].name.toLowerCase(),
+          `${all[i - 1].name} should be before ${all[i].name}`);
+      }
+    });
+
+    it('does not include hidden directories', () => {
+      const all = projects.listAllProjects();
+      assert.ok(!all.some(p => p.name.startsWith('.')));
+    });
+  });
+
+  describe('attachProject', () => {
+    it('attaches an existing unregistered directory', () => {
+      const attachDir = path.join(projectsDir, 'attachable');
+      fs.mkdirSync(attachDir, { recursive: true });
+
+      const result = projects.attachProject('attachable');
+      assert.ok(result.project);
+      assert.equal(result.project.name, 'attachable');
+
+      // Should now be in store
+      assert.ok(store.projects.getByName('attachable'));
+
+      // Should have per-project config
+      assert.ok(fs.existsSync(path.join(attachDir, '.tangleclaw', 'project.json')));
+    });
+
+    it('reads existing .tangleclaw/project.json', () => {
+      const attachDir = path.join(projectsDir, 'has-config');
+      fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'),
+        JSON.stringify({ engine: 'codex', methodology: 'prawduct' }));
+
+      const result = projects.attachProject('has-config');
+      assert.ok(result.project);
+      // Should use engine from existing config
+      const dbProject = store.projects.getByName('has-config');
+      assert.equal(dbProject.engineId, 'codex');
+    });
+
+    it('rejects already registered project', () => {
+      const result = projects.attachProject('new-project');
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].includes('already registered'));
+    });
+
+    it('rejects non-existent directory', () => {
+      const result = projects.attachProject('does-not-exist-xyz');
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].includes('not found'));
+    });
+
+    it('rejects invalid name', () => {
+      const result = projects.attachProject('bad name!');
+      assert.equal(result.project, null);
+      assert.ok(result.errors.length > 0);
+    });
+  });
+
   describe('resolveProjectsDir', () => {
     it('expands tilde to home directory', () => {
       const result = projects.resolveProjectsDir('~/Documents');

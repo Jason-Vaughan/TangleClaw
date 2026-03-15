@@ -60,7 +60,7 @@ describe('store.learnings', () => {
     it('creates with source session', () => {
       const session = store.sessions.start({
         projectId,
-        engineId: 'claude-code',
+        engineId: 'claude',
         tmuxSession: 'learn-sess'
       });
 

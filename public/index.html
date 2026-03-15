@@ -20,21 +20,27 @@
 
   <!-- Header -->
   <header class="header">
-    <img class="header-logo" src="/logo.png" alt="TangleClaw" width="96" height="96">
-    <h1 class="header-title">TANGLECLAW</h1>
-    <p class="header-subtitle">AI Development Orchestration</p>
-    <span id="version" class="header-version"></span>
+    <img class="header-logo" src="/logo-icon.png" alt="" width="64" height="64"
+         onerror="this.src='/logo.png'; this.width=64; this.height=64;">
+    <div class="header-text">
+      <div class="header-text-row">
+        <img class="header-wordmark" src="/logo-text.png" alt="TangleClaw" height="24"
+             onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'header-title',textContent:'TANGLECLAW'}));">
+        <span id="version" class="header-version"></span>
+      </div>
+      <p class="header-subtitle">AI Development Orchestration</p>
+    </div>
   </header>
 
   <!-- System Stats Toggle -->
   <div class="stats-toggle" id="statsToggle" role="button" tabindex="0"
-       aria-expanded="false" aria-controls="statsGrid">
+       aria-expanded="true" aria-controls="statsGrid">
     <span>System</span>
-    <span class="arrow" aria-hidden="true">&#9660;</span>
+    <span class="arrow open" aria-hidden="true">&#9660;</span>
   </div>
 
   <!-- System Stats Grid -->
-  <div id="statsGrid" class="stats-grid" aria-label="System resource usage">
+  <div id="statsGrid" class="stats-grid open" aria-label="System resource usage">
     <div class="stat-card">
       <div class="stat-label">CPU</div>
       <div class="stat-value" id="statCpu">--</div>

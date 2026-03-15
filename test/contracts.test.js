@@ -166,6 +166,7 @@ describe('API Contract Validation', () => {
       assert.equal(typeof res.data.disk.percent, 'number');
       // Uptime
       assert.equal(typeof res.data.uptime, 'number');
+      assert.equal(typeof res.data.uptimeFormatted, 'string');
     });
   });
 
@@ -244,7 +245,7 @@ describe('API Contract Validation', () => {
     it('POST /api/projects returns id, name, path, createdAt', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'contract-test', engine: 'claude-code', methodology: 'minimal' }
+        body: { name: 'contract-test', engine: 'claude', methodology: 'minimal' }
       });
       assert.equal(res.status, 201);
       assert.equal(typeof res.data.id, 'number');
@@ -253,17 +254,39 @@ describe('API Contract Validation', () => {
       assert.equal(typeof res.data.createdAt, 'string');
     });
 
-    it('GET /api/projects returns projects array', async () => {
+    it('GET /api/projects returns projects array with registered field', async () => {
       const res = await request('/api/projects');
       assert.equal(res.status, 200);
       assert.ok(Array.isArray(res.data.projects));
       assert.ok(res.data.projects.length > 0);
 
-      const proj = res.data.projects[0];
+      const proj = res.data.projects.find(p => p.name === 'contract-test');
+      assert.ok(proj);
       assert.equal(typeof proj.id, 'number');
       assert.equal(typeof proj.name, 'string');
       assert.ok(Array.isArray(proj.tags));
       assert.equal(typeof proj.createdAt, 'string');
+      assert.equal(proj.registered, true);
+    });
+
+    it('POST /api/projects/attach returns expected shape', async () => {
+      // Create a directory to attach
+      const config = store.config.load();
+      const projectsDir = path.resolve(config.projectsDir);
+      const attachDir = path.join(projectsDir, 'contract-attach');
+      fs.mkdirSync(attachDir, { recursive: true });
+
+      const res = await request('/api/projects/attach', {
+        method: 'POST',
+        body: { name: 'contract-attach' }
+      });
+      assert.equal(res.status, 201);
+      assert.equal(res.data.name, 'contract-attach');
+      assert.equal(res.data.registered, true);
+      assert.equal(typeof res.data.id, 'number');
+
+      // Cleanup
+      await request('/api/projects/contract-attach', { method: 'DELETE', body: { deleteFiles: true } });
     });
 
     it('GET /api/projects/:name returns enriched project', async () => {

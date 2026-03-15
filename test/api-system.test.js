@@ -85,6 +85,7 @@ describe('API — system, engines, tmux', () => {
       assert.ok(typeof data.memory.percent === 'number');
       assert.ok(data.disk);
       assert.ok(typeof data.uptime === 'number');
+      assert.ok(typeof data.uptimeFormatted === 'string');
       assert.ok(typeof data.nodeVersion === 'string');
       assert.ok(typeof data.platform === 'string');
       assert.ok(typeof data.arch === 'string');
@@ -98,8 +99,8 @@ describe('API — system, engines, tmux', () => {
       assert.ok(Array.isArray(data.engines));
       assert.ok(data.engines.length > 0, 'Should have bundled engine profiles');
 
-      const claude = data.engines.find((e) => e.id === 'claude-code');
-      assert.ok(claude, 'Should include claude-code profile');
+      const claude = data.engines.find((e) => e.id === 'claude');
+      assert.ok(claude, 'Should include claude profile');
       assert.equal(claude.name, 'Claude Code');
       assert.equal(claude.interactionModel, 'session');
       assert.ok(typeof claude.available === 'boolean');
@@ -110,7 +111,7 @@ describe('API — system, engines, tmux', () => {
     it('should include all bundled engines', async () => {
       const { data } = await request('GET', '/api/engines');
       const ids = data.engines.map((e) => e.id);
-      assert.ok(ids.includes('claude-code'));
+      assert.ok(ids.includes('claude'));
       assert.ok(ids.includes('codex'));
       assert.ok(ids.includes('aider'));
       assert.ok(ids.includes('genesis'));
@@ -119,9 +120,9 @@ describe('API — system, engines, tmux', () => {
 
   describe('GET /api/engines/:id', () => {
     it('should return a single engine profile', async () => {
-      const { status, data } = await request('GET', '/api/engines/claude-code');
+      const { status, data } = await request('GET', '/api/engines/claude');
       assert.equal(status, 200);
-      assert.equal(data.id, 'claude-code');
+      assert.equal(data.id, 'claude');
       assert.equal(data.name, 'Claude Code');
       assert.ok(typeof data.available === 'boolean');
       assert.ok(data.configFormat);

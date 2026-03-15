@@ -66,7 +66,7 @@ describe('API /api/upload + /api/uploads', () => {
     store.projects.create({
       name: projectName,
       path: projDir,
-      engine: 'claude-code',
+      engine: 'claude',
       methodology: 'minimal',
       tags: [],
       ports: {}
