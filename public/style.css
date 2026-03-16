@@ -427,7 +427,6 @@ body {
   min-width: 44px;
   padding: 8px;
 }
-
 /* ── Search/Filter ── */
 .filter-section {
   padding: 0 16px 8px;
@@ -498,6 +497,11 @@ body {
   background: var(--primary-dark);
   border-color: var(--primary);
   color: #fff;
+}
+.tag-pill-unreg.active {
+  background: var(--elevated-bg);
+  border-color: var(--root-accent);
+  color: var(--root-accent);
 }
 
 /* ── Project Cards Grid ── */
@@ -699,6 +703,14 @@ body {
   padding: 4px;
   font-size: 12px;
 }
+.btn-detach-subtle {
+  color: var(--text-muted);
+  border-color: var(--elevated-bg);
+}
+.btn-detach-subtle:active {
+  color: var(--root-accent);
+  border-color: var(--root-accent);
+}
 .btn-danger-subtle {
   color: var(--text-muted);
   border-color: var(--elevated-bg);
@@ -707,6 +719,15 @@ body {
   color: var(--danger);
   border-color: var(--danger);
 }
+.btn-detach {
+  background: transparent;
+  color: var(--root-accent);
+  border: 1px solid var(--root-accent);
+}
+.btn-detach:active {
+  background: var(--root-accent);
+  color: #000;
+}
 .btn-kill-card {
   color: var(--danger);
   border-color: var(--danger-dark);
@@ -714,6 +735,23 @@ body {
 .btn-kill-card:active {
   background: var(--danger-dark);
   color: #fff;
+}
+
+/* Mobile: stack card name above badges + buttons */
+@media (max-width: 480px) {
+  .card-row {
+    flex-wrap: wrap;
+    padding: 8px 12px 6px;
+    row-gap: 4px;
+  }
+  .card-name {
+    flex: 1 1 calc(100% - 24px);
+    font-size: 15px;
+    order: -1;
+  }
+  .status-dot {
+    order: -2;
+  }
 }
 
 /* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
