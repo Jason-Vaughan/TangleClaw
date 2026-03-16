@@ -515,6 +515,60 @@ function closeSettings() {
 async function saveSettings() {
   if (!settingsTarget) return;
   const methVal = document.getElementById('settingsMethodology').value;
+  const newMeth = methVal === 'none' ? null : methVal;
+
+  // Check if methodology is changing — show confirmation modal if so
+  const project = state.projects.find(p => p.name === settingsTarget);
+  const currentMeth = project && project.methodology ? project.methodology.id : null;
+  if (newMeth !== currentMeth) {
+    openMethSwitchModal(settingsTarget, currentMeth, newMeth);
+    return;
+  }
+
+  await doSaveSettings();
+}
+
+/**
+ * Show the methodology switch confirmation modal.
+ * @param {string} projectName - Project being updated
+ * @param {string|null} fromMeth - Current methodology id
+ * @param {string|null} toMeth - New methodology id
+ */
+function openMethSwitchModal(projectName, fromMeth, toMeth) {
+  const fromName = fromMeth ? (state.methodologies.find(m => m.id === fromMeth) || {}).name || fromMeth : 'None';
+  const toName = toMeth ? (state.methodologies.find(m => m.id === toMeth) || {}).name || toMeth : 'None';
+
+  let html = `<p style="font-size:15px;margin-bottom:12px"><strong>${esc(fromName)}</strong> &rarr; <strong>${esc(toName)}</strong></p>`;
+
+  if (fromMeth) {
+    html += `<p>The current <strong>${esc(fromName)}</strong> state will be archived (not deleted). Learnings, reflections, and other artifacts remain accessible.</p>`;
+  }
+  if (toMeth) {
+    html += `<p style="margin-top:8px">The new <strong>${esc(toName)}</strong> methodology will be initialized and session hooks updated.</p>`;
+  } else {
+    html += `<p style="margin-top:8px">Session governance hooks will be removed.</p>`;
+  }
+  html += `<p style="margin-top:12px;font-size:12px;color:var(--text-muted)">Archived methodology state stays in the project directory and is referenced in generated configs so AI assistants can review prior context.</p>`;
+
+  document.getElementById('methSwitchText').innerHTML = html;
+  document.getElementById('methSwitchModal').classList.add('open');
+}
+
+/** Close the methodology switch modal without saving. */
+function closeMethSwitchModal() {
+  document.getElementById('methSwitchModal').classList.remove('open');
+}
+
+/** Confirm methodology switch and proceed with settings save. */
+async function confirmMethSwitch() {
+  closeMethSwitchModal();
+  await doSaveSettings();
+}
+
+/** Execute the settings save (called directly or after methodology confirmation). */
+async function doSaveSettings() {
+  if (!settingsTarget) return;
+  const methVal = document.getElementById('settingsMethodology').value;
   const body = {
     engine: document.getElementById('settingsEngine').value,
     methodology: methVal === 'none' ? null : methVal,
@@ -780,6 +834,9 @@ $('settingsSaveBtn').addEventListener('click', saveSettings);
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
 $('settingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSettings(); });
+$('methSwitchCancelBtn').addEventListener('click', closeMethSwitchModal);
+$('methSwitchConfirmBtn').addEventListener('click', confirmMethSwitch);
+$('methSwitchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMethSwitchModal(); });
 
 let filterTimer = null;
 $('filterInput').addEventListener('input', (e) => {

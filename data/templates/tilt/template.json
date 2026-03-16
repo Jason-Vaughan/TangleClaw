@@ -66,6 +66,7 @@
     "identitySentry": true
   },
   "actions": [],
+  "hooks": {},
   "init": {
     "directories": [".tilt"],
     "files": {
