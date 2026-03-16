@@ -7,13 +7,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>__TTYD_PATH__</string>
+        <string>--writable</string>
+        <string>--url-arg</string>
         <string>--port</string>
         <string>3100</string>
-        <string>tmux</string>
-        <string>new-session</string>
-        <string>-A</string>
-        <string>-s</string>
-        <string>tangleclaw</string>
+        <string>__REPO_DIR__/deploy/ttyd-attach.sh</string>
     </array>
     <key>KeepAlive</key>
     <true/>

@@ -16,7 +16,10 @@ const state = {
   connected: true,
   statsOpen: true,
   ports: [],
-  portsOpen: false
+  portsOpen: false,
+  portGroupsOpen: {},
+  rulesOpen: false,
+  globalRulesContent: ''
 };
 
 // ── API Helpers ──
@@ -136,6 +139,57 @@ async function loadPorts() {
   renderPorts();
 }
 
+/**
+ * Load global rules content from the API.
+ */
+async function loadGlobalRules() {
+  const data = await api('/api/rules/global');
+  if (data) {
+    state.globalRulesContent = data.content || '';
+    const editor = document.getElementById('rulesEditor');
+    if (editor) editor.value = state.globalRulesContent;
+  }
+}
+
+/**
+ * Save global rules to the API.
+ */
+async function saveGlobalRules() {
+  const editor = document.getElementById('rulesEditor');
+  const content = editor.value;
+  const data = await apiMutate('/api/rules/global', 'PUT', { content });
+  const status = document.getElementById('rulesStatus');
+  if (data) {
+    state.globalRulesContent = content;
+    status.textContent = 'Saved';
+    status.className = 'rules-status rules-status-ok';
+  } else {
+    status.textContent = 'Save failed';
+    status.className = 'rules-status rules-status-err';
+  }
+  status.classList.remove('hidden');
+  setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+/**
+ * Reset global rules to defaults via the API.
+ */
+async function resetGlobalRules() {
+  const data = await apiMutate('/api/rules/global/reset', 'POST', {});
+  const status = document.getElementById('rulesStatus');
+  if (data) {
+    state.globalRulesContent = data.content || '';
+    document.getElementById('rulesEditor').value = state.globalRulesContent;
+    status.textContent = 'Reset to defaults';
+    status.className = 'rules-status rules-status-ok';
+  } else {
+    status.textContent = 'Reset failed';
+    status.className = 'rules-status rules-status-err';
+  }
+  status.classList.remove('hidden');
+  setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
 async function loadEngines() {
   const data = await api('/api/engines');
   if (data) state.engines = data.engines || [];
@@ -209,8 +263,35 @@ async function launchProject(name) {
   if (project && project.session && project.session.active) {
     return navigateToSession(name);
   }
-  const data = await apiMutate(`/api/sessions/${encodeURIComponent(name)}`, 'POST', {});
-  if (data) navigateToSession(name, { launched: true });
+
+  // Show loading state
+  const toast = document.getElementById('toast');
+
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
+      toast.className = 'toast toast-warn visible';
+      setTimeout(() => { toast.classList.remove('visible'); }, 6000);
+      return;
+    }
+
+    setConnected(true);
+    navigateToSession(name, { launched: true });
+  } catch (err) {
+    if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
+      setConnected(false);
+    }
+    toast.textContent = `Launch failed: ${err.message}`;
+    toast.className = 'toast toast-warn visible';
+    setTimeout(() => { toast.classList.remove('visible'); }, 6000);
+  }
 }
 
 function wrapProject(name) {
@@ -304,7 +385,7 @@ async function init() {
   }
 
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules()]);
   checkPortImports();
   maybeShowFilter();
   startPolling();

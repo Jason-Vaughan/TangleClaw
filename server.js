@@ -516,6 +516,27 @@ route('POST', '/api/setup/complete', (_req, res, _params, body) => {
   });
 });
 
+// GET /api/rules/global
+route('GET', '/api/rules/global', (_req, res) => {
+  const content = store.globalRules.load();
+  jsonResponse(res, 200, { content });
+});
+
+// PUT /api/rules/global
+route('PUT', '/api/rules/global', (_req, res, _params, body) => {
+  if (typeof body.content !== 'string') {
+    return errorResponse(res, 400, 'content (string) is required', 'BAD_REQUEST');
+  }
+  store.globalRules.save(body.content);
+  jsonResponse(res, 200, { ok: true });
+});
+
+// POST /api/rules/global/reset
+route('POST', '/api/rules/global/reset', (_req, res) => {
+  const content = store.globalRules.reset();
+  jsonResponse(res, 200, { content });
+});
+
 // GET /api/system
 route('GET', '/api/system', (_req, res) => {
   const stats = system.getStats();

@@ -61,16 +61,15 @@ else
   yellow "  porthub not found (optional — TangleClaw manages ports directly)"
 fi
 
-# Build PATH for launchd plists — include Homebrew prefix if present
-LAUNCHD_PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -d "/opt/homebrew/bin" ]; then
-  LAUNCHD_PATH="/opt/homebrew/bin:${LAUNCHD_PATH}"
-fi
-# Include directory containing node, ttyd, tmux (may be version manager paths)
-for bin_path in "$(dirname "$NODE_PATH")" "$(dirname "$TTYD_PATH")" "$(dirname "$TMUX_PATH")"; do
+# Build PATH for launchd plists — start from the user's current PATH so that
+# engine binaries installed in non-standard locations (e.g. ~/.local/bin,
+# ~/.npm-global/bin) are discoverable at runtime for engine detection.
+LAUNCHD_PATH="$PATH"
+# Ensure system essentials are present
+for sys_path in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
   case ":${LAUNCHD_PATH}:" in
-    *":${bin_path}:"*) ;; # already present
-    *) LAUNCHD_PATH="${bin_path}:${LAUNCHD_PATH}" ;;
+    *":${sys_path}:"*) ;; # already present
+    *) LAUNCHD_PATH="${LAUNCHD_PATH}:${sys_path}" ;;
   esac
 done
 green "  PATH for launchd: $LAUNCHD_PATH"
@@ -96,6 +95,7 @@ green "  ${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
 # ttyd plist
 sed \
   -e "s|__TTYD_PATH__|${TTYD_PATH}|g" \
+  -e "s|__REPO_DIR__|${REPO_DIR}|g" \
   -e "s|__HOME__|${HOME}|g" \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"

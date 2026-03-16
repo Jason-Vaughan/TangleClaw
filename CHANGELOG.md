@@ -4,6 +4,37 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Global Rules System**: Editable markdown rules that apply to all projects across all engines. Global rules are injected as a `## Global Rules` section into every generated engine config (CLAUDE.md, .codex.yaml, .aider.conf.yml, GEMINI.md). Editable from the landing page or via API (`GET/PUT /api/rules/global`, `POST /api/rules/global/reset`). Stored at `~/.tangleclaw/global-rules.md`, auto-created from bundled defaults on first load.
+
+### Added
+
+- **Gemini CLI engine support**: New built-in engine profile for Google's Gemini CLI. Config file (`GEMINI.md`) is generated in `.gemini/` subdirectory with full rule injection (core rules, extension rules, PortHub guide, methodology info). Auto-detected via `which gemini`.
+- **Cross-platform rule injection parity**: All engines with config file support (Claude Code, Codex, Aider) now receive the same core rules, extension rules, PortHub guide, and methodology info — translated into each engine's native format. Previously only Claude Code got full rule content.
+- **Codex config now includes instructions**: Generated `.codex.yaml` files include an `instructions:` field with full markdown rules, PortHub guide, and methodology description.
+- **Aider config now includes rules**: Generated `.aider.conf.yml` files include core rules and PortHub references as YAML comments for human visibility.
+- **Rule parity test suite**: Automated tests verify that every engine with `supportsConfigFile: true` includes core rules, PortHub references, and methodology info in its generated config.
+
+### Changed — Ports Panel UI
+
+- **Bright white port group headers**: Port group names now use the primary text color (`--text`) instead of muted gray, improving readability in the ports panel.
+- **Collapsible port groups**: Each project group in the ports panel can be individually collapsed/expanded via a clickable toggle with arrow caret. All groups default to open. Keyboard accessible (Enter/Space) with `aria-expanded` attributes. Lease count shown next to each group name.
+
+### Added
+
+- **Kill button on landing page**: Project cards with active sessions now show a Kill button (stop icon) in the card row and in the expanded detail view. Opens a confirmation modal with password support if delete protection is configured. Previously Kill was only available from the session view.
+
+### Fixed
+
+- **Terminal iframe shows wrong tmux session**: ttyd was hardcoded to a single "tangleclaw" tmux session, so the iframe always showed a blank shell instead of the project's actual session (with Claude Code running). Added `--url-arg` flag and a `ttyd-attach.sh` wrapper script so ttyd connects to the correct per-project tmux session based on the iframe's `?arg=` parameter.
+- **Terminal input completely broken (desktop and mobile)**: ttyd 1.7.x defaults to readonly mode. The launchd plist was missing the `--writable` flag, so the terminal rendered output but silently rejected all keyboard input. Added `--writable` to the ttyd plist. Re-run `deploy/install.sh` to apply.
+- **Terminal touch input blocked on mobile**: `touch-action: none` on the session wrapper body prevented touch events from reaching the terminal iframe on iOS Safari and Android Chrome. Changed to `touch-action: manipulation`.
+- **Launch fails on orphaned tmux sessions**: When a tmux session existed from a previous run but the database had no active record (e.g., after a server restart), clicking Launch would fail with "Failed to create tmux session". Now automatically adopts the orphaned tmux session instead of failing.
+- **Engine detection failing under launchd**: The install script built a minimal PATH for the launchd service that excluded user-installed binary locations (`~/.local/bin`, `~/.npm-global/bin`). Engine detection via `which` failed for Claude Code, Gemini CLI, and any other engines installed outside standard system paths. Install script now captures the user's full `$PATH` at install time.
+- **New bundled engine profiles not seeded to existing installs**: The store's `_copyBundledFiles()` skipped entirely if the engines directory already had files, so newly added profiles (e.g., Gemini from p2-3) were never copied to `~/.tangleclaw/engines/`. Now copies any missing profiles individually.
+- **Launch button silently failing**: Clicking Launch on a project card showed no feedback when the API returned an error. Now shows a toast notification with the specific error message.
+
 ### Fixed
 
 - **Aider config generation silently failing**: The Aider engine profile declared generator `"aider-yaml"` but the code switch case expected `"aider-conf"`, causing `generateConfig('aider', ...)` to return `null`. Aider projects now get properly generated `.aider.conf.yml` files.

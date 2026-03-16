@@ -44,7 +44,7 @@ body {
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
-  touch-action: none;
+  touch-action: manipulation;
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }

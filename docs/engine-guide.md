@@ -12,7 +12,7 @@ Each engine is a JSON profile that tells TangleClaw:
 - What **slash commands** the engine supports (shown as pills in the command bar)
 - What **capabilities** the engine has (prime prompt support, co-author format, etc.)
 
-Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with four built-in profiles, copied there on first run.
+Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five built-in profiles, copied there on first run.
 
 ## Built-in Engines
 
@@ -39,6 +39,14 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with four bui
 - **Config file**: `.aider.conf.yml` (YAML)
 - **Slash commands**: `/add` (add file to context), `/drop` (remove file), `/undo` (undo last change)
 - **Capabilities**: Slash commands, prime prompt, config file, co-author
+
+### Gemini CLI
+
+- **Command**: `gemini`
+- **Interaction model**: Session-based (spawns in tmux)
+- **Config file**: `.gemini/GEMINI.md` (Markdown, in `.gemini/` subdirectory)
+- **Slash commands**: None
+- **Capabilities**: Prime prompt, config file, co-author
 
 ### Genesis
 
@@ -100,7 +108,7 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 }
 ```
 
-The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, and `aider-conf`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
+The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, and `gemini-md`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
 ### Engine Profile Fields
 
@@ -124,7 +132,7 @@ The `configFormat` above is set to `null` because config file generation require
 |-------|-------------|
 | `filename` | Config file name written to project root (e.g., `CLAUDE.md`) |
 | `syntax` | File syntax: `"markdown"`, `"yaml"`, or `null` |
-| `generator` | Config generator to use: `"claude-md"`, `"aider-yaml"`, `"codex-yaml"`, or `null` |
+| `generator` | Config generator to use: `"claude-md"`, `"codex-yaml"`, `"aider-conf"`, `"gemini-md"`, or `null` |
 
 ### Detection Strategies
 
@@ -146,13 +154,21 @@ The `configFormat` above is set to `null` because config file generation require
 
 When a session launches, TangleClaw generates the engine-specific config file in the project root. This file is built from:
 
-- The methodology template's rules and description
-- The project's enabled extension rules
-- The engine profile's config format
+- Core rules (CHANGELOG updates, JSDoc, testing, session wrap protocol, PortHub registration)
+- Extension rules (identity sentry, docs parity, decision framework, etc.)
+- PortHub guide (port management API reference, when PortHub registration is enabled)
+- Methodology template name and description
 
-For example, a Claude Code project with Prawduct methodology gets a `CLAUDE.md` file containing the methodology rules in Markdown format. An Aider project gets the same rules translated to `.aider.conf.yml`.
+All engines with `supportsConfigFile: true` receive the same rule content, translated into each engine's native format:
 
-This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion.
+| Engine | Config File | How Rules Are Included |
+|--------|------------|----------------------|
+| Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide, methodology info |
+| Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
+| Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
+| Gemini CLI | `.gemini/GEMINI.md` | Markdown sections (same format as CLAUDE.md), written to `.gemini/` subdirectory |
+
+This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules, PortHub references, and methodology info.
 
 ## Switching Engines
 
