@@ -702,6 +702,14 @@ body {
   color: var(--danger);
   border-color: var(--danger);
 }
+.btn-kill-card {
+  color: var(--danger);
+  border-color: var(--danger-dark);
+}
+.btn-kill-card:active {
+  background: var(--danger-dark);
+  color: #fff;
+}
 
 /* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
 @media (pointer: coarse) {
