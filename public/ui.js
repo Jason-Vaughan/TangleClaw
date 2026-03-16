@@ -66,8 +66,10 @@ function renderCard(project) {
     ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
     : '';
 
-  const phaseBadge = project.methodology && project.methodology.phase
-    ? `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`
+  const phaseBadge = project.methodology
+    ? project.methodology.phase
+      ? `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`
+      : `<span class="badge badge-phase-unknown">idle</span>`
     : '';
 
   const statusDot = hasSession

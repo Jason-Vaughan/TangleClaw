@@ -173,6 +173,11 @@ async function loadProject() {
   const phaseEl = document.getElementById('bannerPhase');
   if (data.methodology && data.methodology.phase) {
     phaseEl.textContent = data.methodology.phase;
+    phaseEl.className = 'banner-phase';
+    phaseEl.style.display = '';
+  } else if (data.methodology) {
+    phaseEl.textContent = 'idle';
+    phaseEl.className = 'banner-phase-unknown';
     phaseEl.style.display = '';
   } else {
     phaseEl.style.display = 'none';

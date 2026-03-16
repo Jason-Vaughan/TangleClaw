@@ -646,6 +646,11 @@ body {
   color: #ffb74d;
   font-size: 9px;
 }
+.badge-phase-unknown {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  font-size: 9px;
+}
 .git-dirty {
   display: inline-block;
   width: 5px;
