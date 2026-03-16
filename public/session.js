@@ -292,10 +292,13 @@ function handleSessionEnded(statusData) {
 
 /**
  * Set up the terminal iframe with the ttyd URL.
+ * Delays loading until layout is stable to avoid resize-triggered redraws.
  */
 function setupTerminal() {
   const frame = document.getElementById('terminalFrame');
-  frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
+  requestAnimationFrame(() => {
+    frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
+  });
 }
 
 // ── Mouse Guard ──
