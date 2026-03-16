@@ -66,6 +66,10 @@ function renderCard(project) {
     ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
     : '';
 
+  const phaseBadge = project.methodology && project.methodology.phase
+    ? `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`
+    : '';
+
   const statusDot = hasSession
     ? `<span class="status-dot active" title="Session active"></span>`
     : `<span class="status-dot" title="No active session"></span>`;
@@ -79,6 +83,7 @@ function renderCard(project) {
       ${gitBadge}
       ${engineBadge}
       ${methBadge}
+      ${phaseBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}

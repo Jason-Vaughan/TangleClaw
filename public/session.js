@@ -170,6 +170,14 @@ async function loadProject() {
     methEl.style.display = 'none';
   }
 
+  const phaseEl = document.getElementById('bannerPhase');
+  if (data.methodology && data.methodology.phase) {
+    phaseEl.textContent = data.methodology.phase;
+    phaseEl.style.display = '';
+  } else {
+    phaseEl.style.display = 'none';
+  }
+
   document.title = `TangleClaw \u2014 ${data.name}`;
 }
 
