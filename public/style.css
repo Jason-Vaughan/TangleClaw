@@ -641,6 +641,11 @@ body {
   color: #ce93d8;
   font-size: 9px;
 }
+.badge-phase {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ffb74d;
+  font-size: 9px;
+}
 .git-dirty {
   display: inline-block;
   width: 5px;

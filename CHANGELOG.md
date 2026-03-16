@@ -16,6 +16,7 @@ All notable changes to TangleClaw are documented in this file.
 - **`hooks` field in methodology templates**: Templates can now declare engine-specific session hooks with `{{TANGLECLAW_DIR}}` placeholder resolution.
 - **Methodology badge in session banner**: Purple pill next to the engine badge shows the active methodology during a session.
 - **Engine and methodology badges on splash page**: Project cards now show engine (green) and methodology (purple) badges with consistent color coding across session and landing pages.
+- **Phase badge**: Orange pill shows the current methodology phase (e.g., "building", "discovery") on both splash page cards and session banner.
 
 ### Added
 
