@@ -170,6 +170,29 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 
 This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules, PortHub references, and methodology info.
 
+## Parity Checklist for New Engines
+
+Every engine with `supportsConfigFile: true` **must** pass parity validation. Use `engines.validateParity()` programmatically or run the parity test suite (`node --test test/engines.test.js`).
+
+When adding a new engine, verify that its generated config includes all of the following:
+
+- [ ] **Core rules** — all five default rules: CHANGELOG updates, JSDoc comments, unit tests, session wrap protocol, PortHub registration
+- [ ] **Extension rules** — active extension rules (identitySentry, docsParity, decisionFramework, etc.) translated into the engine's format
+- [ ] **PortHub guide or reference** — full Port Management guide (for markdown-based engines) or API reference comment (for YAML-based engines)
+- [ ] **Global rules** — content from `~/.tangleclaw/global-rules.md` injected into the config
+- [ ] **Methodology info** — methodology name and description when a template is provided
+- [ ] **Generator switch case** — a `case` entry in `generateConfig()` for the new generator name
+- [ ] **Profile `configFormat.generator`** — must exactly match the switch case string
+- [ ] **`_getRulesContent()` used** — the generator function must call `_getRulesContent()` to get the canonical rule set (do not duplicate rule logic)
+
+### How to add a new engine generator
+
+1. Create the engine profile JSON in `data/engines/<id>.json` with `supportsConfigFile: true` and a unique `configFormat.generator` value
+2. Add a generator function `_generate<Format>()` in `lib/engines.js` that calls `_getRulesContent()` and translates rules into the engine's native format
+3. Add the corresponding `case` in the `generateConfig()` switch statement
+4. Run `engines.validateParity()` — it must return `{ valid: true }`
+5. Add engine-specific tests in `test/engines.test.js`
+
 ## Switching Engines
 
 You can change a project's engine at any time from the project settings on the landing page or the session settings modal. The change takes effect on the next session launch — TangleClaw regenerates the config file in the new engine's format.

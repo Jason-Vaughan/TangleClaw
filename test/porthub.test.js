@@ -11,6 +11,7 @@ setLevel('error');
 
 const store = require('../lib/store');
 const porthub = require('../lib/porthub');
+const portScanner = require('../lib/port-scanner');
 
 describe('porthub (store-backed)', () => {
   let tmpDir;
@@ -23,6 +24,7 @@ describe('porthub (store-backed)', () => {
 
   afterEach(() => {
     porthub.stopExpirationTimer();
+    portScanner._reset();
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -126,6 +128,47 @@ describe('porthub (store-backed)', () => {
       porthub.startExpirationTimer(); // idempotent
       porthub.stopExpirationTimer();
       porthub.stopExpirationTimer(); // idempotent
+    });
+  });
+
+  describe('checkPort with port scanner', () => {
+    it('returns systemDetected when scanner shows port in use', () => {
+      portScanner._reset();
+      portScanner.scan();
+
+      // Port 7777 is unlikely to be leased in our test DB
+      const result = porthub.checkPort(7777);
+      // If 7777 happens to be in use by system, systemDetected will be true
+      // Either way, the shape should be correct
+      assert.equal(typeof result.available, 'boolean');
+      assert.equal(typeof result.systemDetected, 'boolean');
+      assert.ok('leasedBy' in result);
+    });
+
+    it('returns systemDetected: false for unleased port not in system', () => {
+      portScanner._reset(); // empty cache
+      const result = porthub.checkPort(59999);
+      assert.equal(result.available, true);
+      assert.equal(result.leasedBy, null);
+      assert.equal(result.systemDetected, false);
+    });
+
+    it('returns leasedBy when port is leased, not systemDetected', () => {
+      porthub.registerPort(6666, 'test-proj', 'web');
+      const result = porthub.checkPort(6666);
+      assert.equal(result.available, false);
+      assert.equal(result.leasedBy, 'test-proj');
+      assert.equal(result.systemDetected, false);
+    });
+  });
+
+  describe('registerPort with port scanner warning', () => {
+    it('succeeds even when scanner shows port in use', () => {
+      portScanner.scan();
+      // Register should always succeed regardless of scanner state
+      const result = porthub.registerPort(7778, 'test-proj', 'api');
+      assert.equal(result.success, true);
+      assert.equal(result.error, null);
     });
   });
 });

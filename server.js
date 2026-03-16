@@ -13,6 +13,7 @@ const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
+const portScanner = require('./lib/port-scanner');
 
 const log = createLogger('server');
 
@@ -583,8 +584,15 @@ route('GET', '/api/ports', (_req, res) => {
     if (!grouped[lease.project]) grouped[lease.project] = [];
     grouped[lease.project].push(lease);
   }
+
+  // Count system-detected ports not tracked in lease DB
+  const systemPorts = portScanner.getSystemPorts();
+  const leasedPortSet = new Set(leases.map(l => l.port));
+  const systemPortCount = systemPorts.filter(sp => !leasedPortSet.has(sp.port)).length;
+
   jsonResponse(res, 200, {
     totalLeases: leases.length,
+    systemPortCount,
     leases,
     grouped
   });

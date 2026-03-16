@@ -7,6 +7,8 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
+const portScanner = require('../lib/port-scanner');
+const porthub = require('../lib/porthub');
 
 describe('engines', () => {
   let tempDir;
@@ -524,6 +526,151 @@ describe('engines', () => {
       const content = engines._generateClaudeMd(config, null);
       assert.ok(!content.includes('Port Management'), 'Should not include PortHub guide');
       assert.ok(!content.includes('Never hardcode ports'), 'Should not include guide rules');
+    });
+  });
+
+  describe('validateParity', () => {
+    it('should return valid when all engines pass parity checks', () => {
+      const result = engines.validateParity();
+      assert.equal(result.valid, true, `Parity failed: ${JSON.stringify(result.engines.filter(e => !e.valid))}`);
+      assert.ok(result.engines.length >= 4, `Expected at least 4 config-supporting engines, got ${result.engines.length}`);
+    });
+
+    it('should return per-engine results with id and valid flag', () => {
+      const result = engines.validateParity();
+      for (const engine of result.engines) {
+        assert.ok(typeof engine.id === 'string');
+        assert.ok(typeof engine.valid === 'boolean');
+        assert.ok(Array.isArray(engine.errors));
+      }
+    });
+
+    it('should include all config-supporting engines', () => {
+      const result = engines.validateParity();
+      const ids = result.engines.map(e => e.id);
+      assert.ok(ids.includes('claude'), 'Missing claude');
+      assert.ok(ids.includes('codex'), 'Missing codex');
+      assert.ok(ids.includes('aider'), 'Missing aider');
+      assert.ok(ids.includes('gemini'), 'Missing gemini');
+    });
+
+    it('should report no errors for any engine', () => {
+      const result = engines.validateParity();
+      for (const engine of result.engines) {
+        assert.deepEqual(engine.errors, [], `${engine.id} has parity errors: ${engine.errors.join(', ')}`);
+      }
+    });
+  });
+
+  describe('cross-feature integration', () => {
+    it('Gemini config contains all required sections', () => {
+      const projectConfig = {
+        rules: {
+          core: {
+            changelogPerChange: true,
+            jsdocAllFunctions: true,
+            unitTestRequirements: true,
+            sessionWrapProtocol: true,
+            porthubRegistration: true
+          },
+          extensions: { docsParity: true, independentCritic: true }
+        }
+      };
+      const template = { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' };
+
+      const content = engines.generateConfig('gemini', projectConfig, template);
+      assert.ok(content !== null, 'Gemini config should not be null');
+      assert.ok(content.includes('GEMINI.md'), 'Should have GEMINI.md header');
+      assert.ok(content.includes('Core Rules'), 'Should have core rules section');
+      assert.ok(content.includes('Extension Rules'), 'Should have extension rules section');
+      assert.ok(content.includes('docs'), 'Should include docsParity extension');
+      assert.ok(content.includes('Critic') || content.includes('critic'), 'Should include independentCritic extension');
+      assert.ok(content.includes('Port Management'), 'Should include PortHub guide');
+      assert.ok(content.includes('TangleClaw API'), 'Should include API base URL');
+      assert.ok(content.includes('Prawduct'), 'Should include methodology name');
+      assert.ok(content.includes('Structured governance'), 'Should include methodology description');
+      assert.ok(content.includes('Global Rules'), 'Should include global rules');
+    });
+
+    it('global rules changes are reflected in regenerated config', () => {
+      // Save current global rules
+      const original = store.globalRules.load();
+
+      try {
+        // Write custom global rules
+        store.globalRules.save('## Global Rules\n\n- Custom integration test rule alpha\n- Custom rule beta\n');
+
+        // Generate config — should include the new rules
+        const content = engines.generateConfig('claude', { rules: { core: {} } });
+        assert.ok(content.includes('Custom integration test rule alpha'),
+          'Regenerated config should include updated global rules');
+        assert.ok(content.includes('Custom rule beta'),
+          'Regenerated config should include all updated global rules');
+
+        // Also verify Gemini picks them up
+        const geminiContent = engines.generateConfig('gemini', { rules: { core: {} } });
+        assert.ok(geminiContent.includes('Custom integration test rule alpha'),
+          'Gemini config should also reflect updated global rules');
+      } finally {
+        // Restore original global rules
+        store.globalRules.save(original);
+      }
+    });
+
+    it('port scanner conflict detection works with checkPort', () => {
+      // Run a scan to populate cache
+      portScanner.scan();
+
+      // A port that's unlikely to be in use should be available
+      const freeResult = porthub.checkPort(59999);
+      assert.equal(freeResult.systemDetected, false, 'Port 59999 should not be system-detected');
+
+      // If any ports were detected by the scanner, verify checkPort reflects it
+      const systemPorts = portScanner.getSystemPorts();
+      if (systemPorts.length > 0) {
+        // Find a system port that is NOT in our lease DB
+        const unleased = systemPorts.find(sp => {
+          const leaseCheck = store.portLeases.checkConflict(sp.port);
+          return !leaseCheck;
+        });
+        if (unleased) {
+          const result = porthub.checkPort(unleased.port);
+          assert.equal(result.available, false, `Port ${unleased.port} should be unavailable (in use by ${unleased.command})`);
+          assert.equal(result.systemDetected, true, `Port ${unleased.port} should be flagged as system-detected`);
+          assert.ok(result.process, 'Should include process name');
+        }
+      }
+    });
+
+    it('all engines produce parity-equivalent output for same input', () => {
+      const projectConfig = {
+        rules: {
+          core: {
+            changelogPerChange: true,
+            porthubRegistration: true
+          },
+          extensions: { identitySentry: true }
+        }
+      };
+      const template = { id: 'test', name: 'TestMethod', description: 'Test desc' };
+
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+
+      const configs = {};
+      for (const profile of profiles) {
+        configs[profile.id] = engines.generateConfig(profile.id, projectConfig, template);
+        assert.ok(configs[profile.id] !== null, `${profile.id} returned null`);
+      }
+
+      // All configs should mention CHANGELOG, PortHub, TestMethod, and identity/sentry
+      for (const [id, content] of Object.entries(configs)) {
+        assert.ok(content.includes('CHANGELOG') || content.includes('changelog'), `${id}: missing CHANGELOG`);
+        assert.ok(content.includes('PortHub') || content.includes('Port Management') || content.includes('TangleClaw API'), `${id}: missing PortHub`);
+        assert.ok(content.includes('TestMethod'), `${id}: missing methodology name`);
+        assert.ok(content.includes('identity') || content.includes('sentry') || content.includes('Identity'), `${id}: missing identitySentry`);
+      }
     });
   });
 });
