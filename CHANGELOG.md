@@ -18,6 +18,8 @@ All notable changes to TangleClaw are documented in this file.
 - **Engine and methodology badges on splash page**: Project cards now show engine (green) and methodology (purple) badges with consistent color coding across session and landing pages.
 - **Phase badge**: Orange pill shows the current methodology phase (e.g., "building", "discovery") on both splash page cards and session banner.
 - **Kill button styling on landing page**: Kill session button on project cards now has red outline matching the session banner kill button style.
+- **Automatic phase sync**: Product-hook infers the methodology phase from `work_in_progress.type` in project-state.yaml at session start and syncs it to TangleClaw via the API. Phase badge updates automatically without manual configuration.
+- **Phase field in project updates**: `PATCH /api/projects/:name` now accepts a `phase` field to set the methodology phase.
 
 ### Added
 

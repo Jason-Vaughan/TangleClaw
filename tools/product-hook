@@ -641,6 +641,99 @@ def compliance_canary(project_dir: Path) -> list[str]:
 
 
 # =============================================================================
+# Phase sync (best-effort, infer phase from WIP and push to TangleClaw)
+# =============================================================================
+
+
+# Map WIP type values to Prawduct methodology phases
+_WIP_TYPE_TO_PHASE: dict[str, str] = {
+    "discovery": "discovery",
+    "planning": "planning",
+    "building": "building",
+    "build": "building",
+    "feature": "building",
+    "bugfix": "building",
+    "refactor": "building",
+    "polish": "building",
+}
+
+
+def _get_wip_type(prawduct_dir: Path) -> str | None:
+    """Extract work_in_progress.type from project-state.yaml."""
+    state_path = prawduct_dir / "project-state.yaml"
+    if not state_path.is_file():
+        return None
+    try:
+        content = state_path.read_text()
+        in_wip = False
+        for line in content.splitlines():
+            if line.strip().startswith("work_in_progress:"):
+                in_wip = True
+            elif in_wip and line.startswith("  ") and "type:" in line:
+                val = line.split(":", 1)[1].strip().strip("\"'")
+                return val if val and val != "null" else None
+            elif in_wip and not line.startswith(" ") and line.strip():
+                break
+    except Exception:
+        pass
+    return None
+
+
+def _get_project_name(project_dir: Path) -> str | None:
+    """Get project name from .tangleclaw/project.json or directory name."""
+    config_path = project_dir / ".tangleclaw" / "project.json"
+    if config_path.is_file():
+        try:
+            # Project name in TangleClaw is the directory name
+            return project_dir.name
+        except Exception:
+            pass
+    return project_dir.name
+
+
+def _get_tangleclaw_port() -> int:
+    """Get TangleClaw server port from CLAUDE.md or default."""
+    # Try to extract from CLAUDE.md
+    claude_md = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve() / "CLAUDE.md"
+    if claude_md.is_file():
+        try:
+            content = claude_md.read_text()
+            for line in content.splitlines():
+                if "localhost:" in line and "TangleClaw API" in line:
+                    import re as _re
+                    match = _re.search(r"localhost:(\d+)", line)
+                    if match:
+                        return int(match.group(1))
+        except Exception:
+            pass
+    return 3101
+
+
+def _sync_phase_to_tangleclaw(project_dir: Path, prawduct_dir: Path) -> None:
+    """Infer methodology phase from WIP type and sync to TangleClaw API."""
+    wip_type = _get_wip_type(prawduct_dir)
+    phase = _WIP_TYPE_TO_PHASE.get(wip_type, None) if wip_type else None
+
+    project_name = _get_project_name(project_dir)
+    if not project_name:
+        return
+
+    port = _get_tangleclaw_port()
+
+    try:
+        import urllib.request
+        import urllib.error
+
+        url = f"http://localhost:{port}/api/projects/{urllib.parse.quote(project_name)}"
+        data = json.dumps({"phase": phase}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="PATCH")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # Best-effort — TangleClaw may not be running
+
+
+# =============================================================================
 # clear command
 # =============================================================================
 
@@ -733,6 +826,12 @@ def cmd_clear(project_dir: Path) -> int:
                 "  This file is read before writing any code — it tells every session how this project's code should be written.\n"
                 "  Do this NOW, before responding to the user."
             )
+
+    # Sync methodology phase to TangleClaw (best-effort)
+    try:
+        _sync_phase_to_tangleclaw(project_dir, prawduct_dir)
+    except Exception:
+        pass  # Never block session start for phase sync
 
     # Trigger framework sync (best-effort)
     try_sync(project_dir)
