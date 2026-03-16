@@ -6,6 +6,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Parity validation**: New `validateParity()` function in `lib/engines.js` programmatically verifies that all engines with `supportsConfigFile: true` include core rules, PortHub guide, global rules, and methodology info in their generated config. Callable from tests and the Independent Critic.
+- **Cross-feature integration tests**: Full-flow tests verifying Gemini config generation with all sections, global rules propagation across regenerated configs, port scanner conflict detection via `checkPort()`, and parity-equivalent output across all engines.
+- **Parity checklist documentation**: `docs/engine-guide.md` now includes a step-by-step checklist for adding new engine generators with parity requirements.
+
+### Added
+
+- **Periodic Port Scanner**: New `lib/port-scanner.js` module scans the system for listening TCP ports using `lsof` every 60 seconds. `checkPort()` now detects conflicts with ports bound by processes outside the lease registry (returns `systemDetected: true`). `registerPort()` logs a warning when registering a port already in use by a system process but still allows registration. `GET /api/ports` response includes `systemPortCount` (count of system-detected ports not tracked in lease DB). Graceful degradation if `lsof` is unavailable.
 - **Global Rules System**: Editable markdown rules that apply to all projects across all engines. Global rules are injected as a `## Global Rules` section into every generated engine config (CLAUDE.md, .codex.yaml, .aider.conf.yml, GEMINI.md). Editable from the landing page or via API (`GET/PUT /api/rules/global`, `POST /api/rules/global/reset`). Stored at `~/.tangleclaw/global-rules.md`, auto-created from bundled defaults on first load.
 
 ### Added

@@ -76,6 +76,8 @@ Below the system stats, there's a collapsible **Ports** panel. Tap it to see all
 
 TangleClaw manages port assignments directly in its SQLite database. Leases survive server restarts (unlike the old PortHub daemon). The panel auto-refreshes every 30 seconds.
 
+TangleClaw also periodically scans the system for listening TCP ports using `lsof`. When you check a port's availability (via API or internally), TangleClaw will detect conflicts with ports bound by processes outside its registry — even if no lease exists for that port. This helps prevent "port already in use" errors when launching services.
+
 ### Global Rules
 
 Below the ports panel, there's a collapsible **Global Rules** panel. These are markdown rules that apply to every project across all engines. When TangleClaw generates an engine config file (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included automatically.
