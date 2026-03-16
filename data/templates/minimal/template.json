@@ -28,6 +28,7 @@
   },
   "defaultRules": {},
   "actions": [],
+  "hooks": {},
   "init": {
     "directories": [".tangleclaw"],
     "files": {},

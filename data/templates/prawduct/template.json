@@ -76,6 +76,32 @@
   "actions": [
     { "label": "Run Critic", "command": "invoke-critic", "confirm": false }
   ],
+  "hooks": {
+    "claude": {
+      "SessionStart": [
+        {
+          "matcher": "startup|clear|resume",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" clear"
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" stop"
+            }
+          ]
+        }
+      ]
+    }
+  },
   "init": {
     "directories": [".prawduct", ".prawduct/artifacts"],
     "files": {

@@ -673,4 +673,159 @@ describe('engines', () => {
       }
     });
   });
+
+  describe('syncEngineHooks', () => {
+    let projectDir;
+
+    before(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-test-'));
+    });
+
+    after(() => {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    /**
+     * Helper to read .claude/settings.json from the test project dir.
+     * @returns {object}
+     */
+    function readSettings() {
+      return JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+    }
+
+    it('should create .claude/settings.json with hooks when methodology has hooks', () => {
+      const template = {
+        id: 'test-meth',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      assert.ok(settings.hooks, 'hooks key should exist');
+      assert.ok(settings.hooks.SessionStart, 'SessionStart hooks should exist');
+      assert.ok(settings.hooks.Stop, 'Stop hooks should exist');
+      assert.equal(settings.hooks.SessionStart.length, 1);
+      assert.equal(settings.hooks.Stop.length, 1);
+    });
+
+    it('should resolve {{TANGLECLAW_DIR}} placeholder', () => {
+      const template = {
+        id: 'test-meth',
+        hooks: {
+          claude: {
+            Stop: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      const cmd = settings.hooks.Stop[0].hooks[0].command;
+      assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved');
+      assert.ok(cmd.includes('/tools/product-hook'), 'resolved path should contain tools/product-hook');
+    });
+
+    it('should preserve existing non-hook settings', () => {
+      // Pre-populate with permissions and companyAnnouncements
+      const claudeDir = path.join(projectDir, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+        permissions: { allow: ['Bash(git status:*)'] },
+        companyAnnouncements: ['Test announcement'],
+        hooks: { Old: [{ matcher: '', hooks: [] }] }
+      }, null, 2));
+
+      const template = {
+        id: 'test-meth',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'echo test' }]
+            }]
+          }
+        }
+      };
+
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      assert.deepStrictEqual(settings.permissions, { allow: ['Bash(git status:*)'] });
+      assert.deepStrictEqual(settings.companyAnnouncements, ['Test announcement']);
+      // Old hooks should be replaced, not merged
+      assert.ok(!settings.hooks.Old, 'old hooks should be replaced');
+      assert.ok(settings.hooks.SessionStart, 'new hooks should be present');
+    });
+
+    it('should remove hooks when methodology has no hooks', () => {
+      // Pre-populate with hooks
+      const claudeDir = path.join(projectDir, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+        permissions: { allow: [] },
+        hooks: { Stop: [{ matcher: '', hooks: [] }] }
+      }, null, 2));
+
+      const template = { id: 'minimal', hooks: {} };
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      assert.ok(!settings.hooks, 'hooks key should be removed');
+      assert.ok(settings.permissions, 'permissions should be preserved');
+    });
+
+    it('should handle null template gracefully', () => {
+      // Pre-populate
+      const claudeDir = path.join(projectDir, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+        permissions: { allow: [] },
+        hooks: { Stop: [{ matcher: '', hooks: [] }] }
+      }, null, 2));
+
+      engines.syncEngineHooks(projectDir, null);
+
+      const settings = readSettings();
+      assert.ok(!settings.hooks, 'hooks should be removed for null template');
+      assert.ok(settings.permissions, 'permissions preserved');
+    });
+
+    it('should create .claude directory if missing', () => {
+      const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-fresh-'));
+      try {
+        const template = {
+          id: 'test-meth',
+          hooks: {
+            claude: {
+              Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo hi' }] }]
+            }
+          }
+        };
+
+        engines.syncEngineHooks(freshDir, template);
+
+        assert.ok(fs.existsSync(path.join(freshDir, '.claude', 'settings.json')));
+        const settings = JSON.parse(fs.readFileSync(path.join(freshDir, '.claude', 'settings.json'), 'utf8'));
+        assert.ok(settings.hooks.Stop);
+      } finally {
+        fs.rmSync(freshDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
