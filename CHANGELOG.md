@@ -6,10 +6,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **ttyd reconnect loop**: Fixed `deploy/ttyd-attach.sh` where `exec cmd1 || exec cmd2` fallback was dead code (`exec` replaces the shell, so `||` never runs). When a tmux session died overnight, ttyd would rapidly loop trying to reattach. Now uses `tmux new-session -A` which atomically attaches or creates. Added regression tests to prevent reintroduction.
+- **Legacy `claude-code` engine ID in project configs**: The engine rename from `claude-code` to `claude` only updated the DB and defaults — existing `.tangleclaw/project.json` files on disk retained the old ID, causing "Engine not found" on launch. Added migration in `projectConfig.load()` that normalizes `claude-code` to `claude` on read. Bulk-fixed all 16 affected project configs.
+- **Spaces in project names**: Project names with spaces (e.g. "TiLT v2") were rejected by the name validator. Now allowed — spaces are converted to hyphens for tmux session names via `tmux.toSessionName()`. Sanitization applied in session launch, status checks, delete, and ttyd-attach.sh.
+
+### Changed
+
+- **product-hook phase sync removed**: The `_sync_phase_to_tangleclaw()` code in product-hook was removed by upstream Prawduct framework sync. Phase sync is now handled externally.
 - **Methodology config corruption**: Fixed Notse project showing "Minimal" on splash page when it was built with Prawduct (config had wrong methodology value while `.prawduct/` directory existed)
 
 ### Added
 
+- **Detach vs Delete**: Project cards now have two actions — detach (removes from TangleClaw, files stay on disk, re-attachable) and delete (removes from TangleClaw and deletes files from disk). Delete requires type-to-confirm; detach shows a simple confirmation.
+- **Hide unattached projects by default**: Landing page now only shows registered projects. A "N unattached" toggle button in the toolbar reveals unregistered projects when needed. Preference persists in localStorage.
 - **Methodology hook management**: TangleClaw now manages `.claude/settings.json` hooks based on the assigned methodology. Prawduct projects get session governance hooks (product-hook clear/stop) pointing to TangleClaw's tools directory. Minimal/TiLT projects get hooks cleared. Hooks are synced on project create, attach, methodology switch, and session launch.
 - **Methodology switch confirmation modal**: Changing a project's methodology now shows a confirmation dialog explaining what gets archived, what gets initialized, and that hooks will update. Archived state stays accessible to AI assistants.
 - **Methodology archive tracking**: When switching methodologies, the archive path is stored in project config and referenced in generated CLAUDE.md/GEMINI.md and prime prompts so AI assistants know about prior methodology state.
@@ -21,6 +30,7 @@ All notable changes to TangleClaw are documented in this file.
 - **Automatic phase sync**: Product-hook infers the methodology phase from `work_in_progress.type` in project-state.yaml at session start and syncs it to TangleClaw via the API. Phase badge updates automatically without manual configuration.
 - **Phase field in project updates**: `PATCH /api/projects/:name` now accepts a `phase` field to set the methodology phase.
 - **Inferred phase fallback**: Projects with a methodology but no explicit phase show an inferred state badge — "in session" (active session), "active" (dirty git), or "idle" (no activity). Every methodology-enabled project now has a visible state indicator.
+- **Mobile card layout**: On narrow screens (480px and below), project cards stack the name on its own line above badges and action buttons, preventing name truncation.
 
 ### Added
 
