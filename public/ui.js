@@ -58,6 +58,10 @@ function renderCard(project) {
     ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
     : '';
 
+  const engineBadge = project.engine
+    ? `<span class="badge badge-engine">${esc(project.engine.name)}</span>`
+    : '';
+
   const methBadge = project.methodology
     ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
     : '';
@@ -73,6 +77,7 @@ function renderCard(project) {
       <span class="card-name" title="${n}">${n}</span>
       ${versionBadge}
       ${gitBadge}
+      ${engineBadge}
       ${methBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>

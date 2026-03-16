@@ -631,9 +631,14 @@ body {
   align-items: center;
   gap: 3px;
 }
+.badge-engine {
+  background: rgba(139, 195, 74, 0.15);
+  color: var(--primary);
+  font-size: 9px;
+}
 .badge-meth {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
+  background: rgba(171, 71, 188, 0.15);
+  color: #ce93d8;
   font-size: 9px;
 }
 .git-dirty {
