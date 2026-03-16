@@ -66,11 +66,17 @@ function renderCard(project) {
     ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
     : '';
 
-  const phaseBadge = project.methodology
-    ? project.methodology.phase
-      ? `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`
-      : `<span class="badge badge-phase-unknown">idle</span>`
-    : '';
+  let phaseBadge = '';
+  if (project.methodology) {
+    if (project.methodology.phase) {
+      phaseBadge = `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`;
+    } else {
+      const inferredState = hasSession ? 'in session'
+        : (project.git && project.git.dirty) ? 'active'
+        : 'idle';
+      phaseBadge = `<span class="badge badge-phase-unknown">${inferredState}</span>`;
+    }
+  }
 
   const statusDot = hasSession
     ? `<span class="status-dot active" title="Session active"></span>`

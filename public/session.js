@@ -176,7 +176,7 @@ async function loadProject() {
     phaseEl.className = 'banner-phase';
     phaseEl.style.display = '';
   } else if (data.methodology) {
-    phaseEl.textContent = 'idle';
+    phaseEl.textContent = 'in session';
     phaseEl.className = 'banner-phase-unknown';
     phaseEl.style.display = '';
   } else {
