@@ -162,6 +162,14 @@ async function loadProject() {
     engineEl.setAttribute('data-engine', data.engine.id);
   }
 
+  const methEl = document.getElementById('bannerMethodology');
+  if (data.methodology) {
+    methEl.textContent = data.methodology.name;
+    methEl.style.display = '';
+  } else {
+    methEl.style.display = 'none';
+  }
+
   document.title = `TangleClaw \u2014 ${data.name}`;
 }
 

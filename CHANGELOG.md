@@ -14,6 +14,8 @@ All notable changes to TangleClaw are documented in this file.
 - **Methodology switch confirmation modal**: Changing a project's methodology now shows a confirmation dialog explaining what gets archived, what gets initialized, and that hooks will update. Archived state stays accessible to AI assistants.
 - **Methodology archive tracking**: When switching methodologies, the archive path is stored in project config and referenced in generated CLAUDE.md/GEMINI.md and prime prompts so AI assistants know about prior methodology state.
 - **`hooks` field in methodology templates**: Templates can now declare engine-specific session hooks with `{{TANGLECLAW_DIR}}` placeholder resolution.
+- **Methodology badge in session banner**: Purple pill next to the engine badge shows the active methodology during a session.
+- **Engine and methodology badges on splash page**: Project cards now show engine (green) and methodology (purple) badges with consistent color coding across session and landing pages.
 
 ### Added
 
