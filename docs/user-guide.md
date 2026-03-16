@@ -76,6 +76,16 @@ Below the system stats, there's a collapsible **Ports** panel. Tap it to see all
 
 TangleClaw manages port assignments directly in its SQLite database. Leases survive server restarts (unlike the old PortHub daemon). The panel auto-refreshes every 30 seconds.
 
+### Global Rules
+
+Below the ports panel, there's a collapsible **Global Rules** panel. These are markdown rules that apply to every project across all engines. When TangleClaw generates an engine config file (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included automatically.
+
+- **Edit**: Expand the panel, modify the textarea, and tap **Save**
+- **Reset**: Tap **Reset to Defaults** to restore the bundled default rules (with confirmation)
+- **API**: `GET /api/rules/global`, `PUT /api/rules/global`, `POST /api/rules/global/reset`
+
+Global rules are stored at `~/.tangleclaw/global-rules.md`. On first load, this file is created from the bundled defaults in `data/default-global-rules.md`.
+
 ### Toolbar
 
 - **Session count**: Shows how many active sessions are running
@@ -222,7 +232,7 @@ If a `deletePassword` is configured, you'll need to enter it to wrap.
 
 #### Killing a Session
 
-Tap **Kill** to forcefully terminate a session without wrapping. Use this when a session is stuck or you don't need wrap data. Password required if configured.
+Tap **Kill** to forcefully terminate a session without wrapping. Use this when a session is stuck or you don't need wrap data. Password required if configured. Kill is also available from the project card on the landing page — look for the stop icon in the card row when a session is active.
 
 ### Session History
 

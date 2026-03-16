@@ -9,6 +9,7 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 | `~/.tangleclaw/config.json` | Global configuration |
 | `~/.tangleclaw/engines/*.json` | Engine profiles |
 | `~/.tangleclaw/templates/*/template.json` | Custom methodology templates |
+| `~/.tangleclaw/global-rules.md` | Global rules (applied to all projects) |
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
 
@@ -49,6 +50,15 @@ When `deletePassword` is set, the following operations require the password:
 - Wrapping a session
 
 The password is hashed with scrypt before storage. Plaintext passwords from v2 are auto-upgraded on first verification.
+
+## Global Rules (`global-rules.md`)
+
+Editable markdown rules that apply to all projects across all engines. When an engine config is generated (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included as a `## Global Rules` section.
+
+- **Default**: `data/default-global-rules.md` (bundled, restore source)
+- **User copy**: `~/.tangleclaw/global-rules.md` (created from defaults on first load)
+- **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global`
+- **Reset**: Landing page Reset button, or `POST /api/rules/global/reset`
 
 ## Per-Project Configuration (`project.json`)
 
@@ -202,7 +212,7 @@ The `port_leases` table stores all managed port assignments. TangleClaw is the a
 
 ## API Overview
 
-TangleClaw exposes 26 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
+TangleClaw exposes 29 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
 
 ```json
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
@@ -235,6 +245,9 @@ TangleClaw exposes 26 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/ports/lease` | POST | Create or renew a port lease |
 | `/api/ports/release` | POST | Release a port lease |
 | `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
+| `/api/rules/global` | GET | Get global rules content |
+| `/api/rules/global` | PUT | Save global rules content |
+| `/api/rules/global/reset` | POST | Reset global rules to defaults |
 | `/api/activity` | GET | Activity log |
 | `/api/upload` | POST | Upload a file to a project directory (15 MB limit) |
 | `/api/uploads` | GET | List uploads for a project (`?project=name`) |

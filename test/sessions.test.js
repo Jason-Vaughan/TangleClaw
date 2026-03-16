@@ -359,4 +359,55 @@ describe('sessions', () => {
       assert.ok(result.error.includes('not available'));
     });
   });
+
+  describe('launchSession adopts orphaned tmux session', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let sessions;
+    let originalHasSession;
+    let originalDetectEngine;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+
+      // Create a project with the claude engine
+      const projDir = path.join(projectsDir, 'orphan-test');
+      fs.mkdirSync(projDir, { recursive: true });
+      store.projects.create({
+        name: 'orphan-test',
+        path: projDir,
+        engine: 'claude',
+        methodology: 'minimal'
+      });
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalDetectEngine = enginesModule.detectEngine;
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      enginesModule.detectEngine = originalDetectEngine;
+      // Clean up any active sessions so tests are independent
+      const project = store.projects.getByName('orphan-test');
+      if (project) {
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('adopts orphaned tmux session instead of failing', () => {
+      // Mock: tmux session exists, engine is available
+      tmux.hasSession = (name) => name === 'orphan-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const result = sessions.launchSession('orphan-test');
+
+      assert.equal(result.error, null);
+      assert.ok(result.session, 'should return a session');
+      assert.equal(result.session.tmuxSession, 'orphan-test');
+      assert.equal(result.session.engineId, 'claude');
+    });
+  });
 });

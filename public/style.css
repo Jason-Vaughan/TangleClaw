@@ -217,8 +217,34 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  color: var(--text);
+  margin-bottom: 0;
+}
+.port-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  min-height: 44px;
+}
+.port-group-toggle:active .port-group-name { color: var(--primary); }
+.port-group-toggle .arrow {
+  display: inline-block;
+  font-size: 10px;
   color: var(--text-muted);
-  margin-bottom: 4px;
+  transition: transform 0.15s;
+}
+.port-group-toggle .arrow.open { transform: rotate(180deg); }
+.port-group-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.port-group-content.open {
+  max-height: 500px;
 }
 .port-lease {
   display: flex;
@@ -261,6 +287,69 @@ body {
   background: rgba(255, 167, 38, 0.15);
   color: var(--amber);
 }
+
+/* ── Global Rules Panel ── */
+.rules-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  -webkit-user-select: none;
+  user-select: none;
+  min-height: 44px;
+}
+.rules-toggle:active { color: var(--primary); }
+.rules-toggle .arrow {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.rules-toggle .arrow.open { transform: rotate(180deg); }
+
+.rules-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.rules-panel.open {
+  max-height: 500px;
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+.rules-editor {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  color: var(--text);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.rules-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.rules-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.rules-status {
+  font-size: 12px;
+  margin-top: 6px;
+  text-align: right;
+}
+.rules-status-ok { color: var(--primary); }
+.rules-status-err { color: var(--danger); }
 
 /* ── Toolbar ── */
 .toolbar {

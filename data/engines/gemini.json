@@ -1,0 +1,29 @@
+{
+  "id": "gemini",
+  "name": "Gemini CLI",
+  "command": "gemini",
+  "interactionModel": "session",
+  "configFormat": {
+    "filename": ".gemini/GEMINI.md",
+    "syntax": "markdown",
+    "generator": "gemini-md"
+  },
+  "coAuthorFormat": "Co-Authored-By: {name} <{email}>",
+  "commands": [],
+  "detection": {
+    "strategy": "which",
+    "target": "gemini"
+  },
+  "launch": {
+    "shellCommand": "gemini",
+    "args": [],
+    "env": {}
+  },
+  "persistent": null,
+  "capabilities": {
+    "supportsSlashCommands": false,
+    "supportsPrimePrompt": true,
+    "supportsConfigFile": true,
+    "supportsCoAuthor": true
+  }
+}

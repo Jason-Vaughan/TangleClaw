@@ -77,6 +77,7 @@ function renderCard(project) {
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
+        ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openKill('${n}')" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings('${n}')" title="Info">i</button>
         <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete">&times;</button>
       </span>
@@ -144,6 +145,7 @@ function toggleCardDetail(name) {
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
       <div class="detail-actions">
         <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${esc(name)}')">Settings</button>
+        ${project.session && project.session.active ? `<button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openKill('${esc(name)}')">Kill Session</button>` : ''}
         <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${esc(name)}')">Delete</button>
       </div>`;
 
@@ -260,10 +262,28 @@ function renderPorts() {
     grouped[lease.project].push(lease);
   }
 
+  // Default all groups to open if not yet set
+  for (const project of Object.keys(grouped)) {
+    if (!(project in state.portGroupsOpen)) {
+      state.portGroupsOpen[project] = true;
+    }
+  }
+
   let html = '';
   for (const [project, leases] of Object.entries(grouped)) {
+    const isOpen = state.portGroupsOpen[project] !== false;
+    const arrowClass = isOpen ? 'arrow open' : 'arrow';
+    const contentClass = isOpen ? 'port-group-content open' : 'port-group-content';
+
     html += `<div class="port-group">`;
-    html += `<div class="port-group-name">${esc(project)}</div>`;
+    html += `<div class="port-group-toggle" role="button" tabindex="0"
+      aria-expanded="${isOpen}" onclick="togglePortGroup('${esc(project)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePortGroup('${esc(project)}');}">
+      <span class="${arrowClass}">&#9660;</span>
+      <span class="port-group-name">${esc(project)}</span>
+      <span style="color:var(--text-muted);font-size:10px">(${leases.length})</span>
+    </div>`;
+    html += `<div class="${contentClass}">`;
     for (const lease of leases) {
       const typeClass = lease.permanent ? 'port-type-permanent' : 'port-type-ttl';
       const typeLabel = lease.permanent ? 'permanent' : 'TTL';
@@ -274,10 +294,52 @@ function renderPorts() {
         <span class="port-type ${typeClass}">${typeLabel}</span>
       </div>`;
     }
-    html += '</div>';
+    html += '</div></div>';
   }
 
   grid.innerHTML = html;
+}
+
+function togglePortGroup(project) {
+  state.portGroupsOpen[project] = !state.portGroupsOpen[project];
+  renderPorts();
+}
+
+// ── Rules Toggle ──
+
+/**
+ * Toggle the global rules panel open/closed.
+ */
+function toggleRules() {
+  state.rulesOpen = !state.rulesOpen;
+  const panel = document.getElementById('rulesPanel');
+  const arrow = document.querySelector('#rulesToggle .arrow');
+  const toggle = document.getElementById('rulesToggle');
+  panel.classList.toggle('open', state.rulesOpen);
+  arrow.classList.toggle('open', state.rulesOpen);
+  toggle.setAttribute('aria-expanded', state.rulesOpen);
+}
+
+/**
+ * Open the reset confirmation modal.
+ */
+function openRulesResetModal() {
+  document.getElementById('rulesResetModal').classList.add('open');
+}
+
+/**
+ * Close the reset confirmation modal.
+ */
+function closeRulesResetModal() {
+  document.getElementById('rulesResetModal').classList.remove('open');
+}
+
+/**
+ * Confirm reset: call API then close modal.
+ */
+async function confirmRulesReset() {
+  await resetGlobalRules();
+  closeRulesResetModal();
 }
 
 // ── Filter Toggle ──
@@ -351,6 +413,56 @@ async function confirmDelete() {
     return;
   }
   closeDelete();
+  await loadProjects();
+}
+
+// ── Kill Session Modal ──
+
+let killTarget = null;
+
+function openKill(name) {
+  killTarget = name;
+  const modal = document.getElementById('killModal');
+  document.getElementById('killText').innerHTML =
+    `Kill the active session for <strong>${esc(name)}</strong>? This terminates the tmux session immediately.`;
+  document.getElementById('killError').classList.add('hidden');
+  document.getElementById('killPassword').value = '';
+
+  const pwGroup = document.getElementById('killPasswordGroup');
+  if (state.config && state.config.deleteProtected) {
+    pwGroup.classList.remove('hidden');
+  } else {
+    pwGroup.classList.add('hidden');
+  }
+  modal.classList.add('open');
+}
+
+function closeKill() {
+  document.getElementById('killModal').classList.remove('open');
+  killTarget = null;
+}
+
+async function confirmKill() {
+  if (!killTarget) return;
+
+  const pw = document.getElementById('killPassword').value;
+  const body = { reason: 'Killed from landing page' };
+  if (pw) body.password = pw;
+
+  const res = await fetch(`/api/sessions/${encodeURIComponent(killTarget)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    document.getElementById('killError').textContent = data.error || 'Kill failed.';
+    document.getElementById('killError').classList.remove('hidden');
+    return;
+  }
+
+  closeKill();
   await loadProjects();
 }
 
@@ -642,6 +754,15 @@ $('portsToggle').addEventListener('click', togglePorts);
 $('portsToggle').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePorts(); }
 });
+$('rulesToggle').addEventListener('click', toggleRules);
+$('rulesToggle').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRules(); }
+});
+$('rulesSaveBtn').addEventListener('click', saveGlobalRules);
+$('rulesResetBtn').addEventListener('click', openRulesResetModal);
+$('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
+$('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);
+$('rulesResetModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeRulesResetModal(); });
 $('filterBtn').addEventListener('click', toggleFilter);
 $('newBtn').addEventListener('click', openCreateDrawer);
 $('createClose').addEventListener('click', closeCreateDrawer);
@@ -649,6 +770,9 @@ $('createBackdrop').addEventListener('click', closeCreateDrawer);
 $('deleteCancelBtn').addEventListener('click', closeDelete);
 $('deleteConfirmInput').addEventListener('input', onDeleteConfirmInput);
 $('deleteConfirmBtn').addEventListener('click', confirmDelete);
+$('killCancelBtn').addEventListener('click', closeKill);
+$('killConfirmBtn').addEventListener('click', confirmKill);
+$('killModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeKill(); });
 $('wrapCancelBtn').addEventListener('click', closeWrapModal);
 $('wrapConfirmBtn').addEventListener('click', confirmWrap);
 $('settingsCancelBtn').addEventListener('click', closeSettings);

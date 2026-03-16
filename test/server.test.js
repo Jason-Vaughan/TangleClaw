@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { matchRoute, route, parseQuery } = require('../server');
+const { matchRoute, route, parseQuery, handleUpgrade } = require('../server');
 
 describe('server', () => {
   describe('matchRoute', () => {
@@ -47,6 +47,48 @@ describe('server', () => {
     it('should decode URI components', () => {
       const params = parseQuery('?name=hello%20world');
       assert.equal(params.name, 'hello world');
+    });
+  });
+
+  describe('handleUpgrade', () => {
+    /**
+     * Create a mock socket that tracks whether destroy() was called.
+     * @returns {{ destroy: Function, destroyed: boolean }}
+     */
+    function mockSocket() {
+      const { PassThrough } = require('node:stream');
+      const s = new PassThrough();
+      s.destroyed = false;
+      const origDestroy = s.destroy.bind(s);
+      s.destroy = () => { s.destroyed = true; origDestroy(); };
+      return s;
+    }
+
+    /**
+     * Create a mock upgrade request.
+     * @param {string} url
+     * @returns {object}
+     */
+    function mockReq(url) {
+      return { url, headers: { host: 'localhost:3102', upgrade: 'websocket', connection: 'Upgrade' } };
+    }
+
+    it('should destroy socket for non-terminal paths', () => {
+      const socket = mockSocket();
+      handleUpgrade(mockReq('/random'), socket, Buffer.alloc(0));
+      assert.ok(socket.destroyed, 'Socket should be destroyed for /random');
+    });
+
+    it('should destroy socket for /api paths', () => {
+      const socket = mockSocket();
+      handleUpgrade(mockReq('/api/health'), socket, Buffer.alloc(0));
+      assert.ok(socket.destroyed, 'Socket should be destroyed for /api/health');
+    });
+
+    it('should not destroy socket for /terminal/ws path', () => {
+      const socket = mockSocket();
+      handleUpgrade(mockReq('/terminal/ws'), socket, Buffer.alloc(0));
+      assert.ok(!socket.destroyed, 'Socket should NOT be destroyed for /terminal/ws');
     });
   });
 });
