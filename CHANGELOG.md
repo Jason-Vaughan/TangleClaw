@@ -20,6 +20,7 @@ All notable changes to TangleClaw are documented in this file.
 - **Kill button styling on landing page**: Kill session button on project cards now has red outline matching the session banner kill button style.
 - **Automatic phase sync**: Product-hook infers the methodology phase from `work_in_progress.type` in project-state.yaml at session start and syncs it to TangleClaw via the API. Phase badge updates automatically without manual configuration.
 - **Phase field in project updates**: `PATCH /api/projects/:name` now accepts a `phase` field to set the methodology phase.
+- **Idle phase fallback**: Projects with a methodology but no phase set show a muted "idle" badge instead of no badge, so every methodology-enabled project has a visible state indicator.
 
 ### Added
 
