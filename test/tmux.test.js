@@ -5,6 +5,27 @@ const assert = require('node:assert/strict');
 const tmux = require('../lib/tmux');
 
 describe('tmux', () => {
+  describe('toSessionName', () => {
+    it('should pass through valid names unchanged', () => {
+      assert.equal(tmux.toSessionName('my-project'), 'my-project');
+      assert.equal(tmux.toSessionName('TiLT-v2'), 'TiLT-v2');
+    });
+
+    it('should replace spaces with hyphens', () => {
+      assert.equal(tmux.toSessionName('TiLT v2'), 'TiLT-v2');
+      assert.equal(tmux.toSessionName('My Cool Project'), 'My-Cool-Project');
+    });
+
+    it('should strip invalid characters', () => {
+      assert.equal(tmux.toSessionName('project@123'), 'project123');
+      assert.equal(tmux.toSessionName('a/b:c'), 'abc');
+    });
+
+    it('should handle multiple consecutive spaces', () => {
+      assert.equal(tmux.toSessionName('a  b'), 'a-b');
+    });
+  });
+
   describe('isValidSessionName', () => {
     it('should accept valid names', () => {
       assert.ok(tmux.isValidSessionName('my-project'));

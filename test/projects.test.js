@@ -44,8 +44,9 @@ describe('projects', () => {
       assert.equal(projects.validateName(undefined).valid, false);
     });
 
-    it('rejects names with spaces', () => {
-      assert.equal(projects.validateName('my project').valid, false);
+    it('accepts names with spaces', () => {
+      assert.equal(projects.validateName('my project').valid, true);
+      assert.equal(projects.validateName('TiLT v2').valid, true);
     });
 
     it('rejects names with special characters', () => {

@@ -97,7 +97,8 @@ function renderCard(project) {
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill('${n}')" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings('${n}')" title="Info">i</button>
-        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete">&times;</button>
+        <button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); openDetach('${n}')" title="Detach from TangleClaw">&#8856;</button>
+        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
     </div>
   </article>`;
@@ -228,7 +229,8 @@ function renderSessionCount() {
 
 function renderTagRow() {
   const row = document.getElementById('tagRow');
-  if (state.allTags.length === 0) {
+  const unregCount = state.projects.filter(p => p.registered === false).length;
+  if (state.allTags.length === 0 && unregCount === 0) {
     row.classList.add('hidden');
     return;
   }
@@ -239,6 +241,14 @@ function renderTagRow() {
     return `<button class="tag-pill${active ? ' active' : ''}"
       onclick="toggleTag(${isAll ? 'null' : `'${esc(tag)}'`})">${esc(tag)}</button>`;
   });
+
+  // Unattached toggle pill
+  if (unregCount > 0) {
+    const active = state.showUnregistered;
+    pills.push(`<button class="tag-pill tag-pill-unreg${active ? ' active' : ''}" id="unregisteredToggle"
+      onclick="toggleUnregistered()">${unregCount} unattached</button>`);
+  }
+
   row.innerHTML = pills.join('');
 }
 
@@ -380,20 +390,70 @@ function maybeShowFilter() {
   }
 }
 
-// ── Delete Project Modal ──
+// ── Delete / Detach Project Modal ──
 
 let deleteTarget = null;
+let deleteMode = 'delete'; // 'delete' = remove + delete files, 'detach' = remove from TC only
 
-function openDelete(name) {
+/**
+ * Open the modal in detach mode (non-destructive).
+ * @param {string} name
+ */
+function openDetach(name) {
   deleteTarget = name;
+  deleteMode = 'detach';
   const modal = document.getElementById('deleteModal');
+
+  document.getElementById('deleteModalTitle').textContent = 'Detach Project';
+  document.getElementById('deleteModalTitle').style.color = 'var(--text-muted)';
   document.getElementById('deleteText').innerHTML =
-    `Permanently delete <strong style="color:var(--danger)">${esc(name)}</strong>?`;
+    `Detach <strong>${esc(name)}</strong> from TangleClaw?`;
+  document.getElementById('deleteSubtext').innerHTML =
+    'The project will be removed from TangleClaw but <strong>files stay on disk</strong>. It can be re-attached later.';
   document.getElementById('deleteError').classList.add('hidden');
   document.getElementById('deletePassword').value = '';
+
+  // No type-to-confirm for detach — it's non-destructive
+  document.getElementById('deleteConfirmGroup').classList.add('hidden');
+  document.getElementById('deleteConfirmBtn').disabled = false;
+  document.getElementById('deleteConfirmBtn').textContent = 'Detach';
+  document.getElementById('deleteConfirmBtn').className = 'btn btn-detach';
+
+  const pwGroup = document.getElementById('deletePasswordGroup');
+  if (state.config && state.config.deleteProtected) {
+    pwGroup.classList.remove('hidden');
+  } else {
+    pwGroup.classList.add('hidden');
+  }
+  modal.classList.add('open');
+}
+
+/**
+ * Open the modal in delete mode (destructive — removes files from disk).
+ * @param {string} name
+ */
+function openDelete(name) {
+  deleteTarget = name;
+  deleteMode = 'delete';
+  const modal = document.getElementById('deleteModal');
+
+  document.getElementById('deleteModalTitle').textContent = 'Delete Project';
+  document.getElementById('deleteModalTitle').style.color = 'var(--danger)';
+  document.getElementById('deleteText').innerHTML =
+    `Permanently delete <strong style="color:var(--danger)">${esc(name)}</strong>?`;
+  document.getElementById('deleteSubtext').innerHTML =
+    'This will remove the project from TangleClaw, kill any active session, and <strong style="color:var(--danger)">delete all project files from disk</strong>. This cannot be undone.';
+  document.getElementById('deleteError').classList.add('hidden');
+  document.getElementById('deletePassword').value = '';
+
+  // Type-to-confirm for destructive delete
+  const confirmGroup = document.getElementById('deleteConfirmGroup');
+  confirmGroup.classList.remove('hidden');
   document.getElementById('deleteConfirmInput').value = '';
   document.getElementById('deleteConfirmInput').placeholder = name;
   document.getElementById('deleteConfirmBtn').disabled = true;
+  document.getElementById('deleteConfirmBtn').textContent = 'Delete Project';
+  document.getElementById('deleteConfirmBtn').className = 'btn btn-danger';
 
   const pwGroup = document.getElementById('deletePasswordGroup');
   if (state.config && state.config.deleteProtected) {
@@ -405,28 +465,44 @@ function openDelete(name) {
   setTimeout(() => document.getElementById('deleteConfirmInput').focus(), 100);
 }
 
+/**
+ * Handle typing in the confirm input (only active for delete mode).
+ */
 function onDeleteConfirmInput() {
+  if (deleteMode !== 'delete') return;
   const val = document.getElementById('deleteConfirmInput').value.trim();
   document.getElementById('deleteConfirmBtn').disabled = val !== deleteTarget;
 }
 
+/**
+ * Close the delete/detach modal and reset state.
+ */
 function closeDelete() {
   document.getElementById('deleteModal').classList.remove('open');
   deleteTarget = null;
+  deleteMode = 'delete';
 }
 
+/**
+ * Execute the delete or detach action.
+ */
 async function confirmDelete() {
   if (!deleteTarget) return;
-  const confirmVal = document.getElementById('deleteConfirmInput').value.trim();
-  if (confirmVal !== deleteTarget) return;
+
+  // For delete mode, require type-to-confirm
+  if (deleteMode === 'delete') {
+    const confirmVal = document.getElementById('deleteConfirmInput').value.trim();
+    if (confirmVal !== deleteTarget) return;
+  }
 
   const pw = document.getElementById('deletePassword').value;
-  const body = { deleteFiles: false };
+  const body = { deleteFiles: deleteMode === 'delete' };
   if (pw) body.password = pw;
 
   const data = await apiMutate(`/api/projects/${encodeURIComponent(deleteTarget)}`, 'DELETE', body);
   if (!data) {
-    document.getElementById('deleteError').textContent = 'Delete failed. Check password.';
+    const action = deleteMode === 'detach' ? 'Detach' : 'Delete';
+    document.getElementById('deleteError').textContent = `${action} failed. Check password.`;
     document.getElementById('deleteError').classList.remove('hidden');
     return;
   }
@@ -635,8 +711,8 @@ function renderCreateStep() {
         <label class="form-label" for="createName">Name</label>
         <input type="text" class="form-input" id="createName" value="${esc(createData.name)}"
                placeholder="my-project" autocomplete="off" autocorrect="off"
-               autocapitalize="off" spellcheck="false" pattern="[a-zA-Z0-9_-]+">
-        <div class="form-hint">Letters, numbers, hyphens, underscores only</div>
+               autocapitalize="off" spellcheck="false" pattern="[a-zA-Z0-9 _-]+">
+        <div class="form-hint">Letters, numbers, spaces, hyphens, underscores</div>
         <div id="createNameError" class="form-error hidden" role="alert"></div>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="createNext()">Next</button>`;
@@ -721,9 +797,9 @@ function selectMethodology(id) {
 function createNext() {
   if (createStep === 0) {
     const name = document.getElementById('createName').value.trim();
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    if (!/^[a-zA-Z0-9 _-]+$/.test(name)) {
       const errEl = document.getElementById('createNameError');
-      errEl.textContent = 'Invalid name. Use letters, numbers, hyphens, or underscores.';
+      errEl.textContent = 'Invalid name. Use letters, numbers, spaces, hyphens, or underscores.';
       errEl.classList.remove('hidden');
       return;
     }

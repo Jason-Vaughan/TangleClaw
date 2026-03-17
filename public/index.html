@@ -153,16 +153,16 @@
 
   <!-- Delete Confirmation Modal -->
   <div class="modal-backdrop" id="deleteModal">
-    <div class="modal-content" role="dialog" aria-label="Delete project" aria-modal="true">
-      <h3 class="modal-title" style="color:var(--danger)">Delete Project</h3>
+    <div class="modal-content" role="dialog" aria-label="Delete or detach project" aria-modal="true">
+      <h3 class="modal-title" id="deleteModalTitle" style="color:var(--danger)">Delete Project</h3>
       <p class="modal-text" id="deleteText"></p>
-      <p class="modal-text" style="font-size:12px;color:var(--text-muted);margin-top:8px">This will remove the project from TangleClaw and kill any active session. <strong style="color:var(--danger)">This cannot be undone.</strong></p>
-      <div class="form-group" style="margin-top:12px">
+      <p class="modal-text" id="deleteSubtext" style="font-size:12px;color:var(--text-muted);margin-top:8px"></p>
+      <div class="form-group" id="deleteConfirmGroup" style="margin-top:12px">
         <label class="form-label" for="deleteConfirmInput">Type the project name to confirm</label>
         <input type="text" class="form-input" id="deleteConfirmInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="">
       </div>
       <div class="form-group hidden" id="deletePasswordGroup">
-        <label class="form-label" for="deletePassword">Deletion password</label>
+        <label class="form-label" for="deletePassword">Password</label>
         <input type="password" class="password-input" id="deletePassword" autocomplete="off">
       </div>
       <div id="deleteError" class="form-error hidden" role="alert"></div>

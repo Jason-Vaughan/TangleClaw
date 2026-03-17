@@ -350,6 +350,13 @@ describe('store', () => {
       assert.equal(loaded.rules.extensions.docsParity, false); // default preserved
     });
 
+    it('should migrate legacy claude-code engine ID to claude', () => {
+      store.projectConfig.save(projectDir, { engine: 'claude-code' });
+
+      const loaded = store.projectConfig.load(projectDir);
+      assert.equal(loaded.engine, 'claude', 'claude-code should be migrated to claude on load');
+    });
+
     it('should handle malformed JSON gracefully', () => {
       fs.mkdirSync(path.join(projectDir, '.tangleclaw'), { recursive: true });
       fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), 'not json');

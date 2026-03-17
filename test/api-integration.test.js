@@ -279,7 +279,7 @@ describe('Landing Page API Integration', () => {
     it('should return 400 for invalid project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'has spaces', engine: 'claude' }
+        body: { name: 'has/slashes', engine: 'claude' }
       });
       assert.equal(res.status, 400);
     });
