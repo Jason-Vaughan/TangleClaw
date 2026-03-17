@@ -5,10 +5,12 @@ An AI development orchestration platform that manages the contracts, lifecycle, 
 ## What It Does
 
 - **Methodology-as-code**: Pluggable methodology templates (Prawduct, TiLT, Minimal, custom) with structural enforcement — rules are gates, not suggestions
-- **Engine abstraction**: Swap between Claude Code, Codex, Aider, or any AI engine without reconfiguring projects
-- **Session lifecycle**: Prime prompts auto-generated from methodology state, configurable wrap skills, learning capture
-- **Mobile-first**: Manage projects, launch sessions, and interact with AI agents from iPhone Safari or Android
-- **Zero dependencies**: Node.js stdlib only. No npm install, no build step, no bundler
+- **Engine abstraction**: Swap between Claude Code, Codex, Gemini CLI, Aider, or any AI engine without reconfiguring projects. Config parity across all engines
+- **Session lifecycle**: Prime prompts auto-generated from methodology state, configurable wrap skills, learning capture, idle detection
+- **PortHub**: Central port registry preventing conflicts across all projects. Permanent and TTL leases with heartbeat support
+- **Setup wizard**: First-run guided setup scans for existing projects, detects engines, and configures preferences
+- **Mobile-first PWA**: Installable on iOS and Android. Manage projects, launch sessions, and interact with AI agents from your phone
+- **Zero dependencies**: Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
 ## Prerequisites
 
@@ -19,7 +21,7 @@ An AI development orchestration platform that manages the contracts, lifecycle, 
 ## Quick Start
 
 ```bash
-git clone <repo-url> ~/Documents/Projects/TangleClaw-v3
+git clone https://github.com/Jason-Vaughan/TangleClaw.git ~/Documents/Projects/TangleClaw-v3
 cd ~/Documents/Projects/TangleClaw-v3
 ./deploy/install.sh
 ```
@@ -30,7 +32,7 @@ The install script:
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3101**.
+Access the landing page at **http://localhost:3102**.
 
 ## Documentation
 
@@ -80,6 +82,8 @@ lib/
   sessions.js          # Session lifecycle (launch, prime, wrap, kill)
   skills.js            # Skills system (session-wrap skill)
   porthub.js           # PortHub integration (port registration)
+  port-scanner.js      # Periodic system port conflict detection
+  uploads.js           # File upload handling for AI sessions
 public/
   index.html           # Landing page
   session.html         # Session wrapper page
@@ -104,13 +108,13 @@ docs/                  # User documentation
 ```
 launchd (com.tangleclaw.server)
   └─ node server.js
-     ├─ Landing page HTTP server (:3101)
+     ├─ Landing page HTTP server (:3102)
      ├─ API endpoints (/api/*)
-     ├─ Reverse proxy /terminal/* → ttyd (:3100)
+     ├─ Reverse proxy /terminal/* → ttyd (:3101)
      └─ Session wrapper HTML serving
 
 launchd (com.tangleclaw.ttyd)
-  └─ ttyd --port 3100 tmux attach
+  └─ ttyd --port 3101 tmux attach
      └─ WebSocket terminal access
 
 tmux sessions (spawned on demand)
@@ -147,7 +151,7 @@ launchctl unload ~/Library/LaunchAgents/com.tangleclaw.ttyd.plist
 tail -f ~/Library/Logs/tangleclaw-server.log
 
 # Health check
-curl -s http://localhost:3101/api/health | python3 -m json.tool
+curl -s http://localhost:3102/api/health | python3 -m json.tool
 ```
 
 ## License
