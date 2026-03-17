@@ -12,6 +12,7 @@ const state = {
   config: null,
   filterText: '',
   activeTag: null,
+  showUnregistered: false,
   allTags: [],
   connected: true,
   statsOpen: true,
@@ -212,6 +213,7 @@ async function loadProjects() {
   collectTags();
   renderProjects();
   renderSessionCount();
+  updateUnregisteredToggle();
 }
 
 function collectTags() {
@@ -225,8 +227,15 @@ function collectTags() {
 
 // ── Filtering ──
 
+/**
+ * Filter projects based on text, tag, and registered state.
+ * @returns {object[]}
+ */
 function filterProjects() {
   let list = state.projects;
+  if (!state.showUnregistered) {
+    list = list.filter(p => p.registered !== false);
+  }
   const text = state.filterText.toLowerCase();
   if (text) {
     list = list.filter(p => {
@@ -249,6 +258,23 @@ function toggleTag(tag) {
   state.activeTag = tag;
   renderTagRow();
   renderProjects();
+}
+
+/**
+ * Toggle visibility of unregistered projects and persist preference.
+ */
+function toggleUnregistered() {
+  state.showUnregistered = !state.showUnregistered;
+  try { localStorage.setItem('tc_showUnregistered', JSON.stringify(state.showUnregistered)); } catch (e) { /* ignore */ }
+  updateUnregisteredToggle();
+  renderProjects();
+}
+
+/**
+ * Update the unregistered toggle button state by re-rendering the tag row.
+ */
+function updateUnregisteredToggle() {
+  renderTagRow();
 }
 
 // ── Project Actions ──
@@ -375,6 +401,12 @@ function checkPortImports() {
 }
 
 async function init() {
+  // Restore persisted preferences
+  try {
+    const saved = localStorage.getItem('tc_showUnregistered');
+    if (saved !== null) state.showUnregistered = JSON.parse(saved);
+  } catch (e) { /* ignore */ }
+
   await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
 
   // Check for first-run setup wizard
@@ -388,6 +420,7 @@ async function init() {
   await Promise.all([loadStats(), loadPorts(), loadGlobalRules()]);
   checkPortImports();
   maybeShowFilter();
+  updateUnregisteredToggle();
   startPolling();
 }
 

@@ -14,6 +14,18 @@
 - Use decision framework before adding code
 - Independent Critic review after medium+ work
 
+# Global Rules
+
+These rules apply to all projects managed by TangleClaw, across all engines.
+Edit them from the TangleClaw landing page or via the API.
+
+## General
+
+- Follow the project's existing code style and conventions
+- Prefer small, focused commits over large monolithic ones
+- Keep functions short and single-purpose
+- Write clear commit messages that explain why, not just what
+
 ## Port Management (PortHub)
 
 TangleClaw is the central port registry for all projects on this machine. Every port used by any project must be registered here to prevent conflicts. This replaces the old standalone `porthub` CLI — do not use `porthub lease`/`porthub release`; use the TangleClaw API instead.
