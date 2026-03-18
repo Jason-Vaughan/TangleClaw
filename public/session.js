@@ -24,6 +24,7 @@ const sessionState = {
   idleCount: 0,
   commandHistory: [],
   ended: false,
+  wrapping: false,
   mouseOn: false,
   launchGraceRemaining: 0
 };
@@ -240,7 +241,18 @@ async function pollStatus() {
 
   sessionState.session = data;
 
-  if (!data.active && !sessionState.ended) {
+  // Handle wrapping state
+  if (data.wrapping && !sessionState.wrapping) {
+    showWrappingState();
+  }
+
+  // Handle wrap completed (tmux died during wrapping)
+  if (data.wrapCompleted && !sessionState.ended) {
+    handleWrapCompleted(data);
+    return;
+  }
+
+  if (!data.active && !data.wrapping && !sessionState.ended) {
     // Grace period after fresh launch — tmux may not be queryable yet
     if (sessionState.launchGraceRemaining > 0) {
       sessionState.launchGraceRemaining--;
@@ -866,8 +878,134 @@ async function confirmWrap() {
   }
 
   closeWrapModal();
-  // Poll for wrap completion — status will transition to wrapped
+  // Immediately show wrapping state
+  sessionState.wrapping = true;
+  showWrappingState();
+  // Increase poll frequency during wrapping
+  sessionState.pollInterval = 2000;
   startPolling();
+}
+
+// ── Terminal Touch Scroll Shim ──
+// xterm.js virtual scroll doesn't handle mobile touch well.
+// We intercept touch events on the iframe and manually scroll the xterm instance.
+
+/**
+ * Set up touch-based scrolling for the terminal iframe.
+ * Waits for the iframe to load, then attaches touch listeners to xterm's viewport.
+ */
+function setupTerminalTouchScroll() {
+  if (!('ontouchstart' in window)) return; // desktop doesn't need this
+
+  const frame = document.getElementById('terminalFrame');
+  frame.addEventListener('load', () => {
+    try {
+      const iframeDoc = frame.contentDocument || frame.contentWindow.document;
+      const viewport = iframeDoc.querySelector('.xterm-viewport');
+      if (!viewport) return;
+
+      let touchStartY = 0;
+      let lastTouchY = 0;
+      let scrollAccum = 0;
+      const LINE_HEIGHT = 18; // approximate xterm line height in px
+
+      viewport.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        touchStartY = e.touches[0].clientY;
+        lastTouchY = touchStartY;
+        scrollAccum = 0;
+      }, { passive: true });
+
+      viewport.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 1) return;
+        const currentY = e.touches[0].clientY;
+        const deltaY = lastTouchY - currentY; // positive = scroll down
+        lastTouchY = currentY;
+        scrollAccum += deltaY;
+
+        // Scroll in line-sized increments
+        const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
+        if (linesToScroll !== 0) {
+          scrollAccum -= linesToScroll * LINE_HEIGHT;
+          // Access xterm's Terminal instance via ttyd's global
+          const iframeWin = frame.contentWindow;
+          const term = iframeWin && (iframeWin.term || iframeWin.terminal);
+          if (term && typeof term.scrollLines === 'function') {
+            term.scrollLines(linesToScroll);
+          } else {
+            // Fallback: scroll the viewport element directly
+            viewport.scrollTop += linesToScroll * LINE_HEIGHT;
+          }
+        }
+      }, { passive: true });
+    } catch (err) {
+      console.warn('Touch scroll shim failed:', err.message);
+    }
+  });
+}
+
+// ── Wrapping State ──
+
+/**
+ * Show wrapping state UI — amber dot, disable action buttons, show wrapping bar.
+ * Terminal stays visible so user can watch the wrap.
+ */
+function showWrappingState() {
+  sessionState.wrapping = true;
+
+  const dot = document.getElementById('statusDot');
+  dot.classList.add('wrapping');
+  dot.title = 'Wrapping...';
+
+  // Disable action buttons
+  document.getElementById('wrapBtn').disabled = true;
+  document.getElementById('killBtn').disabled = true;
+  document.getElementById('cmdBtn').disabled = true;
+  document.getElementById('commandSend').disabled = true;
+
+  // Show wrapping bar
+  document.getElementById('sessionWrapping').classList.remove('hidden');
+}
+
+/**
+ * Handle wrap completion — show ended bar with 20s countdown + Stay button.
+ * @param {object} data - Status data with wrapCompleted flag
+ */
+function handleWrapCompleted(data) {
+  sessionState.ended = true;
+  sessionState.wrapping = false;
+  stopPolling();
+
+  // Hide wrapping bar
+  document.getElementById('sessionWrapping').classList.add('hidden');
+
+  const dot = document.getElementById('statusDot');
+  dot.classList.remove('wrapping');
+  dot.classList.add('ended');
+  dot.title = 'Session wrapped';
+
+  // Disable action buttons
+  document.getElementById('wrapBtn').disabled = true;
+  document.getElementById('killBtn').disabled = true;
+  document.getElementById('cmdBtn').disabled = true;
+  document.getElementById('commandSend').disabled = true;
+
+  // Show ended bar with longer countdown
+  const endedBar = document.getElementById('sessionEnded');
+  endedBar.classList.remove('hidden');
+
+  let remaining = 20;
+  const countdownEl = document.getElementById('countdown');
+  countdownEl.textContent = `Returning in ${remaining}s`;
+  countdownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(countdownTimer);
+      window.location.href = '/';
+    } else {
+      countdownEl.textContent = `Returning in ${remaining}s`;
+    }
+  }, 1000);
 }
 
 // ── Event Bindings ──
@@ -883,6 +1021,16 @@ function bindEvents() {
   $('settingsBtn').addEventListener('click', openSettings);
   $('wrapBtn').addEventListener('click', openWrapModal);
   $('killBtn').addEventListener('click', openKillModal);
+
+  // Stay button — cancel countdown
+  $('stayBtn').addEventListener('click', () => {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+    $('countdown').textContent = 'Staying';
+    $('stayBtn').disabled = true;
+  });
 
   // Upload modal
   $('uploadFile').addEventListener('change', handleFileSelect);
@@ -965,6 +1113,7 @@ async function initSession() {
 
   // Set up terminal iframe
   setupTerminal();
+  setupTerminalTouchScroll();
 
   // Render command pills
   renderCommandPills();

@@ -178,6 +178,80 @@ describe('store.sessions (write methods)', () => {
     });
   });
 
+  describe('setWrapping', () => {
+    it('transitions active session to wrapping', () => {
+      const session = store.sessions.start({
+        projectId,
+        engineId: 'claude',
+        tmuxSession: 'wrapping-test'
+      });
+
+      const wrapping = store.sessions.setWrapping(session.id);
+      assert.ok(wrapping);
+      assert.equal(wrapping.status, 'wrapping');
+    });
+
+    it('returns null for non-active session', () => {
+      const session = store.sessions.start({
+        projectId,
+        engineId: 'claude',
+        tmuxSession: 'wrapping-killed-test'
+      });
+      store.sessions.kill(session.id, 'test');
+
+      const result = store.sessions.setWrapping(session.id);
+      assert.equal(result, null);
+    });
+
+    it('logs session.wrapping activity', () => {
+      const session = store.sessions.start({
+        projectId,
+        engineId: 'claude',
+        tmuxSession: 'wrapping-log-test'
+      });
+
+      store.sessions.setWrapping(session.id);
+
+      const activity = store.activity.query({ sessionId: session.id, eventType: 'session.wrapping' });
+      assert.ok(activity.length >= 1);
+    });
+  });
+
+  describe('getWrapping', () => {
+    it('returns wrapping session', () => {
+      // Clean up any existing wrapping sessions first
+      let existing = store.sessions.getWrapping(projectId);
+      while (existing) {
+        store.sessions.wrap(existing.id, 'cleanup');
+        existing = store.sessions.getWrapping(projectId);
+      }
+
+      const session = store.sessions.start({
+        projectId,
+        engineId: 'claude',
+        tmuxSession: 'get-wrapping-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      const wrapping = store.sessions.getWrapping(projectId);
+      assert.ok(wrapping);
+      assert.equal(wrapping.id, session.id);
+      assert.equal(wrapping.status, 'wrapping');
+    });
+
+    it('returns null when no wrapping session', () => {
+      // Wrap all wrapping sessions to clear them
+      let wrapping = store.sessions.getWrapping(projectId);
+      while (wrapping) {
+        store.sessions.wrap(wrapping.id, 'cleanup');
+        wrapping = store.sessions.getWrapping(projectId);
+      }
+
+      const result = store.sessions.getWrapping(projectId);
+      assert.equal(result, null);
+    });
+  });
+
   describe('getActive', () => {
     it('returns null after session is wrapped', () => {
       const session = store.sessions.start({
