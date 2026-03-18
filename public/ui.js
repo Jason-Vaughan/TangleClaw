@@ -674,6 +674,119 @@ async function doSaveSettings() {
   await loadProjects();
 }
 
+// ── Global Settings Modal ──
+
+/**
+ * Open the global settings modal, loading current config values.
+ */
+function openGlobalSettings() {
+  const c = state.config || {};
+  const body = document.getElementById('globalSettingsBody');
+
+  const engineOpts = state.engines.map(e =>
+    `<option value="${esc(e.id)}" ${e.id === (c.defaultEngine || '') ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
+  ).join('');
+
+  const methOpts = state.methodologies.map(m =>
+    `<option value="${esc(m.id)}" ${m.id === (c.defaultMethodology || '') ? 'selected' : ''}>${esc(m.name)}</option>`
+  ).join('');
+
+  const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
+
+  body.innerHTML = `
+    <div class="gs-section-label">Appearance</div>
+    <div class="form-group">
+      <label class="form-label" for="gsTheme">Theme</label>
+      <select class="form-select" id="gsTheme">
+        <option value="dark" ${c.theme === 'dark' ? 'selected' : ''}>Dark</option>
+        <option value="light" ${c.theme === 'light' ? 'selected' : ''}>Light</option>
+        <option value="high-contrast" ${c.theme === 'high-contrast' ? 'selected' : ''}>High Contrast</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="gsPeekMode">Peek mode</label>
+      <select class="form-select" id="gsPeekMode">
+        <option value="drawer" ${c.peekMode === 'drawer' ? 'selected' : ''}>Drawer</option>
+        <option value="modal" ${c.peekMode === 'modal' ? 'selected' : ''}>Modal</option>
+        <option value="alert" ${c.peekMode === 'alert' ? 'selected' : ''}>Alert</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Global chime mute</span>
+        <input type="checkbox" id="gsChimeMuted" ${c.chimeMuted ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">When on, silences chime notifications in all sessions</div>
+    </div>
+
+    <div class="gs-section-label">Project Defaults</div>
+    <div class="form-group">
+      <label class="form-label" for="gsDefaultEngine">Default engine</label>
+      <select class="form-select" id="gsDefaultEngine">${engineOpts}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="gsDefaultMethodology">Default methodology</label>
+      <select class="form-select" id="gsDefaultMethodology">${methOpts}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="gsProjectsDir">Projects directory</label>
+      <input type="text" class="form-input" id="gsProjectsDir" value="${esc(c.projectsDir || '~/Documents/Projects')}"
+             autocomplete="off" autocorrect="off" spellcheck="false">
+    </div>
+
+    <div class="gs-section-label">Port Scanner</div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Port scanner enabled</span>
+        <input type="checkbox" id="gsPortScannerEnabled" ${c.portScannerEnabled !== false ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Periodically scans for listening ports via lsof</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="gsPortScannerInterval">Scan interval (seconds)</label>
+      <input type="number" class="form-input" id="gsPortScannerInterval" value="${scannerIntervalSec}" min="10" max="600">
+      <div class="form-hint">Min 10s, max 600s (10 min)</div>
+    </div>
+  `;
+
+  document.getElementById('globalSettingsModal').classList.add('open');
+}
+
+/**
+ * Close the global settings modal without saving.
+ */
+function closeGlobalSettings() {
+  document.getElementById('globalSettingsModal').classList.remove('open');
+}
+
+/**
+ * Save global settings from the modal form.
+ */
+async function saveGlobalSettings() {
+  const intervalSec = parseInt(document.getElementById('gsPortScannerInterval').value, 10);
+  const intervalMs = (isNaN(intervalSec) ? 60 : Math.min(600, Math.max(10, intervalSec))) * 1000;
+
+  const patch = {
+    theme: document.getElementById('gsTheme').value,
+    peekMode: document.getElementById('gsPeekMode').value,
+    chimeMuted: document.getElementById('gsChimeMuted').checked,
+    defaultEngine: document.getElementById('gsDefaultEngine').value,
+    defaultMethodology: document.getElementById('gsDefaultMethodology').value,
+    projectsDir: document.getElementById('gsProjectsDir').value.trim(),
+    portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
+    portScannerIntervalMs: intervalMs
+  };
+
+  const data = await apiMutate('/api/config', 'PATCH', patch);
+  if (data && data.config) {
+    state.config = data.config;
+    applyTheme();
+  }
+  closeGlobalSettings();
+}
+
 // ── Create Project Drawer ──
 
 let createStep = 0;
@@ -931,6 +1044,10 @@ $('settingsModal').addEventListener('click', (e) => { if (e.target === e.current
 $('methSwitchCancelBtn').addEventListener('click', closeMethSwitchModal);
 $('methSwitchConfirmBtn').addEventListener('click', confirmMethSwitch);
 $('methSwitchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMethSwitchModal(); });
+$('gearBtn').addEventListener('click', openGlobalSettings);
+$('globalSettingsCancelBtn').addEventListener('click', closeGlobalSettings);
+$('globalSettingsSaveBtn').addEventListener('click', saveGlobalSettings);
+$('globalSettingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeGlobalSettings(); });
 
 let filterTimer = null;
 $('filterInput').addEventListener('input', (e) => {

@@ -311,7 +311,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
-    'chimeEnabled', 'peekMode', 'setupComplete'
+    'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
+    'portScannerEnabled', 'portScannerIntervalMs'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -335,6 +336,17 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'setupComplete' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'setupComplete must be a boolean', 'BAD_REQUEST');
     }
+    if (key === 'chimeMuted' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'chimeMuted must be a boolean', 'BAD_REQUEST');
+    }
+    if (key === 'portScannerEnabled' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'portScannerEnabled must be a boolean', 'BAD_REQUEST');
+    }
+    if (key === 'portScannerIntervalMs') {
+      if (typeof value !== 'number' || value < 10000 || value > 600000) {
+        return errorResponse(res, 400, 'portScannerIntervalMs must be a number between 10000 and 600000', 'BAD_REQUEST');
+      }
+    }
 
     if (key === 'serverPort' || key === 'ttydPort') {
       if (config[key] !== value) requiresRestart = true;
@@ -349,6 +361,14 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   store.config.save(config);
+
+  // Restart or stop port scanner if settings changed
+  if ('portScannerEnabled' in body || 'portScannerIntervalMs' in body) {
+    portScanner.stopScanner();
+    if (config.portScannerEnabled) {
+      portScanner.startScanner(config.portScannerIntervalMs);
+    }
+  }
 
   // Build redacted response
   const redacted = { ...config };

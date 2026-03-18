@@ -201,7 +201,22 @@ async function loadVersion() {
  */
 async function loadConfig() {
   const data = await api('/api/config');
-  if (data) sessionState.config = data;
+  if (data) {
+    sessionState.config = data;
+    applyTheme();
+  }
+}
+
+/**
+ * Apply the current theme to the document.
+ */
+function applyTheme() {
+  const theme = (sessionState.config && sessionState.config.theme) || 'dark';
+  if (theme === 'dark') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
 }
 
 /**
@@ -495,10 +510,11 @@ function initAudio() {
 }
 
 /**
- * Play a synthesized chime tone.
+ * Play a synthesized chime tone. Respects global chimeMuted config.
  */
 function playChime() {
   if (!audioCtx) return;
+  if (sessionState.config && sessionState.config.chimeMuted) return;
   try {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const osc = audioCtx.createOscillator();

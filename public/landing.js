@@ -363,6 +363,21 @@ async function confirmWrap() {
   await loadProjects();
 }
 
+// ── Theme ──
+
+/**
+ * Apply the current theme to the document.
+ * Sets data-theme attribute on <html> for CSS variable overrides.
+ */
+function applyTheme() {
+  const theme = (state.config && state.config.theme) || 'dark';
+  if (theme === 'dark') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+}
+
 // ── Utilities ──
 
 /**
@@ -408,6 +423,7 @@ async function init() {
   } catch (e) { /* ignore */ }
 
   await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
+  applyTheme();
 
   // Check for first-run setup wizard
   if (typeof checkSetupWizard === 'function' && checkSetupWizard()) {

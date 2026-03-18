@@ -30,6 +30,27 @@
   --radius-pill: 14px;
 }
 
+/* ── Light Theme ── */
+[data-theme="light"] {
+  --bg: #F5F5F5;
+  --card-bg: #FFFFFF;
+  --elevated-bg: #E0E0E0;
+  --text: #1A1A1A;
+  --text-muted: #666;
+}
+
+/* ── High Contrast Theme ── */
+[data-theme="high-contrast"] {
+  --bg: #000000;
+  --card-bg: #000000;
+  --elevated-bg: #333333;
+  --text: #FFFFFF;
+  --text-muted: #BBBBBB;
+  --primary: #A4D65E;
+  --primary-bright: #B8E070;
+  --danger: #FF6B6B;
+}
+
 /* ── Base ── */
 html {
   font-size: 16px;
@@ -89,6 +110,17 @@ body {
   color: var(--text-muted);
   font-family: monospace;
 }
+.header-gear {
+  font-size: 20px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  border: none;
+  background: none;
+}
+.header-gear:active { color: var(--primary); }
 
 /* ── System Stats Dashboard ── */
 .stats-toggle {
@@ -1155,6 +1187,58 @@ body {
   clip: rect(0,0,0,0);
   border: 0;
 }
+/* ── Global Settings Toggle ── */
+.gs-toggle-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.gs-toggle-label input[type="checkbox"] { display: none; }
+.gs-toggle-label .toggle-switch {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--elevated-bg);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.gs-toggle-label .toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.2s;
+}
+.gs-toggle-label input:checked + .toggle-switch {
+  background: var(--primary);
+}
+.gs-toggle-label input:checked + .toggle-switch::after {
+  transform: translateX(18px);
+}
+.gs-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--elevated-bg);
+}
+.gs-section-label:first-child { margin-top: 0; }
+
 .hidden { display: none !important; }
 
 /* ── Setup Wizard ── */
