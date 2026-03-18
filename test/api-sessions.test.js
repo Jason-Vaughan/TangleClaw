@@ -194,6 +194,67 @@ describe('api-sessions', () => {
     });
   });
 
+  describe('POST /api/sessions/:project/wrap response', () => {
+    it('includes wrapSteps and captureFields in response', async () => {
+      // Create an active session to wrap
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-response-test'
+      });
+
+      // Mock tmux — triggerWrap calls sendKeys and setWrapping
+      const tmux = require('../lib/tmux');
+      const originalSendKeys = tmux.sendKeys;
+      const originalHasSession = tmux.hasSession;
+      tmux.sendKeys = () => {};
+      tmux.hasSession = () => true;
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        assert.equal(res.status, 200);
+        assert.equal(res.body.ok, true);
+        assert.equal(res.body.status, 'wrapping');
+        assert.ok(Array.isArray(res.body.wrapSteps));
+        assert.ok(Array.isArray(res.body.captureFields));
+      } finally {
+        tmux.sendKeys = originalSendKeys;
+        tmux.hasSession = originalHasSession;
+        // Cleanup
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+  });
+
+  describe('POST /api/sessions/:project/wrap/complete', () => {
+    it('returns 404 when no wrapping session', async () => {
+      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
+      assert.equal(res.status, 404);
+    });
+
+    it('completes a wrapping session with summary', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-complete-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+        summary: 'Manual wrap summary'
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.session.status, 'wrapped');
+      assert.equal(res.body.session.wrapSummary, 'Manual wrap summary');
+    });
+  });
+
   describe('GET /api/sessions/:project/peek', () => {
     it('returns 404 when no active session', async () => {
       const res = await request(server, 'GET', '/api/sessions/api-sess-test/peek');

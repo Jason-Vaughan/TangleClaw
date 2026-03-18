@@ -4,6 +4,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mobile terminal scrollback**: Added touch scroll shim for the terminal iframe on mobile. xterm.js's built-in touch handling doesn't scroll through the scrollback buffer on mobile; the shim intercepts touch swipe events and calls `scrollLines()` on the xterm.js instance directly.
+- **Session wrap lifecycle**: Wrap button now works end-to-end. Clicking Wrap transitions the session from `active` → `wrapping` → `wrapped` with proper state tracking. The terminal stays visible during wrapping so the user can watch the AI execute wrap steps. When the AI exits tmux, the wrap summary is auto-captured from terminal output and stored for the next session's prime prompt. Added 20s countdown with "Stay" button on wrap completion. The wrap command is now methodology-driven — template-defined `steps` and `captureFields` are sent to the AI and used to parse structured output.
+
 ### Added
 
 - **Global settings modal** (Phase 3, Chunk 1+2): Gear icon in header opens a settings modal with all configurable options — theme, peek mode, global chime mute, default engine/methodology, projects directory, and port scanner controls. Previously required API calls or the first-run wizard.

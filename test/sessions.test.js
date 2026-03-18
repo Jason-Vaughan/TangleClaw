@@ -295,6 +295,161 @@ describe('sessions', () => {
     });
   });
 
+  describe('parseWrapSummary', () => {
+    let sessions;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    it('extracts structured fields from markdown headings', () => {
+      const rawOutput = [
+        'Some preamble',
+        '## summary',
+        'We completed chunk 5',
+        'All tests pass',
+        '## nextSteps',
+        'Start chunk 6',
+        '## learnings',
+        'Wrap parsing is tricky'
+      ].join('\n');
+
+      const result = sessions.parseWrapSummary(rawOutput, ['summary', 'nextSteps', 'learnings']);
+      assert.ok(result.includes('## summary'));
+      assert.ok(result.includes('We completed chunk 5'));
+      assert.ok(result.includes('## nextSteps'));
+      assert.ok(result.includes('Start chunk 6'));
+      assert.ok(result.includes('## learnings'));
+    });
+
+    it('falls back to last 50 lines when no fields match', () => {
+      const lines = Array.from({ length: 60 }, (_, i) => `line ${i}`);
+      const rawOutput = lines.join('\n');
+
+      const result = sessions.parseWrapSummary(rawOutput, ['nonexistent']);
+      assert.ok(result.includes('line 59'));
+      assert.ok(result.includes('line 10'));
+      assert.ok(!result.includes('line 9'));
+    });
+
+    it('returns empty string for empty input', () => {
+      const result = sessions.parseWrapSummary('', ['summary']);
+      assert.equal(result, '');
+    });
+
+    it('falls back to raw output when no captureFields provided', () => {
+      const result = sessions.parseWrapSummary('some output', []);
+      assert.equal(result, 'some output');
+    });
+  });
+
+  describe('autoCompleteWrap', () => {
+    let sessions;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    it('wraps session with cached pane output', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'auto-wrap-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      // Simulate cached pane output
+      sessions._wrapPaneCache.set(session.id, '## summary\nDone with chunk\n## nextSteps\nNext chunk');
+
+      const result = sessions.autoCompleteWrap(project, session);
+      assert.ok(result);
+      assert.equal(result.status, 'wrapped');
+      assert.ok(result.wrapSummary.includes('Done with chunk'));
+    });
+
+    it('handles missing cache gracefully', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'auto-wrap-empty-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      const result = sessions.autoCompleteWrap(project, session);
+      assert.ok(result);
+      assert.equal(result.status, 'wrapped');
+      // Empty cache → empty string → store converts to null
+      assert.equal(result.wrapSummary, null);
+    });
+  });
+
+  describe('triggerWrap (methodology-driven)', () => {
+    let sessions;
+    const tmux = require('../lib/tmux');
+    let originalSendKeys;
+    let originalHasSession;
+    let sentCommand;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    beforeEach(() => {
+      originalSendKeys = tmux.sendKeys;
+      originalHasSession = tmux.hasSession;
+      sentCommand = null;
+      tmux.sendKeys = (name, cmd, opts) => { sentCommand = cmd; };
+      tmux.hasSession = () => true;
+    });
+
+    afterEach(() => {
+      tmux.sendKeys = originalSendKeys;
+      tmux.hasSession = originalHasSession;
+      // Cleanup active/wrapping sessions
+      const project = store.projects.getByName('prime-test');
+      if (project) {
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'test cleanup');
+      }
+    });
+
+    it('sets session to wrapping status', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-test'
+      });
+
+      const result = sessions.triggerWrap('prime-test');
+      assert.ok(result.ok);
+      assert.equal(result.sessionId, session.id);
+
+      // Session should now be wrapping
+      const wrapping = store.sessions.getWrapping(project.id);
+      assert.ok(wrapping);
+      assert.equal(wrapping.id, session.id);
+    });
+
+    it('returns wrapSteps and captureFields', () => {
+      const project = store.projects.getByName('prime-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-fields-test'
+      });
+
+      const result = sessions.triggerWrap('prime-test');
+      assert.ok(result.ok);
+      assert.ok(Array.isArray(result.wrapSteps));
+      assert.ok(Array.isArray(result.captureFields));
+    });
+  });
+
   describe('getSessionHistory', () => {
     let sessions;
 

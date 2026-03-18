@@ -999,7 +999,25 @@ route('POST', '/api/sessions/:project/wrap', (_req, res, params, body) => {
     sessionId: result.sessionId,
     project: params.project,
     status: 'wrapping',
-    wrapCommand: result.wrapCommand
+    wrapCommand: result.wrapCommand,
+    wrapSteps: result.wrapSteps,
+    captureFields: result.captureFields
+  });
+});
+
+// POST /api/sessions/:project/wrap/complete — Manual wrap completion
+route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) => {
+  const result = sessions.completeWrap(params.project, body ? body.summary : undefined);
+  if (result.error) {
+    if (result.error.includes('not found') || result.error.includes('No active')) {
+      return errorResponse(res, 404, result.error, 'NOT_FOUND');
+    }
+    return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
+  }
+
+  jsonResponse(res, 200, {
+    ok: true,
+    session: result.session
   });
 });
 

@@ -161,6 +161,14 @@ body {
   background: var(--danger);
   animation: none;
 }
+.status-dot.wrapping {
+  background: var(--amber);
+  animation: breathe-slow 3s ease-in-out infinite;
+}
+@keyframes breathe-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
 .status-dot.ended {
   background: var(--text-muted);
   animation: none;
@@ -280,6 +288,28 @@ body {
     padding: 4px 7px;
   }
   .banner-name { max-width: 100px; }
+}
+
+/* ── Session Wrapping Bar ── */
+.session-wrapping {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(255, 167, 38, 0.12);
+  border-bottom: 1px solid rgba(255, 167, 38, 0.3);
+  font-size: 14px;
+  color: var(--amber);
+  font-weight: 600;
+}
+.wrapping-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: breathe-slow 3s ease-in-out infinite;
 }
 
 /* ── Session Ended Bar ── */
