@@ -252,6 +252,18 @@ async function pollStatus() {
     return;
   }
 
+  // Handle wrap finished but tmux still alive (idle during wrapping)
+  if (data.wrapping && data.idle && !sessionState.ended) {
+    sessionState.wrapIdleCount = (sessionState.wrapIdleCount || 0) + 1;
+    // Require 3 consecutive idle polls (~6s at 2s interval) to confirm wrap is done
+    if (sessionState.wrapIdleCount >= 3) {
+      completeWrapFromIdle();
+      return;
+    }
+  } else if (data.wrapping) {
+    sessionState.wrapIdleCount = 0;
+  }
+
   if (!data.active && !data.wrapping && !sessionState.ended) {
     // Grace period after fresh launch — tmux may not be queryable yet
     if (sessionState.launchGraceRemaining > 0) {
@@ -957,14 +969,28 @@ function showWrappingState() {
   dot.classList.add('wrapping');
   dot.title = 'Wrapping...';
 
-  // Disable action buttons
+  // Disable wrap/cmd buttons but keep kill enabled as escape hatch
   document.getElementById('wrapBtn').disabled = true;
-  document.getElementById('killBtn').disabled = true;
+  document.getElementById('killBtn').disabled = false;
   document.getElementById('cmdBtn').disabled = true;
   document.getElementById('commandSend').disabled = true;
 
   // Show wrapping bar
   document.getElementById('sessionWrapping').classList.remove('hidden');
+}
+
+/**
+ * Complete wrap when session went idle (tmux still alive).
+ * Calls the server to finalize the wrap, then transitions to completed UI.
+ */
+async function completeWrapFromIdle() {
+  const data = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/wrap/complete`,
+    'POST',
+    {}
+  );
+  // Transition to completed state regardless of API result
+  handleWrapCompleted(data || {});
 }
 
 /**
