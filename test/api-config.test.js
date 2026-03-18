@@ -131,6 +131,9 @@ describe('API endpoints', () => {
       assert.ok(Array.isArray(data.quickCommands));
       assert.equal(typeof data.theme, 'string');
       assert.equal(typeof data.chimeEnabled, 'boolean');
+      assert.equal(typeof data.chimeMuted, 'boolean');
+      assert.equal(typeof data.portScannerEnabled, 'boolean');
+      assert.equal(typeof data.portScannerIntervalMs, 'number');
     });
   });
 
@@ -208,6 +211,99 @@ describe('API endpoints', () => {
     it('should reject empty body', async () => {
       const { status } = await request(server, 'PATCH', '/api/config');
       assert.equal(status, 400);
+    });
+
+    it('should accept chimeMuted boolean', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        chimeMuted: true
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.chimeMuted, true);
+    });
+
+    it('should reject non-boolean chimeMuted', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        chimeMuted: 'yes'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should accept portScannerEnabled boolean', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerEnabled: false
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.portScannerEnabled, false);
+    });
+
+    it('should reject non-boolean portScannerEnabled', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerEnabled: 1
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should accept valid portScannerIntervalMs', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerIntervalMs: 30000
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.portScannerIntervalMs, 30000);
+    });
+
+    it('should reject portScannerIntervalMs below minimum', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerIntervalMs: 5000
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject portScannerIntervalMs above maximum', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerIntervalMs: 999999
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject non-numeric portScannerIntervalMs', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        portScannerIntervalMs: 'fast'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+  });
+
+  describe('config migration defaults', () => {
+    it('should default chimeMuted to false for existing configs', async () => {
+      const config = store.config.load();
+      delete config.chimeMuted;
+      store.config.save(config);
+
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.chimeMuted, false);
+    });
+
+    it('should default portScannerEnabled to true for existing configs', async () => {
+      const config = store.config.load();
+      delete config.portScannerEnabled;
+      store.config.save(config);
+
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.portScannerEnabled, true);
+    });
+
+    it('should default portScannerIntervalMs to 60000 for existing configs', async () => {
+      const config = store.config.load();
+      delete config.portScannerIntervalMs;
+      store.config.save(config);
+
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.portScannerIntervalMs, 60000);
     });
   });
 

@@ -4,6 +4,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Global settings modal** (Phase 3, Chunk 1+2): Gear icon in header opens a settings modal with all configurable options — theme, peek mode, global chime mute, default engine/methodology, projects directory, and port scanner controls. Previously required API calls or the first-run wizard.
+- **Global chime mute** (Phase 3, Chunk 1): Master mute toggle (`chimeMuted`) that silences chime notifications across all sessions, independent of per-session chime settings.
+- **Theme support** (Phase 3, Chunk 1): Theme selection (dark/light/high-contrast) now applies CSS variable overrides immediately on save and persists across pages (landing + session). Dark remains the default.
+- **Configurable port scanner** (Phase 3, Chunk 2): Port scanner can now be disabled (`portScannerEnabled`) or have its interval adjusted (`portScannerIntervalMs`, 10s–600s). Changes take effect immediately — scanner restarts or stops without requiring a server restart.
+
 ### Fixed
 
 - **ttyd reconnect loop**: Fixed `deploy/ttyd-attach.sh` where `exec cmd1 || exec cmd2` fallback was dead code (`exec` replaces the shell, so `||` never runs). When a tmux session died overnight, ttyd would rapidly loop trying to reattach. Now uses `tmux new-session -A` which atomically attaches or creates. Added regression tests to prevent reintroduction.

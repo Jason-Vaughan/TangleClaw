@@ -29,6 +29,27 @@
   --radius-pill: 14px;
 }
 
+/* ── Light Theme ── */
+[data-theme="light"] {
+  --bg: #F5F5F5;
+  --card-bg: #FFFFFF;
+  --elevated-bg: #E0E0E0;
+  --text: #1A1A1A;
+  --text-muted: #666;
+}
+
+/* ── High Contrast Theme ── */
+[data-theme="high-contrast"] {
+  --bg: #000000;
+  --card-bg: #000000;
+  --elevated-bg: #333333;
+  --text: #FFFFFF;
+  --text-muted: #BBBBBB;
+  --primary: #A4D65E;
+  --primary-bright: #B8E070;
+  --danger: #FF6B6B;
+}
+
 /* ── Base ── */
 html {
   font-size: 16px;

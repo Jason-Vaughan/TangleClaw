@@ -30,6 +30,7 @@
       </div>
       <p class="header-subtitle">AI Development Orchestration</p>
     </div>
+    <button class="btn btn-icon header-gear" id="gearBtn" aria-label="Global settings" title="Settings">&#9881;</button>
   </header>
 
   <!-- System Stats Toggle -->
@@ -229,6 +230,19 @@
       <div class="modal-actions">
         <button class="btn" id="methSwitchCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="methSwitchConfirmBtn">Switch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Settings Modal -->
+  <div class="modal-backdrop" id="globalSettingsModal">
+    <div class="modal-content" role="dialog" aria-label="Global settings" aria-modal="true"
+         style="max-width:440px;max-height:85vh;overflow-y:auto">
+      <h3 class="modal-title">Global Settings</h3>
+      <div id="globalSettingsBody"></div>
+      <div class="modal-actions">
+        <button class="btn" id="globalSettingsCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="globalSettingsSaveBtn">Save</button>
       </div>
     </div>
   </div>

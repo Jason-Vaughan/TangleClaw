@@ -108,9 +108,9 @@ describe('port-scanner', () => {
       portScanner.stopScanner();
     });
 
-    it('is idempotent on start', () => {
+    it('restarts with new interval when called while running', () => {
       portScanner.startScanner(999999);
-      portScanner.startScanner(999999); // second call should be no-op
+      portScanner.startScanner(888888); // should stop and restart
       portScanner.stopScanner();
     });
 
