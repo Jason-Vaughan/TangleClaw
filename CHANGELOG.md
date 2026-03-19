@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.4] - 2026-03-19
+
+### Fixed
+
+- **Event-loop blocking from git info polling caused terminal failure**: `git.getInfo()` used `execSync` with a 10-second cache TTL, spawning up to 180 git subprocesses (6 commands × 30 project directories) on nearly every `/api/projects` poll. This blocked the Node event loop for 1–4 seconds, preventing WebSocket upgrades from completing — the browser would launch but the terminal CLI never appeared. Increased cache TTL from 10s to 2 minutes and added early `rev-parse HEAD` check to skip `git log`/`git describe` on repos with no commits.
+- **Git stderr flooding server log to 19MB**: `execSync` in `git.js` did not explicitly set `stdio`, allowing child process stderr (`fatal: not a git repository`, `fatal: No names found`, etc.) to leak to the parent process stderr. Combined with the launchd plist routing both stdout and stderr to the same log file, this produced ~267K lines (19MB) of noise. Added explicit `stdio: ['pipe', 'pipe', 'pipe']` to capture stderr in-process.
+- **Launchd server log growing without rotation**: `StandardOutPath` and `StandardErrorPath` in the server plist pointed to `~/Library/Logs/tangleclaw-server.log` with no rotation. The app's internal logger (`~/.tangleclaw/logs/tangleclaw.log`) already handles rotation at 10MB with 3 backups. Redirected the launchd plist outputs to `/dev/null` to eliminate the redundant, unrotated log.
+
 ## [3.1.3] - 2026-03-19
 
 ### Fixed

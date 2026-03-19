@@ -16,9 +16,9 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/tangleclaw-server.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/tangleclaw-server.log</string>
+    <string>/dev/null</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
