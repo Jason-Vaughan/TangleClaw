@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Model status not shown in session banner**: The model status monitor was only wired to the landing page project cards. Now the session page banner also fetches and displays upstream service status on the engine badge (green/amber/orange/red left border + tooltip), matching the landing page behavior. Polls every 2 minutes.
+
 ## [3.1.0] - 2026-03-18
 
 ### Added

@@ -161,6 +161,8 @@ async function loadProject() {
   if (data.engine) {
     engineEl.textContent = data.engine.name;
     engineEl.setAttribute('data-engine', data.engine.id);
+    // Fetch model status for this engine
+    loadModelStatus(data.engine.id);
   }
 
   const methEl = document.getElementById('bannerMethodology');
@@ -226,6 +228,38 @@ function applyTheme() {
 async function loadEngines() {
   const data = await api('/api/engines');
   if (data) sessionState.engines = data.engines || [];
+}
+
+/**
+ * Fetch model status and update the engine badge in the banner.
+ * @param {string} [engineId] - Engine ID to look up status for
+ */
+async function loadModelStatus(engineId) {
+  const id = engineId || (sessionState.project && sessionState.project.engine && sessionState.project.engine.id);
+  if (!id) return;
+
+  const data = await api('/api/models/status');
+  if (!data || !data.status) return;
+
+  const status = data.status[id];
+  if (!status) return;
+
+  const engineEl = document.getElementById('bannerEngine');
+
+  // Remove any existing status classes
+  engineEl.className = engineEl.className.replace(/\bengine-status-\S+/g, '').trim();
+
+  // Add the new status class
+  engineEl.classList.add(`engine-status-${status.status}`);
+
+  // Set tooltip
+  if (status.error) {
+    engineEl.title = `Status unknown: ${status.error}`;
+  } else if (status.message) {
+    engineEl.title = status.message.replace(/_/g, ' ');
+  } else {
+    engineEl.title = (status.status || 'unknown').replace(/_/g, ' ');
+  }
 }
 
 // ── Session Status Polling ──
@@ -1154,6 +1188,9 @@ async function initSession() {
   if (!sessionState.ended) {
     startPolling();
   }
+
+  // Poll model status every 2 minutes
+  setInterval(() => loadModelStatus(), 120000);
 
   // Start mouse guard on touch devices
   startMouseGuard();
