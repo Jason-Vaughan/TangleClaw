@@ -197,6 +197,29 @@ body {
   color: var(--engine-genesis);
 }
 
+/* ── Engine Status Indicators ── */
+.banner-engine.engine-status-operational {
+  border-left: 3px solid var(--primary);
+}
+.banner-engine.engine-status-degraded {
+  border-left: 3px solid var(--amber);
+  color: var(--amber);
+  background: rgba(255, 167, 38, 0.15);
+}
+.banner-engine.engine-status-partial_outage {
+  border-left: 3px solid #FF7043;
+  color: #FF7043;
+  background: rgba(255, 112, 67, 0.15);
+}
+.banner-engine.engine-status-major_outage {
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  background: rgba(239, 83, 80, 0.15);
+}
+.banner-engine.engine-status-unknown {
+  border-left: 3px solid var(--text-muted);
+}
+
 .banner-methodology {
   font-size: 11px;
   font-weight: 600;
