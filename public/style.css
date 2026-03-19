@@ -672,27 +672,49 @@ body {
   color: var(--primary);
   font-size: 9px;
 }
-/* ── Engine Status Indicators ── */
-.badge-engine.engine-status-operational {
-  border-left: 3px solid var(--primary);
+/* ── Engine Status Dot ── */
+.engine-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: var(--text-muted);
 }
-.badge-engine.engine-status-degraded {
-  border-left: 3px solid var(--amber);
+.engine-status-dot.engine-status-operational {
+  background: var(--primary);
+}
+.engine-status-dot.engine-status-degraded {
+  background: var(--amber);
+}
+.engine-status-dot.engine-status-partial_outage {
+  background: #FF7043;
+}
+.engine-status-dot.engine-status-major_outage {
+  background: var(--danger);
+}
+.engine-status-dot.engine-status-unknown {
+  background: var(--text-muted);
+}
+
+/* ── Engine Status Pill States ── */
+.badge-engine.engine-pill-degraded {
+  background: rgba(255, 167, 38, 0.2);
   color: var(--amber);
-  background: rgba(255, 167, 38, 0.15);
 }
-.badge-engine.engine-status-partial_outage {
-  border-left: 3px solid #FF7043;
+.badge-engine.engine-pill-partial_outage {
+  background: rgba(255, 112, 67, 0.2);
   color: #FF7043;
-  background: rgba(255, 112, 67, 0.15);
 }
-.badge-engine.engine-status-major_outage {
-  border-left: 3px solid var(--danger);
+.badge-engine.engine-pill-major_outage {
+  background: rgba(239, 83, 80, 0.25);
   color: var(--danger);
-  background: rgba(239, 83, 80, 0.15);
+  animation: engine-pulse 1.5s ease-in-out infinite;
 }
-.badge-engine.engine-status-unknown {
-  border-left: 3px solid var(--text-muted);
+@keyframes engine-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(239, 83, 80, 0.3); }
+  50% { box-shadow: 0 0 12px rgba(239, 83, 80, 0.8); }
 }
 .badge-meth {
   background: rgba(171, 71, 188, 0.15);

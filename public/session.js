@@ -246,13 +246,24 @@ async function loadModelStatus(engineId) {
 
   const engineEl = document.getElementById('bannerEngine');
 
-  // Remove any existing status classes
-  engineEl.className = engineEl.className.replace(/\bengine-status-\S+/g, '').trim();
+  // Remove existing status dot if present
+  const existingDot = engineEl.querySelector('.engine-status-dot');
+  if (existingDot) existingDot.remove();
 
-  // Add the new status class
-  engineEl.classList.add(`engine-status-${status.status}`);
+  // Remove existing pill status classes
+  engineEl.className = engineEl.className.replace(/\bengine-pill-\S+/g, '').trim();
 
-  // Set tooltip
+  // Create status dot
+  const dot = document.createElement('span');
+  dot.className = `engine-status-dot engine-status-${status.status}`;
+  engineEl.prepend(dot);
+
+  // Apply pill-level styling for non-operational states
+  if (status.status !== 'operational') {
+    engineEl.classList.add(`engine-pill-${status.status}`);
+  }
+
+  // Set tooltip on the whole badge
   if (status.error) {
     engineEl.title = `Status unknown: ${status.error}`;
   } else if (status.message) {
