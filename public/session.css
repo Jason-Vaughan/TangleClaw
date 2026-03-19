@@ -125,6 +125,8 @@ body {
   width: 28px;
   height: 28px;
   flex-shrink: 0;
+  object-fit: contain;
+  aspect-ratio: 1;
 }
 .banner-sep {
   color: var(--elevated-bg);
