@@ -42,19 +42,6 @@ Structured governance with discovery, planning, and building phases. Includes in
 
 Best for: structured development with governance, planning artifacts, and independent review.
 
-### TiLT
-
-Identity-first development with trust signals and sentry verification.
-
-- **Phases**: Setup (deep) → Development (normal, offers context reset) → Review (focused)
-- **Default rules**: Core + identitySentry
-- **Wrap steps**: learnings-capture, commit
-- **Prime sections**: methodology-rules, current-phase, active-learnings, last-session-summary
-- **Status**: reads `status` from `.tilt/status.json`
-- **Detection**: looks for `.tilt/` directory
-
-Best for: projects where identity verification and trust signals are important.
-
 ## Creating a Custom Methodology Template
 
 Create a JSON file in `~/.tangleclaw/templates/<your-template-id>/template.json`:

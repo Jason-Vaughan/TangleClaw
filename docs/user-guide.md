@@ -134,7 +134,7 @@ TangleClaw shows ALL directories in your `projectsDir` on the landing page — n
 
 Tap **Attach** to register a directory as a TangleClaw project. This:
 - Reads any existing `.tangleclaw/project.json` for engine and methodology settings
-- Detects methodology from directory markers (`.prawduct/`, `.tilt/`)
+- Detects methodology from directory markers (`.prawduct/`)
 - Registers the project in the database
 - Creates a `.tangleclaw/project.json` if one doesn't exist
 
@@ -145,7 +145,7 @@ You can also attach projects in bulk during the first-run setup wizard, or via t
 During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:
 
 - A `.tangleclaw/project.json` file
-- A methodology marker directory (`.prawduct/`, `.tilt/`)
+- A methodology marker directory (`.prawduct/`)
 - A git repository
 
 These are offered for batch attachment during setup.
@@ -279,7 +279,7 @@ node --version
 launchctl list | grep tangleclaw
 
 # View server logs
-tail -50 ~/Library/Logs/tangleclaw-server.log
+tail -50 ~/.tangleclaw/logs/tangleclaw.log
 
 # Health check
 curl -s http://localhost:3101/api/health | python3 -m json.tool
@@ -291,8 +291,8 @@ curl -s http://localhost:3101/api/health | python3 -m json.tool
 # Check ttyd is running
 launchctl list | grep ttyd
 
-# View ttyd logs
-tail -50 ~/Library/Logs/tangleclaw-ttyd.log
+# View ttyd logs (ttyd has no app-level log; check launchd output if needed)
+launchctl list | grep ttyd
 
 # Test ttyd directly
 curl -s http://localhost:3100

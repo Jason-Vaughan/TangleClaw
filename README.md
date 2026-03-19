@@ -1,28 +1,45 @@
 # TangleClaw v3
 
-An AI development orchestration platform that manages the contracts, lifecycle, enforcement, and coordination between a human operator, development methodologies, and AI coding agents.
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/puberty-labs-assets/blob/main/tangleclaw-logo.png?raw=true" alt="TangleClaw logo" width="200">
+</p>
 
-## What It Does
+AI coding agents are powerful, but managing them across multiple projects gets messy fast. Each engine has its own config format, its own way of receiving instructions, and no awareness of what other projects are doing on your machine. You end up juggling terminal sessions, copy-pasting methodology rules, manually tracking ports, and hoping your agents follow the process you intended.
 
-- **Methodology-as-code**: Pluggable methodology templates (Prawduct, TiLT, Minimal, custom) with structural enforcement — rules are gates, not suggestions
-- **Engine abstraction**: Swap between Claude Code, Codex, Gemini CLI, Aider, or any AI engine without reconfiguring projects. Config parity across all engines
+TangleClaw is a local orchestration platform that sits between you and your AI coding agents. It enforces your development methodology as structural rules (not suggestions), generates engine-native config so every agent gets the same instructions regardless of engine, manages session lifecycle from launch to wrap, and provides a single landing page — accessible from your browser or phone — to manage all of it.
+
+## Features
+
+- **Methodology-as-code**: Pluggable methodology templates (Prawduct, Minimal, or custom) with structural enforcement — rules are gates, not suggestions
+- **Engine abstraction**: Ships with five engines — Claude Code, Codex, Gemini CLI, Aider, and Genesis. Swap between them without reconfiguring projects; TangleClaw generates engine-native config (CLAUDE.md, .codex.yaml, GEMINI.md, .aider.conf.yml) so every agent gets the same rules. Adding a new engine is a single JSON profile — no code changes required
+- **Model status monitoring**: Live upstream API status for Claude (Anthropic), Codex (OpenAI), and Gemini (Google) surfaced directly in the session banner so you know before you start typing
 - **Session lifecycle**: Prime prompts auto-generated from methodology state, configurable wrap skills, learning capture, idle detection
 - **PortHub**: Central port registry preventing conflicts across all projects. Permanent and TTL leases with heartbeat support
 - **Setup wizard**: First-run guided setup scans for existing projects, detects engines, and configures preferences
 - **Mobile-first PWA**: Installable on iOS and Android. Manage projects, launch sessions, and interact with AI agents from your phone
 - **Zero dependencies**: Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
+## Security Note
+
+TangleClaw runs a local HTTP server with browser-based terminal access. There is no authentication on the server itself — anyone who can reach the port can view your projects and open terminal sessions. The `deletePassword` config option protects destructive operations (project deletion, data reset) but does not gate general access.
+
+**Recommendations:**
+- Run TangleClaw on a trusted network or behind a VPN (e.g., Tailscale, WireGuard)
+- Do not expose TangleClaw ports to the public internet
+- If accessing from mobile over Wi-Fi, ensure your network is private
+
 ## Prerequisites
 
 - **Node.js 22+** — required for `node:sqlite` and `node:test`
 - **ttyd** — terminal emulator for browser-based terminal access (`brew install ttyd`)
 - **tmux** — session multiplexer (`brew install tmux`)
+- **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Aider](https://aider.chat). TangleClaw auto-detects which engines are installed and makes them available for your projects.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Jason-Vaughan/TangleClaw.git ~/Documents/Projects/TangleClaw-v3
-cd ~/Documents/Projects/TangleClaw-v3
+git clone https://github.com/Jason-Vaughan/TangleClaw.git
+cd TangleClaw
 ./deploy/install.sh
 ```
 
@@ -32,7 +49,7 @@ The install script:
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3102**.
+Access the landing page at **http://localhost:3102**. On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
 ## Documentation
 
@@ -46,8 +63,8 @@ Access the landing page at **http://localhost:3102**.
 Global config lives at `~/.tangleclaw/config.json` (auto-created on first run).
 
 Key settings:
-- `serverPort` — Landing page server port (default: 3101)
-- `ttydPort` — ttyd terminal port (default: 3100)
+- `serverPort` — Landing page server port (code default: 3101, launchd override: 3102)
+- `ttydPort` — ttyd terminal port (code default: 3100, launchd override: 3101)
 - `projectsDir` — Root directory for managed projects
 - `defaultEngine` — Default AI engine for new projects
 - `defaultMethodology` — Default methodology template
@@ -148,12 +165,21 @@ launchctl unload ~/Library/LaunchAgents/com.tangleclaw.server.plist
 launchctl unload ~/Library/LaunchAgents/com.tangleclaw.ttyd.plist
 
 # View logs
-tail -f ~/Library/Logs/tangleclaw-server.log
+tail -f ~/.tangleclaw/logs/tangleclaw.log
 
 # Health check
 curl -s http://localhost:3102/api/health | python3 -m json.tool
 ```
 
+## Roadmap
+
+Planned features and improvements — contributions and feedback welcome.
+
+- **TangleMeth** — AI-guided methodology builder. Instead of hand-writing template JSON, TangleMeth interviews you about your governance needs and generates a complete methodology framework: phase docs, enforcement hooks, artifact templates, and test suites. Compose from existing methodologies or fork and modify them. The output is a full methodology directory that TangleClaw loads as a first-class template.
+- **Multi-engine sessions** — Launch multiple engines on the same project simultaneously (e.g., Claude Code for implementation, Codex for review)
+- **Methodology versioning** — Version and update methodologies already applied to projects without breaking existing sessions
+- **Mobile terminal scrollback** — Improved touch scroll handling for xterm.js on iOS and Android
+
 ## License
 
-Private project.
+MIT — see [LICENSE](LICENSE). Repository is private during active development.

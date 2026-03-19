@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-03-19
+
+### Changed
+
+- **README overhaul for sharing**: Added problem-statement intro, detailed engine/status descriptions, roadmap section with TangleMeth, and MIT license
+- **Removed unreleased methodology templates from distribution**: TiLT template kept locally but excluded from repo via `.gitignore`; Prawduct template (JSON only) continues to ship as a bundled starter
+- **Removed internal development artifacts from repo**: INTAKE-BRIEF.md (Prawduct discovery artifact) and `.tangleclaw/project.json` (dogfooding config) excluded via `.gitignore`
+- **Fixed stale log paths across docs and deploy**: Updated user-guide, install.sh, and README to reference `~/.tangleclaw/logs/tangleclaw.log` instead of removed `~/Library/Logs/tangleclaw-server.log`
+- **Redirected ttyd plist output to `/dev/null`**: Matches server plist change from v3.1.4
+- **Simplified clone path in README**: No longer hardcodes a specific local directory
+- **Added MIT LICENSE file**
+- **Added security note to README**: Documents lack of auth on the server, recommends VPN or trusted network
+
 ## [3.1.4] - 2026-03-19
 
 ### Fixed

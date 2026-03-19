@@ -139,7 +139,7 @@ if [ "$HEALTH_STATUS" = "200" ] || [ "$HEALTH_STATUS" = "503" ]; then
   green "Server is running (health: HTTP $HEALTH_STATUS)"
 else
   yellow "WARNING: Server may not be ready yet (health: HTTP ${HEALTH_STATUS:-timeout})"
-  yellow "Check logs: tail -f ~/Library/Logs/tangleclaw-server.log"
+  yellow "Check logs: tail -f ~/.tangleclaw/logs/tangleclaw.log"
 fi
 
 echo ""
@@ -150,6 +150,6 @@ echo ""
 echo "  Landing page:  http://localhost:3102"
 echo "  Terminal:       http://localhost:3100"
 echo ""
-echo "  Logs:           tail -f ~/Library/Logs/tangleclaw-server.log"
+echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"
 echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
 echo ""

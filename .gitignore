@@ -1,4 +1,4 @@
-# Prawduct session files
+# Prawduct session files (TC dogfoods itself with Prawduct)
 .claude/settings.local.json
 .prawduct/.critic-findings.json
 .prawduct/.session-git-baseline
@@ -8,6 +8,15 @@
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
 __pycache__/
+
+# TC's own project config (dogfooding artifact, not for distribution)
+.tangleclaw/project.json
+
+# Internal design doc (Prawduct intake artifact)
+INTAKE-BRIEF.md
+
+# Unreleased methodology templates (kept locally, not distributed)
+data/templates/tilt/
 
 # Uploads (user-specific)
 .uploads/
