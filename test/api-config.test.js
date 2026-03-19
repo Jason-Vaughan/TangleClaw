@@ -95,7 +95,8 @@ describe('API endpoints', () => {
     it('should return version', async () => {
       const { status, data } = await request(server, 'GET', '/api/version');
       assert.equal(status, 200);
-      assert.equal(data.version, '3.0.0');
+      const expected = require('../version.json').version;
+      assert.equal(data.version, expected);
     });
   });
 
