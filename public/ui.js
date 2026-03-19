@@ -260,27 +260,17 @@ function renderTagRow() {
   row.innerHTML = pills.join('');
 }
 
-// ── Stats Toggle ──
-
-function toggleStats() {
-  state.statsOpen = !state.statsOpen;
-  const grid = document.getElementById('statsGrid');
-  const arrow = document.querySelector('#statsToggle .arrow');
-  const toggle = document.getElementById('statsToggle');
-  grid.classList.toggle('open', state.statsOpen);
-  arrow.classList.toggle('open', state.statsOpen);
-  toggle.setAttribute('aria-expanded', state.statsOpen);
-}
-
 // ── Ports Toggle ──
 
+/**
+ * Toggle the ports panel open/closed from the dashboard bar.
+ */
 function togglePorts() {
   state.portsOpen = !state.portsOpen;
   const grid = document.getElementById('portsGrid');
-  const arrow = document.querySelector('#portsToggle .arrow');
   const toggle = document.getElementById('portsToggle');
   grid.classList.toggle('open', state.portsOpen);
-  arrow.classList.toggle('open', state.portsOpen);
+  toggle.classList.toggle('active', state.portsOpen);
   toggle.setAttribute('aria-expanded', state.portsOpen);
 }
 
@@ -344,15 +334,14 @@ function togglePortGroup(project) {
 // ── Rules Toggle ──
 
 /**
- * Toggle the global rules panel open/closed.
+ * Toggle the global rules panel open/closed from the dashboard bar.
  */
 function toggleRules() {
   state.rulesOpen = !state.rulesOpen;
   const panel = document.getElementById('rulesPanel');
-  const arrow = document.querySelector('#rulesToggle .arrow');
   const toggle = document.getElementById('rulesToggle');
   panel.classList.toggle('open', state.rulesOpen);
-  arrow.classList.toggle('open', state.rulesOpen);
+  toggle.classList.toggle('active', state.rulesOpen);
   toggle.setAttribute('aria-expanded', state.rulesOpen);
 }
 
@@ -1058,18 +1047,8 @@ async function importLeaseProjects(namesJson) {
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
-$('statsToggle').addEventListener('click', toggleStats);
-$('statsToggle').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStats(); }
-});
 $('portsToggle').addEventListener('click', togglePorts);
-$('portsToggle').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePorts(); }
-});
 $('rulesToggle').addEventListener('click', toggleRules);
-$('rulesToggle').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRules(); }
-});
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
 $('rulesResetBtn').addEventListener('click', openRulesResetModal);
 $('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
