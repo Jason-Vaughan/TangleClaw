@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-03-18
+
 ### Added
 
 - **Model status monitor**: Engine badges on project cards now show real-time upstream service status via a colored left border (green = operational, amber = degraded, orange = partial outage, red = major outage). Status polled every 2 minutes from official status pages (Anthropic, OpenAI, Google Cloud). Hover for details.
