@@ -18,68 +18,34 @@
   <!-- Connection toast -->
   <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
-  <!-- Header -->
-  <header class="header">
-    <img class="header-logo" src="/logo-icon.png" alt="" width="64" height="64"
-         onerror="this.src='/logo.png'; this.width=64; this.height=64;">
-    <div class="header-text">
-      <div class="header-text-row">
-        <img class="header-wordmark" src="/logo-text.png" alt="TangleClaw" height="24"
-             onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'header-title',textContent:'TANGLECLAW'}));">
-        <span id="version" class="header-version"></span>
-      </div>
-      <p class="header-subtitle">AI Development Orchestration</p>
+  <!-- Dashboard Bar -->
+  <header class="dash-bar">
+    <div class="dash-brand">
+      <img class="dash-logo" src="/logo-icon.png" alt="" width="32" height="32"
+           onerror="this.src='/logo.png'; this.width=32; this.height=32;">
+      <img class="dash-wordmark" src="/logo-text.png" alt="TangleClaw" height="18"
+           onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dash-title',textContent:'TANGLECLAW'}));">
+      <span id="version" class="dash-version"></span>
     </div>
-    <button class="btn btn-icon header-gear" id="gearBtn" aria-label="Global settings" title="Settings">&#9881;</button>
+    <div class="dash-stats" id="dashStats">
+      <span class="dash-stat"><span class="dash-stat-label">CPU</span><span class="stat-value" id="statCpu">--</span></span>
+      <span class="dash-stat"><span class="dash-stat-label">MEM</span><span class="stat-value" id="statMem">--</span></span>
+      <span class="dash-stat"><span class="dash-stat-label">DISK</span><span class="stat-value" id="statDisk">--</span></span>
+      <span class="dash-stat"><span class="dash-stat-label">UP</span><span class="dash-stat-up" id="statUptime">--</span></span>
+    </div>
+    <div class="dash-actions">
+      <button class="dash-action" id="portsToggle" aria-expanded="false" aria-controls="portsGrid">
+        Ports <span class="dash-badge" id="portsCount">0</span>
+      </button>
+      <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
+        Rules
+      </button>
+      <button class="dash-action dash-gear" id="gearBtn" aria-label="Settings" title="Settings">&#9881;</button>
+    </div>
   </header>
 
-  <!-- System Stats Toggle -->
-  <div class="stats-toggle" id="statsToggle" role="button" tabindex="0"
-       aria-expanded="true" aria-controls="statsGrid">
-    <span>System</span>
-    <span class="arrow open" aria-hidden="true">&#9660;</span>
-  </div>
-
-  <!-- System Stats Grid -->
-  <div id="statsGrid" class="stats-grid open" aria-label="System resource usage">
-    <div class="stat-card">
-      <div class="stat-label">CPU</div>
-      <div class="stat-value" id="statCpu">--</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="statCpuBar"></div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Memory</div>
-      <div class="stat-value" id="statMem">--</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="statMemBar"></div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Disk</div>
-      <div class="stat-value" id="statDisk">--</div>
-      <div class="stat-bar"><div class="stat-bar-fill" id="statDiskBar"></div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Uptime</div>
-      <div class="stat-value" id="statUptime">--</div>
-    </div>
-  </div>
-
-  <!-- Ports Toggle -->
-  <div class="ports-toggle" id="portsToggle" role="button" tabindex="0"
-       aria-expanded="false" aria-controls="portsGrid">
-    <span>Ports</span>
-    <span class="ports-count" id="portsCount">0 leases</span>
-    <span class="arrow" aria-hidden="true">&#9660;</span>
-  </div>
-
-  <!-- Ports Grid -->
+  <!-- Ports Grid (expandable panel) -->
   <div id="portsGrid" class="ports-grid" aria-label="Port leases"></div>
-
-  <!-- Global Rules Toggle -->
-  <div class="rules-toggle" id="rulesToggle" role="button" tabindex="0"
-       aria-expanded="false" aria-controls="rulesPanel">
-    <span>Global Rules</span>
-    <span class="arrow" aria-hidden="true">&#9660;</span>
-  </div>
 
   <!-- Global Rules Panel -->
   <div id="rulesPanel" class="rules-panel" aria-label="Global rules editor">

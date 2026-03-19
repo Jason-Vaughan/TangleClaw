@@ -137,7 +137,7 @@ async function loadPorts() {
   const data = await api('/api/ports');
   if (!data) return;
   state.ports = data.leases || [];
-  document.getElementById('portsCount').textContent = `${state.ports.length} lease${state.ports.length !== 1 ? 's' : ''}`;
+  document.getElementById('portsCount').textContent = state.ports.length;
   renderPorts();
 }
 
