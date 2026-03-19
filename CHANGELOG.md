@@ -4,9 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Desktop session banner**: Single-row layout at 900px+ with compact action buttons inline. Mobile layout unchanged.
+- **Model status indicators**: Replaced border-based engine status with inline status dot inside the pill. Non-operational states change the entire pill color (amber/orange/red) with a pulsing glow on major outages. Consistent across session and landing pages.
+- **Session banner order**: Reordered to name → version → connected dot → methodology → phase → engine (last).
+
 ### Fixed
 
-- **Model status not shown in session banner**: The model status monitor was only wired to the landing page project cards. Now the session page banner also fetches and displays upstream service status on the engine badge (green/amber/orange/red left border + tooltip), matching the landing page behavior. Polls every 2 minutes.
+- **Model status not shown in session banner**: The model status monitor was only wired to the landing page project cards. Now the session page banner also fetches and displays upstream service status on the engine badge, polling every 2 minutes.
 
 ## [3.1.0] - 2026-03-18
 
