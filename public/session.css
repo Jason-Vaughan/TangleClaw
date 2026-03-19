@@ -335,6 +335,31 @@ body {
   .banner-name { max-width: 100px; }
 }
 
+/* Desktop banner: single row */
+@media (min-width: 900px) {
+  .banner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .banner-row {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .banner-actions {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+  .banner-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    min-height: 30px;
+    min-width: 30px;
+  }
+  .banner-name { max-width: 200px; }
+}
+
 /* ── Session Wrapping Bar ── */
 .session-wrapping {
   flex-shrink: 0;
