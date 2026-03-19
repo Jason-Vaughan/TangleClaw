@@ -59,7 +59,14 @@ function renderCard(project) {
     : '';
 
   const engineBadge = project.engine
-    ? `<span class="badge badge-engine">${esc(project.engine.name)}</span>`
+    ? (() => {
+        const es = state.modelStatus[project.engine.id];
+        const sc = es ? `engine-status-${es.status}` : '';
+        const tt = es
+          ? (es.error ? `Status unknown: ${esc(es.error)}` : esc((es.message || es.status).replace(/_/g, ' ')))
+          : '';
+        return `<span class="badge badge-engine ${sc}" title="${tt}">${esc(project.engine.name)}</span>`;
+      })()
     : '';
 
   const methBadge = project.methodology

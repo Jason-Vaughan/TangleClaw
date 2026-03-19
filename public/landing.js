@@ -20,7 +20,8 @@ const state = {
   portsOpen: false,
   portGroupsOpen: {},
   rulesOpen: false,
-  globalRulesContent: ''
+  globalRulesContent: '',
+  modelStatus: {}
 };
 
 // ── API Helpers ──
@@ -189,6 +190,17 @@ async function resetGlobalRules() {
   }
   status.classList.remove('hidden');
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+/**
+ * Load upstream model status for all engines.
+ */
+async function loadModelStatus() {
+  const data = await api('/api/models/status');
+  if (data && data.status) {
+    state.modelStatus = data.status;
+    renderProjects();
+  }
 }
 
 async function loadEngines() {
@@ -469,7 +481,7 @@ async function init() {
   }
 
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -480,6 +492,7 @@ function startPolling() {
   setInterval(loadStats, 30000);
   setInterval(loadPorts, 30000);
   setInterval(loadProjects, 10000);
+  setInterval(loadModelStatus, 120000);
 }
 
 if ('serviceWorker' in navigator) {
