@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-03-18
+
+### Fixed
+
+- **Session page never redirects after session ends**: `getSessionStatus()` returned `active: true` even when the tmux session had died, so the countdown/redirect to the landing page never fired. Now detects dead tmux sessions and marks them as crashed, allowing the frontend to show the countdown and redirect.
+- **Empty terminal on first launch after wrap**: When a wrapping session's tmux died, `enrichProject()` still reported it as `active: true`. The landing page would skip the server-side launch and navigate to a dead terminal. Now checks tmux liveness before reporting sessions as active, and `launchSession()` cleans up stale wrapping/active sessions before creating new ones.
+- **Uncommitted work left behind after wrap**: The wrap protocol told the AI to commit, but if the engine exited before completing the commit step, changes were left uncommitted. Now `completeWrap()` and `autoCompleteWrap()` programmatically commit any uncommitted changes after the wrap finalizes.
+
 ## [3.0.2] - 2026-03-18
 
 ### Fixed
