@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-03-18
+
 ### Changed
 
 - **Desktop session banner**: Single-row layout at 900px+ with compact action buttons inline. Mobile layout unchanged.
@@ -13,6 +15,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Fixed
 
 - **Model status not shown in session banner**: The model status monitor was only wired to the landing page project cards. Now the session page banner also fetches and displays upstream service status on the engine badge, polling every 2 minutes.
+- **Distorted logo in session banner**: Regenerated icon-192.png and icon-512.png from source with correct aspect ratio.
 
 ## [3.1.0] - 2026-03-18
 
