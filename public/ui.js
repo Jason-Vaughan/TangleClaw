@@ -61,11 +61,12 @@ function renderCard(project) {
   const engineBadge = project.engine
     ? (() => {
         const es = state.modelStatus[project.engine.id];
-        const sc = es ? `engine-status-${es.status}` : '';
+        const dot = es ? `<span class="engine-status-dot engine-status-${es.status}"></span>` : '';
+        const pillClass = es && es.status !== 'operational' ? `engine-pill-${es.status}` : '';
         const tt = es
           ? (es.error ? `Status unknown: ${esc(es.error)}` : esc((es.message || es.status).replace(/_/g, ' ')))
           : '';
-        return `<span class="badge badge-engine ${sc}" title="${tt}">${esc(project.engine.name)}</span>`;
+        return `<span class="badge badge-engine ${pillClass}" title="${tt}">${dot}${esc(project.engine.name)}</span>`;
       })()
     : '';
 
