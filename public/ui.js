@@ -961,6 +961,21 @@ async function submitCreate() {
 
   closeCreateDrawer();
   await loadProjects();
+
+  // Auto-launch session so the user lands in an active terminal
+  try {
+    const launchRes = await fetch(`/api/sessions/${encodeURIComponent(createData.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    if (launchRes.ok) {
+      navigateToSession(createData.name, { launched: true });
+      return;
+    }
+  } catch (e) {
+    // Fall through — navigate without launch
+  }
   navigateToSession(createData.name, { launched: false });
 }
 

@@ -17,7 +17,10 @@
   "launch": {
     "shellCommand": "codex",
     "args": [],
-    "env": {}
+    "env": {},
+    "preKeys": ["Enter", "Enter"],
+    "preKeyDelay": 3000,
+    "startupDelay": 2000
   },
   "persistent": null,
   "capabilities": {

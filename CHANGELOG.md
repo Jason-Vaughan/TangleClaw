@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.3] - 2026-03-19
+
+### Fixed
+
+- **Engine config not written for non-Claude engines**: `createProject` and `updateProject` failed silently when writing config files to nested paths (e.g., `.gemini/GEMINI.md`) because the parent directory didn't exist. Added `mkdirSync` before `writeFileSync` in both code paths.
+- **Orphaned tmux session adoption skipped setup**: When a tmux session with the project name already existed (orphaned from a prior run), `launchSession` adopted it in-place, skipping working directory, prime prompt injection, config generation, and hook sync. Now kills the orphan and creates a fresh session with full setup.
+- **New project opened in ended/wrap state**: After the create wizard finished, it navigated to the session page without launching a session first. The page detected no active session and immediately showed the "session ended" state. Now auto-launches the session after creation.
+- **`.claude/` directory created for all projects**: `syncEngineHooks` wrote `.claude/settings.json` regardless of engine. Now skips non-Claude projects.
+- **Codex session crashed on startup**: Codex CLI shows interactive trust/update prompts that blocked startup and caused the session to die. Added `launch.preKeys` and `launch.startupDelay` engine profile fields to dismiss startup prompts before prime prompt injection. Codex profile now sends Enter keys to dismiss trust and update dialogs.
+
 ## [3.1.2] - 2026-03-18
 
 ### Changed
