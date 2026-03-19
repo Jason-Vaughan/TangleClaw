@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-03-18
+
 ### Changed
 
 - **Landing page: compact dashboard bar**: Replaced the stacked header, system stats cards, ports toggle, and rules toggle with a single-row dashboard bar. Logo (32px), inline stats (CPU/MEM/DISK/UP), and action buttons (Ports, Rules, Settings) all in one line. Recovers ~200px of vertical space so the project list is immediately visible. Stats hidden on mobile (<600px) for a clean two-element bar.
