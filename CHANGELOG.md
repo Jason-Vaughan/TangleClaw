@@ -4,8 +4,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-03-18
+
 ### Fixed
 
+- **Import banner keeps re-triggering for the same projects**: The "project found in port leases not registered in TangleClaw" banner used `sessionStorage` for dismissal (cleared on every page load) and showed no details about what was found. Root causes: (1) TangleClaw's own infra ports registered as "TangleClaw" but the project is registered as "TangleClaw-v3" — constant mismatch. (2) Projects without matching directories (e.g. archived) could never be imported, so the banner returned forever. Fixed by: deriving the system port project name from the install directory, adding per-project "Ignore" buttons with `localStorage` persistence, showing project names/ports/conflicts in the banner, and auto-ignoring projects whose directories don't exist when import is attempted.
+- **Port leases not tracked on project rename**: Added `portLeases.renameProject()` to update all leases when a project name changes. Project rename via PATCH now cascades to port lease records.
+- **ttyd "Too many open files" causing reconnect loop**: ttyd was leaking PTY file descriptors (`/dev/ptmx`) when WebSocket connections dropped — they accumulated over time until hitting the default macOS launchd limit of 256 FDs, at which point `pty_spawn` failed on every new connection. Raised `SoftResourceLimits` and `HardResourceLimits` for `NumberOfFiles` to 4096 in both the plist template (`deploy/com.tangleclaw.ttyd.plist`) and the installed plist. Re-run `deploy/install.sh` or manually reload the launchd agent to apply.
 - **Wrap command sends `/session-wrap` slash command that Claude Code doesn't recognize**: The default wrap command was `/session-wrap`, which Claude Code rejects as `Unknown skill: session-wrap`. Changed to a natural language prompt so Claude Code interprets it as a regular instruction instead of a non-existent slash command.
 - **Kill button disabled during wrapping with no escape hatch**: Both wrap and kill buttons were disabled during wrapping state. If the wrap completed but tmux stayed alive, the user was stuck. Kill button now stays enabled during wrapping. Also added idle detection during wrapping — if Claude goes idle for 3 consecutive polls (~6s), the wrap auto-completes without requiring tmux to die.
 - **Mobile terminal scrollback**: Added touch scroll shim for the terminal iframe on mobile. xterm.js's built-in touch handling doesn't scroll through the scrollback buffer on mobile; the shim intercepts touch swipe events and calls `scrollLines()` on the xterm.js instance directly.

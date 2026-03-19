@@ -395,24 +395,60 @@ function esc(str) {
 
 /**
  * Check if any port leases reference projects not registered in TangleClaw.
- * If found, render an import notification banner.
+ * If found, render an import notification banner with details.
  */
 function checkPortImports() {
   if (!state.ports.length || !state.projects.length) return;
 
   const registeredNames = new Set(state.projects.map(p => p.name));
-  const leaseProjects = new Set(state.ports.map(l => l.project));
+  const ignored = getIgnoredLeaseProjects();
 
-  const importable = [];
-  for (const name of leaseProjects) {
-    if (!registeredNames.has(name)) {
-      importable.push(name);
+  // Group ports by unregistered project name
+  const unregistered = {};
+  for (const lease of state.ports) {
+    if (!registeredNames.has(lease.project) && !ignored.has(lease.project)) {
+      if (!unregistered[lease.project]) unregistered[lease.project] = [];
+      unregistered[lease.project].push(lease);
     }
   }
+
+  const importable = Object.entries(unregistered).map(([name, leases]) => ({
+    name,
+    ports: leases.map(l => ({ port: l.port, service: l.service })),
+    // Check for conflicts with registered projects' ports
+    conflicts: leases.filter(l =>
+      state.ports.some(p => p.port === l.port && registeredNames.has(p.project))
+    ).map(l => l.port)
+  }));
 
   if (importable.length > 0) {
     renderImportBanner(importable);
   }
+}
+
+/**
+ * Get the set of lease project names permanently ignored by the user.
+ * @returns {Set<string>}
+ */
+function getIgnoredLeaseProjects() {
+  try {
+    const raw = localStorage.getItem('tc_ignoredLeaseProjects');
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) { return new Set(); }
+}
+
+/**
+ * Add a lease project name to the permanent ignore list.
+ * @param {string} name - Project name to ignore
+ */
+function ignoreLeaseProject(name) {
+  const ignored = getIgnoredLeaseProjects();
+  ignored.add(name);
+  localStorage.setItem('tc_ignoredLeaseProjects', JSON.stringify([...ignored]));
+  // Remove banner and re-check
+  const el = document.getElementById('importBanner');
+  if (el) el.remove();
+  checkPortImports();
 }
 
 async function init() {

@@ -13,6 +13,16 @@
         <string>3100</string>
         <string>__REPO_DIR__/deploy/ttyd-attach.sh</string>
     </array>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
     <key>KeepAlive</key>
     <true/>
     <key>RunAtLoad</key>

@@ -100,14 +100,15 @@ describe('porthub (store-backed)', () => {
     it('registers infrastructure ports', () => {
       porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
 
+      const expectedName = require('node:path').basename(require('node:path').resolve(__dirname, '..'));
       const ttyd = store.portLeases.get(3100);
       assert.ok(ttyd);
-      assert.equal(ttyd.project, 'TangleClaw');
+      assert.equal(ttyd.project, expectedName);
       assert.equal(ttyd.service, 'ttyd');
 
       const server = store.portLeases.get(3101);
       assert.ok(server);
-      assert.equal(server.project, 'TangleClaw');
+      assert.equal(server.project, expectedName);
       assert.equal(server.service, 'server');
     });
   });

@@ -868,18 +868,39 @@ body {
 /* ── Import Banner ── */
 .import-banner {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 10px 16px;
   background: rgba(139, 195, 74, 0.1);
   border-bottom: 1px solid var(--primary-dark);
   font-size: 13px;
   color: var(--text);
-  flex-wrap: wrap;
 }
-.import-banner span:first-child {
-  flex: 1;
-  min-width: 0;
+.import-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.import-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.import-banner-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+.import-banner-item strong {
+  color: var(--primary);
+}
+.import-banner-item .btn {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* ── Empty State ── */

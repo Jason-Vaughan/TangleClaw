@@ -969,17 +969,40 @@ async function submitCreate() {
 
 // ── Import Banner ──
 
+/**
+ * Render an import banner showing unregistered lease projects with details.
+ * @param {object[]} importable - Array of { name, ports: [{port, service}], conflicts: [port] }
+ */
 function renderImportBanner(importable) {
-  if (sessionStorage.getItem('importBannerDismissed')) return;
   // Don't render duplicate banners
   if (document.getElementById('importBanner')) return;
 
   const banner = document.createElement('div');
   banner.id = 'importBanner';
   banner.className = 'import-banner';
-  banner.innerHTML = `<span>${importable.length} project${importable.length > 1 ? 's' : ''} found in port leases not registered in TangleClaw.</span>
-    <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify(importable)))})">Import All</button>
-    <button class="btn btn-small" onclick="dismissImportBanner()">&times;</button>`;
+
+  const details = importable.map(p => {
+    const portList = p.ports.map(pt => `${pt.port} (${pt.service})`).join(', ');
+    const conflictNote = p.conflicts.length > 0
+      ? ` <span style="color:var(--error)">⚠ conflict on port${p.conflicts.length > 1 ? 's' : ''} ${p.conflicts.join(', ')}</span>`
+      : '';
+    const escapedName = esc(JSON.stringify(JSON.stringify(p.name)));
+    return `<div class="import-banner-item">
+      <strong>${esc(p.name)}</strong> — ports: ${portList}${conflictNote}
+      <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify([p.name])))})">Import</button>
+      <button class="btn btn-small" onclick="ignoreLeaseProject(${escapedName})">Ignore</button>
+    </div>`;
+  }).join('');
+
+  const allNames = importable.map(p => p.name);
+  banner.innerHTML = `<div class="import-banner-header">
+      <span>${importable.length} project${importable.length > 1 ? 's' : ''} found in port leases not registered in TangleClaw:</span>
+      <div class="import-banner-actions">
+        <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify(allNames)))})">Import All</button>
+        <button class="btn btn-small" onclick="dismissImportBanner()">Dismiss</button>
+      </div>
+    </div>
+    ${details}`;
 
   const toolbar = document.querySelector('.toolbar');
   if (toolbar) {
@@ -987,21 +1010,41 @@ function renderImportBanner(importable) {
   }
 }
 
+/**
+ * Dismiss the import banner for this session.
+ */
 function dismissImportBanner() {
-  sessionStorage.setItem('importBannerDismissed', 'true');
   const el = document.getElementById('importBanner');
   if (el) el.remove();
 }
 
+/**
+ * Import lease projects by name, then refresh state.
+ * @param {string} namesJson - JSON-encoded array of project names
+ */
 async function importLeaseProjects(namesJson) {
   const names = JSON.parse(namesJson);
   const result = await apiMutate('/api/projects/import', 'POST', { names });
   if (result && result.warnings && result.warnings.length) {
-    console.warn('Import warnings:', result.warnings);
+    // Auto-ignore projects that couldn't be imported (no directory, etc.)
+    const failedNames = [];
+    for (const w of result.warnings) {
+      const match = w.match(/^"(.+?)" directory not found/);
+      if (match) failedNames.push(match[1]);
+    }
+    if (failedNames.length) {
+      for (const n of failedNames) ignoreLeaseProject(n);
+    }
+    // Show any other warnings
+    const otherWarnings = result.warnings.filter(w => !w.match(/directory not found/));
+    if (otherWarnings.length) {
+      console.warn('Import warnings:', otherWarnings);
+    }
   }
-  sessionStorage.setItem('importBannerDismissed', 'true');
   dismissImportBanner();
   await loadProjects();
+  // Re-check in case some remain
+  checkPortImports();
 }
 
 // ── Event Bindings ──
