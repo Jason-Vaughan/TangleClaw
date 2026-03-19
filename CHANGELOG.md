@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-03-18
+
+### Fixed
+
+- **Orphan port leases never cleaned up**: Permanent port leases imported from the old PortHub daemon for projects that no longer exist (e.g. archived `TiLT-v1-archived` on port 5432) stayed in the database forever. The import banner would show them, but clicking Import just auto-ignored them in localStorage — the lease remained. Now: (1) `bootstrap()` runs `_cleanupOrphanLeases()` on every server start, releasing leases for projects that are neither registered in SQLite nor present as directories in projectsDir. (2) The `POST /api/projects/import` endpoint now releases orphan leases when the directory doesn't exist instead of just warning.
+
 ## [3.0.1] - 2026-03-18
 
 ### Fixed
