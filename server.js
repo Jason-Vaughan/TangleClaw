@@ -770,7 +770,13 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 
     const projPath = path.join(projectsDir, name);
     if (!fs.existsSync(projPath) || !fs.statSync(projPath).isDirectory()) {
-      warnings.push(`"${name}" directory not found in ${projectsDir}`);
+      // Release orphan port leases — the project can never be imported
+      const released = store.portLeases.releaseByProject(name);
+      if (released > 0) {
+        warnings.push(`"${name}" directory not found — released ${released} orphan port lease${released > 1 ? 's' : ''}`);
+      } else {
+        warnings.push(`"${name}" directory not found in ${projectsDir}`);
+      }
       continue;
     }
 
