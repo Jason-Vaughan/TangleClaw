@@ -29,5 +29,11 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true
+  },
+  "statusPage": {
+    "adapter": "atlassian",
+    "url": "https://status.claude.com/api/v2/summary.json",
+    "componentId": "yyzkbfz2thpt",
+    "componentName": "Claude Code"
   }
 }

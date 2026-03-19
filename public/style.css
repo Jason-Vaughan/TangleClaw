@@ -672,6 +672,28 @@ body {
   color: var(--primary);
   font-size: 9px;
 }
+/* ── Engine Status Indicators ── */
+.badge-engine.engine-status-operational {
+  border-left: 3px solid var(--primary);
+}
+.badge-engine.engine-status-degraded {
+  border-left: 3px solid var(--amber);
+  color: var(--amber);
+  background: rgba(255, 167, 38, 0.15);
+}
+.badge-engine.engine-status-partial_outage {
+  border-left: 3px solid #FF7043;
+  color: #FF7043;
+  background: rgba(255, 112, 67, 0.15);
+}
+.badge-engine.engine-status-major_outage {
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  background: rgba(239, 83, 80, 0.15);
+}
+.badge-engine.engine-status-unknown {
+  border-left: 3px solid var(--text-muted);
+}
 .badge-meth {
   background: rgba(171, 71, 188, 0.15);
   color: #ce93d8;

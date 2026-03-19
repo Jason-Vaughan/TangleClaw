@@ -184,6 +184,7 @@ When adding a new engine, verify that its generated config includes all of the f
 - [ ] **Generator switch case** — a `case` entry in `generateConfig()` for the new generator name
 - [ ] **Profile `configFormat.generator`** — must exactly match the switch case string
 - [ ] **`_getRulesContent()` used** — the generator function must call `_getRulesContent()` to get the canonical rule set (do not duplicate rule logic)
+- [ ] **Status page config** — set `statusPage` in the engine profile JSON to the upstream status API config (adapter, url, component info), or `null` if the engine has no known status page
 
 ### How to add a new engine generator
 
@@ -191,10 +192,53 @@ When adding a new engine, verify that its generated config includes all of the f
 2. Add a generator function `_generate<Format>()` in `lib/engines.js` that calls `_getRulesContent()` and translates rules into the engine's native format
 3. Add the corresponding `case` in the `generateConfig()` switch statement
 4. Run `engines.validateParity()` — it must return `{ valid: true }`
-5. Add engine-specific tests in `test/engines.test.js`
+5. Run `engines.validateStatusParity()` — it must return `{ valid: true }` (ensures `statusPage` field is present)
+6. Add engine-specific tests in `test/engines.test.js`
 
 ## Switching Engines
 
 You can change a project's engine at any time from the project settings on the landing page or the session settings modal. The change takes effect on the next session launch — TangleClaw regenerates the config file in the new engine's format.
 
 No data is lost when switching engines. Session history, learnings, and methodology state are all engine-independent.
+
+## Model Status Monitoring
+
+TangleClaw monitors the upstream service status for engines with known status pages. The engine badge on project cards reflects real-time operational status:
+
+- **Green left border** — Operational
+- **Amber left border** — Degraded performance
+- **Orange left border** — Partial outage
+- **Red left border** — Major outage
+- **Muted left border** — Unknown (no status page or fetch failed)
+
+Status is polled every 2 minutes from official status pages. Hover over the engine badge for details.
+
+### Supported status sources
+
+| Engine | Status Page | Adapter |
+|--------|------------|---------|
+| Claude Code | status.claude.com | Atlassian Statuspage |
+| Codex | status.openai.com | Atlassian Statuspage |
+| Gemini CLI | status.cloud.google.com | Google Incidents |
+| Aider | None (upstream-dependent) | — |
+| Genesis | None (placeholder) | — |
+
+### Engine profile `statusPage` field
+
+Each engine profile includes a `statusPage` field (object or `null`):
+
+```json
+"statusPage": {
+  "adapter": "atlassian",
+  "url": "https://status.example.com/api/v2/summary.json",
+  "componentId": "abc123",
+  "componentName": "My Service"
+}
+```
+
+- **`adapter`** — Parser type: `"atlassian"` (Atlassian Statuspage) or `"google-incidents"` (Google Cloud)
+- **`url`** — JSON API endpoint to poll
+- **`componentId`** / **`componentName`** — For Atlassian: identifies the specific component to monitor
+- **`productName`** — For Google: product name to filter incidents by
+
+Set to `null` for engines without a known upstream status page.

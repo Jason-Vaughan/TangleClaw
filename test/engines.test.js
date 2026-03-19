@@ -562,6 +562,43 @@ describe('engines', () => {
     });
   });
 
+  describe('validateStatusParity', () => {
+    it('should return valid when all engines have statusPage field', () => {
+      const result = engines.validateStatusParity();
+      assert.equal(result.valid, true, `Status parity failed: ${JSON.stringify(result.engines.filter(e => !e.valid))}`);
+    });
+
+    it('should include all engines (not just config-supporting)', () => {
+      const result = engines.validateStatusParity();
+      const ids = result.engines.map(e => e.id);
+      assert.ok(ids.includes('claude'), 'Missing claude');
+      assert.ok(ids.includes('codex'), 'Missing codex');
+      assert.ok(ids.includes('gemini'), 'Missing gemini');
+      assert.ok(ids.includes('aider'), 'Missing aider');
+      assert.ok(ids.includes('genesis'), 'Missing genesis');
+    });
+
+    it('known providers should have adapter and url', () => {
+      const result = engines.validateStatusParity();
+      const knownProviders = ['claude', 'codex', 'gemini'];
+      for (const id of knownProviders) {
+        const engine = result.engines.find(e => e.id === id);
+        assert.ok(engine, `${id} not found in parity results`);
+        assert.equal(engine.valid, true, `${id} status parity failed: ${engine.errors.join(', ')}`);
+      }
+    });
+
+    it('engines without status pages should have null statusPage', () => {
+      const result = engines.validateStatusParity();
+      const noStatus = ['aider', 'genesis'];
+      for (const id of noStatus) {
+        const engine = result.engines.find(e => e.id === id);
+        assert.ok(engine, `${id} not found`);
+        assert.equal(engine.valid, true, `${id} should be valid with null statusPage`);
+      }
+    });
+  });
+
   describe('cross-feature integration', () => {
     it('Gemini config contains all required sections', () => {
       const projectConfig = {

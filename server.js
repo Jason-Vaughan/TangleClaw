@@ -14,6 +14,7 @@ const sessions = require('./lib/sessions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
 const portScanner = require('./lib/port-scanner');
+const modelStatus = require('./lib/model-status');
 
 const log = createLogger('server');
 
@@ -577,6 +578,11 @@ route('GET', '/api/engines/:id', (_req, res, params) => {
     return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
   }
   jsonResponse(res, 200, profile);
+});
+
+// GET /api/models/status — Upstream service status for all engines
+route('GET', '/api/models/status', (_req, res) => {
+  jsonResponse(res, 200, { status: modelStatus.getStatus() });
 });
 
 // POST /api/tmux/mouse
@@ -1384,6 +1390,9 @@ if (require.main === module) {
   porthub.startExpirationTimer();
   const server = createServer();
 
+  // Start model status monitor
+  modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
+
   server.listen(port, () => {
     log.info(`TangleClaw v${_getVersion()} listening on :${port}`, {
       node: process.version,
@@ -1396,6 +1405,7 @@ if (require.main === module) {
     log.info('Shutting down');
     porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: port });
     porthub.stopExpirationTimer();
+    modelStatus.stopMonitor();
     server.close();
     store.close();
     process.exit(0);

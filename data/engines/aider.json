@@ -29,5 +29,6 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true
-  }
+  },
+  "statusPage": null
 }

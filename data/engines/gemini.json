@@ -25,5 +25,10 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true
+  },
+  "statusPage": {
+    "adapter": "google-incidents",
+    "url": "https://status.cloud.google.com/incidents.json",
+    "productName": "Gemini"
   }
 }

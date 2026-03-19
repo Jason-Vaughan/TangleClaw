@@ -4,6 +4,13 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Model status monitor**: Engine badges on project cards now show real-time upstream service status via a colored left border (green = operational, amber = degraded, orange = partial outage, red = major outage). Status polled every 2 minutes from official status pages (Anthropic, OpenAI, Google Cloud). Hover for details.
+- **New API endpoint**: `GET /api/models/status` returns cached upstream service status for all engines with status page configs.
+- **Engine profile `statusPage` field**: New optional field on engine profiles for upstream status page configuration (adapter type, URL, component/product identifiers). Set to `null` for engines without a known status page.
+- **Status parity guard**: `validateStatusParity()` ensures every engine profile declares a `statusPage` field. Parity tests catch missing status config when adding new engines.
+
 ## [3.0.3] - 2026-03-18
 
 ### Fixed
