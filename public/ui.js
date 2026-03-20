@@ -566,7 +566,7 @@ function openSettings(name) {
   const project = state.projects.find(p => p.name === name);
   if (!project) return;
   const modal = document.getElementById('settingsModal');
-  document.getElementById('settingsTitle').textContent = `Settings: ${name}`;
+  document.getElementById('settingsTitle').textContent = 'Project Settings';
 
   const engineOpts = state.engines.map(e =>
     `<option value="${esc(e.id)}" ${e.id === (project.engine ? project.engine.id : '') ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
@@ -578,7 +578,16 @@ function openSettings(name) {
       `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}</option>`
     ).join('');
 
+  const hasSession = project.session && project.session.active;
+
   document.getElementById('settingsBody').innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="settingsName">Name</label>
+      <input type="text" class="form-input" id="settingsName" value="${esc(name)}"
+             autocomplete="off" autocorrect="off" autocapitalize="off"
+             ${hasSession ? 'disabled' : ''}>
+      ${hasSession ? '<div class="form-hint" style="color:var(--danger)">Cannot rename while a session is active</div>' : ''}
+    </div>
     <div class="form-group">
       <label class="form-label" for="settingsEngine">Engine</label>
       <select class="form-select" id="settingsEngine">${engineOpts}</select>
@@ -660,11 +669,15 @@ async function confirmMethSwitch() {
 async function doSaveSettings() {
   if (!settingsTarget) return;
   const methVal = document.getElementById('settingsMethodology').value;
+  const newName = document.getElementById('settingsName').value.trim();
   const body = {
     engine: document.getElementById('settingsEngine').value,
     methodology: methVal === 'none' ? null : methVal,
     tags: document.getElementById('settingsTags').value.split(',').map(t => t.trim()).filter(Boolean)
   };
+  if (newName && newName !== settingsTarget) {
+    body.name = newName;
+  }
 
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
   closeSettings();
