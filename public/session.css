@@ -145,6 +145,19 @@ body {
   color: var(--text-muted);
   font-family: monospace;
 }
+.update-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--danger);
+  background: rgba(239, 83, 80, 0.15);
+  border: 1px solid var(--danger);
+  border-radius: 14px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.update-badge.hidden { display: none; }
 
 /* ── Status Dot ── */
 .status-dot {

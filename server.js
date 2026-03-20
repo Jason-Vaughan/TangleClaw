@@ -15,6 +15,7 @@ const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
+const updateChecker = require('./lib/update-checker');
 
 const log = createLogger('server');
 
@@ -583,6 +584,11 @@ route('GET', '/api/engines/:id', (_req, res, params) => {
 // GET /api/models/status — Upstream service status for all engines
 route('GET', '/api/models/status', (_req, res) => {
   jsonResponse(res, 200, { status: modelStatus.getStatus() });
+});
+
+// GET /api/update-status — Cached update check result
+route('GET', '/api/update-status', (_req, res) => {
+  jsonResponse(res, 200, updateChecker.getCachedStatus());
 });
 
 // POST /api/tmux/mouse
@@ -1628,6 +1634,9 @@ if (require.main === module) {
   // Start model status monitor
   modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
 
+  // Start update checker (first check 60s after startup, then every 24h)
+  updateChecker.startChecker(config.updateCheckIntervalMs || 24 * 60 * 60 * 1000);
+
   // Start document lock expiry timer (every 5 minutes)
   const _lockExpiryInterval = setInterval(() => {
     try {
@@ -1650,6 +1659,7 @@ if (require.main === module) {
     porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: port });
     porthub.stopExpirationTimer();
     modelStatus.stopMonitor();
+    updateChecker.stopChecker();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
