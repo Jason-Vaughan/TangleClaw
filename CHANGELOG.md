@@ -18,6 +18,8 @@ All notable changes to TangleClaw are documented in this file.
 - **Group badges on project cards**: Small blue pills on project cards showing group membership. Card detail expansion includes groups row with doc counts.
 - **Shared docs in session wrapper**: Settings modal shows shared documents available to the project (via group membership), with lock status indicators, inject mode badges, file paths, and group names. Hidden when project has no groups.
 - **Groups in project detail**: Card detail expansion and project enrichment API now show group membership with shared doc counts
+- **Group creation with members**: New Group modal now shows project checkboxes immediately, so members can be selected during creation instead of requiring a separate edit step. Group name is optional — auto-generated from selected member names (e.g. "project-a + project-b"), with override ability.
+- **Group pills in session banner**: Session wrapper shows clickable blue pills for each group the project belongs to. Tapping a pill shows a popover with all member projects (current project highlighted), group description, and shared doc count. Click outside to dismiss.
 
 ### Fixed
 

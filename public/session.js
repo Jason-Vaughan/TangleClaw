@@ -187,6 +187,62 @@ async function loadProject() {
   }
 
   document.title = `TangleClaw \u2014 ${data.name}`;
+
+  // Render group pills in banner
+  renderBannerGroups(data.groups || []);
+}
+
+/**
+ * Render group pills in the banner row. Clicking shows a popover with member projects.
+ * @param {object[]} groups - Array of { id, name, sharedDocCount }
+ */
+function renderBannerGroups(groups) {
+  const container = document.getElementById('bannerGroups');
+  if (!groups.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = groups.map(g =>
+    `<span class="group-pill" data-group-id="${g.id}" onclick="toggleGroupPopover(this, '${g.id}')">${esc(g.name)}` +
+    `<span class="group-popover" id="groupPop-${g.id}"></span></span>`
+  ).join('');
+}
+
+/**
+ * Toggle the group popover showing member projects.
+ * @param {HTMLElement} pill - The pill element
+ * @param {string} groupId
+ */
+async function toggleGroupPopover(pill, groupId) {
+  const pop = document.getElementById(`groupPop-${groupId}`);
+  if (!pop) return;
+
+  // Close all other popovers
+  document.querySelectorAll('.group-popover.open').forEach(el => {
+    if (el !== pop) el.classList.remove('open');
+  });
+
+  if (pop.classList.contains('open')) {
+    pop.classList.remove('open');
+    return;
+  }
+
+  // Fetch group details
+  const data = await api(`/api/groups/${groupId}`);
+  if (!data) return;
+
+  const members = data.members || [];
+  const docsCount = (data.docs || []).length;
+
+  pop.innerHTML = `<div class="group-popover-title">${esc(data.name)}</div>` +
+    (data.description ? `<div style="color:var(--text-muted);font-size:11px;margin-bottom:6px">${esc(data.description)}</div>` : '') +
+    members.map(m =>
+      `<div class="group-popover-member${m.name === projectName ? ' current' : ''}">${esc(m.name || 'unknown')}</div>`
+    ).join('') +
+    (docsCount > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${docsCount} shared doc${docsCount !== 1 ? 's' : ''}</div>` : '');
+
+  pop.classList.add('open');
 }
 
 /**
@@ -1207,6 +1263,13 @@ function handleWrapCompleted(data) {
 
 function bindEvents() {
   const $ = (id) => document.getElementById(id);
+
+  // Close group popovers on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.group-pill')) {
+      document.querySelectorAll('.group-popover.open').forEach(el => el.classList.remove('open'));
+    }
+  });
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);
