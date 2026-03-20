@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Project rename in settings modal**: Name field is now editable in the project settings modal; renames the directory on disk, updates the DB path, and updates associated port leases. Disabled with a warning when a session is active
+
+### Fixed
+
+- **Stale methodology on session launch**: Engine config and hooks were regenerated _after_ the tmux session started, so the engine loaded the old CLAUDE.md. Moved config generation and hook sync to run _before_ launching the tmux session
+- **Stale extension rules after methodology switch**: Switching away from a methodology (e.g. prawduct → minimal) left its `defaultRules` (docsParity, decisionFramework, independentCritic) enabled. Now resets old methodology rules before applying new ones
+- **Auto-scaffold CHANGELOG.md**: New and attached projects get a starter CHANGELOG.md if one doesn't already exist
+
 ## [3.1.5] - 2026-03-19
 
 ### Changed
