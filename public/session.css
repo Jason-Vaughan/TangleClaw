@@ -874,6 +874,75 @@ body {
   display: inline-block;
 }
 
+/* ── Shared Documents (Settings Modal) ── */
+.shared-docs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+.shared-doc-item {
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  padding: 8px 10px;
+}
+.shared-doc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.shared-doc-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shared-doc-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.shared-doc-badge.inject {
+  background: rgba(139, 195, 74, 0.15);
+  color: var(--primary);
+}
+.shared-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.shared-doc-group {
+  color: #64B5F6;
+  font-weight: 500;
+}
+.shared-doc-lock {
+  color: var(--text-muted);
+}
+.shared-doc-lock.locked {
+  color: var(--amber);
+}
+.shared-doc-path {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 .sr-only {

@@ -283,6 +283,173 @@ body {
   color: var(--amber);
 }
 
+/* ── Groups Panel ── */
+.groups-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.groups-panel.open {
+  max-height: 600px;
+  padding-top: 4px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+.groups-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px;
+}
+.groups-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.group-item {
+  margin-bottom: 4px;
+}
+.group-item-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  min-height: 44px;
+}
+.group-item-toggle:active .group-item-name { color: var(--primary); }
+.group-item-toggle .arrow {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.group-item-toggle .arrow.open { transform: rotate(180deg); }
+.group-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.group-item-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 1;
+}
+.group-item-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.group-item-content.open {
+  max-height: 500px;
+  overflow-y: auto;
+}
+.group-item-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+.group-detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 2px 8px;
+}
+.group-empty-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  font-style: italic;
+}
+.group-members-inline,
+.group-docs-inline {
+  padding: 2px 8px;
+}
+.group-member-row,
+.group-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.group-member-name,
+.group-doc-name {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-doc-mode {
+  font-size: 9px;
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+}
+.group-doc-inject {
+  font-size: 9px;
+}
+.doc-lock-indicator {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.doc-lock-indicator.locked {
+  color: var(--amber);
+}
+
+/* ── Group Members List (modal) ── */
+.group-members-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+.group-member-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.group-member-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+/* ── Group Docs List (modal) ── */
+.group-docs-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+.group-doc-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--elevated-bg);
+}
+.group-doc-edit-row:last-child { border-bottom: none; }
+
+/* ── Group Badge on Project Cards ── */
+.badge-group {
+  background: rgba(100, 181, 246, 0.15);
+  color: #64B5F6;
+  font-size: 9px;
+}
+
 /* ── Global Rules Panel ── */
 .rules-panel {
   max-height: 0;

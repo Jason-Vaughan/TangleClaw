@@ -37,6 +37,9 @@
       <button class="dash-action" id="portsToggle" aria-expanded="false" aria-controls="portsGrid">
         Ports <span class="dash-badge" id="portsCount">0</span>
       </button>
+      <button class="dash-action" id="groupsToggle" aria-expanded="false" aria-controls="groupsPanel">
+        Groups <span class="dash-badge" id="groupsCount">0</span>
+      </button>
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
         Rules
       </button>
@@ -46,6 +49,91 @@
 
   <!-- Ports Grid (expandable panel) -->
   <div id="portsGrid" class="ports-grid" aria-label="Port leases"></div>
+
+  <!-- Groups Panel (expandable) -->
+  <div id="groupsPanel" class="groups-panel" aria-label="Project groups"></div>
+
+  <!-- Group Modal (create/edit) -->
+  <div class="modal-backdrop" id="groupModal">
+    <div class="modal-content" role="dialog" aria-label="Group" aria-modal="true" style="max-width:420px;max-height:85vh;overflow-y:auto">
+      <h3 class="modal-title" id="groupModalTitle">New Group</h3>
+      <div class="form-group">
+        <label class="form-label" for="groupName">Name</label>
+        <input type="text" class="form-input" id="groupName" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="e.g. habitat-infra">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="groupDesc">Description (optional)</label>
+        <input type="text" class="form-input" id="groupDesc" autocomplete="off" placeholder="Projects that deploy to the habitat">
+      </div>
+      <div id="groupMembersSection" class="hidden">
+        <div class="gs-section-label">Members</div>
+        <div id="groupMembersList" class="group-members-list"></div>
+      </div>
+      <div id="groupDocsSection" class="hidden">
+        <div class="gs-section-label">Shared Documents</div>
+        <div id="groupDocsList" class="group-docs-list"></div>
+        <button class="btn btn-small btn-primary" id="groupAddDocBtn" style="margin-top:8px;width:100%">+ Add Document</button>
+      </div>
+      <div id="groupError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="groupCancelBtn">Cancel</button>
+        <button class="btn btn-danger hidden" id="groupDeleteBtn">Delete Group</button>
+        <button class="btn btn-primary" id="groupSaveBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Shared Doc Modal -->
+  <div class="modal-backdrop" id="docModal">
+    <div class="modal-content" role="dialog" aria-label="Shared document" aria-modal="true" style="max-width:400px">
+      <h3 class="modal-title" id="docModalTitle">Add Shared Document</h3>
+      <div class="form-group">
+        <label class="form-label" for="docName">Name</label>
+        <input type="text" class="form-input" id="docName" autocomplete="off" placeholder="e.g. Deploy Guide">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="docFilePath">File path</label>
+        <input type="text" class="form-input" id="docFilePath" autocomplete="off" spellcheck="false" placeholder="/path/to/shared-doc.md">
+        <div class="form-hint">Absolute path to the document file</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="docDescription">Description (optional)</label>
+        <input type="text" class="form-input" id="docDescription" autocomplete="off" placeholder="Infrastructure deployment conventions">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="docInjectMode">Inject mode</label>
+        <select class="form-select" id="docInjectMode">
+          <option value="reference">Reference (file path in config)</option>
+          <option value="inline">Inline (embed content in config)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Inject into engine config</span>
+          <input type="checkbox" id="docInjectToggle" checked>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">When enabled, this document is included in generated CLAUDE.md / engine configs</div>
+      </div>
+      <div id="docError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="docCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="docSaveBtn">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Group Confirmation Modal -->
+  <div class="modal-backdrop" id="groupDeleteModal">
+    <div class="modal-content" role="dialog" aria-label="Delete group" aria-modal="true">
+      <h3 class="modal-title" style="color:var(--danger)">Delete Group</h3>
+      <p class="modal-text" id="groupDeleteText">This will remove the group and all shared document registrations. Project files are not affected.</p>
+      <div class="modal-actions">
+        <button class="btn" id="groupDeleteCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="groupDeleteConfirmBtn">Delete</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Global Rules Panel -->
   <div id="rulesPanel" class="rules-panel" aria-label="Global rules editor">
