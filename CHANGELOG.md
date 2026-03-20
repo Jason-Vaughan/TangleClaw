@@ -7,6 +7,11 @@ All notable changes to TangleClaw are documented in this file.
 ### Added
 
 - **Project Groups and Shared Documents data model**: 4 new SQLite tables (`project_groups`, `project_group_members`, `shared_documents`, `document_locks`) with full store CRUD APIs. Groups allow relating projects (e.g., "habitat infra"). Shared documents register files that can be injected into engine configs at session launch. Advisory document locking prevents concurrent edit conflicts between sessions. Schema version bumped to 3.
+- **Shared Docs API endpoints**: 15 new HTTP endpoints for groups (`GET/POST /api/groups`, `GET/PUT/DELETE /api/groups/:id`), group members (`GET/POST /api/groups/:id/members`, `DELETE /api/groups/:id/members/:projectId`), shared documents (`GET/POST /api/shared-docs`, `GET/PUT/DELETE /api/shared-docs/:id`), and document locks (`POST/GET/DELETE /api/shared-docs/:id/lock`). All endpoints include enriched responses with member/doc counts, lock status, and project names.
+- **Shared docs engine integration**: All 4 engine config generators (Claude, Codex, Aider, Gemini) now inject a `## Shared Documents` section when the project belongs to groups with injectable docs. Reference mode lists file paths with descriptions; inline mode reads and embeds file content in fenced blocks. Lock warnings and missing-file warnings included. Deduplication by file path when project is in multiple groups.
+- **Session lifecycle lock release**: `completeWrap()` and `killSession()` now call `store.documentLocks.releaseBySession()` to automatically release all document locks held by the ending session.
+- **Document lock expiry timer**: Server bootstrap starts a 5-minute interval timer to sweep expired document locks, stopped on graceful shutdown.
+- **Project enrichment with groups**: `enrichProject()` now includes a `groups` array with group name and shared doc count for each group the project belongs to.
 - **Project rename in settings modal**: Name field is now editable in the project settings modal; renames the directory on disk, updates the DB path, and updates associated port leases. Disabled with a warning when a session is active
 
 ### Fixed

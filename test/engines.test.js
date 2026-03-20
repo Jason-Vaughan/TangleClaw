@@ -711,6 +711,197 @@ describe('engines', () => {
     });
   });
 
+  describe('shared docs injection', () => {
+    let groupId;
+    let projectId;
+    let sharedDocFile;
+
+    before(() => {
+      // Create a temp file for inline injection
+      sharedDocFile = path.join(tempDir, 'shared-api-spec.md');
+      fs.writeFileSync(sharedDocFile, '# API Spec\n\nGET /api/health → 200\nPOST /api/data → 201\n');
+
+      // Create a project
+      const projPath = path.join(tempDir, 'test-shared-proj');
+      fs.mkdirSync(projPath, { recursive: true });
+      const project = store.projects.create({
+        name: 'test-shared-proj',
+        path: projPath,
+        engineId: 'claude',
+        methodology: 'prawduct'
+      });
+      projectId = project.id;
+
+      // Create a group and add the project
+      const group = store.projectGroups.create({ name: 'SharedDocsTestGroup' });
+      groupId = group.id;
+      store.projectGroups.addMember(groupId, projectId);
+    });
+
+    it('should include reference mode shared docs in generated config', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'API Reference',
+        filePath: '/docs/api-ref.md',
+        injectIntoConfig: true,
+        injectMode: 'reference',
+        description: 'REST API reference'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(content.includes('Shared Documents'), 'Should include Shared Documents section');
+      assert.ok(content.includes('API Reference'), 'Should include doc name');
+      assert.ok(content.includes('/docs/api-ref.md'), 'Should include file path');
+      assert.ok(content.includes('REST API reference'), 'Should include description');
+
+      // Clean up
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should include inline mode shared docs with file content', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Inline API Spec',
+        filePath: sharedDocFile,
+        injectIntoConfig: true,
+        injectMode: 'inline',
+        description: 'Full API specification'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(content.includes('Inline API Spec'), 'Should include doc name');
+      assert.ok(content.includes('GET /api/health'), 'Should include inlined file content');
+      assert.ok(content.includes('POST /api/data'), 'Should include all file content');
+
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should warn about missing files in reference mode', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Missing Doc',
+        filePath: '/nonexistent/path/doc.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(content.includes('file not found'), 'Should warn about missing file');
+
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should warn about missing files in inline mode', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Missing Inline',
+        filePath: '/nonexistent/inline.md',
+        injectIntoConfig: true,
+        injectMode: 'inline'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(content.includes('File not found'), 'Should warn about missing inline file');
+
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should include lock warnings for locked documents', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Locked Doc',
+        filePath: '/docs/locked.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+
+      // Acquire a lock
+      store.documentLocks.acquire(doc.id, 999, 'other-project');
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(content.includes('LOCKED'), 'Should show lock warning');
+      assert.ok(content.includes('other-project'), 'Should show who locked it');
+
+      // Clean up
+      store.documentLocks.release(doc.id);
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should not include docs when inject_into_config is false', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Non-Injectable',
+        filePath: '/docs/private.md',
+        injectIntoConfig: false,
+        injectMode: 'reference'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(!content.includes('Non-Injectable'), 'Should not include non-injectable docs');
+
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should inject shared docs into all 4 engine generators', () => {
+      const doc = store.sharedDocs.create({
+        groupId,
+        name: 'Parity Doc',
+        filePath: '/docs/parity.md',
+        injectIntoConfig: true,
+        injectMode: 'reference',
+        description: 'Parity test doc'
+      });
+
+      const projectConfig = { id: projectId, rules: { core: {} } };
+
+      const claude = engines._generateClaudeMd(projectConfig, null);
+      assert.ok(claude.includes('Parity Doc'), 'Claude should include shared doc');
+
+      const gemini = engines._generateGeminiMd(projectConfig, null);
+      assert.ok(gemini.includes('Parity Doc'), 'Gemini should include shared doc');
+
+      const codex = engines._generateCodexYaml(projectConfig, null);
+      assert.ok(codex.includes('Parity Doc'), 'Codex should include shared doc');
+
+      const aider = engines._generateAiderConf(projectConfig, null);
+      assert.ok(aider.includes('Parity Doc'), 'Aider should include shared doc');
+
+      store.sharedDocs.delete(doc.id);
+    });
+
+    it('should deduplicate shared docs across multiple groups', () => {
+      // Create second group with same project
+      const group2 = store.projectGroups.create({ name: 'SecondGroup' });
+      store.projectGroups.addMember(group2.id, projectId);
+
+      // Add same file path to both groups
+      const doc1 = store.sharedDocs.create({
+        groupId,
+        name: 'Shared File',
+        filePath: '/docs/shared.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+      const doc2 = store.sharedDocs.create({
+        groupId: group2.id,
+        name: 'Shared File Copy',
+        filePath: '/docs/shared.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      // Should only appear once (deduplicated by file path)
+      const occurrences = content.split('/docs/shared.md').length - 1;
+      assert.equal(occurrences, 1, 'Should deduplicate shared docs by file path');
+
+      // Clean up
+      store.sharedDocs.delete(doc1.id);
+      store.sharedDocs.delete(doc2.id);
+      store.projectGroups.delete(group2.id);
+    });
+  });
+
   describe('syncEngineHooks', () => {
     let projectDir;
 
