@@ -1167,6 +1167,241 @@ route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
   }
 });
 
+// ── Groups API ──
+
+// GET /api/groups
+route('GET', '/api/groups', (_req, res) => {
+  const groups = store.projectGroups.list();
+  // Enrich with member count and doc count
+  const enriched = groups.map(g => {
+    const members = store.projectGroups.listMembers(g.id);
+    const docs = store.sharedDocs.getByGroup(g.id);
+    return { ...g, memberCount: members.length, docCount: docs.length };
+  });
+  jsonResponse(res, 200, { groups: enriched });
+});
+
+// POST /api/groups
+route('POST', '/api/groups', (_req, res, _params, body) => {
+  if (!body || !body.name) {
+    return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
+  }
+  try {
+    const group = store.projectGroups.create(body);
+    jsonResponse(res, 201, group);
+  } catch (err) {
+    if (err.code === 'CONFLICT') {
+      return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    throw err;
+  }
+});
+
+// GET /api/groups/:id
+route('GET', '/api/groups/:id', (_req, res, params) => {
+  const group = store.projectGroups.get(params.id);
+  if (!group) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const members = store.projectGroups.listMembers(group.id);
+  const docs = store.sharedDocs.getByGroup(group.id);
+  jsonResponse(res, 200, { ...group, memberCount: members.length, docCount: docs.length, members, docs });
+});
+
+// PUT /api/groups/:id
+route('PUT', '/api/groups/:id', (_req, res, params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  try {
+    const group = store.projectGroups.update(params.id, body);
+    jsonResponse(res, 200, group);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'CONFLICT') {
+      return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    throw err;
+  }
+});
+
+// DELETE /api/groups/:id
+route('DELETE', '/api/groups/:id', (_req, res, params) => {
+  try {
+    store.projectGroups.delete(params.id);
+    jsonResponse(res, 200, { ok: true, id: params.id });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    throw err;
+  }
+});
+
+// ── Group Members API ──
+
+// GET /api/groups/:id/members
+route('GET', '/api/groups/:id/members', (_req, res, params) => {
+  const group = store.projectGroups.get(params.id);
+  if (!group) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const memberIds = store.projectGroups.listMembers(params.id);
+  // Enrich with project names
+  const members = memberIds.map(pid => {
+    const proj = store.projects.get(pid);
+    return proj ? { id: pid, name: proj.name, path: proj.path } : { id: pid, name: null, path: null };
+  });
+  jsonResponse(res, 200, { members });
+});
+
+// POST /api/groups/:id/members
+route('POST', '/api/groups/:id/members', (_req, res, params, body) => {
+  const group = store.projectGroups.get(params.id);
+  if (!group) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  if (!body || !body.projectId) {
+    return errorResponse(res, 400, 'projectId is required', 'BAD_REQUEST');
+  }
+  const project = store.projects.get(body.projectId);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${body.projectId}" not found`, 'NOT_FOUND');
+  }
+  store.projectGroups.addMember(params.id, body.projectId);
+  jsonResponse(res, 200, { ok: true, groupId: params.id, projectId: body.projectId });
+});
+
+// DELETE /api/groups/:id/members/:projectId
+route('DELETE', '/api/groups/:id/members/:projectId', (_req, res, params) => {
+  const group = store.projectGroups.get(params.id);
+  if (!group) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  store.projectGroups.removeMember(params.id, parseInt(params.projectId, 10));
+  jsonResponse(res, 200, { ok: true, groupId: params.id, projectId: parseInt(params.projectId, 10) });
+});
+
+// ── Shared Documents API ──
+
+// GET /api/shared-docs
+route('GET', '/api/shared-docs', (req, res) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  const options = {};
+  if (query.groupId) options.groupId = query.groupId;
+  const docs = store.sharedDocs.list(options);
+  jsonResponse(res, 200, { docs });
+});
+
+// POST /api/shared-docs
+route('POST', '/api/shared-docs', (_req, res, _params, body) => {
+  if (!body || !body.groupId || !body.name || !body.filePath) {
+    return errorResponse(res, 400, 'groupId, name, and filePath are required', 'BAD_REQUEST');
+  }
+  try {
+    const doc = store.sharedDocs.create(body);
+    jsonResponse(res, 201, doc);
+  } catch (err) {
+    if (err.code === 'CONFLICT') {
+      return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+});
+
+// GET /api/shared-docs/:id
+route('GET', '/api/shared-docs/:id', (_req, res, params) => {
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  // Include lock status
+  const lock = store.documentLocks.check(doc.id);
+  jsonResponse(res, 200, { ...doc, lock: lock || null });
+});
+
+// PUT /api/shared-docs/:id
+route('PUT', '/api/shared-docs/:id', (_req, res, params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  try {
+    const doc = store.sharedDocs.update(params.id, body);
+    jsonResponse(res, 200, doc);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+});
+
+// DELETE /api/shared-docs/:id
+route('DELETE', '/api/shared-docs/:id', (_req, res, params) => {
+  try {
+    store.sharedDocs.delete(params.id);
+    jsonResponse(res, 200, { ok: true, id: params.id });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    throw err;
+  }
+});
+
+// ── Document Locks API ──
+
+// POST /api/shared-docs/:id/lock
+route('POST', '/api/shared-docs/:id/lock', (_req, res, params, body) => {
+  if (!body || !body.sessionId || !body.projectName) {
+    return errorResponse(res, 400, 'sessionId and projectName are required', 'BAD_REQUEST');
+  }
+  try {
+    const lock = store.documentLocks.acquire(params.id, body.sessionId, body.projectName, body.ttlMinutes);
+    jsonResponse(res, 200, lock);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'LOCK_CONFLICT') {
+      return errorResponse(res, 409, err.message, 'LOCK_CONFLICT');
+    }
+    throw err;
+  }
+});
+
+// GET /api/shared-docs/:id/lock
+route('GET', '/api/shared-docs/:id/lock', (_req, res, params) => {
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const lock = store.documentLocks.check(params.id);
+  jsonResponse(res, 200, { locked: !!lock, lock: lock || null });
+});
+
+// DELETE /api/shared-docs/:id/lock
+route('DELETE', '/api/shared-docs/:id/lock', (_req, res, params) => {
+  const doc = store.sharedDocs.get(params.id);
+  if (!doc) {
+    return errorResponse(res, 404, `Shared document "${params.id}" not found`, 'NOT_FOUND');
+  }
+  store.documentLocks.release(params.id);
+  jsonResponse(res, 200, { ok: true, id: params.id });
+});
+
 // ── Terminal Proxy ──
 
 /**
@@ -1393,6 +1628,15 @@ if (require.main === module) {
   // Start model status monitor
   modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
 
+  // Start document lock expiry timer (every 5 minutes)
+  const _lockExpiryInterval = setInterval(() => {
+    try {
+      store.documentLocks.expireStale();
+    } catch (err) {
+      log.warn('Lock expiry sweep failed', { error: err.message });
+    }
+  }, 5 * 60 * 1000);
+
   server.listen(port, () => {
     log.info(`TangleClaw v${_getVersion()} listening on :${port}`, {
       node: process.version,
@@ -1406,6 +1650,7 @@ if (require.main === module) {
     porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: port });
     porthub.stopExpirationTimer();
     modelStatus.stopMonitor();
+    clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
     process.exit(0);

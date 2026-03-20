@@ -279,6 +279,41 @@ describe('sessions', () => {
       assert.equal(result.session, null);
       assert.ok(result.error.includes('No active session'));
     });
+
+    it('releases document locks on kill', () => {
+      const project = store.projects.getByName('prime-test');
+
+      // Create a group, doc, and lock
+      const group = store.projectGroups.create({ name: 'KillLockGroup' });
+      store.projectGroups.addMember(group.id, project.id);
+      const doc = store.sharedDocs.create({
+        groupId: group.id,
+        name: 'KillLockDoc',
+        filePath: '/tmp/kill-lock.md',
+        injectIntoConfig: true
+      });
+
+      // Start a session
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-lock-test'
+      });
+
+      // Acquire lock
+      store.documentLocks.acquire(doc.id, session.id, 'prime-test');
+      assert.ok(store.documentLocks.check(doc.id), 'Lock should be acquired');
+
+      // Kill the session
+      sessions.killSession('prime-test');
+
+      // Lock should be released
+      assert.equal(store.documentLocks.check(doc.id), null, 'Lock should be released after kill');
+
+      // Clean up
+      store.sharedDocs.delete(doc.id);
+      store.projectGroups.delete(group.id);
+    });
   });
 
   describe('completeWrap', () => {
@@ -292,6 +327,42 @@ describe('sessions', () => {
       const result = sessions.completeWrap('nonexistent', 'summary');
       assert.equal(result.session, null);
       assert.ok(result.error.includes('not found'));
+    });
+
+    it('releases document locks on wrap', () => {
+      const project = store.projects.getByName('prime-test');
+
+      // Create a group, doc, and lock
+      const group = store.projectGroups.create({ name: 'WrapLockGroup' });
+      store.projectGroups.addMember(group.id, project.id);
+      const doc = store.sharedDocs.create({
+        groupId: group.id,
+        name: 'WrapLockDoc',
+        filePath: '/tmp/wrap-lock.md',
+        injectIntoConfig: true
+      });
+
+      // Start a session
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-lock-test'
+      });
+
+      // Acquire lock
+      store.documentLocks.acquire(doc.id, session.id, 'prime-test');
+      assert.ok(store.documentLocks.check(doc.id), 'Lock should be acquired');
+
+      // Mark as wrapping and complete
+      store.sessions.setWrapping(session.id);
+      sessions.completeWrap('prime-test', 'test wrap');
+
+      // Lock should be released
+      assert.equal(store.documentLocks.check(doc.id), null, 'Lock should be released after wrap');
+
+      // Clean up
+      store.sharedDocs.delete(doc.id);
+      store.projectGroups.delete(group.id);
     });
   });
 
