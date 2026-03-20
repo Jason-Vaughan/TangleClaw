@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Shared docs auto-discover**: Groups now have an optional `sharedDir` field — a directory path whose `.md` files are auto-registered as shared documents on session launch. File names become doc names (e.g., `NETWORK.md` → "NETWORK"). Idempotent — skips already-registered files. Manual sync via `POST /api/groups/:id/sync` or the "Sync" button in the group edit modal.
+- **AI shared docs guide**: New `data/shared-docs-guide.md` operational guide injected into all 4 engine config generators (Claude, Codex, Aider, Gemini). Teaches AI assistants how to list, register, lock/unlock shared docs, and explains the shared directory convention.
+- **sharedDir UI**: Group create/edit modal now includes a "Shared Directory" input field and "Sync" button. Inline group detail shows the configured shared directory path.
+- **Schema v4 migration**: Adds `shared_dir` column to `project_groups` table.
+
+### Fixed
+
+- **Idle chime repeating every 5 seconds**: Chime now plays once per idle transition instead of every poll cycle while idle. Resets only when the session becomes active again.
+
 ## [3.2.0] - 2026-03-20
 
 ### Added

@@ -117,6 +117,31 @@ describe('store.projectGroups', () => {
     });
   });
 
+  describe('sharedDir field', () => {
+    it('should create a group with sharedDir', () => {
+      const group = store.projectGroups.create({ name: 'with-dir', sharedDir: '/tmp/shared-docs' });
+      assert.equal(group.sharedDir, '/tmp/shared-docs');
+    });
+
+    it('should default sharedDir to null', () => {
+      const group = store.projectGroups.create({ name: 'no-dir' });
+      assert.equal(group.sharedDir, null);
+    });
+
+    it('should update sharedDir', () => {
+      const group = store.projectGroups.create({ name: 'update-dir' });
+      assert.equal(group.sharedDir, null);
+      const updated = store.projectGroups.update(group.id, { sharedDir: '/new/path' });
+      assert.equal(updated.sharedDir, '/new/path');
+    });
+
+    it('should clear sharedDir with empty string', () => {
+      const group = store.projectGroups.create({ name: 'clear-dir', sharedDir: '/some/path' });
+      const updated = store.projectGroups.update(group.id, { sharedDir: '' });
+      assert.equal(updated.sharedDir, null);
+    });
+  });
+
   describe('members', () => {
     it('should add and list members', () => {
       const group = store.projectGroups.create({ name: 'habitat' });

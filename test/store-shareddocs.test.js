@@ -174,6 +174,66 @@ describe('store.sharedDocs', () => {
     });
   });
 
+  describe('syncFromDirectory', () => {
+    it('should register new .md files from a directory', () => {
+      const dirPath = path.join(tmpDir, 'shared-dir');
+      fs.mkdirSync(dirPath, { recursive: true });
+      fs.writeFileSync(path.join(dirPath, 'NETWORK.md'), '# Network');
+      fs.writeFileSync(path.join(dirPath, 'SSH.md'), '# SSH');
+      fs.writeFileSync(path.join(dirPath, 'readme.txt'), 'not markdown');
+
+      const result = store.sharedDocs.syncFromDirectory(group.id, dirPath);
+      assert.equal(result.added.length, 2);
+      assert.equal(result.skipped.length, 0);
+      assert.equal(result.errors.length, 0);
+      assert.ok(result.added.includes('NETWORK.md'));
+      assert.ok(result.added.includes('SSH.md'));
+
+      // Verify docs were created
+      const docs = store.sharedDocs.getByGroup(group.id);
+      assert.equal(docs.length, 2);
+      const network = docs.find(d => d.name === 'NETWORK');
+      assert.ok(network);
+      assert.equal(network.injectIntoConfig, true);
+      assert.equal(network.injectMode, 'reference');
+    });
+
+    it('should skip already-registered files', () => {
+      const dirPath = path.join(tmpDir, 'shared-dir2');
+      fs.mkdirSync(dirPath, { recursive: true });
+      fs.writeFileSync(path.join(dirPath, 'EXISTING.md'), '# Existing');
+
+      // First sync
+      store.sharedDocs.syncFromDirectory(group.id, dirPath);
+      // Second sync — should skip
+      const result = store.sharedDocs.syncFromDirectory(group.id, dirPath);
+      assert.equal(result.added.length, 0);
+      assert.equal(result.skipped.length, 1);
+      assert.ok(result.skipped.includes('EXISTING.md'));
+    });
+
+    it('should handle missing directory gracefully', () => {
+      const result = store.sharedDocs.syncFromDirectory(group.id, '/nonexistent/path');
+      assert.equal(result.added.length, 0);
+      assert.ok(result.errors.length > 0);
+      assert.ok(result.errors[0].includes('not found'));
+    });
+
+    it('should handle null directory path', () => {
+      const result = store.sharedDocs.syncFromDirectory(group.id, null);
+      assert.equal(result.added.length, 0);
+      assert.ok(result.errors.length > 0);
+    });
+
+    it('should handle path that is a file not directory', () => {
+      const filePath = path.join(tmpDir, 'not-a-dir.txt');
+      fs.writeFileSync(filePath, 'content');
+      const result = store.sharedDocs.syncFromDirectory(group.id, filePath);
+      assert.ok(result.errors.length > 0);
+      assert.ok(result.errors[0].includes('not a directory'));
+    });
+  });
+
   describe('getInjectableForProject', () => {
     it('should return injectable docs for a project via group membership', () => {
       const proj = store.projects.create({ name: 'MyProj', path: '/tmp/myproj' });

@@ -22,6 +22,7 @@ const sessionState = {
   pollInterval: 5000,
   lastPeekOutput: null,
   idleCount: 0,
+  chimePlayedForIdle: false,
   commandHistory: [],
   ended: false,
   wrapping: false,
@@ -501,15 +502,16 @@ async function pollStatus() {
     sessionState.launchGraceRemaining = 0;
   }
 
-  // Idle detection for chime
+  // Idle detection for chime — ding once per idle transition
   if (data.active && data.idle) {
     sessionState.idleCount++;
-    if (sessionState.idleCount >= 2 && sessionState.chimeEnabled) {
+    if (sessionState.idleCount >= 2 && sessionState.chimeEnabled && !sessionState.chimePlayedForIdle) {
       playChime();
-      sessionState.idleCount = 0;
+      sessionState.chimePlayedForIdle = true;
     }
   } else {
     sessionState.idleCount = 0;
+    sessionState.chimePlayedForIdle = false;
   }
 }
 
