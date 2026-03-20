@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-03-20
+
 ### Added
 
 - **Update Checker**: Daily git remote poll detects new TangleClaw versions by comparing semver tags. Red version badge appears on the session wrapper banner when an update is available. Tapping the badge injects step-by-step update instructions directly into the active AI session (git fetch, pull, test, restart) — the AI agent handles the update. First check runs 60s after server start, then every 24h. Graceful degradation — no errors if offline or remote unreachable. New `GET /api/update-status` endpoint returns cached check result.
