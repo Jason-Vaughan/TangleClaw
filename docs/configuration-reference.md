@@ -98,6 +98,26 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `independentCritic` | boolean | `false` | Independent Critic review required |
 | `adversarialTesting` | boolean | `false` | Adversarial test cases required |
 
+## Project Groups
+
+Groups are stored in the `project_groups` SQLite table. Managed via the API or landing page UI.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `id` | string | auto-generated | UUID primary key |
+| `name` | string | required | Unique group name |
+| `description` | string\|null | `null` | Group description |
+| `sharedDir` | string\|null | `null` | Absolute path to a directory of shared `.md` files. On session launch, TangleClaw scans this directory and auto-registers new files as shared documents. |
+| `created_at` | string | auto | ISO 8601 timestamp |
+
+### sharedDir Auto-Discover
+
+When `sharedDir` is set on a group, TangleClaw scans the directory for `.md` files at two times:
+1. **Session launch** — before generating the engine config, all groups for the project are synced
+2. **Manual sync** — via `POST /api/groups/:id/sync`
+
+New files are registered with `injectIntoConfig: true` and `injectMode: 'reference'`. Already-registered files (matched by `file_path`) are skipped.
+
 ## Engine Profile JSON Schema
 
 Engine profiles define how TangleClaw interacts with an AI engine. See the [Engine Guide](engine-guide.md) for full details on creating custom profiles.

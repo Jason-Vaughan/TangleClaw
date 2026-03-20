@@ -308,6 +308,13 @@ describe('engines', () => {
       assert.ok(typeof rules.globalRules === 'string');
       assert.ok(rules.globalRules.includes('Global Rules'));
     });
+
+    it('should include shared docs guide', () => {
+      const rules = engines._getRulesContent({});
+      assert.ok(rules.sharedDocsGuide !== null, 'Should include shared docs guide');
+      assert.ok(typeof rules.sharedDocsGuide === 'string');
+      assert.ok(rules.sharedDocsGuide.includes('Shared Documents'));
+    });
   });
 
   describe('rule injection parity', () => {
@@ -386,6 +393,21 @@ describe('engines', () => {
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(content.includes('Prawduct'),
           `${profile.id}: missing methodology name`);
+      }
+    });
+
+    it('all generators should include shared docs guide', () => {
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.ok(
+          content.includes('Shared Documents') || content.includes('Shared Docs Guide'),
+          `${profile.id}: missing shared docs guide`
+        );
       }
     });
   });

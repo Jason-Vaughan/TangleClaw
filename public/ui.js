@@ -1186,6 +1186,9 @@ async function loadGroupDetail(groupId) {
     if (data.description) {
       html += `<div class="group-item-desc">${esc(data.description)}</div>`;
     }
+    if (data.sharedDir) {
+      html += `<div class="group-item-desc" style="font-family:monospace;font-size:0.85em;opacity:0.7">${esc(data.sharedDir)}</div>`;
+    }
 
     // Members
     html += `<div class="group-detail-label">Members</div>`;
@@ -1268,11 +1271,15 @@ async function openGroupModal(groupId) {
   const membersSection = document.getElementById('groupMembersSection');
   membersSection.classList.remove('hidden');
 
+  // Reset shared dir fields
+  document.getElementById('groupSyncStatus').classList.add('hidden');
+
   if (isEdit) {
     const data = await api(`/api/groups/${groupId}`);
     if (!data) return;
     document.getElementById('groupName').value = data.name || '';
     document.getElementById('groupDesc').value = data.description || '';
+    document.getElementById('groupSharedDir').value = data.sharedDir || '';
     document.getElementById('groupDeleteBtn').classList.remove('hidden');
 
     renderGroupMembers(data.members || [], groupId);
@@ -1284,6 +1291,7 @@ async function openGroupModal(groupId) {
   } else {
     document.getElementById('groupName').value = '';
     document.getElementById('groupDesc').value = '';
+    document.getElementById('groupSharedDir').value = '';
     document.getElementById('groupDeleteBtn').classList.add('hidden');
     document.getElementById('groupDocsSection').classList.add('hidden');
 
@@ -1411,7 +1419,8 @@ async function saveGroup() {
       : names.slice(0, 2).join(' + ') + ` +${names.length - 2} more`;
   }
 
-  const body = { name, description: description || null };
+  const sharedDir = document.getElementById('groupSharedDir').value.trim();
+  const body = { name, description: description || null, sharedDir: sharedDir || null };
   let result;
 
   if (groupEditId) {
@@ -1468,6 +1477,42 @@ async function confirmGroupDelete() {
   closeGroupModal();
   await loadGroups();
   await loadProjects();
+}
+
+/**
+ * Sync shared docs from the group's shared directory.
+ */
+async function syncGroupDir() {
+  if (!groupEditId) {
+    const statusEl = document.getElementById('groupSyncStatus');
+    statusEl.textContent = 'Save the group first, then sync.';
+    statusEl.classList.remove('hidden');
+    return;
+  }
+  const statusEl = document.getElementById('groupSyncStatus');
+  statusEl.textContent = 'Syncing...';
+  statusEl.classList.remove('hidden');
+
+  // Save sharedDir first if changed
+  const sharedDir = document.getElementById('groupSharedDir').value.trim();
+  if (sharedDir) {
+    await apiMutate(`/api/groups/${groupEditId}`, 'PUT', { sharedDir });
+  }
+
+  const result = await apiMutate(`/api/groups/${groupEditId}/sync`, 'POST', {});
+  if (!result) {
+    statusEl.textContent = 'Sync failed — check the directory path.';
+    return;
+  }
+  const parts = [];
+  if (result.added && result.added.length > 0) parts.push(`${result.added.length} added`);
+  if (result.skipped && result.skipped.length > 0) parts.push(`${result.skipped.length} existing`);
+  if (result.errors && result.errors.length > 0) parts.push(`${result.errors.length} error(s)`);
+  statusEl.textContent = parts.length > 0 ? parts.join(', ') : 'No .md files found';
+
+  // Refresh docs list
+  const data = await api(`/api/groups/${groupEditId}`);
+  if (data) renderGroupDocs(data.docs || []);
 }
 
 // ── Shared Doc Modal ──

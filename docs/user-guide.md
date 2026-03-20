@@ -245,6 +245,41 @@ Each project maintains a session history showing:
 - Session status (wrapped, killed, crashed)
 - Wrap summary (if wrapped)
 
+## Project Groups and Shared Documents
+
+### Groups
+
+Project groups let you relate projects that share infrastructure or documentation. Create groups from the landing page's Groups panel (collapsible section in the dashboard bar).
+
+### Shared Directory (Auto-Discover)
+
+Each group can have a `sharedDir` — a directory path containing shared `.md` files. On session launch, TangleClaw scans this directory and auto-registers any new markdown files as shared documents. Already-registered files are skipped.
+
+To set up auto-discover:
+1. Edit a group and enter the shared directory path
+2. Click "Sync" to trigger immediate discovery
+3. New `.md` files are registered with `injectIntoConfig: true` and `injectMode: reference`
+
+File names become document names (e.g., `NETWORK.md` becomes "NETWORK").
+
+You can also trigger sync via the API:
+```
+POST /api/groups/<group-id>/sync
+```
+
+### Shared Documents
+
+Shared documents are markdown files registered to a group. When a project belongs to a group, injectable shared docs appear in the project's engine config at session launch.
+
+### Document Locking
+
+Before editing a shared document, lock it to prevent conflicts:
+```
+POST /api/shared-docs/<doc-id>/lock
+{ "sessionId": <id>, "projectName": "my-project" }
+```
+Locks expire after 30 minutes and are auto-released when sessions wrap or are killed.
+
 ## Mobile Tips
 
 ### iPhone Safari

@@ -254,3 +254,81 @@ describe('API /api/groups/:id/members', () => {
     assert.equal(status, 404);
   });
 });
+
+describe('API /api/groups/:id/sync', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-sync-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('POST /api/groups/:id/sync discovers .md files from sharedDir', async () => {
+    // Create shared directory with files
+    const sharedDir = path.join(tmpDir, 'shared-docs');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    fs.writeFileSync(path.join(sharedDir, 'NETWORK.md'), '# Network');
+    fs.writeFileSync(path.join(sharedDir, 'SSH.md'), '# SSH');
+
+    // Create group with sharedDir
+    const groupRes = await request(server, 'POST', '/api/groups', {
+      name: 'SyncTestGroup',
+      sharedDir
+    });
+    assert.equal(groupRes.status, 201);
+    assert.equal(groupRes.data.sharedDir, sharedDir);
+
+    // Trigger sync
+    const { status, data } = await request(server, 'POST', `/api/groups/${groupRes.data.id}/sync`);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.added.length, 2);
+    assert.ok(data.added.includes('NETWORK.md'));
+    assert.ok(data.added.includes('SSH.md'));
+  });
+
+  it('POST /api/groups/:id/sync returns 400 when no sharedDir', async () => {
+    const groupRes = await request(server, 'POST', '/api/groups', {
+      name: 'NoDir'
+    });
+    const { status, data } = await request(server, 'POST', `/api/groups/${groupRes.data.id}/sync`);
+    assert.equal(status, 400);
+    assert.ok(data.error.includes('sharedDir'));
+  });
+
+  it('POST /api/groups/:id/sync returns 404 for unknown group', async () => {
+    const { status } = await request(server, 'POST', '/api/groups/nonexistent/sync');
+    assert.equal(status, 404);
+  });
+
+  it('POST /api/groups/:id/sync with sharedDir in group payload', async () => {
+    const sharedDir = path.join(tmpDir, 'shared-docs2');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    fs.writeFileSync(path.join(sharedDir, 'API.md'), '# API');
+
+    const groupRes = await request(server, 'POST', '/api/groups', {
+      name: 'PayloadTest',
+      sharedDir
+    });
+
+    // Verify sharedDir is returned in GET
+    const getRes = await request(server, 'GET', `/api/groups/${groupRes.data.id}`);
+    assert.equal(getRes.data.sharedDir, sharedDir);
+
+    // Sync
+    const syncRes = await request(server, 'POST', `/api/groups/${groupRes.data.id}/sync`);
+    assert.equal(syncRes.data.added.length, 1);
+    assert.ok(syncRes.data.added.includes('API.md'));
+  });
+});

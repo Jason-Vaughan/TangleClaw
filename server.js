@@ -1246,6 +1246,19 @@ route('DELETE', '/api/groups/:id', (_req, res, params) => {
   }
 });
 
+// POST /api/groups/:id/sync — Sync shared docs from group's sharedDir
+route('POST', '/api/groups/:id/sync', (_req, res, params) => {
+  const group = store.projectGroups.get(params.id);
+  if (!group) {
+    return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
+  }
+  if (!group.sharedDir) {
+    return errorResponse(res, 400, 'Group has no sharedDir configured', 'BAD_REQUEST');
+  }
+  const result = store.sharedDocs.syncFromDirectory(params.id, group.sharedDir);
+  jsonResponse(res, 200, { ok: true, ...result });
+});
+
 // ── Group Members API ──
 
 // GET /api/groups/:id/members
