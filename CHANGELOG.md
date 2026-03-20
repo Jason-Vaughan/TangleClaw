@@ -6,6 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Project Groups and Shared Documents data model**: 4 new SQLite tables (`project_groups`, `project_group_members`, `shared_documents`, `document_locks`) with full store CRUD APIs. Groups allow relating projects (e.g., "habitat infra"). Shared documents register files that can be injected into engine configs at session launch. Advisory document locking prevents concurrent edit conflicts between sessions. Schema version bumped to 3.
 - **Project rename in settings modal**: Name field is now editable in the project settings modal; renames the directory on disk, updates the DB path, and updates associated port leases. Disabled with a warning when a session is active
 
 ### Fixed
