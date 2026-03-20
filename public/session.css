@@ -257,6 +257,60 @@ body {
   50% { box-shadow: 0 0 12px rgba(239, 83, 80, 0.8); }
 }
 
+/* ── Group Pills ── */
+.banner-groups {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.group-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--root-accent);
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+}
+.group-pill:hover {
+  background: rgba(74, 158, 255, 0.3);
+}
+.group-popover {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: var(--elevated-bg);
+  border: 1px solid var(--text-muted);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 160px;
+  z-index: 100;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.group-popover.open { display: block; }
+.group-popover-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--root-accent);
+}
+.group-popover-member {
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.group-popover-member.current {
+  color: var(--primary);
+  font-weight: 600;
+}
+
 .banner-methodology {
   font-size: 11px;
   font-weight: 600;

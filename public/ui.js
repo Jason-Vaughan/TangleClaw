@@ -1264,6 +1264,10 @@ async function openGroupModal(groupId) {
   document.getElementById('groupSaveBtn').textContent = isEdit ? 'Save' : 'Create';
   document.getElementById('groupError').classList.add('hidden');
 
+  // Always show members section — checkboxes of all registered projects
+  const membersSection = document.getElementById('groupMembersSection');
+  membersSection.classList.remove('hidden');
+
   if (isEdit) {
     const data = await api(`/api/groups/${groupId}`);
     if (!data) return;
@@ -1271,12 +1275,9 @@ async function openGroupModal(groupId) {
     document.getElementById('groupDesc').value = data.description || '';
     document.getElementById('groupDeleteBtn').classList.remove('hidden');
 
-    // Show members section
-    const membersSection = document.getElementById('groupMembersSection');
-    membersSection.classList.remove('hidden');
     renderGroupMembers(data.members || [], groupId);
 
-    // Show docs section
+    // Show docs section (edit only — need a group to attach docs to)
     const docsSection = document.getElementById('groupDocsSection');
     docsSection.classList.remove('hidden');
     renderGroupDocs(data.docs || []);
@@ -1284,8 +1285,10 @@ async function openGroupModal(groupId) {
     document.getElementById('groupName').value = '';
     document.getElementById('groupDesc').value = '';
     document.getElementById('groupDeleteBtn').classList.add('hidden');
-    document.getElementById('groupMembersSection').classList.add('hidden');
     document.getElementById('groupDocsSection').classList.add('hidden');
+
+    // Show all projects unchecked for new group
+    renderGroupMembers([], null);
   }
 
   document.getElementById('groupModal').classList.add('open');
@@ -1309,10 +1312,19 @@ function renderGroupMembers(currentMembers, groupId) {
 
   list.innerHTML = registeredProjects.map(p => {
     const checked = memberIds.has(p.id) ? 'checked' : '';
-    return `<label class="group-member-check">
-      <input type="checkbox" ${checked} onchange="toggleGroupMembership('${esc(groupId)}', ${p.id}, this.checked)">
-      <span>${esc(p.name)}</span>
-    </label>`;
+    if (groupId) {
+      // Edit mode — toggle membership immediately via API
+      return `<label class="group-member-check">
+        <input type="checkbox" ${checked} onchange="toggleGroupMembership('${esc(groupId)}', ${p.id}, this.checked)">
+        <span>${esc(p.name)}</span>
+      </label>`;
+    } else {
+      // Create mode — just checkboxes, saved on group create
+      return `<label class="group-member-check">
+        <input type="checkbox" ${checked} data-project-id="${p.id}">
+        <span>${esc(p.name)}</span>
+      </label>`;
+    }
   }).join('');
 }
 
@@ -1375,13 +1387,28 @@ function closeGroupModal() {
  * Save (create or update) a group.
  */
 async function saveGroup() {
-  const name = document.getElementById('groupName').value.trim();
+  let name = document.getElementById('groupName').value.trim();
   const description = document.getElementById('groupDesc').value.trim();
 
+  // Auto-generate name from selected members if blank
   if (!name) {
-    document.getElementById('groupError').textContent = 'Name is required';
-    document.getElementById('groupError').classList.remove('hidden');
-    return;
+    const checked = document.querySelectorAll('#groupMembersList input[type="checkbox"]:checked');
+    const names = [];
+    checked.forEach(cb => {
+      const label = cb.closest('label');
+      if (label) {
+        const span = label.querySelector('span');
+        if (span) names.push(span.textContent.trim());
+      }
+    });
+    if (names.length === 0) {
+      document.getElementById('groupError').textContent = 'Select at least one member or enter a name';
+      document.getElementById('groupError').classList.remove('hidden');
+      return;
+    }
+    name = names.length <= 3
+      ? names.join(' + ')
+      : names.slice(0, 2).join(' + ') + ` +${names.length - 2} more`;
   }
 
   const body = { name, description: description || null };
@@ -1397,6 +1424,15 @@ async function saveGroup() {
     document.getElementById('groupError').textContent = 'Save failed. Name may already exist.';
     document.getElementById('groupError').classList.remove('hidden');
     return;
+  }
+
+  // On create, add checked members
+  if (!groupEditId && result.id) {
+    const checkboxes = document.querySelectorAll('#groupMembersList input[data-project-id]:checked');
+    for (const cb of checkboxes) {
+      const projectId = parseInt(cb.dataset.projectId, 10);
+      await apiMutate(`/api/groups/${result.id}/members`, 'POST', { projectId });
+    }
   }
 
   closeGroupModal();
