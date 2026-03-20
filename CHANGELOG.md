@@ -13,6 +13,10 @@ All notable changes to TangleClaw are documented in this file.
 - **Document lock expiry timer**: Server bootstrap starts a 5-minute interval timer to sweep expired document locks, stopped on graceful shutdown.
 - **Project enrichment with groups**: `enrichProject()` now includes a `groups` array with group name and shared doc count for each group the project belongs to.
 - **Project rename in settings modal**: Name field is now editable in the project settings modal; renames the directory on disk, updates the DB path, and updates associated port leases. Disabled with a warning when a session is active
+- **Groups management UI**: Collapsible "Groups" panel on the landing page dashboard bar. Create, edit, and delete project groups. Manage group membership via checkbox list. Register shared documents with inject mode (reference/inline) and inject toggle. Expandable group items show members, docs, and lock status inline.
+- **Group badges on project cards**: Small blue pills on project cards showing group membership. Card detail expansion includes groups row with doc counts.
+- **Shared docs in session wrapper**: Settings modal shows shared documents available to the project (via group membership), with lock status indicators, inject mode badges, file paths, and group names. Hidden when project has no groups.
+- **Groups in project detail**: Card detail expansion and project enrichment API now show group membership with shared doc counts
 
 ### Fixed
 

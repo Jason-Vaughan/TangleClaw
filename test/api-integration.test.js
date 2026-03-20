@@ -450,4 +450,129 @@ describe('Landing Page API Integration', () => {
       assert.ok(typeof res.data.code === 'string');
     });
   });
+
+  describe('Groups + Shared Docs API response shapes', () => {
+    let testGroupId;
+    let testDocId;
+    let testProjectId;
+
+    it('GET /api/groups should return groups array', async () => {
+      const res = await request('/api/groups');
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.data.groups));
+    });
+
+    it('POST /api/groups should create a group with expected shape', async () => {
+      const res = await request('/api/groups', {
+        method: 'POST',
+        body: { name: 'integ-test-group', description: 'Integration test group' }
+      });
+      assert.equal(res.status, 201);
+      assert.ok(typeof res.data.id === 'string');
+      assert.equal(res.data.name, 'integ-test-group');
+      assert.equal(res.data.description, 'Integration test group');
+      assert.ok(typeof res.data.createdAt === 'string');
+      testGroupId = res.data.id;
+    });
+
+    it('GET /api/groups/:id should return group with members and docs arrays', async () => {
+      const res = await request(`/api/groups/${testGroupId}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.id, testGroupId);
+      assert.equal(res.data.name, 'integ-test-group');
+      assert.ok(Array.isArray(res.data.members));
+      assert.ok(Array.isArray(res.data.docs));
+    });
+
+    it('POST /api/groups/:id/members should add a project member', async () => {
+      // Create a project to add as member
+      const projRes = await request('/api/projects', {
+        method: 'POST',
+        body: { name: 'group-member-test', engine: 'claude', methodology: 'minimal' }
+      });
+      testProjectId = projRes.data.id;
+
+      const res = await request(`/api/groups/${testGroupId}/members`, {
+        method: 'POST',
+        body: { projectId: testProjectId }
+      });
+      assert.equal(res.status, 200);
+      assert.ok(res.data.ok);
+    });
+
+    it('GET /api/groups/:id/members should return members with project names', async () => {
+      const res = await request(`/api/groups/${testGroupId}/members`);
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.data.members));
+      assert.ok(res.data.members.length >= 1);
+      const member = res.data.members[0];
+      assert.ok(typeof member.id === 'number');
+      assert.ok(typeof member.name === 'string');
+    });
+
+    it('POST /api/shared-docs should create a doc with expected shape', async () => {
+      const res = await request('/api/shared-docs', {
+        method: 'POST',
+        body: {
+          groupId: testGroupId,
+          name: 'Test Deploy Guide',
+          filePath: '/tmp/test-deploy-guide.md',
+          injectIntoConfig: true,
+          injectMode: 'reference',
+          description: 'A test document'
+        }
+      });
+      assert.equal(res.status, 201);
+      assert.ok(typeof res.data.id === 'string');
+      assert.equal(res.data.name, 'Test Deploy Guide');
+      assert.equal(res.data.filePath, '/tmp/test-deploy-guide.md');
+      assert.equal(res.data.injectIntoConfig, true);
+      assert.equal(res.data.injectMode, 'reference');
+      testDocId = res.data.id;
+    });
+
+    it('GET /api/shared-docs should list docs, filterable by groupId', async () => {
+      const res = await request(`/api/shared-docs?groupId=${testGroupId}`);
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.data.docs));
+      assert.ok(res.data.docs.length >= 1);
+      const doc = res.data.docs[0];
+      assert.ok(typeof doc.id === 'string');
+      assert.ok(typeof doc.name === 'string');
+      assert.ok(typeof doc.filePath === 'string');
+      assert.ok(typeof doc.injectIntoConfig === 'boolean');
+      assert.ok(['reference', 'inline'].includes(doc.injectMode));
+    });
+
+    it('GET /api/shared-docs/:id should include lock status', async () => {
+      const res = await request(`/api/shared-docs/${testDocId}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.id, testDocId);
+      // lock should be null when no lock acquired
+      assert.equal(res.data.lock, null);
+    });
+
+    it('project enrichment should include groups array', async () => {
+      const res = await request('/api/projects/group-member-test');
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.data.groups));
+      assert.ok(res.data.groups.length >= 1);
+      const g = res.data.groups[0];
+      assert.equal(g.name, 'integ-test-group');
+      assert.ok(typeof g.docCount === 'number');
+    });
+
+    it('DELETE /api/groups/:id should cascade delete', async () => {
+      const res = await request(`/api/groups/${testGroupId}`, { method: 'DELETE' });
+      assert.equal(res.status, 200);
+      assert.ok(res.data.ok);
+
+      // Docs should be gone
+      const docRes = await request(`/api/shared-docs/${testDocId}`);
+      assert.equal(docRes.status, 404);
+
+      // Cleanup project
+      await request('/api/projects/group-member-test', { method: 'DELETE', body: { deleteFiles: true } });
+    });
+  });
 });

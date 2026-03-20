@@ -86,6 +86,11 @@ function renderCard(project) {
     }
   }
 
+  // Group badges
+  const groupBadges = (project.groups || []).map(g =>
+    `<span class="badge badge-group" title="${esc(g.name)}: ${g.docCount || 0} shared doc${(g.docCount || 0) !== 1 ? 's' : ''}">${esc(g.name)}</span>`
+  ).join('');
+
   const statusDot = hasSession
     ? `<span class="status-dot active" title="Session active"></span>`
     : `<span class="status-dot" title="No active session"></span>`;
@@ -100,6 +105,7 @@ function renderCard(project) {
       ${engineBadge}
       ${methBadge}
       ${phaseBadge}
+      ${groupBadges}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -163,6 +169,9 @@ function toggleCardDetail(name) {
       : 'No active session';
     const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
     const gitInfo = project.git ? `${esc(project.git.branch)}${project.git.dirty ? ' (dirty)' : ''}` : 'Not a git repo';
+    const groupsInfo = (project.groups || []).length > 0
+      ? project.groups.map(g => `${esc(g.name)} (${g.docCount || 0} docs)`).join(', ')
+      : 'None';
 
     detail.innerHTML = `
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
@@ -170,6 +179,7 @@ function toggleCardDetail(name) {
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
+      <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>
       <div class="detail-actions">
         <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${esc(name)}')">Settings</button>
         ${project.session && project.session.active ? `<button class="btn btn-compact btn-kill-card" onclick="event.stopPropagation(); openKill('${esc(name)}')">Kill Session</button>` : ''}
@@ -1072,10 +1082,456 @@ async function importLeaseProjects(namesJson) {
   checkPortImports();
 }
 
+// ── Groups Panel ──
+
+/**
+ * Toggle the groups panel open/closed from the dashboard bar.
+ */
+function toggleGroups() {
+  state.groupsOpen = !state.groupsOpen;
+  const panel = document.getElementById('groupsPanel');
+  const toggle = document.getElementById('groupsToggle');
+  panel.classList.toggle('open', state.groupsOpen);
+  toggle.classList.toggle('active', state.groupsOpen);
+  toggle.setAttribute('aria-expanded', state.groupsOpen);
+}
+
+/**
+ * Render the groups panel content.
+ */
+function renderGroups() {
+  const panel = document.getElementById('groupsPanel');
+  if (state.groups.length === 0) {
+    panel.innerHTML = `<div class="groups-empty">
+      No project groups yet
+      <button class="btn btn-small btn-primary" onclick="openGroupModal()" style="margin-left:8px">+ New Group</button>
+    </div>`;
+    return;
+  }
+
+  // Default all groups to open if not yet set
+  for (const group of state.groups) {
+    if (!(group.id in state.groupItemsOpen)) {
+      state.groupItemsOpen[group.id] = false;
+    }
+  }
+
+  let html = `<div class="groups-header-actions">
+    <button class="btn btn-small btn-primary" onclick="openGroupModal()">+ New Group</button>
+  </div>`;
+
+  for (const group of state.groups) {
+    const isOpen = state.groupItemsOpen[group.id] === true;
+    const arrowClass = isOpen ? 'arrow open' : 'arrow';
+    const contentClass = isOpen ? 'group-item-content open' : 'group-item-content';
+
+    html += `<div class="group-item">`;
+    html += `<div class="group-item-toggle" role="button" tabindex="0"
+      aria-expanded="${isOpen}" onclick="toggleGroupItem('${esc(group.id)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGroupItem('${esc(group.id)}');}">
+      <span class="${arrowClass}">&#9660;</span>
+      <span class="group-item-name">${esc(group.name)}</span>
+      <span class="group-item-meta">${group.memberCount || 0} project${(group.memberCount || 0) !== 1 ? 's' : ''}, ${group.docCount || 0} doc${(group.docCount || 0) !== 1 ? 's' : ''}</span>
+      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openGroupModal('${esc(group.id)}')" title="Edit group">&#9998;</button>
+    </div>`;
+    html += `<div class="${contentClass}">`;
+    if (group.description) {
+      html += `<div class="group-item-desc">${esc(group.description)}</div>`;
+    }
+    html += `<div class="group-item-loading">Loading details...</div>`;
+    html += '</div></div>';
+  }
+
+  panel.innerHTML = html;
+
+  // Load details for open groups
+  for (const group of state.groups) {
+    if (state.groupItemsOpen[group.id]) {
+      loadGroupDetail(group.id);
+    }
+  }
+}
+
+/**
+ * Toggle a group item open/closed and load its details.
+ * @param {string} groupId
+ */
+function toggleGroupItem(groupId) {
+  state.groupItemsOpen[groupId] = !state.groupItemsOpen[groupId];
+  renderGroups();
+}
+
+/**
+ * Load group details (members + docs) and render inline.
+ * @param {string} groupId
+ */
+async function loadGroupDetail(groupId) {
+  const data = await api(`/api/groups/${groupId}`);
+  if (!data) return;
+
+  // Find the content div for this group
+  const items = document.querySelectorAll('.group-item');
+  for (const item of items) {
+    const toggle = item.querySelector('.group-item-toggle');
+    if (!toggle) continue;
+    const nameEl = toggle.querySelector('.group-item-name');
+    // Match by group name since IDs aren't on DOM elements
+    const group = state.groups.find(g => g.id === groupId);
+    if (!group || !nameEl || nameEl.textContent !== group.name) continue;
+
+    const content = item.querySelector('.group-item-content');
+    if (!content) break;
+
+    let html = '';
+    if (data.description) {
+      html += `<div class="group-item-desc">${esc(data.description)}</div>`;
+    }
+
+    // Members
+    html += `<div class="group-detail-label">Members</div>`;
+    if (data.members && data.members.length > 0) {
+      html += `<div class="group-members-inline">`;
+      for (const m of data.members) {
+        html += `<div class="group-member-row">
+          <span class="group-member-name">${esc(m.name)}</span>
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeGroupMember('${esc(groupId)}', ${m.id})" title="Remove from group">&times;</button>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="group-empty-hint">No members</div>`;
+    }
+
+    // Docs
+    html += `<div class="group-detail-label" style="margin-top:8px">Shared Documents</div>`;
+    if (data.docs && data.docs.length > 0) {
+      html += `<div class="group-docs-inline">`;
+      for (const doc of data.docs) {
+        const lockHtml = doc.lock
+          ? `<span class="doc-lock-indicator locked" title="Locked by ${esc(doc.lock.lockedByProject)}">&#128274;</span>`
+          : `<span class="doc-lock-indicator" title="Unlocked">&#128275;</span>`;
+        html += `<div class="group-doc-row">
+          ${lockHtml}
+          <span class="group-doc-name">${esc(doc.name)}</span>
+          <span class="group-doc-mode badge">${esc(doc.injectMode)}</span>
+          ${doc.injectIntoConfig ? '<span class="group-doc-inject badge badge-engine">inject</span>' : ''}
+          <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); removeSharedDoc('${esc(doc.id)}')" title="Remove document">&times;</button>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="group-empty-hint">No shared documents</div>`;
+    }
+
+    content.innerHTML = html;
+    break;
+  }
+}
+
+/**
+ * Remove a member from a group.
+ * @param {string} groupId
+ * @param {number} projectId
+ */
+async function removeGroupMember(groupId, projectId) {
+  await apiMutate(`/api/groups/${groupId}/members/${projectId}`, 'DELETE', {});
+  await loadGroups();
+  await loadProjects();
+}
+
+/**
+ * Remove a shared document registration.
+ * @param {string} docId
+ */
+async function removeSharedDoc(docId) {
+  await apiMutate(`/api/shared-docs/${docId}`, 'DELETE', {});
+  await loadGroups();
+}
+
+// ── Group Modal ──
+
+let groupEditId = null;
+
+/**
+ * Open the group modal for create or edit.
+ * @param {string} [groupId] - If provided, opens in edit mode
+ */
+async function openGroupModal(groupId) {
+  groupEditId = groupId || null;
+  const isEdit = !!groupId;
+
+  document.getElementById('groupModalTitle').textContent = isEdit ? 'Edit Group' : 'New Group';
+  document.getElementById('groupSaveBtn').textContent = isEdit ? 'Save' : 'Create';
+  document.getElementById('groupError').classList.add('hidden');
+
+  if (isEdit) {
+    const data = await api(`/api/groups/${groupId}`);
+    if (!data) return;
+    document.getElementById('groupName').value = data.name || '';
+    document.getElementById('groupDesc').value = data.description || '';
+    document.getElementById('groupDeleteBtn').classList.remove('hidden');
+
+    // Show members section
+    const membersSection = document.getElementById('groupMembersSection');
+    membersSection.classList.remove('hidden');
+    renderGroupMembers(data.members || [], groupId);
+
+    // Show docs section
+    const docsSection = document.getElementById('groupDocsSection');
+    docsSection.classList.remove('hidden');
+    renderGroupDocs(data.docs || []);
+  } else {
+    document.getElementById('groupName').value = '';
+    document.getElementById('groupDesc').value = '';
+    document.getElementById('groupDeleteBtn').classList.add('hidden');
+    document.getElementById('groupMembersSection').classList.add('hidden');
+    document.getElementById('groupDocsSection').classList.add('hidden');
+  }
+
+  document.getElementById('groupModal').classList.add('open');
+  setTimeout(() => document.getElementById('groupName').focus(), 100);
+}
+
+/**
+ * Render member checkboxes for group edit.
+ * @param {object[]} currentMembers - Current group members
+ * @param {string} groupId
+ */
+function renderGroupMembers(currentMembers, groupId) {
+  const list = document.getElementById('groupMembersList');
+  const memberIds = new Set(currentMembers.map(m => m.id));
+
+  const registeredProjects = state.projects.filter(p => p.registered !== false);
+  if (registeredProjects.length === 0) {
+    list.innerHTML = '<div class="group-empty-hint">No projects available</div>';
+    return;
+  }
+
+  list.innerHTML = registeredProjects.map(p => {
+    const checked = memberIds.has(p.id) ? 'checked' : '';
+    return `<label class="group-member-check">
+      <input type="checkbox" ${checked} onchange="toggleGroupMembership('${esc(groupId)}', ${p.id}, this.checked)">
+      <span>${esc(p.name)}</span>
+    </label>`;
+  }).join('');
+}
+
+/**
+ * Render shared docs list in group edit modal.
+ * @param {object[]} docs
+ */
+function renderGroupDocs(docs) {
+  const list = document.getElementById('groupDocsList');
+  if (docs.length === 0) {
+    list.innerHTML = '<div class="group-empty-hint">No shared documents registered</div>';
+    return;
+  }
+  list.innerHTML = docs.map(doc => {
+    const lockIcon = doc.lock ? '&#128274;' : '&#128275;';
+    return `<div class="group-doc-edit-row">
+      <span>${lockIcon}</span>
+      <span class="group-doc-name">${esc(doc.name)}</span>
+      <span class="badge">${esc(doc.injectMode)}</span>
+      <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="deleteDocFromModal('${esc(doc.id)}')" title="Remove">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+/**
+ * Toggle a project's membership in a group.
+ * @param {string} groupId
+ * @param {number} projectId
+ * @param {boolean} add
+ */
+async function toggleGroupMembership(groupId, projectId, add) {
+  if (add) {
+    await apiMutate(`/api/groups/${groupId}/members`, 'POST', { projectId });
+  } else {
+    await apiMutate(`/api/groups/${groupId}/members/${projectId}`, 'DELETE', {});
+  }
+}
+
+/**
+ * Delete a shared doc from within the group edit modal, then refresh.
+ * @param {string} docId
+ */
+async function deleteDocFromModal(docId) {
+  await apiMutate(`/api/shared-docs/${docId}`, 'DELETE', {});
+  if (groupEditId) {
+    const data = await api(`/api/groups/${groupEditId}`);
+    if (data) renderGroupDocs(data.docs || []);
+  }
+}
+
+/**
+ * Close the group modal.
+ */
+function closeGroupModal() {
+  document.getElementById('groupModal').classList.remove('open');
+  groupEditId = null;
+}
+
+/**
+ * Save (create or update) a group.
+ */
+async function saveGroup() {
+  const name = document.getElementById('groupName').value.trim();
+  const description = document.getElementById('groupDesc').value.trim();
+
+  if (!name) {
+    document.getElementById('groupError').textContent = 'Name is required';
+    document.getElementById('groupError').classList.remove('hidden');
+    return;
+  }
+
+  const body = { name, description: description || null };
+  let result;
+
+  if (groupEditId) {
+    result = await apiMutate(`/api/groups/${groupEditId}`, 'PUT', body);
+  } else {
+    result = await apiMutate('/api/groups', 'POST', body);
+  }
+
+  if (!result) {
+    document.getElementById('groupError').textContent = 'Save failed. Name may already exist.';
+    document.getElementById('groupError').classList.remove('hidden');
+    return;
+  }
+
+  closeGroupModal();
+  await loadGroups();
+  await loadProjects();
+}
+
+/**
+ * Open the delete group confirmation modal.
+ */
+function openGroupDeleteConfirm() {
+  if (!groupEditId) return;
+  const group = state.groups.find(g => g.id === groupEditId);
+  document.getElementById('groupDeleteText').textContent =
+    `Delete group "${group ? group.name : ''}"? This removes all member associations and shared document registrations. Project files are not affected.`;
+  document.getElementById('groupDeleteModal').classList.add('open');
+}
+
+/**
+ * Close the delete group confirmation modal.
+ */
+function closeGroupDeleteConfirm() {
+  document.getElementById('groupDeleteModal').classList.remove('open');
+}
+
+/**
+ * Confirm group deletion.
+ */
+async function confirmGroupDelete() {
+  if (!groupEditId) return;
+  await apiMutate(`/api/groups/${groupEditId}`, 'DELETE', {});
+  closeGroupDeleteConfirm();
+  closeGroupModal();
+  await loadGroups();
+  await loadProjects();
+}
+
+// ── Shared Doc Modal ──
+
+let docEditGroupId = null;
+let docEditId = null;
+
+/**
+ * Open the add/edit shared document modal.
+ * @param {string} [groupId] - Group to add the doc to (required for new)
+ * @param {string} [docId] - If editing an existing doc
+ */
+async function openDocModal(groupId, docId) {
+  docEditGroupId = groupId || groupEditId;
+  docEditId = docId || null;
+
+  const isEdit = !!docId;
+  document.getElementById('docModalTitle').textContent = isEdit ? 'Edit Document' : 'Add Shared Document';
+  document.getElementById('docSaveBtn').textContent = isEdit ? 'Save' : 'Add';
+  document.getElementById('docError').classList.add('hidden');
+
+  if (isEdit) {
+    const data = await api(`/api/shared-docs/${docId}`);
+    if (!data) return;
+    document.getElementById('docName').value = data.name || '';
+    document.getElementById('docFilePath').value = data.filePath || '';
+    document.getElementById('docDescription').value = data.description || '';
+    document.getElementById('docInjectMode').value = data.injectMode || 'reference';
+    document.getElementById('docInjectToggle').checked = data.injectIntoConfig !== false;
+  } else {
+    document.getElementById('docName').value = '';
+    document.getElementById('docFilePath').value = '';
+    document.getElementById('docDescription').value = '';
+    document.getElementById('docInjectMode').value = 'reference';
+    document.getElementById('docInjectToggle').checked = true;
+  }
+
+  document.getElementById('docModal').classList.add('open');
+  setTimeout(() => document.getElementById('docName').focus(), 100);
+}
+
+/**
+ * Close the doc modal.
+ */
+function closeDocModal() {
+  document.getElementById('docModal').classList.remove('open');
+  docEditGroupId = null;
+  docEditId = null;
+}
+
+/**
+ * Save (create or update) a shared document.
+ */
+async function saveDoc() {
+  const name = document.getElementById('docName').value.trim();
+  const filePath = document.getElementById('docFilePath').value.trim();
+
+  if (!name || !filePath) {
+    document.getElementById('docError').textContent = 'Name and file path are required';
+    document.getElementById('docError').classList.remove('hidden');
+    return;
+  }
+
+  const body = {
+    name,
+    filePath,
+    description: document.getElementById('docDescription').value.trim() || null,
+    injectMode: document.getElementById('docInjectMode').value,
+    injectIntoConfig: document.getElementById('docInjectToggle').checked
+  };
+
+  let result;
+  if (docEditId) {
+    result = await apiMutate(`/api/shared-docs/${docEditId}`, 'PUT', body);
+  } else {
+    body.groupId = docEditGroupId;
+    result = await apiMutate('/api/shared-docs', 'POST', body);
+  }
+
+  if (!result) {
+    document.getElementById('docError').textContent = 'Save failed. File path may already exist in this group.';
+    document.getElementById('docError').classList.remove('hidden');
+    return;
+  }
+
+  closeDocModal();
+
+  // Refresh group edit modal if open
+  if (groupEditId) {
+    const data = await api(`/api/groups/${groupEditId}`);
+    if (data) renderGroupDocs(data.docs || []);
+  }
+  await loadGroups();
+}
+
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
 $('portsToggle').addEventListener('click', togglePorts);
+$('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
 $('rulesResetBtn').addEventListener('click', openRulesResetModal);
@@ -1106,6 +1562,17 @@ $('gearBtn').addEventListener('click', openGlobalSettings);
 $('globalSettingsCancelBtn').addEventListener('click', closeGlobalSettings);
 $('globalSettingsSaveBtn').addEventListener('click', saveGlobalSettings);
 $('globalSettingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeGlobalSettings(); });
+$('groupCancelBtn').addEventListener('click', closeGroupModal);
+$('groupSaveBtn').addEventListener('click', saveGroup);
+$('groupDeleteBtn').addEventListener('click', openGroupDeleteConfirm);
+$('groupModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeGroupModal(); });
+$('groupAddDocBtn').addEventListener('click', () => openDocModal());
+$('groupDeleteCancelBtn').addEventListener('click', closeGroupDeleteConfirm);
+$('groupDeleteConfirmBtn').addEventListener('click', confirmGroupDelete);
+$('groupDeleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeGroupDeleteConfirm(); });
+$('docCancelBtn').addEventListener('click', closeDocModal);
+$('docSaveBtn').addEventListener('click', saveDoc);
+$('docModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDocModal(); });
 
 let filterTimer = null;
 $('filterInput').addEventListener('input', (e) => {

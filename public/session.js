@@ -231,6 +231,71 @@ async function loadEngines() {
 }
 
 /**
+ * Load shared documents available to this project and render in settings.
+ */
+async function loadSharedDocs() {
+  const project = sessionState.project;
+  if (!project || !project.groups || project.groups.length === 0) {
+    const el = document.getElementById('sharedDocsList');
+    el.innerHTML = '<div class="settings-info">No groups</div>';
+    document.getElementById('sharedDocsGroup').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('sharedDocsGroup').style.display = '';
+
+  // Fetch docs for each group
+  const allDocs = [];
+  const seenPaths = new Set();
+  for (const g of project.groups) {
+    const data = await api(`/api/shared-docs?groupId=${g.id}`);
+    if (data && data.docs) {
+      for (const doc of data.docs) {
+        if (!seenPaths.has(doc.filePath)) {
+          seenPaths.add(doc.filePath);
+          doc._groupName = g.name;
+          allDocs.push(doc);
+        }
+      }
+    }
+  }
+
+  renderSharedDocs(allDocs);
+}
+
+/**
+ * Render shared documents list in session settings.
+ * @param {object[]} docs
+ */
+function renderSharedDocs(docs) {
+  const el = document.getElementById('sharedDocsList');
+  if (docs.length === 0) {
+    el.innerHTML = '<div class="settings-info">No shared documents</div>';
+    return;
+  }
+
+  el.innerHTML = docs.map(doc => {
+    const lockHtml = doc.lock
+      ? `<span class="shared-doc-lock locked" title="Locked by ${esc(doc.lock.lockedByProject)}">&#128274; ${esc(doc.lock.lockedByProject)}</span>`
+      : `<span class="shared-doc-lock">&#128275; unlocked</span>`;
+    const injectBadge = doc.injectIntoConfig
+      ? `<span class="shared-doc-badge inject">${esc(doc.injectMode)}</span>`
+      : `<span class="shared-doc-badge">disabled</span>`;
+    return `<div class="shared-doc-item">
+      <div class="shared-doc-header">
+        <span class="shared-doc-name">${esc(doc.name)}</span>
+        ${injectBadge}
+      </div>
+      <div class="shared-doc-meta">
+        <span class="shared-doc-group">${esc(doc._groupName || '')}</span>
+        ${lockHtml}
+      </div>
+      <div class="shared-doc-path">${esc(doc.filePath)}</div>
+    </div>`;
+  }).join('');
+}
+
+/**
  * Fetch model status and update the engine badge in the banner.
  * @param {string} [engineId] - Engine ID to look up status for
  */
@@ -1185,6 +1250,9 @@ async function initSession() {
   // Set up terminal iframe
   setupTerminal();
   setupTerminalTouchScroll();
+
+  // Load shared docs for settings
+  loadSharedDocs();
 
   // Render command pills
   renderCommandPills();

@@ -21,7 +21,10 @@ const state = {
   portGroupsOpen: {},
   rulesOpen: false,
   globalRulesContent: '',
-  modelStatus: {}
+  modelStatus: {},
+  groups: [],
+  groupsOpen: false,
+  groupItemsOpen: {}
 };
 
 // ── API Helpers ──
@@ -190,6 +193,17 @@ async function resetGlobalRules() {
   }
   status.classList.remove('hidden');
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+/**
+ * Load project groups from the API.
+ */
+async function loadGroups() {
+  const data = await api('/api/groups');
+  if (!data) return;
+  state.groups = data.groups || [];
+  document.getElementById('groupsCount').textContent = state.groups.length;
+  renderGroups();
 }
 
 /**
@@ -481,7 +495,7 @@ async function init() {
   }
 
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -493,6 +507,7 @@ function startPolling() {
   setInterval(loadPorts, 30000);
   setInterval(loadProjects, 10000);
   setInterval(loadModelStatus, 120000);
+  setInterval(loadGroups, 30000);
 }
 
 if ('serviceWorker' in navigator) {
