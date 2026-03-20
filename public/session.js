@@ -200,6 +200,65 @@ async function loadVersion() {
 }
 
 /**
+ * Load update status and show/hide the update badge.
+ */
+async function loadUpdateStatus() {
+  const data = await api('/api/update-status');
+  if (!data) return;
+  const badge = document.getElementById('updateBadge');
+  if (!badge) return;
+  if (data.updateAvailable && data.latestVersion) {
+    badge.textContent = `v${data.latestVersion}`;
+    badge.title = `Update available: v${data.currentVersion} → v${data.latestVersion}. Tap to send update instructions to the AI agent.`;
+    badge.classList.remove('hidden');
+    badge.onclick = () => injectUpdatePrompt(data);
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+/**
+ * Build the update instruction prompt for the AI agent.
+ * @param {object} data - Update status data
+ * @returns {string}
+ */
+function buildUpdatePrompt(data) {
+  return [
+    `TangleClaw update available: v${data.currentVersion} → v${data.latestVersion}.`,
+    'Please update TangleClaw by running these steps:',
+    '1. cd ~/Documents/Projects/TangleClaw-v3',
+    '2. git fetch --tags origin',
+    '3. git pull origin main',
+    '4. Review CHANGELOG.md for breaking changes',
+    '5. Run the test suite: node --test test/*.test.js',
+    '6. If tests pass, restart TangleClaw: launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server',
+    'If there are merge conflicts or test failures, report them before restarting.'
+  ].join('\n');
+}
+
+/**
+ * Inject update instructions into the active session via command injection.
+ * @param {object} data - Update status data
+ */
+async function injectUpdatePrompt(data) {
+  const prompt = buildUpdatePrompt(data);
+  const result = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/command`,
+    'POST',
+    { command: prompt }
+  );
+  const toast = document.getElementById('toast');
+  if (result && result.ok) {
+    toast.textContent = 'Update instructions sent to AI agent';
+    toast.className = 'toast toast-ok visible';
+  } else {
+    toast.textContent = 'Could not inject prompt — no active session?';
+    toast.className = 'toast toast-warn visible';
+  }
+  setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+}
+
+/**
  * Load global config.
  */
 async function loadConfig() {
@@ -1239,7 +1298,7 @@ async function initSession() {
   bindEvents();
 
   // Parallel data loading
-  await Promise.all([loadProject(), loadVersion(), loadConfig(), loadEngines()]);
+  await Promise.all([loadProject(), loadVersion(), loadConfig(), loadEngines(), loadUpdateStatus()]);
 
   if (!sessionState.project) {
     // Project not found

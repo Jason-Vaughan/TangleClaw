@@ -575,4 +575,15 @@ describe('Landing Page API Integration', () => {
       await request('/api/projects/group-member-test', { method: 'DELETE', body: { deleteFiles: true } });
     });
   });
+
+  describe('GET /api/update-status', () => {
+    it('should return update status with expected shape', async () => {
+      const res = await request('/api/update-status');
+      assert.equal(res.status, 200);
+      assert.equal(typeof res.data.updateAvailable, 'boolean');
+      assert.ok('currentVersion' in res.data);
+      assert.ok('latestVersion' in res.data);
+      assert.ok('checkedAt' in res.data);
+    });
+  });
 });
