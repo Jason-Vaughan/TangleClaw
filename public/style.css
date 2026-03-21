@@ -450,6 +450,119 @@ body {
   font-size: 9px;
 }
 
+/* ── OpenClaw Connections Panel ── */
+.openclaw-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.openclaw-panel.open {
+  max-height: 600px;
+  padding-top: 4px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+.openclaw-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px;
+}
+.openclaw-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.oc-item {
+  margin-bottom: 4px;
+}
+.oc-item-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  min-height: 44px;
+}
+.oc-item-toggle:active .oc-item-name { color: var(--primary); }
+.oc-item-toggle .arrow {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.oc-item-toggle .arrow.open { transform: rotate(180deg); }
+.oc-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.oc-item-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 1;
+  font-family: monospace;
+}
+.oc-item-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.oc-item-content.open {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.oc-detail-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  padding: 4px 8px 8px;
+  font-size: 12px;
+}
+.oc-detail-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.oc-detail-value {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oc-test-result {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.oc-test-pending {
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+}
+.oc-test-ok {
+  background: rgba(76, 175, 80, 0.15);
+  color: #66BB6A;
+}
+.oc-test-fail {
+  background: rgba(244, 67, 54, 0.15);
+  color: #EF5350;
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+}
+.form-group-half {
+  flex: 1;
+}
+
 /* ── Global Rules Panel ── */
 .rules-panel {
   max-height: 0;
