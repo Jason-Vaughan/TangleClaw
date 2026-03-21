@@ -170,9 +170,9 @@ describe('store.portLeases', () => {
     assert.ok(row, 'port_leases table should exist');
   });
 
-  it('schema version is 5', () => {
+  it('schema version is 6', () => {
     const db = store.getDb();
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-    assert.equal(row.version, 5);
+    assert.equal(row.version, 6);
   });
 });
