@@ -1,0 +1,27 @@
+{
+  "id": "openclaw",
+  "name": "OpenClaw",
+  "command": "ssh",
+  "interactionModel": "session",
+  "configFormat": { "filename": null, "syntax": null, "generator": null },
+  "coAuthorFormat": null,
+  "commands": [],
+  "detection": { "strategy": "which", "target": "ssh" },
+  "launch": {
+    "shellCommand": "ssh",
+    "args": [],
+    "env": {},
+    "startupDelay": 3000
+  },
+  "persistent": null,
+  "capabilities": {
+    "supportsSlashCommands": false,
+    "supportsPrimePrompt": false,
+    "supportsConfigFile": false,
+    "supportsCoAuthor": false,
+    "supportsRemote": true,
+    "supportsModes": ["ssh", "webui"]
+  },
+  "statusPage": null,
+  "remote": true
+}

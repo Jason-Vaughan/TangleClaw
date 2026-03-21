@@ -108,6 +108,32 @@ function esc(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * Build <option> (and <optgroup>) HTML for an engine dropdown.
+ * Groups OpenClaw virtual engines under an "OpenClaw" optgroup.
+ * @param {object[]} engineList - Engines from sessionState.engines
+ * @param {string} selectedId - Currently selected engine ID
+ * @returns {string} HTML string
+ */
+function buildEngineOptions(engineList, selectedId) {
+  const standard = engineList.filter(e => !e.category);
+  const openclaw = engineList.filter(e => e.category === 'OpenClaw');
+
+  let html = standard.map(e =>
+    `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
+  ).join('');
+
+  if (openclaw.length > 0) {
+    html += `<optgroup label="OpenClaw">`;
+    html += openclaw.map(e =>
+      `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}</option>`
+    ).join('');
+    html += `</optgroup>`;
+  }
+
+  return html;
+}
+
 // ── Connection State ──
 
 let reconnectTimer = null;
@@ -793,9 +819,7 @@ function openSettings() {
   // Engine dropdown
   const engineSelect = document.getElementById('settingsEngine');
   const currentEngine = sessionState.project ? (sessionState.project.engine ? sessionState.project.engine.id : '') : '';
-  engineSelect.innerHTML = sessionState.engines.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === currentEngine ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
+  engineSelect.innerHTML = buildEngineOptions(sessionState.engines, currentEngine);
 
   // Methodology info
   const methEl = document.getElementById('settingsMethodology');
@@ -1068,6 +1092,25 @@ async function confirmKill() {
 
   closeKillModal();
   window.location.href = '/';
+}
+
+// ── Capability Gating ──
+
+/**
+ * Hide or disable UI elements based on engine capabilities.
+ * Engines without supportsPrimePrompt (like OpenClaw) cannot wrap.
+ */
+function applyCapabilityGates() {
+  const project = sessionState.project;
+  if (!project || !project.engine || !project.engine.capabilities) return;
+
+  const caps = project.engine.capabilities;
+
+  // Hide wrap button if engine doesn't support prime prompt (no wrap protocol)
+  if (caps.supportsPrimePrompt === false) {
+    const wrapBtn = document.getElementById('wrapBtn');
+    if (wrapBtn) wrapBtn.style.display = 'none';
+  }
 }
 
 // ── Wrap Modal ──
@@ -1370,6 +1413,9 @@ async function initSession() {
     document.getElementById('bannerName').textContent = 'Not Found';
     return;
   }
+
+  // Capability-gate UI elements based on engine
+  applyCapabilityGates();
 
   // Set up terminal iframe
   setupTerminal();

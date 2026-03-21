@@ -2,6 +2,34 @@
 /* ── TangleClaw v3 — Landing Page: UI & Interactions ── */
 /* Rendering, modals, drawers, event bindings. Depends on landing.js. */
 
+// ── Engine Dropdown Helper ──
+
+/**
+ * Build <option> (and <optgroup>) HTML for an engine dropdown.
+ * Groups OpenClaw virtual engines under an "OpenClaw" optgroup.
+ * @param {object[]} engineList - Engines from state.engines
+ * @param {string} selectedId - Currently selected engine ID
+ * @returns {string} HTML string of <option>/<optgroup> elements
+ */
+function buildEngineOptions(engineList, selectedId) {
+  const standard = engineList.filter(e => !e.category);
+  const openclaw = engineList.filter(e => e.category === 'OpenClaw');
+
+  let html = standard.map(e =>
+    `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
+  ).join('');
+
+  if (openclaw.length > 0) {
+    html += `<optgroup label="OpenClaw">`;
+    html += openclaw.map(e =>
+      `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}</option>`
+    ).join('');
+    html += `</optgroup>`;
+  }
+
+  return html;
+}
+
 // ── Project Card Rendering ──
 
 function renderProjects() {
@@ -578,9 +606,7 @@ function openSettings(name) {
   const modal = document.getElementById('settingsModal');
   document.getElementById('settingsTitle').textContent = 'Project Settings';
 
-  const engineOpts = state.engines.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === (project.engine ? project.engine.id : '') ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
+  const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
 
   const currentMeth = project.methodology ? project.methodology.id : 'none';
   const methOpts = `<option value="none" ${currentMeth === 'none' ? 'selected' : ''}>None</option>` +
@@ -703,9 +729,7 @@ function openGlobalSettings() {
   const c = state.config || {};
   const body = document.getElementById('globalSettingsBody');
 
-  const engineOpts = state.engines.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === (c.defaultEngine || '') ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
+  const engineOpts = buildEngineOptions(state.engines, c.defaultEngine || '');
 
   const methOpts = state.methodologies.map(m =>
     `<option value="${esc(m.id)}" ${m.id === (c.defaultMethodology || '') ? 'selected' : ''}>${esc(m.name)}</option>`
@@ -852,9 +876,7 @@ function renderCreateStep() {
     setTimeout(() => { const el = document.getElementById('createName'); if (el) el.focus(); }, 100);
   } else if (createStep === 1) {
     document.getElementById('createTitle').textContent = 'Engine & Methodology';
-    const engineOpts = state.engines.map(e =>
-      `<option value="${esc(e.id)}" ${e.id === createData.engine ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-    ).join('');
+    const engineOpts = buildEngineOptions(state.engines, createData.engine);
     const methPills = state.methodologies.map(m => {
       const sel = m.id === createData.methodology ? ' selected' : '';
       return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}</div>`;
