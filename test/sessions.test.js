@@ -94,6 +94,80 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Active Learnings'));
     });
 
+    it('includes shared infrastructure for single group with docs', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      // Create a group and add the project
+      const group = store.projectGroups.create({ name: 'habitat infra', description: 'shared habitat' });
+      store.projectGroups.addMember(group.id, project.id);
+
+      // Register a shared doc in the group
+      store.sharedDocs.create({
+        groupId: group.id,
+        name: 'NETWORK',
+        filePath: '/tmp/NETWORK.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(prompt.includes('Shared Infrastructure: habitat infra'));
+      assert.ok(prompt.includes('1 shared doc linked'));
+
+      // Cleanup
+      store.projectGroups.delete(group.id);
+    });
+
+    it('includes shared infrastructure with sharedDir path', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      const group = store.projectGroups.create({ name: 'frontend libs', sharedDir: '/tmp/shared-frontend' });
+      store.projectGroups.addMember(group.id, project.id);
+      store.sharedDocs.create({
+        groupId: group.id,
+        name: 'STYLES',
+        filePath: '/tmp/shared-frontend/STYLES.md',
+        injectIntoConfig: true,
+        injectMode: 'reference'
+      });
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(prompt.includes('/tmp/shared-frontend'));
+
+      store.projectGroups.delete(group.id);
+    });
+
+    it('lists multiple groups in bulleted format', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      const g1 = store.projectGroups.create({ name: 'group-alpha' });
+      const g2 = store.projectGroups.create({ name: 'group-beta' });
+      store.projectGroups.addMember(g1.id, project.id);
+      store.projectGroups.addMember(g2.id, project.id);
+      store.sharedDocs.create({ groupId: g1.id, name: 'DOC1', filePath: '/tmp/d1.md', injectIntoConfig: true, injectMode: 'reference' });
+      store.sharedDocs.create({ groupId: g2.id, name: 'DOC2', filePath: '/tmp/d2.md', injectIntoConfig: true, injectMode: 'reference' });
+      store.sharedDocs.create({ groupId: g2.id, name: 'DOC3', filePath: '/tmp/d3.md', injectIntoConfig: true, injectMode: 'reference' });
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(prompt.includes('## Shared Infrastructure\n'));
+      assert.ok(prompt.includes('**group-alpha**: 1 doc'));
+      assert.ok(prompt.includes('**group-beta**: 2 docs'));
+
+      store.projectGroups.delete(g1.id);
+      store.projectGroups.delete(g2.id);
+    });
+
+    it('omits shared infrastructure when project has no groups with docs', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(!prompt.includes('Shared Infrastructure'));
+    });
+
     it('includes last session summary', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
