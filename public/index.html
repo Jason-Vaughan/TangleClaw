@@ -40,6 +40,9 @@
       <button class="dash-action" id="groupsToggle" aria-expanded="false" aria-controls="groupsPanel">
         Groups <span class="dash-badge" id="groupsCount">0</span>
       </button>
+      <button class="dash-action" id="openclawToggle" aria-expanded="false" aria-controls="openclawPanel">
+        OpenClaw <span class="dash-badge" id="openclawCount">0</span>
+      </button>
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
         Rules
       </button>
@@ -52,6 +55,81 @@
 
   <!-- Groups Panel (expandable) -->
   <div id="groupsPanel" class="groups-panel" aria-label="Project groups"></div>
+
+  <!-- OpenClaw Connections Panel (expandable) -->
+  <div id="openclawPanel" class="openclaw-panel" aria-label="OpenClaw connections"></div>
+
+  <!-- OpenClaw Connection Modal (create/edit) -->
+  <div class="modal-backdrop" id="openclawModal">
+    <div class="modal-content" role="dialog" aria-label="OpenClaw connection" aria-modal="true" style="max-width:440px;max-height:85vh;overflow-y:auto">
+      <h3 class="modal-title" id="openclawModalTitle">New Connection</h3>
+      <div class="form-group">
+        <label class="form-label" for="ocName">Name</label>
+        <input type="text" class="form-input" id="ocName" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="e.g. RentalClaw">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ocHost">Host</label>
+        <input type="text" class="form-input" id="ocHost" autocomplete="off" spellcheck="false" placeholder="192.168.20.10">
+      </div>
+      <div class="form-row">
+        <div class="form-group form-group-half">
+          <label class="form-label" for="ocSshUser">SSH User</label>
+          <input type="text" class="form-input" id="ocSshUser" autocomplete="off" spellcheck="false" placeholder="habitat-admin">
+        </div>
+        <div class="form-group form-group-half">
+          <label class="form-label" for="ocPort">Gateway Port</label>
+          <input type="number" class="form-input" id="ocPort" autocomplete="off" value="18789">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ocSshKeyPath">SSH Key Path</label>
+        <input type="text" class="form-input" id="ocSshKeyPath" autocomplete="off" spellcheck="false" placeholder="~/.ssh/id_rsa">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ocGatewayToken">Gateway Token <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
+        <input type="text" class="form-input" id="ocGatewayToken" autocomplete="off" spellcheck="false" placeholder="Bearer token for gateway API">
+      </div>
+      <div class="form-row">
+        <div class="form-group form-group-half">
+          <label class="form-label" for="ocCliCommand">CLI Command</label>
+          <input type="text" class="form-input" id="ocCliCommand" autocomplete="off" spellcheck="false" value="openclaw-cli">
+        </div>
+        <div class="form-group form-group-half">
+          <label class="form-label" for="ocLocalPort">Local Port</label>
+          <input type="number" class="form-input" id="ocLocalPort" autocomplete="off" value="18789">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Available as engine</span>
+          <input type="checkbox" id="ocAvailableAsEngine">
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">When enabled, this connection appears in the engine dropdown for project creation</div>
+      </div>
+      <div id="ocTestResult" class="oc-test-result hidden" role="status"></div>
+      <div id="ocError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="ocTestBtn">Test Connection</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="ocCancelBtn">Cancel</button>
+        <button class="btn btn-danger hidden" id="ocDeleteBtn">Delete</button>
+        <button class="btn btn-primary" id="ocSaveBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenClaw Delete Confirmation Modal -->
+  <div class="modal-backdrop" id="openclawDeleteModal">
+    <div class="modal-content" role="dialog" aria-label="Delete connection" aria-modal="true">
+      <h3 class="modal-title" style="color:var(--danger)">Delete Connection</h3>
+      <p class="modal-text" id="ocDeleteText">This will remove the OpenClaw connection. Any projects using it as an engine will need reconfiguration.</p>
+      <div class="modal-actions">
+        <button class="btn" id="ocDeleteCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="ocDeleteConfirmBtn">Delete</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Group Modal (create/edit) -->
   <div class="modal-backdrop" id="groupModal">

@@ -1515,6 +1515,253 @@ async function syncGroupDir() {
   if (data) renderGroupDocs(data.docs || []);
 }
 
+// ── OpenClaw Connections ──
+
+/**
+ * Toggle the OpenClaw connections panel open/closed.
+ */
+function toggleOpenclaw() {
+  state.openclawOpen = !state.openclawOpen;
+  const panel = document.getElementById('openclawPanel');
+  const toggle = document.getElementById('openclawToggle');
+  panel.classList.toggle('open', state.openclawOpen);
+  toggle.classList.toggle('active', state.openclawOpen);
+  toggle.setAttribute('aria-expanded', state.openclawOpen);
+}
+
+/**
+ * Render the OpenClaw connections panel content.
+ */
+function renderOpenclawConnections() {
+  const panel = document.getElementById('openclawPanel');
+  if (state.openclawConnections.length === 0) {
+    panel.innerHTML = `<div class="openclaw-empty">
+      No OpenClaw connections
+      <button class="btn btn-small btn-primary" onclick="openConnectionModal()" style="margin-left:8px">+ Add Connection</button>
+    </div>`;
+    return;
+  }
+
+  let html = `<div class="openclaw-header-actions">
+    <button class="btn btn-small btn-primary" onclick="openConnectionModal()">+ Add Connection</button>
+  </div>`;
+
+  for (const conn of state.openclawConnections) {
+    const isOpen = state.openclawItemsOpen[conn.id] === true;
+    const arrowClass = isOpen ? 'arrow open' : 'arrow';
+    const contentClass = isOpen ? 'oc-item-content open' : 'oc-item-content';
+    const engineBadge = conn.availableAsEngine
+      ? '<span class="badge badge-engine" style="font-size:9px;padding:1px 5px">engine</span>'
+      : '';
+
+    html += `<div class="oc-item">`;
+    html += `<div class="oc-item-toggle" role="button" tabindex="0"
+      aria-expanded="${isOpen}" onclick="toggleOpenclawItem('${esc(conn.id)}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleOpenclawItem('${esc(conn.id)}');}">
+      <span class="${arrowClass}">&#9660;</span>
+      <span class="oc-item-name">${esc(conn.name)}</span>
+      ${engineBadge}
+      <span class="oc-item-meta">${esc(conn.host)}:${conn.port}</span>
+      <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openConnectionModal('${esc(conn.id)}')" title="Edit connection">&#9998;</button>
+    </div>`;
+    html += `<div class="${contentClass}">`;
+    html += `<div class="oc-detail-grid">
+      <span class="oc-detail-label">Host</span><span class="oc-detail-value">${esc(conn.host)}</span>
+      <span class="oc-detail-label">Port</span><span class="oc-detail-value">${conn.port}</span>
+      <span class="oc-detail-label">SSH User</span><span class="oc-detail-value">${esc(conn.sshUser)}</span>
+      <span class="oc-detail-label">SSH Key</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.sshKeyPath)}</span>
+      <span class="oc-detail-label">CLI Command</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.cliCommand || 'openclaw-cli')}</span>
+      <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
+      <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
+    </div>`;
+    html += '</div></div>';
+  }
+
+  panel.innerHTML = html;
+}
+
+/**
+ * Toggle an OpenClaw connection item open/closed.
+ * @param {string} connId
+ */
+function toggleOpenclawItem(connId) {
+  state.openclawItemsOpen[connId] = !state.openclawItemsOpen[connId];
+  renderOpenclawConnections();
+}
+
+// ── OpenClaw Connection Modal ──
+
+let ocEditId = null;
+
+/**
+ * Open the connection modal for create or edit.
+ * @param {string} [connId] - If provided, opens in edit mode
+ */
+async function openConnectionModal(connId) {
+  ocEditId = connId || null;
+  const isEdit = !!connId;
+
+  document.getElementById('openclawModalTitle').textContent = isEdit ? 'Edit Connection' : 'New Connection';
+  document.getElementById('ocSaveBtn').textContent = isEdit ? 'Save' : 'Create';
+  document.getElementById('ocError').classList.add('hidden');
+  document.getElementById('ocTestResult').classList.add('hidden');
+
+  if (isEdit) {
+    const data = await api(`/api/openclaw/connections/${connId}`);
+    if (!data) return;
+    document.getElementById('ocName').value = data.name || '';
+    document.getElementById('ocHost').value = data.host || '';
+    document.getElementById('ocSshUser').value = data.sshUser || '';
+    document.getElementById('ocPort').value = data.port || 18789;
+    document.getElementById('ocSshKeyPath').value = data.sshKeyPath || '';
+    document.getElementById('ocGatewayToken').value = data.gatewayToken || '';
+    document.getElementById('ocCliCommand').value = data.cliCommand || 'openclaw-cli';
+    document.getElementById('ocLocalPort').value = data.localPort || 18789;
+    document.getElementById('ocAvailableAsEngine').checked = !!data.availableAsEngine;
+    document.getElementById('ocDeleteBtn').classList.remove('hidden');
+  } else {
+    document.getElementById('ocName').value = '';
+    document.getElementById('ocHost').value = '';
+    document.getElementById('ocSshUser').value = '';
+    document.getElementById('ocPort').value = '18789';
+    document.getElementById('ocSshKeyPath').value = '';
+    document.getElementById('ocGatewayToken').value = '';
+    document.getElementById('ocCliCommand').value = 'openclaw-cli';
+    document.getElementById('ocLocalPort').value = '18789';
+    document.getElementById('ocAvailableAsEngine').checked = false;
+    document.getElementById('ocDeleteBtn').classList.add('hidden');
+  }
+
+  document.getElementById('openclawModal').classList.add('open');
+  setTimeout(() => document.getElementById('ocName').focus(), 100);
+}
+
+/**
+ * Close the connection modal.
+ */
+function closeConnectionModal() {
+  document.getElementById('openclawModal').classList.remove('open');
+  ocEditId = null;
+}
+
+/**
+ * Save (create or update) an OpenClaw connection.
+ */
+async function saveConnection() {
+  const name = document.getElementById('ocName').value.trim();
+  const host = document.getElementById('ocHost').value.trim();
+  const sshUser = document.getElementById('ocSshUser').value.trim();
+  const sshKeyPath = document.getElementById('ocSshKeyPath').value.trim();
+
+  if (!name || !host || !sshUser || !sshKeyPath) {
+    document.getElementById('ocError').textContent = 'Name, host, SSH user, and SSH key path are required';
+    document.getElementById('ocError').classList.remove('hidden');
+    return;
+  }
+
+  const body = {
+    name,
+    host,
+    port: parseInt(document.getElementById('ocPort').value, 10) || 18789,
+    sshUser,
+    sshKeyPath,
+    gatewayToken: document.getElementById('ocGatewayToken').value.trim() || null,
+    cliCommand: document.getElementById('ocCliCommand').value.trim() || 'openclaw-cli',
+    localPort: parseInt(document.getElementById('ocLocalPort').value, 10) || 18789,
+    availableAsEngine: document.getElementById('ocAvailableAsEngine').checked
+  };
+
+  let result;
+  if (ocEditId) {
+    result = await apiMutate(`/api/openclaw/connections/${ocEditId}`, 'PUT', body);
+  } else {
+    result = await apiMutate('/api/openclaw/connections', 'POST', body);
+  }
+
+  if (!result) {
+    document.getElementById('ocError').textContent = 'Save failed. Name may already exist.';
+    document.getElementById('ocError').classList.remove('hidden');
+    return;
+  }
+
+  closeConnectionModal();
+  await loadOpenclawConnections();
+}
+
+/**
+ * Test an OpenClaw connection's SSH and gateway connectivity.
+ */
+async function testConnection() {
+  const host = document.getElementById('ocHost').value.trim();
+  const sshUser = document.getElementById('ocSshUser').value.trim();
+  const sshKeyPath = document.getElementById('ocSshKeyPath').value.trim();
+
+  if (!host || !sshUser || !sshKeyPath) {
+    document.getElementById('ocError').textContent = 'Host, SSH user, and SSH key path are required to test';
+    document.getElementById('ocError').classList.remove('hidden');
+    return;
+  }
+
+  const resultEl = document.getElementById('ocTestResult');
+  resultEl.textContent = 'Testing...';
+  resultEl.className = 'oc-test-result oc-test-pending';
+
+  const body = {
+    host,
+    sshUser,
+    sshKeyPath,
+    port: parseInt(document.getElementById('ocPort').value, 10) || 18789,
+    localPort: parseInt(document.getElementById('ocLocalPort').value, 10) || 18789
+  };
+
+  const data = await apiMutate('/api/openclaw/test', 'POST', body);
+  if (!data) {
+    resultEl.textContent = 'Test failed — could not reach server';
+    resultEl.className = 'oc-test-result oc-test-fail';
+    return;
+  }
+
+  const parts = [];
+  parts.push(data.ssh ? 'SSH: OK' : 'SSH: FAIL');
+  parts.push(data.gateway ? 'Gateway: OK' : 'Gateway: FAIL');
+  if (data.errors && data.errors.length > 0) {
+    parts.push(data.errors.join('; '));
+  }
+
+  const allOk = data.ssh && data.gateway;
+  resultEl.textContent = parts.join(' — ');
+  resultEl.className = `oc-test-result ${allOk ? 'oc-test-ok' : 'oc-test-fail'}`;
+}
+
+/**
+ * Open the delete connection confirmation modal.
+ */
+function openConnectionDeleteConfirm() {
+  if (!ocEditId) return;
+  const conn = state.openclawConnections.find(c => c.id === ocEditId);
+  document.getElementById('ocDeleteText').textContent =
+    `Delete connection "${conn ? conn.name : ''}"? Any projects using it as an engine will need reconfiguration.`;
+  document.getElementById('openclawDeleteModal').classList.add('open');
+}
+
+/**
+ * Close the delete connection confirmation modal.
+ */
+function closeConnectionDeleteConfirm() {
+  document.getElementById('openclawDeleteModal').classList.remove('open');
+}
+
+/**
+ * Confirm connection deletion.
+ */
+async function confirmConnectionDelete() {
+  if (!ocEditId) return;
+  await apiMutate(`/api/openclaw/connections/${ocEditId}`, 'DELETE', {});
+  closeConnectionDeleteConfirm();
+  closeConnectionModal();
+  await loadOpenclawConnections();
+}
+
 // ── Shared Doc Modal ──
 
 let docEditGroupId = null;
@@ -1612,6 +1859,15 @@ async function saveDoc() {
 
 const $ = (id) => document.getElementById(id);
 $('portsToggle').addEventListener('click', togglePorts);
+$('openclawToggle').addEventListener('click', toggleOpenclaw);
+$('ocCancelBtn').addEventListener('click', closeConnectionModal);
+$('ocSaveBtn').addEventListener('click', saveConnection);
+$('ocTestBtn').addEventListener('click', testConnection);
+$('ocDeleteBtn').addEventListener('click', openConnectionDeleteConfirm);
+$('openclawModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionModal(); });
+$('ocDeleteCancelBtn').addEventListener('click', closeConnectionDeleteConfirm);
+$('ocDeleteConfirmBtn').addEventListener('click', confirmConnectionDelete);
+$('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionDeleteConfirm(); });
 $('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);

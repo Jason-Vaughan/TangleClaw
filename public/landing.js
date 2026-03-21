@@ -24,7 +24,10 @@ const state = {
   modelStatus: {},
   groups: [],
   groupsOpen: false,
-  groupItemsOpen: {}
+  groupItemsOpen: {},
+  openclawConnections: [],
+  openclawOpen: false,
+  openclawItemsOpen: {}
 };
 
 // ── API Helpers ──
@@ -204,6 +207,18 @@ async function loadGroups() {
   state.groups = data.groups || [];
   document.getElementById('groupsCount').textContent = state.groups.length;
   renderGroups();
+}
+
+/**
+ * Load OpenClaw connections from the API.
+ */
+async function loadOpenclawConnections() {
+  const data = await api('/api/openclaw/connections');
+  if (!data) return;
+  state.openclawConnections = data.connections || [];
+  const countEl = document.getElementById('openclawCount');
+  if (countEl) countEl.textContent = state.openclawConnections.length;
+  renderOpenclawConnections();
 }
 
 /**
@@ -495,7 +510,7 @@ async function init() {
   }
 
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -508,6 +523,7 @@ function startPolling() {
   setInterval(loadProjects, 10000);
   setInterval(loadModelStatus, 120000);
   setInterval(loadGroups, 30000);
+  setInterval(loadOpenclawConnections, 30000);
 }
 
 if ('serviceWorker' in navigator) {
