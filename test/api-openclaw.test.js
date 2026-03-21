@@ -1,0 +1,211 @@
+'use strict';
+
+const { describe, it, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { setLevel } = require('../lib/logger');
+const store = require('../lib/store');
+const { createServer } = require('../server');
+
+setLevel('error');
+
+/**
+ * Make an HTTP request to the test server.
+ * @param {http.Server} server
+ * @param {string} method
+ * @param {string} urlPath
+ * @param {object} [body]
+ * @returns {Promise<{ status: number, data: object }>}
+ */
+function request(server, method, urlPath, body) {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const options = {
+      hostname: '127.0.0.1',
+      port: addr.port,
+      path: urlPath,
+      method,
+      headers: { 'Content-Type': 'application/json' }
+    };
+
+    const req = http.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = raw;
+        }
+        resolve({ status: res.statusCode, data });
+      });
+    });
+
+    req.on('error', reject);
+
+    if (body) {
+      req.write(JSON.stringify(body));
+    }
+    req.end();
+  });
+}
+
+describe('API /api/openclaw/connections', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-openclaw-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const validConnection = {
+    name: 'RentalClaw',
+    host: '192.168.20.10',
+    sshUser: 'habitat-admin',
+    sshKeyPath: '~/.ssh/genesis_habitat'
+  };
+
+  it('GET /api/openclaw/connections returns empty list initially', async () => {
+    const { status, data } = await request(server, 'GET', '/api/openclaw/connections');
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.connections));
+    assert.equal(data.connections.length, 0);
+  });
+
+  it('POST /api/openclaw/connections creates a connection', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/connections', validConnection);
+    assert.equal(status, 201);
+    assert.ok(data.id);
+    assert.equal(data.name, 'RentalClaw');
+    assert.equal(data.host, '192.168.20.10');
+    assert.equal(data.sshUser, 'habitat-admin');
+    assert.equal(data.port, 18789);
+  });
+
+  it('POST /api/openclaw/connections rejects missing fields', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/connections', { name: 'X' });
+    assert.equal(status, 400);
+    assert.ok(data.error);
+  });
+
+  it('POST /api/openclaw/connections rejects duplicate name', async () => {
+    const { status } = await request(server, 'POST', '/api/openclaw/connections', validConnection);
+    assert.equal(status, 409);
+  });
+
+  it('GET /api/openclaw/connections lists connections', async () => {
+    const { status, data } = await request(server, 'GET', '/api/openclaw/connections');
+    assert.equal(status, 200);
+    assert.ok(data.connections.length >= 1);
+    assert.equal(data.connections[0].name, 'RentalClaw');
+  });
+
+  it('GET /api/openclaw/connections/:id returns a connection', async () => {
+    const list = await request(server, 'GET', '/api/openclaw/connections');
+    const id = list.data.connections[0].id;
+    const { status, data } = await request(server, 'GET', `/api/openclaw/connections/${id}`);
+    assert.equal(status, 200);
+    assert.equal(data.name, 'RentalClaw');
+  });
+
+  it('GET /api/openclaw/connections/:id returns 404 for unknown id', async () => {
+    const { status } = await request(server, 'GET', '/api/openclaw/connections/nonexistent');
+    assert.equal(status, 404);
+  });
+
+  it('PUT /api/openclaw/connections/:id updates a connection', async () => {
+    const list = await request(server, 'GET', '/api/openclaw/connections');
+    const id = list.data.connections[0].id;
+    const { status, data } = await request(server, 'PUT', `/api/openclaw/connections/${id}`, {
+      name: 'UpdatedClaw',
+      availableAsEngine: true
+    });
+    assert.equal(status, 200);
+    assert.equal(data.name, 'UpdatedClaw');
+    assert.equal(data.availableAsEngine, true);
+  });
+
+  it('PUT /api/openclaw/connections/:id returns 404 for unknown id', async () => {
+    const { status } = await request(server, 'PUT', '/api/openclaw/connections/nonexistent', { name: 'X' });
+    assert.equal(status, 404);
+  });
+
+  it('DELETE /api/openclaw/connections/:id deletes a connection', async () => {
+    // Create a new one to delete
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'ToDelete',
+      host: '10.0.0.1',
+      sshUser: 'user',
+      sshKeyPath: '/key'
+    });
+    const id = created.data.id;
+    const { status, data } = await request(server, 'DELETE', `/api/openclaw/connections/${id}`);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+
+    // Verify gone
+    const { status: getStatus } = await request(server, 'GET', `/api/openclaw/connections/${id}`);
+    assert.equal(getStatus, 404);
+  });
+
+  it('DELETE /api/openclaw/connections/:id returns 404 for unknown id', async () => {
+    const { status } = await request(server, 'DELETE', '/api/openclaw/connections/nonexistent');
+    assert.equal(status, 404);
+  });
+});
+
+describe('API /api/openclaw/test', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-openclaw-test-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('POST /api/openclaw/test rejects missing fields', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/test', { host: '10.0.0.1' });
+    assert.equal(status, 400);
+    assert.ok(data.error);
+  });
+
+  it('POST /api/openclaw/test returns results object', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/test', {
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key'
+    });
+    assert.equal(status, 200);
+    assert.equal(typeof data.ssh, 'boolean');
+    assert.equal(typeof data.gateway, 'boolean');
+    assert.ok(Array.isArray(data.errors));
+    // SSH should fail with a bad key
+    assert.equal(data.ssh, false);
+  });
+});
