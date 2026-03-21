@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>TangleClaw — OpenClaw</title>
+  <link rel="stylesheet" href="/session.css">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/logo-icon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+</head>
+<body>
+
+  <!-- Connection toast -->
+  <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+  <!-- Banner -->
+  <header class="banner" id="banner">
+    <div class="banner-row">
+      <a href="/" class="banner-back" aria-label="Back to dashboard">&larr;</a>
+      <img class="banner-logo" src="/icons/icon-192.png" alt="" width="28" height="28">
+      <span class="banner-sep" aria-hidden="true">|</span>
+      <span class="banner-name" id="bannerName">OpenClaw</span>
+      <span class="status-dot" id="statusDot" title="Connecting"></span>
+      <span class="banner-engine" id="bannerHost"></span>
+    </div>
+  </header>
+
+  <!-- Main content: iframe fills remaining space -->
+  <div class="terminal-viewport" id="terminalViewport">
+    <iframe id="terminalFrame" class="terminal-frame" title="OpenClaw Control UI"></iframe>
+  </div>
+
+  <script src="/openclaw-view.js"></script>
+</body>
+</html>

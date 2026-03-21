@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('node:http');
+const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
@@ -13,6 +14,7 @@ const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
+const tunnel = require('./lib/tunnel');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
@@ -314,7 +316,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
-    'portScannerEnabled', 'portScannerIntervalMs'
+    'portScannerEnabled', 'portScannerIntervalMs',
+    'httpsEnabled', 'httpsCertPath', 'httpsKeyPath'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -350,7 +353,14 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       }
     }
 
-    if (key === 'serverPort' || key === 'ttydPort') {
+    if (key === 'httpsEnabled' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
+    }
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && typeof value !== 'string') {
+      return errorResponse(res, 400, `${key} must be a string`, 'BAD_REQUEST');
+    }
+
+    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath') {
       if (config[key] !== value) requiresRestart = true;
     }
 
@@ -1572,6 +1582,103 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   jsonResponse(res, 200, results);
 });
 
+// POST /api/openclaw/connections/:id/tunnel — Start tunnel for standalone access
+route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) => {
+  const conn = store.openclawConnections.get(params.id);
+  if (!conn) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+
+  const tunnelResult = await tunnel.ensureTunnel(`oc-direct-${conn.id}`, {
+    host: conn.host,
+    port: conn.port,
+    localPort: conn.localPort,
+    sshUser: conn.sshUser,
+    sshKeyPath: conn.sshKeyPath
+  });
+
+  if (!tunnelResult.ok) {
+    return errorResponse(res, 502, `Tunnel failed: ${tunnelResult.error}`, 'TUNNEL_ERROR');
+  }
+
+  const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
+  // Proxy through TangleClaw so remote browsers can reach the tunnel on cursatory
+  const webuiUrl = `/openclaw-direct/${encodeURIComponent(conn.id)}/chat?session=main${tokenParam}`;
+
+  jsonResponse(res, 200, {
+    ok: true,
+    alreadyUp: tunnelResult.alreadyUp,
+    webuiUrl,
+    localPort: conn.localPort
+  });
+});
+
+// POST /api/openclaw/connections/:id/approve-pending — Auto-approve pending device pairing
+route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res, params) => {
+  const conn = store.openclawConnections.get(params.id);
+  if (!conn) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+
+  if (!conn.gatewayToken) {
+    return errorResponse(res, 400, 'No gateway token configured — cannot approve pairing', 'BAD_REQUEST');
+  }
+
+  const keyPath = conn.sshKeyPath.replace(/^~/, process.env.HOME || '');
+  const { execSync } = require('node:child_process');
+
+  // List pending devices via the gateway's WebSocket CLI
+  let pending;
+  try {
+    const listOutput = execSync(
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
+      `"\\$HOME/.local/bin/docker ps --format '{{.Names}}' | head -1"`,
+      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+
+    if (!listOutput) {
+      return jsonResponse(res, 200, { approved: false, reason: 'No Docker container found' });
+    }
+
+    const containerName = listOutput;
+    const devicesJson = execSync(
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
+      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices list --json"`,
+      { timeout: 15000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+
+    pending = JSON.parse(devicesJson).pending || [];
+  } catch (err) {
+    log.warn('Auto-approve: failed to list devices', { error: err.message });
+    return jsonResponse(res, 200, { approved: false, reason: 'Failed to list pending devices' });
+  }
+
+  if (pending.length === 0) {
+    return jsonResponse(res, 200, { approved: false, reason: 'No pending requests' });
+  }
+
+  // Approve the latest pending request
+  try {
+    const containerName = execSync(
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
+      `"\\$HOME/.local/bin/docker ps --format '{{.Names}}' | head -1"`,
+      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+
+    execSync(
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
+      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices approve --latest --token ${conn.gatewayToken} --json"`,
+      { timeout: 15000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    log.info('Auto-approved device pairing', { connection: conn.name, pendingCount: pending.length });
+    return jsonResponse(res, 200, { approved: true, count: pending.length });
+  } catch (err) {
+    log.warn('Auto-approve: failed to approve', { error: err.message });
+    return jsonResponse(res, 200, { approved: false, reason: `Approve failed: ${err.message}` });
+  }
+});
+
 // ── OpenClaw Proxy ──
 
 /**
@@ -1588,6 +1695,49 @@ function resolveOpenclawPort(projectName) {
   const conn = store.openclawConnections.get(connId);
   if (!conn) return null;
   return { localPort: conn.localPort, conn };
+}
+
+/**
+ * Resolve the local port for a standalone OpenClaw connection by ID.
+ * @param {string} connId - Connection ID
+ * @returns {{ localPort: number, conn: object }|null}
+ */
+function resolveOpenclawPortDirect(connId) {
+  const conn = store.openclawConnections.get(connId);
+  if (!conn) return null;
+  return { localPort: conn.localPort, conn };
+}
+
+/**
+ * Strip frame-blocking headers from proxied OpenClaw responses so the UI can load in an iframe.
+ * @param {object} headers - Response headers from upstream
+ * @returns {object}
+ */
+function _stripFrameBlockers(headers) {
+  const out = { ...headers };
+  delete out['x-frame-options'];
+  if (out['content-security-policy']) {
+    out['content-security-policy'] = out['content-security-policy']
+      .replace(/frame-ancestors\s+[^;]+;?\s*/g, '');
+  }
+  return out;
+}
+
+/**
+ * Build proxy headers for OpenClaw requests, rewriting origin/referer to match the target
+ * and injecting the gateway token for server-side auth.
+ * @param {object} headers - Original request headers
+ * @param {number} localPort - Target local port
+ * @param {string|null} [gatewayToken] - Gateway bearer token
+ * @returns {object}
+ */
+function _openclawProxyHeaders(headers, localPort, gatewayToken) {
+  const out = { ...headers, host: `127.0.0.1:${localPort}` };
+  const localOrigin = `http://127.0.0.1:${localPort}`;
+  if (out.origin) out.origin = localOrigin;
+  if (out.referer) out.referer = localOrigin + '/';
+  if (gatewayToken) out.authorization = `Bearer ${gatewayToken}`;
+  return out;
 }
 
 /**
@@ -1611,12 +1761,9 @@ function proxyToOpenclaw(req, res, projectName, subPath) {
     port: localPort,
     path: targetPath,
     method: req.method,
-    headers: {
-      ...req.headers,
-      host: `127.0.0.1:${localPort}`
-    }
+    headers: _openclawProxyHeaders(req.headers, localPort, resolved.conn.gatewayToken)
   }, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    res.writeHead(proxyRes.statusCode, _stripFrameBlockers(proxyRes.headers));
     proxyRes.pipe(res);
   });
 
@@ -1672,6 +1819,58 @@ function proxyToTtyd(req, res, pathname) {
 function handleUpgrade(req, socket, head) {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
+  // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
+  if (urlObj.pathname.startsWith('/openclaw-direct/')) {
+    const parts = urlObj.pathname.split('/'); // ['', 'openclaw-direct', connId, ...rest]
+    if (parts.length >= 3 && parts[2]) {
+      const connId = decodeURIComponent(parts[2]);
+      const resolved = resolveOpenclawPortDirect(connId);
+      if (!resolved) {
+        socket.destroy();
+        return;
+      }
+      const subPath = parts.slice(3).join('/');
+      const targetUrl = '/' + subPath + (urlObj.search || '');
+
+      const net = require('node:net');
+      const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
+        const localOrigin = `http://127.0.0.1:${resolved.localPort}`;
+        const reqHeaders = [];
+        reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
+        reqHeaders.push(`Host: 127.0.0.1:${resolved.localPort}`);
+        let hasAuth = false;
+        for (const [key, value] of Object.entries(req.headers)) {
+          const k = key.toLowerCase();
+          if (k === 'host') continue;
+          if (k === 'origin') { reqHeaders.push(`origin: ${localOrigin}`); continue; }
+          if (k === 'referer') { reqHeaders.push(`referer: ${localOrigin}/`); continue; }
+          if (k === 'authorization') { hasAuth = true; }
+          reqHeaders.push(`${key}: ${value}`);
+        }
+        if (!hasAuth && resolved.conn.gatewayToken) {
+          reqHeaders.push(`authorization: Bearer ${resolved.conn.gatewayToken}`);
+        }
+        reqHeaders.push('', '');
+
+        proxySocket.write(reqHeaders.join('\r\n'));
+        if (head.length > 0) {
+          proxySocket.write(head);
+        }
+
+        proxySocket.pipe(socket);
+        socket.pipe(proxySocket);
+      });
+
+      proxySocket.on('error', () => socket.destroy());
+      socket.on('error', () => proxySocket.destroy());
+      socket.on('close', () => proxySocket.destroy());
+      proxySocket.on('close', () => socket.destroy());
+      return;
+    }
+    socket.destroy();
+    return;
+  }
+
   // OpenClaw WebSocket proxy — /openclaw/:project/*
   if (urlObj.pathname.startsWith('/openclaw/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw', project, ...rest]
@@ -1687,12 +1886,21 @@ function handleUpgrade(req, socket, head) {
 
       const net = require('node:net');
       const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
+        const localOrigin = `http://127.0.0.1:${resolved.localPort}`;
         const reqHeaders = [];
         reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
         reqHeaders.push(`Host: 127.0.0.1:${resolved.localPort}`);
+        let hasAuth = false;
         for (const [key, value] of Object.entries(req.headers)) {
-          if (key.toLowerCase() === 'host') continue;
+          const k = key.toLowerCase();
+          if (k === 'host') continue;
+          if (k === 'origin') { reqHeaders.push(`origin: ${localOrigin}`); continue; }
+          if (k === 'referer') { reqHeaders.push(`referer: ${localOrigin}/`); continue; }
+          if (k === 'authorization') { hasAuth = true; }
           reqHeaders.push(`${key}: ${value}`);
+        }
+        if (!hasAuth && resolved.conn.gatewayToken) {
+          reqHeaders.push(`authorization: Bearer ${resolved.conn.gatewayToken}`);
         }
         reqHeaders.push('', '');
 
@@ -1830,6 +2038,39 @@ async function handleRequest(req, res) {
     }
   }
 
+  // OpenClaw direct proxy — forward /openclaw-direct/:connId/* to local tunnel port (standalone)
+  if (pathname.startsWith('/openclaw-direct/')) {
+    const parts = pathname.split('/'); // ['', 'openclaw-direct', connId, ...rest]
+    if (parts.length >= 3 && parts[2]) {
+      const connId = decodeURIComponent(parts[2]);
+      const resolved = resolveOpenclawPortDirect(connId);
+      if (!resolved) {
+        return errorResponse(res, 404, 'OpenClaw connection not found', 'NOT_FOUND');
+      }
+      const subPath = parts.slice(3).join('/');
+      const targetPath = '/' + subPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : '');
+
+      const proxyReq = http.request({
+        hostname: '127.0.0.1',
+        port: resolved.localPort,
+        path: targetPath,
+        method: req.method,
+        headers: _openclawProxyHeaders(req.headers, resolved.localPort, resolved.conn.gatewayToken)
+      }, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, _stripFrameBlockers(proxyRes.headers));
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', (err) => {
+        log.warn('OpenClaw direct proxy error', { error: err.message, connId });
+        errorResponse(res, 502, 'OpenClaw service unavailable', 'BAD_GATEWAY');
+      });
+
+      req.pipe(proxyReq);
+      return;
+    }
+  }
+
   // OpenClaw reverse proxy — forward /openclaw/:project/* to local tunnel port
   if (pathname.startsWith('/openclaw/')) {
     const parts = pathname.split('/'); // ['', 'openclaw', project, ...rest]
@@ -1857,6 +2098,14 @@ async function handleRequest(req, res) {
     }
   }
 
+  // OpenClaw viewer page — /openclaw-view/:connId serves openclaw-view.html
+  if (method === 'GET' && pathname.startsWith('/openclaw-view/') && pathname.split('/').length === 3) {
+    const connId = pathname.split('/')[2];
+    if (connId && serveStatic(res, '/openclaw-view.html')) {
+      return;
+    }
+  }
+
   // Fallback: serve index.html for SPA routing
   if (method === 'GET' && !pathname.includes('.')) {
     if (serveStatic(res, '/')) {
@@ -1873,8 +2122,24 @@ async function handleRequest(req, res) {
  * Create and configure the HTTP server (does not start listening).
  * @returns {http.Server}
  */
-function createServer() {
-  const server = http.createServer(handleRequest);
+/**
+ * Create and configure the HTTP/HTTPS server (does not start listening).
+ * @param {object} [options]
+ * @param {boolean} [options.httpsEnabled] - Use HTTPS
+ * @param {string} [options.certPath] - Path to TLS certificate
+ * @param {string} [options.keyPath] - Path to TLS private key
+ * @returns {http.Server|https.Server}
+ */
+function createServer(options = {}) {
+  let server;
+  if (options.httpsEnabled && options.certPath && options.keyPath) {
+    const cert = fs.readFileSync(options.certPath);
+    const key = fs.readFileSync(options.keyPath);
+    server = https.createServer({ cert, key }, handleRequest);
+    log.info('HTTPS enabled', { cert: options.certPath });
+  } else {
+    server = http.createServer(handleRequest);
+  }
   server.on('upgrade', handleUpgrade);
   return server;
 }
@@ -1903,7 +2168,11 @@ if (require.main === module) {
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
   porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: port });
   porthub.startExpirationTimer();
-  const server = createServer();
+  const server = createServer({
+    httpsEnabled: !!config.httpsEnabled,
+    certPath: config.httpsCertPath || null,
+    keyPath: config.httpsKeyPath || null
+  });
 
   // Start model status monitor
   modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
@@ -1920,10 +2189,12 @@ if (require.main === module) {
     }
   }, 5 * 60 * 1000);
 
+  const protocol = config.httpsEnabled ? 'https' : 'http';
   server.listen(port, () => {
-    log.info(`TangleClaw v${_getVersion()} listening on :${port}`, {
+    log.info(`TangleClaw v${_getVersion()} listening on ${protocol}://*:${port}`, {
       node: process.version,
-      pid: process.pid
+      pid: process.pid,
+      https: !!config.httpsEnabled
     });
   });
 
