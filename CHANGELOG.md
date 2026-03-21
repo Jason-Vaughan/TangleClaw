@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-03-20
+
 ### Added
 
 - **Shared docs auto-discover**: Groups now have an optional `sharedDir` field — a directory path whose `.md` files are auto-registered as shared documents on session launch. File names become doc names (e.g., `NETWORK.md` → "NETWORK"). Idempotent — skips already-registered files. Manual sync via `POST /api/groups/:id/sync` or the "Sync" button in the group edit modal.
