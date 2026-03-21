@@ -7,6 +7,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Added
 
 - **OpenClaw engine build plan**: Designed and documented full implementation plan for OpenClaw as a new engine type. Two-tier architecture: connection registry (define OpenClaw instances independently) + engine integration (optionally expose as AI engine in project create wizard). Two connection modes: SSH (tmux-based) and Web UI (iframe-based). 6 session chunks planned. See `build-plan.md`.
+- **OpenClaw connection registry — backend** (Chunk 1/6): Schema v5 migration adds `openclaw_connections` table. Full CRUD store methods (`store.openclawConnections.list/get/create/update/delete`) with validation, name uniqueness, and activity logging. API routes: `GET/POST /api/openclaw/connections`, `GET/PUT/DELETE /api/openclaw/connections/:id`, `POST /api/openclaw/test` (SSH + gateway health check). 36 new tests (961 total).
 
 ## [3.2.2] - 2026-03-20
 

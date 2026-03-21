@@ -1425,6 +1425,125 @@ route('DELETE', '/api/shared-docs/:id/lock', (_req, res, params) => {
   jsonResponse(res, 200, { ok: true, id: params.id });
 });
 
+// ── OpenClaw Connections API ──
+
+// GET /api/openclaw/connections
+route('GET', '/api/openclaw/connections', (_req, res) => {
+  const connections = store.openclawConnections.list();
+  jsonResponse(res, 200, { connections });
+});
+
+// POST /api/openclaw/connections
+route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
+  if (!body || !body.name || !body.host || !body.sshUser || !body.sshKeyPath) {
+    return errorResponse(res, 400, 'name, host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
+  }
+  try {
+    const connection = store.openclawConnections.create(body);
+    jsonResponse(res, 201, connection);
+  } catch (err) {
+    if (err.code === 'CONFLICT') {
+      return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+});
+
+// GET /api/openclaw/connections/:id
+route('GET', '/api/openclaw/connections/:id', (_req, res, params) => {
+  const connection = store.openclawConnections.get(params.id);
+  if (!connection) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, connection);
+});
+
+// PUT /api/openclaw/connections/:id
+route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  try {
+    const connection = store.openclawConnections.update(params.id, body);
+    jsonResponse(res, 200, connection);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'CONFLICT') {
+      return errorResponse(res, 409, err.message, 'CONFLICT');
+    }
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+});
+
+// DELETE /api/openclaw/connections/:id
+route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
+  try {
+    store.openclawConnections.delete(params.id);
+    jsonResponse(res, 200, { ok: true, id: params.id });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    throw err;
+  }
+});
+
+// POST /api/openclaw/test — Test SSH connectivity + gateway health
+route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
+  if (!body || !body.host || !body.sshUser || !body.sshKeyPath) {
+    return errorResponse(res, 400, 'host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
+  }
+
+  const keyPath = body.sshKeyPath.replace(/^~/, process.env.HOME || '');
+  const port = body.port || 18789;
+  const host = body.host;
+  const sshUser = body.sshUser;
+
+  // Test SSH connectivity with a short timeout
+  const { execSync } = require('node:child_process');
+  const results = { ssh: false, gateway: false, errors: [] };
+
+  try {
+    execSync(
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -i "${keyPath}" ${sshUser}@${host} "echo ok"`,
+      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    results.ssh = true;
+  } catch (err) {
+    results.errors.push(`SSH: ${err.stderr || err.message}`);
+  }
+
+  // Test gateway health if a localPort or port is provided
+  if (body.localPort || port) {
+    const testPort = body.localPort || port;
+    try {
+      const output = execSync(
+        `curl -s -m 5 http://localhost:${testPort}/healthz`,
+        { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      try {
+        const parsed = JSON.parse(output);
+        results.gateway = !!parsed.ok;
+      } catch {
+        results.gateway = false;
+        results.errors.push(`Gateway: unexpected response: ${output.slice(0, 200)}`);
+      }
+    } catch (err) {
+      results.errors.push(`Gateway: ${err.stderr || err.message}`);
+    }
+  }
+
+  jsonResponse(res, 200, results);
+});
+
 // ── Terminal Proxy ──
 
 /**
