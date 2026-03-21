@@ -1209,7 +1209,11 @@ route('GET', '/api/groups/:id', (_req, res, params) => {
   if (!group) {
     return errorResponse(res, 404, `Group "${params.id}" not found`, 'NOT_FOUND');
   }
-  const members = store.projectGroups.listMembers(group.id);
+  const memberIds = store.projectGroups.listMembers(group.id);
+  const members = memberIds.map(pid => {
+    const proj = store.projects.get(pid);
+    return proj ? { id: pid, name: proj.name, path: proj.path } : { id: pid, name: null, path: null };
+  });
   const docs = store.sharedDocs.getByGroup(group.id);
   jsonResponse(res, 200, { ...group, memberCount: members.length, docCount: docs.length, members, docs });
 });

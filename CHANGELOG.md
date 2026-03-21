@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-03-20
+
+### Added
+
+- **Shared docs startup banner**: Prime prompt now includes a "Shared Infrastructure" section when a project belongs to groups with shared documents. Single group shows inline format; multiple groups show a bulleted list with doc counts and `sharedDir` paths. Omitted when project has no groups with docs.
+
+### Fixed
+
+- **Group members not displaying**: Group detail endpoint returned raw project IDs instead of enriched objects with names, causing member names to be blank (only delete buttons visible)
+
 ## [3.2.1] - 2026-03-20
 
 ### Added
