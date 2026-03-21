@@ -1572,6 +1572,62 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   jsonResponse(res, 200, results);
 });
 
+// ── OpenClaw Proxy ──
+
+/**
+ * Resolve the local port for an OpenClaw connection from a project name.
+ * @param {string} projectName - Project name
+ * @returns {{ localPort: number, conn: object }|null}
+ */
+function resolveOpenclawPort(projectName) {
+  const project = store.projects.getByName(projectName);
+  if (!project) return null;
+  const engineId = project.engineId;
+  if (!engineId || !engineId.startsWith('openclaw:')) return null;
+  const connId = engineId.split(':')[1];
+  const conn = store.openclawConnections.get(connId);
+  if (!conn) return null;
+  return { localPort: conn.localPort, conn };
+}
+
+/**
+ * Proxy an HTTP request to an OpenClaw instance via its local tunnel port.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} projectName - Project name from URL
+ * @param {string} subPath - Remaining path after /openclaw/:project/
+ */
+function proxyToOpenclaw(req, res, projectName, subPath) {
+  const resolved = resolveOpenclawPort(projectName);
+  if (!resolved) {
+    return errorResponse(res, 404, 'OpenClaw connection not found for project', 'NOT_FOUND');
+  }
+
+  const { localPort } = resolved;
+  const targetPath = '/' + subPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : '');
+
+  const proxyReq = http.request({
+    hostname: '127.0.0.1',
+    port: localPort,
+    path: targetPath,
+    method: req.method,
+    headers: {
+      ...req.headers,
+      host: `127.0.0.1:${localPort}`
+    }
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    log.warn('OpenClaw proxy error', { error: err.message, project: projectName });
+    errorResponse(res, 502, 'OpenClaw service unavailable', 'BAD_GATEWAY');
+  });
+
+  req.pipe(proxyReq);
+}
+
 // ── Terminal Proxy ──
 
 /**
@@ -1615,6 +1671,50 @@ function proxyToTtyd(req, res, pathname) {
  */
 function handleUpgrade(req, socket, head) {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+  // OpenClaw WebSocket proxy — /openclaw/:project/*
+  if (urlObj.pathname.startsWith('/openclaw/')) {
+    const parts = urlObj.pathname.split('/'); // ['', 'openclaw', project, ...rest]
+    if (parts.length >= 3 && parts[2]) {
+      const ocProject = decodeURIComponent(parts[2]);
+      const resolved = resolveOpenclawPort(ocProject);
+      if (!resolved) {
+        socket.destroy();
+        return;
+      }
+      const subPath = parts.slice(3).join('/');
+      const targetUrl = '/' + subPath + (urlObj.search || '');
+
+      const net = require('node:net');
+      const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
+        const reqHeaders = [];
+        reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
+        reqHeaders.push(`Host: 127.0.0.1:${resolved.localPort}`);
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (key.toLowerCase() === 'host') continue;
+          reqHeaders.push(`${key}: ${value}`);
+        }
+        reqHeaders.push('', '');
+
+        proxySocket.write(reqHeaders.join('\r\n'));
+        if (head.length > 0) {
+          proxySocket.write(head);
+        }
+
+        proxySocket.pipe(socket);
+        socket.pipe(proxySocket);
+      });
+
+      proxySocket.on('error', () => socket.destroy());
+      socket.on('error', () => proxySocket.destroy());
+      socket.on('close', () => proxySocket.destroy());
+      proxySocket.on('close', () => socket.destroy());
+      return;
+    }
+    socket.destroy();
+    return;
+  }
+
   if (!urlObj.pathname.startsWith('/terminal')) {
     socket.destroy();
     return;
@@ -1727,6 +1827,16 @@ async function handleRequest(req, res) {
   if (pathname.startsWith('/terminal/') || pathname === '/terminal') {
     if (method === 'GET' || method === 'POST') {
       return proxyToTtyd(req, res, pathname);
+    }
+  }
+
+  // OpenClaw reverse proxy — forward /openclaw/:project/* to local tunnel port
+  if (pathname.startsWith('/openclaw/')) {
+    const parts = pathname.split('/'); // ['', 'openclaw', project, ...rest]
+    if (parts.length >= 3 && parts[2]) {
+      const ocProject = decodeURIComponent(parts[2]);
+      const subPath = parts.slice(3).join('/');
+      return proxyToOpenclaw(req, res, ocProject, subPath);
     }
   }
 
