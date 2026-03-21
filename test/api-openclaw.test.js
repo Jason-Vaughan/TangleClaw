@@ -168,6 +168,59 @@ describe('API /api/openclaw/connections', () => {
     const { status } = await request(server, 'DELETE', '/api/openclaw/connections/nonexistent');
     assert.equal(status, 404);
   });
+
+  it('POST /api/openclaw/connections rejects duplicate localPort', async () => {
+    // Create a connection with a specific localPort
+    const first = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PortConflict1',
+      host: '10.0.0.50',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13200
+    });
+    assert.equal(first.status, 201);
+
+    // Register that port in PortHub (simulates what tunnel startup does)
+    const porthub = require('../lib/porthub');
+    porthub.registerPort(13200, 'PortConflict1', 'openclaw-tunnel');
+
+    // Try to create another connection with the same localPort
+    const second = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PortConflict2',
+      host: '10.0.0.51',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13200
+    });
+    assert.equal(second.status, 409);
+    assert.ok(second.data.error.includes('13200'));
+  });
+
+  it('DELETE /api/openclaw/connections/:id releases port from PortHub', async () => {
+    const porthub = require('../lib/porthub');
+
+    // Create a connection with a localPort
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PortRelease',
+      host: '10.0.0.60',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13201
+    });
+    assert.equal(created.status, 201);
+    const connId = created.data.id;
+
+    // Register its port (simulating tunnel startup)
+    porthub.registerPort(13201, `oc-direct-${connId}`, 'openclaw-tunnel');
+
+    // Delete the connection
+    const { status } = await request(server, 'DELETE', `/api/openclaw/connections/${connId}`);
+    assert.equal(status, 200);
+
+    // Verify the port was released
+    const lease = store.portLeases.get(13201);
+    assert.equal(lease, null, 'port lease should be released after connection delete');
+  });
 });
 
 describe('API /api/openclaw/test', () => {

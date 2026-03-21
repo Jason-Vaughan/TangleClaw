@@ -1476,6 +1476,13 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
   if (!body || !body.name || !body.host || !body.sshUser || !body.sshKeyPath) {
     return errorResponse(res, 400, 'name, host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
   }
+  // Check for port conflicts before creating
+  if (body.localPort) {
+    const portCheck = porthub.checkPort(body.localPort);
+    if (!portCheck.available) {
+      return errorResponse(res, 409, `Port ${body.localPort} is already in use by ${portCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
+    }
+  }
   try {
     const connection = store.openclawConnections.create(body);
     jsonResponse(res, 201, connection);
@@ -1504,6 +1511,16 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
+  // Check for port conflicts if localPort is being changed
+  if (body.localPort !== undefined) {
+    const existing = store.openclawConnections.get(params.id);
+    if (existing && body.localPort !== existing.localPort) {
+      const portCheck = porthub.checkPort(body.localPort);
+      if (!portCheck.available) {
+        return errorResponse(res, 409, `Port ${body.localPort} is already in use by ${portCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
+      }
+    }
+  }
   try {
     const connection = store.openclawConnections.update(params.id, body);
     jsonResponse(res, 200, connection);
@@ -1524,6 +1541,14 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
 // DELETE /api/openclaw/connections/:id
 route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
   try {
+    // Kill any active standalone tunnel and release port before deleting
+    const conn = store.openclawConnections.get(params.id);
+    if (conn) {
+      tunnel.killTunnel(`oc-direct-${conn.id}`);
+      if (conn.localPort) {
+        porthub.releasePort(conn.localPort);
+      }
+    }
     store.openclawConnections.delete(params.id);
     jsonResponse(res, 200, { ok: true, id: params.id });
   } catch (err) {

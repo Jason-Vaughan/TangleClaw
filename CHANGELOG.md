@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **PortHub: bogus per-project ttyd registration removed**: Project creation no longer registers the global ttyd port (3100) under each project's name, which was overwriting TangleClaw's infrastructure lease on every create
+- **PortHub: OpenClaw tunnel ports now tracked**: `ensureTunnel()` registers the local port with PortHub (24h TTL), `killTunnel()` releases it — tunnel ports are now visible in `GET /api/ports`
+- **PortHub: port conflict check on OpenClaw connections**: Creating or updating an OpenClaw connection now checks `localPort` against PortHub and returns 409 if the port is already in use
+- **PortHub: connection delete releases port and kills tunnel**: Deleting an OpenClaw connection now releases its port lease from PortHub and kills any active standalone tunnel
+- **PortHub: orphan cleanup recognizes OpenClaw connections**: `_cleanupOrphanLeases()` no longer removes port leases registered under `oc-direct-<id>` patterns when the corresponding OpenClaw connection still exists
+
 ### Added
 
 - **OpenClaw engine build plan**: Designed and documented full implementation plan for OpenClaw as a new engine type. Two-tier architecture: connection registry (define OpenClaw instances independently) + engine integration (optionally expose as AI engine in project create wizard). Two connection modes: SSH (tmux-based) and Web UI (iframe-based). 6 session chunks planned. See `build-plan.md`.

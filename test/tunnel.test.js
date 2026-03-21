@@ -3,17 +3,32 @@
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const net = require('node:net');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const store = require('../lib/store');
+const porthub = require('../lib/porthub');
 const tunnel = require('../lib/tunnel');
 
 describe('tunnel', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-tunnel-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
   afterEach(() => {
     // Clean up tracked tunnels between tests
     tunnel._tunnels.clear();
     mock.restoreAll();
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   describe('tcpProbe', () => {
@@ -214,6 +229,51 @@ describe('tunnel', () => {
       assert.equal(list.length, 2);
       assert.equal(list[0].projectName, 'proj-a');
       assert.equal(list[1].projectName, 'proj-b');
+    });
+  });
+
+  describe('PortHub integration', () => {
+    it('ensureTunnel registers port with PortHub when already up', async () => {
+      const server = net.createServer();
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = server.address().port;
+
+      try {
+        await tunnel.ensureTunnel('test-porthub', {
+          host: '192.168.20.10',
+          port: 18789,
+          localPort: port,
+          sshUser: 'test',
+          sshKeyPath: '~/.ssh/id_rsa'
+        });
+
+        // Verify the port was registered with PortHub
+        const lease = store.portLeases.get(port);
+        assert.ok(lease, 'port lease should exist');
+        assert.equal(lease.project, 'test-porthub');
+        assert.equal(lease.service, 'openclaw-tunnel');
+        assert.equal(lease.permanent, false);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('killTunnel releases port from PortHub', () => {
+      const localPort = 19997;
+      // Register the port first (simulating what ensureTunnel does)
+      porthub.registerPort(localPort, 'test-kill', 'openclaw-tunnel');
+      tunnel._tunnels.set('test-kill', {
+        pid: 999999,
+        localPort,
+        host: '192.168.20.10',
+        remotePort: 18789
+      });
+
+      tunnel.killTunnel('test-kill');
+
+      // Verify the port was released from PortHub
+      const lease = store.portLeases.get(localPort);
+      assert.equal(lease, null, 'port lease should be released');
     });
   });
 });

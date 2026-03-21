@@ -172,4 +172,40 @@ describe('porthub (store-backed)', () => {
       assert.equal(result.error, null);
     });
   });
+
+  describe('orphan cleanup with OpenClaw connections', () => {
+    it('preserves leases for active OpenClaw connections', () => {
+      // Create an OpenClaw connection
+      const conn = store.openclawConnections.create({
+        name: 'OrphanTest',
+        host: '10.0.0.1',
+        sshUser: 'user',
+        sshKeyPath: '/key',
+        localPort: 13300
+      });
+
+      // Register a port under the oc-direct-<id> pattern
+      porthub.registerPort(13300, `oc-direct-${conn.id}`, 'openclaw-tunnel');
+
+      // Also register an orphan port for a nonexistent project
+      porthub.registerPort(13301, 'deleted-project', 'dev-server');
+
+      // Set projectsDir so cleanup can check directories
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      // Run bootstrap which includes orphan cleanup
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      // oc-direct-* lease should survive
+      const connLease = store.portLeases.get(13300);
+      assert.ok(connLease, 'OpenClaw connection port lease should survive orphan cleanup');
+      assert.equal(connLease.project, `oc-direct-${conn.id}`);
+
+      // Orphan lease should be cleaned up
+      const orphanLease = store.portLeases.get(13301);
+      assert.equal(orphanLease, null, 'orphan lease should be cleaned up');
+    });
+  });
 });
