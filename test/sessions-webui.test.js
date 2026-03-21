@@ -339,6 +339,89 @@ describe('Web UI session lifecycle', () => {
       assert.equal(typeof status.durationSeconds, 'number');
       assert.equal(status.sessionId, session.id);
     });
+
+    it('includes iframeUrl with token in status response', () => {
+      store.sessions.start({
+        projectId,
+        engineId: `openclaw:${connId}`,
+        tmuxSession: null,
+        sessionMode: 'webui'
+      });
+
+      const status = sessions.getSessionStatus('webui-proj');
+      assert.ok(status.iframeUrl);
+      assert.ok(status.iframeUrl.startsWith('/openclaw/webui-proj/'));
+      assert.ok(status.iframeUrl.includes('chat?session=main'));
+      assert.ok(status.iframeUrl.includes('token=test-token-123'));
+    });
+
+    it('includes iframeUrl without token when gatewayToken is null', () => {
+      // Create a connection without token
+      const noTokenConn = store.openclawConnections.create({
+        name: 'Status-NoToken',
+        host: '10.0.0.20',
+        sshUser: 'admin',
+        sshKeyPath: '~/.ssh/key',
+        defaultMode: 'webui'
+      });
+      const ntProjDir = path.join(projectsDir, 'status-notoken');
+      fs.mkdirSync(ntProjDir, { recursive: true });
+      const ntProj = store.projects.create({
+        name: 'status-notoken',
+        path: ntProjDir,
+        engine: `openclaw:${noTokenConn.id}`,
+        methodology: 'minimal'
+      });
+      store.sessions.start({
+        projectId: ntProj.id,
+        engineId: `openclaw:${noTokenConn.id}`,
+        tmuxSession: null,
+        sessionMode: 'webui'
+      });
+
+      const status = sessions.getSessionStatus('status-notoken');
+      assert.ok(status.iframeUrl);
+      assert.ok(status.iframeUrl.startsWith('/openclaw/status-notoken/'));
+      assert.ok(!status.iframeUrl.includes('token='));
+
+      // Cleanup
+      store.sessions.kill(store.sessions.getActive(ntProj.id).id, 'cleanup');
+      store.openclawConnections.delete(noTokenConn.id);
+    });
+
+    it('returns null iframeUrl when connection is deleted', () => {
+      // Create a connection, start session, then delete connection
+      const tempConn = store.openclawConnections.create({
+        name: 'Status-Deleted',
+        host: '10.0.0.21',
+        sshUser: 'admin',
+        sshKeyPath: '~/.ssh/key',
+        defaultMode: 'webui'
+      });
+      const dProjDir = path.join(projectsDir, 'status-deleted');
+      fs.mkdirSync(dProjDir, { recursive: true });
+      const dProj = store.projects.create({
+        name: 'status-deleted',
+        path: dProjDir,
+        engine: `openclaw:${tempConn.id}`,
+        methodology: 'minimal'
+      });
+      store.sessions.start({
+        projectId: dProj.id,
+        engineId: `openclaw:${tempConn.id}`,
+        tmuxSession: null,
+        sessionMode: 'webui'
+      });
+
+      // Delete the connection
+      store.openclawConnections.delete(tempConn.id);
+
+      const status = sessions.getSessionStatus('status-deleted');
+      assert.equal(status.iframeUrl, null);
+
+      // Cleanup
+      store.sessions.kill(store.sessions.getActive(dProj.id).id, 'cleanup');
+    });
   });
 
   // ── killSession for webui ──
@@ -406,5 +489,167 @@ describe('Web UI session lifecycle', () => {
       assert.equal(result.lines, null);
       assert.ok(result.error.includes('Web UI'));
     });
+  });
+});
+
+// ── OpenClaw Reverse Proxy ──
+
+describe('OpenClaw reverse proxy routing', () => {
+  const http = require('node:http');
+  const { createServer } = require('../server');
+  let tmpDir;
+  let server;
+  let backendServer;
+  let backendPort;
+
+  /**
+   * Make an HTTP request to the test server.
+   * @param {string} method
+   * @param {string} urlPath
+   * @returns {Promise<{ status: number, data: string|object, headers: object }>}
+   */
+  function request(method, urlPath) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path: urlPath,
+        method
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data, headers: res.headers });
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-proxy-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+
+    // Spin up a mock OpenClaw backend
+    backendServer = http.createServer((req, res) => {
+      if (req.url === '/chat') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html>OpenClaw Chat</html>');
+      } else if (req.url === '/healthz') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(`path:${req.url}`);
+      }
+    });
+    await new Promise((resolve) => backendServer.listen(0, '127.0.0.1', resolve));
+    backendPort = backendServer.address().port;
+
+    // Create a connection pointing to the mock backend
+    const conn = store.openclawConnections.create({
+      name: 'ProxyTest',
+      host: '127.0.0.1',
+      sshUser: 'admin',
+      sshKeyPath: '~/.ssh/key',
+      localPort: backendPort,
+      availableAsEngine: true,
+      defaultMode: 'webui'
+    });
+
+    // Create a project using this connection
+    const projDir = path.join(projectsDir, 'proxy-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    store.projects.create({
+      name: 'proxy-proj',
+      path: projDir,
+      engine: `openclaw:${conn.id}`,
+      methodology: 'minimal'
+    });
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(() => {
+    server.close();
+    backendServer.close();
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('proxies /openclaw/:project/chat to the backend', async () => {
+    const res = await request('GET', '/openclaw/proxy-proj/chat');
+    assert.equal(res.status, 200);
+    assert.ok(typeof res.data === 'string' ? res.data.includes('OpenClaw Chat') : false);
+  });
+
+  it('proxies /openclaw/:project/healthz to the backend', async () => {
+    const res = await request('GET', '/openclaw/proxy-proj/healthz');
+    assert.equal(res.status, 200);
+    assert.equal(res.data.ok, true);
+  });
+
+  it('preserves sub-paths through the proxy', async () => {
+    const res = await request('GET', '/openclaw/proxy-proj/api/v1/status');
+    assert.equal(res.status, 200);
+    assert.equal(res.data, 'path:/api/v1/status');
+  });
+
+  it('returns 404 for unknown project', async () => {
+    const res = await request('GET', '/openclaw/nonexistent/chat');
+    assert.equal(res.status, 404);
+    assert.ok(res.data.error);
+  });
+
+  it('returns 404 for project without openclaw engine', async () => {
+    // Create a non-openclaw project
+    const projDir = path.join(tmpDir, 'projects', 'plain-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    store.projects.create({
+      name: 'plain-proj',
+      path: projDir,
+      engine: 'claude',
+      methodology: 'minimal'
+    });
+
+    const res = await request('GET', '/openclaw/plain-proj/chat');
+    assert.equal(res.status, 404);
+  });
+
+  it('returns 502 when backend is unreachable', async () => {
+    // Create connection pointing to a closed port
+    const deadConn = store.openclawConnections.create({
+      name: 'DeadBackend',
+      host: '127.0.0.1',
+      sshUser: 'admin',
+      sshKeyPath: '~/.ssh/key',
+      localPort: 59999,
+      availableAsEngine: true
+    });
+    const projDir = path.join(tmpDir, 'projects', 'dead-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    store.projects.create({
+      name: 'dead-proj',
+      path: projDir,
+      engine: `openclaw:${deadConn.id}`,
+      methodology: 'minimal'
+    });
+
+    const res = await request('GET', '/openclaw/dead-proj/chat');
+    assert.equal(res.status, 502);
+    assert.ok(res.data.error.includes('unavailable'));
   });
 });

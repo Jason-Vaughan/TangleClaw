@@ -604,14 +604,40 @@ function handleSessionEnded(statusData) {
 // ── Terminal Setup ──
 
 /**
- * Set up the terminal iframe with the ttyd URL.
- * Delays loading until layout is stable to avoid resize-triggered redraws.
+ * Set up the terminal iframe. For webui sessions uses iframeUrl (OpenClaw UI),
+ * otherwise loads the ttyd terminal proxy.
+ * @param {string} [iframeUrl] - OpenClaw iframe URL for webui sessions
  */
-function setupTerminal() {
+function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
   requestAnimationFrame(() => {
-    frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
+    if (iframeUrl) {
+      frame.src = iframeUrl;
+    } else {
+      frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
+    }
   });
+}
+
+/**
+ * Apply Web UI mode restrictions — disable tmux-dependent buttons.
+ * Called when the session is an OpenClaw Web UI session (no tmux).
+ */
+function applyWebuiMode() {
+  const disable = (id, title) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = true;
+      el.title = title;
+    }
+  };
+  disable('peekBtn', 'Peek not available for Web UI sessions');
+  disable('cmdBtn', 'Command bar not available for Web UI sessions');
+  disable('selectBtn', 'Select not available for Web UI sessions');
+  disable('uploadBtn', 'Upload not available for Web UI sessions');
+
+  // Hide command bar if open
+  document.getElementById('commandBar').classList.add('hidden');
 }
 
 // ── Mouse Guard ──
@@ -836,7 +862,12 @@ function openSettings() {
   // Poll interval
   document.getElementById('pollInterval').value = String(sessionState.pollInterval);
 
-  // Mouse toggle
+  // Mouse toggle — hide for webui sessions (no tmux)
+  const isWebui = sessionState.session && sessionState.session.sessionMode === 'webui';
+  const mouseGroup = document.getElementById('mouseGroup');
+  if (mouseGroup) {
+    mouseGroup.style.display = isWebui ? 'none' : '';
+  }
   document.getElementById('mouseToggle').checked = sessionState.mouseOn;
 
   document.getElementById('settingsModal').classList.add('open');
@@ -1050,8 +1081,9 @@ function formatSize(bytes) {
  * Open the kill confirmation modal.
  */
 function openKillModal() {
+  const isWebui = sessionState.session && sessionState.session.sessionMode === 'webui';
   document.getElementById('killText').innerHTML =
-    `Kill the session for <strong>${esc(projectName)}</strong>? This terminates the tmux session immediately.`;
+    `Kill the session for <strong>${esc(projectName)}</strong>? This ${isWebui ? 'tears down the SSH tunnel' : 'terminates the tmux session'} immediately.`;
   document.getElementById('killError').classList.add('hidden');
   document.getElementById('killPassword').value = '';
   const pwGroup = document.getElementById('killPasswordGroup');
@@ -1417,21 +1449,30 @@ async function initSession() {
   // Capability-gate UI elements based on engine
   applyCapabilityGates();
 
-  // Set up terminal iframe
-  setupTerminal();
-  setupTerminalTouchScroll();
+  // Check initial session status before setting up terminal (need to know session mode)
+  await pollStatus();
+
+  const isWebui = sessionState.session && sessionState.session.sessionMode === 'webui';
+
+  // Set up terminal iframe based on session mode
+  if (isWebui) {
+    setupTerminal(sessionState.session.iframeUrl);
+    applyWebuiMode();
+  } else {
+    setupTerminal();
+    setupTerminalTouchScroll();
+  }
 
   // Load shared docs for settings
   loadSharedDocs();
 
-  // Render command pills
-  renderCommandPills();
+  // Render command pills (skip for webui — no command injection)
+  if (!isWebui) {
+    renderCommandPills();
+  }
 
   // Update chime indicator
   updateChimeIndicator();
-
-  // Check initial session status
-  await pollStatus();
 
   // Start polling if session is active
   if (!sessionState.ended) {
@@ -1441,13 +1482,13 @@ async function initSession() {
   // Poll model status every 2 minutes
   setInterval(() => loadModelStatus(), 120000);
 
-  // Start mouse guard on touch devices
-  startMouseGuard();
-
-  // Load initial mouse state
-  const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-  if (mouseData) {
-    sessionState.mouseOn = mouseData.mouse;
+  // Mouse guard and initial mouse state — tmux only
+  if (!isWebui) {
+    startMouseGuard();
+    const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
+    if (mouseData) {
+      sessionState.mouseOn = mouseData.mouse;
+    }
   }
 }
 

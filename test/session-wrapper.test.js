@@ -397,7 +397,7 @@ describe('Session Wrapper UI', () => {
     });
 
     it('should include terminal setup', () => {
-      assert.ok(js.includes('function setupTerminal()'));
+      assert.ok(js.includes('function setupTerminal('));
       assert.ok(js.includes('/terminal/'));
     });
 
