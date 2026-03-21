@@ -21,6 +21,9 @@ data/templates/tilt/
 # Uploads (user-specific)
 .uploads/
 
+# TLS certificates (generated locally per-host, contain private keys)
+data/certs/
+
 # Node
 node_modules/
 

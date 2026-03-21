@@ -537,6 +537,11 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.oc-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 8px;
+}
 .oc-test-result {
   padding: 8px 10px;
   border-radius: 6px;

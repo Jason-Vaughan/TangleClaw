@@ -1596,6 +1596,10 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
       <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
     </div>`;
+    html += `<div class="oc-actions">
+      <button class="btn btn-small btn-primary" onclick="event.stopPropagation(); launchOpenclawWebUI('${esc(conn.id)}')" title="Open Web UI via tunnel">Web UI</button>
+      <button class="btn btn-small" onclick="event.stopPropagation(); copyOpenclawSSH('${esc(conn.id)}')" title="Copy SSH command to clipboard">SSH</button>
+    </div>`;
     html += '</div></div>';
   }
 
@@ -1609,6 +1613,36 @@ function renderOpenclawConnections() {
 function toggleOpenclawItem(connId) {
   state.openclawItemsOpen[connId] = !state.openclawItemsOpen[connId];
   renderOpenclawConnections();
+}
+
+/**
+ * Launch OpenClaw Web UI in the viewer page.
+ * @param {string} connId - Connection ID
+ */
+function launchOpenclawWebUI(connId) {
+  window.open(`/openclaw-view/${encodeURIComponent(connId)}`, '_blank');
+}
+
+/**
+ * Copy SSH command for an OpenClaw connection to clipboard.
+ * @param {string} connId - Connection ID
+ */
+async function copyOpenclawSSH(connId) {
+  const conn = state.openclawConnections.find(c => c.id === connId);
+  if (!conn) return;
+
+  const sshCmd = `ssh -i ${conn.sshKeyPath} ${conn.sshUser}@${conn.host}`;
+  const toast = document.getElementById('toast');
+
+  try {
+    await navigator.clipboard.writeText(sshCmd);
+    toast.textContent = `Copied: ${sshCmd}`;
+    toast.className = 'toast toast-ok visible';
+  } catch {
+    toast.textContent = sshCmd;
+    toast.className = 'toast toast-ok visible';
+  }
+  setTimeout(() => toast.classList.remove('visible'), 5000);
 }
 
 // ── OpenClaw Connection Modal ──

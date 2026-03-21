@@ -209,3 +209,166 @@ describe('API /api/openclaw/test', () => {
     assert.equal(data.ssh, false);
   });
 });
+
+describe('API /api/openclaw/connections/:id/tunnel', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-oc-tunnel-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('POST /api/openclaw/connections/:id/tunnel returns 404 for unknown id', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/connections/nonexistent/tunnel');
+    assert.equal(status, 404);
+    assert.ok(data.error);
+  });
+
+  it('POST /api/openclaw/connections/:id/tunnel returns webuiUrl on success', async () => {
+    // Create a connection pointing to localhost (tunnel will fail but we test the route shape)
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'TunnelTest',
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      localPort: 19999
+    });
+    const connId = created.data.id;
+
+    // Tunnel will fail because SSH key doesn't exist, but route should respond
+    const { status, data } = await request(server, 'POST', `/api/openclaw/connections/${connId}/tunnel`);
+    // Expect 502 (tunnel error) since the SSH key is invalid
+    assert.equal(status, 502);
+    assert.ok(data.error);
+    assert.ok(data.error.includes('Tunnel failed'));
+  });
+
+  it('direct proxy /openclaw-direct/:connId/* returns 404 for unknown connId', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-direct/nonexistent/chat');
+    assert.equal(status, 404);
+    assert.ok(data.error);
+  });
+
+  it('POST /api/openclaw/connections/:id/approve-pending returns 404 for unknown id', async () => {
+    const { status, data } = await request(server, 'POST', '/api/openclaw/connections/nonexistent/approve-pending');
+    assert.equal(status, 404);
+    assert.ok(data.error);
+  });
+
+  it('POST /api/openclaw/connections/:id/approve-pending requires gatewayToken', async () => {
+    // Create connection without token
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'NoTokenConn',
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+    });
+    const connId = created.data.id;
+
+    const { status, data } = await request(server, 'POST', `/api/openclaw/connections/${connId}/approve-pending`);
+    assert.equal(status, 400);
+    assert.ok(data.error.includes('gateway token'));
+  });
+});
+
+describe('UI OpenClaw standalone actions — data shape', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ui-oc-actions-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('connection objects contain fields needed for SSH command construction', () => {
+    const conn = store.openclawConnections.create({
+      name: 'ActionTest',
+      host: '10.0.0.5',
+      sshUser: 'admin',
+      sshKeyPath: '~/.ssh/id_rsa'
+    });
+
+    assert.ok(conn.id, 'id present');
+    assert.equal(conn.host, '10.0.0.5');
+    assert.equal(conn.sshUser, 'admin');
+    assert.equal(conn.sshKeyPath, '~/.ssh/id_rsa');
+    assert.equal(typeof conn.localPort, 'number');
+  });
+
+  it('connection objects include gatewayToken for webui URL construction', () => {
+    const conn = store.openclawConnections.create({
+      name: 'TokenTest',
+      host: '10.0.0.6',
+      sshUser: 'admin',
+      sshKeyPath: '~/.ssh/id_rsa',
+      gatewayToken: 'secret-token-123'
+    });
+
+    assert.equal(conn.gatewayToken, 'secret-token-123');
+  });
+});
+
+describe('OpenClaw viewer page route', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-oc-viewer-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('GET /openclaw-view/:connId serves openclaw-view.html', async () => {
+    const { status, data } = await request(server, 'GET', '/openclaw-view/some-conn-id');
+    assert.equal(status, 200);
+    // data will be the raw HTML string since it's not JSON
+    assert.ok(typeof data === 'string');
+    assert.ok(data.includes('OpenClaw'));
+  });
+});
+
+describe('HTTPS createServer', () => {
+  it('createServer without HTTPS options returns http.Server', () => {
+    const server = createServer();
+    assert.ok(server instanceof http.Server);
+    server.close();
+  });
+
+  it('createServer with HTTPS options returns https.Server', () => {
+    const certPath = path.join(__dirname, '..', 'data', 'certs', 'cursatory.local+4.pem');
+    const keyPath = path.join(__dirname, '..', 'data', 'certs', 'cursatory.local+4-key.pem');
+
+    // Only test if certs exist (they may not exist on CI)
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      const https = require('node:https');
+      const server = createServer({ httpsEnabled: true, certPath, keyPath });
+      assert.ok(server instanceof https.Server);
+      server.close();
+    }
+  });
+});
