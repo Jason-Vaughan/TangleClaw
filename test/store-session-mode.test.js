@@ -90,7 +90,7 @@ describe('schema v6: session_mode column', () => {
   it('should handle schema version 6', () => {
     const db = store.getDb();
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-    assert.equal(row.version, 6);
+    assert.equal(row.version, 7);
   });
 
   it('should have session_mode column in sessions table', () => {

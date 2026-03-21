@@ -913,8 +913,34 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
 
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
-    engineOverride: body ? body.engineOverride : null
+    engineOverride: body ? body.engineOverride : null,
+    mode: body ? body.mode : undefined
   });
+
+  // Web UI mode — delegate to async launch path
+  if (result.webui) {
+    sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project)
+      .then((webuiResult) => {
+        if (webuiResult.error) {
+          return errorResponse(res, 500, webuiResult.error, 'INTERNAL_ERROR');
+        }
+        jsonResponse(res, 201, {
+          sessionId: webuiResult.session.id,
+          project: params.project,
+          engine: webuiResult.session.engineId,
+          sessionMode: 'webui',
+          tmuxSession: null,
+          primePrompt: null,
+          startedAt: webuiResult.session.startedAt,
+          iframeUrl: webuiResult.iframeUrl,
+          ttydUrl: null
+        });
+      })
+      .catch((err) => {
+        errorResponse(res, 500, `Web UI launch failed: ${err.message}`, 'INTERNAL_ERROR');
+      });
+    return;
+  }
 
   if (result.error) {
     if (result.error.includes('already active')) {
@@ -930,9 +956,11 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
     sessionId: result.session.id,
     project: params.project,
     engine: result.session.engineId,
+    sessionMode: result.session.sessionMode || 'tmux',
     tmuxSession: result.session.tmuxSession,
     primePrompt: result.primePrompt,
     startedAt: result.session.startedAt,
+    iframeUrl: null,
     ttydUrl: result.ttydUrl
   });
 });
