@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **README rewrite**: New intro section tells the origin story — persistent sessions solving dropped VPN/SSH connections — instead of leading with a feature matrix. Added OpenClaw integration to the features list and OpenClaw Setup to the documentation links.
+
 ### Fixed
 
 - **PortHub: bogus per-project ttyd registration removed**: Project creation no longer registers the global ttyd port (3100) under each project's name, which was overwriting TangleClaw's infrastructure lease on every create

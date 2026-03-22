@@ -4,9 +4,13 @@
   <img src="https://github.com/Jason-Vaughan/puberty-labs-assets/blob/main/tangleclaw-logo.png?raw=true" alt="TangleClaw logo" width="200">
 </p>
 
-AI coding agents are powerful, but managing them across multiple projects gets messy fast. Each engine has its own config format, its own way of receiving instructions, and no awareness of what other projects are doing on your machine. You end up juggling terminal sessions, copy-pasting methodology rules, manually tracking ports, and hoping your agents follow the process you intended.
+You VPN into your dev machine. You SSH in. You navigate to your project directory, fire up an AI coding agent, and start building. Thirty minutes later your VPN hiccups, or your SSH tunnel drops, or your laptop goes to sleep — and the session is gone. The agent's context, your conversation history, everything. There's no way to reconnect. You SSH back in, start over, and re-explain what you were doing.
 
-TangleClaw is a local orchestration platform that sits between you and your AI coding agents. It enforces your development methodology as structural rules (not suggestions), generates engine-native config so every agent gets the same instructions regardless of engine, manages session lifecycle from launch to wrap, and provides a single landing page — accessible from your browser or phone — to manage all of it.
+TangleClaw was built to fix that. It wraps AI coding sessions in persistent tmux processes so they survive network drops, device switches, and reconnects. Close your laptop at your desk, open your phone on the couch, and pick up the exact same session. The agent never knows you left.
+
+What started as session persistence grew into a full orchestration platform. Once you have persistent sessions, you start wanting a dashboard to manage them. Then you want your development methodology enforced as structural rules, not suggestions the agent can ignore. Then you want engine-native config generated automatically so Claude Code, Codex, Gemini CLI, and Aider all get the same instructions without you maintaining four different config files. Then you want port conflict management across projects, mobile access, idle detection, session wrap protocols.
+
+TangleClaw is all of that — a local platform that sits between you and your AI coding agents, accessible from any browser or phone on your network.
 
 ## Features
 
@@ -17,6 +21,7 @@ TangleClaw is a local orchestration platform that sits between you and your AI c
 - **PortHub**: Central port registry preventing conflicts across all projects. Permanent and TTL leases with heartbeat support
 - **Setup wizard**: First-run guided setup scans for existing projects, detects engines, and configures preferences
 - **Mobile-first PWA**: Installable on iOS and Android. Manage projects, launch sessions, and interact with AI agents from your phone
+- **OpenClaw integration**: Connect to remote [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) instances via SSH or Web UI mode. Connection registry with health checks, automatic SSH tunnel management, reverse proxy for same-origin iframe embedding, and auto device pairing. Launch sessions on remote machines without leaving the TangleClaw dashboard
 - **Zero dependencies**: Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
 ## Security Note
@@ -57,6 +62,7 @@ Access the landing page at **http://localhost:3102**. On first launch, a setup w
 - **[Methodology Guide](docs/methodology-guide.md)** — Built-in templates, creating custom methodologies, rules
 - **[Engine Guide](docs/engine-guide.md)** — Built-in engines, creating custom engine profiles
 - **[Configuration Reference](docs/configuration-reference.md)** — All config fields, JSON schemas, API overview
+- **[OpenClaw Setup](docs/OPENCLAW-SETUP.md)** — Connecting to remote OpenClaw instances, SSH tunnels, Web UI mode, HTTPS
 
 ## Configuration
 
