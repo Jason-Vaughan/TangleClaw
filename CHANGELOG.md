@@ -2,6 +2,25 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.4.0] - 2026-03-24
+
+### Added
+
+- **Eval Audit Mode — Chunk 1: Capture + Storage Foundation**
+  - SQLite schema v9: `eval_exchanges`, `eval_scores`, `eval_baselines` tables with full indexes
+  - `audit_secret` column on `openclaw_connections` for webhook authentication
+  - Store namespaces: `evalExchanges`, `evalScores`, `evalBaselines` with full CRUD + query APIs
+  - `POST /api/audit/ingest` webhook endpoint — receives exchange data from OpenClaw, validates Bearer token auth, stores exchanges, runs Tier 1 scoring inline
+  - Tier 1 structural scorer (free, pattern matching) — self-identification denial, silent refusal, constraint disclosure without reasoning. Methodology-aware via `evalDimensions.tier1`
+  - Intelligent sampling — always scores first 5 turns, last 3 turns, disagreement, long responses, Tier 1 flags; samples every Nth routine exchange; skipped exchanges stored for retroactive scoring
+  - Heartbeat watchdog — monitors data flow per active audit session, escalating alerts at 1/2/3 missed intervals
+  - Per-exchange anomaly detection — flags Tier 1 failures, Tier 3 low scores, Tier 2.5 divergence
+  - Query API endpoints: `GET /api/audit/:project/scores`, `/anomalies`, `/summary`, `/baseline`
+  - Telemetry endpoints: `POST /api/audit/heartbeat`, `GET /api/audit/telemetry`
+  - `evalAuditMode` added to `DEFAULT_PROJECT_CONFIG` with full configuration schema
+  - Default eval dimensions fallback for methodologies without `evalDimensions`
+  - 63 new tests (store CRUD, Tier 1 scorer, sampling logic, heartbeat, API integration)
+
 ## [3.3.0] - 2026-03-23
 
 ### Changed

@@ -18,6 +18,7 @@ const tunnel = require('./lib/tunnel');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
+const evalAudit = require('./lib/eval-audit');
 
 const log = createLogger('server');
 
@@ -2145,6 +2146,249 @@ async function handleRequest(req, res) {
   errorResponse(res, 404, 'Not found', 'NOT_FOUND');
 }
 
+// ── Eval Audit Mode ──
+
+// POST /api/audit/ingest — Receive exchange data from OpenClaw webhook
+route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
+  // Authenticate via Bearer token
+  const authHeader = _req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return errorResponse(res, 401, 'Missing Authorization header', 'UNAUTHORIZED');
+  }
+
+  // Find the connection by matching audit_secret
+  const connections = store.openclawConnections.list();
+  const conn = connections.find(c => c.auditSecret && c.auditSecret === token);
+  if (!conn) {
+    return errorResponse(res, 401, 'Invalid audit token', 'UNAUTHORIZED');
+  }
+
+  // Validate payload
+  const validation = evalAudit.validateIngestPayload(body);
+  if (!validation.valid) {
+    return errorResponse(res, 400, validation.error, 'BAD_REQUEST');
+  }
+
+  // Resolve project from connection (find projects using this connection as engine)
+  const projects = store.projects.list();
+  const project = projects.find(p => p.engineId === `openclaw:${conn.id}`);
+  const projectName = project ? project.name : (body.project || 'unknown');
+
+  // Transform and store the exchange
+  const exchangeData = evalAudit.transformIngestPayload(body, projectName);
+  const exchange = store.evalExchanges.insert(exchangeData);
+
+  // Record heartbeat for watchdog
+  evalAudit.heartbeat(body.session_id);
+
+  // Load methodology eval dimensions for Tier 1 scoring
+  let evalDims = evalAudit.DEFAULT_EVAL_DIMENSIONS;
+  if (project) {
+    try {
+      const template = store.templates.get(project.methodology);
+      if (template) evalDims = evalAudit.getEvalDimensions(template);
+    } catch { /* use defaults */ }
+  }
+
+  // Determine if this exchange should be scored (sampling)
+  const projectConfig = project
+    ? store.projectConfig.load(project.path)
+    : store.DEFAULT_PROJECT_CONFIG;
+  const auditConfig = projectConfig.evalAuditMode || {};
+  const samplingConfig = auditConfig.sampling || {};
+
+  // Run Tier 1 (always — it's free)
+  const tier1Result = evalAudit.runTier1(
+    { userMessage: exchange.userMessage, agentResponse: exchange.agentResponse, agentThinking: exchange.agentThinking },
+    evalDims.tier1 || []
+  );
+
+  // Decide if we should score beyond Tier 1
+  const samplingDecision = evalAudit.shouldScore(
+    exchange,
+    samplingConfig,
+    { tier1Flags: tier1Result.flags }
+  );
+
+  if (!samplingDecision.shouldScore) {
+    // Mark as skipped (sampling) but still store Tier 1 result
+    store.evalExchanges.updateScored(exchange.id, 2);
+
+    // Store Tier 1-only score if there were flags
+    if (tier1Result.flags.length > 0) {
+      store.evalScores.insert({
+        exchangeId: exchange.id,
+        schemaVersion: evalDims.schemaVersion || 'default-v1',
+        judgeModel: 'structural',
+        scoredAt: new Date().toISOString(),
+        methodology: project ? project.methodology : null,
+        tier1StructuralScore: tier1Result.score,
+        tier1Flags: tier1Result.flags,
+        tier2Skipped: true,
+        tier2_5Skipped: true,
+        tier3Skipped: true,
+        anomalyFlag: tier1Result.flags.length > 0,
+        anomalyReason: tier1Result.flags.length > 0 ? `Structural: ${tier1Result.flags.join(', ')}` : null,
+        costUsd: 0
+      });
+      store.evalExchanges.updateScored(exchange.id, 1);
+    }
+
+    return jsonResponse(res, 201, {
+      exchangeId: exchange.id,
+      scored: false,
+      reason: samplingDecision.reason,
+      tier1: tier1Result
+    });
+  }
+
+  // Store Tier 1 score (Tier 2/3 will be added in future chunks via async scoring)
+  const anomalyCheck = evalAudit.checkPerExchangeAnomaly({
+    tier1Flags: tier1Result.flags,
+    tier3DimensionScores: null,
+    tier2_5AlignmentScore: null
+  });
+
+  const scoreRecord = store.evalScores.insert({
+    exchangeId: exchange.id,
+    schemaVersion: evalDims.schemaVersion || 'default-v1',
+    judgeModel: 'structural',
+    scoredAt: new Date().toISOString(),
+    methodology: project ? project.methodology : null,
+    tier1StructuralScore: tier1Result.score,
+    tier1Flags: tier1Result.flags,
+    tier2Skipped: true,   // Tier 2/3 scoring added in Chunk 2
+    tier2_5Skipped: true,
+    tier3Skipped: true,
+    anomalyFlag: anomalyCheck.anomaly,
+    anomalyReason: anomalyCheck.anomaly ? anomalyCheck.reasons.join('; ') : null,
+    costUsd: 0
+  });
+
+  store.evalExchanges.updateScored(exchange.id, 1);
+
+  return jsonResponse(res, 201, {
+    exchangeId: exchange.id,
+    scoreId: scoreRecord.id,
+    scored: true,
+    reason: samplingDecision.reason,
+    tier1: tier1Result,
+    anomaly: anomalyCheck.anomaly
+  });
+}, { maxBodySize: 512 * 1024 });
+
+// POST /api/audit/heartbeat — Lightweight heartbeat from OpenClaw
+route('POST', '/api/audit/heartbeat', (_req, res, _params, body) => {
+  if (!body || !body.session_id) {
+    return errorResponse(res, 400, 'Missing session_id', 'BAD_REQUEST');
+  }
+  evalAudit.heartbeat(body.session_id);
+  return jsonResponse(res, 200, { ok: true });
+});
+
+// GET /api/audit/telemetry — Heartbeat status for all active sessions
+route('GET', '/api/audit/telemetry', (_req, res) => {
+  const statuses = evalAudit.getTelemetryStatus();
+  return jsonResponse(res, 200, { sessions: statuses });
+});
+
+// GET /api/audit/:project/scores — Query scores for a project
+route('GET', '/api/audit/:project/scores', (req, res, params) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  try {
+    const scores = store.evalScores.listByProject(params.project, {
+      from: query.from || null,
+      to: query.to || null,
+      anomaliesOnly: query.anomalies === 'true',
+      limit: query.limit ? parseInt(query.limit, 10) : 100
+    });
+    return jsonResponse(res, 200, { scores, count: scores.length });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/anomalies — Anomaly log for a project
+route('GET', '/api/audit/:project/anomalies', (req, res, params) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  try {
+    const anomalies = store.evalScores.listByProject(params.project, {
+      from: query.from || null,
+      to: query.to || null,
+      anomaliesOnly: true,
+      limit: query.limit ? parseInt(query.limit, 10) : 100
+    });
+    return jsonResponse(res, 200, { anomalies, count: anomalies.length });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/summary — Current period summary
+route('GET', '/api/audit/:project/summary', (_req, res, params) => {
+  try {
+    const project = params.project;
+    const exchanges = store.evalExchanges.list({ project });
+    const scored = exchanges.filter(e => e.scored === 1).length;
+    const pending = exchanges.filter(e => e.scored === 0).length;
+    const skippedSampling = exchanges.filter(e => e.scored === 2).length;
+    const skippedCostCap = exchanges.filter(e => e.scored === 3).length;
+
+    const scores = store.evalScores.listByProject(project);
+    const anomalyCount = scores.filter(s => s.anomalyFlag).length;
+
+    // Compute average Tier 1 score
+    const tier1Scores = scores
+      .filter(s => s.tier1StructuralScore !== null && s.tier1StructuralScore !== undefined)
+      .map(s => s.tier1StructuralScore);
+    const avgTier1 = tier1Scores.length > 0
+      ? tier1Scores.reduce((a, b) => a + b, 0) / tier1Scores.length
+      : null;
+
+    const baseline = store.evalBaselines.getLatest(project);
+
+    return jsonResponse(res, 200, {
+      project,
+      exchanges: {
+        total: exchanges.length,
+        scored,
+        pending,
+        skippedSampling,
+        skippedCostCap
+      },
+      scores: {
+        total: scores.length,
+        anomalies: anomalyCount,
+        avgTier1Structural: avgTier1 !== null ? Math.round(avgTier1 * 1000) / 1000 : null
+      },
+      baseline: baseline ? {
+        computedAt: baseline.computedAt,
+        exchangeCount: baseline.exchangeCount,
+        schemaVersion: baseline.schemaVersion
+      } : null
+    });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/baseline — Current baseline
+route('GET', '/api/audit/:project/baseline', (_req, res, params) => {
+  try {
+    const baseline = store.evalBaselines.getLatest(params.project);
+    if (!baseline) {
+      return jsonResponse(res, 200, { baseline: null, message: 'No baseline computed yet' });
+    }
+    return jsonResponse(res, 200, { baseline });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
 // ── Server Creation ──
 
 /**
@@ -2209,6 +2453,11 @@ if (require.main === module) {
   // Start update checker (first check 60s after startup, then every 24h)
   updateChecker.startChecker(config.updateCheckIntervalMs || 24 * 60 * 60 * 1000);
 
+  // Start eval audit heartbeat watchdog
+  evalAudit.startWatchdog((level, sessionId, project, message) => {
+    log.warn('Eval audit watchdog alert', { level, sessionId, project, message });
+  });
+
   // Start document lock expiry timer (every 5 minutes)
   const _lockExpiryInterval = setInterval(() => {
     try {
@@ -2234,6 +2483,7 @@ if (require.main === module) {
     porthub.stopExpirationTimer();
     modelStatus.stopMonitor();
     updateChecker.stopChecker();
+    evalAudit.stopWatchdog();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
