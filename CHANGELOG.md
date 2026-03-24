@@ -7,6 +7,16 @@ All notable changes to TangleClaw are documented in this file.
 ### Changed
 
 - **README rewrite**: New intro section tells the origin story — persistent sessions solving dropped VPN/SSH connections — instead of leading with a feature matrix. Added OpenClaw integration to the features list and OpenClaw Setup to the documentation links.
+- **Prawduct framework tools updated**: Synced `product-hook` and all framework tools from upstream Prawduct. Major changes: `prawduct-sync.py`, `prawduct-init.py`, and `prawduct-migrate.py` are now shims delegating to new unified `prawduct-setup.py` (92KB). `product-hook` adds session-end sync (quiet framework sync at session end so hot files are fresh for next session), bootstrap support for repos without manifests, and cleaner sync output formatting. Template updated with `SessionEnd` hook event.
+- **Eval Audit Mode spec v2**: Rewrote `tangleclaw-eval-audit-mode.md` in habitat shared docs. Major additions: methodology-aware scoring dimensions (not Genesis-only), webhook push capture with heartbeat watchdog (tmux parsing dropped), thinking block analysis (Tier 2.5), intelligent sampling, auto-incident generation from anomalies, SQLite from day 1, bidirectional scoring, session wrap quality scoring, silent drift detection via automatic baselines, schema versioning for dimension changes.
+- **Eval Audit Mode build plan**: 8-chunk implementation plan (`build-plan-eval-audit.md`). ~142 new tests planned across schema, ingest, 4-tier scoring pipeline, query APIs, heartbeat/telemetry, baselines/drift detection, and bidirectional scoring.
+
+### Added
+
+- **Methodology extractions directory** (`docs/methodology-extractions/`): New directory for dissecting organic methodologies from existing projects into structured, reproducible patterns. Groundwork for TangleMeth.
+  - **TiLT v2 extraction** (`tilt-v2.md`): 10 patterns — identity sentries, session wraps, learning capture, data safety, PROD/DEV separation, doc parity, testing mandates, decision frameworks, mobile parity, anti-bloat rules. Enforcement analysis (prose vs gates).
+  - **OnDeck-V2 extraction** (`ondeck-v2.md`): 3 unique patterns — critical incidents log (failures → prevention rules feedback loop), AI config sync system (single source of truth for multi-engine rules), session priming files (dedicated next-session planning with timestamp discipline).
+  - **Prawduct reference** (`prawduct.md`): Not extracted — Prawduct is already a designed framework (13,400 lines, Python tools, 27 templates, agent definitions). Referenced as TangleMeth's target output rather than dissected.
 
 ### Fixed
 
