@@ -77,7 +77,7 @@ describe('store', () => {
 
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 8);
+      assert.equal(row.version, 9);
     });
 
     it('should copy bundled engine profiles', () => {
