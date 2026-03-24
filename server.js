@@ -618,18 +618,21 @@ route('POST', '/api/tmux/mouse', (_req, res, _params, body) => {
   }
 });
 
-// GET /api/ports — List all port leases
-route('GET', '/api/ports', (_req, res) => {
-  const leases = porthub.getLeases();
+// GET /api/ports — List all port leases (optional ?host= filter)
+route('GET', '/api/ports', (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const hostFilter = url.searchParams.get('host') || undefined;
+  const leases = porthub.getLeases(hostFilter ? { host: hostFilter } : undefined);
   const grouped = {};
   for (const lease of leases) {
-    if (!grouped[lease.project]) grouped[lease.project] = [];
-    grouped[lease.project].push(lease);
+    const key = lease.host === 'localhost' ? lease.project : `${lease.host}/${lease.project}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(lease);
   }
 
-  // Count system-detected ports not tracked in lease DB
+  // Count system-detected ports not tracked in lease DB (localhost only)
   const systemPorts = portScanner.getSystemPorts();
-  const leasedPortSet = new Set(leases.map(l => l.port));
+  const leasedPortSet = new Set(leases.filter(l => l.host === 'localhost').map(l => l.port));
   const systemPortCount = systemPorts.filter(sp => !leasedPortSet.has(sp.port)).length;
 
   jsonResponse(res, 200, {
@@ -647,6 +650,7 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
   }
   try {
     const lease = store.portLeases.lease({
+      host: body.host || 'localhost',
       port: body.port,
       project: body.project,
       service: body.service,
@@ -672,8 +676,8 @@ route('POST', '/api/ports/release', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
   }
-  store.portLeases.release(body.port);
-  jsonResponse(res, 200, { ok: true, port: body.port });
+  store.portLeases.release(body.port, body.host || 'localhost');
+  jsonResponse(res, 200, { ok: true, host: body.host || 'localhost', port: body.port });
 });
 
 // POST /api/ports/heartbeat — Heartbeat a lease
@@ -681,7 +685,7 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
   }
-  const lease = store.portLeases.heartbeat(body.port);
+  const lease = store.portLeases.heartbeat(body.port, body.host || 'localhost');
   if (!lease) {
     return errorResponse(res, 404, `No lease found for port ${body.port}`, 'NOT_FOUND');
   }

@@ -99,6 +99,17 @@
             }
           ]
         }
+      ],
+      "SessionEnd": [
+        {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" session-end"
+            }
+          ]
+        }
       ]
     }
   },
