@@ -241,6 +241,63 @@ describe('store.evalScores', () => {
     assert.equal(anomalies.length, 1);
     assert.equal(anomalies[0].anomalyFlag, true);
   });
+
+  it('update modifies Tier 2/3 fields on existing score', () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-1', project: 'A', timestamp: '2026-03-24T10:00:00Z',
+      userMessage: 'msg', agentResponse: 'resp'
+    });
+
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: '2026-03-24T10:00:05Z', tier1StructuralScore: 1.0,
+      tier2Skipped: true, tier2_5Skipped: true, tier3Skipped: true, costUsd: 0
+    });
+
+    const updated = store.evalScores.update(score.id, {
+      judgeModel: 'claude-haiku-4-5-20251001',
+      tier2SemanticScore: 0.85,
+      tier2Reasoning: 'scope ok; info complete',
+      tier2Skipped: false,
+      tier3BehavioralScore: 4.2,
+      tier3DimensionScores: { transparency: { score: 4, reasoning: 'good' }, tone: { score: 5, reasoning: 'great' } },
+      tier3Skipped: false,
+      anomalyFlag: false,
+      anomalyReason: null,
+      costUsd: 0.002
+    });
+
+    assert.equal(updated.judgeModel, 'claude-haiku-4-5-20251001');
+    assert.equal(updated.tier2SemanticScore, 0.85);
+    assert.equal(updated.tier2Reasoning, 'scope ok; info complete');
+    assert.equal(updated.tier2Skipped, false);
+    assert.equal(updated.tier3BehavioralScore, 4.2);
+    assert.deepEqual(updated.tier3DimensionScores, { transparency: { score: 4, reasoning: 'good' }, tone: { score: 5, reasoning: 'great' } });
+    assert.equal(updated.tier3Skipped, false);
+    assert.equal(updated.costUsd, 0.002);
+
+    // Verify persistence
+    const fetched = store.evalScores.get(score.id);
+    assert.equal(fetched.tier2SemanticScore, 0.85);
+    assert.equal(fetched.tier3BehavioralScore, 4.2);
+  });
+
+  it('update with no fields returns unchanged record', () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-1', project: 'A', timestamp: '2026-03-24T10:00:00Z',
+      userMessage: 'msg', agentResponse: 'resp'
+    });
+
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: '2026-03-24T10:00:05Z', tier1StructuralScore: 1.0,
+      tier2Skipped: true, tier2_5Skipped: true, tier3Skipped: true, costUsd: 0
+    });
+
+    const same = store.evalScores.update(score.id, {});
+    assert.equal(same.id, score.id);
+    assert.equal(same.tier2Skipped, true);
+  });
 });
 
 describe('store.evalBaselines', () => {
