@@ -124,6 +124,48 @@ describe('store.evalExchanges', () => {
   it('get returns null for nonexistent id', () => {
     assert.equal(store.evalExchanges.get('nonexistent'), null);
   });
+
+  it('listSessions returns distinct sessions with counts', () => {
+    store.evalExchanges.insert({
+      sessionId: 'sess-1', project: 'A', timestamp: '2026-03-24T10:00:00Z',
+      userMessage: 'msg1', agentResponse: 'resp1'
+    });
+    store.evalExchanges.insert({
+      sessionId: 'sess-1', project: 'A', timestamp: '2026-03-24T10:01:00Z',
+      userMessage: 'msg2', agentResponse: 'resp2'
+    });
+    store.evalExchanges.insert({
+      sessionId: 'sess-2', project: 'A', timestamp: '2026-03-24T11:00:00Z',
+      userMessage: 'msg3', agentResponse: 'resp3'
+    });
+    store.evalExchanges.insert({
+      sessionId: 'sess-3', project: 'B', timestamp: '2026-03-24T12:00:00Z',
+      userMessage: 'msg4', agentResponse: 'resp4'
+    });
+
+    const sessions = store.evalExchanges.listSessions('A');
+    assert.equal(sessions.length, 2);
+    // Most recent session first
+    assert.equal(sessions[0].sessionId, 'sess-2');
+    assert.equal(sessions[0].exchangeCount, 1);
+    assert.equal(sessions[1].sessionId, 'sess-1');
+    assert.equal(sessions[1].exchangeCount, 2);
+  });
+
+  it('listSessions respects limit', () => {
+    store.evalExchanges.insert({
+      sessionId: 'sess-1', project: 'A', timestamp: '2026-03-24T10:00:00Z',
+      userMessage: 'msg1', agentResponse: 'resp1'
+    });
+    store.evalExchanges.insert({
+      sessionId: 'sess-2', project: 'A', timestamp: '2026-03-24T11:00:00Z',
+      userMessage: 'msg2', agentResponse: 'resp2'
+    });
+
+    const sessions = store.evalExchanges.listSessions('A', { limit: 1 });
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].sessionId, 'sess-2');
+  });
 });
 
 describe('store.evalScores', () => {

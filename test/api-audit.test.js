@@ -237,4 +237,29 @@ describe('API /api/audit', () => {
     assert.equal(status, 200);
     assert.equal(data.baseline, null);
   });
+
+  // ── Trends Endpoint ──
+
+  it('GET /api/audit/:project/trends returns aggregated data', async () => {
+    const { status, data } = await request(server, 'GET', '/api/audit/unknown/trends');
+    assert.equal(status, 200);
+    assert.equal(data.project, 'unknown');
+    assert.equal(data.window, '14d');
+    assert.ok(Array.isArray(data.dataPoints));
+  });
+
+  it('GET /api/audit/:project/trends respects window param', async () => {
+    const { status, data } = await request(server, 'GET', '/api/audit/unknown/trends?window=7d');
+    assert.equal(status, 200);
+    assert.equal(data.window, '7d');
+  });
+
+  // ── Wrap Quality Endpoint ──
+
+  it('GET /api/audit/:project/wrap-quality returns session wrap scores', async () => {
+    const { status, data } = await request(server, 'GET', '/api/audit/unknown/wrap-quality');
+    assert.equal(status, 200);
+    assert.equal(data.project, 'unknown');
+    assert.ok(Array.isArray(data.sessions));
+  });
 });

@@ -2,6 +2,25 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.6.0] - 2026-03-24
+
+### Added
+
+- **Eval Audit Mode — Chunk 3: Tier 2.5 + Wrap Quality + Trends API**
+  - Tier 2.5 thinking block analysis — LLM judge compares agent thinking vs output for reasoning-output alignment (0.0-1.0), sycophancy detection, and advocacy suppression. Skips when no thinking block is available. Integrates into scoring pipeline between Tier 2 and Tier 3
+  - `buildTier2_5JudgePrompt()` — specialized system prompt for thinking-vs-output comparison (fixed task, no configurable dimensions)
+  - `scoreTier2_5()` — async LLM judge call with same DI pattern as Tier 2/3, returns alignment score + sycophancy/suppression flags
+  - Tier 2.5 gate cascade integration — sycophancy or advocacy suppression detected forces Tier 3 (same escalation as Tier 2 flag)
+  - Session wrap quality scoring — `scoreWrapQuality()` pattern-matches session-end exchanges against methodology `wrap.steps` (version-bump, changelog-update, learnings-capture, next-session-prime, commit). Free structural check, no LLM call
+  - `aggregateTrends()` — groups score records by day with per-day averages for all tiers, anomaly counts, and exchange counts. Supports configurable time windows (7d, 14d, 30d)
+  - `GET /api/audit/:project/trends` endpoint — returns daily trend data points with window parameter
+  - `GET /api/audit/:project/wrap-quality` endpoint — returns wrap quality scores for recent sessions with methodology-aware step checking
+  - `evalExchanges.listSessions()` store method — distinct sessions by project with exchange counts and timestamp ranges
+  - Tier 2.5 fields now populated in async ingest pipeline (were previously null placeholders)
+  - `evalDimensions` added to Prawduct methodology template — governance-focused: decision_framework_adherence (Tier 2), independent_thinking + methodology_compliance (Tier 3), Prawduct-specific judge context
+  - `evalDimensions` added to TiLT methodology template — identity-focused: identity_consistency (Tier 2), identity_sentry_compliance + trust_signal_accuracy (Tier 3), TiLT-specific judge context
+  - 20 new tests (1142 → 1162): Tier 2.5 scoring (4), wrap quality (5), trends aggregation (3), pipeline integration (2), store listSessions (2), API endpoints (3), prompt builder (1)
+
 ## [3.5.0] - 2026-03-24
 
 ### Added

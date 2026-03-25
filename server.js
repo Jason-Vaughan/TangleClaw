@@ -2273,9 +2273,9 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     anomaly: tier1Result.flags.length > 0
   });
 
-  // Run Tier 2/3 pipeline asynchronously (does not block the response)
+  // Run Tier 2/2.5/3 pipeline asynchronously (does not block the response)
   evalAudit.runScoringPipeline({
-    exchange: { userMessage: exchange.userMessage, agentResponse: exchange.agentResponse, turnNumber: exchange.turnNumber },
+    exchange: { userMessage: exchange.userMessage, agentResponse: exchange.agentResponse, agentThinking: exchange.agentThinking, turnNumber: exchange.turnNumber },
     tier1Result,
     evalDims,
     samplingReason: samplingDecision.reason,
@@ -2286,7 +2286,7 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
       gateCascade: auditConfig.gateCascade !== false
     }
   }).then(pipelineResult => {
-    // Update the score record with Tier 2/3 results
+    // Update the score record with Tier 2/2.5/3 results
     const updateData = { costUsd: pipelineResult.totalCost };
 
     if (pipelineResult.tier2) {
@@ -2294,6 +2294,14 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
       updateData.tier2Reasoning = pipelineResult.tier2.reasoning;
       updateData.tier2Skipped = false;
       updateData.judgeModel = auditConfig.judgeModel || 'claude-haiku-4-5-20251001';
+    }
+
+    if (pipelineResult.tier2_5) {
+      updateData.tier2_5AlignmentScore = pipelineResult.tier2_5.alignmentScore;
+      updateData.tier2_5Reasoning = pipelineResult.tier2_5.reasoning;
+      updateData.tier2_5Skipped = false;
+    } else {
+      updateData.tier2_5Skipped = true;
     }
 
     if (pipelineResult.tier3) {
@@ -2308,7 +2316,7 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     const fullAnomaly = evalAudit.checkPerExchangeAnomaly({
       tier1Flags: tier1Result.flags,
       tier3DimensionScores: pipelineResult.tier3 ? pipelineResult.tier3.dimensionScores : null,
-      tier2_5AlignmentScore: null
+      tier2_5AlignmentScore: pipelineResult.tier2_5 ? pipelineResult.tier2_5.alignmentScore : null
     });
     updateData.anomalyFlag = fullAnomaly.anomaly;
     updateData.anomalyReason = fullAnomaly.anomaly ? fullAnomaly.reasons.join('; ') : null;
@@ -2424,6 +2432,58 @@ route('GET', '/api/audit/:project/baseline', (_req, res, params) => {
       return jsonResponse(res, 200, { baseline: null, message: 'No baseline computed yet' });
     }
     return jsonResponse(res, 200, { baseline });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/trends — Aggregated score trends over time
+route('GET', '/api/audit/:project/trends', (req, res, params) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  try {
+    const window = query.window || '14d';
+    const scores = store.evalScores.listByProject(params.project, { limit: 10000 });
+    const trends = evalAudit.aggregateTrends(scores, window);
+    return jsonResponse(res, 200, { project: params.project, ...trends });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/wrap-quality — Wrap quality scores for recent sessions
+route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  try {
+    const limit = query.limit ? parseInt(query.limit, 10) : 10;
+    const sessions = store.evalExchanges.listSessions(params.project, { limit });
+
+    // Resolve methodology template for wrap step definitions
+    const projects = store.projects.list();
+    const project = projects.find(p => p.name === params.project);
+    let methodology = null;
+    if (project) {
+      try { methodology = store.templates.get(project.methodology); } catch { /* use null */ }
+    }
+
+    const results = sessions.map(sess => {
+      // Get last 5 exchanges for this session
+      const exchanges = store.evalExchanges.list({
+        project: params.project,
+        sessionId: sess.sessionId
+      }).slice(-5);
+
+      const quality = evalAudit.scoreWrapQuality(exchanges, methodology);
+      return {
+        sessionId: sess.sessionId,
+        exchangeCount: sess.exchangeCount,
+        lastTimestamp: sess.lastTimestamp,
+        ...quality
+      };
+    });
+
+    return jsonResponse(res, 200, { project: params.project, sessions: results });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'INTERNAL');
   }
