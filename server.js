@@ -2231,6 +2231,42 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     { tier1Flags: tier1Result.flags }
   );
 
+  // Cost cap enforcement — skip paid tiers if session cost exceeds cap
+  const costCap = auditConfig.costCapPerSession || 1.00;
+  const sessionCost = store.evalScores.getSessionCost(body.session_id);
+  const costCapResult = evalAudit.checkCostCap(sessionCost, costCap);
+
+  if (costCapResult.exceeded && samplingDecision.shouldScore) {
+    // Store Tier 1 only (free), mark as cost-cap-skipped
+    store.evalExchanges.updateScored(exchange.id, 3);
+
+    if (tier1Result.flags.length > 0) {
+      store.evalScores.insert({
+        exchangeId: exchange.id,
+        schemaVersion: evalDims.schemaVersion || 'default-v1',
+        judgeModel: 'structural',
+        scoredAt: new Date().toISOString(),
+        methodology: project ? project.methodology : null,
+        tier1StructuralScore: tier1Result.score,
+        tier1Flags: tier1Result.flags,
+        tier2Skipped: true,
+        tier2_5Skipped: true,
+        tier3Skipped: true,
+        anomalyFlag: true,
+        anomalyReason: `Structural: ${tier1Result.flags.join(', ')}`,
+        costUsd: 0
+      });
+    }
+
+    return jsonResponse(res, 201, {
+      exchangeId: exchange.id,
+      scored: false,
+      reason: 'cost_cap_exceeded',
+      tier1: tier1Result,
+      costCap: { currentCost: costCapResult.currentCost, cap: costCapResult.cap }
+    });
+  }
+
   if (!samplingDecision.shouldScore) {
     // Mark as skipped (sampling) but still store Tier 1 result
     store.evalExchanges.updateScored(exchange.id, 2);
@@ -2580,6 +2616,40 @@ route('PUT', '/api/audit/:project/incidents/:id', (_req, res, params, body) => {
   }
 });
 
+// POST /api/audit/:project/scores/:id/human — Submit human score for an exchange
+route('POST', '/api/audit/:project/scores/:id/human', (_req, res, params, body) => {
+  try {
+    const score = store.evalScores.get(params.id);
+    if (!score) {
+      return errorResponse(res, 404, 'Score record not found', 'NOT_FOUND');
+    }
+    // Verify score belongs to the project
+    const exchange = store.evalExchanges.get(score.exchangeId);
+    if (!exchange || exchange.project !== params.project) {
+      return errorResponse(res, 404, 'Score record not found for this project', 'NOT_FOUND');
+    }
+    const validation = evalAudit.validateHumanScore(body);
+    if (!validation.valid) {
+      return errorResponse(res, 400, validation.error, 'VALIDATION');
+    }
+    const updated = store.evalScores.updateHumanScore(params.id, body);
+    return jsonResponse(res, 200, { score: updated });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// POST /api/audit/retention/run — Manually trigger retention policy
+route('POST', '/api/audit/retention/run', (_req, res, _params, body) => {
+  try {
+    const retentionDays = (body && body.retentionDays) || 90;
+    const result = evalAudit.runRetentionPolicy(store, retentionDays);
+    return jsonResponse(res, 200, result);
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
 // ── Server Creation ──
 
 /**
@@ -2648,6 +2718,17 @@ if (require.main === module) {
   evalAudit.startWatchdog((level, sessionId, project, message) => {
     log.warn('Eval audit watchdog alert', { level, sessionId, project, message });
   });
+
+  // Run retention policy on startup (purge old eval data)
+  try {
+    const retentionDays = store.DEFAULT_PROJECT_CONFIG.evalAuditMode.retentionDays || 90;
+    const retentionResult = evalAudit.runRetentionPolicy(store, retentionDays);
+    if (retentionResult.exchangesPurged > 0) {
+      log.info('Startup retention policy', retentionResult);
+    }
+  } catch (err) {
+    log.warn('Startup retention policy failed', { error: err.message });
+  }
 
   // Start document lock expiry timer (every 5 minutes)
   const _lockExpiryInterval = setInterval(() => {

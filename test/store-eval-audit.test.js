@@ -575,3 +575,126 @@ describe('store.evalIncidents', () => {
     assert.equal(list[1].title, 'Old');
   });
 });
+
+// ── Human Scoring ──
+
+describe('store.evalScores.updateHumanScore', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eval-human-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('stores and retrieves human score', () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 's1', project: 'P', timestamp: new Date().toISOString(),
+      userMessage: 'hi', agentResponse: 'hello'
+    });
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: new Date().toISOString(), tier1StructuralScore: 1.0, tier1Flags: []
+    });
+
+    const updated = store.evalScores.updateHumanScore(score.id, { score: 4, comment: 'Good response' });
+    assert.equal(updated.humanScore, 4);
+    assert.equal(updated.humanComment, 'Good response');
+    assert.ok(updated.humanScoredAt);
+  });
+
+  it('human score fields default to null', () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 's1', project: 'P', timestamp: new Date().toISOString(),
+      userMessage: 'hi', agentResponse: 'hello'
+    });
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: new Date().toISOString(), tier1StructuralScore: 1.0, tier1Flags: []
+    });
+    assert.equal(score.humanScore, null);
+    assert.equal(score.humanComment, null);
+    assert.equal(score.humanScoredAt, null);
+  });
+});
+
+// ── Session Cost Aggregation ──
+
+describe('store.evalScores.getSessionCost', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eval-cost-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('aggregates cost across session exchanges', () => {
+    const ts = new Date().toISOString();
+    const ex1 = store.evalExchanges.insert({ sessionId: 'sess-A', project: 'P', timestamp: ts, userMessage: 'a', agentResponse: 'b' });
+    const ex2 = store.evalExchanges.insert({ sessionId: 'sess-A', project: 'P', timestamp: ts, userMessage: 'c', agentResponse: 'd' });
+    store.evalScores.insert({ exchangeId: ex1.id, schemaVersion: 'v1', judgeModel: 'haiku', scoredAt: ts, costUsd: 0.003 });
+    store.evalScores.insert({ exchangeId: ex2.id, schemaVersion: 'v1', judgeModel: 'haiku', scoredAt: ts, costUsd: 0.007 });
+
+    const total = store.evalScores.getSessionCost('sess-A');
+    assert.ok(Math.abs(total - 0.01) < 0.0001);
+  });
+
+  it('returns 0 for session with no scores', () => {
+    assert.equal(store.evalScores.getSessionCost('nonexistent'), 0);
+  });
+});
+
+// ── Retention Purge ──
+
+describe('store.evalExchanges.purgeOlderThan', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eval-purge-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('purges old exchanges and their scores', () => {
+    const old = '2025-01-01T00:00:00Z';
+    const recent = '2026-03-24T00:00:00Z';
+    const exOld = store.evalExchanges.insert({ sessionId: 's', project: 'P', timestamp: old, userMessage: 'old', agentResponse: 'old' });
+    const exNew = store.evalExchanges.insert({ sessionId: 's', project: 'P', timestamp: recent, userMessage: 'new', agentResponse: 'new' });
+    store.evalScores.insert({ exchangeId: exOld.id, schemaVersion: 'v1', judgeModel: 'structural', scoredAt: old, costUsd: 0 });
+    store.evalScores.insert({ exchangeId: exNew.id, schemaVersion: 'v1', judgeModel: 'structural', scoredAt: recent, costUsd: 0 });
+
+    const result = store.evalExchanges.purgeOlderThan('2026-01-01T00:00:00Z');
+    assert.equal(result.exchangesPurged, 1);
+    assert.equal(result.scoresPurged, 1);
+
+    // New exchange still exists
+    assert.ok(store.evalExchanges.get(exNew.id));
+    assert.ok(store.evalScores.getByExchange(exNew.id));
+
+    // Old exchange gone
+    assert.equal(store.evalExchanges.get(exOld.id), null);
+    assert.equal(store.evalScores.getByExchange(exOld.id), null);
+  });
+
+  it('returns zeros when nothing to purge', () => {
+    const result = store.evalExchanges.purgeOlderThan('2020-01-01T00:00:00Z');
+    assert.equal(result.exchangesPurged, 0);
+    assert.equal(result.scoresPurged, 0);
+  });
+});

@@ -2,6 +2,21 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.8.0] - 2026-03-24
+
+### Added
+
+- **Eval Audit Mode — Chunk 5: Bidirectional Scoring, Cost Cap, Retention, UI + Polish (Feature Complete)**
+  - **Bidirectional (human-side) scoring** — `validateHumanScore()` validates 1-5 scale submissions; `POST /api/audit/:project/scores/:id/human` endpoint stores human score, comment, and timestamp on any score record. Schema v10 migration adds `human_score`, `human_comment`, `human_scored_at` columns to `eval_scores`
+  - **Cost cap enforcement** — `checkCostCap()` checks accumulated session cost against `costCapPerSession` config (default $1.00/session). Ingest handler skips paid scoring tiers when cap exceeded, stores Tier 1 only (free), returns `reason: 'cost_cap_exceeded'`. `getSessionCost(sessionId)` store method aggregates cost across session exchanges
+  - **Retention policy** — `runRetentionPolicy(store, retentionDays)` purges exchanges and cascading scores older than the configured window (default 90 days). `purgeOlderThan(cutoffDate)` store method deletes scores first (FK dependency) then exchanges. Runs automatically on server startup; manual trigger via `POST /api/audit/retention/run`
+  - **evalDimensions validation** — `validateTemplate()` in `lib/methodologies.js` now validates `evalDimensions` field: schemaVersion required, tier1 checks must be `"pattern"` type with patterns array, tier2 entries need id+description, tier3 entries require `when` field from valid set (always, execution_task, disagreement, high_stakes, multi_user, implementation_task, code_change)
+  - **Startup banner** — `generatePrimePrompt()` adds "Eval Audit Mode: Active" section when enabled, showing judge model, tiers, sampling config, cost cap, and open incident count. Gives the agent visibility that it's being evaluated
+  - **Project card audit badge** — `enrichProject()` exposes `evalAudit: { enabled, openIncidents }`. Project cards show green "Audit" badge with incident count pill when audit is active
+  - **Dashboard audit panel** — Expandable "Audit" panel in landing page header with incident count badge. Panel shows summary table per audit-enabled project: exchange count, scored count, anomalies, open incidents. Loads summaries on first open
+  - CSS: `.badge-audit`, `.audit-dot`, `.badge-anomaly`, `.audit-panel`, `.audit-summary-table` styles
+  - 28 new tests (1186 → 1214): human score store CRUD (2), session cost aggregation (2), retention purge (2), validateHumanScore (7), checkCostCap (3), runRetentionPolicy (2), evalDimensions validation (5), API endpoints (human score 3, retention 1, cost cap ingest 1)
+
 ## [3.7.0] - 2026-03-24
 
 ### Added

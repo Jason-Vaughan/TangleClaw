@@ -1380,3 +1380,98 @@ describe('eval-audit: generateIncidents', () => {
     assert.equal(spike.status, 'open');
   });
 });
+
+// ── Bidirectional (Human) Scoring Validation ──
+
+describe('eval-audit: validateHumanScore', () => {
+  it('accepts valid score', () => {
+    const result = evalAudit.validateHumanScore({ score: 4, comment: 'Good' });
+    assert.equal(result.valid, true);
+  });
+
+  it('accepts score without comment', () => {
+    const result = evalAudit.validateHumanScore({ score: 3 });
+    assert.equal(result.valid, true);
+  });
+
+  it('rejects missing score', () => {
+    const result = evalAudit.validateHumanScore({ comment: 'test' });
+    assert.equal(result.valid, false);
+    assert.ok(result.error.includes('score'));
+  });
+
+  it('rejects score out of range (low)', () => {
+    const result = evalAudit.validateHumanScore({ score: 0 });
+    assert.equal(result.valid, false);
+  });
+
+  it('rejects score out of range (high)', () => {
+    const result = evalAudit.validateHumanScore({ score: 6 });
+    assert.equal(result.valid, false);
+  });
+
+  it('rejects non-object input', () => {
+    const result = evalAudit.validateHumanScore(null);
+    assert.equal(result.valid, false);
+  });
+
+  it('rejects non-numeric score', () => {
+    const result = evalAudit.validateHumanScore({ score: 'good' });
+    assert.equal(result.valid, false);
+  });
+});
+
+// ── Cost Cap ──
+
+describe('eval-audit: checkCostCap', () => {
+  it('returns not exceeded when under cap', () => {
+    const result = evalAudit.checkCostCap(0.50, 1.00);
+    assert.equal(result.exceeded, false);
+    assert.equal(result.currentCost, 0.50);
+    assert.equal(result.cap, 1.00);
+  });
+
+  it('returns exceeded when at cap', () => {
+    const result = evalAudit.checkCostCap(1.00, 1.00);
+    assert.equal(result.exceeded, true);
+  });
+
+  it('returns exceeded when over cap', () => {
+    const result = evalAudit.checkCostCap(1.50, 1.00);
+    assert.equal(result.exceeded, true);
+  });
+});
+
+// ── Retention Policy ──
+
+describe('eval-audit: runRetentionPolicy', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'tc-eval-ret-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    require('node:fs').rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('purges exchanges older than retentionDays', () => {
+    const old = new Date(Date.now() - 100 * 86400000).toISOString();
+    const recent = new Date().toISOString();
+    store.evalExchanges.insert({ sessionId: 's', project: 'P', timestamp: old, userMessage: 'old', agentResponse: 'old' });
+    store.evalExchanges.insert({ sessionId: 's', project: 'P', timestamp: recent, userMessage: 'new', agentResponse: 'new' });
+
+    const result = evalAudit.runRetentionPolicy(store, 90);
+    assert.equal(result.exchangesPurged, 1);
+    assert.ok(result.cutoffDate);
+  });
+
+  it('returns zeros with 0 retentionDays', () => {
+    const result = evalAudit.runRetentionPolicy(store, 0);
+    assert.equal(result.exchangesPurged, 0);
+    assert.equal(result.cutoffDate, null);
+  });
+});

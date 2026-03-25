@@ -27,7 +27,10 @@ const state = {
   groupItemsOpen: {},
   openclawConnections: [],
   openclawOpen: false,
-  openclawItemsOpen: {}
+  openclawItemsOpen: {},
+  auditOpen: false,
+  auditSummaries: {},
+  auditLoaded: false
 };
 
 // ── API Helpers ──
@@ -255,6 +258,12 @@ async function loadProjects() {
   renderProjects();
   renderSessionCount();
   updateUnregisteredToggle();
+
+  // Update audit incident count badge
+  const totalIncidents = state.projects.reduce((sum, p) =>
+    sum + ((p.evalAudit && p.evalAudit.openIncidents) || 0), 0);
+  const countEl = document.getElementById('auditIncidentCount');
+  if (countEl) countEl.textContent = totalIncidents;
 }
 
 function collectTags() {

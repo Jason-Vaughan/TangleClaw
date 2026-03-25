@@ -352,4 +352,100 @@ describe('API /api/audit', () => {
     const { status } = await request(server, 'PUT', `/api/audit/val-test/incidents/${inc.id}`, { status: 'bogus' });
     assert.equal(status, 400);
   });
+
+  // ── Human Scoring Endpoint ──
+
+  it('POST /api/audit/:project/scores/:id/human accepts valid score', async () => {
+    // Create exchange and score
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-h', project: 'human-test', timestamp: new Date().toISOString(),
+      userMessage: 'test', agentResponse: 'response'
+    });
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: new Date().toISOString(), tier1StructuralScore: 1.0, tier1Flags: []
+    });
+
+    const { status, data } = await request(server, 'POST',
+      `/api/audit/human-test/scores/${score.id}/human`,
+      { score: 4, comment: 'Nice work' }
+    );
+    assert.equal(status, 200);
+    assert.equal(data.score.humanScore, 4);
+    assert.equal(data.score.humanComment, 'Nice work');
+  });
+
+  it('POST /api/audit/:project/scores/:id/human rejects invalid score', async () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-h2', project: 'human-test2', timestamp: new Date().toISOString(),
+      userMessage: 'test', agentResponse: 'response'
+    });
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: new Date().toISOString(), tier1StructuralScore: 1.0, tier1Flags: []
+    });
+
+    const { status } = await request(server, 'POST',
+      `/api/audit/human-test2/scores/${score.id}/human`,
+      { score: 10 }
+    );
+    assert.equal(status, 400);
+  });
+
+  it('POST /api/audit/:project/scores/:id/human returns 404 for wrong project', async () => {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-h3', project: 'proj-a', timestamp: new Date().toISOString(),
+      userMessage: 'test', agentResponse: 'response'
+    });
+    const score = store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'structural',
+      scoredAt: new Date().toISOString(), tier1StructuralScore: 1.0, tier1Flags: []
+    });
+
+    const { status } = await request(server, 'POST',
+      `/api/audit/proj-b/scores/${score.id}/human`,
+      { score: 3 }
+    );
+    assert.equal(status, 404);
+  });
+
+  // ── Retention Endpoint ──
+
+  it('POST /api/audit/retention/run returns purge stats', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/retention/run', { retentionDays: 90 });
+    assert.equal(status, 200);
+    assert.equal(typeof data.exchangesPurged, 'number');
+    assert.equal(typeof data.scoresPurged, 'number');
+    assert.ok(data.cutoffDate);
+  });
+
+  // ── Cost Cap in Ingest ──
+
+  it('POST /api/audit/ingest returns cost_cap_exceeded when cap hit', async () => {
+    // Create exchanges with enough cost to exceed cap
+    for (let i = 0; i < 3; i++) {
+      const ex = store.evalExchanges.insert({
+        sessionId: 'cap-sess', project: 'cap-test', timestamp: new Date().toISOString(),
+        userMessage: `msg${i}`, agentResponse: `resp${i}`
+      });
+      store.evalScores.insert({
+        exchangeId: ex.id, schemaVersion: 'v1', judgeModel: 'haiku',
+        scoredAt: new Date().toISOString(), costUsd: 0.50
+      });
+    }
+
+    // Now ingest another exchange — session cost is 1.50 which exceeds default 1.00 cap
+    const { status, data } = await request(server, 'POST', '/api/audit/ingest', {
+      session_id: 'cap-sess',
+      exchange: {
+        id: `ex-cap-${Date.now()}`, timestamp: new Date().toISOString(),
+        user_message: { content: 'test' },
+        agent_response: { content: 'response' }
+      }
+    }, { 'Authorization': `Bearer ${auditSecret}` });
+
+    assert.equal(status, 201);
+    assert.equal(data.reason, 'cost_cap_exceeded');
+    assert.equal(data.scored, false);
+  });
 });

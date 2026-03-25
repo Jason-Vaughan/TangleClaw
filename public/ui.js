@@ -119,6 +119,17 @@ function renderCard(project) {
     `<span class="badge badge-group" title="${esc(g.name)}: ${g.docCount || 0} shared doc${(g.docCount || 0) !== 1 ? 's' : ''}">${esc(g.name)}</span>`
   ).join('');
 
+  // Eval audit badge
+  const auditBadge = project.evalAudit && project.evalAudit.enabled
+    ? (() => {
+        const incidents = project.evalAudit.openIncidents || 0;
+        const incidentPill = incidents > 0
+          ? `<span class="badge-anomaly" title="${incidents} open incident${incidents !== 1 ? 's' : ''}">${incidents}</span>`
+          : '';
+        return `<span class="badge badge-audit" title="Eval Audit active${incidents ? ` — ${incidents} open incident${incidents !== 1 ? 's' : ''}` : ''}"><span class="audit-dot"></span>Audit${incidentPill}</span>`;
+      })()
+    : '';
+
   const statusDot = hasSession
     ? `<span class="status-dot active" title="Session active"></span>`
     : `<span class="status-dot" title="No active session"></span>`;
@@ -134,6 +145,7 @@ function renderCard(project) {
       ${methBadge}
       ${phaseBadge}
       ${groupBadges}
+      ${auditBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -1911,11 +1923,83 @@ async function saveDoc() {
   await loadGroups();
 }
 
+// ── Eval Audit Panel ──
+
+/**
+ * Toggle the Eval Audit panel open/closed.
+ */
+function toggleAudit() {
+  state.auditOpen = !state.auditOpen;
+  const panel = document.getElementById('auditPanel');
+  const toggle = document.getElementById('auditToggle');
+  panel.classList.toggle('open', state.auditOpen);
+  toggle.classList.toggle('active', state.auditOpen);
+  toggle.setAttribute('aria-expanded', state.auditOpen);
+  if (state.auditOpen && !state.auditLoaded) {
+    loadAuditSummaries();
+  }
+}
+
+/**
+ * Load audit summaries for all projects that have audit enabled.
+ */
+async function loadAuditSummaries() {
+  state.auditLoaded = true;
+  const auditProjects = state.projects.filter(p => p.evalAudit && p.evalAudit.enabled);
+  if (auditProjects.length === 0) {
+    renderAuditPanel();
+    return;
+  }
+
+  state.auditSummaries = {};
+  const summaries = await Promise.all(
+    auditProjects.map(async (p) => {
+      const data = await api(`/api/audit/${encodeURIComponent(p.name)}/summary`);
+      return { project: p.name, summary: data, incidents: p.evalAudit.openIncidents || 0 };
+    })
+  );
+  for (const s of summaries) {
+    state.auditSummaries[s.project] = s;
+  }
+  renderAuditPanel();
+}
+
+/**
+ * Render the Eval Audit dashboard panel.
+ */
+function renderAuditPanel() {
+  const panel = document.getElementById('auditPanel');
+  const auditProjects = state.projects.filter(p => p.evalAudit && p.evalAudit.enabled);
+
+  if (auditProjects.length === 0) {
+    panel.innerHTML = '<div class="audit-empty">No projects have Eval Audit enabled.</div>';
+    return;
+  }
+
+  let html = '<table class="audit-summary-table"><thead><tr><th>Project</th><th>Exchanges</th><th>Scored</th><th>Anomalies</th><th>Incidents</th></tr></thead><tbody>';
+  for (const p of auditProjects) {
+    const s = state.auditSummaries[p.name];
+    const summary = s && s.summary ? s.summary : {};
+    const incidents = p.evalAudit.openIncidents || 0;
+    const incidentClass = incidents > 0 ? ' style="color:#d32f2f;font-weight:600"' : '';
+    html += `<tr>
+      <td>${esc(p.name)}</td>
+      <td>${summary.totalExchanges || 0}</td>
+      <td>${summary.scoredExchanges || 0}</td>
+      <td>${summary.anomalyCount || 0}</td>
+      <td${incidentClass}>${incidents}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  panel.innerHTML = html;
+}
+
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
 $('portsToggle').addEventListener('click', togglePorts);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);
+$('auditToggle').addEventListener('click', toggleAudit);
 $('ocCancelBtn').addEventListener('click', closeConnectionModal);
 $('ocSaveBtn').addEventListener('click', saveConnection);
 $('ocTestBtn').addEventListener('click', testConnection);
