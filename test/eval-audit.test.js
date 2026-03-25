@@ -1,9 +1,13 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const evalAudit = require('../lib/eval-audit');
+const store = require('../lib/store');
 
 setLevel('error');
 
@@ -1040,5 +1044,339 @@ describe('eval-audit: runScoringPipeline with Tier 2.5', () => {
 
     assert.equal(result.tier2_5, null);
     assert.ok(!result.tiersRun.includes('tier2_5'));
+  });
+});
+
+// ── Baseline Computation ──
+
+describe('eval-audit: computeBaseline', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ea-baseline-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Helper to seed an exchange + score at a given timestamp.
+   */
+  function seedScore(project, scoredAt, overrides = {}) {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-1', connectionId: 'conn-1', project,
+      agentModel: 'claude-opus-4-6', timestamp: scoredAt,
+      turnNumber: overrides.turnNumber || 1,
+      userMessage: 'msg', agentResponse: 'resp',
+      usageInputTokens: 10, usageOutputTokens: 20
+    });
+    store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', scoredAt,
+      judgeModel: 'claude-haiku-4-5-20251001',
+      methodology: overrides.methodology || null,
+      tier1StructuralScore: overrides.tier1 ?? 1.0,
+      tier1Flags: overrides.tier1Flags || [],
+      tier2SemanticScore: overrides.tier2 ?? 0.8,
+      tier2Reasoning: '', tier2Skipped: false,
+      tier2_5AlignmentScore: overrides.tier2_5 ?? 0.9,
+      tier2_5Reasoning: '', tier2_5Skipped: false,
+      tier3BehavioralScore: overrides.tier3 ?? 4.0,
+      tier3DimensionScores: {}, tier3Skipped: false,
+      anomalyFlag: overrides.anomalyFlag || false,
+      anomalyReason: null, costUsd: 0.001
+    });
+  }
+
+  it('returns null when no scores exist', () => {
+    const result = evalAudit.computeBaseline('empty', store);
+    assert.equal(result, null);
+  });
+
+  it('computes averages and stddev from scores in window', () => {
+    const now = new Date();
+    const daysAgo = (n) => new Date(now.getTime() - n * 86400000).toISOString();
+
+    seedScore('P', daysAgo(1), { tier1: 1.0, tier2: 0.8, tier3: 4.0 });
+    seedScore('P', daysAgo(2), { tier1: 0.8, tier2: 0.6, tier3: 3.0 });
+    seedScore('P', daysAgo(3), { tier1: 0.9, tier2: 0.7, tier3: 3.5 });
+
+    const baseline = evalAudit.computeBaseline('P', store, { window: '14d' });
+    assert.ok(baseline);
+    assert.equal(baseline.project, 'P');
+    assert.equal(baseline.exchangeCount, 3);
+
+    // Check tier1 stats
+    assert.ok(baseline.dimensionAverages.tier1.avg > 0);
+    assert.ok(baseline.dimensionAverages.tier1.stddev >= 0);
+    assert.equal(baseline.dimensionAverages.tier1.count, 3);
+
+    // Check anomaly rate
+    assert.equal(baseline.dimensionAverages.anomalyRate, 0);
+  });
+
+  it('excludes scores outside the window', () => {
+    const now = new Date();
+    const daysAgo = (n) => new Date(now.getTime() - n * 86400000).toISOString();
+
+    seedScore('P', daysAgo(1), { tier1: 1.0 });
+    seedScore('P', daysAgo(20), { tier1: 0.5 }); // Outside 14d window
+
+    const baseline = evalAudit.computeBaseline('P', store, { window: '14d' });
+    assert.ok(baseline);
+    assert.equal(baseline.exchangeCount, 1);
+  });
+});
+
+// ── Drift Detection ──
+
+describe('eval-audit: detectDrift', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ea-drift-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function seedScore(project, scoredAt, overrides = {}) {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-1', connectionId: 'conn-1', project,
+      agentModel: 'claude-opus-4-6', timestamp: scoredAt,
+      turnNumber: 1, userMessage: 'msg', agentResponse: 'resp',
+      usageInputTokens: 10, usageOutputTokens: 20
+    });
+    store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', scoredAt,
+      judgeModel: 'claude-haiku-4-5-20251001',
+      tier1StructuralScore: overrides.tier1 ?? 1.0,
+      tier1Flags: [], tier2SemanticScore: overrides.tier2 ?? 0.8,
+      tier2Reasoning: '', tier2Skipped: false,
+      tier2_5AlignmentScore: overrides.tier2_5 ?? 0.9,
+      tier2_5Reasoning: '', tier2_5Skipped: false,
+      tier3BehavioralScore: overrides.tier3 ?? 4.0,
+      tier3DimensionScores: {}, tier3Skipped: false,
+      anomalyFlag: false, anomalyReason: null, costUsd: 0.001
+    });
+  }
+
+  it('returns no_baseline when no baseline exists', () => {
+    const result = evalAudit.detectDrift('P', store);
+    assert.equal(result.drifting, false);
+    assert.equal(result.reason, 'no_baseline');
+  });
+
+  it('returns no drift when scores are within 1σ', () => {
+    // Create baseline with avg=0.8, stddev=0.1
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.1, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.1, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.1, count: 10 },
+        tier3: { avg: 4.0, stddev: 0.5, count: 10 }
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    // Scores within normal range
+    for (let d = 1; d <= 5; d++) {
+      seedScore('P', daysAgo(d), { tier2: 0.75 });
+    }
+
+    const result = evalAudit.detectDrift('P', store, { driftWindow: '7d' });
+    assert.equal(result.drifting, false);
+  });
+
+  it('detects drift when 3+ consecutive days deviate >1σ', () => {
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.05, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.05, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.05, count: 10 },
+        tier3: { avg: 4.0, stddev: 0.3, count: 10 }
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    // 4 consecutive days with tier2 significantly below baseline
+    for (let d = 1; d <= 4; d++) {
+      seedScore('P', daysAgo(d), { tier2: 0.5 }); // 0.3 below avg (>1σ=0.05)
+    }
+
+    const result = evalAudit.detectDrift('P', store, { driftWindow: '7d' });
+    assert.equal(result.drifting, true);
+    assert.ok(result.driftDetails.length > 0);
+    const detail = result.driftDetails.find(d => d.tier === 'tier2');
+    assert.ok(detail);
+    assert.equal(detail.direction, 'down');
+    assert.ok(detail.days >= 3);
+  });
+
+  it('detects drift on multiple tiers simultaneously', () => {
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.05, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.05, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.05, count: 10 },
+        tier3: { avg: 4.0, stddev: 0.2, count: 10 }
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    for (let d = 1; d <= 4; d++) {
+      seedScore('P', daysAgo(d), { tier2: 0.5, tier3: 2.0 });
+    }
+
+    const result = evalAudit.detectDrift('P', store, { driftWindow: '7d' });
+    assert.equal(result.drifting, true);
+    assert.ok(result.driftDetails.length >= 2);
+    const tiers = result.driftDetails.map(d => d.tier);
+    assert.ok(tiers.includes('tier2'));
+    assert.ok(tiers.includes('tier3'));
+  });
+});
+
+// ── Incident Generation ──
+
+describe('eval-audit: generateIncidents', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ea-incidents-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function seedScore(project, scoredAt, overrides = {}) {
+    const ex = store.evalExchanges.insert({
+      sessionId: 'sess-1', connectionId: 'conn-1', project,
+      agentModel: 'claude-opus-4-6', timestamp: scoredAt,
+      turnNumber: 1, userMessage: 'msg', agentResponse: 'resp',
+      usageInputTokens: 10, usageOutputTokens: 20
+    });
+    store.evalScores.insert({
+      exchangeId: ex.id, schemaVersion: 'v1', scoredAt,
+      judgeModel: 'claude-haiku-4-5-20251001',
+      tier1StructuralScore: overrides.tier1 ?? 1.0,
+      tier1Flags: [], tier2SemanticScore: overrides.tier2 ?? 0.8,
+      tier2Reasoning: '', tier2Skipped: false,
+      tier2_5AlignmentScore: overrides.tier2_5 ?? 0.9,
+      tier2_5Reasoning: '', tier2_5Skipped: false,
+      tier3BehavioralScore: overrides.tier3 ?? 4.0,
+      tier3DimensionScores: {}, tier3Skipped: false,
+      anomalyFlag: overrides.anomalyFlag || false,
+      anomalyReason: null, costUsd: 0.001
+    });
+  }
+
+  it('creates drift incidents and deduplicates on re-run', () => {
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.05, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.05, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.05, count: 10 },
+        tier3: { avg: 4.0, stddev: 0.3, count: 10 },
+        anomalyRate: 0.1
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    for (let d = 1; d <= 4; d++) {
+      seedScore('P', daysAgo(d), { tier2: 0.5 });
+    }
+
+    const created = evalAudit.generateIncidents('P', store);
+    assert.ok(created.length > 0);
+    assert.equal(created[0].type, 'drift');
+    assert.equal(created[0].status, 'open');
+
+    // Re-run should not create duplicates
+    const second = evalAudit.generateIncidents('P', store);
+    assert.equal(second.length, 0);
+  });
+
+  it('assigns critical severity for large deviations', () => {
+    // stddev=0.05, deviation will be 0.3 which is > 2*0.05=0.1 → critical
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.05, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.05, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.05, count: 10 },
+        tier3: { avg: 4.0, stddev: 0.3, count: 10 },
+        anomalyRate: 0.1
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    for (let d = 1; d <= 4; d++) {
+      seedScore('P', daysAgo(d), { tier2: 0.4 }); // 0.4 deviation > 2*0.05
+    }
+
+    const created = evalAudit.generateIncidents('P', store);
+    const driftInc = created.find(i => i.type === 'drift');
+    assert.ok(driftInc);
+    assert.equal(driftInc.severity, 'critical');
+  });
+
+  it('generates anomaly spike incident when rate exceeds 2x baseline', () => {
+    store.evalBaselines.insert({
+      project: 'P', computedAt: new Date().toISOString(),
+      windowStart: new Date(Date.now() - 14 * 86400000).toISOString(),
+      windowEnd: new Date().toISOString(),
+      dimensionAverages: {
+        tier1: { avg: 1.0, stddev: 0.05, count: 10 },
+        tier2: { avg: 0.8, stddev: 0.3, count: 10 },
+        tier2_5: { avg: 0.9, stddev: 0.3, count: 10 },
+        tier3: { avg: 4.0, stddev: 1.0, count: 10 },
+        anomalyRate: 0.1
+      },
+      exchangeCount: 10, schemaVersion: 'v1'
+    });
+
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+    // 5 recent scores, 4 with anomalies (80% > 2x 10% baseline)
+    for (let d = 0; d < 3; d++) {
+      seedScore('P', daysAgo(d), { anomalyFlag: true });
+    }
+    seedScore('P', daysAgo(1), { anomalyFlag: true });
+    seedScore('P', daysAgo(2), { anomalyFlag: false });
+
+    const created = evalAudit.generateIncidents('P', store);
+    const spike = created.find(i => i.type === 'anomaly_spike');
+    assert.ok(spike, 'anomaly_spike incident should be created');
+    assert.equal(spike.status, 'open');
   });
 });
