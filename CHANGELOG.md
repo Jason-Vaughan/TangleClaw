@@ -17,6 +17,10 @@ All notable changes to TangleClaw are documented in this file.
   - CSS: `.badge-audit`, `.audit-dot`, `.badge-anomaly`, `.audit-panel`, `.audit-summary-table` styles
   - 28 new tests (1186 → 1214): human score store CRUD (2), session cost aggregation (2), retention purge (2), validateHumanScore (7), checkCostCap (3), runRetentionPolicy (2), evalDimensions validation (5), API endpoints (human score 3, retention 1, cost cap ingest 1)
 
+### TODO
+
+- **Manual integration testing of Eval Audit Mode (v3.4.0–v3.8.0)** — All 5 chunks have unit/API tests but need end-to-end verification against a live OpenClaw instance. See `build-plan-eval-audit.md` verification checklists (Phase 1 items 1-6, Phase 2 items 1-6) for the full test plan.
+
 ## [3.7.0] - 2026-03-24
 
 ### Added
