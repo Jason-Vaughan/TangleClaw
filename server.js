@@ -19,6 +19,7 @@ const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const evalAudit = require('./lib/eval-audit');
+const pidfile = require('./lib/pidfile');
 
 const log = createLogger('server');
 
@@ -2754,9 +2755,18 @@ if (require.main === module) {
     setLevel(envLogLevel);
   }
 
-  // Initialize store
+  // Initialize store (needed for config before PID check)
   store.init();
   const config = store.config.load();
+
+  // PID file guard — prevent duplicate instances
+  const existingPid = pidfile.check();
+  if (existingPid) {
+    // eslint-disable-next-line no-console
+    console.error(`TangleClaw is already running (PID ${existingPid}). Exiting.`);
+    process.exit(1);
+  }
+  pidfile.write();
 
   // Initialize file logging
   initFileLogging(path.join(store._getBasePath(), 'logs'));
@@ -2807,6 +2817,16 @@ if (require.main === module) {
   }, 5 * 60 * 1000);
 
   const protocol = config.httpsEnabled ? 'https' : 'http';
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      log.error(`Port ${port} is already in use — another process is bound to it. Exiting.`);
+      pidfile.remove();
+      process.exit(1);
+    }
+    throw err;
+  });
+
   server.listen(port, () => {
     log.info(`TangleClaw v${_getVersion()} listening on ${protocol}://*:${port}`, {
       node: process.version,
@@ -2818,6 +2838,7 @@ if (require.main === module) {
   // Graceful shutdown
   const shutdown = () => {
     log.info('Shutting down');
+    pidfile.remove();
     porthub.shutdown({ ttydPort: config.ttydPort || 3100, serverPort: port });
     porthub.stopExpirationTimer();
     modelStatus.stopMonitor();
