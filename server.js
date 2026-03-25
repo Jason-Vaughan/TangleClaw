@@ -2244,38 +2244,78 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     });
   }
 
-  // Store Tier 1 score (Tier 2/3 will be added in future chunks via async scoring)
-  const anomalyCheck = evalAudit.checkPerExchangeAnomaly({
-    tier1Flags: tier1Result.flags,
-    tier3DimensionScores: null,
-    tier2_5AlignmentScore: null
-  });
-
+  // Insert initial Tier 1 score record
   const scoreRecord = store.evalScores.insert({
     exchangeId: exchange.id,
     schemaVersion: evalDims.schemaVersion || 'default-v1',
-    judgeModel: 'structural',
+    judgeModel: auditConfig.judgeModel || 'claude-haiku-4-5-20251001',
     scoredAt: new Date().toISOString(),
     methodology: project ? project.methodology : null,
     tier1StructuralScore: tier1Result.score,
     tier1Flags: tier1Result.flags,
-    tier2Skipped: true,   // Tier 2/3 scoring added in Chunk 2
+    tier2Skipped: true,
     tier2_5Skipped: true,
     tier3Skipped: true,
-    anomalyFlag: anomalyCheck.anomaly,
-    anomalyReason: anomalyCheck.anomaly ? anomalyCheck.reasons.join('; ') : null,
+    anomalyFlag: tier1Result.flags.length > 0,
+    anomalyReason: tier1Result.flags.length > 0 ? `Structural: ${tier1Result.flags.join(', ')}` : null,
     costUsd: 0
   });
 
   store.evalExchanges.updateScored(exchange.id, 1);
 
-  return jsonResponse(res, 201, {
+  // Send immediate response with Tier 1 results (non-blocking)
+  jsonResponse(res, 201, {
     exchangeId: exchange.id,
     scoreId: scoreRecord.id,
     scored: true,
     reason: samplingDecision.reason,
     tier1: tier1Result,
-    anomaly: anomalyCheck.anomaly
+    anomaly: tier1Result.flags.length > 0
+  });
+
+  // Run Tier 2/3 pipeline asynchronously (does not block the response)
+  evalAudit.runScoringPipeline({
+    exchange: { userMessage: exchange.userMessage, agentResponse: exchange.agentResponse, turnNumber: exchange.turnNumber },
+    tier1Result,
+    evalDims,
+    samplingReason: samplingDecision.reason,
+    options: {
+      callJudge: auditConfig._callJudge || undefined,
+      model: auditConfig.judgeModel,
+      apiKey: auditConfig.apiKey,
+      gateCascade: auditConfig.gateCascade !== false
+    }
+  }).then(pipelineResult => {
+    // Update the score record with Tier 2/3 results
+    const updateData = { costUsd: pipelineResult.totalCost };
+
+    if (pipelineResult.tier2) {
+      updateData.tier2SemanticScore = pipelineResult.tier2.score;
+      updateData.tier2Reasoning = pipelineResult.tier2.reasoning;
+      updateData.tier2Skipped = false;
+      updateData.judgeModel = auditConfig.judgeModel || 'claude-haiku-4-5-20251001';
+    }
+
+    if (pipelineResult.tier3) {
+      updateData.tier3BehavioralScore = pipelineResult.tier3.score;
+      updateData.tier3DimensionScores = pipelineResult.tier3.dimensionScores;
+      updateData.tier3Skipped = false;
+    } else {
+      updateData.tier3Skipped = true;
+    }
+
+    // Re-check anomaly with full scoring data
+    const fullAnomaly = evalAudit.checkPerExchangeAnomaly({
+      tier1Flags: tier1Result.flags,
+      tier3DimensionScores: pipelineResult.tier3 ? pipelineResult.tier3.dimensionScores : null,
+      tier2_5AlignmentScore: null
+    });
+    updateData.anomalyFlag = fullAnomaly.anomaly;
+    updateData.anomalyReason = fullAnomaly.anomaly ? fullAnomaly.reasons.join('; ') : null;
+
+    store.evalScores.update(scoreRecord.id, updateData);
+  }).catch(err => {
+    log.error('Async scoring pipeline failed', { exchangeId: exchange.id, error: err.message });
   });
 }, { maxBodySize: 512 * 1024 });
 

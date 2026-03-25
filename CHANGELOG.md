@@ -2,6 +2,24 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.5.0] - 2026-03-24
+
+### Added
+
+- **Eval Audit Mode — Chunk 2: Tier 2/3 Scoring + Gate Cascade**
+  - Tier 2 semantic scorer — LLM judge call (Haiku-class) for scope compliance and information completeness. Returns 0.0-1.0 scores per dimension with reasoning
+  - Tier 3 behavioral dimensional scorer — LLM judge scoring 1-5 per applicable dimension with methodology-specific filtering via `when` field (always, execution_task, disagreement, high_stakes, code_change)
+  - Judge prompt assembly — `buildJudgePrompt()` constructs system prompts from methodology `judgeContext` + dimension definitions, with tier-specific scoring instructions
+  - `callJudge` with dependency injection — default implementation calls Anthropic Messages API via Node `https`; accepts injectable function for testability
+  - Gate cascade cost optimization — Tier 1 fail → run all tiers; routine pass → Tier 2 only; Tier 2 flag → escalate to Tier 3; cascade togglable via `gateCascade` config
+  - `isRoutine()` classifier — determines if an exchange is routine based on turn number, sampling reason, and disagreement patterns
+  - Cost tracking — `estimateCost()` calculates USD cost from token usage with Haiku/Sonnet pricing tiers
+  - `runScoringPipeline()` — orchestrates full Tier 1→2→3 cascade with error handling, cost accumulation, and tier tracking
+  - Async pipeline in ingest handler — Tier 1 scored synchronously, Tier 2/3 run asynchronously after response. Score record updated with pipeline results via new `evalScores.update()`
+  - `evalScores.update()` store method — updates Tier 2/3 fields, anomaly flags, cost, and judge model on existing score records
+  - Markdown-fenced JSON parsing tolerance in judge response parser
+  - 25 new tests (1117 → 1142): judge prompt assembly, Tier 2 scoring with mock judge, Tier 3 dimensional scoring with dimension filtering, cost estimation, routine classification, gate cascade (6 scenarios), store update, error handling
+
 ## [3.4.0] - 2026-03-24
 
 ### Added
