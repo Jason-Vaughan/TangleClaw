@@ -598,6 +598,28 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.oc-tunnel-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 2px;
+  font-size: 12px;
+}
+.badge-tunnel-active {
+  background: rgba(255, 167, 38, 0.2);
+  color: var(--amber);
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.oc-tunnel-detail {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 11px;
+}
 .oc-actions {
   display: flex;
   gap: 6px;

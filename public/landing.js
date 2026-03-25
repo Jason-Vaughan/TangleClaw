@@ -28,6 +28,7 @@ const state = {
   openclawConnections: [],
   openclawOpen: false,
   openclawItemsOpen: {},
+  openclawTunnelStatus: {},
   auditOpen: false,
   auditSummaries: {},
   auditLoaded: false
@@ -213,7 +214,7 @@ async function loadGroups() {
 }
 
 /**
- * Load OpenClaw connections from the API.
+ * Load OpenClaw connections from the API and fetch tunnel status for each.
  */
 async function loadOpenclawConnections() {
   const data = await api('/api/openclaw/connections');
@@ -221,6 +222,14 @@ async function loadOpenclawConnections() {
   state.openclawConnections = data.connections || [];
   const countEl = document.getElementById('openclawCount');
   if (countEl) countEl.textContent = state.openclawConnections.length;
+
+  // Fetch tunnel status for each connection in parallel
+  const statusPromises = state.openclawConnections.map(async (conn) => {
+    const status = await api(`/api/openclaw/connections/${conn.id}/tunnel`);
+    if (status) state.openclawTunnelStatus[conn.id] = status;
+  });
+  await Promise.all(statusPromises);
+
   renderOpenclawConnections();
 }
 

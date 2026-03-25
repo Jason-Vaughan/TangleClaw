@@ -232,6 +232,81 @@ describe('tunnel', () => {
     });
   });
 
+  describe('detectTunnel', () => {
+    it('should detect active tunnel when port is connectable', async () => {
+      const server = net.createServer();
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = server.address().port;
+
+      try {
+        const result = await tunnel.detectTunnel(port);
+        assert.equal(result.active, true);
+        assert.equal(result.connectable, true);
+        assert.equal(result.port, port);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('should return inactive when port is not connectable and no SSH process', async () => {
+      const result = await tunnel.detectTunnel(19991);
+      assert.equal(result.active, false);
+      assert.equal(result.connectable, false);
+      assert.equal(result.pid, null);
+    });
+  });
+
+  describe('killTunnelByPort', () => {
+    it('should release port from PortHub even when no SSH process found', () => {
+      const localPort = 19993;
+      porthub.registerPort(localPort, 'stale-project', 'openclaw-tunnel');
+
+      const result = tunnel.killTunnelByPort(localPort);
+      assert.equal(result.ok, true);
+      assert.equal(result.pid, null);
+
+      const lease = store.portLeases.get(localPort);
+      assert.equal(lease, null, 'port lease should be released');
+    });
+
+    it('should clean up tracked tunnel entry matching the port', () => {
+      tunnel._tunnels.set('tracked-proj', {
+        pid: 999999,
+        localPort: 19994,
+        host: '192.168.20.10',
+        remotePort: 18789
+      });
+
+      const result = tunnel.killTunnelByPort(19994);
+      assert.equal(result.ok, true);
+      assert.equal(tunnel._tunnels.has('tracked-proj'), false);
+    });
+  });
+
+  describe('ensureTunnel force mode', () => {
+    it('should skip force kill when port is not in use', async () => {
+      // Port not in use — force flag should not cause issues
+      const result = await tunnel.ensureTunnel('force-test', {
+        host: '127.0.0.1',
+        port: 99999,
+        localPort: 19992,
+        sshUser: 'nobody',
+        sshKeyPath: '/nonexistent/key',
+        force: true
+      });
+
+      // SSH will fail (bogus config), but force shouldn't cause errors
+      assert.equal(result.alreadyUp, false);
+    });
+  });
+
+  describe('_findSshPidByPort', () => {
+    it('should return null when no SSH process on that port', () => {
+      const pid = tunnel._findSshPidByPort(19990);
+      assert.equal(pid, null);
+    });
+  });
+
   describe('PortHub integration', () => {
     it('ensureTunnel registers port with PortHub when already up', async () => {
       const server = net.createServer();

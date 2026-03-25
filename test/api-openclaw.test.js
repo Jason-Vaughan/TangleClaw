@@ -313,6 +313,52 @@ describe('API /api/openclaw/connections/:id/tunnel', () => {
     assert.ok(data.error);
   });
 
+  it('GET /api/openclaw/connections/:id/tunnel returns tunnel status', async () => {
+    // Create a connection
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'TunnelStatusTest',
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      localPort: 19995
+    });
+    const connId = created.data.id;
+
+    const { status, data } = await request(server, 'GET', `/api/openclaw/connections/${connId}/tunnel`);
+    assert.equal(status, 200);
+    assert.equal(data.localPort, 19995);
+    assert.equal(typeof data.active, 'boolean');
+    assert.equal(typeof data.connectable, 'boolean');
+    assert.equal(typeof data.tracked, 'boolean');
+  });
+
+  it('GET /api/openclaw/connections/:id/tunnel returns 404 for unknown id', async () => {
+    const { status } = await request(server, 'GET', '/api/openclaw/connections/nonexistent/tunnel');
+    assert.equal(status, 404);
+  });
+
+  it('DELETE /api/openclaw/connections/:id/tunnel kills tunnel and returns result', async () => {
+    // Create a connection
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'TunnelKillTest',
+      host: '127.0.0.1',
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      localPort: 19994
+    });
+    const connId = created.data.id;
+
+    const { status, data } = await request(server, 'DELETE', `/api/openclaw/connections/${connId}/tunnel`);
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.localPort, 19994);
+  });
+
+  it('DELETE /api/openclaw/connections/:id/tunnel returns 404 for unknown id', async () => {
+    const { status } = await request(server, 'DELETE', '/api/openclaw/connections/nonexistent/tunnel');
+    assert.equal(status, 404);
+  });
+
   it('POST /api/openclaw/connections/:id/approve-pending returns 404 for unknown id', async () => {
     const { status, data } = await request(server, 'POST', '/api/openclaw/connections/nonexistent/approve-pending');
     assert.equal(status, 404);
