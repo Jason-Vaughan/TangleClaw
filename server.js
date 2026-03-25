@@ -934,10 +934,17 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
 
   // Web UI mode — delegate to async launch path
   if (result.webui) {
-    sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project)
+    const launchOpts = { force: body ? body.force === true : false };
+    sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project, launchOpts)
       .then((webuiResult) => {
         if (webuiResult.error) {
-          return errorResponse(res, 500, webuiResult.error, 'INTERNAL_ERROR');
+          const status = webuiResult.staleTunnel ? 409 : 500;
+          const code = webuiResult.staleTunnel ? 'TUNNEL_CONFLICT' : 'INTERNAL_ERROR';
+          const payload = { error: webuiResult.error, code };
+          if (webuiResult.staleTunnel) payload.staleTunnel = webuiResult.staleTunnel;
+          res.writeHead(status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(payload));
+          return;
         }
         jsonResponse(res, 201, {
           sessionId: webuiResult.session.id,
@@ -1613,7 +1620,7 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
 });
 
 // POST /api/openclaw/connections/:id/tunnel — Start tunnel for standalone access
-route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) => {
+route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params, body) => {
   const conn = store.openclawConnections.get(params.id);
   if (!conn) {
     return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
@@ -1624,7 +1631,8 @@ route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) 
     port: conn.port,
     localPort: conn.localPort,
     sshUser: conn.sshUser,
-    sshKeyPath: conn.sshKeyPath
+    sshKeyPath: conn.sshKeyPath,
+    force: body && body.force === true
   });
 
   if (!tunnelResult.ok) {
@@ -1639,6 +1647,65 @@ route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) 
     ok: true,
     alreadyUp: tunnelResult.alreadyUp,
     webuiUrl,
+    localPort: conn.localPort
+  });
+});
+
+// GET /api/openclaw/connections/:id/tunnel — Get tunnel status for a connection
+route('GET', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) => {
+  const conn = store.openclawConnections.get(params.id);
+  if (!conn) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+
+  const status = await tunnel.detectTunnel(conn.localPort, conn.host);
+  const tracked = tunnel.getTunnel(`oc-direct-${conn.id}`);
+
+  jsonResponse(res, 200, {
+    localPort: conn.localPort,
+    host: conn.host,
+    active: status.active,
+    connectable: status.connectable,
+    pid: status.pid,
+    tracked: !!tracked
+  });
+});
+
+// DELETE /api/openclaw/connections/:id/tunnel — Kill tunnel for a connection
+route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params) => {
+  const conn = store.openclawConnections.get(params.id);
+  if (!conn) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+
+  // Try tracked kill first, then fall back to port-based kill
+  const tracked = tunnel.killTunnel(`oc-direct-${conn.id}`);
+  const byPort = tunnel.killTunnelByPort(conn.localPort, conn.host);
+
+  // Also kill any project-scoped tunnels using this connection's port
+  const projectTunnels = tunnel.listTunnels().filter(t => t.localPort === conn.localPort);
+  for (const t of projectTunnels) {
+    tunnel.killTunnel(t.projectName);
+  }
+
+  // Mark any active webui sessions using this connection as killed
+  const connections = store.openclawConnections.list();
+  const thisConn = connections.find(c => c.id === params.id);
+  if (thisConn) {
+    const projects = store.projects.list();
+    for (const proj of projects) {
+      if (proj.engineId === `openclaw:${params.id}`) {
+        const active = store.sessions.getActive(proj.id);
+        if (active && active.sessionMode === 'webui') {
+          store.sessions.kill(active.id, 'Tunnel killed from connection panel');
+        }
+      }
+    }
+  }
+
+  jsonResponse(res, 200, {
+    ok: true,
+    killedPid: byPort.pid,
     localPort: conn.localPort
   });
 });

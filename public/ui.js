@@ -564,8 +564,11 @@ let killTarget = null;
 function openKill(name) {
   killTarget = name;
   const modal = document.getElementById('killModal');
+  const proj = state.projects.find(p => p.name === name);
+  const isWebui = proj && proj.session && proj.session.sessionMode === 'webui';
+  const modeText = isWebui ? 'tears down the SSH tunnel' : 'terminates the tmux session';
   document.getElementById('killText').innerHTML =
-    `Kill the active session for <strong>${esc(name)}</strong>? This terminates the tmux session immediately.`;
+    `Kill the active session for <strong>${esc(name)}</strong>? This ${modeText} immediately.`;
   document.getElementById('killError').classList.add('hidden');
   document.getElementById('killPassword').value = '';
 
@@ -1608,6 +1611,16 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
       <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
     </div>`;
+    // Tunnel status + kill button
+    const ts = state.openclawTunnelStatus[conn.id];
+    if (ts && ts.active) {
+      html += `<div class="oc-tunnel-status">
+        <span class="badge badge-tunnel-active">tunnel active</span>
+        <span class="oc-tunnel-detail">port ${ts.localPort}${ts.pid ? `, PID ${ts.pid}` : ''}</span>
+        <button class="btn btn-small btn-danger-subtle" onclick="event.stopPropagation(); killOpenclawTunnel('${esc(conn.id)}')" title="Kill SSH tunnel and release port">Kill Tunnel</button>
+      </div>`;
+    }
+
     html += `<div class="oc-actions">
       <button class="btn btn-small btn-primary" onclick="event.stopPropagation(); launchOpenclawWebUI('${esc(conn.id)}')" title="Open Web UI via tunnel">Web UI</button>
       <button class="btn btn-small" onclick="event.stopPropagation(); copyOpenclawSSH('${esc(conn.id)}')" title="Copy SSH command to clipboard">SSH</button>
@@ -1653,6 +1666,40 @@ async function copyOpenclawSSH(connId) {
   } catch {
     toast.textContent = sshCmd;
     toast.className = 'toast toast-ok visible';
+  }
+  setTimeout(() => toast.classList.remove('visible'), 5000);
+}
+
+/**
+ * Kill an OpenClaw SSH tunnel with confirmation.
+ * @param {string} connId - Connection ID
+ */
+async function killOpenclawTunnel(connId) {
+  const conn = state.openclawConnections.find(c => c.id === connId);
+  if (!conn) return;
+
+  const ts = state.openclawTunnelStatus[connId];
+  const detail = ts ? `Port ${ts.localPort}${ts.pid ? `, PID ${ts.pid}` : ''}` : `Port ${conn.localPort}`;
+
+  if (!confirm(`Kill SSH tunnel for "${conn.name}"?\n\n${detail}\n\nThis will terminate the SSH process and release the port. Any active Web UI sessions using this tunnel will be ended.`)) {
+    return;
+  }
+
+  const res = await fetch(`/api/openclaw/connections/${encodeURIComponent(connId)}/tunnel`, {
+    method: 'DELETE'
+  });
+
+  const toast = document.getElementById('toast');
+  if (res.ok) {
+    const data = await res.json();
+    toast.textContent = `Tunnel killed${data.killedPid ? ` (PID ${data.killedPid})` : ''} — port ${data.localPort} released`;
+    toast.className = 'toast toast-ok visible';
+    delete state.openclawTunnelStatus[connId];
+    renderOpenclawConnections();
+  } else {
+    const data = await res.json().catch(() => ({}));
+    toast.textContent = data.error || 'Failed to kill tunnel';
+    toast.className = 'toast toast-err visible';
   }
   setTimeout(() => toast.classList.remove('visible'), 5000);
 }

@@ -216,15 +216,20 @@ describe('Web UI session lifecycle', () => {
     const tunnelModule = require('../lib/tunnel');
     let originalEnsureTunnel;
     let originalCheckHealth;
+    let originalDetectTunnel;
 
     beforeEach(() => {
       originalEnsureTunnel = tunnelModule.ensureTunnel;
       originalCheckHealth = tunnelModule.checkHealth;
+      originalDetectTunnel = tunnelModule.detectTunnel;
+      // Default mock: no existing tunnel
+      tunnelModule.detectTunnel = async () => ({ active: false, pid: null, port: 0, connectable: false });
     });
 
     afterEach(() => {
       tunnelModule.ensureTunnel = originalEnsureTunnel;
       tunnelModule.checkHealth = originalCheckHealth;
+      tunnelModule.detectTunnel = originalDetectTunnel;
     });
 
     it('launches webui session with tunnel and returns iframeUrl', async () => {

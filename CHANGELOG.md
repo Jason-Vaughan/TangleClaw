@@ -2,6 +2,23 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.8.1] - 2026-03-24
+
+### Fixed
+
+- **OpenClaw tunnel kill/cleanup from UI** — Stale SSH tunnels (e.g. from server restarts or crashed sessions) can now be detected and killed directly from the OpenClaw connection panel
+  - `detectTunnel(localPort, host)` — finds SSH tunnel processes by port regardless of in-memory tracking (survives server restarts)
+  - `killTunnelByPort(localPort, host)` — kills SSH tunnel by port, cleans up PortHub lease and in-memory tracking
+  - `ensureTunnel()` now returns PID when tunnel is already up, re-tracks untracked tunnels in memory, and supports `force` option to auto-kill stale tunnels before spawning fresh ones
+  - `GET /api/openclaw/connections/:id/tunnel` — tunnel status endpoint (active, connectable, PID, tracked)
+  - `DELETE /api/openclaw/connections/:id/tunnel` — kills tunnel for a connection (tracked + port-based + project-scoped), marks associated webui sessions as killed
+  - Connection cards show tunnel status badge with port and PID when active, with a "Kill Tunnel" button and confirmation dialog
+  - Session launch returns 409 `TUNNEL_CONFLICT` with `staleTunnel` info when port is blocked by a stale tunnel (instead of generic 500)
+  - `POST /api/sessions/:project` and `POST /api/openclaw/connections/:id/tunnel` accept `force: true` to auto-kill stale tunnels
+  - Kill session modal text is now mode-aware ("tears down the SSH tunnel" for webui, "terminates the tmux session" for tmux)
+  - CSS: `.oc-tunnel-status`, `.badge-tunnel-active`, `.oc-tunnel-detail` styles
+  - 10 new tests (1214 → 1224): detectTunnel (2), killTunnelByPort (2), ensureTunnel force (1), _findSshPidByPort (1), API tunnel status/kill (4)
+
 ## [3.8.0] - 2026-03-24
 
 ### Added
