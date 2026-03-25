@@ -43,6 +43,9 @@
       <button class="dash-action" id="openclawToggle" aria-expanded="false" aria-controls="openclawPanel">
         OpenClaw <span class="dash-badge" id="openclawCount">0</span>
       </button>
+      <button class="dash-action" id="auditToggle" aria-expanded="false" aria-controls="auditPanel">
+        Audit <span class="dash-badge" id="auditIncidentCount">0</span>
+      </button>
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
         Rules
       </button>
@@ -58,6 +61,9 @@
 
   <!-- OpenClaw Connections Panel (expandable) -->
   <div id="openclawPanel" class="openclaw-panel" aria-label="OpenClaw connections"></div>
+
+  <!-- Eval Audit Panel (expandable) -->
+  <div id="auditPanel" class="audit-panel" aria-label="Eval audit overview"></div>
 
   <!-- OpenClaw Connection Modal (create/edit) -->
   <div class="modal-backdrop" id="openclawModal">

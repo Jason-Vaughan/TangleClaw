@@ -143,6 +143,65 @@ describe('validateTemplate', () => {
       assert.equal(result.valid, true, `Template "${id}" validation failed: ${result.errors.join(', ')}`);
     }
   });
+
+  it('accepts valid evalDimensions', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', type: 'methodology', version: '1.0.0', description: 'Test',
+      evalDimensions: {
+        schemaVersion: 'v1',
+        tier1: [{ id: 'check1', description: 'Desc', check: 'pattern', patterns: ['test'] }],
+        tier2: [{ id: 'dim1', description: 'Desc' }],
+        tier3: [{ id: 'dim2', description: 'Desc', when: 'always' }],
+        judgeContext: 'You are a judge.'
+      }
+    });
+    assert.equal(result.valid, true);
+  });
+
+  it('rejects evalDimensions without schemaVersion', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', type: 'methodology', version: '1.0.0', description: 'Test',
+      evalDimensions: { tier1: [] }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('schemaVersion')));
+  });
+
+  it('rejects tier1 with invalid check type', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', type: 'methodology', version: '1.0.0', description: 'Test',
+      evalDimensions: {
+        schemaVersion: 'v1',
+        tier1: [{ id: 'c', description: 'd', check: 'regex', patterns: ['x'] }]
+      }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('check must be "pattern"')));
+  });
+
+  it('rejects tier3 with invalid when value', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', type: 'methodology', version: '1.0.0', description: 'Test',
+      evalDimensions: {
+        schemaVersion: 'v1',
+        tier3: [{ id: 'd', description: 'd', when: 'never' }]
+      }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('when must be one of')));
+  });
+
+  it('rejects tier3 without when field', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', type: 'methodology', version: '1.0.0', description: 'Test',
+      evalDimensions: {
+        schemaVersion: 'v1',
+        tier3: [{ id: 'd', description: 'd' }]
+      }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('when is required')));
+  });
 });
 
 // ── Detection ──
