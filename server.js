@@ -2148,6 +2148,25 @@ async function handleRequest(req, res) {
 
 // ── Eval Audit Mode ──
 
+// Debounced incident generation — max once per 60s per project
+const _incidentGenerationTimestamps = {};
+
+/**
+ * Run incident generation for a project if not run in the last 60 seconds.
+ * @param {string} project - Project name
+ */
+function _maybeGenerateIncidents(project) {
+  const now = Date.now();
+  const lastRun = _incidentGenerationTimestamps[project] || 0;
+  if (now - lastRun < 60000) return;
+  _incidentGenerationTimestamps[project] = now;
+  try {
+    evalAudit.generateIncidents(project, store);
+  } catch (err) {
+    log.error('Incident generation failed', { project, error: err.message });
+  }
+}
+
 // POST /api/audit/ingest — Receive exchange data from OpenClaw webhook
 route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
   // Authenticate via Bearer token
@@ -2322,6 +2341,9 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     updateData.anomalyReason = fullAnomaly.anomaly ? fullAnomaly.reasons.join('; ') : null;
 
     store.evalScores.update(scoreRecord.id, updateData);
+
+    // Debounced incident generation (max once per minute per project)
+    _maybeGenerateIncidents(projectName);
   }).catch(err => {
     log.error('Async scoring pipeline failed', { exchangeId: exchange.id, error: err.message });
   });
@@ -2484,6 +2506,75 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
     });
 
     return jsonResponse(res, 200, { project: params.project, sessions: results });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// POST /api/audit/:project/baseline/recompute — Recompute baseline from recent scores
+route('POST', '/api/audit/:project/baseline/recompute', (req, res, params, body) => {
+  try {
+    const window = (body && body.window) || '14d';
+    const baseline = evalAudit.computeBaseline(params.project, store, { window });
+    if (!baseline) {
+      return jsonResponse(res, 200, { baseline: null, message: 'No scores found in window to compute baseline' });
+    }
+    return jsonResponse(res, 200, { baseline });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/incidents — List incidents
+route('GET', '/api/audit/:project/incidents', (req, res, params) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  try {
+    const options = {};
+    if (query.status) options.status = query.status;
+    if (query.type) options.type = query.type;
+    if (query.limit) options.limit = parseInt(query.limit, 10);
+    const incidents = store.evalIncidents.list(params.project, options);
+    return jsonResponse(res, 200, { project: params.project, incidents });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// GET /api/audit/:project/incidents/:id — Get single incident
+route('GET', '/api/audit/:project/incidents/:id', (_req, res, params) => {
+  try {
+    const incident = store.evalIncidents.get(params.id);
+    if (!incident || incident.project !== params.project) {
+      return errorResponse(res, 404, 'Incident not found', 'NOT_FOUND');
+    }
+    return jsonResponse(res, 200, { incident });
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'INTERNAL');
+  }
+});
+
+// PUT /api/audit/:project/incidents/:id — Update incident (accept/dismiss)
+route('PUT', '/api/audit/:project/incidents/:id', (_req, res, params, body) => {
+  try {
+    const existing = store.evalIncidents.get(params.id);
+    if (!existing || existing.project !== params.project) {
+      return errorResponse(res, 404, 'Incident not found', 'NOT_FOUND');
+    }
+    if (!body || !body.status) {
+      return errorResponse(res, 400, 'Missing status field', 'VALIDATION');
+    }
+    const validStatuses = ['open', 'accepted', 'dismissed'];
+    if (!validStatuses.includes(body.status)) {
+      return errorResponse(res, 400, `Invalid status: ${body.status}. Must be one of: ${validStatuses.join(', ')}`, 'VALIDATION');
+    }
+    const updateData = { status: body.status };
+    if (body.status !== 'open') {
+      updateData.resolvedAt = new Date().toISOString();
+      updateData.resolvedBy = body.resolvedBy || 'user';
+    }
+    const updated = store.evalIncidents.update(params.id, updateData);
+    return jsonResponse(res, 200, { incident: updated });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'INTERNAL');
   }

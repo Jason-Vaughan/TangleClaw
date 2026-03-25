@@ -262,4 +262,94 @@ describe('API /api/audit', () => {
     assert.equal(data.project, 'unknown');
     assert.ok(Array.isArray(data.sessions));
   });
+
+  // ── Baseline Recompute Endpoint ──
+
+  it('POST /api/audit/:project/baseline/recompute returns null when no scores', async () => {
+    const { status, data } = await request(server, 'POST', '/api/audit/empty-project/baseline/recompute', { window: '14d' });
+    assert.equal(status, 200);
+    assert.equal(data.baseline, null);
+  });
+
+  it('POST /api/audit/:project/baseline/recompute computes baseline from scores', async () => {
+    // Seed some scores
+    const now = new Date();
+    const daysAgo = (n) => new Date(now.getTime() - n * 86400000).toISOString();
+    for (let d = 1; d <= 3; d++) {
+      const ex = store.evalExchanges.insert({
+        sessionId: 'sess-bl', connectionId: 'conn-1', project: 'baseline-test',
+        agentModel: 'claude-opus-4-6', timestamp: daysAgo(d),
+        turnNumber: d, userMessage: 'msg', agentResponse: 'resp',
+        usageInputTokens: 10, usageOutputTokens: 20
+      });
+      store.evalScores.insert({
+        exchangeId: ex.id, schemaVersion: 'v1', scoredAt: daysAgo(d),
+        judgeModel: 'claude-haiku-4-5-20251001',
+        tier1StructuralScore: 1.0, tier1Flags: [],
+        tier2SemanticScore: 0.8, tier2Reasoning: '', tier2Skipped: false,
+        tier2_5AlignmentScore: 0.9, tier2_5Reasoning: '', tier2_5Skipped: false,
+        tier3BehavioralScore: 4.0, tier3DimensionScores: {}, tier3Skipped: false,
+        anomalyFlag: false, anomalyReason: null, costUsd: 0.001
+      });
+    }
+
+    const { status, data } = await request(server, 'POST', '/api/audit/baseline-test/baseline/recompute', { window: '14d' });
+    assert.equal(status, 200);
+    assert.ok(data.baseline);
+    assert.equal(data.baseline.project, 'baseline-test');
+    assert.equal(data.baseline.exchangeCount, 3);
+    assert.ok(data.baseline.dimensionAverages.tier1);
+  });
+
+  // ── Incidents Endpoints ──
+
+  it('GET /api/audit/:project/incidents returns empty list for new project', async () => {
+    const { status, data } = await request(server, 'GET', '/api/audit/no-incidents/incidents');
+    assert.equal(status, 200);
+    assert.deepEqual(data.incidents, []);
+  });
+
+  it('GET/PUT /api/audit/:project/incidents CRUD workflow', async () => {
+    // Insert an incident directly
+    const inc = store.evalIncidents.insert({
+      project: 'inc-test', type: 'drift', title: 'Test drift',
+      description: 'Testing', detectedAt: new Date().toISOString()
+    });
+
+    // GET list
+    const { status: listStatus, data: listData } = await request(server, 'GET', '/api/audit/inc-test/incidents');
+    assert.equal(listStatus, 200);
+    assert.equal(listData.incidents.length, 1);
+    assert.equal(listData.incidents[0].id, inc.id);
+
+    // GET single
+    const { status: getStatus, data: getData } = await request(server, 'GET', `/api/audit/inc-test/incidents/${inc.id}`);
+    assert.equal(getStatus, 200);
+    assert.equal(getData.incident.id, inc.id);
+
+    // PUT update status
+    const { status: putStatus, data: putData } = await request(server, 'PUT', `/api/audit/inc-test/incidents/${inc.id}`, {
+      status: 'dismissed', resolvedBy: 'tester'
+    });
+    assert.equal(putStatus, 200);
+    assert.equal(putData.incident.status, 'dismissed');
+    assert.ok(putData.incident.resolvedAt);
+    assert.equal(putData.incident.resolvedBy, 'tester');
+  });
+
+  it('GET /api/audit/:project/incidents/:id returns 404 for wrong project', async () => {
+    const inc = store.evalIncidents.insert({
+      project: 'proj-a', type: 'drift', title: 'Test', description: 'T', detectedAt: new Date().toISOString()
+    });
+    const { status } = await request(server, 'GET', `/api/audit/proj-b/incidents/${inc.id}`);
+    assert.equal(status, 404);
+  });
+
+  it('PUT /api/audit/:project/incidents/:id rejects invalid status', async () => {
+    const inc = store.evalIncidents.insert({
+      project: 'val-test', type: 'drift', title: 'Test', description: 'T', detectedAt: new Date().toISOString()
+    });
+    const { status } = await request(server, 'PUT', `/api/audit/val-test/incidents/${inc.id}`, { status: 'bogus' });
+    assert.equal(status, 400);
+  });
 });

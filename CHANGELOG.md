@@ -2,6 +2,22 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.7.0] - 2026-03-24
+
+### Added
+
+- **Eval Audit Mode — Chunk 4: Baselines + Drift Detection + Incidents**
+  - `eval_incidents` table (CREATE TABLE IF NOT EXISTS in schema v9) with project index. Store namespace `evalIncidents` with insert, get, list (filterable by status/type), update, and countByStatus methods
+  - `computeBaseline(project, store, options)` — computes per-tier averages and standard deviations from historical scores within a configurable window (default 14 days). Stores baseline via `evalBaselines.insert()` with anomaly rate tracking
+  - `detectDrift(project, store, options)` — compares recent daily score averages against latest baseline. Flags drift when 3+ consecutive days deviate >1σ from baseline on any tier. Returns per-tier drift details with direction, deviation amount, and baseline reference
+  - `generateIncidents(project, store, options)` — orchestrates drift detection and anomaly spike detection. Creates typed incidents (`drift`, `anomaly_spike`) with severity levels (`warning` for >1σ, `critical` for >2σ). Deduplicates against existing open incidents to prevent duplicates on re-runs
+  - `POST /api/audit/:project/baseline/recompute` endpoint — triggers baseline recomputation with optional window parameter
+  - `GET /api/audit/:project/incidents` endpoint — lists incidents with optional status/type/limit filtering
+  - `GET /api/audit/:project/incidents/:id` endpoint — fetches single incident with project ownership validation
+  - `PUT /api/audit/:project/incidents/:id` endpoint — accept/dismiss workflow with status validation, auto-sets resolvedAt/resolvedBy
+  - Debounced auto-incident generation in ingest handler — runs `generateIncidents()` max once per 60 seconds per project after async scoring pipeline completes
+  - 24 new tests (1162 → 1186): store CRUD (8), computeBaseline (3), detectDrift (4), generateIncidents (3), API endpoints (6)
+
 ## [3.6.0] - 2026-03-24
 
 ### Added

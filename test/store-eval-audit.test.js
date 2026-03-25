@@ -468,3 +468,110 @@ describe('store schema v9 migration', () => {
     assert.ok(bl.id);
   });
 });
+
+// ── Eval Incidents ──
+
+describe('store.evalIncidents', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eval-inc-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('insert and get an incident', () => {
+    const inc = store.evalIncidents.insert({
+      project: 'TestProject',
+      type: 'drift',
+      severity: 'warning',
+      title: 'Tier 2 drift detected',
+      description: 'Tier 2 scores drifting down',
+      metadata: { tierAffected: 'tier2', direction: 'down' },
+      detectedAt: '2026-03-24T10:00:00Z'
+    });
+    assert.ok(inc.id);
+    assert.equal(inc.project, 'TestProject');
+    assert.equal(inc.type, 'drift');
+    assert.equal(inc.status, 'open');
+    assert.equal(inc.severity, 'warning');
+    assert.deepEqual(inc.metadata, { tierAffected: 'tier2', direction: 'down' });
+
+    const fetched = store.evalIncidents.get(inc.id);
+    assert.deepEqual(fetched, inc);
+  });
+
+  it('list incidents with filtering', () => {
+    store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'D1', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'anomaly_spike', title: 'A1', description: 'a', detectedAt: '2026-03-24T11:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'drift', status: 'dismissed', title: 'D2', description: 'd', detectedAt: '2026-03-24T09:00:00Z' });
+    store.evalIncidents.insert({ project: 'Other', type: 'drift', title: 'D3', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+
+    const all = store.evalIncidents.list('P');
+    assert.equal(all.length, 3);
+
+    const openOnly = store.evalIncidents.list('P', { status: 'open' });
+    assert.equal(openOnly.length, 2);
+
+    const driftOnly = store.evalIncidents.list('P', { type: 'drift' });
+    assert.equal(driftOnly.length, 2);
+
+    const limited = store.evalIncidents.list('P', { limit: 1 });
+    assert.equal(limited.length, 1);
+  });
+
+  it('update incident status', () => {
+    const inc = store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'D1', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    assert.equal(inc.status, 'open');
+
+    const updated = store.evalIncidents.update(inc.id, {
+      status: 'accepted',
+      resolvedAt: '2026-03-24T12:00:00Z',
+      resolvedBy: 'admin'
+    });
+    assert.equal(updated.status, 'accepted');
+    assert.equal(updated.resolvedAt, '2026-03-24T12:00:00Z');
+    assert.equal(updated.resolvedBy, 'admin');
+  });
+
+  it('countByStatus returns correct counts', () => {
+    store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'D1', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'D2', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'drift', status: 'accepted', title: 'D3', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'drift', status: 'dismissed', title: 'D4', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+
+    const counts = store.evalIncidents.countByStatus('P');
+    assert.equal(counts.open, 2);
+    assert.equal(counts.accepted, 1);
+    assert.equal(counts.dismissed, 1);
+  });
+
+  it('countByStatus returns zeros for empty project', () => {
+    const counts = store.evalIncidents.countByStatus('empty');
+    assert.deepEqual(counts, { open: 0, accepted: 0, dismissed: 0 });
+  });
+
+  it('get returns null for nonexistent incident', () => {
+    assert.equal(store.evalIncidents.get('nope'), null);
+  });
+
+  it('insert defaults to open status and warning severity', () => {
+    const inc = store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'T', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+    assert.equal(inc.status, 'open');
+    assert.equal(inc.severity, 'warning');
+  });
+
+  it('list returns newest first', () => {
+    store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'Old', description: 'd', detectedAt: '2026-03-20T10:00:00Z' });
+    store.evalIncidents.insert({ project: 'P', type: 'drift', title: 'New', description: 'd', detectedAt: '2026-03-24T10:00:00Z' });
+
+    const list = store.evalIncidents.list('P');
+    assert.equal(list[0].title, 'New');
+    assert.equal(list[1].title, 'Old');
+  });
+});
