@@ -2,6 +2,18 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.8.2] - 2026-03-24
+
+### Added
+
+- **PID file guard against duplicate server instances** — prevents multiple TangleClaw servers from running simultaneously
+  - `lib/pidfile.js` — PID file management module: `check()` detects live instances (handles stale PID files from crashes), `write()` records PID on startup, `remove()` cleans up on shutdown
+  - Startup guard in `server.js` — checks for existing instance before binding, exits with clear error message if duplicate detected
+  - EADDRINUSE handler — gracefully exits instead of crashing if port is already bound (prevents launchd restart loops)
+  - PID file cleaned up on graceful shutdown (SIGTERM/SIGINT) and on EADDRINUSE exit
+  - Stale PID files from crashed processes are auto-cleaned on next startup
+  - 11 new tests (1224 → 1235): write/readPid (3), check logic (4), remove (2), isProcessAlive (2)
+
 ## [3.8.1] - 2026-03-24
 
 ### Fixed
