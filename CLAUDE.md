@@ -88,7 +88,7 @@ POST /api/ports/heartbeat
 ### Conflict Resolution
 If `GET /api/ports` shows a port is taken, pick a different one in the same range. Do not overwrite another project's lease.
 
-**TangleClaw API base URL**: `http://localhost:3102`
+**TangleClaw API base URL**: `https://localhost:3102`
 
 ## Shared Documents
 

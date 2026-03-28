@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.8.3] - 2026-03-27
+
+### Fixed
+
+- **Engine configs now use correct HTTPS protocol** — all generated engine configs (CLAUDE.md, GEMINI.md, Codex YAML, Aider conf) now emit `https://` when HTTPS is enabled instead of always using `http://`; fixes API calls failing with "empty reply from server" in projects like BiTCH
+
 ## [3.8.2] - 2026-03-24
 
 ### Added
