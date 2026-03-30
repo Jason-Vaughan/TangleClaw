@@ -27,7 +27,24 @@
       <span class="status-dot" id="statusDot" title="Connecting"></span>
       <span class="banner-engine" id="bannerHost"></span>
     </div>
+    <div class="sidecar-pills" id="sidecarPills"></div>
   </header>
+
+  <!-- Sidecar detail panel -->
+  <div class="backdrop" id="sidecarBackdrop" hidden></div>
+  <aside class="sidecar-panel" id="sidecarPanel" role="complementary" aria-label="Process details">
+    <div class="sidecar-panel-header">
+      <span class="sidecar-panel-title">Processes</span>
+      <div class="sidecar-panel-actions">
+        <button id="sidecarRefresh" class="btn-icon" title="Refresh" aria-label="Refresh processes">&#x21bb;</button>
+        <button id="sidecarClose" class="btn-icon" title="Close" aria-label="Close panel">&times;</button>
+      </div>
+    </div>
+    <nav class="sidecar-nav" id="sidecarNav"></nav>
+    <div class="sidecar-detail" id="sidecarDetail">
+      <div class="sidecar-detail-empty">No processes</div>
+    </div>
+  </aside>
 
   <!-- Main content: iframe fills remaining space -->
   <div class="terminal-viewport" id="terminalViewport">

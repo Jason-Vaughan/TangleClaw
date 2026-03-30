@@ -2,6 +2,30 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.9.4] - 2026-03-30
+
+### Added
+
+- **Sidecar: Chunk 5 — Pills + detail panel in OpenClaw viewer**
+  - Sidecar pills container in `openclaw-view.html` banner (between banner-row and terminal viewport)
+  - Sidecar detail panel markup: backdrop, aside panel, nav bar, detail container, refresh/close buttons
+  - `openclaw-view.js` — full sidecar UI wired to connection-based API:
+    - `pollSidecarProcesses()` — polls `GET /api/sidecar/connection/:connId/processes` every 10s after tunnel is up
+    - `renderSidecarPills(processes, stale)` — status-colored pills with dot, label, elapsed time
+    - `openSidecarPanel(processId)` / `closeSidecarPanel()` — slide-in detail panel with backdrop
+    - `renderSidecarDetail()` — full process detail: status badge, type, project, workDir, timestamps, duration, exit code, signal, attention flags, last output snippet
+    - `autoSelectProcess(processes)` — selects first attention-needing, then first active, then first process
+    - `formatElapsed(startedAt, completedAt)` / `formatTimestamp(iso)` — time display helpers
+    - `sidecarStatusClass(proc)` — maps status to pill CSS class
+    - `sidecarField(label, valueHtml)` / `escapeHtml(str)` — rendering helpers
+    - `initSidecar()` — wires close, backdrop, refresh, pill click, and nav click event listeners
+    - `startSidecarPolling()` / `stopSidecarPolling()` — polling lifecycle
+  - Process nav bar for switching between multiple processes
+  - Pill click opens detail panel for that process
+  - Panel auto-updates on each poll cycle when open
+  - All CSS reused from shared `session.css` — no new styles
+  - 27 new tests (1284 → 1311): HTML structure (8), JS functions (16), connection-based polling API (3)
+
 ## [3.9.3] - 2026-03-30
 
 ### Changed
