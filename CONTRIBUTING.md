@@ -60,6 +60,30 @@ The test suite uses `node:test` (built into Node.js 22+). Tests create temporary
 2. Define phases, rules, detection strategy, wrap behavior, and prime prompt sections
 3. Add tests for detection and initialization
 
+## Areas Looking for Contributions
+
+These are features we'd love help with. Check the issues tab for related discussions, or open a new issue to propose your approach before starting.
+
+### Authentication
+
+TangleClaw currently has no user authentication — anyone who can reach the server port has full access. Adding an auth layer (session-based, token-based, or OAuth) is the single biggest security improvement the project needs. The `deletePassword` mechanism for destructive operations could serve as a starting point.
+
+### Linux Support
+
+TangleClaw currently requires macOS (launchd for service management). Adding systemd support would open TangleClaw to Linux servers — which is a natural fit for the VPN/SSH remote dev use case.
+
+### TangleMeth — Methodology Builder
+
+Instead of hand-writing methodology template JSON, TangleMeth would interview you about your governance needs and generate a complete methodology framework: phase docs, enforcement hooks, artifact templates, and test suites. See the [Roadmap](README.md#roadmap) for context.
+
+### Sidecar Controls
+
+The sidecar currently shows read-only process status from [ClawBridge](https://github.com/Jason-Vaughan/ClawBridge). Adding controls — poll/refresh individual processes, show full output, dismiss, terminate — would make it a full process management panel.
+
+### Mobile Terminal Scrollback
+
+The current touch scroll shim for xterm.js works but has edge cases on iOS and Android. Better touch scroll handling or an alternative approach would improve the mobile experience significantly.
+
 ## Making Changes
 
 1. Create a branch from `main`
