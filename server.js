@@ -2479,6 +2479,29 @@ route('GET', '/api/sidecar/:project/processes', (_req, res, params) => {
   });
 });
 
+// GET /api/sidecar/connection/:connId/processes — Get cached process state by connection ID (direct connect)
+route('GET', '/api/sidecar/connection/:connId/processes', (_req, res, params) => {
+  const connId = params.connId;
+  const state = sidecar.getProcessesByConnection(connId);
+
+  if (state.error === 'Connection not found') {
+    return errorResponse(res, 404, `Connection "${connId}" not found`, 'NOT_FOUND');
+  }
+
+  // Ensure polling is running for this connection
+  if (!sidecar._pollers.has(connId)) {
+    sidecar.startPolling(connId);
+  }
+
+  jsonResponse(res, 200, {
+    active: state.active,
+    recent: state.recent,
+    lastPollAt: state.lastPollAt,
+    stale: state.stale,
+    error: state.error
+  });
+});
+
 // POST /api/audit/heartbeat — Lightweight heartbeat from OpenClaw
 route('POST', '/api/audit/heartbeat', (_req, res, _params, body) => {
   if (!body || !body.session_id) {
