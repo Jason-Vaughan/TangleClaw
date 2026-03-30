@@ -29,17 +29,17 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/project splash screen with sampele cards.png" alt="TangleClaw dashboard" width="800">
+  <img src="https://github.com/Jason-Vaughan/puberty-labs-assets/blob/main/tangleclaw-screenshots/project%20splash%20screen%20with%20sampele%20cards.png?raw=true" alt="TangleClaw dashboard" width="800">
   <br><em>Dashboard — project cards with engine badges, methodology status, git info, and session indicators</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/project info panel expanded.png" alt="Project info panel" width="800">
+  <img src="https://github.com/Jason-Vaughan/puberty-labs-assets/blob/main/tangleclaw-screenshots/project%20info%20panel%20expanded.png?raw=true" alt="Project info panel" width="800">
   <br><em>Project detail panel — engine, methodology, active session, git state, settings, and session management</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/porthub-registry list example.png" alt="PortHub registry" width="800">
+  <img src="https://github.com/Jason-Vaughan/puberty-labs-assets/blob/main/tangleclaw-screenshots/porthub-registry%20list%20example.png?raw=true" alt="PortHub registry" width="800">
   <br><em>PortHub registry — all port leases grouped by project with conflict detection</em>
 </p>
 
