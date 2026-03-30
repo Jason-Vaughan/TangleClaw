@@ -28,54 +28,54 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 
 ## Features
 
-### Sessions
+- **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
+- **Five built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw). Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
+- **Methodology enforcement** — pluggable JSON templates define phases, rules, and session behavior. Rules are structural gates, not suggestions. First-class [Prawduct](https://github.com/brookstalley/prawduct) integration for governed workflows with independent Critic review
+- **Dashboard & mobile PWA** — manage projects, launch sessions, and interact with AI agents from any browser or phone on your network. Installable on iOS and Android
+- **OpenClaw integration** — connect to remote [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) instances via SSH or Web UI mode with automatic SSH tunnel management, and live background process visibility via [ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)
+- **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
-- **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects
-- **Prime prompts** — auto-generated from methodology state, active learnings, and last session summary, injected on session start
-- **Wrap protocol** — configurable session wrap with version bumps, changelog updates, learnings capture, and next-session priming
+<details>
+<summary>All features</summary>
+
+### Sessions
+- **Session briefings** — auto-generated context from methodology state, active learnings, and last session summary, injected on session start
+- **Structured session wrap** — configurable close-out with version bumps, changelog updates, learnings capture, and next-session priming
 - **Command bar** — inject commands into running sessions without touching the terminal. Quick command pills for common operations and engine-specific slash commands
 - **Peek** — slide-up drawer showing the last lines of terminal output — check progress without scrolling
 - **File upload** — send files into the project directory from the session wrapper (images, docs, configs up to 15 MB)
-- **Idle detection** — audio chime when the terminal goes idle, so you know the agent has finished
+- **Idle chime** — audio notification when the terminal goes idle, so you know the agent has finished
 - **Session history** — start time, duration, engine, wrap status, and wrap summary per project
 
 ### Engines
-
-- **Six built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw), and Genesis (persistent agent placeholder)
-- **Engine-native config generation** — write rules once, TangleClaw translates to CLAUDE.md, .codex.yaml, GEMINI.md, .aider.conf.yml. Swap engines without reconfiguring projects
+- **Engine-native config generation** — CLAUDE.md, .codex.yaml, GEMINI.md, .aider.conf.yml generated automatically from your rules
 - **Custom engines** — adding a new engine is a single JSON profile, no code changes
 - **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Gemini (Google) in the session banner
 
 ### Methodologies
-
-- **Methodology-as-code** — pluggable JSON templates that define phases, rules, wrap behavior, prime prompts, and status contracts. Rules are structural gates, not suggestions
-- **[Prawduct](https://github.com/brookstalley/prawduct) integration** — first-class support for structured governance with discovery, planning, building phases, independent Critic review, and continuous learning. Installed separately; TangleClaw auto-detects and integrates
+- **[Prawduct](https://github.com/brookstalley/prawduct) integration** — discovery, planning, building phases with independent Critic review and continuous learning. Installed separately; TangleClaw auto-detects and integrates
 - **Custom methodologies** — create your own templates with custom phases, rules, actions, and hooks
 - **Global rules** — markdown rules applied to every project across all engines, editable from the dashboard
 - **Methodology switching** — switch methodologies on any project with automatic state archival and rollback support
 
 ### Dashboard
-
 - **Project management** — create, attach, filter, tag, and delete projects from a central landing page
 - **Setup wizard** — first-run guided setup scans for existing projects, detects engines, configures preferences
-- **Project groups & shared documents** — group related projects, share markdown documents across groups, auto-discover from shared directories, document locking
-- **Mobile-first PWA** — installable on iOS and Android with 44px touch targets, safe area support, pull-to-refresh
-- **PortHub** — central port registry preventing conflicts across all projects. Permanent and TTL leases with heartbeat support, system port scanning via lsof
-- **HTTPS/TLS** — optional TLS via mkcert for secure remote access (required for OpenClaw Web UI from non-localhost browsers)
+- **Project groups & shared documents** — group related projects, share markdown documents across groups with document locking
+- **PortHub** — central port registry preventing conflicts across all projects. Permanent and TTL leases with heartbeat support
+- **HTTPS/TLS** — optional TLS via mkcert for secure remote access
 
 ### Integrations
-
-- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — connect to remote self-hosted AI agent instances via SSH or Web UI mode. Connection registry with health checks, automatic SSH tunnel management, reverse proxy for same-origin iframe embedding, and auto device pairing
-- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — bridge service running alongside OpenClaw that exposes background process status. TangleClaw's sidecar polls ClawBridge for live process visibility — status pills, detail panels with timestamps, exit codes, attention flags, and last output
-- **[Prawduct](https://github.com/brookstalley/prawduct)** — structured product development framework. TangleClaw detects Prawduct projects, wires session hooks for briefings and governance gates, reads project state for dashboard badges, and syncs framework updates on each session start
-- **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation system. Ingests exchange data from OpenClaw instances, runs a scoring pipeline with intelligent gating, tracks quality baselines, detects drift, and generates incidents
+- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels, reverse proxy, auto device pairing
+- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — live background process visibility — status pills, detail panels with timestamps, exit codes, attention flags
+- **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation. Ingests exchange data from OpenClaw, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
 ### Technical
-
-- **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
 - **62 API endpoints** — full REST API for everything TangleClaw does
 - **1,314 tests** — comprehensive test suite using node:test
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
+
+</details>
 
 ## Prerequisites
 

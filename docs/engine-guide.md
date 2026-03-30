@@ -12,7 +12,7 @@ Each engine is a JSON profile that tells TangleClaw:
 - What **slash commands** the engine supports (shown as pills in the command bar)
 - What **capabilities** the engine has (prime prompt support, co-author format, etc.)
 
-Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with six built-in profiles, copied there on first run.
+Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five built-in profiles, copied there on first run.
 
 ## Built-in Engines
 
@@ -47,13 +47,6 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with six buil
 - **Config file**: `.gemini/GEMINI.md` (Markdown, in `.gemini/` subdirectory)
 - **Slash commands**: None
 - **Capabilities**: Prime prompt, config file, co-author
-
-### Genesis
-
-- **Command**: None (persistent agent)
-- **Interaction model**: Persistent (connects to a running process, not managed by TangleClaw)
-- **Config file**: None
-- **Capabilities**: Placeholder — governance is handled by Mission Control, not TangleClaw
 
 ### OpenClaw
 
