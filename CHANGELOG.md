@@ -2,6 +2,20 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.9.5] - 2026-03-30
+
+### Added
+
+- **Sidecar bridge integration: direct ClawBridge polling**
+  - Schema v11: added `bridge_port` column to `openclaw_connections` (default 3201)
+  - Updated `_rowToConnection()`, `create()`, `update()` to handle `bridgePort` field
+  - Sidecar `pollProcesses()` now polls `bridgePort` instead of `localPort` — hits ClawBridge directly instead of the OpenClaw gateway
+  - Tunnel manager `ensureTunnel()` accepts `extraForwards` array — SSH tunnel now forwards both gateway port (18789) and bridge port (3201) in a single connection
+  - Updated `launchWebuiSession()` and direct-connect tunnel route to pass bridge port as extra forward
+  - Bridge Port field added to connection modal in UI (`index.html`, `ui.js`)
+  - **ClawBridge side** (RentalClaw-Project): added `GET /api/processes` endpoint to `bridge/server.js` — returns active and recently completed background runs with process registry tracking
+  - 2 new tests (1311 → 1313): bridgePort update (1), schema migration bridge_port column (1); plus bridgePort assertions added to existing create tests and 4 schema version assertions updated to v11
+
 ## [3.9.4] - 2026-03-30
 
 ### Added

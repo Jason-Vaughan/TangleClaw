@@ -1732,6 +1732,7 @@ async function openConnectionModal(connId) {
     document.getElementById('ocGatewayToken').value = data.gatewayToken || '';
     document.getElementById('ocCliCommand').value = data.cliCommand || 'openclaw-cli';
     document.getElementById('ocLocalPort').value = data.localPort || 18789;
+    document.getElementById('ocBridgePort').value = data.bridgePort || 3201;
     document.getElementById('ocAvailableAsEngine').checked = !!data.availableAsEngine;
     document.getElementById('ocDeleteBtn').classList.remove('hidden');
   } else {
@@ -1743,6 +1744,7 @@ async function openConnectionModal(connId) {
     document.getElementById('ocGatewayToken').value = '';
     document.getElementById('ocCliCommand').value = 'openclaw-cli';
     document.getElementById('ocLocalPort').value = '18789';
+    document.getElementById('ocBridgePort').value = '3201';
     document.getElementById('ocAvailableAsEngine').checked = false;
     document.getElementById('ocDeleteBtn').classList.add('hidden');
   }
@@ -1783,6 +1785,7 @@ async function saveConnection() {
     gatewayToken: document.getElementById('ocGatewayToken').value.trim() || null,
     cliCommand: document.getElementById('ocCliCommand').value.trim() || 'openclaw-cli',
     localPort: parseInt(document.getElementById('ocLocalPort').value, 10) || 18789,
+    bridgePort: parseInt(document.getElementById('ocBridgePort').value, 10) || 3201,
     availableAsEngine: document.getElementById('ocAvailableAsEngine').checked
   };
 
