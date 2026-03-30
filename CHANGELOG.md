@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.8.4] - 2026-03-29
+
+### Fixed
+
+- **Prevent duplicate port leases for OpenClaw tunnels** — `ensureTunnel()` now checks for existing leases before registering, avoiding conflicts when both a project session and a direct-connect use the same tunnel port (e.g., RentalClaw + oc-direct on port 18789)
+
 ## [3.8.3] - 2026-03-27
 
 ### Fixed
