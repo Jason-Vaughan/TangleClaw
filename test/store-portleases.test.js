@@ -173,6 +173,6 @@ describe('store.portLeases', () => {
   it('schema version is 11', () => {
     const db = store.getDb();
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-    assert.equal(row.version, 11);
+    assert.equal(row.version, 12);
   });
 });
