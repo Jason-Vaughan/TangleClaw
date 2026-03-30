@@ -1628,13 +1628,15 @@ route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params, 
     return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
   }
 
+  const extraForwards = conn.bridgePort ? [{ localPort: conn.bridgePort, remotePort: conn.bridgePort }] : [];
   const tunnelResult = await tunnel.ensureTunnel(`oc-direct-${conn.id}`, {
     host: conn.host,
     port: conn.port,
     localPort: conn.localPort,
     sshUser: conn.sshUser,
     sshKeyPath: conn.sshKeyPath,
-    force: body && body.force === true
+    force: body && body.force === true,
+    extraForwards
   });
 
   if (!tunnelResult.ok) {

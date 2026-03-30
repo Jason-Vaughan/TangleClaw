@@ -53,6 +53,7 @@ describe('store.openclawConnections', () => {
       assert.equal(conn.cliCommand, 'openclaw-cli');
       assert.equal(conn.availableAsEngine, false);
       assert.equal(conn.gatewayToken, null);
+      assert.equal(conn.bridgePort, 3201);
       assert.ok(conn.createdAt);
     });
 
@@ -62,11 +63,13 @@ describe('store.openclawConnections', () => {
         gatewayToken: 'tok-123',
         cliCommand: 'my-cli',
         localPort: 8888,
+        bridgePort: 4201,
         availableAsEngine: true
       });
       assert.equal(conn.port, 9999);
       assert.equal(conn.gatewayToken, 'tok-123');
       assert.equal(conn.cliCommand, 'my-cli');
+      assert.equal(conn.bridgePort, 4201);
       assert.equal(conn.localPort, 8888);
       assert.equal(conn.availableAsEngine, true);
     });
@@ -155,6 +158,13 @@ describe('store.openclawConnections', () => {
       assert.equal(updated.host, '192.168.20.10'); // unchanged
     });
 
+    it('should update bridgePort', () => {
+      const conn = createConnection();
+      assert.equal(conn.bridgePort, 3201);
+      const updated = store.openclawConnections.update(conn.id, { bridgePort: 4201 });
+      assert.equal(updated.bridgePort, 4201);
+    });
+
     it('should toggle availableAsEngine', () => {
       const conn = createConnection();
       assert.equal(conn.availableAsEngine, false);
@@ -216,6 +226,14 @@ describe('store.openclawConnections', () => {
       const list = store.openclawConnections.list();
       assert.equal(list.length, 1);
       assert.equal(list[0].name, 'RentalClaw');
+    });
+
+    it('should have bridge_port column after migration', () => {
+      const db = store.getDb();
+      const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
+      const bridgeCol = cols.find(c => c.name === 'bridge_port');
+      assert.ok(bridgeCol, 'bridge_port column should exist');
+      assert.equal(bridgeCol.dflt_value, '3201');
     });
   });
 });
