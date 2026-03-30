@@ -1154,7 +1154,13 @@ async function pollSidecarProcesses() {
   const recent = data.recent || [];
   const all = [...active, ...recent];
 
+  // Cache for detail panel
+  sidecarProcesses = all;
+
   renderSidecarPills(all, data.stale);
+
+  // Update detail panel if open
+  if (sidecarPanelOpen) renderSidecarDetail();
 }
 
 /**
@@ -1245,6 +1251,192 @@ function stopSidecarPolling() {
     clearInterval(sidecarTimer);
     sidecarTimer = null;
   }
+}
+
+// ── Sidecar Detail Panel ──
+
+/** Currently cached sidecar processes (set by pollSidecarProcesses). */
+let sidecarProcesses = [];
+
+/** Currently selected process ID in the detail panel. */
+let sidecarSelectedId = null;
+
+/** Whether the sidecar panel is open. */
+let sidecarPanelOpen = false;
+
+/**
+ * Open the sidecar detail panel, optionally selecting a process.
+ * @param {string} [processId] - Process ID to select, or auto-select
+ */
+function openSidecarPanel(processId) {
+  sidecarPanelOpen = true;
+  document.getElementById('sidecarBackdrop').classList.add('open');
+  document.getElementById('sidecarPanel').classList.add('open');
+
+  if (processId) {
+    sidecarSelectedId = processId;
+  } else {
+    sidecarSelectedId = autoSelectProcess();
+  }
+
+  renderSidecarDetail();
+}
+
+/**
+ * Close the sidecar detail panel.
+ */
+function closeSidecarPanel() {
+  sidecarPanelOpen = false;
+  document.getElementById('sidecarBackdrop').classList.remove('open');
+  document.getElementById('sidecarPanel').classList.remove('open');
+}
+
+/**
+ * Auto-select the best process: first needing attention, then first active, then first.
+ * @returns {string|null} Process ID or null
+ */
+function autoSelectProcess() {
+  if (sidecarProcesses.length === 0) return null;
+  const attention = sidecarProcesses.find(p => p.needsAttention);
+  if (attention) return attention.id;
+  const active = sidecarProcesses.find(p => p.status === 'running' || p.status === 'quiet');
+  if (active) return active.id;
+  return sidecarProcesses[0].id;
+}
+
+/**
+ * Format an ISO timestamp for display.
+ * @param {string} iso - ISO-8601 timestamp
+ * @returns {string} Formatted time string
+ */
+function formatTimestamp(iso) {
+  if (!iso) return '--';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return iso; }
+}
+
+/**
+ * Render the sidecar detail panel content for the selected process.
+ */
+function renderSidecarDetail() {
+  const container = document.getElementById('sidecarDetail');
+  const titleEl = document.getElementById('sidecarTitle');
+
+  if (sidecarProcesses.length === 0) {
+    titleEl.textContent = 'Process Detail';
+    container.innerHTML = '<div class="sidecar-detail-empty">No processes</div>';
+    return;
+  }
+
+  // Process nav (if multiple)
+  let navHtml = '';
+  if (sidecarProcesses.length > 1) {
+    navHtml = '<div class="sidecar-nav">' + sidecarProcesses.map(p => {
+      const active = p.id === sidecarSelectedId ? ' active' : '';
+      const cls = sidecarStatusClass(p);
+      const dotColor = cls === 'running' ? 'var(--primary)' :
+        cls === 'quiet' || cls === 'attention' ? 'var(--amber)' :
+        cls === 'failed' ? 'var(--danger)' : 'var(--text-muted)';
+      return `<button class="sidecar-nav-btn${active}" data-nav-id="${esc(p.id)}">` +
+        `<span class="sidecar-nav-dot" style="background:${dotColor}"></span>` +
+        `${esc(p.label || p.type || 'process')}</button>`;
+    }).join('') + '</div>';
+  }
+
+  // Find selected process
+  const proc = sidecarProcesses.find(p => p.id === sidecarSelectedId);
+  if (!proc) {
+    sidecarSelectedId = autoSelectProcess();
+    const fallback = sidecarProcesses.find(p => p.id === sidecarSelectedId);
+    if (!fallback) {
+      container.innerHTML = navHtml + '<div class="sidecar-detail-empty">Process not found</div>';
+      return;
+    }
+    renderSidecarDetail();
+    return;
+  }
+
+  titleEl.textContent = proc.label || proc.type || 'Process Detail';
+
+  const statusCls = proc.status || 'unknown';
+  const elapsed = formatElapsed(proc.startedAt, proc.completedAt);
+
+  // Build fields
+  let fieldsHtml = '';
+  fieldsHtml += sidecarField('Status', `<span class="sidecar-status-badge sidecar-status-badge--${esc(statusCls)}">${esc(proc.status || 'unknown')}</span>`);
+  fieldsHtml += sidecarField('Type', esc(proc.type || '--'));
+  if (proc.project) fieldsHtml += sidecarField('Project', esc(proc.project));
+  if (proc.workDir) fieldsHtml += sidecarField('Work Dir', `<code>${esc(proc.workDir)}</code>`);
+  fieldsHtml += sidecarField('Started', formatTimestamp(proc.startedAt));
+  if (elapsed) fieldsHtml += sidecarField('Duration', elapsed);
+  if (proc.lastUpdateAt) fieldsHtml += sidecarField('Last Update', formatTimestamp(proc.lastUpdateAt));
+  if (proc.completedAt) fieldsHtml += sidecarField('Completed', formatTimestamp(proc.completedAt));
+  if (proc.exitCode != null) fieldsHtml += sidecarField('Exit Code', String(proc.exitCode));
+  if (proc.signal) fieldsHtml += sidecarField('Signal', esc(proc.signal));
+
+  // Attention flags
+  let flagsHtml = '';
+  if (proc.needsAttention || proc.waitingForInput || proc.suspectedStalled) {
+    flagsHtml = '<div class="sidecar-flags">';
+    if (proc.waitingForInput) flagsHtml += '<span class="sidecar-flag">Waiting for Input</span>';
+    if (proc.suspectedStalled) flagsHtml += '<span class="sidecar-flag sidecar-flag--danger">Suspected Stalled</span>';
+    if (proc.needsAttention && !proc.waitingForInput && !proc.suspectedStalled) {
+      flagsHtml += '<span class="sidecar-flag">Needs Attention</span>';
+    }
+    flagsHtml += '</div>';
+  }
+
+  // Output snippet
+  let outputHtml = '';
+  outputHtml = '<div class="sidecar-output">' +
+    '<div class="sidecar-output-label">Last Output</div>';
+  if (proc.lastOutputSnippet) {
+    outputHtml += `<pre class="sidecar-output-content">${esc(proc.lastOutputSnippet)}</pre>`;
+  } else {
+    outputHtml += '<div class="sidecar-output-content sidecar-output-empty">No output captured</div>';
+  }
+  outputHtml += '</div>';
+
+  container.innerHTML = navHtml + fieldsHtml + flagsHtml + outputHtml;
+
+  // Wire nav button clicks
+  container.querySelectorAll('.sidecar-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sidecarSelectedId = btn.dataset.navId;
+      renderSidecarDetail();
+    });
+  });
+}
+
+/**
+ * Build a detail field row.
+ * @param {string} label - Field label
+ * @param {string} valueHtml - Field value (may contain HTML)
+ * @returns {string} HTML string
+ */
+function sidecarField(label, valueHtml) {
+  return `<div class="sidecar-field"><span class="sidecar-field-label">${label}</span><span class="sidecar-field-value">${valueHtml}</span></div>`;
+}
+
+/**
+ * Handle a pill click — open the sidecar panel for that process.
+ * @param {Event} e - Click event
+ */
+function handlePillClick(e) {
+  const pill = e.target.closest('.sidecar-pill[data-process-id]');
+  if (!pill) return;
+  const id = pill.dataset.processId;
+  if (id) openSidecarPanel(id);
+}
+
+/**
+ * Manually refresh sidecar data and re-render the panel.
+ */
+async function refreshSidecarPanel() {
+  await pollSidecarProcesses();
+  if (sidecarPanelOpen) renderSidecarDetail();
 }
 
 // ── Capability Gating ──
@@ -1507,6 +1699,12 @@ function bindEvents() {
       sendCommand($('commandInput').value.trim());
     }
   });
+
+  // Sidecar detail panel
+  $('sidecarClose').addEventListener('click', closeSidecarPanel);
+  $('sidecarRefresh').addEventListener('click', refreshSidecarPanel);
+  $('sidecarBackdrop').addEventListener('click', closeSidecarPanel);
+  $('sidecarPills').addEventListener('click', handlePillClick);
 
   // Peek drawer
   $('peekClose').addEventListener('click', closePeek);

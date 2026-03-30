@@ -562,8 +562,11 @@ body {
   flex: 1;
   position: relative;
   min-height: 0;
+  overflow: hidden;
 }
 .terminal-frame {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border: none;
@@ -1116,6 +1119,14 @@ body {
   font-style: italic;
 }
 
+/* Clickable pills */
+.sidecar-pill[data-process-id] {
+  cursor: pointer;
+}
+.sidecar-pill[data-process-id]:active {
+  opacity: 0.7;
+}
+
 /* Mobile: smaller pills */
 @media (max-width: 600px) {
   .sidecar-pill {
@@ -1125,6 +1136,199 @@ body {
   .sidecar-pill-label {
     max-width: 80px;
   }
+}
+
+/* ── Sidecar Detail Panel ── */
+.sidecar-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  background: var(--card-bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-modal) var(--radius-modal) 0 0;
+  max-height: 75vh;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: flex;
+  flex-direction: column;
+}
+.sidecar-panel.open { transform: translateY(0); }
+
+.sidecar-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 8px;
+  flex-shrink: 0;
+}
+.sidecar-panel-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.sidecar-panel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* ── Sidecar Detail Content ── */
+.sidecar-detail {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+.sidecar-detail-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+  padding: 24px 0;
+}
+
+/* Process nav (when multiple processes) */
+.sidecar-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.sidecar-nav::-webkit-scrollbar { display: none; }
+.sidecar-nav-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--elevated-bg);
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sidecar-nav-btn:active { background: var(--elevated-bg); }
+.sidecar-nav-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(139, 195, 74, 0.1);
+}
+.sidecar-nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+/* Detail fields */
+.sidecar-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 13px;
+}
+.sidecar-field:last-of-type { border-bottom: none; }
+.sidecar-field-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+.sidecar-field-value {
+  text-align: right;
+  word-break: break-word;
+}
+
+/* Status indicator in detail */
+.sidecar-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.sidecar-status-badge--running {
+  background: rgba(139, 195, 74, 0.15);
+  color: var(--primary);
+}
+.sidecar-status-badge--quiet {
+  background: rgba(255, 167, 38, 0.15);
+  color: var(--amber);
+}
+.sidecar-status-badge--completed {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+}
+.sidecar-status-badge--failed {
+  background: rgba(239, 83, 80, 0.15);
+  color: var(--danger);
+}
+.sidecar-status-badge--terminated {
+  background: rgba(239, 83, 80, 0.15);
+  color: var(--danger);
+}
+.sidecar-status-badge--unknown {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+}
+
+/* Attention flags */
+.sidecar-flags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.sidecar-flag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 167, 38, 0.15);
+  color: var(--amber);
+}
+.sidecar-flag--danger {
+  background: rgba(239, 83, 80, 0.15);
+  color: var(--danger);
+}
+
+/* Output snippet */
+.sidecar-output {
+  margin-top: 12px;
+}
+.sidecar-output-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.sidecar-output-content {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #ccc;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #000;
+  border-radius: var(--radius-btn);
+  padding: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.sidecar-output-empty {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* ── Utility ── */
