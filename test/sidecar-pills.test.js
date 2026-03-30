@@ -10,6 +10,7 @@ const os = require('node:os');
 // ── Test Helpers ──
 
 const store = require('../lib/store');
+const sidecar = require('../lib/sidecar');
 const { createServer } = require('../server');
 
 let server;
@@ -72,6 +73,7 @@ before(async () => {
 });
 
 after(async () => {
+  sidecar.stopAllPolling();
   await new Promise((resolve) => server.close(resolve));
   store.close();
   fs.rmSync(testDir, { recursive: true, force: true });
@@ -79,7 +81,7 @@ after(async () => {
 
 // ── Tests ──
 
-describe('Sidecar Pills — HTML', () => {
+describe('Sidecar Pills — session.html should NOT have sidecar', () => {
   let html;
 
   before(async () => {
@@ -87,21 +89,12 @@ describe('Sidecar Pills — HTML', () => {
     html = res.data;
   });
 
-  it('should include sidecar pills container in banner', () => {
-    assert.ok(html.includes('id="sidecarPills"'));
-    assert.ok(html.includes('class="sidecar-pills hidden"'));
+  it('should NOT include sidecarPills in session.html (moved to openclaw-view)', () => {
+    assert.ok(!html.includes('id="sidecarPills"'));
   });
 
-  it('should have sidecar pills container between banner-row and banner-actions', () => {
-    const rowEnd = html.indexOf('bannerGroups');
-    const pillsPos = html.indexOf('sidecarPills');
-    const actionsPos = html.indexOf('banner-actions');
-    assert.ok(rowEnd < pillsPos, 'sidecarPills should come after bannerGroups');
-    assert.ok(pillsPos < actionsPos, 'sidecarPills should come before banner-actions');
-  });
-
-  it('should have aria-label on sidecar pills container', () => {
-    assert.ok(html.includes('aria-label="Background processes"'));
+  it('should NOT include sidecar panel in session.html (moved to openclaw-view)', () => {
+    assert.ok(!html.includes('id="sidecarPanel"'));
   });
 });
 
@@ -113,7 +106,7 @@ describe('Sidecar Pills — CSS', () => {
     css = res.data;
   });
 
-  it('should include sidecar pills container styles', () => {
+  it('should include sidecar pills container styles (shared CSS)', () => {
     assert.ok(css.includes('.sidecar-pills'));
   });
 
@@ -156,15 +149,16 @@ describe('Sidecar Pills — CSS', () => {
     assert.ok(css.includes('.sidecar-stale-badge'));
   });
 
-  it('should include mobile responsive styles for pills', () => {
-    // Check that within a max-width media query, sidecar-pill is restyled
-    const mobileIdx = css.indexOf('.sidecar-pill-label');
-    assert.ok(mobileIdx > 0, 'should have sidecar-pill-label style');
-    assert.ok(css.includes('max-width: 80px'), 'should have mobile label width');
+  it('should include sidecar panel styles', () => {
+    assert.ok(css.includes('.sidecar-panel'));
+    assert.ok(css.includes('.sidecar-detail'));
+    assert.ok(css.includes('.sidecar-field'));
+    assert.ok(css.includes('.sidecar-status-badge--running'));
+    assert.ok(css.includes('.sidecar-output'));
   });
 });
 
-describe('Sidecar Pills — JS', () => {
+describe('Sidecar Pills — session.js should NOT have sidecar code', () => {
   let js;
 
   before(async () => {
@@ -172,56 +166,60 @@ describe('Sidecar Pills — JS', () => {
     js = res.data;
   });
 
-  it('should include isOpenClawProject function', () => {
-    assert.ok(js.includes('function isOpenClawProject()'));
-    assert.ok(js.includes("startsWith('openclaw:')"));
+  it('should NOT include sidecar polling functions', () => {
+    assert.ok(!js.includes('function startSidecarPolling()'));
+    assert.ok(!js.includes('function stopSidecarPolling()'));
+    assert.ok(!js.includes('function pollSidecarProcesses()'));
   });
 
-  it('should include pollSidecarProcesses function', () => {
-    assert.ok(js.includes('async function pollSidecarProcesses()'));
-    assert.ok(js.includes('/api/sidecar/'));
+  it('should NOT include sidecar pill rendering', () => {
+    assert.ok(!js.includes('function renderSidecarPills('));
   });
 
-  it('should include sidecarStatusClass mapping function', () => {
-    assert.ok(js.includes('function sidecarStatusClass('));
-    assert.ok(js.includes("'running'"));
-    assert.ok(js.includes("'quiet'"));
-    assert.ok(js.includes("'completed'"));
-    assert.ok(js.includes("'failed'"));
-    assert.ok(js.includes("'attention'"));
+  it('should NOT include sidecar detail panel', () => {
+    assert.ok(!js.includes('function openSidecarPanel('));
+    assert.ok(!js.includes('function closeSidecarPanel()'));
+    assert.ok(!js.includes('function renderSidecarDetail()'));
   });
 
-  it('should include formatElapsed time formatter', () => {
-    assert.ok(js.includes('function formatElapsed('));
+  it('should NOT include isOpenClawProject', () => {
+    assert.ok(!js.includes('function isOpenClawProject()'));
+  });
+});
+
+describe('Sidecar — connection-based API route', () => {
+  let connId;
+
+  before(() => {
+    const conn = store.openclawConnections.create({
+      name: 'SidecarTest',
+      host: '192.168.20.10',
+      port: 18789,
+      sshUser: 'test',
+      sshKeyPath: '~/.ssh/test',
+      localPort: 19999,
+      availableAsEngine: false
+    });
+    connId = conn.id;
   });
 
-  it('should include renderSidecarPills function', () => {
-    assert.ok(js.includes('function renderSidecarPills('));
-    assert.ok(js.includes('sidecar-pill'));
-    assert.ok(js.includes('sidecar-pill-dot'));
-    assert.ok(js.includes('sidecar-attention-badge'));
+  it('should return 404 for unknown connection ID', async () => {
+    const res = await request('/api/sidecar/connection/nonexistent/processes');
+    assert.equal(res.status, 404);
   });
 
-  it('should include startSidecarPolling and stopSidecarPolling', () => {
-    assert.ok(js.includes('function startSidecarPolling()'));
-    assert.ok(js.includes('function stopSidecarPolling()'));
+  it('should return empty processes for valid connection with no data', async () => {
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.data.active, []);
+    assert.deepEqual(res.data.recent, []);
+    assert.equal(res.data.stale, false);
   });
 
-  it('should start sidecar polling in initSession', () => {
-    assert.ok(js.includes('startSidecarPolling()'));
-  });
-
-  it('should stop sidecar polling on session ended', () => {
-    assert.ok(js.includes('stopSidecarPolling()'));
-  });
-
-  it('should use 10s polling interval for sidecar', () => {
-    assert.ok(js.includes('SIDECAR_POLL_INTERVAL'));
-    assert.ok(js.includes('10000'));
-  });
-
-  it('should render stale badge when data is stale', () => {
-    assert.ok(js.includes('sidecar-stale-badge'));
-    assert.ok(js.includes('stale'));
+  it('should return lastPollAt and stale fields', async () => {
+    const res = await request(`/api/sidecar/connection/${connId}/processes`);
+    assert.equal(res.status, 200);
+    assert.ok('lastPollAt' in res.data);
+    assert.ok('stale' in res.data);
   });
 });

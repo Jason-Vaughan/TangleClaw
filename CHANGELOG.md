@@ -2,6 +2,19 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.9.3] - 2026-03-30
+
+### Changed
+
+- **Sidecar: Chunk 4 — Strip from session page, add connection-based API**
+  - Removed all sidecar code from `session.js` and `session.html` — sidecar is for OpenClaw direct-connect sessions only, not project sessions
+  - Removed: `isOpenClawProject()`, `pollSidecarProcesses()`, `sidecarStatusClass()`, `formatElapsed()`, `renderSidecarPills()`, `startSidecarPolling()`, `stopSidecarPolling()`, sidecar detail panel functions, sidecar pills container, sidecar panel markup
+  - Kept: all sidecar CSS in `session.css` (shared with `openclaw-view.html`), webui banner scroll fix
+  - Added `getProcessesByConnection(connId)` to `lib/sidecar.js` — direct connection lookup without project resolution
+  - Added `GET /api/sidecar/connection/:connId/processes` API route — polls by connection ID for direct-connect sessions
+  - Updated `syncPolling()` to also start polling for connections with active tunnels (`oc-direct-*`), not just project engine sessions
+  - Tests updated: 1304 → 1284 (removed 52 misplaced session-page assertions, added 32 for connection-based API + absence checks)
+
 ## [3.9.2] - 2026-03-29
 
 ### Added

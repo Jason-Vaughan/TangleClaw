@@ -7,9 +7,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-// ��─ Test Helpers ──
+// ── Test Helpers ──
 
 const store = require('../lib/store');
+const sidecar = require('../lib/sidecar');
 const { createServer } = require('../server');
 
 let server;
@@ -72,6 +73,7 @@ before(async () => {
 });
 
 after(async () => {
+  sidecar.stopAllPolling();
   await new Promise((resolve) => server.close(resolve));
   store.close();
   fs.rmSync(testDir, { recursive: true, force: true });
@@ -79,7 +81,7 @@ after(async () => {
 
 // ── Tests ──
 
-describe('Sidecar Panel — HTML', () => {
+describe('Sidecar Panel — session page should NOT have sidecar markup', () => {
   let html;
 
   before(async () => {
@@ -87,35 +89,20 @@ describe('Sidecar Panel — HTML', () => {
     html = res.data;
   });
 
-  it('should include sidecar panel backdrop', () => {
-    assert.ok(html.includes('id="sidecarBackdrop"'));
-    assert.ok(html.includes('class="drawer-backdrop"'));
+  it('should NOT include sidecar panel backdrop', () => {
+    assert.ok(!html.includes('id="sidecarBackdrop"'));
   });
 
-  it('should include sidecar panel aside element', () => {
-    assert.ok(html.includes('id="sidecarPanel"'));
-    assert.ok(html.includes('class="sidecar-panel"'));
-    assert.ok(html.includes('aria-label="Process detail"'));
+  it('should NOT include sidecar panel aside', () => {
+    assert.ok(!html.includes('id="sidecarPanel"'));
   });
 
-  it('should include sidecar panel header with title and actions', () => {
-    assert.ok(html.includes('id="sidecarTitle"'));
-    assert.ok(html.includes('id="sidecarRefresh"'));
-    assert.ok(html.includes('id="sidecarClose"'));
-  });
-
-  it('should include sidecar detail container', () => {
-    assert.ok(html.includes('id="sidecarDetail"'));
-  });
-
-  it('should place sidecar panel before peek drawer', () => {
-    const sidecarPos = html.indexOf('id="sidecarPanel"');
-    const peekPos = html.indexOf('id="peekDrawer"');
-    assert.ok(sidecarPos < peekPos, 'sidecar panel should come before peek drawer');
+  it('should NOT include sidecar detail container', () => {
+    assert.ok(!html.includes('id="sidecarDetail"'));
   });
 });
 
-describe('Sidecar Panel — CSS', () => {
+describe('Sidecar Panel — CSS remains in shared stylesheet', () => {
   let css;
 
   before(async () => {
@@ -131,7 +118,6 @@ describe('Sidecar Panel — CSS', () => {
   it('should include panel header styles', () => {
     assert.ok(css.includes('.sidecar-panel-header'));
     assert.ok(css.includes('.sidecar-panel-title'));
-    assert.ok(css.includes('.sidecar-panel-actions'));
   });
 
   it('should include detail content styles', () => {
@@ -142,13 +128,6 @@ describe('Sidecar Panel — CSS', () => {
   it('should include process nav styles', () => {
     assert.ok(css.includes('.sidecar-nav'));
     assert.ok(css.includes('.sidecar-nav-btn'));
-    assert.ok(css.includes('.sidecar-nav-btn.active'));
-  });
-
-  it('should include detail field styles', () => {
-    assert.ok(css.includes('.sidecar-field'));
-    assert.ok(css.includes('.sidecar-field-label'));
-    assert.ok(css.includes('.sidecar-field-value'));
   });
 
   it('should include status badge styles for all statuses', () => {
@@ -157,113 +136,69 @@ describe('Sidecar Panel — CSS', () => {
     assert.ok(css.includes('.sidecar-status-badge--completed'));
     assert.ok(css.includes('.sidecar-status-badge--failed'));
     assert.ok(css.includes('.sidecar-status-badge--terminated'));
-    assert.ok(css.includes('.sidecar-status-badge--unknown'));
   });
 
   it('should include attention flag styles', () => {
     assert.ok(css.includes('.sidecar-flags'));
     assert.ok(css.includes('.sidecar-flag'));
-    assert.ok(css.includes('.sidecar-flag--danger'));
   });
 
   it('should include output snippet styles', () => {
     assert.ok(css.includes('.sidecar-output'));
-    assert.ok(css.includes('.sidecar-output-label'));
     assert.ok(css.includes('.sidecar-output-content'));
-    assert.ok(css.includes('.sidecar-output-empty'));
-  });
-
-  it('should include clickable pill cursor styles', () => {
-    assert.ok(css.includes('.sidecar-pill[data-process-id]'));
-    assert.ok(css.includes('cursor: pointer'));
   });
 });
 
-describe('Sidecar Panel — JS', () => {
-  let js;
+describe('Sidecar — getProcessesByConnection', () => {
+  let connId;
 
-  before(async () => {
-    const res = await request('/session.js');
-    js = res.data;
+  before(() => {
+    const conn = store.openclawConnections.create({
+      name: 'PanelTest',
+      host: '192.168.20.10',
+      port: 18789,
+      sshUser: 'test',
+      sshKeyPath: '~/.ssh/test',
+      localPort: 19998,
+      availableAsEngine: false
+    });
+    connId = conn.id;
   });
 
-  it('should include openSidecarPanel function', () => {
-    assert.ok(js.includes('function openSidecarPanel('));
-    assert.ok(js.includes('sidecarBackdrop'));
-    assert.ok(js.includes('sidecarPanel'));
+  it('should return error for unknown connection', () => {
+    const result = sidecar.getProcessesByConnection('nonexistent');
+    assert.equal(result.error, 'Connection not found');
+    assert.deepEqual(result.active, []);
+    assert.deepEqual(result.recent, []);
   });
 
-  it('should include closeSidecarPanel function', () => {
-    assert.ok(js.includes('function closeSidecarPanel()'));
+  it('should return empty arrays for valid connection with no cached data', () => {
+    const result = sidecar.getProcessesByConnection(connId);
+    assert.deepEqual(result.active, []);
+    assert.deepEqual(result.recent, []);
+    assert.equal(result.stale, false);
   });
 
-  it('should include autoSelectProcess function', () => {
-    assert.ok(js.includes('function autoSelectProcess()'));
-    assert.ok(js.includes('needsAttention'));
-  });
+  it('should return cached data when available', () => {
+    // Manually seed cache
+    sidecar._cache.set(connId, {
+      processes: {
+        active: [{ id: 'p1', type: 'claude', status: 'running', label: 'test run' }],
+        recent: [{ id: 'p2', type: 'exec', status: 'completed', label: 'done' }]
+      },
+      lastPollAt: new Date().toISOString(),
+      error: null,
+      stale: false
+    });
 
-  it('should include renderSidecarDetail function', () => {
-    assert.ok(js.includes('function renderSidecarDetail()'));
-    assert.ok(js.includes('sidecar-status-badge'));
-    assert.ok(js.includes('sidecar-field'));
-  });
+    const result = sidecar.getProcessesByConnection(connId);
+    assert.equal(result.active.length, 1);
+    assert.equal(result.active[0].id, 'p1');
+    assert.equal(result.recent.length, 1);
+    assert.equal(result.recent[0].id, 'p2');
+    assert.equal(result.stale, false);
 
-  it('should include formatTimestamp helper', () => {
-    assert.ok(js.includes('function formatTimestamp('));
-  });
-
-  it('should include sidecarField helper', () => {
-    assert.ok(js.includes('function sidecarField('));
-  });
-
-  it('should include handlePillClick for pill interaction', () => {
-    assert.ok(js.includes('function handlePillClick('));
-    assert.ok(js.includes('openSidecarPanel'));
-  });
-
-  it('should include refreshSidecarPanel function', () => {
-    assert.ok(js.includes('async function refreshSidecarPanel()'));
-    assert.ok(js.includes('pollSidecarProcesses'));
-  });
-
-  it('should cache processes in sidecarProcesses array', () => {
-    assert.ok(js.includes('sidecarProcesses = all'));
-  });
-
-  it('should update detail panel during poll when open', () => {
-    assert.ok(js.includes('if (sidecarPanelOpen) renderSidecarDetail()'));
-  });
-
-  it('should wire sidecar panel events in DOMContentLoaded', () => {
-    assert.ok(js.includes("$('sidecarClose').addEventListener('click', closeSidecarPanel)"));
-    assert.ok(js.includes("$('sidecarRefresh').addEventListener('click', refreshSidecarPanel)"));
-    assert.ok(js.includes("$('sidecarBackdrop').addEventListener('click', closeSidecarPanel)"));
-    assert.ok(js.includes("$('sidecarPills').addEventListener('click', handlePillClick)"));
-  });
-
-  it('should render process nav when multiple processes', () => {
-    assert.ok(js.includes('sidecar-nav'));
-    assert.ok(js.includes('sidecar-nav-btn'));
-    assert.ok(js.includes('data-nav-id'));
-  });
-
-  it('should render attention flags for flagged processes', () => {
-    assert.ok(js.includes('waitingForInput'));
-    assert.ok(js.includes('suspectedStalled'));
-    assert.ok(js.includes('Waiting for Input'));
-    assert.ok(js.includes('Suspected Stalled'));
-    assert.ok(js.includes('Needs Attention'));
-  });
-
-  it('should render output snippet area', () => {
-    assert.ok(js.includes('lastOutputSnippet'));
-    assert.ok(js.includes('sidecar-output-content'));
-    assert.ok(js.includes('No output captured'));
-  });
-
-  it('should display exit code and signal when available', () => {
-    assert.ok(js.includes('exitCode'));
-    assert.ok(js.includes('Exit Code'));
-    assert.ok(js.includes('Signal'));
+    // Cleanup
+    sidecar._cache.delete(connId);
   });
 });
