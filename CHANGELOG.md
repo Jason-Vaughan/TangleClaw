@@ -2,7 +2,19 @@
 
 All notable changes to TangleClaw are documented in this file.
 
-## [3.8.4] - 2026-03-29
+## [3.9.0] - 2026-03-29
+
+### Added
+
+- **Sidecar: OpenClaw Process Visibility — Chunk 1: Backend Polling Infrastructure**
+  - `lib/sidecar.js` — polls OpenClaw's `/api/processes` through SSH tunnel, caches state per connection
+  - `pollProcesses(connectionId)` — fetches active/recent background processes from ClawBridge
+  - `getProcesses(connectionId)` / `getProcessesForProject(projectName)` — returns cached state with stale detection
+  - `startPolling()` / `stopPolling()` / `syncPolling()` — manages per-connection polling intervals (default 10s)
+  - Graceful degradation: stale cache preserved on connection failure
+  - `GET /api/sidecar/:project/processes` — API endpoint for frontend to consume process state
+  - Auto-starts polling on server startup for OpenClaw connections with active sessions
+  - 17 new tests (1235 → 1252): resolveConnectionId (3), getProcesses (4), getProcessesForProject (2), pollProcesses (3), polling lifecycle (3), syncPolling (2)
 
 ### Fixed
 
