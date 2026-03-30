@@ -14,15 +14,15 @@ This guide walks you through using TangleClaw — from first launch to managing 
 ### Installation
 
 ```bash
-git clone <repo-url> ~/Documents/Projects/TangleClaw-v3
-cd ~/Documents/Projects/TangleClaw-v3
+git clone https://github.com/Jason-Vaughan/TangleClaw.git
+cd TangleClaw
 ./deploy/install.sh
 ```
 
 The install script verifies prerequisites, generates launchd plists, loads the services, and runs a health check. On success, you'll see:
 
-- **Landing page**: http://localhost:3101
-- **Terminal (ttyd)**: http://localhost:3100
+- **Landing page**: http://localhost:3102
+- **Terminal (ttyd)**: http://localhost:3101
 
 Both services auto-restart on crash via launchd KeepAlive.
 
@@ -34,7 +34,7 @@ On first launch, TangleClaw creates `~/.tangleclaw/` with:
 - `engines/` — engine profile JSON files
 - `tangleclaw.db` — SQLite database for runtime state
 
-Open http://localhost:3101 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration:
+Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration:
 
 1. **Welcome** — overview of what TangleClaw does
 2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
@@ -317,7 +317,7 @@ launchctl list | grep tangleclaw
 tail -50 ~/.tangleclaw/logs/tangleclaw.log
 
 # Health check
-curl -s http://localhost:3101/api/health | python3 -m json.tool
+curl -s http://localhost:3102/api/health | python3 -m json.tool
 ```
 
 ### Terminal Not Connecting
@@ -330,7 +330,7 @@ launchctl list | grep ttyd
 launchctl list | grep ttyd
 
 # Test ttyd directly
-curl -s http://localhost:3100
+curl -s http://localhost:3101
 ```
 
 ### Session Won't Launch

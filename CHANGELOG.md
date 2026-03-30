@@ -14,6 +14,15 @@ All notable changes to TangleClaw are documented in this file.
   - TangleClaw detects and orchestrates Prawduct projects; Prawduct owns its own tools
   - 1 new test (1313 → 1314): `$CLAUDE_PROJECT_DIR` passthrough verification
 
+- **Documentation overhaul for public release**
+  - README: updated project structure (added 8 missing lib/ files, OpenClaw viewer, setup.js; removed bundled tools/), updated architecture diagram with SSH tunnels and OpenClaw proxy, added Sidecar and Eval Audit to features, added Prawduct as optional prerequisite with repo link, added BitchBoard and Sidecar controls to roadmap, removed "private repository" notice, added Eval Audit Mode to docs index
+  - User Guide: fixed clone URL to `github.com/Jason-Vaughan/TangleClaw`, fixed all port references (3101→3102 for server, 3100→3101 for ttyd)
+  - Methodology Guide: added [Prawduct](https://github.com/brookstalley/prawduct) repo link, documented separate install model, added hooks documentation with `$CLAUDE_PROJECT_DIR` resolution
+  - Engine Guide: added OpenClaw engine section (SSH and Web UI modes, connection registry, sidecar), updated engine count to six
+  - Configuration Reference: updated schema version 2→12, added 7 missing tables, expanded API from 29→62 endpoints organized by category (core, projects, sessions, ports, groups, shared docs, OpenClaw, sidecar, eval audit), added HTTPS config fields
+  - OpenClaw Setup: updated version requirement to v3.10.0+, added Bridge Port/Token fields, added Sidecar section
+  - Prawduct extraction doc: updated to reference external repo, removed local path references
+
 ## [3.9.5] - 2026-03-30
 
 ### Added

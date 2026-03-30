@@ -4,7 +4,7 @@ This guide walks through connecting an OpenClaw instance to TangleClaw. It cover
 
 ## Prerequisites
 
-- TangleClaw v3.2.8+ running on a host machine (the "TangleClaw host")
+- TangleClaw v3.10.0+ running on a host machine (the "TangleClaw host")
 - An OpenClaw gateway running on a remote machine (the "OpenClaw host"), typically in Docker
 - SSH access from the TangleClaw host to the OpenClaw host (key-based, no password prompt)
 - The OpenClaw gateway token (found in the gateway config)
@@ -117,6 +117,8 @@ Same path: `gateway.auth.token`.
 | **Gateway Port** | OpenClaw gateway port (default `18789`) | Remote port |
 | **Gateway Token** | The token from Step 2 | Required for remote access |
 | **Local Port** | Local tunnel port (default `18789`) | Must not conflict with other tunnels |
+| **Bridge Port** | ClawBridge port (default `3201`) | For sidecar process visibility |
+| **Bridge Token** | ClawBridge authentication token | Required for sidecar polling |
 | **Available as Engine** | Toggle on if you want to use it as a project engine | Optional |
 
 5. Click **"Test Connection"** to verify SSH and gateway connectivity
@@ -171,6 +173,29 @@ If you toggled "Available as Engine" when creating the connection:
    - **SSH** — tmux-based terminal session on the remote machine
    - **Web UI** — iframe-based OpenClaw Control UI (same as the standalone viewer)
 4. Launch a session
+
+## Sidecar: Background Process Visibility
+
+When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configured, TangleClaw polls the ClawBridge for background process status. This is displayed as **sidecar pills** in the OpenClaw viewer.
+
+### What it shows
+
+- **Running processes** — active Claude Code sessions, build chunks, background tasks
+- **Completed processes** — recently finished with exit code and duration
+- **Stalled/waiting processes** — processes that appear stuck or are waiting for input
+
+### How it works
+
+1. TangleClaw's SSH tunnel forwards both the gateway port (18789) and the bridge port (3201)
+2. The sidecar polls `GET /api/processes` on the ClawBridge every 10 seconds
+3. Status pills appear in the OpenClaw viewer banner — colored by status (running, completed, errored)
+4. Click a pill to open the detail panel with timestamps, exit code, working directory, and last output
+
+### Requirements
+
+- ClawBridge must be running on the OpenClaw host (typically port 3201)
+- The `BRIDGE_TOKEN` environment variable must be set on the ClawBridge
+- The connection's Bridge Token must match the ClawBridge's `BRIDGE_TOKEN`
 
 ## Troubleshooting
 

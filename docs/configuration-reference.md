@@ -30,6 +30,9 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | `chimeEnabled` | boolean | `true` | Play audio chime when session goes idle |
 | `peekMode` | string | `"drawer"` | Peek UI mode: `"drawer"`, `"modal"`, `"alert"` |
 | `setupComplete` | boolean | `false` | Whether the first-run wizard has been completed. Set to `true` automatically for existing installs that lack this field. |
+| `httpsEnabled` | boolean | `false` | Enable HTTPS for the server |
+| `httpsCertPath` | string\|null | `null` | Path to TLS certificate file (PEM) |
+| `httpsKeyPath` | string\|null | `null` | Path to TLS private key file (PEM) |
 
 ### Default Quick Commands
 
@@ -209,9 +212,9 @@ Methodology templates define project workflow. See the [Methodology Guide](metho
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
-**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`
+**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`, `project_groups`, `group_members`, `shared_docs`, `openclaw_connections`, `eval_scores`, `eval_baselines`, `eval_incidents`
 
-Current schema version: **2**
+Current schema version: **12**
 
 ### Port Leases Table
 
@@ -232,11 +235,13 @@ The `port_leases` table stores all managed port assignments. TangleClaw is the a
 
 ## API Overview
 
-TangleClaw exposes 29 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
+TangleClaw exposes 62 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
 
 ```json
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
 ```
+
+### Core
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -245,26 +250,57 @@ TangleClaw exposes 29 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/system` | GET | CPU, memory, disk stats |
 | `/api/config` | GET | Global config (password redacted) |
 | `/api/config` | PATCH | Update config fields |
+| `/api/models/status` | GET | Upstream API status for all engines |
+| `/api/update-status` | GET | Version update check |
+
+### Engines & Methodologies
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/engines` | GET | List engines with availability |
 | `/api/engines/:id` | GET | Engine profile details |
 | `/api/methodologies` | GET | List methodology templates |
 | `/api/methodologies/:id` | GET | Methodology template details |
+
+### Projects
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/projects` | GET | List projects (filterable) |
 | `/api/projects/:name` | GET | Single project detail |
 | `/api/projects` | POST | Create project |
+| `/api/projects/attach` | POST | Attach existing directory as project |
+| `/api/projects/import` | POST | Import project from external source |
 | `/api/projects/:name` | PATCH | Update project |
 | `/api/projects/:name` | DELETE | Delete project |
+
+### Sessions
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/sessions/:project` | POST | Launch session |
 | `/api/sessions/:project` | DELETE | Kill session |
 | `/api/sessions/:project/status` | GET | Session status |
 | `/api/sessions/:project/command` | POST | Inject command |
 | `/api/sessions/:project/wrap` | POST | Trigger wrap |
+| `/api/sessions/:project/wrap/complete` | POST | Complete wrap with captured data |
 | `/api/sessions/:project/peek` | GET | Peek at output |
 | `/api/sessions/:project/history` | GET | Session history |
+
+### Ports
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/ports` | GET | List all port leases |
 | `/api/ports/lease` | POST | Create or renew a port lease |
 | `/api/ports/release` | POST | Release a port lease |
 | `/api/ports/heartbeat` | POST | Heartbeat a TTL lease |
+| `/api/ports/sync` | POST | Sync port leases with system state |
+
+### Rules & Config
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/rules/global` | GET | Get global rules content |
 | `/api/rules/global` | PUT | Save global rules content |
 | `/api/rules/global/reset` | POST | Reset global rules to defaults |
@@ -273,6 +309,75 @@ TangleClaw exposes 29 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/uploads` | GET | List uploads for a project (`?project=name`) |
 | `/api/tmux/mouse/:session` | GET | Get mouse mode |
 | `/api/tmux/mouse` | POST | Set mouse mode |
+
+### Setup
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/setup/scan` | POST | Scan projects directory for attachable projects |
+| `/api/setup/complete` | POST | Complete first-run setup wizard |
+
+### Groups & Shared Documents
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/groups` | GET | List project groups |
+| `/api/groups` | POST | Create a group |
+| `/api/groups/:id` | GET | Get group details |
+| `/api/groups/:id` | PUT | Update a group |
+| `/api/groups/:id` | DELETE | Delete a group |
+| `/api/groups/:id/members` | GET | List group members |
+| `/api/groups/:id/members` | POST | Add member to group |
+| `/api/groups/:id/members/:projectId` | DELETE | Remove member from group |
+| `/api/shared-docs` | GET | List shared documents |
+| `/api/shared-docs` | POST | Register a shared document |
+| `/api/shared-docs/:id` | GET | Get shared document details |
+| `/api/shared-docs/:id` | PUT | Update a shared document |
+| `/api/shared-docs/:id` | DELETE | Delete a shared document |
+| `/api/shared-docs/:id/lock` | GET | Check document lock status |
+| `/api/shared-docs/:id/lock` | POST | Lock a shared document |
+| `/api/shared-docs/:id/lock` | DELETE | Unlock a shared document |
+
+### OpenClaw
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/openclaw/connections` | GET | List all connections |
+| `/api/openclaw/connections` | POST | Create a connection |
+| `/api/openclaw/connections/:id` | GET | Get connection details |
+| `/api/openclaw/connections/:id` | PUT | Update a connection |
+| `/api/openclaw/connections/:id` | DELETE | Delete a connection |
+| `/api/openclaw/connections/:id/tunnel` | POST | Start SSH tunnel |
+| `/api/openclaw/connections/:id/tunnel` | DELETE | Stop SSH tunnel |
+| `/api/openclaw/connections/:id/approve-pending` | POST | Auto-approve device pairing |
+| `/api/openclaw/test` | POST | Test SSH + gateway connectivity |
+
+### Sidecar
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/sidecar/:project/processes` | GET | Get background processes for a project |
+| `/api/sidecar/connection/:connId/processes` | GET | Get background processes by connection ID |
+
+### Eval Audit
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/audit/telemetry` | GET | Get audit telemetry |
+| `/api/audit/ingest` | POST | Ingest exchange data for evaluation |
+| `/api/audit/heartbeat` | POST | Heartbeat for audit sessions |
+| `/api/audit/retention/run` | POST | Run retention cleanup |
+| `/api/audit/:project/scores` | GET | Get evaluation scores |
+| `/api/audit/:project/scores/:id/human` | POST | Submit human review of a score |
+| `/api/audit/:project/anomalies` | GET | Get detected anomalies |
+| `/api/audit/:project/summary` | GET | Get audit summary |
+| `/api/audit/:project/baseline` | GET | Get quality baseline |
+| `/api/audit/:project/baseline/recompute` | POST | Recompute baseline |
+| `/api/audit/:project/trends` | GET | Get quality trends |
+| `/api/audit/:project/wrap-quality` | GET | Get wrap quality metrics |
+| `/api/audit/:project/incidents` | GET | List incidents |
+| `/api/audit/:project/incidents/:id` | GET | Get incident details |
+| `/api/audit/:project/incidents/:id` | PUT | Update incident |
 
 ### Per-Route Body Size Limits
 

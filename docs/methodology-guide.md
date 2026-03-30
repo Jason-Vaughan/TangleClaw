@@ -30,7 +30,7 @@ Best for: projects where you want TangleClaw's session management without a pres
 
 ### Prawduct
 
-Structured governance with discovery, planning, and building phases. Includes independent Critic review.
+[Prawduct](https://github.com/brookstalley/prawduct) is a structured product development framework with discovery, planning, and building phases, independent Critic review, and continuous learning. **Prawduct is installed separately** — TangleClaw detects Prawduct projects and integrates with the framework's session hooks automatically.
 
 - **Phases**: Discovery (deep) → Planning (deep, offers context reset) → Building (normal, offers context reset)
 - **Default rules**: Core + independentCritic, docsParity, decisionFramework
@@ -39,8 +39,9 @@ Structured governance with discovery, planning, and building phases. Includes in
 - **Status**: reads `work_in_progress.description` from `.prawduct/project-state.yaml`
 - **Detection**: looks for `.prawduct/` directory
 - **Actions**: "Run Critic" button in session wrapper
+- **Hooks**: Prawduct's `product-hook` runs on session start (briefing + sync) and session stop (governance gates). Hooks reference the product's own `tools/product-hook` — updated automatically via framework sync on each session start
 
-Best for: structured development with governance, planning artifacts, and independent review.
+Best for: structured development with governance, planning artifacts, and independent review. See the [Prawduct README](https://github.com/brookstalley/prawduct) for installation and full documentation.
 
 ## Creating a Custom Methodology Template
 
