@@ -101,9 +101,10 @@ Access the landing page at **http://localhost:3102**. On first launch, a setup w
 
 ## Security Note
 
-TangleClaw runs a local HTTP server with browser-based terminal access. There is no authentication on the server itself — anyone who can reach the port can view your projects and open terminal sessions. The `deletePassword` config option protects destructive operations (project deletion, data reset) but does not gate general access.
+TangleClaw runs an HTTP or HTTPS server with browser-based terminal access. HTTPS is supported via mkcert or any TLS certificate — enable it in config with `httpsEnabled`, `httpsCertPath`, and `httpsKeyPath`. There is no user authentication on the server itself — anyone who can reach the port can view your projects and open terminal sessions. The `deletePassword` config option protects destructive operations (project deletion, data reset) but does not gate general access.
 
 **Recommendations:**
+- **Enable HTTPS** for any non-localhost access (required for OpenClaw Web UI device pairing)
 - Run TangleClaw on a trusted network or behind a VPN (e.g., Tailscale, WireGuard)
 - Do not expose TangleClaw ports to the public internet
 - If accessing from mobile over Wi-Fi, ensure your network is private
