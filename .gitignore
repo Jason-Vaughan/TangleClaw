@@ -1,31 +1,32 @@
-# Prawduct session files (TC dogfoods itself with Prawduct)
-.claude/settings.local.json
-.prawduct/.critic-findings.json
-.prawduct/.session-git-baseline
-.prawduct/.session-reflected
-.prawduct/.session-start
-.prawduct/.subagent-briefing.md
-.prawduct/reflections.md
-.prawduct/sync-manifest.json
-__pycache__/
+# macOS
+.DS_Store
 
-# TC's own project config (dogfooding artifact, not for distribution)
-.tangleclaw/project.json
+# Claude Code (personal settings)
+.claude/
 
-# Internal design doc (Prawduct intake artifact)
+# Prawduct dogfooding state (TC builds itself with Prawduct)
+.prawduct/
+
+# TangleClaw project config (dogfooding artifact)
+.tangleclaw/
+
+# Internal design docs and build plans
 INTAKE-BRIEF.md
+build-plan*.md
+wishlist.md
 
-# Unreleased methodology templates (kept locally, not distributed)
+# Runtime database (generated at startup)
+data/tangleclaw.db
+
+# Unreleased methodology templates
 data/templates/tilt/
+
+# TLS certificates (generated locally, contain private keys)
+data/certs/
 
 # Uploads (user-specific)
 .uploads/
 
-# TLS certificates (generated locally per-host, contain private keys)
-data/certs/
-
 # Node
 node_modules/
-
-# TangleClaw runtime (user-specific, not in repo)
-# ~/.tangleclaw/ is the runtime data directory
+__pycache__/
