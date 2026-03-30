@@ -28,6 +28,10 @@ data/certs/
 # Uploads (user-specific)
 .uploads/
 
+# Screenshots with personal data (retake with generic values before publishing)
+docs/screenshots/openclaw modal.png
+docs/screenshots/shared directories and files between groups modal.png
+
 # Node
 node_modules/
 __pycache__/

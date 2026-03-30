@@ -26,11 +26,29 @@ What started as session persistence grew into a full orchestration platform. Onc
 
 TangleClaw is all of that — a local platform that sits between you and your AI coding agents, accessible from any browser or phone on your network.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/project splash screen with sampele cards.png" alt="TangleClaw dashboard" width="800">
+  <br><em>Dashboard — project cards with engine badges, methodology status, git info, and session indicators</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/project info panel expanded.png" alt="Project info panel" width="800">
+  <br><em>Project detail panel — engine, methodology, active session, git state, settings, and session management</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/porthub-registry list example.png" alt="PortHub registry" width="800">
+  <br><em>PortHub registry — all port leases grouped by project with conflict detection</em>
+</p>
+
 ## Features
 
 - **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
 - **Five built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw). Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
 - **Methodology enforcement** — pluggable JSON templates define phases, rules, and session behavior. Rules are structural gates, not suggestions. First-class [Prawduct](https://github.com/brookstalley/prawduct) integration for governed workflows with independent Critic review
+- **[PortHub](https://github.com/Jason-Vaughan/PortHub) built in** — central port registry preventing conflicts across all projects. Originally a [standalone CLI](https://github.com/Jason-Vaughan/PortHub), now fully integrated into TangleClaw with permanent and TTL leases, heartbeat support, and system-wide conflict detection via lsof
 - **Dashboard & mobile PWA** — manage projects, launch sessions, and interact with AI agents from any browser or phone on your network. Installable on iOS and Android
 - **OpenClaw integration** — connect to remote [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) instances via SSH or Web UI mode with automatic SSH tunnel management, and live background process visibility via [ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)
 - **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
