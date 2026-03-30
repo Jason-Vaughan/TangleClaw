@@ -1010,6 +1010,123 @@ body {
   white-space: nowrap;
 }
 
+/* ── Sidecar Process Pills ── */
+.sidecar-pills {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 10px;
+}
+.sidecar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.sidecar-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+.sidecar-pill-label {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidecar-pill-time {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Status-specific dot colors */
+.sidecar-pill--running .sidecar-pill-dot {
+  background: var(--primary);
+  animation: breathe 2s ease-in-out infinite;
+}
+.sidecar-pill--running {
+  color: var(--primary);
+  background: rgba(139, 195, 74, 0.12);
+}
+.sidecar-pill--quiet .sidecar-pill-dot {
+  background: var(--amber);
+}
+.sidecar-pill--quiet {
+  color: var(--amber);
+  background: rgba(255, 167, 38, 0.12);
+}
+.sidecar-pill--completed .sidecar-pill-dot {
+  background: var(--text-muted);
+  animation: none;
+}
+.sidecar-pill--completed {
+  opacity: 0.6;
+}
+.sidecar-pill--failed .sidecar-pill-dot {
+  background: var(--danger);
+  animation: none;
+}
+.sidecar-pill--failed {
+  color: var(--danger);
+  background: rgba(239, 83, 80, 0.12);
+}
+
+/* Attention pulse */
+.sidecar-pill--attention {
+  animation: sidecar-pulse 1.5s ease-in-out infinite;
+}
+@keyframes sidecar-pulse {
+  0%, 100% { box-shadow: 0 0 2px rgba(255, 167, 38, 0.3); }
+  50% { box-shadow: 0 0 8px rgba(255, 167, 38, 0.8); }
+}
+
+/* Attention badge (count of processes needing attention) */
+.sidecar-attention-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--amber);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+/* Stale data indicator */
+.sidecar-stale-badge {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* Mobile: smaller pills */
+@media (max-width: 600px) {
+  .sidecar-pill {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+  .sidecar-pill-label {
+    max-width: 80px;
+  }
+}
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 .sr-only {
