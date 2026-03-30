@@ -950,11 +950,11 @@ describe('engines', () => {
           claude: {
             SessionStart: [{
               matcher: 'startup|clear|resume',
-              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" clear' }]
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
             }],
             Stop: [{
               matcher: '',
-              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" stop' }]
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
             }]
           }
         }
@@ -977,7 +977,7 @@ describe('engines', () => {
           claude: {
             Stop: [{
               matcher: '',
-              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/product-hook" stop' }]
+              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/some-hook" stop' }]
             }]
           }
         }
@@ -988,7 +988,27 @@ describe('engines', () => {
       const settings = readSettings();
       const cmd = settings.hooks.Stop[0].hooks[0].command;
       assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved');
-      assert.ok(cmd.includes('/tools/product-hook'), 'resolved path should contain tools/product-hook');
+      assert.ok(cmd.includes('/tools/some-hook'), 'resolved path should contain tools/some-hook');
+    });
+
+    it('should pass through $CLAUDE_PROJECT_DIR without modification', () => {
+      const template = {
+        id: 'test-meth',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }]
+          }
+        }
+      };
+
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+      assert.ok(cmd.includes('$CLAUDE_PROJECT_DIR'), 'should preserve $CLAUDE_PROJECT_DIR env var');
     });
 
     it('should preserve existing non-hook settings', () => {

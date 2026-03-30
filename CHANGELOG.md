@@ -2,6 +2,18 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.10.0] - 2026-03-30
+
+### Changed
+
+- **Unbundle Prawduct tools — methodology is now a separate install**
+  - Removed bundled `tools/product-hook`, `tools/prawduct-setup.py`, `tools/prawduct-init.py`, `tools/prawduct-sync.py`, `tools/prawduct-migrate.py` — Prawduct is now installed separately from [brookstalley/prawduct](https://github.com/brookstalley/prawduct)
+  - Updated `template.json` hooks from `{{TANGLECLAW_DIR}}/tools/product-hook` to `$CLAUDE_PROJECT_DIR/tools/product-hook` — matches Prawduct v1.3.0 native hook resolution
+  - Removed `SessionEnd` hook (removed upstream in Prawduct v1.2.3 — it dirtied the repo after commit)
+  - Added `statusMessage` fields to hooks (Prawduct v1.3.0 convention)
+  - TangleClaw detects and orchestrates Prawduct projects; Prawduct owns its own tools
+  - 1 new test (1313 → 1314): `$CLAUDE_PROJECT_DIR` passthrough verification
+
 ## [3.9.5] - 2026-03-30
 
 ### Added

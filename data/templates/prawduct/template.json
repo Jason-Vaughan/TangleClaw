@@ -84,7 +84,8 @@
           "hooks": [
             {
               "type": "command",
-              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" clear"
+              "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" clear",
+              "statusMessage": "Preparing session..."
             }
           ]
         }
@@ -95,18 +96,8 @@
           "hooks": [
             {
               "type": "command",
-              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" stop"
-            }
-          ]
-        }
-      ],
-      "SessionEnd": [
-        {
-          "matcher": "",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "python3 \"{{TANGLECLAW_DIR}}/tools/product-hook\" session-end"
+              "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" stop",
+              "statusMessage": "Checking governance gates..."
             }
           ]
         }
