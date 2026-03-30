@@ -1644,7 +1644,7 @@ route('POST', '/api/openclaw/connections/:id/tunnel', async (_req, res, params, 
   }
 
   const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
-  // Proxy through TangleClaw so remote browsers can reach the tunnel on cursatory
+  // Proxy through TangleClaw so remote browsers can reach the tunnel on the TangleClaw host
   const webuiUrl = `/openclaw-direct/${encodeURIComponent(conn.id)}/chat?session=main${tokenParam}`;
 
   jsonResponse(res, 200, {
