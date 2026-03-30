@@ -2,6 +2,25 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.9.1] - 2026-03-29
+
+### Added
+
+- **Sidecar: OpenClaw Process Visibility — Chunk 2: Frontend Process Pills**
+  - `sidecarPills` container in session header between banner-row and banner-actions
+  - `pollSidecarProcesses()` — polls `/api/sidecar/:project/processes` every 10s for OpenClaw sessions
+  - `isOpenClawProject()` — detects OpenClaw engine from project data
+  - `sidecarStatusClass(proc)` — maps process status to pill color class (running=green, quiet=yellow, failed=red, completed=gray)
+  - `formatElapsed(startedAt, completedAt)` — human-readable elapsed time (45s, 2m, 1h 3m)
+  - `renderSidecarPills(processes, stale)` — renders status-colored pills with dot, label, elapsed time
+  - `startSidecarPolling()` / `stopSidecarPolling()` — lifecycle management, auto-starts for OpenClaw sessions
+  - Attention badge: amber count pill when processes have `needsAttention` flag
+  - Stale data indicator when poll cache is outdated
+  - `sidecar-pill--attention` pulse animation for processes needing attention
+  - Sidecar polling stops on session end and wrap completion
+  - CSS: `.sidecar-pills`, `.sidecar-pill`, `.sidecar-pill--running/quiet/completed/failed`, `.sidecar-pill--attention`, `.sidecar-attention-badge`, `.sidecar-stale-badge` with mobile responsive breakpoint
+  - 23 new tests (1252 → 1275): HTML structure (3), CSS styles (10), JS functions (10)
+
 ## [3.9.0] - 2026-03-29
 
 ### Added

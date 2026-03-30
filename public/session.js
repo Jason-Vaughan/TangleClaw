@@ -570,6 +570,7 @@ let countdownTimer = null;
 function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
+  stopSidecarPolling();
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('ended');
@@ -1126,6 +1127,126 @@ async function confirmKill() {
   window.location.href = '/';
 }
 
+// ── Sidecar Process Pills ──
+
+let sidecarTimer = null;
+const SIDECAR_POLL_INTERVAL = 10000;
+
+/**
+ * Check if the current project uses an OpenClaw engine.
+ * @returns {boolean}
+ */
+function isOpenClawProject() {
+  return sessionState.project &&
+    sessionState.project.engine &&
+    typeof sessionState.project.engine.id === 'string' &&
+    sessionState.project.engine.id.startsWith('openclaw:');
+}
+
+/**
+ * Poll the sidecar processes endpoint and update pills.
+ */
+async function pollSidecarProcesses() {
+  const data = await api(`/api/sidecar/${encodeURIComponent(projectName)}/processes`);
+  if (!data) return;
+
+  const active = data.active || [];
+  const recent = data.recent || [];
+  const all = [...active, ...recent];
+
+  renderSidecarPills(all, data.stale);
+}
+
+/**
+ * Map a process status to a pill color class.
+ * @param {object} proc - Process object
+ * @returns {string} CSS class suffix
+ */
+function sidecarStatusClass(proc) {
+  if (proc.needsAttention) return 'attention';
+  switch (proc.status) {
+    case 'running': return 'running';
+    case 'quiet': return 'quiet';
+    case 'completed': return 'completed';
+    case 'failed': return 'failed';
+    case 'terminated': return 'failed';
+    default: return 'quiet';
+  }
+}
+
+/**
+ * Format elapsed time from a start timestamp.
+ * @param {string} startedAt - ISO timestamp
+ * @param {string} [completedAt] - ISO timestamp (if finished)
+ * @returns {string} e.g. "2m", "1h 3m", "45s"
+ */
+function formatElapsed(startedAt, completedAt) {
+  if (!startedAt) return '';
+  const start = new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  const secs = Math.max(0, Math.floor((end - start) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
+/**
+ * Render sidecar process pills in the banner.
+ * @param {object[]} processes - Combined active + recent processes
+ * @param {boolean} stale - Whether the data is stale
+ */
+function renderSidecarPills(processes, stale) {
+  const container = document.getElementById('sidecarPills');
+  if (!processes || processes.length === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+
+  // Count attention-needing processes
+  const attentionCount = processes.filter(p => p.needsAttention).length;
+
+  container.innerHTML = processes.map(proc => {
+    const cls = sidecarStatusClass(proc);
+    const elapsed = formatElapsed(proc.startedAt, proc.completedAt);
+    const label = esc(proc.label || proc.type || 'process');
+    const attentionCls = proc.needsAttention ? ' sidecar-pill--attention' : '';
+    const title = `${proc.type || 'process'}: ${proc.status}${proc.lastOutputSnippet ? '\n' + proc.lastOutputSnippet : ''}`;
+    return `<span class="sidecar-pill sidecar-pill--${cls}${attentionCls}" title="${esc(title)}" data-process-id="${esc(proc.id || '')}">` +
+      `<span class="sidecar-pill-dot"></span>` +
+      `<span class="sidecar-pill-label">${label}</span>` +
+      (elapsed ? `<span class="sidecar-pill-time">${elapsed}</span>` : '') +
+      `</span>`;
+  }).join('') +
+    (attentionCount > 0 ? `<span class="sidecar-attention-badge">${attentionCount}</span>` : '') +
+    (stale ? `<span class="sidecar-stale-badge" title="Data may be stale">stale</span>` : '');
+}
+
+/**
+ * Start sidecar process polling (OpenClaw projects only).
+ */
+function startSidecarPolling() {
+  if (!isOpenClawProject()) return;
+  stopSidecarPolling();
+  // Initial poll
+  pollSidecarProcesses();
+  sidecarTimer = setInterval(pollSidecarProcesses, SIDECAR_POLL_INTERVAL);
+}
+
+/**
+ * Stop sidecar process polling.
+ */
+function stopSidecarPolling() {
+  if (sidecarTimer) {
+    clearInterval(sidecarTimer);
+    sidecarTimer = null;
+  }
+}
+
 // ── Capability Gating ──
 
 /**
@@ -1303,6 +1424,7 @@ function handleWrapCompleted(data) {
   sessionState.ended = true;
   sessionState.wrapping = false;
   stopPolling();
+  stopSidecarPolling();
 
   // Hide wrapping bar
   document.getElementById('sessionWrapping').classList.add('hidden');
@@ -1477,6 +1599,7 @@ async function initSession() {
   // Start polling if session is active
   if (!sessionState.ended) {
     startPolling();
+    startSidecarPolling();
   }
 
   // Poll model status every 2 minutes
