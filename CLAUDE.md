@@ -96,7 +96,7 @@ TangleClaw supports shared documents — files that multiple projects can refere
 
 ### What Are Groups and Shared Docs?
 
-A **group** links related projects (e.g., "habitat infra"). Each group can have **shared documents** — markdown files that are injected into engine configs at session launch. Groups may also have a **shared directory** (`sharedDir`) — a folder whose `.md` files are auto-discovered and registered on session launch.
+A **group** links related projects (e.g., "backend services"). Each group can have **shared documents** — markdown files that are injected into engine configs at session launch. Groups may also have a **shared directory** (`sharedDir`) — a folder whose `.md` files are auto-discovered and registered on session launch.
 
 ### API Operations
 

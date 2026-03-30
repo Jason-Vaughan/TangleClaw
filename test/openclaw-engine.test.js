@@ -79,7 +79,7 @@ describe('OpenClaw engine integration', () => {
       // Create an OpenClaw connection with availableAsEngine=true
       const conn = store.openclawConnections.create({
         name: 'TestClaw',
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         sshUser: 'admin',
         sshKeyPath: '~/.ssh/test_key',
         port: 18789,
@@ -171,9 +171,9 @@ describe('OpenClaw engine integration', () => {
       sessions = require('../lib/sessions');
       const conn = store.openclawConnections.create({
         name: 'LaunchClaw',
-        host: '192.168.20.10',
-        sshUser: 'habitat-admin',
-        sshKeyPath: '~/.ssh/genesis_habitat',
+        host: '198.51.100.10',
+        sshUser: 'testuser',
+        sshKeyPath: '~/.ssh/test_key',
         cliCommand: 'openclaw-cli',
         availableAsEngine: true
       });
@@ -186,7 +186,7 @@ describe('OpenClaw engine integration', () => {
       const cmd = sessions._buildLaunchCommand(engineProfile, project);
 
       assert.ok(cmd.startsWith('ssh -t -i'));
-      assert.ok(cmd.includes('habitat-admin@192.168.20.10'));
+      assert.ok(cmd.includes('testuser@198.51.100.10'));
       assert.ok(cmd.includes('"openclaw-cli"'));
       // Tilde should be expanded
       assert.ok(cmd.includes(process.env.HOME));
@@ -232,7 +232,7 @@ describe('OpenClaw engine integration', () => {
 
       const conn = store.openclawConnections.create({
         name: 'EnrichClaw',
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         sshUser: 'admin',
         sshKeyPath: '~/.ssh/key',
         availableAsEngine: true

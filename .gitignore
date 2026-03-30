@@ -10,10 +10,11 @@
 # TangleClaw project config (dogfooding artifact)
 .tangleclaw/
 
-# Internal design docs and build plans
+# Internal design docs, build plans, and research notes
 INTAKE-BRIEF.md
 build-plan*.md
 wishlist.md
+docs/methodology-extractions/
 
 # Runtime database (generated at startup)
 data/tangleclaw.db

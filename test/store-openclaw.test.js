@@ -33,9 +33,9 @@ describe('store.openclawConnections', () => {
   function createConnection(overrides = {}) {
     return store.openclawConnections.create({
       name: 'RentalClaw',
-      host: '192.168.20.10',
-      sshUser: 'habitat-admin',
-      sshKeyPath: '~/.ssh/genesis_habitat',
+      host: '198.51.100.10',
+      sshUser: 'testuser',
+      sshKeyPath: '~/.ssh/test_key',
       ...overrides
     });
   }
@@ -45,9 +45,9 @@ describe('store.openclawConnections', () => {
       const conn = createConnection();
       assert.ok(conn.id);
       assert.equal(conn.name, 'RentalClaw');
-      assert.equal(conn.host, '192.168.20.10');
-      assert.equal(conn.sshUser, 'habitat-admin');
-      assert.equal(conn.sshKeyPath, '~/.ssh/genesis_habitat');
+      assert.equal(conn.host, '198.51.100.10');
+      assert.equal(conn.sshUser, 'testuser');
+      assert.equal(conn.sshKeyPath, '~/.ssh/test_key');
       assert.equal(conn.port, 18789);
       assert.equal(conn.localPort, 18789);
       assert.equal(conn.cliCommand, 'openclaw-cli');
@@ -111,7 +111,7 @@ describe('store.openclawConnections', () => {
       const created = createConnection();
       const fetched = store.openclawConnections.get(created.id);
       assert.equal(fetched.name, 'RentalClaw');
-      assert.equal(fetched.host, '192.168.20.10');
+      assert.equal(fetched.host, '198.51.100.10');
     });
 
     it('should return null for non-existent id', () => {
@@ -155,7 +155,7 @@ describe('store.openclawConnections', () => {
       const updated = store.openclawConnections.update(conn.id, { name: 'NewName', port: 5555 });
       assert.equal(updated.name, 'NewName');
       assert.equal(updated.port, 5555);
-      assert.equal(updated.host, '192.168.20.10'); // unchanged
+      assert.equal(updated.host, '198.51.100.10'); // unchanged
     });
 
     it('should update bridgePort', () => {

@@ -88,7 +88,7 @@ describe('Sidecar in openclaw-view — HTML structure', () => {
     // Create a connection so we get a valid openclaw-view page
     store.openclawConnections.create({
       name: 'ViewTest',
-      host: '192.168.20.10',
+      host: '198.51.100.10',
       port: 18789,
       sshUser: 'test',
       sshKeyPath: '~/.ssh/test',
@@ -217,7 +217,7 @@ describe('Sidecar in openclaw-view — connection-based polling API', () => {
   before(() => {
     const conn = store.openclawConnections.create({
       name: 'OcViewPollTest',
-      host: '192.168.20.10',
+      host: '198.51.100.10',
       port: 18789,
       sshUser: 'test',
       sshKeyPath: '~/.ssh/test',

@@ -67,7 +67,7 @@ describe('tunnel', () => {
 
       try {
         const result = await tunnel.ensureTunnel('test-project', {
-          host: '192.168.20.10',
+          host: '198.51.100.10',
           port: 18789,
           localPort: port,
           sshUser: 'test',
@@ -112,7 +112,7 @@ describe('tunnel', () => {
       tunnel._tunnels.set('test-project', {
         pid: 999999,
         localPort: 19997,
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         remotePort: 18789
       });
 
@@ -206,7 +206,7 @@ describe('tunnel', () => {
       tunnel._tunnels.set('my-project', {
         pid: 12345,
         localPort: 18789,
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         remotePort: 18789
       });
 
@@ -273,7 +273,7 @@ describe('tunnel', () => {
       tunnel._tunnels.set('tracked-proj', {
         pid: 999999,
         localPort: 19994,
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         remotePort: 18789
       });
 
@@ -315,7 +315,7 @@ describe('tunnel', () => {
 
       try {
         await tunnel.ensureTunnel('test-porthub', {
-          host: '192.168.20.10',
+          host: '198.51.100.10',
           port: 18789,
           localPort: port,
           sshUser: 'test',
@@ -340,7 +340,7 @@ describe('tunnel', () => {
       tunnel._tunnels.set('test-kill', {
         pid: 999999,
         localPort,
-        host: '192.168.20.10',
+        host: '198.51.100.10',
         remotePort: 18789
       });
 

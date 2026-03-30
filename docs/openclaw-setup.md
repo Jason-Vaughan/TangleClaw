@@ -16,7 +16,7 @@ Browser (any machine)
     |
     | HTTPS
     v
-TangleClaw (cursatory / your server)
+TangleClaw (your server)
     |
     | SSH tunnel (auto-managed)
     v
@@ -111,8 +111,8 @@ Same path: `gateway.auth.token`.
 | Field | Value | Notes |
 |---|---|---|
 | **Name** | Display name (e.g., "MyOpenClaw") | Must be unique |
-| **Host** | OpenClaw host IP or hostname | e.g., `192.168.20.10` |
-| **SSH User** | SSH login user | e.g., `habitat-admin` |
+| **Host** | OpenClaw host IP or hostname | e.g., `198.51.100.10` |
+| **SSH User** | SSH login user | e.g., `admin` |
 | **SSH Key Path** | Path to SSH private key on TangleClaw host | e.g., `~/.ssh/id_rsa` |
 | **Gateway Port** | OpenClaw gateway port (default `18789`) | Remote port |
 | **Gateway Token** | The token from Step 2 | Required for remote access |
@@ -131,8 +131,8 @@ curl -sk -X POST https://localhost:3102/api/openclaw/connections \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "MyOpenClaw",
-    "host": "192.168.20.10",
-    "sshUser": "habitat-admin",
+    "host": "198.51.100.10",
+    "sshUser": "admin",
     "sshKeyPath": "~/.ssh/id_rsa",
     "gatewayToken": "<your-token-here>"
   }'

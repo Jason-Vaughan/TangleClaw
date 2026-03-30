@@ -193,7 +193,7 @@ describe('Sidecar — connection-based API route', () => {
   before(() => {
     const conn = store.openclawConnections.create({
       name: 'SidecarTest',
-      host: '192.168.20.10',
+      host: '198.51.100.10',
       port: 18789,
       sshUser: 'test',
       sshKeyPath: '~/.ssh/test',

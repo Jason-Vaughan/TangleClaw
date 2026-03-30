@@ -65,7 +65,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with six buil
 - **Slash commands**: None
 - **Capabilities**: Remote sessions, two connection modes (SSH terminal, Web UI iframe), automatic SSH tunnel management, sidecar process visibility via ClawBridge
 
-OpenClaw engines appear in the engine dropdown when a connection has "Available as Engine" enabled. The engine ID is `openclaw:<connection-id>`. See the [OpenClaw Setup Guide](OPENCLAW-SETUP.md) for connection configuration.
+OpenClaw engines appear in the engine dropdown when a connection has "Available as Engine" enabled. The engine ID is `openclaw:<connection-id>`. See the [OpenClaw Setup Guide](openclaw-setup.md) for connection configuration.
 
 **Connection modes:**
 - **SSH mode** — TangleClaw spawns an SSH session in tmux, connecting to the OpenClaw CLI on the remote host. Works like any other tmux-based engine session.
