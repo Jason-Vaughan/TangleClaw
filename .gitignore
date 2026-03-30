@@ -28,6 +28,9 @@ data/certs/
 # Uploads (user-specific)
 .uploads/
 
+# Screenshots (hosted in puberty-labs-assets repo)
+docs/screenshots/
+
 # Node
 node_modules/
 __pycache__/
