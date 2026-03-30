@@ -122,7 +122,7 @@ Tap **+ New** to open the create project drawer:
 3. **Methodology** — choose a methodology template
 4. **Tags** — optional tags for organization
 
-The project is created in your configured `projectsDir` (default: `~/Documents/Projects`). TangleClaw scaffolds the project directory, initializes the methodology, registers ports with PortHub (if available), and generates the engine-specific config file.
+The project is created in your configured `projectsDir` (default: `~/Documents/Projects`). TangleClaw scaffolds the project directory, initializes the methodology, registers ports with PortHub (if available), and generates the engine-specific config file. See the [Engine Guide](engine-guide.md) for details on custom engines and the [Methodology Guide](methodology-guide.md) for custom methodologies.
 
 ### Deleting a Project
 
@@ -220,6 +220,8 @@ The settings modal lets you configure:
 - **Methodology info** — current methodology and phase
 - **Mouse mode** — toggle tmux mouse mode on/off
 
+See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
+
 #### Wrapping a Session
 
 Tap **Wrap** to trigger the methodology-defined wrap skill. This:
@@ -244,6 +246,8 @@ Each project maintains a session history showing:
 - Engine used
 - Session status (wrapped, killed, crashed)
 - Wrap summary (if wrapped)
+
+For OpenClaw remote sessions, see the [OpenClaw Setup Guide](openclaw-setup.md).
 
 ## Project Groups and Shared Documents
 
