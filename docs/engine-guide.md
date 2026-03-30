@@ -12,7 +12,7 @@ Each engine is a JSON profile that tells TangleClaw:
 - What **slash commands** the engine supports (shown as pills in the command bar)
 - What **capabilities** the engine has (prime prompt support, co-author format, etc.)
 
-Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five built-in profiles, copied there on first run.
+Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with six built-in profiles, copied there on first run.
 
 ## Built-in Engines
 
@@ -54,6 +54,22 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 - **Interaction model**: Persistent (connects to a running process, not managed by TangleClaw)
 - **Config file**: None
 - **Capabilities**: Placeholder — governance is handled by Mission Control, not TangleClaw
+
+### OpenClaw
+
+[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) is a self-hosted AI agent platform running in Docker on remote machines. Unlike other engines, OpenClaw connections are registered independently of projects in TangleClaw's connection registry.
+
+- **Command**: `ssh` (SSH mode) or none (Web UI mode)
+- **Interaction model**: Session-based (SSH) or iframe-based (Web UI)
+- **Config file**: None (OpenClaw manages its own configuration)
+- **Slash commands**: None
+- **Capabilities**: Remote sessions, two connection modes (SSH terminal, Web UI iframe), automatic SSH tunnel management, sidecar process visibility via ClawBridge
+
+OpenClaw engines appear in the engine dropdown when a connection has "Available as Engine" enabled. The engine ID is `openclaw:<connection-id>`. See the [OpenClaw Setup Guide](OPENCLAW-SETUP.md) for connection configuration.
+
+**Connection modes:**
+- **SSH mode** — TangleClaw spawns an SSH session in tmux, connecting to the OpenClaw CLI on the remote host. Works like any other tmux-based engine session.
+- **Web UI mode** — TangleClaw establishes an SSH tunnel, then loads the OpenClaw Control UI in an iframe via a reverse proxy. No tmux involved — the browser talks directly to the OpenClaw gateway through the tunnel.
 
 ## Engine Detection
 

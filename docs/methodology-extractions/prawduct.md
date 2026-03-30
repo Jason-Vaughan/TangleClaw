@@ -1,12 +1,14 @@
 # Prawduct — Reference (Not Extracted)
 
-Prawduct is TangleClaw's most complete methodology template. Unlike TiLT v2 and OnDeck-V2 — which grew organically as prose rules — Prawduct was designed from the ground up as a portable, tooled framework. It doesn't need extraction because it already *is* the reference implementation.
+[Prawduct](https://github.com/brookstalley/prawduct) is the most complete methodology template supported by TangleClaw. Unlike TiLT v2 and OnDeck-V2 — which grew organically as prose rules — Prawduct was designed from the ground up as a portable, tooled framework. It doesn't need extraction because it already *is* the reference implementation.
+
+**Prawduct is installed separately** — TangleClaw detects Prawduct projects and integrates with the framework's session hooks. See the [Prawduct README](https://github.com/brookstalley/prawduct) for installation.
 
 ## Location
 
-- **Framework**: `/Users/jasonvaughan/Documents/Projects/prawduct-test/prawduct/` (4.0 MB)
-- **TangleClaw template**: `data/templates/prawduct/template.json` (119 lines)
-- **Session hook**: `tools/product-hook` (938 lines, Python 3, stdlib only)
+- **Framework**: [brookstalley/prawduct](https://github.com/brookstalley/prawduct) (installed locally, e.g., `~/Documents/Projects/prawduct/`)
+- **TangleClaw template**: `data/templates/prawduct/template.json` — integration config (hooks, phases, detection, status contract)
+- **Session hook**: Each product repo gets its own `tools/product-hook` via framework sync
 
 ## Scale
 
