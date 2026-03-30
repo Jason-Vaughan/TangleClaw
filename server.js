@@ -20,6 +20,7 @@ const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
+const sidecar = require('./lib/sidecar');
 
 const log = createLogger('server');
 
@@ -2453,6 +2454,31 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
   });
 }, { maxBodySize: 512 * 1024 });
 
+// ── Sidecar: OpenClaw Process Visibility ──
+
+// GET /api/sidecar/:project/processes — Get cached process state for an OpenClaw project
+route('GET', '/api/sidecar/:project/processes', (_req, res, params) => {
+  const projectName = params.project;
+  const state = sidecar.getProcessesForProject(projectName);
+
+  if (!state.connectionId) {
+    return errorResponse(res, 404, `Project "${projectName}" is not an OpenClaw project`, 'NOT_FOUND');
+  }
+
+  // Ensure polling is running for this connection
+  if (!sidecar._pollers.has(state.connectionId)) {
+    sidecar.startPolling(state.connectionId);
+  }
+
+  jsonResponse(res, 200, {
+    active: state.processes ? (state.processes.active || []) : [],
+    recent: state.processes ? (state.processes.recent || []) : [],
+    lastPollAt: state.lastPollAt,
+    stale: state.stale,
+    error: state.error
+  });
+});
+
 // POST /api/audit/heartbeat — Lightweight heartbeat from OpenClaw
 route('POST', '/api/audit/heartbeat', (_req, res, _params, body) => {
   if (!body || !body.session_id) {
@@ -2796,6 +2822,9 @@ if (require.main === module) {
     log.warn('Eval audit watchdog alert', { level, sessionId, project, message });
   });
 
+  // Start sidecar polling for active OpenClaw sessions
+  sidecar.syncPolling();
+
   // Run retention policy on startup (purge old eval data)
   try {
     const retentionDays = store.DEFAULT_PROJECT_CONFIG.evalAuditMode.retentionDays || 90;
@@ -2844,6 +2873,7 @@ if (require.main === module) {
     modelStatus.stopMonitor();
     updateChecker.stopChecker();
     evalAudit.stopWatchdog();
+    sidecar.stopAllPolling();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
