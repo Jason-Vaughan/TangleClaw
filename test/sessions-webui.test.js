@@ -35,9 +35,9 @@ describe('Web UI session lifecycle', () => {
     // Create an OpenClaw connection with webui mode
     const conn = store.openclawConnections.create({
       name: 'WebUI-Test',
-      host: '192.168.20.10',
+      host: '198.51.100.10',
       port: 18789,
-      sshUser: 'habitat-admin',
+      sshUser: 'testuser',
       sshKeyPath: '~/.ssh/test_key',
       gatewayToken: 'test-token-123',
       localPort: 18789,

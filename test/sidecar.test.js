@@ -21,7 +21,7 @@ const sidecar = require('../lib/sidecar');
 function createConn(name, localPort = 19999) {
   const conn = store.openclawConnections.create({
     name,
-    host: '192.168.20.10',
+    host: '198.51.100.10',
     port: 18789,
     sshUser: 'test',
     sshKeyPath: '~/.ssh/id_rsa',

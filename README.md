@@ -12,6 +12,10 @@
   <code>claude code</code> &middot; <code>codex</code> &middot; <code>gemini cli</code> &middot; <code>aider</code> &middot; <code>openclaw</code> &middot; <code>tmux</code> &middot; <code>pwa</code> &middot; <code>zero dependencies</code>
 </p>
 
+<p align="center">
+  <strong>macOS only</strong> (launchd required for service management)
+</p>
+
 ---
 
 You VPN into your dev machine. You SSH in. You navigate to your project directory, fire up an AI coding agent, and start building. Thirty minutes later your VPN hiccups, or your SSH tunnel drops, or your laptop goes to sleep — and the session is gone. The agent's context, your conversation history, everything. There's no way to reconnect. You SSH back in, start over, and re-explain what you were doing.
@@ -37,7 +41,7 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 
 ### Engines
 
-- **Six built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), Genesis, and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)
+- **Six built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw), and Genesis (persistent agent placeholder)
 - **Engine-native config generation** — write rules once, TangleClaw translates to CLAUDE.md, .codex.yaml, GEMINI.md, .aider.conf.yml. Swap engines without reconfiguring projects
 - **Custom engines** — adding a new engine is a single JSON profile, no code changes
 - **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Gemini (Google) in the session banner
@@ -73,6 +77,17 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 - **1,314 tests** — comprehensive test suite using node:test
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
 
+## Prerequisites
+
+- **macOS** — TangleClaw uses launchd for service management. Linux support is not yet available
+- **Node.js 22+** — required for `node:sqlite` and `node:test`
+- **ttyd** — browser-based terminal access (`brew install ttyd`)
+- **tmux** — session multiplexer (`brew install tmux`)
+- **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Aider](https://aider.chat)
+- **[Prawduct](https://github.com/brookstalley/prawduct)** *(optional)* — install separately for governed workflows with discovery, planning, building phases, and independent Critic review
+- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** *(optional)* — for remote AI agent sessions. Requires SSH access to the OpenClaw host
+- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** *(optional)* — for background process visibility on OpenClaw instances
+
 ## Quick Start
 
 ```bash
@@ -88,16 +103,6 @@ The install script:
 4. Runs a health check
 
 Access the landing page at **http://localhost:3102**. On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
-
-## Prerequisites
-
-- **Node.js 22+** — required for `node:sqlite` and `node:test`
-- **ttyd** — browser-based terminal access (`brew install ttyd`)
-- **tmux** — session multiplexer (`brew install tmux`)
-- **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Aider](https://aider.chat)
-- **[Prawduct](https://github.com/brookstalley/prawduct)** *(optional)* — install separately for governed workflows with discovery, planning, building phases, and independent Critic review
-- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** *(optional)* — for remote AI agent sessions. Requires SSH access to the OpenClaw host
-- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** *(optional)* — for background process visibility on OpenClaw instances
 
 ## Security Note
 
@@ -115,7 +120,7 @@ TangleClaw runs an HTTP or HTTPS server with browser-based terminal access. HTTP
 - **[Methodology Guide](docs/methodology-guide.md)** — Built-in templates, creating custom methodologies, rules
 - **[Engine Guide](docs/engine-guide.md)** — Built-in engines, creating custom engine profiles
 - **[Configuration Reference](docs/configuration-reference.md)** — All config fields, JSON schemas, API overview
-- **[OpenClaw Setup](docs/OPENCLAW-SETUP.md)** — Connecting to remote OpenClaw instances, SSH tunnels, Web UI mode, HTTPS
+- **[OpenClaw Setup](docs/openclaw-setup.md)** — Connecting to remote OpenClaw instances, SSH tunnels, Web UI mode, HTTPS
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — AI agent evaluation pipeline, scoring, baselines, drift detection
 
 ## Configuration
@@ -256,9 +261,9 @@ curl -s http://localhost:3102/api/health | python3 -m json.tool
 Planned features and improvements — contributions and feedback welcome.
 
 - **TangleMeth** — AI-guided methodology builder. Instead of hand-writing template JSON, TangleMeth interviews you about your governance needs and generates a complete methodology framework: phase docs, enforcement hooks, artifact templates, and test suites. Compose from existing methodologies or fork and modify them
-- **BitchBoard** — Multi-agent switchboard for coordinating parallel AI sessions across projects
 - **Multi-engine sessions** — Launch multiple engines on the same project simultaneously (e.g., Claude Code for implementation, Codex for review)
 - **Sidecar controls** — Poll/refresh individual processes, show full output, dismiss, terminate from the detail panel
+- **Linux support** — systemd service management as an alternative to launchd
 - **Mobile terminal scrollback** — Improved touch scroll handling for xterm.js on iOS and Android
 
 ## License

@@ -14,6 +14,18 @@ All notable changes to TangleClaw are documented in this file.
   - TangleClaw detects and orchestrates Prawduct projects; Prawduct owns its own tools
   - 1 new test (1313 → 1314): `$CLAUDE_PROJECT_DIR` passthrough verification
 
+- **Critic review fixes for public release**
+  - Replaced personal infrastructure values (IPs, hostnames, SSH keys) with generic placeholders across docs, HTML, and 9 test files
+  - Added macOS-only platform requirement to README header and prerequisites
+  - Moved Prerequisites before Quick Start for better onboarding flow
+  - Removed BitchBoard from roadmap (separate project), added Linux support to roadmap
+  - Clarified Genesis engine as "persistent agent placeholder"
+  - Removed methodology-extractions/ from published files (internal research notes)
+  - Cleaned eval-audit-mode.md build metadata and TODO section
+  - Renamed OPENCLAW-SETUP.md → openclaw-setup.md for consistent naming
+  - Fixed port number documentation (clarified code defaults vs launchd overrides)
+  - Replaced "habitat infra" examples with generic "backend services" across docs
+
 - **Documentation overhaul for public release**
   - README: updated project structure (added 8 missing lib/ files, OpenClaw viewer, setup.js; removed bundled tools/), updated architecture diagram with SSH tunnels and OpenClaw proxy, added Sidecar and Eval Audit to features, added Prawduct as optional prerequisite with repo link, added BitchBoard and Sidecar controls to roadmap, removed "private repository" notice, added Eval Audit Mode to docs index
   - User Guide: fixed clone URL to `github.com/Jason-Vaughan/TangleClaw`, fixed all port references (3101→3102 for server, 3100→3101 for ttyd)
@@ -268,7 +280,7 @@ All notable changes to TangleClaw are documented in this file.
 
 - **README rewrite**: New intro section tells the origin story — persistent sessions solving dropped VPN/SSH connections — instead of leading with a feature matrix. Added OpenClaw integration to the features list and OpenClaw Setup to the documentation links.
 - **Prawduct framework tools updated**: Synced `product-hook` and all framework tools from upstream Prawduct. Major changes: `prawduct-sync.py`, `prawduct-init.py`, and `prawduct-migrate.py` are now shims delegating to new unified `prawduct-setup.py` (92KB). `product-hook` adds session-end sync (quiet framework sync at session end so hot files are fresh for next session), bootstrap support for repos without manifests, and cleaner sync output formatting. Template updated with `SessionEnd` hook event.
-- **Eval Audit Mode spec v2**: Rewrote `tangleclaw-eval-audit-mode.md` in habitat shared docs. Major additions: methodology-aware scoring dimensions (not Genesis-only), webhook push capture with heartbeat watchdog (tmux parsing dropped), thinking block analysis (Tier 2.5), intelligent sampling, auto-incident generation from anomalies, SQLite from day 1, bidirectional scoring, session wrap quality scoring, silent drift detection via automatic baselines, schema versioning for dimension changes.
+- **Eval Audit Mode spec v2**: Rewrote `tangleclaw-eval-audit-mode.md` in shared docs. Major additions: methodology-aware scoring dimensions (not Genesis-only), webhook push capture with heartbeat watchdog (tmux parsing dropped), thinking block analysis (Tier 2.5), intelligent sampling, auto-incident generation from anomalies, SQLite from day 1, bidirectional scoring, session wrap quality scoring, silent drift detection via automatic baselines, schema versioning for dimension changes.
 - **Eval Audit Mode build plan**: 8-chunk implementation plan (`build-plan-eval-audit.md`). ~142 new tests planned across schema, ingest, 4-tier scoring pipeline, query APIs, heartbeat/telemetry, baselines/drift detection, and bidirectional scoring.
 - **PortHub schema v8**: host column on port_leases table (composite PK), host-aware lease/release/heartbeat, test version assertions updated.
 
@@ -332,7 +344,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Added
 
 - **Update Checker**: Daily git remote poll detects new TangleClaw versions by comparing semver tags. Red version badge appears on the session wrapper banner when an update is available. Tapping the badge injects step-by-step update instructions directly into the active AI session (git fetch, pull, test, restart) — the AI agent handles the update. First check runs 60s after server start, then every 24h. Graceful degradation — no errors if offline or remote unreachable. New `GET /api/update-status` endpoint returns cached check result.
-- **Project Groups and Shared Documents data model**: 4 new SQLite tables (`project_groups`, `project_group_members`, `shared_documents`, `document_locks`) with full store CRUD APIs. Groups allow relating projects (e.g., "habitat infra"). Shared documents register files that can be injected into engine configs at session launch. Advisory document locking prevents concurrent edit conflicts between sessions. Schema version bumped to 3.
+- **Project Groups and Shared Documents data model**: 4 new SQLite tables (`project_groups`, `project_group_members`, `shared_documents`, `document_locks`) with full store CRUD APIs. Groups allow relating projects (e.g., "backend services"). Shared documents register files that can be injected into engine configs at session launch. Advisory document locking prevents concurrent edit conflicts between sessions. Schema version bumped to 3.
 - **Shared Docs API endpoints**: 15 new HTTP endpoints for groups (`GET/POST /api/groups`, `GET/PUT/DELETE /api/groups/:id`), group members (`GET/POST /api/groups/:id/members`, `DELETE /api/groups/:id/members/:projectId`), shared documents (`GET/POST /api/shared-docs`, `GET/PUT/DELETE /api/shared-docs/:id`), and document locks (`POST/GET/DELETE /api/shared-docs/:id/lock`). All endpoints include enriched responses with member/doc counts, lock status, and project names.
 - **Shared docs engine integration**: All 4 engine config generators (Claude, Codex, Aider, Gemini) now inject a `## Shared Documents` section when the project belongs to groups with injectable docs. Reference mode lists file paths with descriptions; inline mode reads and embeds file content in fenced blocks. Lock warnings and missing-file warnings included. Deduplication by file path when project is in multiple groups.
 - **Session lifecycle lock release**: `completeWrap()` and `killSession()` now call `store.documentLocks.releaseBySession()` to automatically release all document locks held by the ending session.

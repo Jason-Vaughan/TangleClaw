@@ -1,7 +1,5 @@
 # Eval Audit Mode — Technical Overview
 
-**TangleClaw v3.4.0–v3.8.0** | 160 tests | 5 build chunks
-
 Eval Audit Mode is a multi-tiered AI agent evaluation system built into TangleClaw. It ingests exchange data (user messages, agent responses, thinking blocks) from remote OpenClaw instances, runs a scoring pipeline with intelligent gating, tracks quality baselines, detects drift, and generates incidents — all without disrupting the agent session.
 
 ---
@@ -19,7 +17,7 @@ It runs alongside sessions — not in them. The agent sees a startup banner noti
 ```
 ┌──────────────┐     webhook      ┌──────────────────────────────────────────┐
 │   OpenClaw   │ ──────────────▶  │  TangleClaw — Eval Audit Mode           │
-│  (habitat)   │  POST /ingest    │                                          │
+│ (remote host)│  POST /ingest    │                                          │
 │              │                  │  ┌─────────┐  ┌─────────┐  ┌──────────┐ │
 │  agent runs  │                  │  │ Tier 1   │→ │ Tier 2   │→ │ Tier 2.5 │ │
 │  exchanges   │                  │  │ (free)   │  │ (judge)  │  │ (think)  │ │
@@ -387,16 +385,7 @@ All tables use UUID primary keys, ISO timestamps, and JSON columns for structure
 
 ---
 
-## What's Next
+## Requirements
 
-The TangleClaw side is complete. Integration testing requires:
-
-1. **OpenClaw webhook implementation** — The OpenClaw instance needs to POST each exchange to TangleClaw's `/api/audit/ingest` endpoint with a Bearer token matching the connection's `audit_secret`.
-
-2. **Live verification** — Run a real session, confirm exchanges flow through the full pipeline, verify drift detection and incident generation work with real data.
-
-3. **ANTHROPIC_API_KEY** — Must be set in TangleClaw's environment for Tier 2/2.5/3 judge calls.
-
----
-
-*Built across TangleClaw v3.4.0–v3.8.0 (March 2026). 160 unit/API tests, 5 implementation chunks.*
+- **ANTHROPIC_API_KEY** — Must be set in TangleClaw's environment for Tier 2/2.5/3 judge scoring
+- **OpenClaw webhook** — The OpenClaw instance must POST each exchange to TangleClaw's `/api/audit/ingest` endpoint with a Bearer token matching the connection's `audit_secret`

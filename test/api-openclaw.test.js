@@ -76,9 +76,9 @@ describe('API /api/openclaw/connections', () => {
 
   const validConnection = {
     name: 'RentalClaw',
-    host: '192.168.20.10',
-    sshUser: 'habitat-admin',
-    sshKeyPath: '~/.ssh/genesis_habitat'
+    host: '198.51.100.10',
+    sshUser: 'testuser',
+    sshKeyPath: '~/.ssh/test_key'
   };
 
   it('GET /api/openclaw/connections returns empty list initially', async () => {
@@ -93,8 +93,8 @@ describe('API /api/openclaw/connections', () => {
     assert.equal(status, 201);
     assert.ok(data.id);
     assert.equal(data.name, 'RentalClaw');
-    assert.equal(data.host, '192.168.20.10');
-    assert.equal(data.sshUser, 'habitat-admin');
+    assert.equal(data.host, '198.51.100.10');
+    assert.equal(data.sshUser, 'testuser');
     assert.equal(data.port, 18789);
   });
 
@@ -459,8 +459,8 @@ describe('HTTPS createServer', () => {
   });
 
   it('createServer with HTTPS options returns https.Server', () => {
-    const certPath = path.join(__dirname, '..', 'data', 'certs', 'cursatory.local+4.pem');
-    const keyPath = path.join(__dirname, '..', 'data', 'certs', 'cursatory.local+4-key.pem');
+    const certPath = path.join(__dirname, '..', 'data', 'certs', 'localhost+4.pem');
+    const keyPath = path.join(__dirname, '..', 'data', 'certs', 'localhost+4-key.pem');
 
     // Only test if certs exist (they may not exist on CI)
     if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {

@@ -19,8 +19,8 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `serverPort` | number | `3101` | Landing page HTTP server port |
-| `ttydPort` | number | `3100` | ttyd terminal emulator port |
+| `serverPort` | number | `3101` | Landing page HTTP server port. The install script sets `TANGLECLAW_PORT=3102` via launchd, so the effective default after installation is **3102**. |
+| `ttydPort` | number | `3100` | ttyd terminal emulator port. The install script configures ttyd on port **3101** via launchd. |
 | `defaultEngine` | string | `"claude"` | Default engine for new projects |
 | `defaultMethodology` | string | `"minimal"` | Default methodology for new projects |
 | `projectsDir` | string | `"~/Documents/Projects"` | Root directory for managed projects |
