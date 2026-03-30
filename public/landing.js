@@ -462,10 +462,13 @@ function checkPortImports() {
   const registeredNames = new Set(state.projects.map(p => p.name));
   const ignored = getIgnoredLeaseProjects();
 
+  // OpenClaw direct-connect tunnels register under oc-direct-<connId> — not orphan projects
+  const ocConnIds = new Set((state.openclawConnections || []).map(c => `oc-direct-${c.id}`));
+
   // Group ports by unregistered project name
   const unregistered = {};
   for (const lease of state.ports) {
-    if (!registeredNames.has(lease.project) && !ignored.has(lease.project)) {
+    if (!registeredNames.has(lease.project) && !ignored.has(lease.project) && !ocConnIds.has(lease.project)) {
       if (!unregistered[lease.project]) unregistered[lease.project] = [];
       unregistered[lease.project].push(lease);
     }
