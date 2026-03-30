@@ -2,6 +2,30 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.9.2] - 2026-03-29
+
+### Added
+
+- **Sidecar: OpenClaw Process Visibility — Chunk 3: Detail Panel**
+  - Sidecar detail panel (slide-in drawer from bottom, mirrors peek drawer pattern)
+  - `openSidecarPanel(processId)` / `closeSidecarPanel()` — open/close with backdrop
+  - `autoSelectProcess()` — selects first attention-needing, then first active, then first process
+  - `renderSidecarDetail()` — renders full process detail: status badge, type, project, workDir, timestamps, duration, exit code, signal
+  - `formatTimestamp(iso)` — formats ISO timestamps for display
+  - `sidecarField(label, valueHtml)` — builds detail field rows
+  - Process nav bar when multiple processes — clickable buttons with status dots
+  - Attention flags: "Waiting for Input", "Suspected Stalled", "Needs Attention" pills
+  - Last output snippet in monospace pre block (auto-refreshes on poll)
+  - Pill click handler: clicking a sidecar pill opens the detail panel for that process
+  - Refresh button: manual re-poll and re-render
+  - `pollSidecarProcesses()` now caches processes and auto-updates panel when open
+  - CSS: `.sidecar-panel`, `.sidecar-panel-header`, `.sidecar-detail`, `.sidecar-nav`, `.sidecar-field`, `.sidecar-status-badge--*`, `.sidecar-flags`, `.sidecar-output`, clickable pill cursor
+  - 29 new tests (1275 → 1304): HTML structure (5), CSS styles (9), JS functions (15)
+
+### Fixed
+
+- **OpenClaw webui session layout** — terminal viewport iframe now uses `position: absolute; inset: 0` with `overflow: hidden` on viewport container, preventing the banner from scrolling off-screen when OpenClaw UI content is taller than the viewport
+
 ## [3.9.1] - 2026-03-29
 
 ### Added

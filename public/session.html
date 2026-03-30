@@ -75,6 +75,20 @@
     <iframe id="terminalFrame" class="terminal-frame" title="Terminal session"></iframe>
   </div>
 
+  <!-- Sidecar Detail Panel -->
+  <div class="drawer-backdrop" id="sidecarBackdrop"></div>
+  <aside class="sidecar-panel" id="sidecarPanel" role="dialog" aria-label="Process detail" aria-modal="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="sidecar-panel-header">
+      <span class="sidecar-panel-title" id="sidecarTitle">Process Detail</span>
+      <div class="sidecar-panel-actions">
+        <button class="banner-btn" id="sidecarRefresh" aria-label="Refresh processes">&#8635;</button>
+        <button class="banner-btn" id="sidecarClose" aria-label="Close panel">&times;</button>
+      </div>
+    </div>
+    <div class="sidecar-detail" id="sidecarDetail"></div>
+  </aside>
+
   <!-- Peek Drawer -->
   <div class="drawer-backdrop" id="peekBackdrop"></div>
   <aside class="peek-drawer" id="peekDrawer" role="dialog" aria-label="Terminal peek" aria-modal="true">
