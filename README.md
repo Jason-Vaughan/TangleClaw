@@ -50,7 +50,7 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 - **Methodology enforcement** — pluggable JSON templates define phases, rules, and session behavior. Rules are structural gates, not suggestions. First-class [Prawduct](https://github.com/brookstalley/prawduct) integration for governed workflows with independent Critic review
 - **[PortHub](https://github.com/Jason-Vaughan/PortHub) built in** — central port registry preventing conflicts across all projects. Originally a [standalone CLI](https://github.com/Jason-Vaughan/PortHub), now fully integrated into TangleClaw with permanent and TTL leases, heartbeat support, and system-wide conflict detection via lsof
 - **Dashboard & mobile PWA** — manage projects, launch sessions, and interact with AI agents from any browser or phone on your network. Installable on iOS and Android
-- **OpenClaw integration** — connect to remote [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) instances via SSH or Web UI mode with automatic SSH tunnel management, and live background process visibility via [ClawBridge](https://github.com/Jason-Vaughan/ClawBridge) *(coming soon)*
+- **OpenClaw integration** — connect to remote [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) instances via SSH or Web UI mode with automatic SSH tunnel management, and live background process visibility via [ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)
 - **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
 <details>
@@ -85,7 +85,7 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 
 ### Integrations
 - **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels, reverse proxy, auto device pairing
-- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge) *(coming soon)*** — live background process visibility — status pills, detail panels with timestamps, exit codes, attention flags
+- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — live background process visibility — status pills, detail panels with timestamps, exit codes, attention flags
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation. Ingests exchange data from OpenClaw, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
 ### Technical
@@ -104,7 +104,7 @@ TangleClaw is all of that — a local platform that sits between you and your AI
 - **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Aider](https://aider.chat)
 - **[Prawduct](https://github.com/brookstalley/prawduct)** *(optional)* — install separately for governed workflows with discovery, planning, building phases, and independent Critic review
 - **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** *(optional)* — for remote AI agent sessions. Requires SSH access to the OpenClaw host
-- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge) *(coming soon)*** *(optional)* — for background process visibility on OpenClaw instances
+- **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** *(optional)* — for background process visibility on OpenClaw instances
 
 ## Quick Start
 
