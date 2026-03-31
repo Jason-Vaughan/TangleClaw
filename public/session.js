@@ -2,6 +2,12 @@
 /* ── TangleClaw v3 — Session Wrapper ── */
 /* Handles command bar, peek drawer, chime system, settings, and polling. */
 
+// ── Theme Prefetch ──
+try {
+  const cachedTheme = localStorage.getItem('tc_theme');
+  if (cachedTheme && cachedTheme !== 'dark') document.documentElement.setAttribute('data-theme', cachedTheme);
+} catch (e) {}
+
 // ── Extract Project Name from URL ──
 
 const projectName = decodeURIComponent(
@@ -349,6 +355,10 @@ async function loadConfig() {
   if (data) {
     sessionState.config = data;
     applyTheme();
+    // Cache theme for next page load (prevents flash)
+    try {
+      localStorage.setItem('tc_theme', (data.theme) || 'dark');
+    } catch (_) { }
   }
 }
 
@@ -357,10 +367,12 @@ async function loadConfig() {
  */
 function applyTheme() {
   const theme = (sessionState.config && sessionState.config.theme) || 'dark';
-  if (theme === 'dark') {
-    document.documentElement.removeAttribute('data-theme');
-  } else {
-    document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.setAttribute('data-theme', theme);
+
+  // Keep <meta name="theme-color"> in sync for mobile chrome
+  const meta = document.getElementById('metaThemeColor');
+  if (meta) {
+    meta.content = theme === 'light' ? '#F5F5F5' : '#000000';
   }
 }
 
@@ -610,11 +622,24 @@ function handleSessionEnded(statusData) {
  */
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  let ttydTheme = {};
+  
+  if (theme === 'light') {
+    ttydTheme = { background: '#F5F5F5', foreground: '#1A1A1A', cursor: '#1A1A1A' };
+  } else if (theme === 'high-contrast') {
+    ttydTheme = { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' };
+  } else {
+    ttydTheme = { background: '#000000', foreground: '#E8E8E8', cursor: '#E8E8E8' };
+  }
+  
+  const themeParam = `&theme=${encodeURIComponent(JSON.stringify(ttydTheme))}`;
+
   requestAnimationFrame(() => {
     if (iframeUrl) {
-      frame.src = iframeUrl;
+      frame.src = iframeUrl + (iframeUrl.includes('?') ? '&' : '?') + `theme=${theme}`;
     } else {
-      frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}`;
+      frame.src = `/terminal/?arg=${encodeURIComponent(projectName)}${themeParam}`;
     }
   });
 }
@@ -898,7 +923,7 @@ async function closeSettings() {
   // Apply engine change
   const newEngine = document.getElementById('settingsEngine').value;
   if (sessionState.project && sessionState.project.engine &&
-      newEngine !== sessionState.project.engine.id) {
+    newEngine !== sessionState.project.engine.id) {
     await apiMutate(`/api/projects/${encodeURIComponent(projectName)}`, 'PATCH', {
       engine: newEngine
     });
@@ -1423,6 +1448,12 @@ async function initSession() {
     window.location.href = '/';
     return;
   }
+
+  // Apply theme immediately from localStorage to prevent flash
+  const cachedTheme = (() => {
+    try { return localStorage.getItem('tc_theme') || 'dark'; } catch (_) { return 'dark'; }
+  })();
+  document.body.dataset.theme = cachedTheme;
 
   // Load persisted settings
   sessionState.chimeEnabled = loadSetting('chime', false);

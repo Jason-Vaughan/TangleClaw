@@ -1,17 +1,25 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content="#000000" id="metaThemeColor">
   <title>TangleClaw — Session</title>
   <link rel="stylesheet" href="/session.css">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo-icon.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <script>
+    try {
+      const theme = localStorage.getItem('tc_theme');
+      if (theme && theme !== 'dark') document.documentElement.setAttribute('data-theme', theme);
+    } catch(e) {}
+  </script>
 </head>
+
 <body>
 
   <!-- Connection toast -->
@@ -35,8 +43,8 @@
     <div class="banner-actions">
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
       <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
-      <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
-              aria-expanded="false" aria-controls="commandBar">Cmd</button>
+      <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar" aria-expanded="false"
+        aria-controls="commandBar">Cmd</button>
       <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
       <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;</button>
       <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
@@ -61,9 +69,8 @@
   <!-- Command Bar -->
   <div class="command-bar hidden" id="commandBar">
     <div class="command-input-row">
-      <input type="text" class="command-input" id="commandInput"
-             placeholder="Type a command..." autocomplete="off"
-             autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input type="text" class="command-input" id="commandInput" placeholder="Type a command..." autocomplete="off"
+        autocorrect="off" autocapitalize="off" spellcheck="false">
       <button class="command-send" id="commandSend">Send</button>
     </div>
     <div class="command-pills" id="commandPills" role="toolbar" aria-label="Quick commands"></div>
@@ -154,7 +161,7 @@
       <div class="form-group">
         <label class="form-label" for="uploadFile">Choose file</label>
         <input type="file" class="upload-file-input" id="uploadFile"
-               accept=".png,.jpg,.jpeg,.gif,.pdf,.md,.txt,.json,.yaml,.yml">
+          accept=".png,.jpg,.jpeg,.gif,.pdf,.md,.txt,.json,.yaml,.yml">
       </div>
       <div class="upload-preview hidden" id="uploadPreview">
         <img id="uploadPreviewImg" class="upload-preview-img" alt="Preview">
@@ -208,4 +215,5 @@
 
   <script src="/session.js"></script>
 </body>
+
 </html>
