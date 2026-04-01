@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.10.1] - 2026-03-31
+
+### Fixed
+
+- **Main page banner now stays fixed while content scrolls** — matches behavior of session and OpenClaw pages (body flex layout + scrollable content wrapper)
+
 ## [3.10.0] - 2026-03-30
 
 ### Changed
