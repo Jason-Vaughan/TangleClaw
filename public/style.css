@@ -60,20 +60,29 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100dvh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   -webkit-tap-highlight-color: transparent;
-  overflow-x: hidden;
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
 /* ── Dashboard Bar ── */
+.main-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
 .dash-bar {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px;
+  flex-shrink: 0;
 }
 .dash-brand {
   display: flex;
