@@ -28,7 +28,7 @@ data/certs/
 # Uploads (user-specific)
 .uploads/
 
-# Screenshots (hosted in puberty-labs-assets repo)
+# Screenshots (hosted in project-assets repo)
 docs/screenshots/
 
 # Node
