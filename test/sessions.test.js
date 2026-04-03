@@ -184,6 +184,72 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Last Session Summary'));
       assert.ok(prompt.includes('Completed chunk 4'));
     });
+
+    it('includes playbook content when methodology has a playbook.md', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      // Switch to prawduct which has a playbook
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const updated = store.projects.getByName('prime-test');
+
+      const prompt = sessions.generatePrimePrompt(updated, engine);
+      assert.ok(prompt.includes('Session Playbook'), 'should include playbook header');
+      assert.ok(prompt.includes('One chunk per session'), 'should include session discipline');
+      assert.ok(prompt.includes('Independent Critic Review'), 'should include critic protocol');
+      assert.ok(prompt.includes('Janitor Pass'), 'should include janitor pass');
+
+      // Restore
+      store.projects.update(project.id, { methodology: 'minimal' });
+    });
+
+    it('omits playbook when methodology has no playbook.md', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(!prompt.includes('Session Playbook'));
+    });
+
+    it('includes rule definitions from template defaultRules', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      // Switch to prawduct and enable rules in project config
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const updated = store.projects.getByName('prime-test');
+      const projConfig = store.projectConfig.load(updated.path);
+      projConfig.rules = projConfig.rules || { extensions: {} };
+      projConfig.rules.extensions.independentCritic = true;
+      projConfig.rules.extensions.docsParity = true;
+      store.projectConfig.save(updated.path, projConfig);
+
+      const prompt = sessions.generatePrimePrompt(updated, engine);
+      assert.ok(prompt.includes('**independentCritic**:'), 'should include bold rule name');
+      assert.ok(prompt.includes('spawn a separate review agent'), 'should include critic definition');
+      assert.ok(prompt.includes('**docsParity**:'), 'should include docsParity definition');
+
+      // Restore
+      store.projects.update(project.id, { methodology: 'minimal' });
+    });
+
+    it('falls back to plain rule names when no definitions exist', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      // minimal has no defaultRules with definitions
+      const projConfig = store.projectConfig.load(project.path);
+      projConfig.rules = projConfig.rules || { extensions: {} };
+      projConfig.rules.extensions.customRule = true;
+      store.projectConfig.save(project.path, projConfig);
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.ok(prompt.includes('- customRule'), 'should list rule name without bold');
+
+      // Cleanup
+      delete projConfig.rules.extensions.customRule;
+      store.projectConfig.save(project.path, projConfig);
+    });
   });
 
   describe('_buildLaunchCommand', () => {

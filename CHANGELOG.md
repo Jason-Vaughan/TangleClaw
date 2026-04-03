@@ -2,6 +2,16 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.0] - 2026-04-02
+
+### Added
+
+- **Methodology playbook injection in prime prompt** — `generatePrimePrompt()` now reads and injects `playbook.md` from methodology template directories, giving engines full operational procedures instead of just the methodology name and phase labels (fixes #14)
+- **Extension rule definitions in prime prompt** — `defaultRules` in `template.json` now supports object form with `enabled` and `definition` fields; active rules are rendered with their definitions in the prime prompt
+- **Prawduct playbook** — new `data/templates/prawduct/playbook.md` covering session discipline (one chunk per session), phase procedures (Discovery/Planning/Building), Independent Critic review protocol, Janitor Pass, and Decision Framework
+- **Prawduct rule definitions** — `independentCritic`, `docsParity`, and `decisionFramework` now include concrete definitions explaining what each rule requires in practice
+- 7 new tests: store `getPlaybook` (3), prime prompt playbook injection (2), rule definitions (2)
+
 ## [3.10.2] - 2026-04-02
 
 ### Fixed
