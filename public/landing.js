@@ -85,13 +85,21 @@ function setConnected(connected) {
     toast.textContent = 'Connection lost. Retrying\u2026';
     toast.className = 'toast toast-warn visible';
     if (!reconnectTimer) {
-      reconnectTimer = setInterval(() => loadProjects(), 5000);
+      reconnectTimer = true; // sentinel
+      (function reconnectLoop() {
+        if (!reconnectTimer) return;
+        reconnectTimer = setTimeout(async () => {
+          if (!reconnectTimer) return;
+          await loadProjects();
+          reconnectLoop();
+        }, 5000);
+      })();
     }
   } else {
     toast.textContent = 'Reconnected';
     toast.className = 'toast toast-ok visible';
     if (reconnectTimer) {
-      clearInterval(reconnectTimer);
+      if (reconnectTimer !== true) clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
@@ -538,13 +546,27 @@ async function init() {
   startPolling();
 }
 
+/**
+ * Start all landing page polling loops using setTimeout chains.
+ * Prevents callback burst storms when browser tabs are backgrounded
+ * and then refocused (setInterval queues callbacks during throttling).
+ */
 function startPolling() {
-  setInterval(loadStats, 30000);
-  setInterval(loadPorts, 30000);
-  setInterval(loadProjects, 10000);
-  setInterval(loadModelStatus, 120000);
-  setInterval(loadGroups, 30000);
-  setInterval(loadOpenclawConnections, 30000);
+  function loop(fn, ms) {
+    function tick() {
+      setTimeout(async () => {
+        await fn();
+        tick();
+      }, ms);
+    }
+    tick();
+  }
+  loop(loadStats, 30000);
+  loop(loadPorts, 30000);
+  loop(loadProjects, 10000);
+  loop(loadModelStatus, 120000);
+  loop(loadGroups, 30000);
+  loop(loadOpenclawConnections, 30000);
 }
 
 if ('serviceWorker' in navigator) {

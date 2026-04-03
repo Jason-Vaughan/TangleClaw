@@ -155,7 +155,17 @@ function setConnected(connected) {
     dot.title = 'Disconnected';
     document.getElementById('commandSend').disabled = true;
     if (!reconnectTimer) {
-      reconnectTimer = setInterval(() => pollStatus(), 5000);
+      // Use setTimeout chain instead of setInterval to prevent burst storms
+      function reconnectLoop() {
+        if (!reconnectTimer) return;
+        reconnectTimer = setTimeout(async () => {
+          if (!reconnectTimer) return;
+          await pollStatus();
+          reconnectLoop();
+        }, 5000);
+      }
+      reconnectTimer = true; // sentinel
+      reconnectLoop();
     }
   } else {
     toast.textContent = 'Reconnected';
@@ -164,7 +174,7 @@ function setConnected(connected) {
     dot.title = 'Connected';
     document.getElementById('commandSend').disabled = false;
     if (reconnectTimer) {
-      clearInterval(reconnectTimer);
+      if (reconnectTimer !== true) clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
@@ -480,6 +490,23 @@ async function loadModelStatus(engineId) {
   }
 }
 
+// ── Visibility-Aware Polling ──
+// Uses setTimeout chains instead of setInterval to prevent callback stacking
+// when browser tabs are backgrounded and then refocused (which causes a burst
+// of queued setInterval callbacks to fire simultaneously).
+
+let _pageVisible = !document.hidden;
+
+document.addEventListener('visibilitychange', () => {
+  const wasVisible = _pageVisible;
+  _pageVisible = !document.hidden;
+  if (_pageVisible && !wasVisible) {
+    // Tab regained focus — restart polling fresh (no queued bursts)
+    if (pollTimer) startPolling();
+    if (mouseGuardTimer) startMouseGuard();
+  }
+});
+
 // ── Session Status Polling ──
 
 let pollTimer = null;
@@ -542,21 +569,33 @@ async function pollStatus() {
 }
 
 /**
- * Start polling at the configured interval.
+ * Start polling at the configured interval using setTimeout chains.
+ * Unlike setInterval, setTimeout chains don't queue callbacks when the
+ * tab is backgrounded, preventing burst storms on tab refocus.
  */
 function startPolling() {
   stopPolling();
-  pollTimer = setInterval(pollStatus, sessionState.pollInterval);
+  pollTimer = true; // sentinel — actual timeout ID set below
+  function scheduleNext() {
+    if (!pollTimer) return;
+    pollTimer = setTimeout(async () => {
+      if (!pollTimer) return;
+      if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
+      await pollStatus();
+      scheduleNext();
+    }, sessionState.pollInterval);
+  }
+  scheduleNext();
 }
 
 /**
  * Stop status polling.
  */
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (pollTimer && pollTimer !== true) {
+    clearTimeout(pollTimer);
   }
+  pollTimer = null;
 }
 
 // ── Session Ended ──
@@ -646,19 +685,38 @@ let mouseGuardTimer = null;
 
 /**
  * Periodically check tmux mouse mode and turn it off if it drifted on.
- * Only active on touch devices.
+ * Only active on touch devices. Uses setTimeout chain to prevent burst storms.
  */
 function startMouseGuard() {
   if (!('ontouchstart' in window)) return;
-  mouseGuardTimer = setInterval(async () => {
-    const data = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-    if (data && data.mouse && !sessionState.mouseOn) {
-      await apiMutate('/api/tmux/mouse', 'POST', {
-        session: projectName,
-        on: false
-      });
-    }
-  }, 3000);
+  stopMouseGuard();
+  mouseGuardTimer = true; // sentinel
+  function scheduleNext() {
+    if (!mouseGuardTimer) return;
+    mouseGuardTimer = setTimeout(async () => {
+      if (!mouseGuardTimer) return;
+      if (!_pageVisible) return; // skip while hidden
+      const data = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
+      if (data && data.mouse && !sessionState.mouseOn) {
+        await apiMutate('/api/tmux/mouse', 'POST', {
+          session: projectName,
+          on: false
+        });
+      }
+      scheduleNext();
+    }, 3000);
+  }
+  scheduleNext();
+}
+
+/**
+ * Stop mouse guard polling.
+ */
+function stopMouseGuard() {
+  if (mouseGuardTimer && mouseGuardTimer !== true) {
+    clearTimeout(mouseGuardTimer);
+  }
+  mouseGuardTimer = null;
 }
 
 // ── Command Bar ──
@@ -1479,8 +1537,13 @@ async function initSession() {
     startPolling();
   }
 
-  // Poll model status every 2 minutes
-  setInterval(() => loadModelStatus(), 120000);
+  // Poll model status every 2 minutes (setTimeout chain to avoid burst storms)
+  (function modelStatusLoop() {
+    setTimeout(() => {
+      loadModelStatus();
+      modelStatusLoop();
+    }, 120000);
+  })();
 
   // Mouse guard and initial mouse state — tmux only
   if (!isWebui) {
