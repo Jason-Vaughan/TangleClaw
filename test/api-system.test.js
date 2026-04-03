@@ -159,6 +159,16 @@ describe('API — system, engines, tmux', () => {
       assert.equal(status, 404);
       assert.equal(data.code, 'NOT_FOUND');
     });
+
+    it('should normalize session name with spaces (fixes #12)', async () => {
+      const { status, data } = await request('POST', '/api/tmux/mouse', {
+        session: 'No Such Project v99',
+        on: true
+      });
+      // 404 because no tmux session named "No-Such-Project-v99" exists
+      assert.equal(status, 404);
+      assert.ok(data.error.includes('No-Such-Project-v99'), 'should reference normalized tmux name');
+    });
   });
 
   describe('GET /api/tmux/mouse/:session', () => {
@@ -166,6 +176,12 @@ describe('API — system, engines, tmux', () => {
       const { status, data } = await request('GET', '/api/tmux/mouse/__nonexistent_session__');
       assert.equal(status, 404);
       assert.equal(data.code, 'NOT_FOUND');
+    });
+
+    it('should normalize session name with spaces (fixes #12)', async () => {
+      const { status, data } = await request('GET', `/api/tmux/mouse/${encodeURIComponent('No Such Project v99')}`);
+      assert.equal(status, 404);
+      assert.ok(data.error.includes('No-Such-Project-v99'), 'should reference normalized tmux name');
     });
   });
 });
