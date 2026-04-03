@@ -94,34 +94,40 @@ async function init() {
 /**
  * Poll for pending device pairing requests and auto-approve them.
  * Runs for 30 seconds after page load to catch the initial pairing flow.
+ * Uses setTimeout chain to prevent burst storms on tab refocus.
  */
 function startAutoApprove() {
   let attempts = 0;
   const maxAttempts = 10;
+  let stopped = false;
 
-  const timer = setInterval(async () => {
+  function next() {
+    if (stopped) return;
     attempts++;
-    if (attempts > maxAttempts) {
-      clearInterval(timer);
-      return;
-    }
+    if (attempts > maxAttempts) return;
 
-    const result = await api(`/api/openclaw/connections/${connId}/approve-pending`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
+    setTimeout(async () => {
+      if (stopped) return;
+      const result = await api(`/api/openclaw/connections/${connId}/approve-pending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
 
-    if (result && result.approved) {
-      showToast('Device paired successfully', 'ok');
-      clearInterval(timer);
-      // Reload iframe after brief delay to pick up the approved pairing
-      setTimeout(() => {
-        const frame = document.getElementById('terminalFrame');
-        frame.src = frame.src;
-      }, 1000);
-    }
-  }, 3000);
+      if (result && result.approved) {
+        showToast('Device paired successfully', 'ok');
+        stopped = true;
+        // Reload iframe after brief delay to pick up the approved pairing
+        setTimeout(() => {
+          const frame = document.getElementById('terminalFrame');
+          frame.src = frame.src;
+        }, 1000);
+        return;
+      }
+      next();
+    }, 3000);
+  }
+  next();
 }
 
 // ── Sidecar: process visibility ──
@@ -362,21 +368,31 @@ async function pollSidecarProcesses() {
 
 /**
  * Start sidecar polling for this connection.
+ * Uses setTimeout chain to prevent burst storms on tab refocus.
  */
 function startSidecarPolling() {
   if (_sidecarPollTimer) return;
   pollSidecarProcesses();
-  _sidecarPollTimer = setInterval(pollSidecarProcesses, SIDECAR_POLL_MS);
+  _sidecarPollTimer = true; // sentinel
+  function scheduleNext() {
+    if (!_sidecarPollTimer) return;
+    _sidecarPollTimer = setTimeout(async () => {
+      if (!_sidecarPollTimer) return;
+      await pollSidecarProcesses();
+      scheduleNext();
+    }, SIDECAR_POLL_MS);
+  }
+  scheduleNext();
 }
 
 /**
  * Stop sidecar polling.
  */
 function stopSidecarPolling() {
-  if (_sidecarPollTimer) {
-    clearInterval(_sidecarPollTimer);
-    _sidecarPollTimer = null;
+  if (_sidecarPollTimer && _sidecarPollTimer !== true) {
+    clearTimeout(_sidecarPollTimer);
   }
+  _sidecarPollTimer = null;
 }
 
 /**

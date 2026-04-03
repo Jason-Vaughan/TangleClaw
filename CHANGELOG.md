@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.2] - 2026-04-02
+
+### Fixed
+
+- **Polling burst storm on tab refocus crashes system** — replaced all `setInterval` polling in `session.js`, `openclaw-view.js`, and `landing.js` with `setTimeout` chains that don't queue callbacks when browser tabs are backgrounded; added `visibilitychange` listener to pause/resume session page polling when tabs are hidden/shown. Previously, backgrounding a session tab for ~60s caused ~35 queued interval callbacks to fire simultaneously on refocus, hammering the server with rapid tmux shell commands and overwhelming the system (fixes #19)
+
 ## [3.11.1] - 2026-04-02
 
 ### Fixed
