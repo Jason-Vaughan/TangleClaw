@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.4] - 2026-04-03
+
+### Fixed
+
+- **Kill button shows generic "Check password" instead of actual error** — session view's `confirmKill()` used `apiMutate()` which swallowed server error messages and showed a hardcoded string; now uses direct `fetch` (matching the landing page pattern) to display the actual error from the server (e.g. "Password required" vs "Incorrect password")
+
 ## [3.11.3] - 2026-04-03
 
 ### Fixed
