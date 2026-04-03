@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.1] - 2026-04-02
+
+### Fixed
+
+- **Prime prompt no longer fires before Claude engine is ready** — added explicit `startupDelay: 2000` to Claude engine profile, bumped default fallback from 500ms to 1500ms (fixes #17)
+
 ## [3.11.0] - 2026-04-02
 
 ### Added
