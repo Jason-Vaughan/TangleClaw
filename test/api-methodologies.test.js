@@ -93,8 +93,10 @@ describe('GET /api/methodologies', () => {
     const prawduct = data.methodologies.find((m) => m.id === 'prawduct');
     assert.ok(prawduct);
     assert.deepEqual(prawduct.phases, ['discovery', 'planning', 'building']);
-    assert.equal(prawduct.defaultRules.independentCritic, true);
-    assert.equal(prawduct.defaultRules.docsParity, true);
+    assert.equal(prawduct.defaultRules.independentCritic.enabled, true);
+    assert.ok(prawduct.defaultRules.independentCritic.definition, 'independentCritic should have a definition');
+    assert.equal(prawduct.defaultRules.docsParity.enabled, true);
+    assert.ok(prawduct.defaultRules.docsParity.definition, 'docsParity should have a definition');
   });
 
   it('includes tilt with identity sentry default', async () => {

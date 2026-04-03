@@ -69,9 +69,18 @@
     "maxTokens": 4000
   },
   "defaultRules": {
-    "independentCritic": true,
-    "docsParity": true,
-    "decisionFramework": true
+    "independentCritic": {
+      "enabled": true,
+      "definition": "After completing medium+ work, spawn a separate review agent with access only to code, tests, and specs — not the builder's reasoning. The Critic checks for: missed edge cases, test coverage gaps, scope creep, and doc parity. Address all findings before merging."
+    },
+    "docsParity": {
+      "enabled": true,
+      "definition": "Documentation must be updated in the same commit as code changes. If you change behavior, update the relevant docs. If you add a feature, document it. Never ship code without matching docs."
+    },
+    "decisionFramework": {
+      "enabled": true,
+      "definition": "Before adding code, changing architecture, or introducing dependencies, state the decision explicitly: what alternatives were considered, why this approach was chosen, and what trade-offs were accepted. This applies to non-trivial choices, not every line of code."
+    }
   },
   "actions": [
     { "label": "Run Critic", "command": "invoke-critic", "confirm": false }

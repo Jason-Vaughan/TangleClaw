@@ -286,6 +286,25 @@ describe('store', () => {
         assert.throws(() => store.templates.delete('nonexistent'), /not found/);
       });
     });
+
+    describe('getPlaybook', () => {
+      it('should return playbook content for prawduct', () => {
+        const playbook = store.templates.getPlaybook('prawduct');
+        assert.ok(playbook, 'prawduct should have a playbook');
+        assert.ok(playbook.includes('Session Playbook'), 'should contain playbook header');
+        assert.ok(playbook.includes('One chunk per session'), 'should contain session discipline');
+      });
+
+      it('should return null for templates without playbook', () => {
+        const playbook = store.templates.getPlaybook('minimal');
+        assert.equal(playbook, null);
+      });
+
+      it('should return null for nonexistent template', () => {
+        const playbook = store.templates.getPlaybook('nonexistent');
+        assert.equal(playbook, null);
+      });
+    });
   });
 
   describe('projectConfig', () => {
