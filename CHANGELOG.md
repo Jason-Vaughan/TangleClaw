@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.10.2] - 2026-04-02
+
+### Fixed
+
+- **Select button now works for projects with spaces/special characters in name** — mouse toggle API endpoints now normalize project names via `toSessionName()` before passing to tmux, matching the sanitized tmux session name (e.g., "TiLT v2" → "TiLT-v2") (fixes #12)
+
 ## [3.10.1] - 2026-03-31
 
 ### Fixed

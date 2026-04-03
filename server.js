@@ -614,7 +614,8 @@ route('POST', '/api/tmux/mouse', (_req, res, _params, body) => {
   }
 
   try {
-    tmux.setMouse(body.session, body.on, { hooks: !!body.hooks });
+    const tmuxName = tmux.toSessionName(body.session);
+    tmux.setMouse(tmuxName, body.on, { hooks: !!body.hooks });
     jsonResponse(res, 200, { mouse: body.on, session: body.session });
   } catch (err) {
     return errorResponse(res, 404, err.message, 'NOT_FOUND');
@@ -1218,7 +1219,8 @@ route('GET', '/api/uploads', (req, res) => {
 // GET /api/tmux/mouse/:session
 route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
   try {
-    const mouse = tmux.getMouse(params.session);
+    const tmuxName = tmux.toSessionName(params.session);
+    const mouse = tmux.getMouse(tmuxName);
     jsonResponse(res, 200, { mouse, session: params.session });
   } catch (err) {
     return errorResponse(res, 404, err.message, 'NOT_FOUND');
