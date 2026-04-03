@@ -2,6 +2,15 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.3] - 2026-04-03
+
+### Fixed
+
+- **Methodology playbook missing from engine config files** — `_generateClaudeMd`, `_generateCodexYaml`, `_generateAiderConf`, and `_generateGeminiMd` now inject the full playbook content (not just methodology name and description), matching what `generatePrimePrompt()` already does
+- **Bundled template sync skips new files in existing directories** — `_copyBundledTemplates()` now syncs missing files into existing template directories instead of skipping the entire directory; this fixes the case where `playbook.md` was added to bundled templates but never copied to installations that already had the template directory
+- **`getPlaybook()` falls back to bundled templates** — if a playbook is missing from the user's `~/.tangleclaw/templates/` directory, it now checks the bundled `data/templates/` directory as a fallback, ensuring playbook injection works reliably even before the sync runs
+- 7 new tests: playbook injection for Claude/Gemini/Codex/Aider generators and cross-engine parity
+
 ## [3.11.2] - 2026-04-02
 
 ### Fixed
