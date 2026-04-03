@@ -1168,14 +1168,15 @@ async function confirmKill() {
   const body = { reason: 'Manual kill from UI' };
   if (pw) body.password = pw;
 
-  const data = await apiMutate(
-    `/api/sessions/${encodeURIComponent(projectName)}`,
-    'DELETE',
-    body
-  );
+  const res = await fetch(`/api/sessions/${encodeURIComponent(projectName)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
 
-  if (!data) {
-    document.getElementById('killError').textContent = 'Kill failed. Check password.';
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    document.getElementById('killError').textContent = errData.error || 'Kill failed.';
     document.getElementById('killError').classList.remove('hidden');
     return;
   }
