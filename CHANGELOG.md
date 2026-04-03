@@ -6,7 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- **Prime prompt pastes but doesn't submit on session start** — `sendKeys()` in tmux.js was sending text and Enter in a single command, which broke with larger payloads (especially after playbook injection made prompts longer); split into two separate tmux commands and added `-l` (literal) flag so text is sent verbatim without tmux interpreting key names within it
+- **Prime prompt pastes but doesn't submit on session start** — `sendKeys()` now uses tmux `load-buffer`/`paste-buffer` for reliable delivery of large text (properly triggers bracketed paste mode), with a 500ms delay before sending Enter to let the terminal process the paste; the previous `send-keys -l` approach sent characters too fast for Claude Code to process before Enter arrived
 
 ## [3.11.4] - 2026-04-03
 
