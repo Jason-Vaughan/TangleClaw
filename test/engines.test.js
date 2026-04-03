@@ -231,6 +231,15 @@ describe('engines', () => {
       assert.ok(content.includes('PortHub'), 'Instructions should mention PortHub');
     });
 
+    it('should include playbook content in codex instructions when methodology has a playbook', () => {
+      const content = engines._generateCodexYaml(
+        {},
+        { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' }
+      );
+      assert.ok(content.includes('Session Playbook'), 'should include playbook header in instructions');
+      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
+    });
+
     it('should produce valid YAML block scalar indentation in codex instructions', () => {
       const content = engines._generateCodexYaml(
         { rules: { core: { porthubRegistration: true } } },
@@ -396,6 +405,19 @@ describe('engines', () => {
       }
     });
 
+    it('all generators should include playbook when methodology has one', () => {
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.ok(content.includes('Session Playbook'),
+          `${profile.id}: missing playbook content`);
+      }
+    });
+
     it('all generators should include shared docs guide', () => {
       const profiles = store.engines.list().filter(p =>
         p.capabilities && p.capabilities.supportsConfigFile
@@ -432,6 +454,17 @@ describe('engines', () => {
       const content = engines._generateGeminiMd({}, { name: 'TiLT', description: 'Identity-first' });
       assert.ok(content.includes('TiLT'));
       assert.ok(content.includes('Identity-first'));
+    });
+
+    it('should include playbook content when methodology has a playbook', () => {
+      const content = engines._generateGeminiMd({}, { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' });
+      assert.ok(content.includes('Session Playbook'), 'should include playbook header');
+      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
+    });
+
+    it('should omit playbook when methodology has no playbook', () => {
+      const content = engines._generateGeminiMd({}, { id: 'minimal', name: 'Minimal', description: 'Basic' });
+      assert.ok(!content.includes('Session Playbook'), 'should not include playbook content');
     });
 
     it('should include active extension rules', () => {
@@ -509,6 +542,18 @@ describe('engines', () => {
       const content = engines._generateClaudeMd({}, { name: 'TiLT', description: 'Identity-first' });
       assert.ok(content.includes('TiLT'));
       assert.ok(content.includes('Identity-first'));
+    });
+
+    it('should include playbook content when methodology has a playbook', () => {
+      const content = engines._generateClaudeMd({}, { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' });
+      assert.ok(content.includes('Session Playbook'), 'should include playbook header');
+      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
+      assert.ok(content.includes('Independent Critic'), 'should include Critic protocol');
+    });
+
+    it('should omit playbook when methodology has no playbook', () => {
+      const content = engines._generateClaudeMd({}, { id: 'minimal', name: 'Minimal', description: 'Basic' });
+      assert.ok(!content.includes('Session Playbook'), 'should not include playbook content');
     });
 
     it('should include active extension rules', () => {
