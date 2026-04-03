@@ -21,7 +21,8 @@
   "launch": {
     "shellCommand": "claude",
     "args": [],
-    "env": {}
+    "env": {},
+    "startupDelay": 2000
   },
   "persistent": null,
   "capabilities": {
