@@ -160,6 +160,20 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(projectsDir, 'new-project', '.tangleclaw', 'project.json')));
     });
 
+    it('creates session memory directory and seed file', () => {
+      const result = projects.createProject({
+        name: 'memory-project',
+        methodology: 'minimal'
+      });
+      assert.ok(result.project);
+      const memoriesDir = path.join(projectsDir, 'memory-project', '.tangleclaw', 'memories');
+      assert.ok(fs.existsSync(memoriesDir), 'memories directory should exist');
+      const memoryFile = path.join(memoriesDir, 'MEMORY.md');
+      assert.ok(fs.existsSync(memoryFile), 'MEMORY.md should exist');
+      const content = fs.readFileSync(memoryFile, 'utf8');
+      assert.ok(content.includes('Session Memory'));
+    });
+
     it('rejects invalid names', () => {
       const result = projects.createProject({ name: 'bad name!' });
       assert.equal(result.project, null);
