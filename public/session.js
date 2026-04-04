@@ -883,8 +883,22 @@ function renderCommandPills() {
 /**
  * Open the peek drawer and fetch terminal output.
  */
+/**
+ * Strip ANSI escape codes from a string.
+ * @param {string} str - Raw string with potential ANSI codes
+ * @returns {string} Clean string
+ */
+function stripAnsi(str) {
+  // Matches: CSI sequences, OSC sequences, and other common escape codes
+  return str.replace(/\x1B(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\[[0-9;]*m)/g, '');
+}
+
+/** Whether the peek content is pinned to the bottom (sticky scroll). */
+let peekStickyScroll = true;
+
 async function openPeek() {
   sessionState.peekOpen = true;
+  peekStickyScroll = true;
   document.getElementById('peekBackdrop').classList.add('open');
   document.getElementById('peekDrawer').classList.add('open');
   document.getElementById('peekTitle').textContent = `Peek: ${projectName}`;
@@ -901,17 +915,19 @@ function closePeek() {
 }
 
 /**
- * Fetch and display terminal output in the peek drawer.
+ * Fetch and display full terminal scrollback in the peek drawer.
+ * Strips ANSI escape codes and supports sticky scroll.
  */
 async function refreshPeek() {
   const content = document.getElementById('peekContent');
   content.textContent = 'Loading\u2026';
 
-  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/peek?lines=50`);
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/peek?full=true`);
   if (data && data.lines) {
-    content.textContent = data.lines.join('\n');
-    // Auto-scroll to bottom
-    content.scrollTop = content.scrollHeight;
+    content.textContent = stripAnsi(data.lines.join('\n'));
+    if (peekStickyScroll) {
+      content.scrollTop = content.scrollHeight;
+    }
   } else {
     content.textContent = 'No output available';
   }
@@ -1513,6 +1529,25 @@ function bindEvents() {
   $('peekClose').addEventListener('click', closePeek);
   $('peekRefresh').addEventListener('click', refreshPeek);
   $('peekBackdrop').addEventListener('click', closePeek);
+
+  // Jump buttons
+  $('peekJumpTop').addEventListener('click', () => {
+    const content = $('peekContent');
+    content.scrollTop = 0;
+    peekStickyScroll = false;
+  });
+  $('peekJumpBottom').addEventListener('click', () => {
+    const content = $('peekContent');
+    content.scrollTop = content.scrollHeight;
+    peekStickyScroll = true;
+  });
+
+  // Sticky scroll: unlock when user scrolls up, re-lock when at bottom
+  $('peekContent').addEventListener('scroll', () => {
+    const el = $('peekContent');
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+    peekStickyScroll = atBottom;
+  });
 
   // Settings modal
   $('settingsCloseBtn').addEventListener('click', closeSettings);

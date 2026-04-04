@@ -379,6 +379,18 @@ describe('sessions', () => {
       assert.equal(result.lines, null);
       assert.ok(result.error.includes('No active session'));
     });
+
+    it('accepts options object with lines param', () => {
+      const result = sessions.peek('nonexistent', { lines: 50 });
+      assert.equal(result.lines, null);
+      assert.ok(result.error.includes('not found'));
+    });
+
+    it('accepts options object with full param', () => {
+      const result = sessions.peek('nonexistent', { full: true });
+      assert.equal(result.lines, null);
+      assert.ok(result.error.includes('not found'));
+    });
   });
 
   describe('triggerWrap', () => {
