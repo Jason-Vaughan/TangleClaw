@@ -7,6 +7,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Added
 
 - **Session Memory** — File-based, per-project memory system that persists context across AI sessions; `.tangleclaw/memories/MEMORY.md` created automatically on project init; session memory guide injected into all engine configs (Claude, Codex, Aider, Gemini) telling the AI to read and update memory files; engine-agnostic — works with any AI that can read files and follow instructions; 4 new tests (fixes #36)
+- **Startup project sync** — `syncAllProjects()` runs on every server boot: regenerates all engine configs and backfills scaffolding (like `.tangleclaw/memories/`) for existing projects; ensures code changes (new guides, updated rules) are reflected immediately across all projects without waiting for session relaunch; 3 new tests
 
 ## [3.12.1] - 2026-04-04
 
