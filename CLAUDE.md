@@ -147,6 +147,16 @@ Structured governance with discovery, planning, building, and independent Critic
 
 This is your operational guide. Follow these procedures — they are not suggestions.
 
+### Session Start
+
+On session start, before asking the user what to do:
+1. Glob for all `build-plan*.md` files (not just `build-plan.md`) — multiple features may have their own plans
+2. Read each build plan and identify any incomplete chunks (marked ⬜ or without ✅)
+3. Read the top of `CHANGELOG.md` to understand recent work
+4. Surface all pending work to the user: which plans have remaining chunks, what the next chunk is
+
+Do not launch exploration agents for this — direct `Glob` + `Read` calls are faster and sufficient.
+
 ### Phases
 
 **Discovery** — Understand the problem before proposing solutions. Ask clarifying questions scaled to risk: 5-8 for small utilities, 15-25 for critical systems. Produce a problem statement and success criteria. Do not write code in this phase.
@@ -159,7 +169,7 @@ This is your operational guide. Follow these procedures — they are not suggest
 
 - **One chunk per session.** Finish it, test it, commit it, wrap it. No partial chunks, no multi-chunk sessions.
 - **Always commit after completing a chunk.** Never leave work uncommitted across sessions.
-- **Wrap before ending.** Capture summary, next steps, and learnings. The next session reads your wrap to resume context.
+- **Wrap before ending.** Update the relevant `build-plan*.md` file: mark completed chunks ✅, ensure the next chunk is clearly marked ⬜. This is how the next session picks up context — not conversation history.
 - **No context compaction mid-work.** If context is getting long, finish the current chunk and wrap rather than continuing in a degraded state.
 
 ### Independent Critic Review
