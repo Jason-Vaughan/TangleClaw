@@ -363,7 +363,35 @@ async function loadConfig() {
 }
 
 /**
- * Apply the current theme to the document.
+ * xterm.js theme palettes keyed by TangleClaw theme name.
+ * @type {Object<string, Object>}
+ */
+const XTERM_THEMES = {
+  dark: {
+    background: '#000000',
+    foreground: '#E8E8E8',
+    cursor: '#E8E8E8',
+    cursorAccent: '#000000',
+    selectionBackground: 'rgba(139,195,74,0.3)'
+  },
+  light: {
+    background: '#F5F5F5',
+    foreground: '#1A1A1A',
+    cursor: '#1A1A1A',
+    cursorAccent: '#F5F5F5',
+    selectionBackground: 'rgba(139,195,74,0.3)'
+  },
+  'high-contrast': {
+    background: '#000000',
+    foreground: '#FFFFFF',
+    cursor: '#FFFFFF',
+    cursorAccent: '#000000',
+    selectionBackground: 'rgba(164,214,94,0.4)'
+  }
+};
+
+/**
+ * Apply the current theme to the document and the terminal iframe.
  */
 function applyTheme() {
   const theme = (sessionState.config && sessionState.config.theme) || 'dark';
@@ -372,6 +400,25 @@ function applyTheme() {
   } else {
     document.documentElement.setAttribute('data-theme', theme);
   }
+  applyTerminalTheme(theme);
+}
+
+/**
+ * Push a colour theme into the xterm.js instance inside the ttyd iframe.
+ * Safe to call at any time — silently no-ops if the iframe or terminal
+ * instance is not ready.
+ * @param {string} theme - Theme key ('dark', 'light', 'high-contrast')
+ */
+function applyTerminalTheme(theme) {
+  const frame = document.getElementById('terminalFrame');
+  if (!frame) return;
+  try {
+    const win = frame.contentWindow;
+    const term = win && (win.term || win.terminal);
+    if (term && term.options) {
+      term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
+    }
+  } catch (_) { /* cross-origin or not loaded yet — ignore */ }
 }
 
 /**
@@ -649,6 +696,23 @@ function handleSessionEnded(statusData) {
  */
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
+  frame.addEventListener('load', () => {
+    const theme = (sessionState.config && sessionState.config.theme) || 'dark';
+    // ttyd/xterm may initialize asynchronously after iframe load — retry briefly
+    let attempts = 0;
+    const tryApply = () => {
+      try {
+        const win = frame.contentWindow;
+        const term = win && (win.term || win.terminal);
+        if (term && term.options) {
+          term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
+          return;
+        }
+      } catch (_) { /* not ready */ }
+      if (++attempts < 20) setTimeout(tryApply, 250);
+    };
+    tryApply();
+  }, { once: true });
   requestAnimationFrame(() => {
     if (iframeUrl) {
       frame.src = iframeUrl;
