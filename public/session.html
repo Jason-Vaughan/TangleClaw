@@ -80,7 +80,15 @@
     <div class="drawer-handle" aria-hidden="true"></div>
     <div class="peek-header">
       <span class="peek-title" id="peekTitle">Peek</span>
+      <div class="peek-search" id="peekSearchBar" style="display:none;">
+        <input type="text" id="peekSearchInput" class="peek-search-input" placeholder="Search..." aria-label="Search peek content" />
+        <span class="peek-search-count" id="peekSearchCount"></span>
+        <button class="banner-btn peek-search-nav" id="peekSearchPrev" aria-label="Previous match">&uarr;</button>
+        <button class="banner-btn peek-search-nav" id="peekSearchNext" aria-label="Next match">&darr;</button>
+        <button class="banner-btn peek-search-nav" id="peekSearchClose" aria-label="Close search">&times;</button>
+      </div>
       <div class="peek-actions">
+        <button class="banner-btn" id="peekSearchBtn" aria-label="Search peek">&#128269;</button>
         <button class="banner-btn peek-jump" id="peekJumpTop" aria-label="Jump to top">&uarr;</button>
         <button class="banner-btn peek-jump" id="peekJumpBottom" aria-label="Jump to bottom">&darr;</button>
         <button class="banner-btn" id="peekRefresh" aria-label="Refresh peek">&#8635;</button>
