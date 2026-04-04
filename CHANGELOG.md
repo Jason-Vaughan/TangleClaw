@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.6] - 2026-04-04
+
+### Fixed
+
+- **Light mode only changes splash screen, not terminal shell** — `applyTheme()` in `session.js` now propagates theme colors to the xterm.js terminal instance inside the ttyd iframe via `term.options.theme`; added xterm theme palettes for dark, light, and high-contrast modes; terminal theme is applied on iframe load (with retry for async xterm init) and on theme change; `.terminal-frame` background changed from hardcoded `#000` to `var(--bg)` (fixes #30)
+
 ## [3.11.5] - 2026-04-03
 
 ### Fixed
