@@ -295,6 +295,13 @@ describe('store', () => {
         assert.ok(playbook.includes('One chunk per session'), 'should contain session discipline');
       });
 
+      it('should include session start instructions in prawduct playbook', () => {
+        const playbook = store.templates.getPlaybook('prawduct');
+        assert.ok(playbook.includes('### Session Start'), 'should contain session start section');
+        assert.ok(playbook.includes('build-plan*.md'), 'should glob for all build plans, not just build-plan.md');
+        assert.ok(playbook.includes('incomplete chunks'), 'should mention finding incomplete chunks');
+      });
+
       it('should return null for templates without playbook', () => {
         const playbook = store.templates.getPlaybook('minimal');
         assert.equal(playbook, null);

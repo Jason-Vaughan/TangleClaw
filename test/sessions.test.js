@@ -203,6 +203,21 @@ describe('sessions', () => {
       store.projects.update(project.id, { methodology: 'minimal' });
     });
 
+    it('includes session start and wrap instructions in prawduct playbook', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const updated = store.projects.getByName('prime-test');
+
+      const prompt = sessions.generatePrimePrompt(updated, engine);
+      assert.ok(prompt.includes('### Session Start'), 'should include session start section');
+      assert.ok(prompt.includes('build-plan*.md'), 'should instruct globbing for all build plans');
+      assert.ok(prompt.includes('mark completed chunks'), 'wrap should reference updating build plan files');
+
+      store.projects.update(project.id, { methodology: 'minimal' });
+    });
+
     it('omits playbook when methodology has no playbook.md', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
