@@ -157,4 +157,60 @@ describe('tmux', () => {
       );
     });
   });
+
+  describe('createSession - history-limit', () => {
+    const testSession = '__tc_test_histlimit__';
+
+    it('should set history-limit to 50000 on new session', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        const { execSync } = require('node:child_process');
+        const val = execSync(
+          `tmux show-option -t ${testSession} history-limit`,
+          { encoding: 'utf8', timeout: 3000 }
+        ).trim();
+        assert.ok(val.includes('50000'), `Expected history-limit 50000, got: ${val}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('capturePane - full mode', () => {
+    const testSession = '__tc_test_fullcap__';
+
+    it('should capture full scrollback with full option', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        // Send some content
+        tmux.sendKeys(testSession, 'echo peek-full-test');
+        // Small delay for output
+        const { execSync } = require('node:child_process');
+        execSync('sleep 0.5');
+        const lines = tmux.capturePane(testSession, { full: true });
+        assert.ok(Array.isArray(lines));
+        assert.ok(lines.length > 0, 'Expected at least some output');
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should return more output with full than limited lines', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        // Generate several lines of output
+        for (let i = 0; i < 10; i++) {
+          tmux.sendKeys(testSession, `echo line-${i}`);
+        }
+        const { execSync } = require('node:child_process');
+        execSync('sleep 1');
+        const limited = tmux.capturePane(testSession, { lines: 3 });
+        const full = tmux.capturePane(testSession, { full: true });
+        assert.ok(full.length >= limited.length,
+          `Full (${full.length}) should be >= limited (${limited.length})`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
 });

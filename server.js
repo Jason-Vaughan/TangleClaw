@@ -1096,9 +1096,10 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
 route('GET', '/api/sessions/:project/peek', (req, res, params) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const query = parseQuery(urlObj.search);
+  const full = query.full === 'true';
   const lines = query.lines ? parseInt(query.lines, 10) : 5;
 
-  const result = sessions.peek(params.project, lines);
+  const result = sessions.peek(params.project, { lines, full });
   if (result.error) {
     return errorResponse(res, 404, result.error, 'NOT_FOUND');
   }
