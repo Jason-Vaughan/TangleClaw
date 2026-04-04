@@ -2,7 +2,11 @@
 
 All notable changes to TangleClaw are documented in this file.
 
-## [3.11.6] - 2026-04-04
+## [3.12.0] - 2026-04-04
+
+### Added
+
+- **Full scrollback peek** — Peek drawer now shows the entire terminal scrollback history instead of the last 50 lines; tmux sessions are created with `history-limit 50000`; `capturePane()` supports `full: true` for full buffer capture (`-S - -E -`); peek API accepts `full=true` query param; frontend strips ANSI escape codes, auto-scrolls to bottom, supports sticky scroll (unlocks on scroll-up, re-locks at bottom), and has Jump to Top/Bottom buttons (fixes #26)
 
 ### Fixed
 

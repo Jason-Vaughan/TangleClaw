@@ -635,15 +635,19 @@ body {
   font-family: monospace;
   font-size: 13px;
   line-height: 1.4;
-  color: #ccc;
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-all;
-  background: #000;
+  background: var(--bg);
   border-radius: var(--radius-btn);
   margin: 0 12px 12px;
   padding: 12px;
   min-height: 100px;
   max-height: calc(70vh - 100px);
+}
+.peek-jump {
+  font-size: 14px;
+  min-width: 28px;
 }
 
 /* ── Modal Styles (shared with landing) ── */
