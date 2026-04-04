@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.1] - 2026-04-04
+
+### Added
+
+- **Peek search** — Search bar in peek drawer with live case-insensitive matching, match highlighting (`<mark>` spans), next/prev navigation (buttons + Enter/Shift+Enter), match counter ("3 of 42"), Cmd/Ctrl+F keyboard shortcut when peek is open, Escape to close; performance-guarded rendering limits DOM highlights to 1000 around the active match for large buffers; 4 new tests (1341 total)
+
 ## [3.12.0] - 2026-04-04
 
 ### Added

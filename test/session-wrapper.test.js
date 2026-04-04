@@ -187,6 +187,16 @@ describe('Session Wrapper UI', () => {
       assert.ok(html.includes('peek-drawer'));
     });
 
+    it('should include peek search bar', () => {
+      assert.ok(html.includes('peekSearchBar'));
+      assert.ok(html.includes('peekSearchInput'));
+      assert.ok(html.includes('peekSearchCount'));
+      assert.ok(html.includes('peekSearchPrev'));
+      assert.ok(html.includes('peekSearchNext'));
+      assert.ok(html.includes('peekSearchClose'));
+      assert.ok(html.includes('peekSearchBtn'));
+    });
+
     it('should include settings modal', () => {
       assert.ok(html.includes('settingsModal'));
       assert.ok(html.includes('chimeToggle'));
@@ -285,6 +295,15 @@ describe('Session Wrapper UI', () => {
       assert.ok(css.includes('max-height: 70vh'));
     });
 
+    it('should include peek search styles', () => {
+      assert.ok(css.includes('.peek-search'));
+      assert.ok(css.includes('.peek-search-input'));
+      assert.ok(css.includes('.peek-search-count'));
+      assert.ok(css.includes('.peek-search-match'));
+      assert.ok(css.includes('.peek-search-match-active'));
+      assert.ok(css.includes('.peek-search-nav'));
+    });
+
     it('should include terminal viewport styles', () => {
       assert.ok(css.includes('.terminal-viewport'));
       assert.ok(css.includes('.terminal-frame'));
@@ -354,6 +373,18 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes('async function openPeek()'));
       assert.ok(js.includes('function closePeek()'));
       assert.ok(js.includes('async function refreshPeek()'));
+    });
+
+    it('should include peek search functions', () => {
+      assert.ok(js.includes('function openPeekSearch()'));
+      assert.ok(js.includes('function closePeekSearch()'));
+      assert.ok(js.includes('function executePeekSearch('));
+      assert.ok(js.includes('function renderPeekWithHighlights()'));
+      assert.ok(js.includes('function peekSearchNext()'));
+      assert.ok(js.includes('function peekSearchPrev()'));
+      assert.ok(js.includes('function scrollToCurrentMatch()'));
+      assert.ok(js.includes('function updatePeekSearchCount()'));
+      assert.ok(js.includes('function escapeHtml('));
     });
 
     it('should include chime system with Web Audio', () => {

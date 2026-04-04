@@ -649,6 +649,48 @@ body {
   font-size: 14px;
   min-width: 28px;
 }
+.peek-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 16px 8px;
+  flex-shrink: 0;
+}
+.peek-search-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: monospace;
+  outline: none;
+  min-width: 120px;
+}
+.peek-search-input:focus {
+  border-color: var(--accent);
+}
+.peek-search-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: center;
+}
+.peek-search-nav {
+  font-size: 12px;
+  min-width: 24px;
+  padding: 2px 4px;
+}
+.peek-search-match {
+  background: rgba(255, 200, 0, 0.4);
+  border-radius: 2px;
+}
+.peek-search-match-active {
+  background: rgba(255, 140, 0, 0.7);
+  border-radius: 2px;
+}
 
 /* ── Modal Styles (shared with landing) ── */
 .modal-backdrop {
