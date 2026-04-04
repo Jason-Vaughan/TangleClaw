@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.11.6] - 2026-04-04
+
+### Added
+
+- **tmux.js integration test suite** — 28 new tests covering session lifecycle (create, kill, hasSession, listSessions), sendKeys (text delivery, Enter flag, special characters, single quotes, large payloads, multiline), sendRawKey, capturePane, setMouse/getMouse with hooks, and _exec timeout behavior; uses real tmux sessions with automatic cleanup (fixes #23)
+
 ## [3.11.5] - 2026-04-03
 
 ### Fixed
