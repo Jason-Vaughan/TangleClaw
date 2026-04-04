@@ -896,6 +896,19 @@ function stripAnsi(str) {
 /** Whether the peek content is pinned to the bottom (sticky scroll). */
 let peekStickyScroll = true;
 
+/** Raw peek text (ANSI-stripped), used for search highlighting. */
+let peekRawText = '';
+
+/** Current peek search state. */
+const peekSearch = {
+  query: '',
+  matches: [],       // Array of { start, end } indices into peekRawText
+  currentIndex: -1,  // Which match is active
+};
+
+/**
+ * Open the peek drawer and fetch content.
+ */
 async function openPeek() {
   sessionState.peekOpen = true;
   peekStickyScroll = true;
@@ -912,6 +925,7 @@ function closePeek() {
   sessionState.peekOpen = false;
   document.getElementById('peekBackdrop').classList.remove('open');
   document.getElementById('peekDrawer').classList.remove('open');
+  closePeekSearch();
 }
 
 /**
@@ -924,13 +938,187 @@ async function refreshPeek() {
 
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/peek?full=true`);
   if (data && data.lines) {
-    content.textContent = stripAnsi(data.lines.join('\n'));
+    peekRawText = stripAnsi(data.lines.join('\n'));
+    if (peekSearch.query) {
+      renderPeekWithHighlights();
+    } else {
+      content.textContent = peekRawText;
+    }
     if (peekStickyScroll) {
       content.scrollTop = content.scrollHeight;
     }
   } else {
+    peekRawText = '';
     content.textContent = 'No output available';
   }
+}
+
+/**
+ * Open the peek search bar and focus the input.
+ */
+function openPeekSearch() {
+  const bar = document.getElementById('peekSearchBar');
+  bar.style.display = '';
+  const input = document.getElementById('peekSearchInput');
+  input.focus();
+  input.select();
+}
+
+/**
+ * Close the peek search bar and clear highlights.
+ */
+function closePeekSearch() {
+  document.getElementById('peekSearchBar').style.display = 'none';
+  document.getElementById('peekSearchInput').value = '';
+  document.getElementById('peekSearchCount').textContent = '';
+  peekSearch.query = '';
+  peekSearch.matches = [];
+  peekSearch.currentIndex = -1;
+  // Restore plain text (no highlights)
+  const content = document.getElementById('peekContent');
+  if (peekRawText) {
+    content.textContent = peekRawText;
+  }
+}
+
+/**
+ * Escape special HTML characters for safe insertion.
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * Execute peek search: find all matches and render highlights.
+ * @param {string} query - Search string (case-insensitive literal match)
+ */
+function executePeekSearch(query) {
+  peekSearch.query = query;
+  peekSearch.matches = [];
+  peekSearch.currentIndex = -1;
+
+  if (!query || !peekRawText) {
+    document.getElementById('peekSearchCount').textContent = '';
+    const content = document.getElementById('peekContent');
+    if (peekRawText) content.textContent = peekRawText;
+    return;
+  }
+
+  // Find all case-insensitive matches
+  const lowerText = peekRawText.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let pos = 0;
+  while (pos < lowerText.length) {
+    const idx = lowerText.indexOf(lowerQuery, pos);
+    if (idx === -1) break;
+    peekSearch.matches.push({ start: idx, end: idx + query.length });
+    pos = idx + 1;
+  }
+
+  if (peekSearch.matches.length > 0) {
+    peekSearch.currentIndex = 0;
+  }
+
+  renderPeekWithHighlights();
+  updatePeekSearchCount();
+  scrollToCurrentMatch();
+}
+
+/** Maximum number of matches to highlight in DOM (performance guard). */
+const PEEK_MAX_HIGHLIGHTS = 1000;
+
+/**
+ * Render peek content with search match highlights.
+ * Uses innerHTML with escaped text and <mark> spans.
+ * When there are more than PEEK_MAX_HIGHLIGHTS matches, only highlights
+ * a window around the current match to keep DOM rendering fast.
+ */
+function renderPeekWithHighlights() {
+  const content = document.getElementById('peekContent');
+  const matches = peekSearch.matches;
+
+  if (matches.length === 0) {
+    content.textContent = peekRawText;
+    return;
+  }
+
+  // For large match sets, only highlight a window around the active match
+  let visibleMatches = matches;
+  let indexOffset = 0;
+  if (matches.length > PEEK_MAX_HIGHLIGHTS) {
+    const half = Math.floor(PEEK_MAX_HIGHLIGHTS / 2);
+    const start = Math.max(0, peekSearch.currentIndex - half);
+    const end = Math.min(matches.length, start + PEEK_MAX_HIGHLIGHTS);
+    visibleMatches = matches.slice(start, end);
+    indexOffset = start;
+  }
+
+  let html = '';
+  let lastEnd = 0;
+  for (let i = 0; i < visibleMatches.length; i++) {
+    const m = visibleMatches[i];
+    const globalIndex = i + indexOffset;
+    // Text before this match
+    html += escapeHtml(peekRawText.slice(lastEnd, m.start));
+    // The match itself
+    const cls = globalIndex === peekSearch.currentIndex ? 'peek-search-match peek-search-match-active' : 'peek-search-match';
+    html += `<mark class="${cls}" data-match-index="${globalIndex}">${escapeHtml(peekRawText.slice(m.start, m.end))}</mark>`;
+    lastEnd = m.end;
+  }
+  // Remaining text after last match
+  html += escapeHtml(peekRawText.slice(lastEnd));
+
+  content.innerHTML = html;
+}
+
+/**
+ * Update the match count display (e.g. "3 of 42").
+ */
+function updatePeekSearchCount() {
+  const countEl = document.getElementById('peekSearchCount');
+  const total = peekSearch.matches.length;
+  if (total === 0) {
+    countEl.textContent = peekSearch.query ? 'No matches' : '';
+  } else {
+    countEl.textContent = `${peekSearch.currentIndex + 1} of ${total}`;
+  }
+}
+
+/**
+ * Scroll the peek content to bring the current active match into view.
+ */
+function scrollToCurrentMatch() {
+  if (peekSearch.currentIndex < 0) return;
+  const content = document.getElementById('peekContent');
+  const mark = content.querySelector('.peek-search-match-active');
+  if (mark) {
+    mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    peekStickyScroll = false;
+  }
+}
+
+/**
+ * Navigate to the next search match.
+ */
+function peekSearchNext() {
+  if (peekSearch.matches.length === 0) return;
+  peekSearch.currentIndex = (peekSearch.currentIndex + 1) % peekSearch.matches.length;
+  renderPeekWithHighlights();
+  updatePeekSearchCount();
+  scrollToCurrentMatch();
+}
+
+/**
+ * Navigate to the previous search match.
+ */
+function peekSearchPrev() {
+  if (peekSearch.matches.length === 0) return;
+  peekSearch.currentIndex = (peekSearch.currentIndex - 1 + peekSearch.matches.length) % peekSearch.matches.length;
+  renderPeekWithHighlights();
+  updatePeekSearchCount();
+  scrollToCurrentMatch();
 }
 
 // ── Chime System ──
@@ -1529,6 +1717,36 @@ function bindEvents() {
   $('peekClose').addEventListener('click', closePeek);
   $('peekRefresh').addEventListener('click', refreshPeek);
   $('peekBackdrop').addEventListener('click', closePeek);
+
+  // Peek search
+  $('peekSearchBtn').addEventListener('click', openPeekSearch);
+  $('peekSearchClose').addEventListener('click', closePeekSearch);
+  $('peekSearchNext').addEventListener('click', peekSearchNext);
+  $('peekSearchPrev').addEventListener('click', peekSearchPrev);
+
+  // Search input: debounced live search + keyboard navigation
+  let peekSearchTimer = null;
+  $('peekSearchInput').addEventListener('input', (e) => {
+    clearTimeout(peekSearchTimer);
+    peekSearchTimer = setTimeout(() => executePeekSearch(e.target.value), 150);
+  });
+  $('peekSearchInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) { peekSearchPrev(); } else { peekSearchNext(); }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closePeekSearch();
+    }
+  });
+
+  // Cmd/Ctrl+F when peek is open opens search instead of browser find
+  document.addEventListener('keydown', (e) => {
+    if (sessionState.peekOpen && (e.metaKey || e.ctrlKey) && e.key === 'f') {
+      e.preventDefault();
+      openPeekSearch();
+    }
+  });
 
   // Jump buttons
   $('peekJumpTop').addEventListener('click', () => {
