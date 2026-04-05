@@ -160,6 +160,20 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(projectsDir, 'new-project', '.tangleclaw', 'project.json')));
     });
 
+    it('creates session memory directory and seed file', () => {
+      const result = projects.createProject({
+        name: 'memory-project',
+        methodology: 'minimal'
+      });
+      assert.ok(result.project);
+      const memoriesDir = path.join(projectsDir, 'memory-project', '.tangleclaw', 'memories');
+      assert.ok(fs.existsSync(memoriesDir), 'memories directory should exist');
+      const memoryFile = path.join(memoriesDir, 'MEMORY.md');
+      assert.ok(fs.existsSync(memoryFile), 'MEMORY.md should exist');
+      const content = fs.readFileSync(memoryFile, 'utf8');
+      assert.ok(content.includes('Session Memory'));
+    });
+
     it('rejects invalid names', () => {
       const result = projects.createProject({ name: 'bad name!' });
       assert.equal(result.project, null);
@@ -256,6 +270,48 @@ describe('projects', () => {
       for (const p of list) {
         assert.ok(p.tags.includes('node'));
       }
+    });
+  });
+
+  describe('syncAllProjects', () => {
+    it('regenerates engine config for registered project', () => {
+      // new-project was created earlier in the test suite
+      const projPath = path.join(projectsDir, 'new-project');
+      const claudeMd = path.join(projPath, 'CLAUDE.md');
+
+      // Delete existing config to confirm it gets regenerated
+      if (fs.existsSync(claudeMd)) fs.unlinkSync(claudeMd);
+      assert.ok(!fs.existsSync(claudeMd));
+
+      const result = projects.syncAllProjects();
+      assert.ok(result.synced > 0);
+      assert.ok(fs.existsSync(claudeMd), 'CLAUDE.md should be regenerated');
+      const content = fs.readFileSync(claudeMd, 'utf8');
+      assert.ok(content.includes('Session Memory'), 'Should include session memory guide');
+    });
+
+    it('creates memories directory for project missing it', () => {
+      const projPath = path.join(projectsDir, 'new-project');
+      const memoriesDir = path.join(projPath, '.tangleclaw', 'memories');
+      const memoryFile = path.join(memoriesDir, 'MEMORY.md');
+
+      // Remove memories dir if it exists
+      if (fs.existsSync(memoriesDir)) fs.rmSync(memoriesDir, { recursive: true, force: true });
+      assert.ok(!fs.existsSync(memoriesDir));
+
+      const result = projects.syncAllProjects();
+      assert.ok(result.synced > 0);
+      assert.ok(fs.existsSync(memoriesDir), 'memories directory should be created');
+      assert.ok(fs.existsSync(memoryFile), 'MEMORY.md should be seeded');
+    });
+
+    it('skips projects with missing paths without crashing', () => {
+      // Create a project pointing to a non-existent path
+      store.projects.create({ name: 'ghost-project', path: '/tmp/nonexistent-tc-path-12345', engine: 'claude' });
+      const result = projects.syncAllProjects();
+      assert.ok(Array.isArray(result.errors));
+      // Should not throw, ghost project is silently skipped
+      assert.ok(result.synced >= 0);
     });
   });
 

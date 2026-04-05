@@ -2864,6 +2864,19 @@ if (require.main === module) {
     log.warn('Startup retention policy failed', { error: err.message });
   }
 
+  // Sync all projects: ensure scaffolding + regenerate engine configs
+  try {
+    const syncResult = projects.syncAllProjects();
+    if (syncResult.synced > 0) {
+      log.info('Startup project sync', syncResult);
+    }
+    if (syncResult.errors.length > 0) {
+      log.warn('Startup project sync errors', { errors: syncResult.errors });
+    }
+  } catch (err) {
+    log.warn('Startup project sync failed', { error: err.message });
+  }
+
   // Start document lock expiry timer (every 5 minutes)
   const _lockExpiryInterval = setInterval(() => {
     try {
