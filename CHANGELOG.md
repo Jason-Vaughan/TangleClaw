@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.4] - 2026-04-04
+
+### Changed
+
+- **Slim session prime prompt** — Removed full methodology playbook from the prime prompt injected into the terminal at session start; the playbook is already in the engine config (CLAUDE.md) which the AI reads automatically; prime prompt now shows only: session header, methodology name, current phase, last session summary, active learnings, and extension rules — reducing terminal output from ~50+ lines to ~10-15 lines (fixes #40)
+
 ## [3.12.3] - 2026-04-04
 
 ### Fixed

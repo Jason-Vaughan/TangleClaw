@@ -185,7 +185,7 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Completed chunk 4'));
     });
 
-    it('includes playbook content when methodology has a playbook.md', () => {
+    it('omits playbook from prime prompt (playbook lives in engine config only)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
@@ -194,36 +194,12 @@ describe('sessions', () => {
       const updated = store.projects.getByName('prime-test');
 
       const prompt = sessions.generatePrimePrompt(updated, engine);
-      assert.ok(prompt.includes('Session Playbook'), 'should include playbook header');
-      assert.ok(prompt.includes('One chunk per session'), 'should include session discipline');
-      assert.ok(prompt.includes('Independent Critic Review'), 'should include critic protocol');
-      assert.ok(prompt.includes('Janitor Pass'), 'should include janitor pass');
+      assert.ok(!prompt.includes('Session Playbook'), 'playbook should not be in prime prompt');
+      assert.ok(!prompt.includes('Janitor Pass'), 'playbook details should not be in prime prompt');
+      assert.ok(prompt.includes('Methodology: Prawduct'), 'should still include methodology name');
 
       // Restore
       store.projects.update(project.id, { methodology: 'minimal' });
-    });
-
-    it('includes session start and wrap instructions in prawduct playbook', () => {
-      const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude');
-
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      const updated = store.projects.getByName('prime-test');
-
-      const prompt = sessions.generatePrimePrompt(updated, engine);
-      assert.ok(prompt.includes('### Session Start'), 'should include session start section');
-      assert.ok(prompt.includes('build-plan*.md'), 'should instruct globbing for all build plans');
-      assert.ok(prompt.includes('mark completed chunks'), 'wrap should reference updating build plan files');
-
-      store.projects.update(project.id, { methodology: 'minimal' });
-    });
-
-    it('omits playbook when methodology has no playbook.md', () => {
-      const project = store.projects.getByName('prime-test');
-      const engine = store.engines.get('claude');
-
-      const prompt = sessions.generatePrimePrompt(project, engine);
-      assert.ok(!prompt.includes('Session Playbook'));
     });
 
     it('includes rule definitions from template defaultRules', () => {
