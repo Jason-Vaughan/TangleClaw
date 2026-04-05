@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.3] - 2026-04-04
+
+### Fixed
+
+- **Wrap button completes wrap but doesn't kill session or clear banner** — Wrap completion relied solely on idle detection (3 consecutive polls with stable terminal output), which could fail silently if captured output fluctuated; added server-side wrap timeout (120s) that force-completes wrapping sessions via `getSessionStatus`; added frontend fallback timeout (120s) in `showWrappingState()`; guarded `completeWrapFromIdle()` against re-entry with `wrapCompleting` flag; all timeouts cleaned up in `handleWrapCompleted` and `handleSessionEnded`; 6 new tests (fixes #28)
+
 ## [3.12.2] - 2026-04-04
 
 ### Added

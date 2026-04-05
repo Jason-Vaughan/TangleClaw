@@ -688,6 +688,126 @@ describe('sessions', () => {
     });
   });
 
+  describe('wrap timeout', () => {
+    let sessions;
+    const tmux = require('../lib/tmux');
+    let originalHasSession, originalCapturePane, originalKillSession;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalCapturePane = tmux.capturePane;
+      originalKillSession = tmux.killSession;
+      tmux.hasSession = () => true;
+      tmux.capturePane = () => ['line1', 'line2', 'line3'];
+      tmux.killSession = () => {};
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.capturePane = originalCapturePane;
+      tmux.killSession = originalKillSession;
+      sessions._wrapStartTimes.clear();
+      // Cleanup wrapping sessions
+      const project = store.projects.getByName('prime-test');
+      if (project) {
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'test cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('force-completes wrapping session after timeout', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-timeout-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      // Simulate wrap started well past the timeout
+      sessions._wrapStartTimes.set(session.id, Date.now() - sessions.WRAP_TIMEOUT_MS - 1000);
+
+      const status = sessions.getSessionStatus('prime-test');
+      assert.equal(status.wrapping, false);
+      assert.equal(status.wrapCompleted, true);
+      assert.ok(status.lastSession);
+      assert.equal(status.lastSession.status, 'wrapped');
+    });
+
+    it('does not force-complete before timeout', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-no-timeout-test'
+      });
+      store.sessions.setWrapping(session.id);
+
+      // Simulate wrap started recently (well within timeout)
+      sessions._wrapStartTimes.set(session.id, Date.now() - 5000);
+
+      const status = sessions.getSessionStatus('prime-test');
+      assert.equal(status.wrapping, true);
+      assert.equal(status.active, false);
+    });
+
+    it('triggerWrap records wrap start time', () => {
+      const originalSendKeys = tmux.sendKeys;
+      tmux.sendKeys = () => {};
+      try {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-start-time-test'
+        });
+
+        const before = Date.now();
+        sessions.triggerWrap('prime-test');
+        const after = Date.now();
+
+        const startTime = sessions._wrapStartTimes.get(session.id);
+        assert.ok(startTime >= before && startTime <= after, 'Wrap start time should be recorded');
+      } finally {
+        tmux.sendKeys = originalSendKeys;
+      }
+    });
+
+    it('completeWrap cleans up wrap start time', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-cleanup-test'
+      });
+      store.sessions.setWrapping(session.id);
+      sessions._wrapStartTimes.set(session.id, Date.now());
+
+      sessions.completeWrap('prime-test', 'test summary');
+      assert.equal(sessions._wrapStartTimes.has(session.id), false, 'Wrap start time should be cleaned up');
+    });
+
+    it('autoCompleteWrap cleans up wrap start time', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'auto-wrap-cleanup-test'
+      });
+      store.sessions.setWrapping(session.id);
+      sessions._wrapStartTimes.set(session.id, Date.now());
+
+      sessions.autoCompleteWrap(project, session);
+      assert.equal(sessions._wrapStartTimes.has(session.id), false, 'Wrap start time should be cleaned up');
+    });
+  });
+
   describe('getSessionHistory', () => {
     let sessions;
 
