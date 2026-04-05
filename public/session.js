@@ -27,7 +27,8 @@ const sessionState = {
   ended: false,
   wrapping: false,
   mouseOn: false,
-  launchGraceRemaining: 0
+  launchGraceRemaining: 0,
+  wrapCompleting: false
 };
 
 // ── Storage Helpers ──
@@ -656,6 +657,7 @@ let countdownTimer = null;
 function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
+  clearWrapTimeout();
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('ended');
@@ -1587,6 +1589,8 @@ function setupTerminalTouchScroll() {
 
 // ── Wrapping State ──
 
+let wrapTimeoutTimer = null;
+
 /**
  * Show wrapping state UI — amber dot, disable action buttons, show wrapping bar.
  * Terminal stays visible so user can watch the wrap.
@@ -1606,13 +1610,37 @@ function showWrappingState() {
 
   // Show wrapping bar
   document.getElementById('sessionWrapping').classList.remove('hidden');
+
+  // Fallback timeout — force-complete if idle detection never triggers
+  clearWrapTimeout();
+  wrapTimeoutTimer = setTimeout(() => {
+    if (sessionState.wrapping && !sessionState.ended) {
+      console.warn('Wrap timeout reached (120s), force-completing');
+      completeWrapFromIdle();
+    }
+  }, 120_000);
+}
+
+/**
+ * Clear the wrap fallback timeout.
+ */
+function clearWrapTimeout() {
+  if (wrapTimeoutTimer) {
+    clearTimeout(wrapTimeoutTimer);
+    wrapTimeoutTimer = null;
+  }
 }
 
 /**
  * Complete wrap when session went idle (tmux still alive).
  * Calls the server to finalize the wrap, then transitions to completed UI.
+ * Guarded against re-entry — only runs once.
  */
 async function completeWrapFromIdle() {
+  if (sessionState.wrapCompleting) return;
+  sessionState.wrapCompleting = true;
+  clearWrapTimeout();
+
   const data = await apiMutate(
     `/api/sessions/${encodeURIComponent(projectName)}/wrap/complete`,
     'POST',
@@ -1629,7 +1657,9 @@ async function completeWrapFromIdle() {
 function handleWrapCompleted(data) {
   sessionState.ended = true;
   sessionState.wrapping = false;
+  sessionState.wrapCompleting = false;
   stopPolling();
+  clearWrapTimeout();
 
   // Hide wrapping bar
   document.getElementById('sessionWrapping').classList.add('hidden');
