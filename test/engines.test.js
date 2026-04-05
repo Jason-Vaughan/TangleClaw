@@ -324,6 +324,13 @@ describe('engines', () => {
       assert.ok(typeof rules.sharedDocsGuide === 'string');
       assert.ok(rules.sharedDocsGuide.includes('Shared Documents'));
     });
+
+    it('should include session memory guide', () => {
+      const rules = engines._getRulesContent({});
+      assert.ok(rules.sessionMemoryGuide !== null, 'Should include session memory guide');
+      assert.ok(typeof rules.sessionMemoryGuide === 'string');
+      assert.ok(rules.sessionMemoryGuide.includes('Session Memory'));
+    });
   });
 
   describe('rule injection parity', () => {
@@ -429,6 +436,21 @@ describe('engines', () => {
         assert.ok(
           content.includes('Shared Documents') || content.includes('Shared Docs Guide'),
           `${profile.id}: missing shared docs guide`
+        );
+      }
+    });
+
+    it('all generators should include session memory guide', () => {
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.ok(
+          content.includes('Session Memory') || content.includes('session memory'),
+          `${profile.id}: missing session memory guide`
         );
       }
     });
