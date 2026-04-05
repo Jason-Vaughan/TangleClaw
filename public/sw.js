@@ -1,7 +1,7 @@
 /* ── TangleClaw v3 — Service Worker ── */
 /* Cache-first for static assets, network-first for API and HTML. */
 
-const CACHE_NAME = 'tangleclaw-v3-8';
+const CACHE_NAME = 'tangleclaw-v3-9';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
