@@ -7,6 +7,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Fixed
 
 - **Orphan bare shell after session ends** — `ttyd-attach.sh` used `tmux new-session -A` which silently creates a new bare shell when the engine session is gone (wrap, kill, or crash); the orphan shell had no working directory (cwd `/`), inherited ttyd's restrictive launchd resource limits (`NumberOfFiles: 4096`), triggered `.zshrc` ulimit errors, and confused TangleClaw's `hasSession()` state tracking; replaced with `tmux has-session` guard + `tmux attach-session` so the script only attaches to existing sessions and shows a "session not running" message when the session is gone; 4 new tests (fixes #47)
+- **Codex sessions crash immediately on launch** — live engine profiles at `~/.tangleclaw/engines/` were never updated when bundled profiles gained new fields (e.g. `preKeys`, `preKeyDelay`, `startupDelay`); without `preKeys` the trust dialog wasn't dismissed, so the prime prompt injection selected "No, quit" and Codex exited; `_copyBundledFiles()` now deep-merges missing fields from bundled profiles into existing ones without overwriting user customizations; 4 new tests (fixes #47)
 
 ## [3.12.6] - 2026-04-05
 
