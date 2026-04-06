@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.7] - 2026-04-05
+
+### Fixed
+
+- **Orphan bare shell after session ends** — `ttyd-attach.sh` used `tmux new-session -A` which silently creates a new bare shell when the engine session is gone (wrap, kill, or crash); the orphan shell had no working directory (cwd `/`), inherited ttyd's restrictive launchd resource limits (`NumberOfFiles: 4096`), triggered `.zshrc` ulimit errors, and confused TangleClaw's `hasSession()` state tracking; replaced with `tmux has-session` guard + `tmux attach-session` so the script only attaches to existing sessions and shows a "session not running" message when the session is gone; 4 new tests (fixes #47)
+
 ## [3.12.6] - 2026-04-05
 
 ### Fixed
