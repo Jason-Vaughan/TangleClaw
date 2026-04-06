@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.6] - 2026-04-05
+
+### Fixed
+
+- **Peek not working for alternate-screen engines (Codex, etc.)** — TUI-based engines like Codex run in tmux's alternate screen buffer, which has no scrollback history; `capture-pane -S - -E -` could fail or return empty content for these panes; `capturePane()` now detects alternate screen mode via `#{alternate_on}` and falls back to visible-only capture; new `isAlternateScreen()` helper in `tmux.js`; peek API response includes `alternateScreen` flag; frontend shows informational notice when peek content is screen-only (no scrollback); 4 new tests (fixes #44)
+
 ## [3.12.5] - 2026-04-05
 
 ### Added

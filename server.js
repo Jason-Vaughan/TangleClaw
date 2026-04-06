@@ -1129,7 +1129,8 @@ route('GET', '/api/sessions/:project/peek', (req, res, params) => {
   jsonResponse(res, 200, {
     lines: result.lines,
     project: params.project,
-    tmuxSession: result.tmuxSession
+    tmuxSession: result.tmuxSession,
+    alternateScreen: result.alternateScreen || false
   });
 });
 

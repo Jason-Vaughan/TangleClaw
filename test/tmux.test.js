@@ -187,9 +187,10 @@ describe('tmux', () => {
         // Small delay for output
         const { execSync } = require('node:child_process');
         execSync('sleep 0.5');
-        const lines = tmux.capturePane(testSession, { full: true });
-        assert.ok(Array.isArray(lines));
-        assert.ok(lines.length > 0, 'Expected at least some output');
+        const capture = tmux.capturePane(testSession, { full: true });
+        assert.ok(Array.isArray(capture.lines));
+        assert.ok(capture.lines.length > 0, 'Expected at least some output');
+        assert.equal(typeof capture.alternateScreen, 'boolean');
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
@@ -206,8 +207,58 @@ describe('tmux', () => {
         execSync('sleep 1');
         const limited = tmux.capturePane(testSession, { lines: 3 });
         const full = tmux.capturePane(testSession, { full: true });
-        assert.ok(full.length >= limited.length,
-          `Full (${full.length}) should be >= limited (${limited.length})`);
+        assert.ok(full.lines.length >= limited.lines.length,
+          `Full (${full.lines.length}) should be >= limited (${limited.lines.length})`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('isAlternateScreen', () => {
+    it('should return false for non-existent session', () => {
+      assert.equal(tmux.isAlternateScreen('__nonexistent_test_session__'), false);
+    });
+
+    it('should return false for a normal bash session (not in alternate screen)', () => {
+      const testSession = '__tc_test_altscreen__';
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        assert.equal(tmux.isAlternateScreen(testSession), false);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('capturePane - alternate screen handling', () => {
+    const testSession = '__tc_test_altcap__';
+
+    it('should return alternateScreen false for normal bash pane', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash' });
+        const capture = tmux.capturePane(testSession, { full: true });
+        assert.equal(capture.alternateScreen, false);
+        assert.ok(Array.isArray(capture.lines));
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should return alternateScreen true and visible content for TUI pane', () => {
+      try {
+        // Use `less` as a controlled alternate screen app
+        tmux.createSession(testSession, { command: 'exec bash' });
+        tmux.sendKeys(testSession, 'echo hello-alt-test | less');
+        const { execSync } = require('node:child_process');
+        execSync('sleep 0.5');
+        const capture = tmux.capturePane(testSession, { full: true });
+        assert.equal(capture.alternateScreen, true);
+        assert.ok(Array.isArray(capture.lines));
+        // less should show our content on the visible screen
+        const joined = capture.lines.join('\n');
+        assert.ok(joined.includes('hello-alt-test'),
+          `Expected visible content to include "hello-alt-test", got: ${joined.slice(0, 200)}`);
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }
