@@ -489,6 +489,65 @@ describe('projects', () => {
     });
   });
 
+  describe('archiveProject', () => {
+    it('archives a registered project', () => {
+      const result = projects.archiveProject('attachable');
+      assert.ok(result.success);
+      // Should not appear in default list
+      const list = projects.listProjects();
+      assert.ok(!list.some(p => p.name === 'attachable'));
+    });
+
+    it('rejects archiving an already-archived project', () => {
+      const result = projects.archiveProject('attachable');
+      assert.equal(result.success, false);
+      assert.ok(result.errors[0].includes('already archived'));
+    });
+
+    it('rejects archiving a non-existent project', () => {
+      const result = projects.archiveProject('nonexistent-xyz');
+      assert.equal(result.success, false);
+      assert.ok(result.errors[0].includes('not found'));
+    });
+
+    it('archived projects excluded from syncAllProjects', () => {
+      // syncAllProjects uses store.projects.list() which excludes archived
+      const syncResult = projects.syncAllProjects();
+      // attachable is archived, should not be counted
+      const allActive = store.projects.list();
+      assert.ok(!allActive.some(p => p.name === 'attachable'));
+    });
+
+    it('archived projects excluded from listAllProjects unregistered scan', () => {
+      const all = projects.listAllProjects();
+      // attachable is archived — should not appear as unregistered
+      const asUnreg = all.find(p => p.name === 'attachable' && p.registered === false);
+      assert.equal(asUnreg, undefined);
+    });
+  });
+
+  describe('unarchiveProject', () => {
+    it('restores an archived project', () => {
+      const result = projects.unarchiveProject('attachable');
+      assert.ok(result.success);
+      // Should appear in default list again
+      const list = projects.listProjects();
+      assert.ok(list.some(p => p.name === 'attachable'));
+    });
+
+    it('rejects unarchiving a non-archived project', () => {
+      const result = projects.unarchiveProject('attachable');
+      assert.equal(result.success, false);
+      assert.ok(result.errors[0].includes('not archived'));
+    });
+
+    it('rejects unarchiving a non-existent project', () => {
+      const result = projects.unarchiveProject('nonexistent-xyz');
+      assert.equal(result.success, false);
+      assert.ok(result.errors[0].includes('not found'));
+    });
+  });
+
   describe('resolveProjectsDir', () => {
     it('expands tilde to home directory', () => {
       const result = projects.resolveProjectsDir('~/Documents');

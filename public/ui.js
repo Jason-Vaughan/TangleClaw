@@ -54,13 +54,25 @@ function renderProjects() {
 
   // Root directory panel
   const rootHtml = renderRootPanel();
-  grid.innerHTML = rootHtml + filtered.map(renderCard).join('');
+
+  // Archived projects section (collapsed by default)
+  const archived = state.projects.filter(p => p.archived);
+  let archivedHtml = '';
+  if (archived.length > 0) {
+    archivedHtml = `<details class="archived-section">
+      <summary class="archived-section-header">${archived.length} archived project${archived.length !== 1 ? 's' : ''}</summary>
+      <div class="archived-section-list">${archived.map(renderCard).join('')}</div>
+    </details>`;
+  }
+
+  grid.innerHTML = rootHtml + filtered.map(renderCard).join('') + archivedHtml;
 }
 
 function renderRootPanel() {
   if (!state.config || !state.config.projectsDir) return '';
-  const totalCount = state.projects.length;
-  const registered = state.projects.filter(p => p.registered !== false).length;
+  const nonArchived = state.projects.filter(p => !p.archived);
+  const totalCount = nonArchived.length;
+  const registered = nonArchived.filter(p => p.registered !== false).length;
   return `<div class="root-panel">
     <span class="root-label">ROOT</span>
     <span class="root-path">${esc(state.config.projectsDir)}</span>
@@ -72,6 +84,11 @@ function renderCard(project) {
   // Unregistered project — show muted style with Attach button
   if (project.registered === false) {
     return renderUnregisteredCard(project);
+  }
+
+  // Archived project — show muted style with Unarchive button
+  if (project.archived) {
+    return renderArchivedCard(project);
   }
 
   const hasSession = project.session && project.session.active;
@@ -151,6 +168,7 @@ function renderCard(project) {
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-kill-card" onclick="event.stopPropagation(); openKill('${n}')" title="Kill session">&#9632;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openSettings('${n}')" title="Info">i</button>
+        ${!hasSession ? `<button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); archiveProjectUI('${n}')" title="Archive project">&#128451;</button>` : ''}
         <button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); openDetach('${n}')" title="Detach from TangleClaw">&#8856;</button>
         <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
@@ -176,6 +194,26 @@ function renderUnregisteredCard(project) {
       ${methBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject('${n}')">Attach</button>
+      </span>
+    </div>
+  </article>`;
+}
+
+/**
+ * Render an archived project card with muted styling and Unarchive button.
+ * @param {object} project - Project data
+ * @returns {string} HTML
+ */
+function renderArchivedCard(project) {
+  const n = esc(project.name);
+  return `<article class="project-card compact archived" tabindex="0">
+    <div class="card-row">
+      <span class="status-dot archived"></span>
+      <span class="card-name card-name-muted" title="${n}">${n}</span>
+      <span class="badge badge-archived">archived</span>
+      <span class="card-row-actions">
+        <button class="btn btn-compact" onclick="event.stopPropagation(); unarchiveProject('${n}')">Unarchive</button>
+        <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
     </div>
   </article>`;
@@ -231,8 +269,60 @@ function toggleCardDetail(name) {
   }
 }
 
-async function attachProject(name) {
+/** @type {string|null} */
+let attachConfirmTarget = null;
+
+/**
+ * Show confirmation modal before attaching a project.
+ * @param {string} name - Project directory name
+ */
+function attachProject(name) {
+  attachConfirmTarget = name;
+  document.getElementById('attachConfirmText').innerHTML =
+    `<p>Register <strong>${esc(name)}</strong> as a TangleClaw project?</p>` +
+    `<p style="margin-top:8px;font-size:13px;color:var(--text-muted)">This will scaffold project config, generate engine files (CLAUDE.md), and sync on every server boot.</p>`;
+  document.getElementById('attachConfirmModal').classList.add('open');
+}
+
+/**
+ * Close the attach confirmation modal without attaching.
+ */
+function closeAttachConfirm() {
+  document.getElementById('attachConfirmModal').classList.remove('open');
+  attachConfirmTarget = null;
+}
+
+/**
+ * Confirm attach and register the project.
+ */
+async function confirmAttach() {
+  const name = attachConfirmTarget;
+  closeAttachConfirm();
+  if (!name) return;
   const data = await apiMutate('/api/projects/attach', 'POST', { name });
+  if (data) {
+    await loadProjects();
+  }
+}
+
+/**
+ * Archive a project (deactivate — stops sync and blocks session launch).
+ * @param {string} name - Project name
+ */
+async function archiveProjectUI(name) {
+  if (!confirm(`Archive "${name}"? It will be hidden from the main list and won't sync on boot. You can unarchive it later.`)) return;
+  const data = await apiMutate(`/api/projects/${encodeURIComponent(name)}/archive`, 'POST', {});
+  if (data) {
+    await loadProjects();
+  }
+}
+
+/**
+ * Unarchive (restore) an archived project.
+ * @param {string} name - Project name
+ */
+async function unarchiveProject(name) {
+  const data = await apiMutate(`/api/projects/${encodeURIComponent(name)}/unarchive`, 'POST', {});
   if (data) {
     await loadProjects();
   }
@@ -2085,6 +2175,9 @@ $('settingsSaveBtn').addEventListener('click', saveSettings);
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
 $('settingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSettings(); });
+$('attachConfirmCancelBtn').addEventListener('click', closeAttachConfirm);
+$('attachConfirmBtn').addEventListener('click', confirmAttach);
+$('attachConfirmModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeAttachConfirm(); });
 $('methSwitchCancelBtn').addEventListener('click', closeMethSwitchModal);
 $('methSwitchConfirmBtn').addEventListener('click', confirmMethSwitch);
 $('methSwitchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMethSwitchModal(); });

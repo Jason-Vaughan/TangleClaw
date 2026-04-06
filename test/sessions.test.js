@@ -832,6 +832,22 @@ describe('sessions', () => {
       assert.ok(result.error.includes('not found'));
     });
 
+    it('returns error for archived project', () => {
+      const projDir = path.join(projectsDir, 'archived-proj');
+      fs.mkdirSync(projDir, { recursive: true });
+      const proj = store.projects.create({
+        name: 'archived-proj',
+        path: projDir,
+        engine: 'claude',
+        methodology: 'minimal'
+      });
+      store.projects.archive(proj.id);
+
+      const result = sessions.launchSession('archived-proj');
+      assert.equal(result.session, null);
+      assert.ok(result.error.includes('archived'));
+    });
+
     it('returns error for unavailable engine', () => {
       // Create a project with an unavailable engine
       const projDir = path.join(projectsDir, 'bad-engine');

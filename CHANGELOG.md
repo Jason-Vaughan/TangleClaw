@@ -2,6 +2,17 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [3.12.5] - 2026-04-05
+
+### Added
+
+- **Project archive/unarchive** — Projects can be archived (deactivated) from the landing page; archived projects are skipped by `syncAllProjects()` on boot, hidden from the main project list, and blocked from session launch; archived projects appear in a collapsed section at the bottom of the landing page with an "Unarchive" button; new API endpoints `POST /api/projects/:name/archive` and `POST /api/projects/:name/unarchive`; `store.projects.unarchive()` added; `listAllProjects()` excludes archived projects from the unregistered filesystem scan; 10 new tests (fixes #42)
+- **Attach confirmation dialog** — Clicking "Attach" on an unregistered project card now shows a confirmation modal explaining what will happen (scaffold config, generate engine files, sync on boot) before registering the project; prevents accidental project registration
+
+### Fixed
+
+- **Session launch blocked for archived projects** — `launchSession()` now returns an error if the project is archived, with a message to unarchive first
+
 ## [3.12.4] - 2026-04-04
 
 ### Changed
