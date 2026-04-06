@@ -357,7 +357,14 @@ async function launchProject(name) {
     return navigateToSession(name);
   }
 
-  // Show loading state
+  // Immediate visual feedback — swap button text to "Launching…" and disable
+  const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.textContent = 'Launching\u2026';
+    btn.disabled = true;
+  }
+
   const toast = document.getElementById('toast');
 
   try {
@@ -369,6 +376,7 @@ async function launchProject(name) {
     const data = await res.json();
 
     if (!res.ok) {
+      if (btn) { btn.textContent = originalText; btn.disabled = false; }
       toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
       toast.className = 'toast toast-warn visible';
       setTimeout(() => { toast.classList.remove('visible'); }, 6000);
@@ -378,6 +386,7 @@ async function launchProject(name) {
     setConnected(true);
     navigateToSession(name, { launched: true });
   } catch (err) {
+    if (btn) { btn.textContent = originalText; btn.disabled = false; }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }
