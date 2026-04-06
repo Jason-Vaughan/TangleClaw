@@ -108,6 +108,68 @@ describe('store', () => {
       const engines = fs.readdirSync(enginesDir);
       assert.ok(engines.includes('custom.json'), 'Custom engine should remain');
     });
+
+    it('should merge new bundled fields into existing engine profiles', () => {
+      // Simulate an older codex.json that's missing launch.preKeys
+      const enginesDir = path.join(tmpDir, 'engines');
+      fs.mkdirSync(enginesDir, { recursive: true });
+      const oldProfile = {
+        id: 'codex',
+        name: 'Codex',
+        launch: { shellCommand: 'codex', args: [], env: {} }
+      };
+      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(oldProfile, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'codex.json'), 'utf8'));
+      // New fields from bundled profile should be backfilled
+      assert.deepStrictEqual(updated.launch.preKeys, ['Enter', 'Enter']);
+      assert.equal(updated.launch.preKeyDelay, 3000);
+      assert.equal(updated.launch.startupDelay, 2000);
+      // Existing values should NOT be overwritten
+      assert.equal(updated.launch.shellCommand, 'codex');
+    });
+
+    it('should not overwrite user-customized values when merging bundled profiles', () => {
+      const enginesDir = path.join(tmpDir, 'engines');
+      fs.mkdirSync(enginesDir, { recursive: true });
+      const customProfile = {
+        id: 'codex',
+        name: 'My Custom Codex',
+        launch: { shellCommand: 'my-codex', args: ['--flag'], env: { CUSTOM: '1' } },
+        capabilities: { supportsPrimePrompt: false }
+      };
+      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(customProfile, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'codex.json'), 'utf8'));
+      // User's custom values must be preserved
+      assert.equal(updated.name, 'My Custom Codex');
+      assert.equal(updated.launch.shellCommand, 'my-codex');
+      assert.deepStrictEqual(updated.launch.args, ['--flag']);
+      assert.equal(updated.capabilities.supportsPrimePrompt, false);
+      // New fields from bundled should still be added
+      assert.ok('preKeys' in updated.launch, 'preKeys should be backfilled');
+      assert.ok('supportsConfigFile' in updated.capabilities, 'supportsConfigFile should be backfilled');
+    });
+
+    it('should not modify engine profiles when bundled has no new fields', () => {
+      // Init once to get all bundled profiles
+      store.init();
+
+      const enginesDir = path.join(tmpDir, 'engines');
+      const codexPath = path.join(enginesDir, 'codex.json');
+      const before = fs.readFileSync(codexPath, 'utf8');
+
+      // Close and re-init — should not change anything
+      store.close();
+      store.init();
+
+      const after = fs.readFileSync(codexPath, 'utf8');
+      assert.equal(before, after, 'Profile should be unchanged when bundled has no new fields');
+    });
   });
 
   describe('close', () => {

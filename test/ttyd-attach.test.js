@@ -33,20 +33,27 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
-  it('should use tmux new-session -A (attach-or-create)', () => {
-    const tmuxLine = codeLines().find(l => l.includes('tmux'));
-    assert.ok(tmuxLine, 'script must contain a tmux command');
-    assert.match(
-      tmuxLine,
-      /tmux\s+new-session\s+-A/,
-      'must use "tmux new-session -A" for atomic attach-or-create'
+  it('should check session existence with tmux has-session before attaching', () => {
+    assert.ok(
+      script.includes('tmux has-session -t'),
+      'must check for session existence with tmux has-session'
+    );
+  });
+
+  it('should use tmux attach-session (not new-session -A) to avoid orphan shells', () => {
+    const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
+    assert.ok(attachLine, 'must use tmux attach-session for existing sessions');
+
+    const hasNewSessionA = codeLines().some(l =>
+      /tmux\s+new-session\s+-A/.test(l)
+    );
+    assert.ok(
+      !hasNewSessionA,
+      'must NOT use tmux new-session -A — it creates orphan bare shells when the session is gone (fixes #47)'
     );
   });
 
   it('should NOT use the broken exec-or-exec pattern', () => {
-    // The pattern `exec cmd || exec cmd` is broken because exec replaces the
-    // shell process — the || fallback can never run. This caused a rapid
-    // reconnect loop when tmux sessions died overnight.
     const hasExecOr = codeLines().some(l =>
       /exec\s+.*\|\|/.test(l)
     );
@@ -56,29 +63,45 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
-  it('should exec the final tmux command (not fork)', () => {
-    const tmuxLine = codeLines().find(l => l.includes('tmux'));
+  it('should exec the tmux attach command (not fork)', () => {
+    const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
     assert.match(
-      tmuxLine,
+      attachLine,
       /^\s*exec\s+tmux/,
-      'tmux command should be called with exec to replace the shell process'
+      'tmux attach command should be called with exec to replace the shell process'
     );
   });
 
   it('should quote the session variable', () => {
-    const tmuxLine = codeLines().find(l => l.includes('tmux'));
+    const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
     assert.match(
-      tmuxLine,
+      attachLine,
       /"\$session"/,
       'session variable must be quoted to handle names with spaces'
     );
   });
 
   it('should sanitize the session name for tmux', () => {
-    // Script must replace spaces and strip invalid chars before passing to tmux
     assert.ok(
       script.includes("tr ' ' '-'"),
       'should replace spaces with hyphens for tmux compatibility'
+    );
+  });
+
+  it('should show a message when session does not exist', () => {
+    assert.ok(
+      script.includes('not running'),
+      'should display a user-friendly message when the session is gone'
+    );
+  });
+
+  it('should sleep after showing session-ended message so ttyd keeps the terminal open', () => {
+    // Without sleep, ttyd closes the connection immediately when the script
+    // exits, flashing the message too briefly to read.
+    const elseBlock = script.slice(script.indexOf('else'));
+    assert.ok(
+      elseBlock.includes('sleep'),
+      'should sleep after message so the user can read it before ttyd closes'
     );
   });
 });
