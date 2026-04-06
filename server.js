@@ -868,6 +868,28 @@ route('DELETE', '/api/projects/:name', (_req, res, params, body) => {
   });
 });
 
+// POST /api/projects/:name/archive — Archive (deactivate) a project
+route('POST', '/api/projects/:name/archive', (_req, res, params) => {
+  const result = projects.archiveProject(params.name);
+  if (!result.success) {
+    const firstError = result.errors[0];
+    const status = firstError.includes('not found') ? 404 : 400;
+    return errorResponse(res, status, firstError, firstError.includes('not found') ? 'NOT_FOUND' : 'BAD_REQUEST');
+  }
+  jsonResponse(res, 200, { ok: true, name: params.name });
+});
+
+// POST /api/projects/:name/unarchive — Restore an archived project
+route('POST', '/api/projects/:name/unarchive', (_req, res, params) => {
+  const result = projects.unarchiveProject(params.name);
+  if (!result.success) {
+    const firstError = result.errors[0];
+    const status = firstError.includes('not found') ? 404 : 400;
+    return errorResponse(res, status, firstError, firstError.includes('not found') ? 'NOT_FOUND' : 'BAD_REQUEST');
+  }
+  jsonResponse(res, 200, { ok: true, name: params.name });
+});
+
 // PATCH /api/projects/:name
 route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {

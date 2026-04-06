@@ -924,6 +924,38 @@ body {
 .project-card.unregistered {
   opacity: 0.6;
 }
+.project-card.archived {
+  opacity: 0.5;
+}
+
+.archived-section {
+  margin-top: 12px;
+}
+.archived-section-header {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 12px;
+  user-select: none;
+}
+.archived-section-header:hover {
+  color: var(--text);
+}
+.archived-section-list {
+  margin-top: 4px;
+}
+
+.status-dot.archived {
+  background: transparent;
+  border: 1px solid var(--text-muted);
+}
+.badge-archived {
+  background: var(--bg-dim);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
 
 .card-row {
   display: flex;

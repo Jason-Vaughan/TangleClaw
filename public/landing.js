@@ -268,7 +268,7 @@ async function loadConfig() {
 }
 
 async function loadProjects() {
-  const data = await api('/api/projects');
+  const data = await api('/api/projects?archived=true');
   if (!data) return;
   state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   collectTags();
@@ -299,7 +299,7 @@ function collectTags() {
  * @returns {object[]}
  */
 function filterProjects() {
-  let list = state.projects;
+  let list = state.projects.filter(p => !p.archived);
   if (!state.showUnregistered) {
     list = list.filter(p => p.registered !== false);
   }

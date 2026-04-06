@@ -26,6 +26,16 @@ Edit them from the TangleClaw landing page or via the API.
 - Keep functions short and single-purpose
 - Write clear commit messages that explain why, not just what
 
+## Build Plans & Chunks
+
+Claude Code stores plan files globally at `~/.claude/plans/`. This causes problems — plans get lost across sessions and can collide between projects.
+
+**Rule: Keep plans local to the project.**
+- After creating or updating a plan in Claude Code's plan mode, copy the plan file into the project directory at `<project-root>/.claude/plans/<plan-name>.md`.
+- All memory entries and session handoffs must reference the **project-local copy** using its absolute path (e.g., `/Users/jasonvaughan/Documents/Projects/MyProject/.claude/plans/my-plan.md`).
+- Never reference plans with ambiguous relative paths like `.claude/plans/...` — always use absolute paths.
+- Each project's plans live inside that project. Do not rely on `~/.claude/plans/` as the source of truth across sessions.
+
 ## Port Management (PortHub)
 
 TangleClaw is the central port registry for all projects on this machine. Every port used by any project must be registered here to prevent conflicts. This replaces the old standalone `porthub` CLI — do not use `porthub lease`/`porthub release`; use the TangleClaw API instead.

@@ -180,6 +180,20 @@ describe('store.projects', () => {
     });
   });
 
+  describe('unarchive', () => {
+    it('restores archived flag to false', () => {
+      const found = store.projects.getByName('archive-test');
+      store.projects.unarchive(found.id);
+      const restored = store.projects.get(found.id);
+      assert.equal(restored.archived, false);
+    });
+
+    it('unarchived projects appear in default list', () => {
+      const list = store.projects.list();
+      assert.ok(list.some((p) => p.name === 'archive-test'));
+    });
+  });
+
   describe('delete', () => {
     it('removes project from database', () => {
       const created = store.projects.create({ name: 'delete-test', path: '/tmp/delete-test' });
