@@ -938,6 +938,10 @@ async function refreshPeek() {
   const content = document.getElementById('peekContent');
   content.textContent = 'Loading\u2026';
 
+  // Remove previous alternate-screen notice if any
+  const oldNotice = document.getElementById('peekAltScreenNotice');
+  if (oldNotice) oldNotice.remove();
+
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/peek?full=true`);
   if (data && data.lines) {
     peekRawText = stripAnsi(data.lines.join('\n'));
@@ -948,6 +952,14 @@ async function refreshPeek() {
     }
     if (peekStickyScroll) {
       content.scrollTop = content.scrollHeight;
+    }
+    // Show notice for alternate screen (TUI engines with no scrollback)
+    if (data.alternateScreen) {
+      const notice = document.createElement('div');
+      notice.id = 'peekAltScreenNotice';
+      notice.style.cssText = 'padding:6px 12px;background:#2a2a1a;color:#b8a830;font-size:12px;border-bottom:1px solid #444;';
+      notice.textContent = 'Showing visible screen only \u2014 this engine uses a fullscreen TUI (no scrollback history)';
+      content.parentNode.insertBefore(notice, content);
     }
   } else {
     peekRawText = '';
