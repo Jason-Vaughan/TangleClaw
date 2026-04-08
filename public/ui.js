@@ -507,24 +507,14 @@ async function confirmRulesReset() {
   closeRulesResetModal();
 }
 
-// ── Filter Toggle ──
+// ── Filter Toggle (inline — always visible, no toggle needed) ──
 
 function toggleFilter() {
-  const section = document.getElementById('filterSection');
-  const btn = document.getElementById('filterBtn');
-  const isHidden = section.classList.contains('hidden');
-  section.classList.toggle('hidden', !isHidden);
-  btn.setAttribute('aria-expanded', isHidden);
-  if (isHidden) {
-    document.getElementById('filterInput').focus();
-  }
+  document.getElementById('filterInput').focus();
 }
 
 function maybeShowFilter() {
-  if (state.projects.length > 10) {
-    document.getElementById('filterSection').classList.remove('hidden');
-    document.getElementById('filterBtn').setAttribute('aria-expanded', 'true');
-  }
+  // Filter input is always visible inline; no-op for backwards compat
 }
 
 // ── Delete / Detach Project Modal ──
@@ -2158,7 +2148,7 @@ $('rulesResetBtn').addEventListener('click', openRulesResetModal);
 $('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
 $('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);
 $('rulesResetModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeRulesResetModal(); });
-$('filterBtn').addEventListener('click', toggleFilter);
+// filterBtn removed — filter input is always visible inline
 $('newBtn').addEventListener('click', openCreateDrawer);
 $('createClose').addEventListener('click', closeCreateDrawer);
 $('createBackdrop').addEventListener('click', closeCreateDrawer);

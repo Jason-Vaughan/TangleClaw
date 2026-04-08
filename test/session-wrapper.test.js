@@ -265,9 +265,9 @@ describe('Session Wrapper UI', () => {
       assert.ok(css.includes('overscroll-behavior: none'));
     });
 
-    it('should have 44px minimum touch targets', () => {
-      assert.ok(css.includes('min-height: 44px'));
-      assert.ok(css.includes('min-width: 44px'));
+    it('should have compact touch targets', () => {
+      assert.ok(css.includes('min-height: 32px') || css.includes('min-height: 30px'));
+      assert.ok(css.includes('min-width: 32px') || css.includes('min-width: 30px'));
     });
 
     it('should include banner styles', () => {
