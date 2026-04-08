@@ -2,6 +2,12 @@
 
 All notable changes to TangleClaw are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Status pill misses short incidents** — `_parseAtlassian()` only checked component status, which can revert to `operational` before the next poll; now also parses the `incidents[]` array from the Atlassian summary response and checks for unresolved incidents affecting the target component; uses the worse of component status vs. active incident impact; new `_parseAtlassianIncidents()` and `_incidentAffectsComponent()` helpers with component matching by ID and name; 7 new tests
+
 ## [3.12.7] - 2026-04-05
 
 ### Fixed
