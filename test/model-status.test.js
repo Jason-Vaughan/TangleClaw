@@ -94,6 +94,245 @@ describe('model-status', () => {
       const result = modelStatus._parseAtlassian({}, { componentId: 'x' });
       assert.equal(result.status, 'unknown');
     });
+
+    it('escalates status when unresolved incident is worse than component status', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'major',
+            name: 'Elevated errors on Claude Code',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'operational', new_status: 'partial_outage' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'partial_outage');
+      assert.equal(result.message, 'Elevated errors on Claude Code');
+    });
+
+    it('keeps component status when it is worse than incident impact', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'major_outage' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'minor',
+            name: 'Minor issue',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'operational', new_status: 'degraded_performance' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'critical' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'major_outage');
+    });
+
+    it('ignores resolved incidents', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'resolved',
+            impact: 'critical',
+            name: 'Past outage',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'partial_outage', new_status: 'operational' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'operational');
+    });
+
+    it('ignores incidents affecting other components', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'critical',
+            name: 'API is down',
+            incident_updates: [{
+              affected_components: [
+                { code: 'xyz', name: 'Claude API', old_status: 'operational', new_status: 'major_outage' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'operational');
+    });
+
+    it('treats incidents with no component info as affecting all components', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'minor',
+            name: 'Something is wrong',
+            incident_updates: [{ affected_components: [] }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'degraded');
+      assert.equal(result.message, 'Something is wrong');
+    });
+
+    it('matches component by name in incident affected_components', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'identified',
+            impact: 'major',
+            name: 'Auth errors',
+            incident_updates: [{
+              affected_components: [
+                { code: 'different-id', name: 'Claude Code', old_status: 'operational', new_status: 'partial_outage' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'partial_outage');
+    });
+
+    it('ignores postmortem incidents', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'postmortem',
+            impact: 'critical',
+            name: 'Post-incident review',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'major_outage', new_status: 'operational' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'operational');
+    });
+
+    it('matches via top-level incident.components when no incident_updates', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'major',
+            name: 'Service disruption',
+            incident_updates: [],
+            components: [
+              { id: 'abc', name: 'Claude Code' }
+            ]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'partial_outage');
+      assert.equal(result.message, 'Service disruption');
+    });
+
+    it('does not escalate for impact none (informational incidents)', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'investigating',
+            impact: 'none',
+            name: 'Informational notice',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'operational', new_status: 'operational' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'operational');
+    });
+
+    it('uses worst incident when multiple unresolved incidents exist', () => {
+      const json = {
+        components: [
+          { id: 'abc', name: 'Claude Code', status: 'operational' }
+        ],
+        incidents: [
+          {
+            status: 'monitoring',
+            impact: 'minor',
+            name: 'Minor degradation',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'operational', new_status: 'degraded_performance' }
+              ]
+            }]
+          },
+          {
+            status: 'investigating',
+            impact: 'critical',
+            name: 'Major outage',
+            incident_updates: [{
+              affected_components: [
+                { code: 'abc', name: 'Claude Code', old_status: 'degraded_performance', new_status: 'major_outage' }
+              ]
+            }]
+          }
+        ],
+        status: { indicator: 'none' }
+      };
+      const result = modelStatus._parseAtlassian(json, { componentId: 'abc', componentName: 'Claude Code' });
+      assert.equal(result.status, 'major_outage');
+      assert.equal(result.message, 'Major outage');
+    });
   });
 
   describe('_parseGoogleIncidents', () => {
