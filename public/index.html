@@ -266,27 +266,19 @@
     <div class="toolbar-left">
       <span class="session-count" id="sessionCount" aria-live="polite">0 active</span>
     </div>
+    <div class="toolbar-center">
+      <div class="filter-input-wrap filter-input-wrap--inline">
+        <input type="text" class="filter-input filter-input--inline" id="filterInput"
+               placeholder="Filter..." autocomplete="off"
+               autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button class="filter-clear hidden" id="filterClear" aria-label="Clear filter">&times;</button>
+      </div>
+      <div class="tag-row" id="tagRow" role="toolbar" aria-label="Filter by tag"></div>
+    </div>
     <div class="toolbar-right">
-      <button class="btn btn-icon" id="filterBtn" aria-label="Toggle filter"
-              aria-expanded="false" aria-controls="filterSection">
-        &#128269;
-      </button>
       <button class="btn btn-primary" id="newBtn" aria-label="Create new project">+ New</button>
     </div>
   </nav>
-
-  <!-- Filter Section -->
-  <section id="filterSection" class="filter-section hidden" aria-label="Project filter">
-    <div class="filter-input-wrap">
-      <input type="text" class="filter-input" id="filterInput"
-             placeholder="Filter projects..." autocomplete="off"
-             autocorrect="off" autocapitalize="off" spellcheck="false">
-      <button class="filter-clear hidden" id="filterClear" aria-label="Clear filter">&times;</button>
-    </div>
-  </section>
-
-  <!-- Tag Pills -->
-  <div class="tag-row hidden" id="tagRow" role="toolbar" aria-label="Filter by tag"></div>
 
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">

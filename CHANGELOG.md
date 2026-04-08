@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Slimmer UI chrome across all pages** — Reduced vertical space consumed by headers, toolbars, and action buttons across the session banner, OpenClaw wrapper, and landing page; banner buttons shrunk from 44px to 30px (26px on desktop), back button from 44px to 32px, landing `.btn` from 44px to 32px, dash-bar and toolbar padding tightened, card rows from 44px to 34px min-height, logo and font sizes reduced proportionally; no functionality removed — same controls, just denser (fixes #51)
+
 ### Fixed
 
 - **Status pill misses short incidents** — `_parseAtlassian()` only checked component status, which can revert to `operational` before the next poll; now also parses the `incidents[]` array from the Atlassian summary response and checks for unresolved incidents affecting the target component; uses the worse of component status vs. active incident impact; new `_parseAtlassianIncidents()` and `_incidentAffectsComponent()` helpers with component matching by ID and name; 10 new tests
