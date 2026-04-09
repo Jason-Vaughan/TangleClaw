@@ -284,12 +284,15 @@ async function toggleGroupPopover(pill, groupId) {
 }
 
 /**
- * Load version and display in banner.
+ * Display project version in banner from already-loaded project data.
  */
-async function loadVersion() {
-  const data = await api('/api/version');
-  if (data) {
-    document.getElementById('bannerVersion').textContent = `v${data.version}`;
+function loadVersion() {
+  const ver = sessionState.project && sessionState.project.version;
+  const el = document.getElementById('bannerVersion');
+  if (ver) {
+    el.textContent = `v${ver}`;
+  } else {
+    el.textContent = '';
   }
 }
 
@@ -1855,8 +1858,9 @@ async function initSession() {
 
   bindEvents();
 
-  // Parallel data loading
-  await Promise.all([loadProject(), loadVersion(), loadConfig(), loadEngines(), loadUpdateStatus()]);
+  // Parallel data loading (loadVersion runs after loadProject since it reads project data)
+  await Promise.all([loadProject(), loadConfig(), loadEngines(), loadUpdateStatus()]);
+  loadVersion();
 
   if (!sessionState.project) {
     // Project not found

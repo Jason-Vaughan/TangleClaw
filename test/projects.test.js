@@ -560,4 +560,55 @@ describe('projects', () => {
       assert.equal(result, '/absolute/path');
     });
   });
+
+  describe('enrichProject - version', () => {
+    let versionDir;
+
+    before(() => {
+      versionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-version-'));
+    });
+
+    after(() => {
+      fs.rmSync(versionDir, { recursive: true, force: true });
+    });
+
+    it('should include version from project package.json', () => {
+      const projPath = path.join(versionDir, 'with-version');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.5.0' }));
+
+      const registered = store.projects.create({ name: 'ver-test-1', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '2.5.0');
+    });
+
+    it('should return null version when project has no package.json', () => {
+      const projPath = path.join(versionDir, 'no-pkg');
+      fs.mkdirSync(projPath, { recursive: true });
+
+      const registered = store.projects.create({ name: 'ver-test-2', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, null);
+    });
+
+    it('should return null version when package.json has no version field', () => {
+      const projPath = path.join(versionDir, 'no-ver-field');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ name: 'test' }));
+
+      const registered = store.projects.create({ name: 'ver-test-3', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, null);
+    });
+
+    it('should return null version when package.json is malformed', () => {
+      const projPath = path.join(versionDir, 'bad-json');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), 'not json{{{');
+
+      const registered = store.projects.create({ name: 'ver-test-4', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, null);
+    });
+  });
 });

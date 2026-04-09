@@ -10,6 +10,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Session banner shows TangleClaw version instead of project version** — `loadVersion()` was fetching `/api/version` (TangleClaw's own version); now reads the project's `version` field from `enrichProject()`, which parses the project's `package.json`; projects without a `package.json` or version field show no version badge; 4 new tests (fixes #53)
+- **Tmux status bar shows raw internals** — `createSession()` now configures `status-left` with a `tmux:` prefix label and `status-right` with current time and date (`%H:%M %Y-%m-%d`); 2 new tests (fixes #53)
+
 - **Status pill misses short incidents** — `_parseAtlassian()` only checked component status, which can revert to `operational` before the next poll; now also parses the `incidents[]` array from the Atlassian summary response and checks for unresolved incidents affecting the target component; uses the worse of component status vs. active incident impact; new `_parseAtlassianIncidents()` and `_incidentAffectsComponent()` helpers with component matching by ID and name; 10 new tests
 
 ## [3.12.7] - 2026-04-05
