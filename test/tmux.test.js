@@ -179,7 +179,7 @@ describe('tmux', () => {
   describe('createSession - status bar', () => {
     const testSession = '__tc_test_statusbar__';
 
-    it('should set status-left with tmux: prefix', () => {
+    it('should set status-left to "TangleClaw" label', () => {
       try {
         tmux.createSession(testSession, { command: 'exec bash' });
         const { execSync } = require('node:child_process');
@@ -187,8 +187,10 @@ describe('tmux', () => {
           `tmux show-option -t ${testSession} status-left`,
           { encoding: 'utf8', timeout: 3000 }
         ).trim();
-        assert.ok(val.includes('tmux:'), `Expected status-left to contain "tmux:", got: ${val}`);
-        assert.ok(val.includes('#{session_name}'), `Expected status-left to contain session_name variable, got: ${val}`);
+        assert.ok(val.includes('TangleClaw'), `Expected status-left to contain "TangleClaw", got: ${val}`);
+        // Should NOT contain raw tmux session name variables — that's confusing
+        assert.ok(!val.includes('#{session_name}'), `status-left should not include session_name variable, got: ${val}`);
+        assert.ok(!val.includes('#S'), `status-left should not include #S variable, got: ${val}`);
       } finally {
         try { tmux.killSession(testSession); } catch (_) {}
       }

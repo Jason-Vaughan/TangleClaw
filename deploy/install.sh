@@ -10,6 +10,8 @@ readonly REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 readonly SERVER_PLIST="com.tangleclaw.server.plist"
 readonly TTYD_PLIST="com.tangleclaw.ttyd.plist"
+readonly TMUX_CONF_SRC="${SCRIPT_DIR}/tmux.conf"
+readonly TMUX_CONF_DST="$HOME/.tmux.conf"
 
 # ── Colors ──
 
@@ -101,6 +103,32 @@ sed \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
+
+echo ""
+
+# ── Install tmux.conf ──
+
+echo "Installing tmux configuration..."
+
+if [ -f "$TMUX_CONF_DST" ]; then
+  if cmp -s "$TMUX_CONF_SRC" "$TMUX_CONF_DST"; then
+    green "  ${TMUX_CONF_DST} (already up-to-date)"
+  else
+    BACKUP="${TMUX_CONF_DST}.backup.$(date +%Y%m%d-%H%M%S)"
+    cp "$TMUX_CONF_DST" "$BACKUP"
+    yellow "  Existing ${TMUX_CONF_DST} backed up to ${BACKUP}"
+    cp "$TMUX_CONF_SRC" "$TMUX_CONF_DST"
+    green "  ${TMUX_CONF_DST} (updated)"
+  fi
+else
+  cp "$TMUX_CONF_SRC" "$TMUX_CONF_DST"
+  green "  ${TMUX_CONF_DST} (installed)"
+fi
+
+# Reload tmux config in any running tmux server (best-effort, ignore failures)
+if tmux info &>/dev/null; then
+  tmux source-file "$TMUX_CONF_DST" 2>/dev/null && green "  Reloaded tmux config in running server" || true
+fi
 
 echo ""
 
