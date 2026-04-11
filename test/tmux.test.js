@@ -300,4 +300,145 @@ describe('tmux', () => {
       }
     });
   });
+
+  describe('sendKeys - behavioral', () => {
+    const testSession = '__tc_test_sendkeys__';
+    const { execSync } = require('node:child_process');
+
+    function captureContent(session) {
+      // Small delay so the shell finishes processing before we capture
+      execSync('sleep 0.4');
+      const cap = tmux.capturePane(session, { full: true });
+      return cap.lines.join('\n');
+    }
+
+    it('should deliver simple text and execute it when enter:true (default)', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        tmux.sendKeys(testSession, 'echo hello-from-send-keys');
+        const content = captureContent(testSession);
+        assert.ok(
+          content.includes('hello-from-send-keys'),
+          `Expected output to contain echoed string, got: ${content.slice(0, 200)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should NOT execute the line when enter:false', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Use a marker that would only appear in OUTPUT (not the prompt) if executed
+        tmux.sendKeys(testSession, 'echo not-executed-marker', { enter: false });
+        execSync('sleep 0.4');
+        const cap = tmux.capturePane(testSession, { full: true });
+        const content = cap.lines.join('\n');
+        // The text is on the prompt line; with no Enter, only the literal command appears once.
+        // After Enter we'd see two occurrences (command + echoed output).
+        const occurrences = (content.match(/not-executed-marker/g) || []).length;
+        assert.equal(occurrences, 1,
+          `Expected exactly 1 occurrence of marker (command on prompt only, not executed), got ${occurrences}: ${content.slice(0, 200)}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should preserve single quotes in delivered text', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Single quotes are the trickiest case for shell escaping
+        tmux.sendKeys(testSession, `echo "it's working"`);
+        const content = captureContent(testSession);
+        assert.ok(
+          content.includes("it's working"),
+          `Expected single-quoted content to be preserved, got: ${content.slice(0, 200)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should preserve special shell characters ($, `, \\)', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Send a literal string with characters that would normally be interpreted
+        tmux.sendKeys(testSession, `echo 'a$b\`c\\d'`);
+        const content = captureContent(testSession);
+        assert.ok(
+          content.includes('a$b`c\\d'),
+          `Expected special chars preserved literally, got: ${content.slice(0, 200)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('should deliver large multi-line payloads (>4KB) intact', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Build a heredoc that echoes a large unique marker after a long preamble
+        // This catches the original 3.11.0 regression where large payloads truncated.
+        const filler = 'x'.repeat(4500);
+        const marker = 'large-payload-marker-end';
+        tmux.sendKeys(testSession, `echo '${filler}' > /dev/null && echo ${marker}`);
+        const content = captureContent(testSession);
+        assert.ok(
+          content.includes(marker),
+          `Expected large payload to execute fully and reach marker, got tail: ${content.slice(-300)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('sendRawKey', () => {
+    const testSession = '__tc_test_rawkey__';
+    const { execSync } = require('node:child_process');
+
+    it('should throw for non-existent session', () => {
+      assert.throws(
+        () => tmux.sendRawKey('__nonexistent_test_session__', 'Enter'),
+        /does not exist/
+      );
+    });
+
+    it('should send Enter as a raw key (executes pending command)', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // Stage a command without executing it
+        tmux.sendKeys(testSession, 'echo raw-enter-marker', { enter: false });
+        execSync('sleep 0.3');
+        // Now send Enter via sendRawKey to execute it
+        tmux.sendRawKey(testSession, 'Enter');
+        execSync('sleep 0.4');
+        const cap = tmux.capturePane(testSession, { full: true });
+        const content = cap.lines.join('\n');
+        // After Enter, the marker should appear at least twice (typed + echoed output)
+        const occurrences = (content.match(/raw-enter-marker/g) || []).length;
+        assert.ok(occurrences >= 2,
+          `Expected marker to appear at least twice after Enter, got ${occurrences}: ${content.slice(0, 200)}`);
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
+  describe('killSession - success path', () => {
+    const testSession = '__tc_test_killsuccess__';
+
+    it('should return true and remove the session', () => {
+      tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+      assert.equal(tmux.hasSession(testSession), true, 'precondition: session should exist');
+      const result = tmux.killSession(testSession);
+      assert.equal(result, true, 'killSession should return true on success');
+      assert.equal(tmux.hasSession(testSession), false, 'session should be gone after kill');
+    });
+
+    it('should return false when killing a non-existent session', () => {
+      const result = tmux.killSession('__never_existed_session__');
+      assert.equal(result, false);
+    });
+  });
 });

@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`tmux.js` regression-prevention test coverage** — `lib/tmux.js` previously had only structural tests (validation, error cases, history-limit). Added behavioral tests for the functions that physically deliver prompts to engines, where regressions silently break user experience: `sendKeys()` round-trip via real tmux sessions (text delivery, `enter:false` behavior, single-quote preservation, special shell characters `$` `` ` `` `\`, large >4KB multi-line payloads — covers the original 3.11.0 regression that motivated #23), `sendRawKey()` (behavioral Enter delivery + missing-session error case), and `killSession()` success path (return value + session removal); 9 new tests, 40 total in `test/tmux.test.js` (closes #23)
+
 ### Changed
 
 - **Slimmer UI chrome across all pages** — Reduced vertical space consumed by headers, toolbars, and action buttons across the session banner, OpenClaw wrapper, and landing page; banner buttons shrunk from 44px to 30px (26px on desktop), back button from 44px to 32px, landing `.btn` from 44px to 32px, dash-bar and toolbar padding tightened, card rows from 44px to 34px min-height, logo and font sizes reduced proportionally; no functionality removed — same controls, just denser (fixes #51)
