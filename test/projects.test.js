@@ -610,5 +610,159 @@ describe('projects', () => {
       const enriched = projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
+
+    // ── #55: Universal version detection chain ──
+
+    it('layer 1: should read version from .tangleclaw/project-version.txt cache file', () => {
+      const projPath = path.join(versionDir, 'cache-only');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        'version: 9.9.9-rc1\nrecorded_at: 2026-04-10T20:00:00Z\nsource: CHANGELOG.md\n'
+      );
+
+      const registered = store.projects.create({ name: 'ver-cache-1', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '9.9.9-rc1');
+    });
+
+    it('layer 1: cache file should win over CHANGELOG, version.json, and package.json', () => {
+      const projPath = path.join(versionDir, 'cache-precedence');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        'version: 1.0.0-from-cache\nsource: manual\n'
+      );
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '# Changelog\n\n## [2.0.0-from-changelog] - 2026-04-01\n');
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0-from-versionjson' }));
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0-from-packagejson' }));
+
+      const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '1.0.0-from-cache');
+    });
+
+    it('layer 1: malformed cache file falls through to next layer', () => {
+      const projPath = path.join(versionDir, 'cache-malformed');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      // No "version:" line at all
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        'recorded_at: 2026-04-10\nsource: nothing\n'
+      );
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '5.5.5' }));
+
+      const registered = store.projects.create({ name: 'ver-cache-3', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '5.5.5');
+    });
+
+    it('layer 2: should read first released version from CHANGELOG.md', () => {
+      const projPath = path.join(versionDir, 'changelog-only');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n\n## [3.12.7] - 2026-04-05\n\n## [3.12.6] - 2026-04-04\n'
+      );
+
+      const registered = store.projects.create({ name: 'ver-cl-1', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '3.12.7');
+    });
+
+    it('layer 2: CHANGELOG with only [Unreleased] falls through to next layer', () => {
+      const projPath = path.join(versionDir, 'changelog-unreleased-only');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n\n### Added\n- not yet released\n');
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '0.1.0' }));
+
+      const registered = store.projects.create({ name: 'ver-cl-2', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '0.1.0');
+    });
+
+    it('layer 2: CHANGELOG should win over version.json and package.json when present', () => {
+      const projPath = path.join(versionDir, 'changelog-precedence');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [2.0.0] - 2026-04-01\n');
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0' }));
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
+
+      const registered = store.projects.create({ name: 'ver-cl-3', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '2.0.0');
+    });
+
+    it('layer 3: should read version from version.json (TangleClaw convention)', () => {
+      const projPath = path.join(versionDir, 'versionjson-only');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.12.7' }));
+
+      const registered = store.projects.create({ name: 'ver-vj-1', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '3.12.7');
+    });
+
+    it('layer 3: version.json should win over package.json when no cache or CHANGELOG', () => {
+      const projPath = path.join(versionDir, 'versionjson-precedence');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.0.0' }));
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
+
+      const registered = store.projects.create({ name: 'ver-vj-2', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '3.0.0');
+    });
+
+    it('chain: all sources missing returns null', () => {
+      const projPath = path.join(versionDir, 'nothing');
+      fs.mkdirSync(projPath, { recursive: true });
+
+      const registered = store.projects.create({ name: 'ver-none', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, null);
+    });
+
+    it('chain: project path that does not exist returns null without throwing', () => {
+      // Simulate a registered project whose directory was deleted
+      const result = projects._detectProjectVersion('/nonexistent/path/that/should/not/exist/anywhere');
+      assert.equal(result, null);
+    });
+
+    it('helpers: _readChangelogVersion handles version with build metadata (e.g. 0.6.9-beta)', () => {
+      const projPath = path.join(versionDir, 'changelog-prerelease');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [0.6.9-beta] - 2026-04-01\n');
+      assert.equal(projects._readChangelogVersion(projPath), '0.6.9-beta');
+    });
+
+    it('helpers: _readChangelogVersion rejects date-style headers (not a version)', () => {
+      const projPath = path.join(versionDir, 'changelog-date-header');
+      fs.mkdirSync(projPath, { recursive: true });
+      // Some projects use date headers like ## [2026-03-31] — these are NOT versions
+      fs.writeFileSync(
+        path.join(projPath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [Unreleased]\n\n## [2026-03-31] — Some Release\n\n## [2026-03-30] — Earlier Release\n'
+      );
+      assert.equal(projects._readChangelogVersion(projPath), null);
+    });
+
+    it('helpers: _readChangelogVersion skips date headers and finds first valid version', () => {
+      const projPath = path.join(versionDir, 'changelog-mixed-headers');
+      fs.mkdirSync(projPath, { recursive: true });
+      // Mixed: a date header AND a valid version — should skip the date and pick the version
+      fs.writeFileSync(
+        path.join(projPath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [2026-03-31] — Date Entry\n\n## [1.2.3] - 2026-03-01\n'
+      );
+      assert.equal(projects._readChangelogVersion(projPath), '1.2.3');
+    });
+
+    it('helpers: _readChangelogVersion accepts v-prefixed versions (e.g. v1.0.0)', () => {
+      const projPath = path.join(versionDir, 'changelog-v-prefix');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [v1.0.0] - 2026-04-01\n');
+      assert.equal(projects._readChangelogVersion(projPath), 'v1.0.0');
+    });
   });
 });
