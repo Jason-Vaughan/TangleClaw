@@ -764,5 +764,121 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [v1.0.0] - 2026-04-01\n');
       assert.equal(projects._readChangelogVersion(projPath), 'v1.0.0');
     });
+
+    // ── Critic follow-ups (#55 chunk 1 hardening) ──
+
+    it('BOM: _readChangelogVersion handles UTF-8 BOM-prefixed file', () => {
+      const projPath = path.join(versionDir, 'changelog-bom');
+      fs.mkdirSync(projPath, { recursive: true });
+      // Write a BOM-prefixed CHANGELOG — common from Windows editors
+      fs.writeFileSync(
+        path.join(projPath, 'CHANGELOG.md'),
+        '\uFEFF# Changelog\n\n## [Unreleased]\n\n## [1.2.3] - 2026-04-01\n'
+      );
+      assert.equal(projects._readChangelogVersion(projPath), '1.2.3');
+    });
+
+    it('BOM: _readVersionJsonVersion handles UTF-8 BOM-prefixed file', () => {
+      const projPath = path.join(versionDir, 'versionjson-bom');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, 'version.json'),
+        '\uFEFF' + JSON.stringify({ version: '7.7.7' })
+      );
+      assert.equal(projects._readVersionJsonVersion(projPath), '7.7.7');
+    });
+
+    it('BOM: _readPackageJsonVersion handles UTF-8 BOM-prefixed file', () => {
+      const projPath = path.join(versionDir, 'packagejson-bom');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, 'package.json'),
+        '\uFEFF' + JSON.stringify({ version: '8.8.8' })
+      );
+      assert.equal(projects._readPackageJsonVersion(projPath), '8.8.8');
+    });
+
+    it('BOM: _readVersionCacheFile handles UTF-8 BOM-prefixed file', () => {
+      const projPath = path.join(versionDir, 'cache-bom');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        '\uFEFFversion: 9.9.9\nsource: manual\n'
+      );
+      assert.equal(projects._readVersionCacheFile(projPath), '9.9.9');
+    });
+
+    it('version.json: rejects non-string version (number)', () => {
+      const projPath = path.join(versionDir, 'vj-number');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: 123 }));
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+
+      const registered = store.projects.create({ name: 'ver-vj-num', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      // Should fall through to package.json since version.json had non-string
+      assert.equal(enriched.version, '1.0.0');
+    });
+
+    it('version.json: rejects non-string version (object)', () => {
+      const projPath = path.join(versionDir, 'vj-object');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, 'version.json'),
+        JSON.stringify({ version: { major: 1, minor: 2 } })
+      );
+      assert.equal(projects._readVersionJsonVersion(projPath), null);
+    });
+
+    it('version.json: rejects missing version field', () => {
+      const projPath = path.join(versionDir, 'vj-missing');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ name: 'only-name' }));
+      assert.equal(projects._readVersionJsonVersion(projPath), null);
+    });
+
+    it('version.json: rejects malformed JSON', () => {
+      const projPath = path.join(versionDir, 'vj-bad');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), 'not json{{{');
+      assert.equal(projects._readVersionJsonVersion(projPath), null);
+    });
+
+    it('cache file: rejects whitespace-only version value', () => {
+      const projPath = path.join(versionDir, 'cache-whitespace');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      // Version line with only spaces after the colon — should NOT be accepted
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        'version:    \nsource: nothing\n'
+      );
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.2.2' }));
+
+      const registered = store.projects.create({ name: 'ver-cache-ws', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      // Cache file should be rejected as empty → fall through to package.json
+      assert.equal(enriched.version, '2.2.2');
+    });
+
+    it('cache file: handles CRLF line endings', () => {
+      const projPath = path.join(versionDir, 'cache-crlf');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project-version.txt'),
+        'version: 5.5.5\r\nrecorded_at: 2026-04-10\r\nsource: manual\r\n'
+      );
+      assert.equal(projects._readVersionCacheFile(projPath), '5.5.5');
+    });
+
+    it('layer 4 symmetry: package.json used when no cache/CHANGELOG/version.json', () => {
+      // Dedicated layer-4 test for symmetry with layers 1-3 precedence tests
+      const projPath = path.join(versionDir, 'layer4-only');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.4.4' }));
+
+      const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engineId: 'claude-code' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.version, '4.4.4');
+    });
   });
 });
