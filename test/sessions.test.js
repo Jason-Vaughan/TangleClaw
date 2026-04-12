@@ -241,6 +241,39 @@ describe('sessions', () => {
       delete projConfig.rules.extensions.customRule;
       store.projectConfig.save(project.path, projConfig);
     });
+
+    it('includes Project Version Recording section', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+
+      assert.ok(prompt.includes('## Project Version Recording'), 'should have version recording heading');
+      assert.ok(prompt.includes('.tangleclaw/project-version.txt'), 'should reference cache file path');
+      assert.ok(prompt.includes('CHANGELOG.md'), 'should mention CHANGELOG as a source');
+      assert.ok(prompt.includes('version.json'), 'should mention version.json as a source');
+      assert.ok(prompt.includes('package.json'), 'should mention package.json as a source');
+      assert.ok(prompt.includes('git describe'), 'should mention git tags as a fallback');
+      assert.ok(prompt.includes('0.0.0-dev'), 'should mention dev placeholder');
+      assert.ok(prompt.includes('recorded_at:'), 'should show cache file format');
+      assert.ok(prompt.includes('source:'), 'should show source field in format');
+    });
+
+    it('includes version recording for all methodologies', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      // Test with prawduct methodology
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const prawductProject = store.projects.getByName('prime-test');
+      const prawductPrompt = sessions.generatePrimePrompt(prawductProject, engine);
+      assert.ok(prawductPrompt.includes('## Project Version Recording'), 'prawduct should have version recording');
+
+      // Test with minimal methodology
+      store.projects.update(project.id, { methodology: 'minimal' });
+      const minimalProject = store.projects.getByName('prime-test');
+      const minimalPrompt = sessions.generatePrimePrompt(minimalProject, engine);
+      assert.ok(minimalPrompt.includes('## Project Version Recording'), 'minimal should have version recording');
+    });
   });
 
   describe('_buildLaunchCommand', () => {
@@ -621,9 +654,10 @@ describe('sessions', () => {
     afterEach(() => {
       tmux.sendKeys = originalSendKeys;
       tmux.hasSession = originalHasSession;
-      // Cleanup active/wrapping sessions
+      // Cleanup active/wrapping sessions and restore methodology
       const project = store.projects.getByName('prime-test');
       if (project) {
+        store.projects.update(project.id, { methodology: 'minimal' });
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'test cleanup');
         const wrapping = store.sessions.getWrapping(project.id);
@@ -661,6 +695,63 @@ describe('sessions', () => {
       assert.ok(result.ok);
       assert.ok(Array.isArray(result.wrapSteps));
       assert.ok(Array.isArray(result.captureFields));
+    });
+
+    it('includes version re-record instruction in wrap command', () => {
+      const project = store.projects.getByName('prime-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-version-test'
+      });
+
+      sessions.triggerWrap('prime-test');
+      assert.ok(sentCommand, 'should have sent a command');
+      assert.ok(sentCommand.includes('project-version.txt'), 'wrap command should reference version cache file');
+      assert.ok(sentCommand.includes('re-check the project version'), 'wrap command should include re-record instruction');
+    });
+
+    it('includes version re-record for minimal methodology too', () => {
+      const project = store.projects.getByName('prime-test');
+      // Ensure minimal methodology
+      store.projects.update(project.id, { methodology: 'minimal' });
+
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-version-minimal-test'
+      });
+
+      sessions.triggerWrap('prime-test');
+      assert.ok(sentCommand, 'should have sent a command');
+      assert.ok(sentCommand.includes('project-version.txt'), 'minimal wrap should also reference version cache file');
+    });
+
+    it('includes version re-record even with custom wrap command', () => {
+      const skills = require('../lib/skills');
+      const originalGetWrapSkill = skills.getWrapSkill;
+      skills.getWrapSkill = () => ({
+        command: '/custom-wrap --fast',
+        steps: ['commit'],
+        captureFields: ['summary']
+      });
+
+      try {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'trigger-wrap-custom-cmd-test'
+        });
+
+        sessions.triggerWrap('prime-test');
+        assert.ok(sentCommand, 'should have sent a command');
+        assert.ok(sentCommand.includes('/custom-wrap --fast'), 'should start with custom command');
+        assert.ok(sentCommand.includes('project-version.txt'), 'custom-command wrap should also include version re-record');
+        assert.ok(sentCommand.includes('re-check the project version'), 'custom-command wrap should include re-record instruction');
+      } finally {
+        skills.getWrapSkill = originalGetWrapSkill;
+      }
     });
   });
 
