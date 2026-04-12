@@ -115,6 +115,30 @@ async function loadVersion() {
   }
 }
 
+/**
+ * Fetch update status and show notification pill if an update is available.
+ * Dismissed state is persisted in localStorage keyed by version.
+ */
+async function loadUpdateStatus() {
+  const data = await api('/api/update-status');
+  if (!data || !data.updateAvailable || !data.latestVersion) return;
+
+  const dismissKey = `tc_updateDismissed_${data.latestVersion}`;
+  if (localStorage.getItem(dismissKey)) return;
+
+  const pill = document.getElementById('updatePill');
+  if (!pill) return;
+
+  pill.innerHTML = `v${esc(data.latestVersion)} available <button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
+  pill.classList.remove('hidden');
+
+  pill.querySelector('.update-pill-dismiss').addEventListener('click', (e) => {
+    e.stopPropagation();
+    pill.classList.add('hidden');
+    localStorage.setItem(dismissKey, '1');
+  });
+}
+
 async function loadStats() {
   const data = await api('/api/system');
   if (!data) return;
@@ -548,7 +572,7 @@ async function init() {
   }
 
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
