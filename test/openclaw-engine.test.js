@@ -65,10 +65,9 @@ describe('OpenClaw engine integration', () => {
       assert.equal(profile.statusPage, null);
     });
 
-    it('should detect via ssh', () => {
+    it('should have null detection (requires manual configuration)', () => {
       const profile = store.engines.get('openclaw');
-      assert.equal(profile.detection.strategy, 'which');
-      assert.equal(profile.detection.target, 'ssh');
+      assert.equal(profile.detection, null);
     });
   });
 

@@ -4,6 +4,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fix setup wizard logo SVG not rendering** — Welcome step inline SVG used `var(--primary)` CSS custom properties which aren't resolved when the setup page loads before the theme stylesheet is applied; replaced with hardcoded `#8BC34A` hex values (fixes #60)
+- **Fix OpenClaw falsely detected as available in setup wizard** — `openclaw.json` used `"strategy": "which", "target": "ssh"` which matched on every machine since ssh is ubiquitous; OpenClaw is a remote engine requiring explicit configuration, so detection is now `null` — the base profile correctly shows as unavailable, while configured OpenClaw connections still appear as virtual engines with `available: true` (fixes #60)
+
 ### Added
 
 - **Document project version convention (#55, chunk 3)** — Added "Project Version Recording" section to CLAUDE.md global rules documenting the `.tangleclaw/project-version.txt` convention: file format, when to write (session start + wrap), detection order, and how TangleClaw reads it. Doc parity sweep confirmed no stale references in README or user-guide — existing "version badge" references are generic and still accurate. Completes #55.
