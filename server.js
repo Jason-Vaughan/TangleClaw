@@ -446,16 +446,24 @@ route('POST', '/api/setup/scan', (_req, res, _params, body) => {
     // Check for TangleClaw config
     const hasTangleclawConfig = fs.existsSync(path.join(dirPath, '.tangleclaw', 'project.json'));
 
-    // Include if it has any project markers (methodology, git, or tangleclaw config)
-    if (detectedMethodology || (gitInfo && gitInfo.branch) || hasTangleclawConfig) {
-      detected.push({
-        name: entry.name,
-        path: dirPath,
-        methodology: detectedMethodology ? detectedMethodology.id : null,
-        hasTangleclawConfig,
-        git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null
-      });
-    }
+    // Check for common project manifest files
+    const PROJECT_MARKERS = [
+      'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod',
+      'Makefile', 'Gemfile', 'pom.xml', 'build.gradle',
+      'CMakeLists.txt', 'setup.py', 'composer.json', 'mix.exs'
+    ];
+    const hasProjectMarker = PROJECT_MARKERS.some(m => fs.existsSync(path.join(dirPath, m)));
+
+    const isDetected = !!(detectedMethodology || (gitInfo && gitInfo.branch) || hasTangleclawConfig || hasProjectMarker);
+
+    detected.push({
+      name: entry.name,
+      path: dirPath,
+      methodology: detectedMethodology ? detectedMethodology.id : null,
+      hasTangleclawConfig,
+      git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null,
+      detected: isDetected
+    });
   }
 
   jsonResponse(res, 200, { projects: detected });

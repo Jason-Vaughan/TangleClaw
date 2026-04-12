@@ -181,6 +181,44 @@ describe('Setup Wizard', () => {
       const found = data.projects.find(p => p.name === 'test-git-project');
       assert.ok(found, 'Should find the git project');
       assert.ok(found.git, 'Should include git info');
+      assert.equal(found.detected, true, 'Git project should be detected');
+    });
+
+    it('should include directories without markers as detected: false', async () => {
+      const plainDir = path.join(projectsDir, 'test-plain-folder');
+      fs.mkdirSync(plainDir, { recursive: true });
+
+      const { status, data } = await request(server, 'POST', '/api/setup/scan', {
+        directory: projectsDir
+      });
+      assert.equal(status, 200);
+
+      const found = data.projects.find(p => p.name === 'test-plain-folder');
+      assert.ok(found, 'Should include the plain directory');
+      assert.equal(found.detected, false, 'Should be marked as not detected');
+    });
+
+    it('should detect directories with common project markers', async () => {
+      const pyDir = path.join(projectsDir, 'test-python-project');
+      fs.mkdirSync(pyDir, { recursive: true });
+      fs.writeFileSync(path.join(pyDir, 'pyproject.toml'), '[project]\nname = "test"\n');
+
+      const goDir = path.join(projectsDir, 'test-go-project');
+      fs.mkdirSync(goDir, { recursive: true });
+      fs.writeFileSync(path.join(goDir, 'go.mod'), 'module example.com/test\n');
+
+      const { status, data } = await request(server, 'POST', '/api/setup/scan', {
+        directory: projectsDir
+      });
+      assert.equal(status, 200);
+
+      const pyFound = data.projects.find(p => p.name === 'test-python-project');
+      assert.ok(pyFound, 'Should find the Python project');
+      assert.equal(pyFound.detected, true, 'pyproject.toml should trigger detection');
+
+      const goFound = data.projects.find(p => p.name === 'test-go-project');
+      assert.ok(goFound, 'Should find the Go project');
+      assert.equal(goFound.detected, true, 'go.mod should trigger detection');
     });
 
     it('should detect projects with methodology markers', async () => {
@@ -197,6 +235,7 @@ describe('Setup Wizard', () => {
       const found = data.projects.find(p => p.name === 'test-meth-project');
       assert.ok(found, 'Should find the methodology project');
       assert.equal(found.methodology, 'prawduct');
+      assert.equal(found.detected, true, 'Methodology project should be detected');
     });
   });
 
