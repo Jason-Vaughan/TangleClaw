@@ -87,10 +87,10 @@ describe('schema v6: session_mode column', () => {
     assert.equal(sessions[0].sessionMode, 'tmux');
   });
 
-  it('should handle schema version 11', () => {
+  it('should handle schema version 13', () => {
     const db = store.getDb();
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-    assert.equal(row.version, 12);
+    assert.equal(row.version, 13);
   });
 
   it('should have session_mode column in sessions table', () => {

@@ -359,6 +359,20 @@
     </div>
   </div>
 
+  <!-- Launch Mode Modal -->
+  <div class="modal-backdrop" id="launchModeModal">
+    <div class="modal-content" role="dialog" aria-label="Launch mode" aria-modal="true" style="max-width:380px">
+      <h3 class="modal-title">Launch Mode</h3>
+      <p class="modal-text" id="launchModeText"></p>
+      <div id="launchModeList" class="launch-mode-list"></div>
+      <div id="launchModeWarning" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeLaunchModeModal()">Cancel</button>
+        <button class="btn btn-primary" id="launchModeConfirmBtn" onclick="confirmLaunchMode()">Launch</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings Modal -->
   <div class="modal-backdrop" id="settingsModal">
     <div class="modal-content" role="dialog" aria-label="Project settings" aria-modal="true"

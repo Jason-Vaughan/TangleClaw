@@ -301,6 +301,43 @@ describe('sessions', () => {
       const cmd = sessions._buildLaunchCommand({});
       assert.equal(cmd, undefined);
     });
+
+    it('appends launch mode args when mode is specified', () => {
+      const cmd = sessions._buildLaunchCommand({
+        launch: { shellCommand: 'claude', args: [], env: {} },
+        launchModes: {
+          auto: { label: 'Auto', args: ['--permission-mode', 'auto', '--enable-auto-mode'] }
+        }
+      }, null, 'auto');
+      assert.equal(cmd, 'claude --permission-mode auto --enable-auto-mode');
+    });
+
+    it('ignores launch mode when mode key does not exist', () => {
+      const cmd = sessions._buildLaunchCommand({
+        launch: { shellCommand: 'claude', args: ['--verbose'], env: {} },
+        launchModes: {
+          auto: { label: 'Auto', args: ['--permission-mode', 'auto'] }
+        }
+      }, null, 'nonexistent');
+      assert.equal(cmd, 'claude --verbose');
+    });
+
+    it('ignores launch mode when engine has no launchModes', () => {
+      const cmd = sessions._buildLaunchCommand({
+        launch: { shellCommand: 'codex', args: [], env: {} }
+      }, null, 'auto');
+      assert.equal(cmd, 'codex');
+    });
+
+    it('appends mode args after static args', () => {
+      const cmd = sessions._buildLaunchCommand({
+        launch: { shellCommand: 'claude', args: ['--verbose'], env: {} },
+        launchModes: {
+          plan: { label: 'Plan', args: ['--permission-mode', 'plan'] }
+        }
+      }, null, 'plan');
+      assert.equal(cmd, 'claude --verbose --permission-mode plan');
+    });
   });
 
   describe('detectIdle', () => {
