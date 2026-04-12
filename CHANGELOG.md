@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Remove misleading PortHub warning from installer** — `deploy/install.sh` previously checked for standalone `porthub` and printed a yellow warning when not found, causing new users to think it was a missing dependency; PortHub was fully absorbed into TangleClaw — the standalone CLI check and its associated messages have been removed (fixes #59)
+
 ### Added
 
 - **Document project version convention (#55, chunk 3)** — Added "Project Version Recording" section to CLAUDE.md global rules documenting the `.tangleclaw/project-version.txt` convention: file format, when to write (session start + wrap), detection order, and how TangleClaw reads it. Doc parity sweep confirmed no stale references in README or user-guide — existing "version badge" references are generic and still accurate. Completes #55.
