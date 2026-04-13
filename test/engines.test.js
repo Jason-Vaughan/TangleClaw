@@ -170,6 +170,16 @@ describe('engines', () => {
         assert.ok(typeof engine.available === 'boolean');
       }
     });
+
+    it('should include launchModes for engines that define them', () => {
+      const list = engines.listWithAvailability();
+      const claude = list.find(e => e.id === 'claude');
+      assert.ok(claude, 'Claude should be in the list');
+      assert.ok(claude.launchModes, 'Claude should have launchModes');
+      assert.ok(claude.launchModes.auto, 'Claude should have auto mode');
+      assert.ok(Array.isArray(claude.launchModes.auto.args), 'Auto mode should have args array');
+      assert.equal(claude.defaultLaunchMode, 'default');
+    });
   });
 
   describe('getWithAvailability', () => {

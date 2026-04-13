@@ -962,7 +962,8 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
     engineOverride: body ? body.engineOverride : null,
-    mode: body ? body.mode : undefined
+    mode: body ? body.mode : undefined,
+    launchMode: body ? body.launchMode : undefined
   });
 
   // Web UI mode — delegate to async launch path
@@ -1012,6 +1013,7 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
     project: params.project,
     engine: result.session.engineId,
     sessionMode: result.session.sessionMode || 'tmux',
+    launchMode: result.session.launchMode || null,
     tmuxSession: result.session.tmuxSession,
     primePrompt: result.primePrompt,
     startedAt: result.session.startedAt,

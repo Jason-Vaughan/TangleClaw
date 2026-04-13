@@ -24,6 +24,14 @@
     "env": {},
     "startupDelay": 2000
   },
+  "launchModes": {
+    "default": { "label": "Interactive", "args": [], "description": "Prompts for permission on every action" },
+    "acceptEdits": { "label": "Accept Edits", "args": ["--permission-mode", "acceptEdits"], "description": "Auto-accepts file reads and edits" },
+    "plan": { "label": "Plan Only", "args": ["--permission-mode", "plan"], "description": "Read-only, no code changes" },
+    "auto": { "label": "Auto", "args": ["--permission-mode", "auto", "--enable-auto-mode"], "description": "Full autonomy with safety classifier" },
+    "bypassPermissions": { "label": "Bypass", "args": ["--dangerously-skip-permissions"], "description": "Accepts everything (containers/VMs only)", "warning": "Only use in isolated environments" }
+  },
+  "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
     "supportsSlashCommands": true,

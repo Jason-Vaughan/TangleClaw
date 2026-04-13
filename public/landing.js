@@ -381,6 +381,23 @@ async function launchProject(name) {
     return navigateToSession(name);
   }
 
+  // Check if engine has launch modes — show picker if so
+  const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
+  const engine = (state.engines || []).find(e => e.id === engineId);
+  if (engine && engine.launchModes && Object.keys(engine.launchModes).length > 1) {
+    openLaunchModeModal(name, engine);
+    return;
+  }
+
+  await doLaunchProject(name, null);
+}
+
+/**
+ * Execute the actual session launch with optional launch mode.
+ * @param {string} name - Project name
+ * @param {string|null} launchMode - Launch mode key or null for default
+ */
+async function doLaunchProject(name, launchMode) {
   // Immediate visual feedback — swap button text to "Launching…" and disable
   const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
   const originalText = btn ? btn.textContent : '';
@@ -390,12 +407,14 @@ async function launchProject(name) {
   }
 
   const toast = document.getElementById('toast');
+  const body = {};
+  if (launchMode) body.launchMode = launchMode;
 
   try {
     const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify(body)
     });
     const data = await res.json();
 
@@ -418,6 +437,72 @@ async function launchProject(name) {
     toast.className = 'toast toast-warn visible';
     setTimeout(() => { toast.classList.remove('visible'); }, 6000);
   }
+}
+
+// ── Launch Mode Modal ──
+
+let launchModeTarget = null;
+let selectedLaunchMode = null;
+
+/**
+ * Open the launch mode picker modal.
+ * @param {string} name - Project name
+ * @param {object} engine - Engine object with launchModes
+ */
+function openLaunchModeModal(name, engine) {
+  launchModeTarget = name;
+  selectedLaunchMode = engine.defaultLaunchMode || Object.keys(engine.launchModes)[0];
+
+  document.getElementById('launchModeText').innerHTML =
+    `Choose a launch mode for <strong>${esc(name)}</strong>:`;
+
+  const list = document.getElementById('launchModeList');
+  let html = '';
+  for (const [key, mode] of Object.entries(engine.launchModes)) {
+    const checked = key === selectedLaunchMode ? 'checked' : '';
+    const warning = mode.warning ? `<span class="launch-mode-warning">${esc(mode.warning)}</span>` : '';
+    html += `
+      <label class="launch-mode-option">
+        <input type="radio" name="launchMode" value="${esc(key)}" ${checked}
+               onchange="selectedLaunchMode='${esc(key)}'; updateLaunchModeWarning()">
+        <div class="launch-mode-info">
+          <span class="launch-mode-label">${esc(mode.label)}</span>
+          <span class="launch-mode-desc">${esc(mode.description || '')}</span>
+          ${warning}
+        </div>
+      </label>`;
+  }
+  list.innerHTML = html;
+  updateLaunchModeWarning();
+  document.getElementById('launchModeModal').classList.add('open');
+}
+
+/**
+ * Update the warning display based on selected launch mode.
+ */
+function updateLaunchModeWarning() {
+  // Warning is shown inline per-option, no separate warning needed
+  document.getElementById('launchModeWarning').classList.add('hidden');
+}
+
+/**
+ * Close the launch mode modal.
+ */
+function closeLaunchModeModal() {
+  document.getElementById('launchModeModal').classList.remove('open');
+  launchModeTarget = null;
+  selectedLaunchMode = null;
+}
+
+/**
+ * Confirm launch mode selection and launch.
+ */
+async function confirmLaunchMode() {
+  if (!launchModeTarget) return;
+  const name = launchModeTarget;
+  const mode = selectedLaunchMode;
+  closeLaunchModeModal();
+  await doLaunchProject(name, mode);
 }
 
 function wrapProject(name) {

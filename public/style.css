@@ -1420,6 +1420,48 @@ body {
 }
 .modal-actions .btn { min-width: 80px; }
 
+/* ── Launch Mode Picker ── */
+.launch-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.launch-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+}
+.launch-mode-option:hover { background: var(--card-hover); }
+.launch-mode-option input[type="radio"] {
+  margin-top: 2px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+.launch-mode-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.launch-mode-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.launch-mode-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.launch-mode-warning {
+  font-size: 11px;
+  color: var(--danger);
+  font-style: italic;
+}
+
 /* ── Bottom-Sheet Drawer ── */
 .drawer-backdrop {
   position: fixed;
