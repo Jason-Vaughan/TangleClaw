@@ -131,10 +131,10 @@ function renderWelcome(body) {
     <div class="setup-step">
       <div class="setup-icon">
         <svg viewBox="0 0 96 96" width="80" height="80" aria-hidden="true">
-          <circle cx="48" cy="48" r="44" fill="none" stroke="var(--primary)" stroke-width="2"/>
+          <circle cx="48" cy="48" r="44" fill="none" stroke="#8BC34A" stroke-width="2"/>
           <path d="M30 60 Q38 28 48 36 Q58 44 52 56 Q46 68 58 62 Q70 56 66 44 Q62 32 48 28"
-                fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="42" cy="34" r="2.5" fill="var(--primary)"/>
+                fill="none" stroke="#8BC34A" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="42" cy="34" r="2.5" fill="#8BC34A"/>
         </svg>
       </div>
       <h2 class="setup-heading">Welcome to TangleClaw</h2>

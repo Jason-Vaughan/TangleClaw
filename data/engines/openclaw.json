@@ -6,7 +6,7 @@
   "configFormat": { "filename": null, "syntax": null, "generator": null },
   "coAuthorFormat": null,
   "commands": [],
-  "detection": { "strategy": "which", "target": "ssh" },
+  "detection": null,
   "launch": {
     "shellCommand": "ssh",
     "args": [],
