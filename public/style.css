@@ -110,6 +110,30 @@ body {
   color: var(--text-muted);
   font-family: monospace;
 }
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--primary-dark);
+  color: #fff;
+  white-space: nowrap;
+}
+.update-pill.hidden { display: none; }
+.update-pill-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  opacity: 0.7;
+}
+.update-pill-dismiss:hover { opacity: 1; }
 .dash-stats {
   display: flex;
   align-items: center;
