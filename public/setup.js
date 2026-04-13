@@ -195,18 +195,20 @@ async function wizardValidateDir() {
   }
 
   wizard.scannedProjects = data.projects || [];
-  wizard.selectedProjects = new Set(wizard.scannedProjects.map(p => p.name));
+  wizard.selectedProjects = new Set(wizard.scannedProjects.filter(p => p.detected).map(p => p.name));
   wizardNext();
 }
 
 function renderDetectProjects(body) {
-  const projects = wizard.scannedProjects;
+  const allDirs = wizard.scannedProjects;
+  const detected = allDirs.filter(p => p.detected);
+  const other = allDirs.filter(p => !p.detected);
 
-  if (projects.length === 0) {
+  if (allDirs.length === 0) {
     body.innerHTML = `
       <div class="setup-step">
         <h2 class="setup-heading">Detect Projects</h2>
-        <p class="setup-text-muted">No existing projects found in <strong>${esc(wizard.projectsDir)}</strong>.</p>
+        <p class="setup-text-muted">No directories found in <strong>${esc(wizard.projectsDir)}</strong>.</p>
         <p class="setup-text-muted">That's fine — you can create projects after setup.</p>
         <div class="setup-nav">
           <button class="btn" onclick="wizardBack()">Back</button>
@@ -216,28 +218,60 @@ function renderDetectProjects(body) {
     return;
   }
 
-  let listHtml = '';
-  for (const p of projects) {
-    const checked = wizard.selectedProjects.has(p.name) ? 'checked' : '';
-    const methLabel = p.methodology ? p.methodology : 'No methodology';
-    const gitLabel = p.git ? `${p.git.branch}${p.git.dirty ? ' (dirty)' : ''}` : '';
+  /**
+   * Build a checkbox list HTML for an array of scanned projects.
+   * @param {object[]} items - Scanned project entries
+   * @returns {string} HTML string
+   */
+  function buildProjectList(items) {
+    let html = '';
+    for (const p of items) {
+      const checked = wizard.selectedProjects.has(p.name) ? 'checked' : '';
+      const methLabel = p.methodology ? p.methodology : 'No methodology';
+      const gitLabel = p.git ? `${p.git.branch}${p.git.dirty ? ' (dirty)' : ''}` : '';
 
-    listHtml += `
-      <label class="setup-project-item">
-        <input type="checkbox" ${checked}
-               onchange="wizardToggleProject('${esc(p.name)}', this.checked)">
-        <div class="setup-project-info">
-          <span class="setup-project-name">${esc(p.name)}</span>
-          <span class="setup-project-meta">${esc(methLabel)}${gitLabel ? ' &middot; ' + esc(gitLabel) : ''}</span>
-        </div>
-      </label>`;
+      html += `
+        <label class="setup-project-item">
+          <input type="checkbox" ${checked}
+                 onchange="wizardToggleProject('${esc(p.name)}', this.checked)">
+          <div class="setup-project-info">
+            <span class="setup-project-name">${esc(p.name)}</span>
+            <span class="setup-project-meta">${esc(methLabel)}${gitLabel ? ' &middot; ' + esc(gitLabel) : ''}</span>
+          </div>
+        </label>`;
+    }
+    return html;
   }
+
+  let listHtml = '';
+
+  if (detected.length > 0) {
+    listHtml += `<div class="setup-project-list">${buildProjectList(detected)}</div>`;
+  }
+
+  if (other.length > 0) {
+    const detectedNote = detected.length > 0
+      ? 'These directories don\'t have recognized project markers but can still be attached:'
+      : 'No projects with recognized markers were found, but you can attach any directory:';
+    listHtml += `
+      <details class="setup-other-dirs">
+        <summary class="setup-other-dirs-summary">Other directories (${other.length})</summary>
+        <p class="setup-text-muted" style="margin:4px 0 8px">${detectedNote}</p>
+        <div class="setup-project-list">${buildProjectList(other)}</div>
+      </details>`;
+  }
+
+  const detectedCount = detected.length;
+  const totalCount = allDirs.length;
+  const summary = detectedCount > 0
+    ? `Found ${detectedCount} project${detectedCount !== 1 ? 's' : ''} in <strong>${esc(wizard.projectsDir)}</strong>. Select which to attach:`
+    : `Found ${totalCount} director${totalCount !== 1 ? 'ies' : 'y'} in <strong>${esc(wizard.projectsDir)}</strong>:`;
 
   body.innerHTML = `
     <div class="setup-step">
       <h2 class="setup-heading">Detect Projects</h2>
-      <p class="setup-text-muted">Found ${projects.length} project${projects.length !== 1 ? 's' : ''} in <strong>${esc(wizard.projectsDir)}</strong>. Select which to attach:</p>
-      <div class="setup-project-list">${listHtml}</div>
+      <p class="setup-text-muted">${summary}</p>
+      ${listHtml}
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
         <button class="btn btn-primary" onclick="wizardNext()">Next</button>

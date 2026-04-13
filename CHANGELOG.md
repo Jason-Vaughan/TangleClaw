@@ -6,6 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Setup wizard scan includes all directories** — `POST /api/setup/scan` previously required at least one project marker (methodology, git, or TangleClaw config) to include a directory; plain folders were silently skipped, causing new users to miss legitimate projects; scan now returns all top-level directories with a `detected` flag — directories with recognized markers (including new common project files: `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `Makefile`, etc.) are pre-selected; unrecognized directories appear in a collapsed "Other directories" section that users can expand and opt into; 2 new tests, 1426 total passing (fixes #63)
 - **Fix setup wizard logo SVG not rendering** — Welcome step inline SVG used `var(--primary)` CSS custom properties which aren't resolved when the setup page loads before the theme stylesheet is applied; replaced with hardcoded `#8BC34A` hex values (fixes #60)
 - **Fix OpenClaw falsely detected as available in setup wizard** — `openclaw.json` used `"strategy": "which", "target": "ssh"` which matched on every machine since ssh is ubiquitous; OpenClaw is a remote engine requiring explicit configuration, so detection is now `null` — the base profile correctly shows as unavailable, while configured OpenClaw connections still appear as virtual engines with `available: true` (fixes #60)
 

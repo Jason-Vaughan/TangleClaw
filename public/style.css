@@ -1826,6 +1826,20 @@ body.setup-active { overflow: hidden; }
   color: var(--text-muted);
 }
 
+/* Wizard other-directories disclosure */
+.setup-other-dirs {
+  margin-top: 12px;
+}
+.setup-other-dirs-summary {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 0;
+}
+.setup-other-dirs .setup-project-list {
+  max-height: 30vh;
+}
+
 /* Wizard engine list */
 .setup-engine-list {
   display: flex;
