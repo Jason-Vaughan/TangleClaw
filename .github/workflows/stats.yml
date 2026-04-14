@@ -10,28 +10,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Count stats
         run: |
-          # Lines of code (JS/MJS files, excluding node_modules and min files)
           LOC=$(find . -name '*.js' -o -name '*.mjs' | grep -v node_modules | grep -v '.min.' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-
-          # Test cases (it() and test() calls in test files)
           TESTS=$(find . -name '*.test.*' -o -name '*.spec.*' | grep -v node_modules | xargs grep -c 'it(\|test(' 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
-
-          # Test files
           TEST_FILES=$(find . -name '*.test.*' -o -name '*.spec.*' | grep -v node_modules | wc -l | awk '{print $1}')
-
-          # AI engines supported (count unique engine references)
+          COMMITS=$(git rev-list --count HEAD)
+          CONTRIBUTORS=$(git shortlog -sn HEAD | wc -l | awk '{print $1}')
+          FIRST_COMMIT=$(git log --reverse --format=%ad --date=short HEAD | head -1)
           ENGINES=$(grep -rio 'claude code\|aider\|codex\|cursor' lib/ server.js 2>/dev/null | grep -io 'claude code\|aider\|codex\|cursor' | sort -uf | wc -l | awk '{print $1}')
-
-          # API routes
           ROUTES=$(grep -rE '(method|req\.method)' lib/ server.js 2>/dev/null | wc -l | awk '{print $1}')
 
           echo "{" > stats.json
           echo "  \"loc\": $LOC," >> stats.json
           echo "  \"tests\": $TESTS," >> stats.json
           echo "  \"testFiles\": $TEST_FILES," >> stats.json
+          echo "  \"commits\": $COMMITS," >> stats.json
+          echo "  \"contributors\": $CONTRIBUTORS," >> stats.json
+          echo "  \"firstCommit\": \"$FIRST_COMMIT\"," >> stats.json
           echo "  \"engines\": $ENGINES," >> stats.json
           echo "  \"routes\": $ROUTES," >> stats.json
           echo "  \"npmDeps\": 0," >> stats.json
