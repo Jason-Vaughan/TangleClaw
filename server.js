@@ -21,6 +21,7 @@ const updateChecker = require('./lib/update-checker');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
+const httpsSetup = require('./lib/https-setup');
 
 const log = createLogger('server');
 
@@ -38,6 +39,22 @@ const CONTENT_TYPES = {
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// ── Restart scheduler (overridable in tests) ──
+let _scheduleRestart = () => {
+  setTimeout(() => {
+    log.info('Setup complete — restarting server to apply HTTPS config');
+    process.exit(0);
+  }, 500);
+};
+
+/**
+ * Override the restart scheduler (used by tests to prevent process.exit).
+ * @param {Function} fn
+ */
+function _setRestartScheduler(fn) {
+  _scheduleRestart = fn;
+}
 
 // ── Route Table ──
 
@@ -394,6 +411,57 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
 });
 
+// GET /api/setup/https-check — Detect mkcert availability for the wizard
+route('GET', '/api/setup/https-check', (_req, res) => {
+  const detection = httpsSetup.detectMkcert();
+  const caInstalled = detection.available ? httpsSetup.isCaInstalled(detection.carootPath) : false;
+  jsonResponse(res, 200, {
+    mkcert: {
+      available: detection.available,
+      version: detection.version,
+      carootPath: detection.carootPath,
+      caInstalled,
+      error: detection.error
+    },
+    certsDir: httpsSetup.getCertsDir()
+  });
+});
+
+// POST /api/setup/generate-cert — Run mkcert to produce cert.pem + key.pem
+// Valid host: letters/digits/dots/colons/hyphens, not starting with '-' so mkcert
+// can't mistake it for a flag. Max length 253 per RFC 1035 (plus IPv6 colons).
+const HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9.\-:]{0,252})$/;
+route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
+  let hosts;
+  if (body && body.hosts !== undefined) {
+    if (!Array.isArray(body.hosts) || body.hosts.length === 0) {
+      return errorResponse(res, 400, 'hosts must be a non-empty array of strings', 'BAD_REQUEST');
+    }
+    for (const h of body.hosts) {
+      if (typeof h !== 'string' || !HOST_RE.test(h)) {
+        return errorResponse(res, 400, `Invalid host: ${JSON.stringify(h)}`, 'BAD_REQUEST');
+      }
+    }
+    hosts = body.hosts;
+  }
+
+  let result;
+  try {
+    result = httpsSetup.generateCerts(hosts ? { hosts } : undefined);
+  } catch (err) {
+    return errorResponse(res, 500, err.message, 'MKCERT_FAILED');
+  }
+
+  jsonResponse(res, 200, {
+    ok: true,
+    certPath: result.certPath,
+    keyPath: result.keyPath,
+    hosts: result.hosts,
+    expiry: result.expiry,
+    remoteTrust: httpsSetup.getRemoteTrustInstructions(result.carootPath)
+  });
+});
+
 // POST /api/setup/scan — Scan a directory for existing projects
 route('POST', '/api/setup/scan', (_req, res, _params, body) => {
   if (!body || typeof body.directory !== 'string') {
@@ -470,13 +538,20 @@ route('POST', '/api/setup/scan', (_req, res, _params, body) => {
 });
 
 // POST /api/setup/complete — Batch setup: update config + attach projects
-route('POST', '/api/setup/complete', (_req, res, _params, body) => {
+route('POST', '/api/setup/complete', (req, res, _params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
   const config = store.config.load();
   const warnings = [];
+
+  // Snapshot HTTPS state before mutations so we can decide whether to restart
+  const prevHttps = {
+    enabled: !!config.httpsEnabled,
+    certPath: config.httpsCertPath || null,
+    keyPath: config.httpsKeyPath || null
+  };
 
   // Update config fields
   if (body.projectsDir && typeof body.projectsDir === 'string') {
@@ -497,6 +572,26 @@ route('POST', '/api/setup/complete', (_req, res, _params, body) => {
   }
   if (typeof body.chimeEnabled === 'boolean') {
     config.chimeEnabled = body.chimeEnabled;
+  }
+
+  // HTTPS fields
+  if (typeof body.httpsEnabled === 'boolean') {
+    config.httpsEnabled = body.httpsEnabled;
+  }
+  if (body.httpsCertPath === null || typeof body.httpsCertPath === 'string') {
+    config.httpsCertPath = body.httpsCertPath || null;
+  }
+  if (body.httpsKeyPath === null || typeof body.httpsKeyPath === 'string') {
+    config.httpsKeyPath = body.httpsKeyPath || null;
+  }
+
+  if (config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath) {
+    const validation = httpsSetup.validateCertFiles(config.httpsCertPath, config.httpsKeyPath);
+    if (!validation.ok) {
+      return errorResponse(res, 400, `HTTPS cert validation failed: ${validation.error}`, 'BAD_REQUEST');
+    }
+  } else if (config.httpsEnabled && (config.httpsCertPath || config.httpsKeyPath)) {
+    return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
   // Mark setup as complete
@@ -552,11 +647,31 @@ route('POST', '/api/setup/complete', (_req, res, _params, body) => {
     }
   }
 
+  // Decide whether to schedule a restart so the server re-binds with the new protocol
+  const prevWillServeHttps = !!(prevHttps.enabled && prevHttps.certPath && prevHttps.keyPath);
+  const willServeHttps = !!(config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath);
+  const httpsChanged = prevHttps.enabled !== !!config.httpsEnabled
+    || prevHttps.certPath !== (config.httpsCertPath || null)
+    || prevHttps.keyPath !== (config.httpsKeyPath || null);
+  const shouldRestart = httpsChanged && (willServeHttps || prevWillServeHttps);
+
+  let redirectUrl = null;
+  if (shouldRestart) {
+    const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
+    const hostname = hostHeader.split(':')[0] || 'localhost';
+    const port = config.serverPort || 3101;
+    const protocol = willServeHttps ? 'https' : 'http';
+    redirectUrl = `${protocol}://${hostname}:${port}`;
+    _scheduleRestart();
+  }
+
   jsonResponse(res, 200, {
     ok: true,
     setupComplete: true,
     attached,
-    warnings
+    warnings,
+    restart: shouldRestart,
+    redirectUrl
   });
 });
 
@@ -2822,10 +2937,19 @@ route('POST', '/api/audit/retention/run', (_req, res, _params, body) => {
 function createServer(options = {}) {
   let server;
   if (options.httpsEnabled && options.certPath && options.keyPath) {
-    const cert = fs.readFileSync(options.certPath);
-    const key = fs.readFileSync(options.keyPath);
-    server = https.createServer({ cert, key }, handleRequest);
-    log.info('HTTPS enabled', { cert: options.certPath });
+    try {
+      const cert = fs.readFileSync(options.certPath);
+      const key = fs.readFileSync(options.keyPath);
+      server = https.createServer({ cert, key }, handleRequest);
+      log.info('HTTPS enabled', { cert: options.certPath });
+    } catch (err) {
+      log.warn('HTTPS config present but cert/key could not be loaded — falling back to HTTP', {
+        certPath: options.certPath,
+        keyPath: options.keyPath,
+        error: err.message
+      });
+      server = http.createServer(handleRequest);
+    }
   } else {
     server = http.createServer(handleRequest);
   }
@@ -2964,4 +3088,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE };
+module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE, _setRestartScheduler };

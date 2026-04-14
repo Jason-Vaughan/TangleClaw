@@ -470,4 +470,14 @@ describe('HTTPS createServer', () => {
       server.close();
     }
   });
+
+  it('createServer falls back to HTTP when cert files cannot be read', () => {
+    const server = createServer({
+      httpsEnabled: true,
+      certPath: '/tmp/tc-missing-cert-' + Date.now() + '.pem',
+      keyPath: '/tmp/tc-missing-key-' + Date.now() + '.pem'
+    });
+    assert.ok(server instanceof http.Server, 'should fall back to http.Server, not crash');
+    server.close();
+  });
 });
