@@ -1991,3 +1991,161 @@ body.setup-active { overflow: hidden; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── HTTPS Wizard Step ── */
+.setup-https-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+.setup-https-status {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.setup-https-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.setup-https-badge-ok {
+  background: rgba(139, 195, 74, 0.15);
+  color: var(--primary);
+}
+.setup-https-badge-warn {
+  background: rgba(239, 83, 80, 0.15);
+  color: var(--danger);
+}
+.setup-https-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.setup-https-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+.setup-https-mode.selected {
+  border-color: var(--primary);
+}
+.setup-https-mode.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.setup-https-mode input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--primary);
+}
+.setup-https-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.setup-https-mode-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.setup-https-mode-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.setup-https-panel {
+  background: var(--card-bg);
+  border-radius: var(--radius-card);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.setup-https-success {
+  color: var(--primary);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.setup-https-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.setup-https-kv span {
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+.setup-https-kv code {
+  font-size: 12px;
+  word-break: break-all;
+}
+.setup-https-subheading {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 6px;
+}
+.setup-https-trust-step {
+  margin-bottom: 10px;
+}
+.setup-https-trust-label {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.setup-https-code {
+  background: var(--elevated-bg);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.setup-https-trust-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.setup-https-confirmed-row {
+  color: var(--primary);
+  font-weight: 500;
+  margin-top: 10px;
+}
+.setup-https-warning {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px solid var(--danger);
+  background: rgba(239, 83, 80, 0.08);
+}
+.setup-https-warn-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.setup-https-warn-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.setup-https-restart-panel {
+  text-align: center;
+  padding: 24px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}

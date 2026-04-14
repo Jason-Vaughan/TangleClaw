@@ -7,7 +7,7 @@
 
 const wizard = {
   step: 0,
-  totalSteps: 6,
+  totalSteps: 7,
   projectsDir: '',
   scannedProjects: [],
   selectedProjects: new Set(),
@@ -15,7 +15,16 @@ const wizard = {
   defaultEngine: '',
   defaultMethodology: '',
   deletePassword: '',
-  chimeEnabled: true
+  chimeEnabled: true,
+  httpsCheckLoaded: false,
+  httpsMode: null,
+  mkcertAvailable: null,
+  mkcertCaroot: '',
+  mkcertCaInstalled: false,
+  httpsGenerated: null,
+  httpsCertPath: '',
+  httpsKeyPath: '',
+  httpsRemoteTrustConfirmed: false
 };
 
 // ── Wizard Lifecycle ──
@@ -122,7 +131,8 @@ function renderWizardStep() {
     case 2: renderDetectProjects(body); break;
     case 3: renderEngines(body); break;
     case 4: renderPreferences(body); break;
-    case 5: renderConfirm(body); break;
+    case 5: renderHttpsSetup(body); break;
+    case 6: renderConfirm(body); break;
   }
 }
 
@@ -361,6 +371,235 @@ function renderPreferences(body) {
     </div>`;
 }
 
+async function renderHttpsSetup(body) {
+  if (!wizard.httpsCheckLoaded) {
+    body.innerHTML = `
+      <div class="setup-step">
+        <h2 class="setup-heading">Secure Access</h2>
+        <p class="setup-text-muted">Checking your system for certificate tools…</p>
+        <div class="setup-https-loading"><span class="spinner"></span></div>
+      </div>`;
+    const data = await apiMutate('/api/setup/https-check', 'GET');
+    if (data && data.mkcert) {
+      wizard.mkcertAvailable = !!data.mkcert.available;
+      wizard.mkcertCaroot = data.mkcert.carootPath || '';
+      wizard.mkcertCaInstalled = !!data.mkcert.caInstalled;
+    } else {
+      wizard.mkcertAvailable = false;
+    }
+    if (!wizard.httpsMode) {
+      wizard.httpsMode = wizard.mkcertAvailable ? 'mkcert' : 'manual';
+    }
+    wizard.httpsCheckLoaded = true;
+    renderHttpsSetup(body);
+    return;
+  }
+
+  const available = !!wizard.mkcertAvailable;
+  const mode = wizard.httpsMode;
+  const statusBadge = available
+    ? '<span class="setup-https-badge setup-https-badge-ok">mkcert detected</span>'
+    : '<span class="setup-https-badge setup-https-badge-warn">mkcert not installed</span>';
+
+  const mkcertDisabledAttr = available ? '' : 'disabled';
+  const modeTabs = `
+    <div class="setup-https-modes">
+      <label class="setup-https-mode ${mode === 'mkcert' ? 'selected' : ''} ${available ? '' : 'disabled'}">
+        <input type="radio" name="httpsMode" value="mkcert" ${mode === 'mkcert' ? 'checked' : ''} ${mkcertDisabledAttr}
+               onchange="wizardSelectHttpsMode('mkcert')">
+        <div class="setup-https-mode-text">
+          <span class="setup-https-mode-title">Automatic (recommended)</span>
+          <span class="setup-https-mode-sub">Generate trusted certs with mkcert</span>
+        </div>
+      </label>
+      <label class="setup-https-mode ${mode === 'manual' ? 'selected' : ''}">
+        <input type="radio" name="httpsMode" value="manual" ${mode === 'manual' ? 'checked' : ''}
+               onchange="wizardSelectHttpsMode('manual')">
+        <div class="setup-https-mode-text">
+          <span class="setup-https-mode-title">Manual</span>
+          <span class="setup-https-mode-sub">Provide existing cert + key paths</span>
+        </div>
+      </label>
+      <label class="setup-https-mode ${mode === 'skip' ? 'selected' : ''}">
+        <input type="radio" name="httpsMode" value="skip" ${mode === 'skip' ? 'checked' : ''}
+               onchange="wizardSelectHttpsMode('skip')">
+        <div class="setup-https-mode-text">
+          <span class="setup-https-mode-title">Skip for now</span>
+          <span class="setup-https-mode-sub">Continue without HTTPS</span>
+        </div>
+      </label>
+    </div>`;
+
+  let modeBody = '';
+  if (mode === 'mkcert') modeBody = _renderHttpsMkcertBody();
+  else if (mode === 'manual') modeBody = _renderHttpsManualBody();
+  else if (mode === 'skip') modeBody = _renderHttpsSkipBody();
+
+  const canAdvance = _httpsCanAdvance();
+
+  body.innerHTML = `
+    <div class="setup-step">
+      <h2 class="setup-heading">Secure Access</h2>
+      <p class="setup-text-muted">TangleClaw can serve over HTTPS so session traffic, API keys, and OpenClaw connections stay encrypted.</p>
+      <div class="setup-https-status">${statusBadge}</div>
+      ${modeTabs}
+      <div class="setup-https-body">${modeBody}</div>
+      <div id="setupHttpsError" class="form-error hidden" role="alert"></div>
+      <div class="setup-nav">
+        <button class="btn" onclick="wizardBack()">Back</button>
+        <button class="btn btn-primary" id="setupHttpsNextBtn" ${canAdvance ? '' : 'disabled'} onclick="wizardHttpsNext()">Next</button>
+      </div>
+    </div>`;
+
+  if (mode === 'manual') {
+    const cert = document.getElementById('setupHttpsCertPath');
+    const key = document.getElementById('setupHttpsKeyPath');
+    const sync = () => {
+      wizard.httpsCertPath = (cert && cert.value.trim()) || '';
+      wizard.httpsKeyPath = (key && key.value.trim()) || '';
+      const nextBtn = document.getElementById('setupHttpsNextBtn');
+      if (nextBtn) nextBtn.disabled = !_httpsCanAdvance();
+    };
+    if (cert) cert.addEventListener('input', sync);
+    if (key) key.addEventListener('input', sync);
+  }
+}
+
+function _renderHttpsMkcertBody() {
+  if (!wizard.httpsGenerated) {
+    const caNote = wizard.mkcertCaInstalled
+      ? ''
+      : '<p class="setup-text-muted">mkcert will install a local trust CA on this machine the first time you generate a cert.</p>';
+    return `
+      <div class="setup-https-panel">
+        <p class="setup-text-muted">Click below to generate a TLS certificate for <code>localhost</code>, <code>127.0.0.1</code>, and <code>::1</code> using mkcert.</p>
+        ${caNote}
+        <button class="btn btn-primary" id="setupGenerateCertBtn" onclick="wizardGenerateCerts()">Generate Certificates</button>
+      </div>`;
+  }
+  const gen = wizard.httpsGenerated;
+  const steps = (gen.remoteTrust && gen.remoteTrust.steps) || [];
+  let stepsHtml = '';
+  for (const step of steps) {
+    stepsHtml += `
+      <div class="setup-https-trust-step">
+        <div class="setup-https-trust-label"><strong>${esc(step.platform)}</strong> — ${esc(step.label)}</div>
+        <pre class="setup-https-code"><code>${esc(step.command)}</code></pre>
+      </div>`;
+  }
+  const noteHtml = gen.remoteTrust && gen.remoteTrust.note
+    ? `<p class="setup-text-muted">${esc(gen.remoteTrust.note)}</p>`
+    : '';
+  const trustedRow = wizard.httpsRemoteTrustConfirmed
+    ? '<div class="setup-https-confirmed-row">✓ Remote trust confirmed</div>'
+    : `
+      <div class="setup-https-trust-buttons">
+        <button class="btn btn-primary" onclick="wizardConfirmRemoteTrust()">I've done this on remote machines</button>
+        <button class="btn" onclick="wizardConfirmRemoteTrust()">I only access locally</button>
+      </div>`;
+  const expiryRow = gen.expiry ? `<div><span>Expires:</span> ${esc(gen.expiry)}</div>` : '';
+  return `
+    <div class="setup-https-panel">
+      <div class="setup-https-success">✓ Certificate generated</div>
+      <div class="setup-https-kv">
+        <div><span>Cert:</span> <code>${esc(gen.certPath)}</code></div>
+        <div><span>Key:</span> <code>${esc(gen.keyPath)}</code></div>
+        ${expiryRow}
+      </div>
+      <h3 class="setup-https-subheading">Remote browser trust</h3>
+      <p class="setup-text-muted">If you'll access TangleClaw from another machine, copy <code>rootCA.pem</code> from <code>${esc(gen.remoteTrust ? gen.remoteTrust.caRootPath : wizard.mkcertCaroot)}</code> and run the matching command on that machine.</p>
+      ${noteHtml}
+      ${stepsHtml}
+      ${trustedRow}
+    </div>`;
+}
+
+function _renderHttpsManualBody() {
+  return `
+    <div class="setup-https-panel">
+      <p class="setup-text-muted">Have an existing certificate? Enter the full paths below. They'll be validated when you finish setup.</p>
+      <div class="form-group">
+        <label class="form-label" for="setupHttpsCertPath">Certificate file (PEM)</label>
+        <input type="text" class="form-input" id="setupHttpsCertPath"
+               value="${esc(wizard.httpsCertPath)}"
+               placeholder="/etc/ssl/mysite.pem"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setupHttpsKeyPath">Private key file (PEM)</label>
+        <input type="text" class="form-input" id="setupHttpsKeyPath"
+               value="${esc(wizard.httpsKeyPath)}"
+               placeholder="/etc/ssl/mysite-key.pem"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      </div>
+    </div>`;
+}
+
+function _renderHttpsSkipBody() {
+  return `
+    <div class="setup-https-panel setup-https-warning">
+      <div class="setup-https-warn-icon" aria-hidden="true">!</div>
+      <div>
+        <div class="setup-https-warn-title">You'll run TangleClaw over HTTP.</div>
+        <p class="setup-text-muted">OpenClaw connections over HTTP expose session tokens and API keys on your LAN. You can enable HTTPS later from Settings.</p>
+      </div>
+    </div>`;
+}
+
+function _httpsCanAdvance() {
+  if (wizard.httpsMode === 'skip') return true;
+  if (wizard.httpsMode === 'mkcert') {
+    return !!(wizard.httpsGenerated && wizard.httpsCertPath && wizard.httpsKeyPath && wizard.httpsRemoteTrustConfirmed);
+  }
+  if (wizard.httpsMode === 'manual') {
+    return !!(wizard.httpsCertPath && wizard.httpsKeyPath);
+  }
+  return false;
+}
+
+function wizardSelectHttpsMode(mode) {
+  if (wizard.httpsMode !== mode) {
+    // Clear per-mode state so generated mkcert paths don't pre-fill the
+    // manual inputs and a prior remote-trust confirmation doesn't unlock
+    // Next for a freshly-selected mode.
+    wizard.httpsGenerated = null;
+    wizard.httpsCertPath = '';
+    wizard.httpsKeyPath = '';
+    wizard.httpsRemoteTrustConfirmed = false;
+  }
+  wizard.httpsMode = mode;
+  renderHttpsSetup(document.getElementById('setupBody'));
+}
+
+function wizardHttpsNext() {
+  if (!_httpsCanAdvance()) return;
+  wizardNext();
+}
+
+async function wizardGenerateCerts() {
+  const btn = document.getElementById('setupGenerateCertBtn');
+  const err = document.getElementById('setupHttpsError');
+  if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Generating…'; }
+
+  const data = await apiMutate('/api/setup/generate-cert', 'POST', {});
+  if (!data) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Certificates'; }
+    if (err) { err.textContent = 'Certificate generation failed. Check server logs.'; err.classList.remove('hidden'); }
+    return;
+  }
+
+  wizard.httpsGenerated = data;
+  wizard.httpsCertPath = data.certPath || '';
+  wizard.httpsKeyPath = data.keyPath || '';
+  renderHttpsSetup(document.getElementById('setupBody'));
+}
+
+function wizardConfirmRemoteTrust() {
+  wizard.httpsRemoteTrustConfirmed = true;
+  renderHttpsSetup(document.getElementById('setupBody'));
+}
+
 function renderConfirm(body) {
   const selectedCount = wizard.selectedProjects.size;
   const engineName = (state.engines.find(e => e.id === wizard.defaultEngine) || {}).name || wizard.defaultEngine;
@@ -385,6 +624,10 @@ function renderConfirm(body) {
         <div class="setup-summary-row">
           <span class="setup-summary-label">Default Methodology</span>
           <span class="setup-summary-value">${esc(methName)}</span>
+        </div>
+        <div class="setup-summary-row">
+          <span class="setup-summary-label">HTTPS</span>
+          <span class="setup-summary-value">${esc(_httpsSummaryLabel())}</span>
         </div>
         <div class="setup-summary-row">
           <span class="setup-summary-label">Delete Protection</span>
@@ -427,6 +670,8 @@ async function wizardComplete() {
     setupBody.deletePassword = wizard.deletePassword;
   }
 
+  Object.assign(setupBody, _buildHttpsPayload());
+
   const result = await apiMutate('/api/setup/complete', 'POST', setupBody);
   if (!result) {
     const err = document.getElementById('setupCompleteError');
@@ -437,7 +682,75 @@ async function wizardComplete() {
     return;
   }
 
+  if (result.restart) {
+    // Backend always supplies redirectUrl with restart today, but fall back
+    // to the current origin so the overlay still shows while the server
+    // cycles — otherwise the normal dismiss flow would run fetches against
+    // a process that's exiting.
+    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/');
+    return;
+  }
+
   // Refresh state and dismiss — dismissWizard() handles loadProjects()
   await loadConfig();
   dismissWizard();
+}
+
+/**
+ * Build the HTTPS-related fields of the setup-complete payload.
+ * @returns {object} Subset of payload containing httpsEnabled/httpsCertPath/httpsKeyPath
+ */
+function _buildHttpsPayload() {
+  if (wizard.httpsMode === 'mkcert' || wizard.httpsMode === 'manual') {
+    return {
+      httpsEnabled: true,
+      httpsCertPath: wizard.httpsCertPath || null,
+      httpsKeyPath: wizard.httpsKeyPath || null
+    };
+  }
+  return {
+    httpsEnabled: false,
+    httpsCertPath: null,
+    httpsKeyPath: null
+  };
+}
+
+function _httpsSummaryLabel() {
+  if (wizard.httpsMode === 'mkcert') return 'Enabled (mkcert)';
+  if (wizard.httpsMode === 'manual') return 'Enabled (manual)';
+  if (wizard.httpsMode === 'skip') return 'Disabled';
+  return 'Not configured';
+}
+
+function _showRestartOverlay(redirectUrl) {
+  const body = document.getElementById('setupBody');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="setup-step">
+      <h2 class="setup-heading">Restarting TangleClaw…</h2>
+      <div class="setup-https-restart-panel">
+        <div class="spinner"></div>
+        <p class="setup-text">The server is restarting with your new HTTPS configuration.</p>
+        <p class="setup-text-muted">You'll be redirected to <code>${esc(redirectUrl)}</code> automatically.</p>
+        <button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Go now</button>
+      </div>
+    </div>`;
+  _pollRestartAndRedirect(redirectUrl);
+}
+
+async function _pollRestartAndRedirect(redirectUrl) {
+  const deadline = Date.now() + 20000;
+  // Give the server time to actually exit before we start probing.
+  await new Promise((r) => setTimeout(r, 1200));
+  while (Date.now() < deadline) {
+    try {
+      await fetch(redirectUrl, { mode: 'no-cors', cache: 'no-store' });
+      window.location.href = redirectUrl;
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  // Timeout fallback — redirect anyway so the user isn't stuck on the overlay.
+  window.location.href = redirectUrl;
 }
