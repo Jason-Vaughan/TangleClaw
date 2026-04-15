@@ -90,6 +90,12 @@ function loadSetup(overrides = {}) {
       if (overrides.apiMutate) return overrides.apiMutate(url, method, body);
       return null;
     },
+    // Minimal api() stub — wizard handlers read api.lastError for the
+    // #80 server-error surfacing; tests can override via overrides.api.
+    api: Object.assign(
+      overrides.api || (async () => null),
+      { lastError: null, lastErrorCode: null }
+    ),
     loadConfig: async () => {},
     loadProjects: async () => {},
     loadStats: async () => {},
@@ -339,6 +345,30 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       await ctx.wizardGenerateCerts();
       assert.equal(ctx.wizard.httpsGenerated, null);
       assert.equal(ctx.wizard.httpsCertPath, '');
+    });
+
+    it('renders api.lastError in #setupHttpsError when server surfaces a message (#80)', async () => {
+      const ctx = loadSetup({ apiMutate: async () => null });
+      // Simulate what the real api() helper does on 4xx — populates its
+      // side-channel with the server's error string.
+      ctx.api.lastError = 'mkcert binary not found on PATH';
+      ctx.wizard.httpsMode = 'mkcert';
+      ctx.wizard.httpsCheckLoaded = true;
+      await ctx.wizardGenerateCerts();
+      const errEl = ctx.__elements.get('setupHttpsError');
+      assert.ok(errEl, 'setupHttpsError element should have been touched');
+      assert.equal(errEl.textContent, 'mkcert binary not found on PATH');
+      assert.equal(errEl.classList.contains('hidden'), false);
+    });
+
+    it('falls back to generic message when api.lastError is empty (#80)', async () => {
+      const ctx = loadSetup({ apiMutate: async () => null });
+      ctx.api.lastError = null;
+      ctx.wizard.httpsMode = 'mkcert';
+      ctx.wizard.httpsCheckLoaded = true;
+      await ctx.wizardGenerateCerts();
+      const errEl = ctx.__elements.get('setupHttpsError');
+      assert.equal(errEl.textContent, 'Certificate generation failed.');
     });
   });
 

@@ -585,7 +585,7 @@ async function wizardGenerateCerts() {
   const data = await apiMutate('/api/setup/generate-cert', 'POST', {});
   if (!data) {
     if (btn) { btn.disabled = false; btn.textContent = 'Generate Certificates'; }
-    if (err) { err.textContent = 'Certificate generation failed. Check server logs.'; err.classList.remove('hidden'); }
+    if (err) { err.textContent = api.lastError || 'Certificate generation failed.'; err.classList.remove('hidden'); }
     return;
   }
 
@@ -675,7 +675,7 @@ async function wizardComplete() {
   const result = await apiMutate('/api/setup/complete', 'POST', setupBody);
   if (!result) {
     const err = document.getElementById('setupCompleteError');
-    err.textContent = 'Setup failed. Check server logs.';
+    err.textContent = api.lastError || 'Setup failed.';
     err.classList.remove('hidden');
     btn.disabled = false;
     btn.textContent = 'Complete Setup';

@@ -1084,7 +1084,7 @@ async function submitCreate() {
 
   if (!result) {
     const errEl = document.getElementById('createError');
-    errEl.textContent = 'Failed to create project. Check server logs.';
+    errEl.textContent = api.lastError || 'Failed to create project.';
     errEl.classList.remove('hidden');
     btn.disabled = false;
     btn.textContent = 'Create';
