@@ -31,13 +31,24 @@ async function api(url, opts) {
   try {
     const res = await fetch(url, opts);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      api.lastError = data.error || `HTTP ${res.status}`;
+      api.lastErrorCode = data.code || null;
+      console.error(`API ${url}: ${api.lastError}${api.lastErrorCode ? ` (${api.lastErrorCode})` : ''}`);
+      return null;
+    }
+    api.lastError = null;
+    api.lastErrorCode = null;
     return data;
   } catch (err) {
+    api.lastError = err.message || 'Unknown error';
+    api.lastErrorCode = null;
     console.error(`API ${url}:`, err.message);
     return null;
   }
 }
+api.lastError = null;
+api.lastErrorCode = null;
 
 /**
  * Initialize the OpenClaw viewer: start tunnel, load iframe, auto-approve pairing.
