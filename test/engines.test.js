@@ -341,6 +341,49 @@ describe('engines', () => {
       assert.ok(typeof rules.sessionMemoryGuide === 'string');
       assert.ok(rules.sessionMemoryGuide.includes('Session Memory'));
     });
+
+    it('should include project version recording guide', () => {
+      const rules = engines._getRulesContent({});
+      assert.ok(rules.projectVersionGuide !== null, 'Should include project version recording guide');
+      assert.ok(typeof rules.projectVersionGuide === 'string');
+      assert.ok(rules.projectVersionGuide.includes('Project Version Recording'));
+      assert.ok(rules.projectVersionGuide.includes('.tangleclaw/project-version.txt'));
+    });
+  });
+
+  describe('project version recording injection', () => {
+    const projectConfig = {
+      rules: {
+        core: {
+          changelogPerChange: true,
+          jsdocAllFunctions: true,
+          unitTestRequirements: true,
+          sessionWrapProtocol: true,
+          porthubRegistration: true
+        }
+      }
+    };
+    const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
+
+    it('all generators with supportsConfigFile should include Project Version Recording section', () => {
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+      assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
+
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, projectConfig, template);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.ok(
+          content.includes('Project Version Recording'),
+          `${profile.id}: missing Project Version Recording section`
+        );
+        assert.ok(
+          content.includes('project-version.txt'),
+          `${profile.id}: missing project-version.txt cache-file reference`
+        );
+      }
+    });
   });
 
   describe('rule injection parity', () => {
