@@ -349,6 +349,22 @@ describe('engines', () => {
       assert.ok(rules.projectVersionGuide.includes('Project Version Recording'));
       assert.ok(rules.projectVersionGuide.includes('.tangleclaw/project-version.txt'));
     });
+
+    it('degrades gracefully when project version recording guide file is missing', () => {
+      const originalExistsSync = fs.existsSync;
+      fs.existsSync = (p) => {
+        if (typeof p === 'string' && p.endsWith('project-version-recording-guide.md')) return false;
+        return originalExistsSync(p);
+      };
+      try {
+        const rules = engines._getRulesContent({});
+        assert.equal(rules.projectVersionGuide, null, 'should be null when file missing');
+        // Other guides still populate (basic sanity — no wide blast radius from the stub).
+        assert.ok(rules.sessionMemoryGuide !== null, 'session memory guide should still load');
+      } finally {
+        fs.existsSync = originalExistsSync;
+      }
+    });
   });
 
   describe('project version recording injection', () => {
