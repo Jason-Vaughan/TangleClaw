@@ -480,4 +480,55 @@ describe('HTTPS createServer', () => {
     assert.ok(server instanceof http.Server, 'should fall back to http.Server, not crash');
     server.close();
   });
+
+  it('createServer falls back to HTTP when httpsEnabled=true but no cert paths configured', () => {
+    // Covers the else-branch: existing installs upgrading with DEFAULT_CONFIG.httpsEnabled=true
+    // but no certs yet. Must not crash and must stay on HTTP.
+    const server = createServer({ httpsEnabled: true });
+    assert.ok(server instanceof http.Server, 'should fall back to http.Server, not crash');
+    server.close();
+  });
+
+  it('createServer logs a visible warning when HTTPS is enabled but cert paths are missing', () => {
+    // The graceful fallback was previously silent — chunk 3 makes it visible.
+    const { setLevel } = require('../lib/logger');
+    const prev = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk, ...rest) => { prev.push(String(chunk)); return origWrite(chunk, ...rest); };
+    setLevel('warn');
+    try {
+      const server = createServer({ httpsEnabled: true });
+      server.close();
+    } finally {
+      process.stdout.write = origWrite;
+      setLevel('error');
+    }
+    assert.ok(
+      prev.some(l => l.includes('HTTPS enabled but cert/key paths not configured')),
+      'must emit a warn-level log explaining the HTTP fallback'
+    );
+  });
+
+  it('createServer logs a visible warning when HTTPS cert files cannot be loaded', () => {
+    const { setLevel } = require('../lib/logger');
+    const prev = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk, ...rest) => { prev.push(String(chunk)); return origWrite(chunk, ...rest); };
+    setLevel('warn');
+    try {
+      const server = createServer({
+        httpsEnabled: true,
+        certPath: '/tmp/tc-missing-cert-log-' + Date.now() + '.pem',
+        keyPath: '/tmp/tc-missing-key-log-' + Date.now() + '.pem'
+      });
+      server.close();
+    } finally {
+      process.stdout.write = origWrite;
+      setLevel('error');
+    }
+    assert.ok(
+      prev.some(l => l.includes('HTTPS enabled but cert/key could not be loaded')),
+      'must emit a warn-level log when cert files are unreadable'
+    );
+  });
 });

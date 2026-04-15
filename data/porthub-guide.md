@@ -16,7 +16,7 @@ TangleClaw is the central port registry for all projects on this machine. Every 
 
 ### API Operations
 
-All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide.
+All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. HTTPS (`https://localhost:3102`) is the default; installs that skipped HTTPS or have no certificates configured fall back to `http://localhost:3102`. When hitting HTTPS with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it.
 
 **Check what's taken** before picking a port:
 ```
