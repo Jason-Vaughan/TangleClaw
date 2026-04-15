@@ -376,20 +376,38 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
     }
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && typeof value !== 'string') {
-      return errorResponse(res, 400, `${key} must be a string`, 'BAD_REQUEST');
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && value !== null && typeof value !== 'string') {
+      return errorResponse(res, 400, `${key} must be a string or null`, 'BAD_REQUEST');
+    }
+
+    // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
+    let storedValue = value;
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && (value === '' || value === null)) {
+      storedValue = null;
     }
 
     if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath') {
-      if (config[key] !== value) requiresRestart = true;
+      if (config[key] !== storedValue) requiresRestart = true;
     }
 
     // Hash deletePassword before persisting
-    if (key === 'deletePassword' && value !== null) {
-      config[key] = projects.hashPassword(value);
+    if (key === 'deletePassword' && storedValue !== null) {
+      config[key] = projects.hashPassword(storedValue);
     } else {
-      config[key] = value;
+      config[key] = storedValue;
     }
+  }
+
+  // Validate HTTPS cert pair when HTTPS is enabled (mirrors /api/setup/complete).
+  // Allow httpsEnabled=true with no cert paths — createServer() will log and fall
+  // back to HTTP gracefully so existing installs don't break on upgrade.
+  if (config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath) {
+    const validation = httpsSetup.validateCertFiles(config.httpsCertPath, config.httpsKeyPath);
+    if (!validation.ok) {
+      return errorResponse(res, 400, `HTTPS cert validation failed: ${validation.error}`, 'BAD_REQUEST');
+    }
+  } else if (config.httpsEnabled && (config.httpsCertPath || config.httpsKeyPath)) {
+    return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
   store.config.save(config);
@@ -2943,7 +2961,7 @@ function createServer(options = {}) {
       server = https.createServer({ cert, key }, handleRequest);
       log.info('HTTPS enabled', { cert: options.certPath });
     } catch (err) {
-      log.warn('HTTPS config present but cert/key could not be loaded — falling back to HTTP', {
+      log.warn('HTTPS enabled but cert/key could not be loaded — falling back to HTTP. Fix cert paths in Settings or regenerate via the setup wizard.', {
         certPath: options.certPath,
         keyPath: options.keyPath,
         error: err.message
@@ -2951,6 +2969,12 @@ function createServer(options = {}) {
       server = http.createServer(handleRequest);
     }
   } else {
+    if (options.httpsEnabled && (!options.certPath || !options.keyPath)) {
+      log.warn('HTTPS enabled but cert/key paths not configured — falling back to HTTP. Run the setup wizard (Settings → HTTPS) to generate certificates.', {
+        certPath: options.certPath || null,
+        keyPath: options.keyPath || null
+      });
+    }
     server = http.createServer(handleRequest);
   }
   server.on('upgrade', handleUpgrade);

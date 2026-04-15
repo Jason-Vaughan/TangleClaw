@@ -149,6 +149,32 @@ green "  Loaded ${TTYD_PLIST}"
 
 echo ""
 
+# ── Detect protocol from config ──
+# Reads ~/.tangleclaw/config.json to determine whether the running server
+# will serve HTTPS. Requires httpsEnabled=true AND both cert paths set —
+# matches createServer()'s guard in server.js so the health-check URL is
+# consistent with what the server actually binds. Falls back to HTTP when
+# the config file is missing (first install) or fields are null.
+CONFIG_FILE="$HOME/.tangleclaw/config.json"
+PROTOCOL="http"
+CURL_OPTS=""
+if [ -f "$CONFIG_FILE" ]; then
+  PROTOCOL_DETECTED="$(node -e '
+    try {
+      const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      if (c.httpsEnabled && c.httpsCertPath && c.httpsKeyPath) process.stdout.write("https");
+      else process.stdout.write("http");
+    } catch { process.stdout.write("http"); }
+  ' "$CONFIG_FILE" 2>/dev/null || echo "http")"
+  if [ "$PROTOCOL_DETECTED" = "https" ]; then
+    PROTOCOL="https"
+    CURL_OPTS="-k"
+  fi
+fi
+green "  Server protocol: $PROTOCOL"
+
+echo ""
+
 # ── Health check ──
 
 echo "Waiting for server to start..."
@@ -156,7 +182,7 @@ sleep 2
 
 HEALTH_STATUS=""
 for i in 1 2 3 4 5; do
-  HEALTH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3102/api/health 2>/dev/null || true)"
+  HEALTH_STATUS="$(curl -s $CURL_OPTS -o /dev/null -w '%{http_code}' "${PROTOCOL}://localhost:3102/api/health" 2>/dev/null || true)"
   if [ "$HEALTH_STATUS" = "200" ] || [ "$HEALTH_STATUS" = "503" ]; then
     break
   fi
@@ -175,7 +201,7 @@ echo "======================================"
 green "TangleClaw v3 installed successfully!"
 echo "======================================"
 echo ""
-echo "  Landing page:  http://localhost:3102"
+echo "  Landing page:  ${PROTOCOL}://localhost:3102"
 echo "  Terminal:       http://localhost:3100"
 echo ""
 echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"

@@ -279,6 +279,150 @@ describe('API endpoints', () => {
     });
   });
 
+  describe('PATCH /api/config HTTPS cert validation', () => {
+    const { execSync } = require('node:child_process');
+    let fixtureDir;
+    let certPath;
+    let keyPath;
+    let hasOpenssl;
+
+    before(() => {
+      fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-patch-https-'));
+      certPath = path.join(fixtureDir, 'cert.pem');
+      keyPath = path.join(fixtureDir, 'key.pem');
+      try {
+        execSync(
+          `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 30 -nodes -subj "/CN=localhost"`,
+          { stdio: 'ignore', timeout: 10000 }
+        );
+        hasOpenssl = true;
+      } catch {
+        hasOpenssl = false;
+      }
+    });
+
+    after(() => {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+      // Reset HTTPS fields so later tests start clean
+      const config = store.config.load();
+      config.httpsEnabled = false;
+      config.httpsCertPath = null;
+      config.httpsKeyPath = null;
+      store.config.save(config);
+    });
+
+    it('should reject enabling HTTPS with a missing cert file', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: true,
+        httpsCertPath: '/tmp/tc-no-such-cert-' + Date.now() + '.pem',
+        httpsKeyPath: '/tmp/tc-no-such-key-' + Date.now() + '.pem'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.match(data.error, /HTTPS cert validation failed/);
+    });
+
+    it('should reject enabling HTTPS with only one cert path set', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: true,
+        httpsCertPath: certPath,
+        httpsKeyPath: ''
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.match(data.error, /Both httpsCertPath and httpsKeyPath are required/);
+    });
+
+    it('should accept enabling HTTPS with a valid cert pair', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: true,
+        httpsCertPath: certPath,
+        httpsKeyPath: keyPath
+      });
+      assert.equal(status, 200);
+      assert.equal(data.ok, true);
+      assert.equal(data.config.httpsEnabled, true);
+      assert.equal(data.requiresRestart, true);
+    });
+
+    it('should allow enabling HTTPS with no cert paths (graceful HTTP fallback)', async () => {
+      // Existing installs upgrading to DEFAULT_CONFIG.httpsEnabled=true without certs
+      // must not be blocked here — createServer() logs and falls back to HTTP.
+      // Clear cert fields first so the validator sees the "no paths" case.
+      const config = store.config.load();
+      config.httpsCertPath = null;
+      config.httpsKeyPath = null;
+      store.config.save(config);
+
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: true,
+        httpsCertPath: '',
+        httpsKeyPath: ''
+      });
+      assert.equal(status, 200);
+      assert.equal(data.ok, true);
+    });
+
+    it('should normalize empty-string cert paths to null (shape parity with /api/setup/complete)', async () => {
+      const config = store.config.load();
+      config.httpsCertPath = null;
+      config.httpsKeyPath = null;
+      store.config.save(config);
+
+      await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false,
+        httpsCertPath: '',
+        httpsKeyPath: ''
+      });
+      const saved = store.config.load();
+      assert.equal(saved.httpsCertPath, null);
+      assert.equal(saved.httpsKeyPath, null);
+    });
+
+    it('should accept null for httpsCertPath/httpsKeyPath to clear them', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false,
+        httpsCertPath: null,
+        httpsKeyPath: null
+      });
+      assert.equal(status, 200);
+      assert.equal(data.ok, true);
+      const saved = store.config.load();
+      assert.equal(saved.httpsCertPath, null);
+      assert.equal(saved.httpsKeyPath, null);
+    });
+
+    it('should allow disabling HTTPS even when cert paths remain set', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      // Simulate user turning HTTPS off without clearing paths — validator must not run.
+      const config = store.config.load();
+      config.httpsEnabled = true;
+      config.httpsCertPath = certPath;
+      config.httpsKeyPath = keyPath;
+      store.config.save(config);
+
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.httpsEnabled, false);
+    });
+
+    it('should reject enabling HTTPS when cert exists but key is missing (asymmetric failure)', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: true,
+        httpsCertPath: certPath,
+        httpsKeyPath: '/tmp/tc-no-such-key-' + Date.now() + '.pem'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.match(data.error, /HTTPS cert validation failed/);
+    });
+  });
+
   describe('config migration defaults', () => {
     it('should default chimeMuted to false for existing configs', async () => {
       const config = store.config.load();
