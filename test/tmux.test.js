@@ -391,6 +391,28 @@ describe('tmux', () => {
         try { tmux.killSession(testSession); } catch (_) {}
       }
     });
+
+    it('should use tmux paste-buffer -p so LFs are not replaced with CR (#75)', () => {
+      // Source-level regression: tmux's `paste-buffer` default replaces every LF
+      // with CR (per tmux 3.6 man page), which collapses multi-line prime prompts
+      // into a single line when pasted into a TUI (#75). The -p flag wraps the
+      // paste in bracketed-paste escape sequences — tmux then sends LFs literally
+      // to apps that advertise bracketed-paste mode (Claude Code, Codex, etc.).
+      // If this ever regresses to `paste-buffer -t` (no -p) the bug is back.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
+      assert.match(
+        source,
+        /tmux paste-buffer -p -t/,
+        'lib/tmux.js must invoke `tmux paste-buffer -p -t ...` to preserve LFs in multi-line payloads (#75)'
+      );
+      assert.doesNotMatch(
+        source,
+        /tmux paste-buffer -t /,
+        'lib/tmux.js must not call paste-buffer without -p — default LF→CR replacement causes #75'
+      );
+    });
   });
 
   describe('sendRawKey', () => {
