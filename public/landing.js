@@ -35,56 +35,12 @@ const state = {
 };
 
 // ── API Helpers ──
+// Bound from the shared factory in /api-helper.js (loaded before this file).
+// `setConnected` is a function declaration below and is hoisted, so the
+// factory captures the live reference. See PR for #82 for rationale.
 
-/**
- * Fetch JSON from the API. Returns parsed data or null on error.
- * @param {string} url
- * @param {object} [opts]
- * @returns {Promise<object|null>}
- */
-async function api(url, opts) {
-  try {
-    const res = await fetch(url, opts);
-    const data = await res.json();
-    if (!res.ok) {
-      api.lastError = data.error || `HTTP ${res.status}`;
-      api.lastErrorCode = data.code || null;
-      console.error(`API ${url}: ${api.lastError}${api.lastErrorCode ? ` (${api.lastErrorCode})` : ''}`);
-      return null;
-    }
-    api.lastError = null;
-    api.lastErrorCode = null;
-    setConnected(true);
-    return data;
-  } catch (err) {
-    if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
-      setConnected(false);
-      api.lastError = 'Connection lost.';
-    } else {
-      api.lastError = err.message || 'Unknown error';
-    }
-    api.lastErrorCode = null;
-    console.error(`API ${url}:`, err.message);
-    return null;
-  }
-}
-api.lastError = null;
-api.lastErrorCode = null;
-
-/**
- * POST/PATCH/DELETE with JSON body.
- * @param {string} url
- * @param {string} method
- * @param {object} body
- * @returns {Promise<object|null>}
- */
-async function apiMutate(url, method, body) {
-  return api(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-}
+const api = window.tcCreateApi({ setConnected });
+const apiMutate = window.tcCreateApiMutate(api);
 
 // ── Connection State ──
 
