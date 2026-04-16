@@ -21,34 +21,14 @@ function showToast(text, type, duration = 3000) {
   }
 }
 
-/**
- * Fetch JSON from an API endpoint.
- * @param {string} url
- * @param {object} [opts]
- * @returns {Promise<object|null>}
- */
-async function api(url, opts) {
-  try {
-    const res = await fetch(url, opts);
-    const data = await res.json();
-    if (!res.ok) {
-      api.lastError = data.error || `HTTP ${res.status}`;
-      api.lastErrorCode = data.code || null;
-      console.error(`API ${url}: ${api.lastError}${api.lastErrorCode ? ` (${api.lastErrorCode})` : ''}`);
-      return null;
-    }
-    api.lastError = null;
-    api.lastErrorCode = null;
-    return data;
-  } catch (err) {
-    api.lastError = err.message || 'Unknown error';
-    api.lastErrorCode = null;
-    console.error(`API ${url}:`, err.message);
-    return null;
-  }
-}
-api.lastError = null;
-api.lastErrorCode = null;
+// Bound from the shared factory in /api-helper.js (loaded before this file).
+// No `setConnected` hook — this page has no connection banner. The unified
+// helper sets `api.lastError = 'Connection lost.'` on network failure where
+// the prior local copy passed `err.message` through; openclaw-view doesn't
+// read api.lastError today, so this is a console-only string normalization.
+// See PR for #82.
+
+const api = window.tcCreateApi();
 
 /**
  * Initialize the OpenClaw viewer: start tunnel, load iframe, auto-approve pairing.

@@ -347,9 +347,11 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes("window.location.pathname.replace(/^\\/session\\//"));
     });
 
-    it('should define api helper functions', () => {
-      assert.ok(js.includes('async function api('));
-      assert.ok(js.includes('async function apiMutate('));
+    it('should bind api helper from the shared factory', () => {
+      // After #82, api()/apiMutate() live in /api-helper.js. session.js binds
+      // them at module load via window.tcCreateApi / window.tcCreateApiMutate.
+      assert.ok(js.includes('window.tcCreateApi'));
+      assert.ok(js.includes('window.tcCreateApiMutate'));
     });
 
     it('should include HTML escaping function', () => {
