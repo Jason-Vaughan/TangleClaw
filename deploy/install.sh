@@ -56,13 +56,6 @@ fi
 TMUX_PATH="$(which tmux)"
 green "  tmux ($TMUX_PATH)"
 
-# PortHub (optional — TangleClaw manages ports directly)
-if command -v porthub &>/dev/null; then
-  green "  porthub ($(which porthub)) — existing leases will be imported"
-else
-  yellow "  porthub not found (optional — TangleClaw manages ports directly)"
-fi
-
 # Build PATH for launchd plists — start from the user's current PATH so that
 # engine binaries installed in non-standard locations (e.g. ~/.local/bin,
 # ~/.npm-global/bin) are discoverable at runtime for engine detection.
