@@ -50,11 +50,17 @@
     <span>Wrapping session...</span>
   </div>
 
-  <!-- Session Wrap-Idle Bar — shown when wrap has gone idle but tmux is still alive -->
-  <div class="session-wrap-idle hidden" id="sessionWrapIdle">
-    <span>Wrap appears complete &mdash; session still attached.</span>
-    <button class="btn btn-primary btn-small" id="wrapReturnBtn">Return to Projects</button>
-    <button class="btn btn-small" id="wrapResumeBtn">Resume working</button>
+  <!-- Session Wrap-Idle Modal — shown when wrap has gone idle but tmux is still alive.
+       Sticky once shown: dismissed only by user action (Return / Resume / backdrop click). -->
+  <div class="modal-backdrop" id="sessionWrapIdle">
+    <div class="modal-content" role="dialog" aria-label="Wrap appears complete" aria-modal="true">
+      <h3 class="modal-title">Wrap appears complete</h3>
+      <p class="modal-text">The wrap protocol has gone idle but the session is still attached. Return to Projects to finalize, or Resume working to keep going.</p>
+      <div class="modal-actions">
+        <button class="btn" id="wrapResumeBtn">Resume working</button>
+        <button class="btn btn-primary" id="wrapReturnBtn">Return to Projects</button>
+      </div>
+    </div>
   </div>
 
   <!-- Session Ended Bar — tmux is gone -->
