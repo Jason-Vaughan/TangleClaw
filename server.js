@@ -22,6 +22,7 @@ const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
 const httpsSetup = require('./lib/https-setup');
+const ttydWatcher = require('./lib/ttyd-watcher');
 
 const log = createLogger('server');
 
@@ -3084,6 +3085,8 @@ if (require.main === module) {
       pid: process.pid,
       https: !!config.httpsEnabled
     });
+    // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
+    ttydWatcher.start();
   });
 
   // Graceful shutdown
@@ -3096,6 +3099,7 @@ if (require.main === module) {
     updateChecker.stopChecker();
     evalAudit.stopWatchdog();
     sidecar.stopAllPolling();
+    ttydWatcher.stop();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
