@@ -221,6 +221,12 @@ describe('Session Wrapper UI', () => {
       assert.ok(html.includes('countdown'));
     });
 
+    it('should include wrap-idle banner with Return / Resume buttons', () => {
+      assert.ok(html.includes('sessionWrapIdle'));
+      assert.ok(html.includes('wrapReturnBtn'));
+      assert.ok(html.includes('wrapResumeBtn'));
+    });
+
     it('should include connection toast', () => {
       assert.ok(html.includes('id="toast"'));
       assert.ok(html.includes('aria-live="assertive"'));
@@ -281,6 +287,10 @@ describe('Session Wrapper UI', () => {
       assert.ok(css.includes('.status-dot'));
       assert.ok(css.includes('@keyframes breathe'));
       assert.ok(css.includes('.status-dot.disconnected'));
+    });
+
+    it('should include wrap-idle banner styles (#91)', () => {
+      assert.ok(css.includes('.session-wrap-idle'));
     });
 
     it('should include command bar styles', () => {
@@ -420,6 +430,78 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes('function handleSessionEnded('));
       assert.ok(js.includes('countdown'));
       assert.ok(js.includes('Returning in'));
+    });
+
+    it('should require 8 idle polls before showing wrap-idle banner (#91)', () => {
+      // Idle threshold raised from 3 (~6s) to 8 (~16s) to survive brief
+      // git push / Critic pauses without false-positive completion.
+      assert.ok(js.includes('wrapIdleCount >= 8'));
+      assert.ok(!js.includes('wrapIdleCount >= 3'));
+    });
+
+    it('should not have a 120s wrap force-completion timeout (#91)', () => {
+      // The hard timeout was removed — kill button is the escape hatch.
+      assert.ok(!js.includes('120_000'));
+      assert.ok(!js.includes('wrapTimeoutTimer'));
+      assert.ok(!js.includes('clearWrapTimeout'));
+    });
+
+    it('should expose wrap-idle banner handlers (#91)', () => {
+      assert.ok(js.includes('function showWrapIdleBanner('));
+      assert.ok(js.includes('function resumeFromWrapIdle('));
+      assert.ok(js.includes('async function confirmReturnFromWrapIdle('));
+    });
+
+    it('should not navigate when /wrap/complete POST fails (#91 Critic)', () => {
+      // Regression: if apiMutate returns null (network/server error),
+      // tmux is still alive — the user must not be silently bounced to /.
+      // The handler should re-enable buttons and show a toast instead.
+      const start = js.indexOf('async function confirmReturnFromWrapIdle(');
+      assert.ok(start >= 0);
+      let depth = 0;
+      let i = js.indexOf('{', start);
+      let end = -1;
+      for (; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      const body = js.slice(start, end + 1);
+      assert.ok(body.includes('if (!data)'),
+        'must guard the navigate behind a truthy data check');
+      assert.ok(body.includes("wrapReturnBtn').disabled = false") ||
+                body.includes("wrapReturnBtn').disabled  = false"),
+        'must re-enable wrapReturnBtn on POST failure');
+      assert.ok(body.includes('toast'),
+        'must surface a toast on POST failure');
+    });
+
+    it('should not auto-redirect from handleWrapCompleted (#91)', () => {
+      // The 20s countdown that auto-navigated to / has been removed.
+      // Slice handleWrapCompleted's body and assert no setInterval/Returning in.
+      const start = js.indexOf('function handleWrapCompleted(');
+      assert.ok(start >= 0, 'handleWrapCompleted must exist');
+      // Walk braces to find the function body end.
+      let depth = 0;
+      let i = js.indexOf('{', start);
+      let end = -1;
+      for (; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      assert.ok(end > start, 'handleWrapCompleted body must close');
+      const body = js.slice(start, end + 1);
+      assert.ok(!body.includes('setInterval'),
+        'handleWrapCompleted must not start an auto-redirect interval');
+      assert.ok(!body.includes('Returning in'),
+        'handleWrapCompleted must not show a countdown');
+      assert.ok(!body.includes("window.location.href = '/'"),
+        'handleWrapCompleted must not navigate automatically');
     });
 
     it('should include kill and wrap modal functions', () => {
