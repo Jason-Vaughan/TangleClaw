@@ -50,7 +50,14 @@
     <span>Wrapping session...</span>
   </div>
 
-  <!-- Session Ended Bar -->
+  <!-- Session Wrap-Idle Bar — shown when wrap has gone idle but tmux is still alive -->
+  <div class="session-wrap-idle hidden" id="sessionWrapIdle">
+    <span>Wrap appears complete &mdash; session still attached.</span>
+    <button class="btn btn-primary btn-small" id="wrapReturnBtn">Return to Projects</button>
+    <button class="btn btn-small" id="wrapResumeBtn">Resume working</button>
+  </div>
+
+  <!-- Session Ended Bar — tmux is gone -->
   <div class="session-ended hidden" id="sessionEnded">
     <span>Session ended</span>
     <a href="/" class="btn btn-primary btn-small">Back to Projects</a>

@@ -451,6 +451,22 @@ body {
   animation: breathe-slow 3s ease-in-out infinite;
 }
 
+/* ── Session Wrap-Idle Bar — wrap appears done but tmux is still alive ── */
+.session-wrap-idle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(139, 195, 74, 0.12);
+  border-bottom: 1px solid rgba(139, 195, 74, 0.3);
+  font-size: 14px;
+  color: var(--primary);
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
 /* ── Session Ended Bar ── */
 .session-ended {
   flex-shrink: 0;

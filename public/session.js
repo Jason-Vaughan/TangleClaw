@@ -551,16 +551,23 @@ async function pollStatus() {
     return;
   }
 
-  // Handle wrap finished but tmux still alive (idle during wrapping)
+  // Handle wrap finished but tmux still alive (idle during wrapping).
+  // Show the wrap-idle banner — does NOT auto-finalize. User must click
+  // "Return to Projects" (kills tmux) or "Resume working" (dismisses banner).
   if (data.wrapping && data.idle && !sessionState.ended) {
     sessionState.wrapIdleCount = (sessionState.wrapIdleCount || 0) + 1;
-    // Require 3 consecutive idle polls (~6s at 2s interval) to confirm wrap is done
-    if (sessionState.wrapIdleCount >= 3) {
-      completeWrapFromIdle();
-      return;
+    // 8 polls (~16s at 2s interval) — survives brief git push / Critic pauses
+    if (sessionState.wrapIdleCount >= 8 && !sessionState.wrapIdleBannerShown) {
+      showWrapIdleBanner();
     }
   } else if (data.wrapping) {
+    // AI is active again — reset counter and hide banner if it was shown,
+    // so a fleeting click on "Resume working" isn't required when the AI
+    // demonstrably resumed work on its own.
     sessionState.wrapIdleCount = 0;
+    if (sessionState.wrapIdleBannerShown) {
+      resumeFromWrapIdle();
+    }
   }
 
   if (!data.active && !data.wrapping && !sessionState.ended) {
@@ -629,7 +636,12 @@ let countdownTimer = null;
 function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
-  clearWrapTimeout();
+
+  // Defensively hide wrap-idle banner — if tmux died while it was showing,
+  // the wrap-completed code path normally handles this, but cover the case
+  // where we land here directly.
+  document.getElementById('sessionWrapIdle').classList.add('hidden');
+  sessionState.wrapIdleBannerShown = false;
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('ended');
@@ -1573,14 +1585,14 @@ function setupTerminalTouchScroll() {
 
 // ── Wrapping State ──
 
-let wrapTimeoutTimer = null;
-
 /**
  * Show wrapping state UI — amber dot, disable action buttons, show wrapping bar.
  * Terminal stays visible so user can watch the wrap.
  */
 function showWrappingState() {
   sessionState.wrapping = true;
+  sessionState.wrapIdleBannerShown = false;
+  sessionState.wrapIdleCount = 0;
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('wrapping');
@@ -1594,59 +1606,83 @@ function showWrappingState() {
 
   // Show wrapping bar
   document.getElementById('sessionWrapping').classList.remove('hidden');
-
-  // Fallback timeout — force-complete if idle detection never triggers
-  clearWrapTimeout();
-  wrapTimeoutTimer = setTimeout(() => {
-    if (sessionState.wrapping && !sessionState.ended) {
-      console.warn('Wrap timeout reached (120s), force-completing');
-      completeWrapFromIdle();
-    }
-  }, 120_000);
+  document.getElementById('sessionWrapIdle').classList.add('hidden');
 }
 
 /**
- * Clear the wrap fallback timeout.
+ * Show the wrap-idle banner. Tmux stays alive — user must explicitly choose
+ * to finalize ("Return to Projects") or dismiss ("Resume working").
  */
-function clearWrapTimeout() {
-  if (wrapTimeoutTimer) {
-    clearTimeout(wrapTimeoutTimer);
-    wrapTimeoutTimer = null;
-  }
+function showWrapIdleBanner() {
+  sessionState.wrapIdleBannerShown = true;
+  document.getElementById('sessionWrapIdle').classList.remove('hidden');
+  document.getElementById('wrapReturnBtn').disabled = false;
+  document.getElementById('wrapResumeBtn').disabled = false;
 }
 
 /**
- * Complete wrap when session went idle (tmux still alive).
- * Calls the server to finalize the wrap, then transitions to completed UI.
- * Guarded against re-entry — only runs once.
+ * Dismiss the wrap-idle banner without finalizing. Resets the idle counter so
+ * the banner can re-appear if the AI goes idle again for another threshold window.
  */
-async function completeWrapFromIdle() {
+function resumeFromWrapIdle() {
+  sessionState.wrapIdleBannerShown = false;
+  sessionState.wrapIdleCount = 0;
+  document.getElementById('sessionWrapIdle').classList.add('hidden');
+}
+
+/**
+ * "Return to Projects" handler from the wrap-idle banner. Finalizes the wrap
+ * (POST /wrap/complete kills tmux on the server), then transitions to the
+ * ended state and navigates back to projects. Guarded against re-entry.
+ * If the POST fails (network/server error), tmux is still alive — re-enable
+ * the banner buttons so the user can retry instead of getting silently bounced.
+ */
+async function confirmReturnFromWrapIdle() {
   if (sessionState.wrapCompleting) return;
   sessionState.wrapCompleting = true;
-  clearWrapTimeout();
+  document.getElementById('wrapReturnBtn').disabled = true;
+  document.getElementById('wrapResumeBtn').disabled = true;
 
   const data = await apiMutate(
     `/api/sessions/${encodeURIComponent(projectName)}/wrap/complete`,
     'POST',
     {}
   );
-  // Transition to completed state regardless of API result
-  handleWrapCompleted(data || {});
+
+  if (!data) {
+    // POST failed — tmux still alive, let the user retry or resume.
+    sessionState.wrapCompleting = false;
+    document.getElementById('wrapReturnBtn').disabled = false;
+    document.getElementById('wrapResumeBtn').disabled = false;
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = api.lastError || 'Could not finalize wrap. Try again or click Resume working.';
+      toast.className = 'toast toast-warn visible';
+      setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+    }
+    return;
+  }
+
+  handleWrapCompleted(data);
+  // After finalizing, the user explicitly asked to return — navigate now.
+  window.location.href = '/';
 }
 
 /**
- * Handle wrap completion — show ended bar with 20s countdown + Stay button.
+ * Handle wrap completion — tmux is gone. Show ended bar with no auto-redirect;
+ * user must click "Back to Projects" or "Stay" themselves.
  * @param {object} data - Status data with wrapCompleted flag
  */
 function handleWrapCompleted(data) {
   sessionState.ended = true;
   sessionState.wrapping = false;
   sessionState.wrapCompleting = false;
+  sessionState.wrapIdleBannerShown = false;
   stopPolling();
-  clearWrapTimeout();
 
-  // Hide wrapping bar
+  // Hide wrap-related bars
   document.getElementById('sessionWrapping').classList.add('hidden');
+  document.getElementById('sessionWrapIdle').classList.add('hidden');
 
   const dot = document.getElementById('statusDot');
   dot.classList.remove('wrapping');
@@ -1659,22 +1695,11 @@ function handleWrapCompleted(data) {
   document.getElementById('cmdBtn').disabled = true;
   document.getElementById('commandSend').disabled = true;
 
-  // Show ended bar with longer countdown
+  // Show ended bar — no countdown for the wrap-completed path. The countdown
+  // span is reused by handleSessionEnded (unexpected tmux death) only.
   const endedBar = document.getElementById('sessionEnded');
   endedBar.classList.remove('hidden');
-
-  let remaining = 20;
-  const countdownEl = document.getElementById('countdown');
-  countdownEl.textContent = `Returning in ${remaining}s`;
-  countdownTimer = setInterval(() => {
-    remaining--;
-    if (remaining <= 0) {
-      clearInterval(countdownTimer);
-      window.location.href = '/';
-    } else {
-      countdownEl.textContent = `Returning in ${remaining}s`;
-    }
-  }, 1000);
+  document.getElementById('countdown').textContent = '';
 }
 
 // ── Event Bindings ──
@@ -1698,7 +1723,9 @@ function bindEvents() {
   $('wrapBtn').addEventListener('click', openWrapModal);
   $('killBtn').addEventListener('click', openKillModal);
 
-  // Stay button — cancel countdown
+  // Stay button — cancel the auto-redirect countdown set by handleSessionEnded
+  // (unexpected tmux death). The wrap-completed path doesn't start a countdown
+  // anymore, so clicking Stay there is a no-op except for disabling the button.
   $('stayBtn').addEventListener('click', () => {
     if (countdownTimer) {
       clearInterval(countdownTimer);
@@ -1707,6 +1734,10 @@ function bindEvents() {
     $('countdown').textContent = 'Staying';
     $('stayBtn').disabled = true;
   });
+
+  // Wrap-idle banner buttons
+  $('wrapReturnBtn').addEventListener('click', confirmReturnFromWrapIdle);
+  $('wrapResumeBtn').addEventListener('click', resumeFromWrapIdle);
 
   // Upload modal
   $('uploadFile').addEventListener('change', handleFileSelect);
