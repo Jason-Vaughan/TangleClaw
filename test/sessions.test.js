@@ -340,6 +340,112 @@ describe('sessions', () => {
     });
   });
 
+  describe('_resolvePreKeys', () => {
+    let sessions;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    it('returns mode-level preKeys when mode defines them', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          bypassPermissions: { label: 'Bypass', args: ['--dangerously-skip-permissions'], preKeys: ['2'], preKeyDelay: 2000 }
+        }
+      }, 'bypassPermissions');
+      assert.deepEqual(result.preKeys, ['2']);
+      assert.equal(result.preKeyDelay, 2000);
+    });
+
+    it('falls back to engine-level preKeys when mode has none', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'codex', args: [], preKeys: ['Enter', 'Enter'], preKeyDelay: 3000 },
+        launchModes: {
+          default: { label: 'Interactive', args: [] }
+        }
+      }, 'default');
+      assert.deepEqual(result.preKeys, ['Enter', 'Enter']);
+      assert.equal(result.preKeyDelay, 3000);
+    });
+
+    it('falls back to engine-level preKeys when launchMode is null', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'codex', args: [], preKeys: ['Enter'], preKeyDelay: 2500 }
+      }, null);
+      assert.deepEqual(result.preKeys, ['Enter']);
+      assert.equal(result.preKeyDelay, 2500);
+    });
+
+    it('returns null preKeys when neither mode nor engine define them', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          default: { label: 'Interactive', args: [] }
+        }
+      }, 'default');
+      assert.equal(result.preKeys, null);
+      assert.equal(result.preKeyDelay, 0);
+    });
+
+    it('returns null preKeys for engine with no launch config', () => {
+      const result = sessions._resolvePreKeys({}, null);
+      assert.equal(result.preKeys, null);
+      assert.equal(result.preKeyDelay, 0);
+    });
+
+    it('uses mode preKeyDelay over engine preKeyDelay', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [], preKeyDelay: 1000 },
+        launchModes: {
+          bypassPermissions: { label: 'Bypass', args: [], preKeys: ['2'], preKeyDelay: 3000 }
+        }
+      }, 'bypassPermissions');
+      assert.equal(result.preKeyDelay, 3000);
+    });
+
+    it('falls back to engine preKeyDelay when mode omits it', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [], preKeyDelay: 1500 },
+        launchModes: {
+          bypassPermissions: { label: 'Bypass', args: [], preKeys: ['2'] }
+        }
+      }, 'bypassPermissions');
+      assert.equal(result.preKeyDelay, 1500);
+    });
+
+    it('defaults preKeyDelay to 2000 when neither mode nor engine specify it', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          bypassPermissions: { label: 'Bypass', args: [], preKeys: ['2'] }
+        }
+      }, 'bypassPermissions');
+      assert.equal(result.preKeyDelay, 2000);
+    });
+
+    it('ignores mode preKeys for nonexistent mode key', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [], preKeys: ['Enter'] },
+        launchModes: {
+          bypassPermissions: { label: 'Bypass', args: [], preKeys: ['2'] }
+        }
+      }, 'nonexistent');
+      assert.deepEqual(result.preKeys, ['Enter']);
+    });
+
+    it('skips empty preKeys arrays', () => {
+      const result = sessions._resolvePreKeys({
+        launch: { shellCommand: 'claude', args: [], preKeys: ['Enter'] },
+        launchModes: {
+          default: { label: 'Interactive', args: [], preKeys: [] }
+        }
+      }, 'default');
+      // Empty mode preKeys should fall through to engine-level
+      assert.deepEqual(result.preKeys, ['Enter']);
+    });
+  });
+
   describe('detectIdle', () => {
     let sessions;
 
