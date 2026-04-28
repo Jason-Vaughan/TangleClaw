@@ -221,10 +221,23 @@ describe('Session Wrapper UI', () => {
       assert.ok(html.includes('countdown'));
     });
 
-    it('should include wrap-idle banner with Return / Resume buttons', () => {
+    it('should include wrap-idle modal with Return / Resume buttons (#98)', () => {
+      // #sessionWrapIdle is now a .modal-backdrop / .modal-content modal
+      // (was inline banner before #98). Sticky once shown — backdrop click
+      // dismisses (= Resume working).
       assert.ok(html.includes('sessionWrapIdle'));
       assert.ok(html.includes('wrapReturnBtn'));
       assert.ok(html.includes('wrapResumeBtn'));
+      // Locate the modal element and assert it carries the modal classes.
+      const idx = html.indexOf('id="sessionWrapIdle"');
+      assert.ok(idx >= 0, 'sessionWrapIdle must exist in markup');
+      const openTag = html.slice(html.lastIndexOf('<', idx), html.indexOf('>', idx) + 1);
+      assert.ok(openTag.includes('modal-backdrop'), 'sessionWrapIdle must carry modal-backdrop');
+      // Modal-content with role="dialog" + aria-modal must be present in the slice.
+      const slice = html.slice(idx, html.indexOf('</div>', idx) + 200);
+      assert.ok(slice.includes('modal-content'), 'must contain modal-content');
+      assert.ok(slice.includes('aria-modal="true"'), 'must be aria-modal');
+      assert.ok(slice.includes('modal-actions'), 'must contain modal-actions');
     });
 
     it('should include connection toast', () => {
@@ -289,8 +302,11 @@ describe('Session Wrapper UI', () => {
       assert.ok(css.includes('.status-dot.disconnected'));
     });
 
-    it('should include wrap-idle banner styles (#91)', () => {
-      assert.ok(css.includes('.session-wrap-idle'));
+    it('should not carry the legacy wrap-idle banner CSS class (#98)', () => {
+      // The .session-wrap-idle inline-banner class was removed when the
+      // wrap-idle UI moved to the existing .modal-backdrop / .modal-content
+      // pattern. The tests for those classes live elsewhere.
+      assert.ok(!css.includes('.session-wrap-idle'));
     });
 
     it('should include command bar styles', () => {
@@ -446,10 +462,54 @@ describe('Session Wrapper UI', () => {
       assert.ok(!js.includes('clearWrapTimeout'));
     });
 
-    it('should expose wrap-idle banner handlers (#91)', () => {
-      assert.ok(js.includes('function showWrapIdleBanner('));
+    it('should expose wrap-idle modal handlers (#91, renamed in #98)', () => {
+      assert.ok(js.includes('function showWrapIdleModal('));
+      assert.ok(!js.includes('function showWrapIdleBanner('));
       assert.ok(js.includes('function resumeFromWrapIdle('));
       assert.ok(js.includes('async function confirmReturnFromWrapIdle('));
+    });
+
+    it('wrap-idle modal is sticky once shown — no auto-hide on idle flip-flop (#98)', () => {
+      // PR #93 added a Critic-MAJOR-2 auto-hide that called resumeFromWrapIdle()
+      // from the poll handler when data.wrapping && !data.idle and the banner
+      // was shown. #98 dropped that branch — incidental ttyd redraw events were
+      // dismissing the modal under the cursor. Verify the auto-hide call is
+      // no longer wired through that branch.
+      const branchIdx = js.indexOf('AI active again');
+      assert.ok(branchIdx >= 0, 'expected the wrapping-active comment');
+      // Slice ~400 chars after the comment — that's the poll-handler else-branch.
+      const slice = js.slice(branchIdx, branchIdx + 400);
+      assert.ok(!slice.includes('resumeFromWrapIdle()'),
+        'auto-hide-on-resume must be removed from the poll handler');
+    });
+
+    it('wrap-idle modal supports backdrop click → dismiss (#98)', () => {
+      // Mirror of the wrapModal / killModal backdrop pattern: clicking the
+      // .modal-backdrop element (not its content) calls resumeFromWrapIdle.
+      // Brace-walk the listener body so a wrapping comment doesn't escape the
+      // window — the body itself is what we're asserting.
+      const wireIdx = js.indexOf("$('sessionWrapIdle').addEventListener");
+      assert.ok(wireIdx >= 0, 'sessionWrapIdle must have a click listener wired');
+      const arrowStart = js.indexOf('=>', wireIdx);
+      assert.ok(arrowStart >= 0, 'expected arrow function in listener');
+      let i = js.indexOf('{', arrowStart);
+      assert.ok(i >= 0, 'expected listener body open brace');
+      let depth = 0;
+      let end = -1;
+      for (; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      const body = js.slice(wireIdx, end + 1);
+      assert.ok(body.includes('e.target === e.currentTarget'),
+        'backdrop click must guard on event target equality');
+      assert.ok(body.includes('resumeFromWrapIdle'),
+        'backdrop click must call resumeFromWrapIdle');
+      assert.ok(body.includes('wrapCompleting'),
+        'backdrop click must short-circuit while a Return POST is in flight');
     });
 
     it('should not navigate when /wrap/complete POST fails (#91 Critic)', () => {

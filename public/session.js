@@ -552,21 +552,23 @@ async function pollStatus() {
   }
 
   // Handle wrap finished but tmux still alive (idle during wrapping).
-  // Show the wrap-idle banner — does NOT auto-finalize. User must click
-  // "Return to Projects" (kills tmux) or "Resume working" (dismisses banner).
+  // Show the wrap-idle modal — does NOT auto-finalize. User must click
+  // "Return to Projects" (kills tmux), "Resume working", or click the
+  // backdrop (both dismiss). The modal is sticky once shown — it does NOT
+  // auto-hide on subsequent idle flip-flops, because incidental ttyd redraw
+  // events (mouse hover into iframe, laptop reattach) can cause data.idle
+  // to briefly flip to false. See #98.
   if (data.wrapping && data.idle && !sessionState.ended) {
     sessionState.wrapIdleCount = (sessionState.wrapIdleCount || 0) + 1;
     // 8 polls (~16s at 2s interval) — survives brief git push / Critic pauses
-    if (sessionState.wrapIdleCount >= 8 && !sessionState.wrapIdleBannerShown) {
-      showWrapIdleBanner();
+    if (sessionState.wrapIdleCount >= 8 && !sessionState.wrapIdleModalShown) {
+      showWrapIdleModal();
     }
   } else if (data.wrapping) {
-    // AI is active again — reset counter and hide banner if it was shown,
-    // so a fleeting click on "Resume working" isn't required when the AI
-    // demonstrably resumed work on its own.
-    sessionState.wrapIdleCount = 0;
-    if (sessionState.wrapIdleBannerShown) {
-      resumeFromWrapIdle();
+    // AI active again: only reset the pre-modal counter. Once the modal is
+    // shown, it stays put until the user explicitly chooses an action.
+    if (!sessionState.wrapIdleModalShown) {
+      sessionState.wrapIdleCount = 0;
     }
   }
 
@@ -637,11 +639,11 @@ function handleSessionEnded(statusData) {
   sessionState.ended = true;
   stopPolling();
 
-  // Defensively hide wrap-idle banner — if tmux died while it was showing,
+  // Defensively hide wrap-idle modal — if tmux died while it was showing,
   // the wrap-completed code path normally handles this, but cover the case
   // where we land here directly.
-  document.getElementById('sessionWrapIdle').classList.add('hidden');
-  sessionState.wrapIdleBannerShown = false;
+  document.getElementById('sessionWrapIdle').classList.remove('open');
+  sessionState.wrapIdleModalShown = false;
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('ended');
@@ -1591,7 +1593,7 @@ function setupTerminalTouchScroll() {
  */
 function showWrappingState() {
   sessionState.wrapping = true;
-  sessionState.wrapIdleBannerShown = false;
+  sessionState.wrapIdleModalShown = false;
   sessionState.wrapIdleCount = 0;
 
   const dot = document.getElementById('statusDot');
@@ -1606,36 +1608,37 @@ function showWrappingState() {
 
   // Show wrapping bar
   document.getElementById('sessionWrapping').classList.remove('hidden');
-  document.getElementById('sessionWrapIdle').classList.add('hidden');
+  document.getElementById('sessionWrapIdle').classList.remove('open');
 }
 
 /**
- * Show the wrap-idle banner. Tmux stays alive — user must explicitly choose
- * to finalize ("Return to Projects") or dismiss ("Resume working").
+ * Show the wrap-idle modal. Tmux stays alive — user must explicitly choose
+ * to finalize ("Return to Projects"), dismiss ("Resume working"), or click
+ * the backdrop. Sticky once shown — see #98.
  */
-function showWrapIdleBanner() {
-  sessionState.wrapIdleBannerShown = true;
-  document.getElementById('sessionWrapIdle').classList.remove('hidden');
+function showWrapIdleModal() {
+  sessionState.wrapIdleModalShown = true;
+  document.getElementById('sessionWrapIdle').classList.add('open');
   document.getElementById('wrapReturnBtn').disabled = false;
   document.getElementById('wrapResumeBtn').disabled = false;
 }
 
 /**
- * Dismiss the wrap-idle banner without finalizing. Resets the idle counter so
- * the banner can re-appear if the AI goes idle again for another threshold window.
+ * Dismiss the wrap-idle modal without finalizing. Resets the idle counter so
+ * the modal can re-appear if the AI goes idle again for another threshold window.
  */
 function resumeFromWrapIdle() {
-  sessionState.wrapIdleBannerShown = false;
+  sessionState.wrapIdleModalShown = false;
   sessionState.wrapIdleCount = 0;
-  document.getElementById('sessionWrapIdle').classList.add('hidden');
+  document.getElementById('sessionWrapIdle').classList.remove('open');
 }
 
 /**
- * "Return to Projects" handler from the wrap-idle banner. Finalizes the wrap
+ * "Return to Projects" handler from the wrap-idle modal. Finalizes the wrap
  * (POST /wrap/complete kills tmux on the server), then transitions to the
  * ended state and navigates back to projects. Guarded against re-entry.
  * If the POST fails (network/server error), tmux is still alive — re-enable
- * the banner buttons so the user can retry instead of getting silently bounced.
+ * the modal buttons so the user can retry instead of getting silently bounced.
  */
 async function confirmReturnFromWrapIdle() {
   if (sessionState.wrapCompleting) return;
@@ -1677,12 +1680,12 @@ function handleWrapCompleted(data) {
   sessionState.ended = true;
   sessionState.wrapping = false;
   sessionState.wrapCompleting = false;
-  sessionState.wrapIdleBannerShown = false;
+  sessionState.wrapIdleModalShown = false;
   stopPolling();
 
   // Hide wrap-related bars
   document.getElementById('sessionWrapping').classList.add('hidden');
-  document.getElementById('sessionWrapIdle').classList.add('hidden');
+  document.getElementById('sessionWrapIdle').classList.remove('open');
 
   const dot = document.getElementById('statusDot');
   dot.classList.remove('wrapping');
@@ -1735,9 +1738,17 @@ function bindEvents() {
     $('stayBtn').disabled = true;
   });
 
-  // Wrap-idle banner buttons
+  // Wrap-idle modal buttons + backdrop click
   $('wrapReturnBtn').addEventListener('click', confirmReturnFromWrapIdle);
   $('wrapResumeBtn').addEventListener('click', resumeFromWrapIdle);
+  $('sessionWrapIdle').addEventListener('click', (e) => {
+    // Don't dismiss while a Return-to-Projects POST is in flight (Critic NIT).
+    // Either the POST will succeed (modal hidden via handleWrapCompleted) or
+    // fail (toast surfaced via confirmReturnFromWrapIdle's error path), and
+    // the modal stays put either way until that resolves.
+    if (sessionState.wrapCompleting) return;
+    if (e.target === e.currentTarget) resumeFromWrapIdle();
+  });
 
   // Upload modal
   $('uploadFile').addEventListener('change', handleFileSelect);
