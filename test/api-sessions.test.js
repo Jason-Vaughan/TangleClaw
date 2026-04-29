@@ -284,6 +284,46 @@ describe('api-sessions', () => {
       config.deletePassword = null;
       store.config.save(config);
     });
+
+    it('returns 200 with reconciled:true when killSession reports orphan tmux cleanup (#105)', async () => {
+      // Stub the lifecycle layer to simulate "no DB row but tmux orphan was killed".
+      const sessionsLifecycle = require('../lib/sessions');
+      const original = sessionsLifecycle.killSession;
+      sessionsLifecycle.killSession = () => ({ session: null, reconciled: true, error: null });
+
+      try {
+        const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {});
+        assert.equal(res.status, 200);
+        assert.equal(res.body.ok, true);
+        assert.equal(res.body.reconciled, true);
+        assert.equal(res.body.project, 'api-sess-test');
+        // No session id is surfaced — there was no DB row to update.
+        assert.equal(res.body.sessionId, undefined);
+      } finally {
+        sessionsLifecycle.killSession = original;
+      }
+    });
+
+    it('returns 200 with sessionId when killSession kills a wrapping row (#105)', async () => {
+      const sessionsLifecycle = require('../lib/sessions');
+      const original = sessionsLifecycle.killSession;
+      sessionsLifecycle.killSession = () => ({
+        session: { id: 9999, durationSeconds: 42, status: 'killed' },
+        error: null
+      });
+
+      try {
+        const res = await request(server, 'DELETE', '/api/sessions/api-sess-test', {});
+        assert.equal(res.status, 200);
+        assert.equal(res.body.ok, true);
+        assert.equal(res.body.sessionId, 9999);
+        assert.equal(res.body.status, 'killed');
+        assert.equal(res.body.durationSeconds, 42);
+        assert.notEqual(res.body.reconciled, true);
+      } finally {
+        sessionsLifecycle.killSession = original;
+      }
+    });
   });
 
   describe('POST /api/sessions/:project (launch)', () => {
