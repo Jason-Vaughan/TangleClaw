@@ -635,6 +635,139 @@ describe('sessions', () => {
     });
   });
 
+  describe('killSession recovers wrapping + orphan tmux (#105)', () => {
+    let sessions;
+    const tmux = require('../lib/tmux');
+    let originalHasSession;
+    let originalKillSession;
+    let killedTmux;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalKillSession = tmux.killSession;
+      killedTmux = [];
+      tmux.killSession = (name) => { killedTmux.push(name); };
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.killSession = originalKillSession;
+      // Cleanup any leftover wrapping/active rows so tests are independent
+      const project = store.projects.getByName('prime-test');
+      if (project) {
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.kill(wrapping.id, 'test cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('kills wrapping session when tmux is alive', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-wrapping-alive'
+      });
+      store.sessions.setWrapping(session.id);
+      tmux.hasSession = (name) => name === 'kill-wrapping-alive';
+
+      const result = sessions.killSession('prime-test', 'user kill while wrapping');
+
+      assert.equal(result.error, null);
+      assert.ok(result.session, 'should return killed session');
+      assert.equal(result.session.status, 'killed');
+      assert.deepEqual(killedTmux, ['kill-wrapping-alive'], 'tmux session should be killed');
+    });
+
+    it('kills wrapping session when tmux is already dead — reconciles DB only', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-wrapping-dead'
+      });
+      store.sessions.setWrapping(session.id);
+      tmux.hasSession = () => false;
+
+      const result = sessions.killSession('prime-test');
+
+      assert.equal(result.error, null);
+      assert.ok(result.session);
+      assert.equal(result.session.status, 'killed');
+      assert.deepEqual(killedTmux, [], 'should not call tmux.killSession when session is dead');
+    });
+
+    it('reconciles orphan tmux when no DB row exists', () => {
+      // No active and no wrapping row — but tmux still has a session.
+      tmux.hasSession = (name) => name === 'prime-test';
+
+      const result = sessions.killSession('prime-test', 'cleanup orphan');
+
+      assert.equal(result.error, null);
+      assert.equal(result.session, null);
+      assert.equal(result.reconciled, true);
+      assert.deepEqual(killedTmux, ['prime-test'], 'orphan tmux should be killed under the project name');
+    });
+
+    it('returns NOT_FOUND-style error when no DB row and no orphan tmux', () => {
+      tmux.hasSession = () => false;
+
+      const result = sessions.killSession('prime-test');
+
+      assert.equal(result.session, null);
+      assert.ok(result.error.includes('No active session'));
+      assert.ok(!result.reconciled);
+      assert.deepEqual(killedTmux, []);
+    });
+
+    it('clears wrap pane cache when killing wrapping session', () => {
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-wrapping-cache'
+      });
+      store.sessions.setWrapping(session.id);
+      sessions._wrapPaneCache.set(session.id, 'cached pane output');
+      tmux.hasSession = () => true;
+
+      sessions.killSession('prime-test');
+
+      assert.equal(sessions._wrapPaneCache.has(session.id), false, 'cache entry should be cleared');
+    });
+
+    it('prefers active over wrapping when both somehow exist', () => {
+      // Defensive: there shouldn't normally be both, but if a future bug allows
+      // it the kill button must target the active row first.
+      const project = store.projects.getByName('prime-test');
+      const wrappingSession = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-priority-wrap'
+      });
+      store.sessions.setWrapping(wrappingSession.id);
+      const activeSession = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'kill-priority-active'
+      });
+      tmux.hasSession = () => true;
+
+      const result = sessions.killSession('prime-test');
+
+      assert.equal(result.session.id, activeSession.id, 'should target the active row');
+      assert.deepEqual(killedTmux, ['kill-priority-active']);
+
+      // Cleanup the still-wrapping row
+      store.sessions.kill(wrappingSession.id, 'test cleanup');
+    });
+  });
+
   describe('completeWrap', () => {
     let sessions;
 
@@ -1079,6 +1212,202 @@ describe('sessions', () => {
       assert.ok(result.session, 'should return a session');
       assert.equal(result.session.tmuxSession, 'orphan-test');
       assert.equal(result.session.engineId, 'claude');
+    });
+  });
+
+  describe('launchSession stale wrapping recovery (#105)', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let sessions;
+    let originalHasSession;
+    let originalDetectEngine;
+    let originalKillSession;
+    let originalCreateSession;
+    let killedTmux;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      // Project for launch-guard tests
+      const projDir = path.join(projectsDir, 'stale-wrap');
+      fs.mkdirSync(projDir, { recursive: true });
+      store.projects.create({
+        name: 'stale-wrap',
+        path: projDir,
+        engine: 'claude',
+        methodology: 'minimal'
+      });
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalDetectEngine = enginesModule.detectEngine;
+      originalKillSession = tmux.killSession;
+      originalCreateSession = tmux.createSession;
+      killedTmux = [];
+      tmux.killSession = (name) => { killedTmux.push(name); };
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.killSession = originalKillSession;
+      tmux.createSession = originalCreateSession;
+      enginesModule.detectEngine = originalDetectEngine;
+      const project = store.projects.getByName('stale-wrap');
+      if (project) {
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.kill(wrapping.id, 'test cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    /**
+     * Force a session row's wrap_started_at to a past timestamp (simulating a
+     * wrap that has been stuck for `hoursAgo` hours). Uses store.getDb()
+     * directly since there is no public mutator for this column — appropriate
+     * here because the field is otherwise managed exclusively by setWrapping.
+     */
+    function _backdateWrapStart(sessionId, hoursAgo) {
+      const db = store.getDb();
+      db.prepare(`UPDATE sessions SET wrap_started_at = datetime('now', ?) WHERE id = ?`)
+        .run(`-${hoursAgo} hours`, sessionId);
+    }
+
+    function _backdateStartedAt(sessionId, hoursAgo) {
+      const db = store.getDb();
+      db.prepare(`UPDATE sessions SET started_at = datetime('now', ?) WHERE id = ?`)
+        .run(`-${hoursAgo} hours`, sessionId);
+    }
+
+    function _clearWrapStart(sessionId) {
+      const db = store.getDb();
+      db.prepare('UPDATE sessions SET wrap_started_at = NULL WHERE id = ?').run(sessionId);
+    }
+
+    it('recovers stale wrapping row (>1h) and proceeds with fresh launch', () => {
+      const project = store.projects.getByName('stale-wrap');
+      // Distinct tmux name on the wrapping row so the recovery-kill is
+      // distinguishable from the pre-launch orphan-kill that fires later in
+      // launchSession against the project's canonical tmux name (Critic MINOR).
+      const stale = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'stale-wrap-OLD'
+      });
+      store.sessions.setWrapping(stale.id);
+      _backdateWrapStart(stale.id, 2); // wrap began 2h ago — well past threshold
+      tmux.hasSession = (name) => name === 'stale-wrap-OLD' || name === 'stale-wrap';
+
+      const result = sessions.launchSession('stale-wrap');
+
+      assert.equal(result.error, null, 'launch should proceed');
+      assert.ok(result.session, 'fresh session should be created');
+      assert.notEqual(result.session.id, stale.id, 'should be a new session row');
+      assert.ok(killedTmux.includes('stale-wrap-OLD'),
+        'stale wrapping tmux name should have been killed during recovery branch');
+
+      // Original wrapping row should now be marked killed
+      const recovered = store.sessions.list(project.id, { status: 'killed', limit: 5 })
+        .find((s) => s.id === stale.id);
+      assert.ok(recovered, 'stale row should be marked killed');
+      assert.equal(recovered.status, 'killed');
+    });
+
+    it('falls back to recovery (not block) when timestamps are unparseable', () => {
+      // Defense for MINOR 5: a wrapping row with corrupt timestamps must not
+      // brick the project. Fail-safe direction is "recover" since that's the
+      // entire bug class #105 was filed for.
+      const project = store.projects.getByName('stale-wrap');
+      const corrupt = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'corrupt-wrap'
+      });
+      store.sessions.setWrapping(corrupt.id);
+      const db = store.getDb();
+      db.prepare("UPDATE sessions SET wrap_started_at = '<not a date>', started_at = '<not a date>' WHERE id = ?")
+        .run(corrupt.id);
+      tmux.hasSession = () => true;
+
+      const result = sessions.launchSession('stale-wrap');
+      assert.equal(result.error, null, 'corrupt timestamps must not block launch');
+      assert.ok(result.session);
+    });
+
+    it('blocks launch when wrapping row is recent (<1h) and tmux is alive', () => {
+      const project = store.projects.getByName('stale-wrap');
+      const recent = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'recent-wrap'
+      });
+      store.sessions.setWrapping(recent.id);
+      // wrap_started_at defaults to now (just set by setWrapping) — well within threshold
+      tmux.hasSession = (name) => name === 'recent-wrap';
+
+      const result = sessions.launchSession('stale-wrap');
+
+      assert.equal(result.session, null);
+      assert.ok(result.error.includes('currently wrapping'));
+      assert.deepEqual(killedTmux, [], 'recent wrap should not be killed');
+    });
+
+    it('falls back to started_at for legacy rows with NULL wrap_started_at', () => {
+      // Legacy row predates schema v14 — wrap_started_at is NULL but the row
+      // is in wrapping status with an old started_at. Should still recover.
+      const project = store.projects.getByName('stale-wrap');
+      const legacy = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'legacy-wrap-OLD'
+      });
+      store.sessions.setWrapping(legacy.id);
+      _clearWrapStart(legacy.id);
+      _backdateStartedAt(legacy.id, 3); // started 3h ago
+      tmux.hasSession = (name) => name === 'legacy-wrap-OLD' || name === 'stale-wrap';
+
+      const result = sessions.launchSession('stale-wrap');
+
+      assert.equal(result.error, null, 'legacy stale row should be recovered too');
+      assert.ok(result.session);
+      assert.notEqual(result.session.id, legacy.id);
+      assert.ok(killedTmux.includes('legacy-wrap-OLD'),
+        'legacy stale tmux name should have been killed during recovery');
+    });
+
+    it('STALE_WRAPPING_THRESHOLD_MS is 1 hour', () => {
+      assert.equal(sessions.STALE_WRAPPING_THRESHOLD_MS, 60 * 60 * 1000);
+    });
+
+    it('setWrapping populates wrap_started_at on transition (schema v14)', () => {
+      const project = store.projects.getByName('stale-wrap');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'set-wrapping-timestamp'
+      });
+      const wrapped = store.sessions.setWrapping(session.id);
+      assert.ok(wrapped, 'setWrapping should return updated row');
+      assert.equal(wrapped.status, 'wrapping');
+      assert.ok(wrapped.wrapStartedAt, 'wrap_started_at should be populated');
+      // Should be within the last few seconds. Parse as UTC since SQLite emits
+      // a TZ-less string and the test machine may not be in UTC.
+      const ageMs = Date.now() - sessions._parseSqliteUtcMs(wrapped.wrapStartedAt);
+      assert.ok(ageMs < 5000, `wrap_started_at should be very recent (got ageMs=${ageMs})`);
+      assert.ok(ageMs >= 0, `wrap_started_at should not be in the future (got ageMs=${ageMs})`);
+    });
+
+    it('_parseSqliteUtcMs interprets TZ-less SQLite timestamps as UTC', () => {
+      // SQLite emits 'YYYY-MM-DD HH:MM:SS' without timezone — should parse as UTC.
+      const tzLess = '2026-04-29 05:00:00';
+      const withZ = '2026-04-29T05:00:00Z';
+      assert.equal(sessions._parseSqliteUtcMs(tzLess), Date.parse(withZ));
+      // Also handle inputs that already have Z or offset
+      assert.equal(sessions._parseSqliteUtcMs(withZ), Date.parse(withZ));
+      assert.ok(Number.isNaN(sessions._parseSqliteUtcMs(null)));
+      assert.ok(Number.isNaN(sessions._parseSqliteUtcMs('')));
     });
   });
 });

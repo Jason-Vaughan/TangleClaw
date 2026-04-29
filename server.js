@@ -1171,6 +1171,15 @@ route('DELETE', '/api/sessions/:project', (_req, res, params, body) => {
     return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
   }
 
+  // Orphan tmux reconciliation — DB had no session row but tmux had one (#105).
+  if (result.reconciled) {
+    return jsonResponse(res, 200, {
+      ok: true,
+      project: params.project,
+      reconciled: true
+    });
+  }
+
   jsonResponse(res, 200, {
     ok: true,
     sessionId: result.session.id,
