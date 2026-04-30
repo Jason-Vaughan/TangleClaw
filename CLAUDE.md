@@ -14,174 +14,174 @@
 - Use decision framework before adding code
 - Independent Critic review after medium+ work
 
-# Global Rules                                                                                                                                                           
-                                          
-  These rules apply to all projects managed by TangleClaw, across all engines.                                                                                             
-  Edit them from the TangleClaw landing page or via the API.                                                                                                               
-                                                                                                                                                                           
-  ## General                                                                                                                                                               
-                                                                                                                                                                           
-  - Follow the project's existing code style and conventions
-  - Prefer small, focused commits over large monolithic ones                                                                                                               
-  - Keep functions short and single-purpose                 
-  - Write clear commit messages that explain why, not just what
-                                                               
-  ## Build Plans & Chunks
-                                                                                                                                                                           
-  Claude Code stores plan files globally at `~/.claude/plans/`. This causes problems _ plans get lost across sessions and can collide between projects.
-                                                                                                                                                                           
-  **Rule: Keep plans local to the project.**             
-  - After creating or updating a plan in Claude Code's plan mode, copy the plan file into the project directory at `<project-root>/.claude/plans/<plan-name>.md`.
-  - All memory entries and session handoffs must reference the **project-local copy** using its absolute path (e.g.,                                                       
-  `/Users/jasonvaughan/Documents/Projects/MyProject/.claude/plans/my-plan.md`).                                     
-  - Never reference plans with ambiguous relative paths like `.claude/plans/...` _ always use absolute paths.                                                              
-  - Each project's plans live inside that project. Do not rely on `~/.claude/plans/` as the source of truth across sessions.
-                                                                                                                                                                           
-  ## Memory Hygiene                                                                                                                                                        
-                                              
-  Memory entries that exist only to bridge a specific gap (e.g., "decisions ratified in chat that haven't yet landed in the canonical plan", "context for an in-progress   
-  migration", "notes for an open incident") should not be allowed to outlive their purpose. They turn into stale canon and quietly mislead future sessions.                
-                                                                                                                                                                           
-  **Rule: Bridge memos must self-delete.**                                                                                                                                 
-                                                                                                                                                                           
-  When you create a bridging memory entry:               
-  - Frontmatter `description` must explicitly state the file is **self-deleting** and reference the cleanup criterion.                                                     
-  - File body must include a prominent "**__ Auto-cleanup check**" section near the top with:                                                                              
-    1. A short, mechanical procedure to verify whether the bridging condition is still relevant (e.g., "read this file path, check whether these specific items appear in
-  it").                                                                                                                                                                    
-    2. The action to take if the condition is resolved: `rm` the memory file AND prune its line from `MEMORY.md`.
-    3. The action to take if the condition is still pending: leave the file alone, treat its contents as canonical until ratified.                                         
-  - `MEMORY.md` index line should signal the self-deleting nature (e.g., "**Self-deleting**: read its top 'Auto-cleanup check' section every session_").                   
-                                                                                                                                                                           
-  When you read a bridging memory entry at session start:                                                                                                                  
-  - Run the cleanup check before treating the file as canon.                                                                                                               
-  - If the check says delete, delete the file and prune `MEMORY.md` before continuing.                                                                                     
-                                                                                                                                                                           
-  This prevents memory pollution and ensures bridging notes resolve cleanly into the permanent canonical docs (build plans, specs, ADRs) rather than accumulating as stale 
-  background.                                                                                                                                                              
-                                                                                                                                                                     
-  ## Priming Prompts                                                                                                                                                       
-                                                         
-  When a project develops a recurring "session role" (e.g., advisor session for a parallel build, on-call review session, debugging session), the priming prompt for that role should be saved as a durable artifact, not kept in chat memory.
-                                                                                                                                                                           
-  **Rule: Save priming prompts as git-tracked files.**                                                                                                                     
-  - Path convention: `<project-root>/.claude/priming/<role>.md`.
-  - The file should contain the verbatim block to paste, plus a short "How to use" section.                                                                                
-  - Update history at the bottom (date + what changed) so divergence over time is visible.                                                                                 
-                                              
-  ## Cross-Session Write Boundaries                                                                                                                                        
-                                                                                                                                                                           
-  When two Claude Code sessions are working on related but distinct repos (e.g., an advisor session and a builder session, or a coordinator and an executor), the sessions 
-  should respect repo ownership.                                                                                                                                           
-                                                                                                                                                                           
-  **Rule: Don't write to the other session's repo from yours.**                                                                                                            
-  - The advisor / coordinator session should not commit to the builder / executor's repo, even when "it would be faster."
-  - Suggestions go via memo-back: produce a paste-able block the other session can apply, or write to a shared bridge memo (subject to the Memory Hygiene rule above).     
-  - Both sessions can edit shared infrastructure (TangleClaw config, ports, etc.) since neither owns it.                                                                   
-  - This prevents merge conflicts, surprises in the other session's git log, and ambiguity about who's responsible for which commit.
+# Global Rules
 
-  ## Issues & Feature Requests
+These rules apply to all projects managed by TangleClaw, across all engines.
+Edit them from the TangleClaw landing page or via the API.
 
-  GitHub Issues are the canonical place to surface work that doesn't fit the current scope. They're searchable, citeable, assignable, and contribute to the project's public activity stats.
+## General
 
-  **Rule: File issues for bugs, deferred features, and open questions — don't bury them in chat or memory files.**
+- Follow the project's existing code style and conventions
+- Prefer small, focused commits over large monolithic ones
+- Keep functions short and single-purpose
+- Write clear commit messages that explain why, not just what
 
-  When the agent surfaces a bug, scope creep, deferred feature, or unresolved question that exceeds the current work item, suggest filing a GitHub issue before continuing.
+## Build Plans & Chunks
 
-  - Title format: `[type] subject` where type is `bug`, `feature`, `chore`, `docs`, `question`.
-  - Body covers: what / why / how-to-reproduce (for bugs) or expected behavior (for features).
-  - Use templates from `.github/ISSUE_TEMPLATE/` if the repo has them.
-  - Link issues from PRs and commits with `Fixes #N` / `Closes #N` syntax — auto-closes the issue on merge.
-  - For solo projects: even when you'll fix it yourself, file the issue first, close it via the PR. The history is the value.
+Claude Code stores plan files globally at `~/.claude/plans/`. This causes problems _ plans get lost across sessions and can collide between projects.
 
-  ## Branches & Pull Requests
+**Rule: Keep plans local to the project.**
+- After creating or updating a plan in Claude Code's plan mode, copy the plan file into the project directory at `<project-root>/.claude/plans/<plan-name>.md`.
+- All memory entries and session handoffs must reference the **project-local copy** using its absolute path (e.g.,
+`/Users/jasonvaughan/Documents/Projects/MyProject/.claude/plans/my-plan.md`).
+- Never reference plans with ambiguous relative paths like `.claude/plans/...` _ always use absolute paths.
+- Each project's plans live inside that project. Do not rely on `~/.claude/plans/` as the source of truth across sessions.
 
-  Substantive work goes through a feature branch and a pull request, even for solo projects. The PR is documentation of why a change happened — it's not just process overhead.
+## Memory Hygiene
 
-  **Rule: Branch + PR for substantive work; direct main commits only for trivial doc edits or incident hot-fixes.**
+Memory entries that exist only to bridge a specific gap (e.g., "decisions ratified in chat that haven't yet landed in the canonical plan", "context for an in-progress
+migration", "notes for an open incident") should not be allowed to outlive their purpose. They turn into stale canon and quietly mislead future sessions.
 
-  - Branch naming: `feat/<short-name>`, `fix/<short-name>`, `chore/<short-name>`, `docs/<short-name>`, `refactor/<short-name>`.
-  - PR titles in active voice ("Add X", "Fix Y when Z", "Update W to vN.N").
-  - PR body has "What", "Why", and "Test plan" sections; link to issues with `Fixes #N`.
-  - Delete branches after merge.
+**Rule: Bridge memos must self-delete.**
 
-  **Rule: Pair `gh pr create` with `gh pr merge --auto --squash --delete-branch` for routine PRs.**
+When you create a bridging memory entry:
+- Frontmatter `description` must explicitly state the file is **self-deleting** and reference the cleanup criterion.
+- File body must include a prominent "**__ Auto-cleanup check**" section near the top with:
+  1. A short, mechanical procedure to verify whether the bridging condition is still relevant (e.g., "read this file path, check whether these specific items appear in
+it").
+  2. The action to take if the condition is resolved: `rm` the memory file AND prune its line from `MEMORY.md`.
+  3. The action to take if the condition is still pending: leave the file alone, treat its contents as canonical until ratified.
+- `MEMORY.md` index line should signal the self-deleting nature (e.g., "**Self-deleting**: read its top 'Auto-cleanup check' section every session_").
 
-  Routine PRs are docs, chore, version bumps, dependency updates, and test-only changes. Once branch protection gates clear, GitHub merges the PR server-side — no waiting on the session.
+When you read a bridging memory entry at session start:
+- Run the cleanup check before treating the file as canon.
+- If the check says delete, delete the file and prune `MEMORY.md` before continuing.
 
-  When opening a PR for routine work, immediately follow with:
+This prevents memory pollution and ensures bridging notes resolve cleanly into the permanent canonical docs (build plans, specs, ADRs) rather than accumulating as stale
+background.
 
-  ```
-  gh pr merge <PR#> --auto --squash --delete-branch
-  ```
+## Priming Prompts
 
-  GitHub holds the PR and merges the instant required checks pass.
+When a project develops a recurring "session role" (e.g., advisor session for a parallel build, on-call review session, debugging session), the priming prompt for that role should be saved as a durable artifact, not kept in chat memory.
 
-  **When to use `--auto`:**
-  - Documentation-only changes (README, CHANGELOG, MEMORY, plan files, comments, JSDoc).
-  - Chore PRs (dependency bumps, version updates, gitignore tweaks) where the change is mechanical and doesn't shift active methodology.
-  - Test-only PRs where the test code is the entire change.
+**Rule: Save priming prompts as git-tracked files.**
+- Path convention: `<project-root>/.claude/priming/<role>.md`.
+- The file should contain the verbatim block to paste, plus a short "How to use" section.
+- Update history at the bottom (date + what changed) so divergence over time is visible.
 
-  **When NOT to use `--auto`:**
-  - Feature PRs (anything user-facing or behavior-changing).
-  - Refactors with non-trivial code movement.
-  - Anything that triggered an Independent Critic review — wait until findings are addressed and the user has signed off.
-  - PRs touching CI workflows, deploy config, secrets, or branch protection rules.
-  - Any PR the user has explicitly said they want to review before merging.
+## Cross-Session Write Boundaries
 
-  **Why `--squash`:** keeps `main` history linear and CHANGELOG-friendly. Matches the one-squash-commit-per-PR pattern most projects already use.
+When two Claude Code sessions are working on related but distinct repos (e.g., an advisor session and a builder session, or a coordinator and an executor), the sessions
+should respect repo ownership.
 
-  **Safety note:** branch protection rules still gate. If `main` requires a review, `--auto` waits for that review before merging. This rule never *overrides* protection — it only *removes the wait* once gates clear. Safe to apply broadly.
+**Rule: Don't write to the other session's repo from yours.**
+- The advisor / coordinator session should not commit to the builder / executor's repo, even when "it would be faster."
+- Suggestions go via memo-back: produce a paste-able block the other session can apply, or write to a shared bridge memo (subject to the Memory Hygiene rule above).
+- Both sessions can edit shared infrastructure (TangleClaw config, ports, etc.) since neither owns it.
+- This prevents merge conflicts, surprises in the other session's git log, and ambiguity about who's responsible for which commit.
 
-  **If auto-merge isn't enabled on the repo:** `gh pr merge --auto` will error. Either enable it in repo Settings → General → Pull Requests, or fall back to `gh pr checks <PR#> --watch` followed by a manual merge.
+## Issues & Feature Requests
 
-  ## Releases & Versioning
+GitHub Issues are the canonical place to surface work that doesn't fit the current scope. They're searchable, citeable, assignable, and contribute to the project's public activity stats.
 
-  Substantive milestones become tagged releases on GitHub. Releases create permanent, citeable URLs and contribute to the project's public activity.
+**Rule: File issues for bugs, deferred features, and open questions — don't bury them in chat or memory files.**
 
-  **Rule: Tag releases with semver and create GitHub Releases with CHANGELOG-driven notes.**
+When the agent surfaces a bug, scope creep, deferred feature, or unresolved question that exceeds the current work item, suggest filing a GitHub issue before continuing.
 
-  - Use semver: MAJOR for breaking changes, MINOR for new features, PATCH for bug fixes. Pre-1.0 projects can use 0.x freely.
-  - After a substantive merge, suggest tagging: `git tag -a vX.Y.Z -m "..." && git push --tags`.
-  - Create the GitHub release: `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for hand-curated notes from CHANGELOG).
-  - Maintain a `CHANGELOG.md` in Keep a Changelog format with `[Unreleased]` section + dated release entries. Each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
+- Title format: `[type] subject` where type is `bug`, `feature`, `chore`, `docs`, `question`.
+- Body covers: what / why / how-to-reproduce (for bugs) or expected behavior (for features).
+- Use templates from `.github/ISSUE_TEMPLATE/` if the repo has them.
+- Link issues from PRs and commits with `Fixes #N` / `Closes #N` syntax — auto-closes the issue on merge.
+- For solo projects: even when you'll fix it yourself, file the issue first, close it via the PR. The history is the value.
 
-  ## Repository Standards
+## Branches & Pull Requests
 
-  Every repo should look professional and ready for visitors — future-self, contributors, and hiring evaluators reviewing the user's portfolio.
+Substantive work goes through a feature branch and a pull request, even for solo projects. The PR is documentation of why a change happened — it's not just process overhead.
 
-  **Rule: Maintain a baseline of repository hygiene files; the agent suggests creating missing ones when the project's stage warrants.**
+**Rule: Branch + PR for substantive work; direct main commits only for trivial doc edits or incident hot-fixes.**
 
-  Baseline:
-  - `README.md` — what / why / install / use / status
-  - `LICENSE` — even private repos benefit from explicit licensing for future open-sourcing
-  - `CHANGELOG.md` — Keep a Changelog format
-  - `.gitignore` — language defaults + project-specific (env files, build outputs, OS noise)
-  - `.github/ISSUE_TEMPLATE/bug.md` and `feature.md` — for projects expecting contributions
-  - `.github/PULL_REQUEST_TEMPLATE.md` — checklist + What/Why/Test-plan sections
-  - Branch protection rule on `main` — require status checks; require review when contributors arrive
+- Branch naming: `feat/<short-name>`, `fix/<short-name>`, `chore/<short-name>`, `docs/<short-name>`, `refactor/<short-name>`.
+- PR titles in active voice ("Add X", "Fix Y when Z", "Update W to vN.N").
+- PR body has "What", "Why", and "Test plan" sections; link to issues with `Fixes #N`.
+- Delete branches after merge.
 
-  The agent suggests adding any of these only when it would add real value at the project's current stage (not boilerplate spam). A pre-public solo project doesn't need ISSUE_TEMPLATEs yet; a project being shown to a potential client does.
+**Rule: Pair `gh pr create` with `gh pr merge --auto --squash --delete-branch` for routine PRs.**
 
-  ## Contributor Readiness
+Routine PRs are docs, chore, version bumps, dependency updates, and test-only changes. Once branch protection gates clear, GitHub merges the PR server-side — no waiting on the session.
 
-  Once a project is shown to potential contributors, clients, or hiring evaluators, the agent should help the user flip from "solo project hygiene" to "open project hygiene."
+When opening a PR for routine work, immediately follow with:
 
-  **Rule: Anticipate contributor readiness; flag gaps proactively when the project signals it's going public.**
+```
+gh pr merge <PR#> --auto --squash --delete-branch
+```
 
-  Triggers for the agent to do a readiness sweep: user says "this is going public" / "I'm bringing in a contributor" / "this is my dev-for-hire showcase" / "I want this on my portfolio" / project is about to be unprivated on GitHub.
+GitHub holds the PR and merges the instant required checks pass.
 
-  Readiness checklist the agent runs through:
-  - README explains setup clearly enough that a stranger can get the project running with no prior context.
-  - LICENSE is present and intentional (MIT, Apache 2.0, BSL, AGPL — match the project's commercial stance).
-  - CONTRIBUTING.md exists with: dev setup, branch/PR conventions, test requirements, code-style expectations, where to file issues.
-  - CODE_OF_CONDUCT.md if the project is open to public participation (Contributor Covenant is a sensible default).
-  - CI is green and visible (status badges in README link to the CI workflow).
-  - Recent activity is visible — no months-stale main branch.
-  - Issue + PR templates are present.
-  - Discoverable from the user's GitHub profile (pinned repo if it's a showcase; mentioned in the user's profile README if relevant).
+**When to use `--auto`:**
+- Documentation-only changes (README, CHANGELOG, MEMORY, plan files, comments, JSDoc).
+- Chore PRs (dependency bumps, version updates, gitignore tweaks) where the change is mechanical and doesn't shift active methodology.
+- Test-only PRs where the test code is the entire change.
 
-  The agent should treat the user's GitHub profile as the user's public portfolio. Public commit activity, public repos, GitHub Releases, stars on others' projects, and contributions to others' repos all feed the user's profile stats and contribute to dev-for-hire credibility. Visibility is a feature, not a side-effect — when work crosses a milestone worth showing, suggest the visibility action.
+**When NOT to use `--auto`:**
+- Feature PRs (anything user-facing or behavior-changing).
+- Refactors with non-trivial code movement.
+- Anything that triggered an Independent Critic review — wait until findings are addressed and the user has signed off.
+- PRs touching CI workflows, deploy config, secrets, or branch protection rules.
+- Any PR the user has explicitly said they want to review before merging.
+
+**Why `--squash`:** keeps `main` history linear and CHANGELOG-friendly. Matches the one-squash-commit-per-PR pattern most projects already use.
+
+**Safety note:** branch protection rules still gate. If `main` requires a review, `--auto` waits for that review before merging. This rule never *overrides* protection — it only *removes the wait* once gates clear. Safe to apply broadly.
+
+**If auto-merge isn't enabled on the repo:** `gh pr merge --auto` will error. Either enable it in repo Settings → General → Pull Requests, or fall back to `gh pr checks <PR#> --watch` followed by a manual merge.
+
+## Releases & Versioning
+
+Substantive milestones become tagged releases on GitHub. Releases create permanent, citeable URLs and contribute to the project's public activity.
+
+**Rule: Tag releases with semver and create GitHub Releases with CHANGELOG-driven notes.**
+
+- Use semver: MAJOR for breaking changes, MINOR for new features, PATCH for bug fixes. Pre-1.0 projects can use 0.x freely.
+- After a substantive merge, suggest tagging: `git tag -a vX.Y.Z -m "..." && git push --tags`.
+- Create the GitHub release: `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for hand-curated notes from CHANGELOG).
+- Maintain a `CHANGELOG.md` in Keep a Changelog format with `[Unreleased]` section + dated release entries. Each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
+
+## Repository Standards
+
+Every repo should look professional and ready for visitors — future-self, contributors, and hiring evaluators reviewing the user's portfolio.
+
+**Rule: Maintain a baseline of repository hygiene files; the agent suggests creating missing ones when the project's stage warrants.**
+
+Baseline:
+- `README.md` — what / why / install / use / status
+- `LICENSE` — even private repos benefit from explicit licensing for future open-sourcing
+- `CHANGELOG.md` — Keep a Changelog format
+- `.gitignore` — language defaults + project-specific (env files, build outputs, OS noise)
+- `.github/ISSUE_TEMPLATE/bug.md` and `feature.md` — for projects expecting contributions
+- `.github/PULL_REQUEST_TEMPLATE.md` — checklist + What/Why/Test-plan sections
+- Branch protection rule on `main` — require status checks; require review when contributors arrive
+
+The agent suggests adding any of these only when it would add real value at the project's current stage (not boilerplate spam). A pre-public solo project doesn't need ISSUE_TEMPLATEs yet; a project being shown to a potential client does.
+
+## Contributor Readiness
+
+Once a project is shown to potential contributors, clients, or hiring evaluators, the agent should help the user flip from "solo project hygiene" to "open project hygiene."
+
+**Rule: Anticipate contributor readiness; flag gaps proactively when the project signals it's going public.**
+
+Triggers for the agent to do a readiness sweep: user says "this is going public" / "I'm bringing in a contributor" / "this is my dev-for-hire showcase" / "I want this on my portfolio" / project is about to be unprivated on GitHub.
+
+Readiness checklist the agent runs through:
+- README explains setup clearly enough that a stranger can get the project running with no prior context.
+- LICENSE is present and intentional (MIT, Apache 2.0, BSL, AGPL — match the project's commercial stance).
+- CONTRIBUTING.md exists with: dev setup, branch/PR conventions, test requirements, code-style expectations, where to file issues.
+- CODE_OF_CONDUCT.md if the project is open to public participation (Contributor Covenant is a sensible default).
+- CI is green and visible (status badges in README link to the CI workflow).
+- Recent activity is visible — no months-stale main branch.
+- Issue + PR templates are present.
+- Discoverable from the user's GitHub profile (pinned repo if it's a showcase; mentioned in the user's profile README if relevant).
+
+The agent should treat the user's GitHub profile as the user's public portfolio. Public commit activity, public repos, GitHub Releases, stars on others' projects, and contributions to others' repos all feed the user's profile stats and contribute to dev-for-hire credibility. Visibility is a feature, not a side-effect — when work crosses a milestone worth showing, suggest the visibility action.
 
 ## Port Management (PortHub)
 
