@@ -67,16 +67,16 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
-    it('includes methodology info when template exists', () => {
+    it('does not inject methodology heading or description (#102 — already in CLAUDE.md + pill)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // Set methodology to one with phases
       store.projects.update(project.id, { methodology: 'minimal' });
       const updatedProject = store.projects.getByName('prime-test');
 
       const prompt = sessions.generatePrimePrompt(updatedProject, engine);
-      assert.ok(prompt.includes('Methodology'));
+      assert.equal(prompt.includes('## Methodology:'), false, 'prime should not carry methodology heading');
+      assert.equal(prompt.includes('## Current Phase:'), false, 'prime should not carry current phase heading');
     });
 
     it('includes active learnings', () => {
@@ -94,15 +94,12 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Active Learnings'));
     });
 
-    it('includes shared infrastructure for single group with docs', () => {
+    it('does not inject Shared Infrastructure pointer for single group (#102 — docs already in CLAUDE.md)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // Create a group and add the project
       const group = store.projectGroups.create({ name: 'habitat infra', description: 'shared habitat' });
       store.projectGroups.addMember(group.id, project.id);
-
-      // Register a shared doc in the group
       store.sharedDocs.create({
         groupId: group.id,
         name: 'NETWORK',
@@ -112,14 +109,13 @@ describe('sessions', () => {
       });
 
       const prompt = sessions.generatePrimePrompt(project, engine);
-      assert.ok(prompt.includes('Shared Infrastructure: habitat infra'));
-      assert.ok(prompt.includes('1 shared doc linked'));
+      assert.equal(prompt.includes('Shared Infrastructure'), false, 'prime should not surface Shared Infrastructure heading');
+      assert.equal(prompt.includes('1 shared doc linked'), false, 'prime should not surface shared-doc counts');
 
-      // Cleanup
       store.projectGroups.delete(group.id);
     });
 
-    it('includes shared infrastructure with sharedDir path', () => {
+    it('does not inject sharedDir path (#102)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
@@ -134,12 +130,12 @@ describe('sessions', () => {
       });
 
       const prompt = sessions.generatePrimePrompt(project, engine);
-      assert.ok(prompt.includes('/tmp/shared-frontend'));
+      assert.equal(prompt.includes('/tmp/shared-frontend'), false, 'prime should not echo sharedDir paths');
 
       store.projectGroups.delete(group.id);
     });
 
-    it('lists multiple groups in bulleted format', () => {
+    it('does not list multiple groups in bulleted format (#102)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
@@ -152,9 +148,9 @@ describe('sessions', () => {
       store.sharedDocs.create({ groupId: g2.id, name: 'DOC3', filePath: '/tmp/d3.md', injectIntoConfig: true, injectMode: 'reference' });
 
       const prompt = sessions.generatePrimePrompt(project, engine);
-      assert.ok(prompt.includes('## Shared Infrastructure\n'));
-      assert.ok(prompt.includes('**group-alpha**: 1 doc'));
-      assert.ok(prompt.includes('**group-beta**: 2 docs'));
+      assert.equal(prompt.includes('Shared Infrastructure'), false);
+      assert.equal(prompt.includes('group-alpha'), false);
+      assert.equal(prompt.includes('group-beta'), false);
 
       store.projectGroups.delete(g1.id);
       store.projectGroups.delete(g2.id);
@@ -185,28 +181,25 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Completed chunk 4'));
     });
 
-    it('omits playbook from prime prompt (playbook lives in engine config only)', () => {
+    it('omits playbook AND methodology heading (#102 — both belong in CLAUDE.md, not prime)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // Switch to prawduct which has a playbook
       store.projects.update(project.id, { methodology: 'prawduct' });
       const updated = store.projects.getByName('prime-test');
 
       const prompt = sessions.generatePrimePrompt(updated, engine);
       assert.ok(!prompt.includes('Session Playbook'), 'playbook should not be in prime prompt');
       assert.ok(!prompt.includes('Janitor Pass'), 'playbook details should not be in prime prompt');
-      assert.ok(prompt.includes('Methodology: Prawduct'), 'should still include methodology name');
+      assert.equal(prompt.includes('Methodology: Prawduct'), false, 'methodology heading should not be in prime (#102)');
 
-      // Restore
       store.projects.update(project.id, { methodology: 'minimal' });
     });
 
-    it('includes rule definitions from template defaultRules', () => {
+    it('does not inject Active Extension Rules with definitions (#102 — already in CLAUDE.md)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // Switch to prawduct and enable rules in project config
       store.projects.update(project.id, { methodology: 'prawduct' });
       const updated = store.projects.getByName('prime-test');
       const projConfig = store.projectConfig.load(updated.path);
@@ -216,30 +209,54 @@ describe('sessions', () => {
       store.projectConfig.save(updated.path, projConfig);
 
       const prompt = sessions.generatePrimePrompt(updated, engine);
-      assert.ok(prompt.includes('**independentCritic**:'), 'should include bold rule name');
-      assert.ok(prompt.includes('spawn a separate review agent'), 'should include critic definition');
-      assert.ok(prompt.includes('**docsParity**:'), 'should include docsParity definition');
+      assert.equal(prompt.includes('## Active Extension Rules'), false, 'no Active Extension Rules heading');
+      assert.equal(prompt.includes('**independentCritic**:'), false, 'no rule definitions');
+      assert.equal(prompt.includes('**docsParity**:'), false, 'no rule definitions');
 
-      // Restore
       store.projects.update(project.id, { methodology: 'minimal' });
     });
 
-    it('falls back to plain rule names when no definitions exist', () => {
+    it('does not list plain rule names either (#102 — extension rules block fully removed)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // minimal has no defaultRules with definitions
       const projConfig = store.projectConfig.load(project.path);
       projConfig.rules = projConfig.rules || { extensions: {} };
       projConfig.rules.extensions.customRule = true;
       store.projectConfig.save(project.path, projConfig);
 
       const prompt = sessions.generatePrimePrompt(project, engine);
-      assert.ok(prompt.includes('- customRule'), 'should list rule name without bold');
+      assert.equal(prompt.includes('## Active Extension Rules'), false, 'no Active Extension Rules heading');
+      assert.equal(prompt.includes('- customRule'), false, 'no rule list');
 
-      // Cleanup
       delete projConfig.rules.extensions.customRule;
       store.projectConfig.save(project.path, projConfig);
+    });
+
+    it('does not inject Previous Methodology Archives (#102 — AI can find filesystem itself)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+
+      const projConfig = store.projectConfig.load(project.path);
+      projConfig.methodologyArchives = [
+        { archivePath: '.tangleclaw/project.json.archived/2025-12-01', methodology: 'minimal' }
+      ];
+      store.projectConfig.save(project.path, projConfig);
+
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.equal(prompt.includes('## Previous Methodology Archives'), false);
+      assert.equal(prompt.includes('archived'), false, 'no archive pointer text');
+
+      delete projConfig.methodologyArchives;
+      store.projectConfig.save(project.path, projConfig);
+    });
+
+    it('prime carries header + branding flourish on a clean project (no learnings, no last session, no audit mode)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      assert.match(prompt, /^# Session Start — prime-test/m, 'header present');
+      assert.match(prompt, /\*TangleClaw'd into existence\.\*/, 'branding flourish present');
     });
 
     it('does not inject Project Version Recording protocol (#101 — TC owns the writer)', () => {
