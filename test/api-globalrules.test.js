@@ -121,4 +121,17 @@ describe('API /api/rules/global', () => {
       assert.equal(loaded.content, data.content);
     });
   });
+
+  describe('normalization on save (#100)', () => {
+    it('strips trailing whitespace and uniform body indent on PUT round-trip', async () => {
+      // Mirrors the live ~/.tangleclaw/global-rules.md pollution: H1 at col 0,
+      // body uniformly indented 2 spaces, trailing whitespace per line.
+      const dirty = '# Rules   \n\n  - one  \n  - two\t\n';
+      const { status } = await request(server, 'PUT', '/api/rules/global', { content: dirty });
+      assert.equal(status, 200);
+
+      const { data } = await request(server, 'GET', '/api/rules/global');
+      assert.equal(data.content, '# Rules\n\n- one\n- two\n');
+    });
+  });
 });
