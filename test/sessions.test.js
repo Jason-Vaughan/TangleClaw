@@ -242,37 +242,28 @@ describe('sessions', () => {
       store.projectConfig.save(project.path, projConfig);
     });
 
-    it('includes Project Version Recording section', () => {
+    it('does not inject Project Version Recording protocol (#101 — TC owns the writer)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
       const prompt = sessions.generatePrimePrompt(project, engine);
 
-      assert.ok(prompt.includes('## Project Version Recording'), 'should have version recording heading');
-      assert.ok(prompt.includes('.tangleclaw/project-version.txt'), 'should reference cache file path');
-      assert.ok(prompt.includes('CHANGELOG.md'), 'should mention CHANGELOG as a source');
-      assert.ok(prompt.includes('version.json'), 'should mention version.json as a source');
-      assert.ok(prompt.includes('package.json'), 'should mention package.json as a source');
-      assert.ok(prompt.includes('git describe'), 'should mention git tags as a fallback');
-      assert.ok(prompt.includes('0.0.0-dev'), 'should mention dev placeholder');
-      assert.ok(prompt.includes('recorded_at:'), 'should show cache file format');
-      assert.ok(prompt.includes('source:'), 'should show source field in format');
+      assert.equal(prompt.includes('## Project Version Recording'), false, 'prime should not include version-recording heading');
+      assert.equal(prompt.includes('.tangleclaw/project-version.txt'), false, 'prime should not reference cache file path');
+      assert.equal(prompt.includes('git describe'), false, 'prime should not mention git tags as a fallback');
+      assert.equal(prompt.includes('recorded_at:'), false, 'prime should not show cache file format');
     });
 
-    it('includes version recording for all methodologies', () => {
+    it('omits version recording for all methodologies (#101)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      // Test with prawduct methodology
       store.projects.update(project.id, { methodology: 'prawduct' });
-      const prawductProject = store.projects.getByName('prime-test');
-      const prawductPrompt = sessions.generatePrimePrompt(prawductProject, engine);
-      assert.ok(prawductPrompt.includes('## Project Version Recording'), 'prawduct should have version recording');
+      const prawductPrompt = sessions.generatePrimePrompt(store.projects.getByName('prime-test'), engine);
+      assert.equal(prawductPrompt.includes('## Project Version Recording'), false, 'prawduct prime should not include version recording');
 
-      // Test with minimal methodology
       store.projects.update(project.id, { methodology: 'minimal' });
-      const minimalProject = store.projects.getByName('prime-test');
-      const minimalPrompt = sessions.generatePrimePrompt(minimalProject, engine);
-      assert.ok(minimalPrompt.includes('## Project Version Recording'), 'minimal should have version recording');
+      const minimalPrompt = sessions.generatePrimePrompt(store.projects.getByName('prime-test'), engine);
+      assert.equal(minimalPrompt.includes('## Project Version Recording'), false, 'minimal prime should not include version recording');
     });
   });
 
@@ -973,7 +964,7 @@ describe('sessions', () => {
       assert.ok(Array.isArray(result.captureFields));
     });
 
-    it('includes version re-record instruction in wrap command', () => {
+    it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({
         projectId: project.id,
@@ -983,27 +974,31 @@ describe('sessions', () => {
 
       sessions.triggerWrap('prime-test');
       assert.ok(sentCommand, 'should have sent a command');
-      assert.ok(sentCommand.includes('project-version.txt'), 'wrap command should reference version cache file');
-      assert.ok(sentCommand.includes('re-check the project version'), 'wrap command should include re-record instruction');
+      assert.equal(sentCommand.includes('project-version.txt'), false, 'wrap command should not reference version cache file');
+      assert.equal(sentCommand.includes('re-check the project version'), false, 'wrap command should not include re-record instruction');
     });
 
-    it('includes version re-record for minimal methodology too', () => {
+    it('writes project-version.txt directly during wrap (#101)', () => {
       const project = store.projects.getByName('prime-test');
-      // Ensure minimal methodology
-      store.projects.update(project.id, { methodology: 'minimal' });
-
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'trigger-wrap-version-minimal-test'
+        tmuxSession: 'trigger-wrap-tc-writer-test'
       });
 
+      const cachePath = path.join(project.path, '.tangleclaw', 'project-version.txt');
+      // Remove any prior recording so we can detect this wrap's write.
+      try { fs.rmSync(cachePath, { force: true }); } catch {}
+
       sessions.triggerWrap('prime-test');
-      assert.ok(sentCommand, 'should have sent a command');
-      assert.ok(sentCommand.includes('project-version.txt'), 'minimal wrap should also reference version cache file');
+      assert.ok(fs.existsSync(cachePath), 'wrap should produce the version cache file');
+      const body = fs.readFileSync(cachePath, 'utf8');
+      assert.match(body, /^version:\s*\S+/m, 'cache file should contain a version: line');
+      assert.match(body, /^source:\s*\S+/m, 'cache file should contain a source: line');
+      assert.match(body, /^recorded_at:\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m, 'recorded_at should be ISO-8601 UTC');
     });
 
-    it('includes version re-record even with custom wrap command', () => {
+    it('preserves custom wrap command without injecting any version protocol (#101)', () => {
       const skills = require('../lib/skills');
       const originalGetWrapSkill = skills.getWrapSkill;
       skills.getWrapSkill = () => ({
@@ -1023,8 +1018,8 @@ describe('sessions', () => {
         sessions.triggerWrap('prime-test');
         assert.ok(sentCommand, 'should have sent a command');
         assert.ok(sentCommand.includes('/custom-wrap --fast'), 'should start with custom command');
-        assert.ok(sentCommand.includes('project-version.txt'), 'custom-command wrap should also include version re-record');
-        assert.ok(sentCommand.includes('re-check the project version'), 'custom-command wrap should include re-record instruction');
+        assert.equal(sentCommand.includes('project-version.txt'), false, 'custom-command wrap should not include version protocol');
+        assert.equal(sentCommand.includes('re-check the project version'), false, 'custom-command wrap should not include re-record instruction');
       } finally {
         skills.getWrapSkill = originalGetWrapSkill;
       }
@@ -1212,6 +1207,34 @@ describe('sessions', () => {
       assert.ok(result.session, 'should return a session');
       assert.equal(result.session.tmuxSession, 'orphan-test');
       assert.equal(result.session.engineId, 'claude');
+    });
+
+    it('writes project-version.txt during launch (#101 — TC owns the writer)', () => {
+      tmux.hasSession = (name) => name === 'orphan-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const project = store.projects.getByName('orphan-test');
+      const cachePath = path.join(project.path, '.tangleclaw', 'project-version.txt');
+      const seededPkgPath = path.join(project.path, 'package.json');
+      try { fs.rmSync(cachePath, { force: true }); } catch {}
+      try {
+        // Seed a version source so detection has something to write.
+        fs.writeFileSync(seededPkgPath, '{"version": "0.1.0"}\n');
+
+        const result = sessions.launchSession('orphan-test');
+        assert.equal(result.error, null);
+        assert.ok(fs.existsSync(cachePath), 'project-version.txt should exist after launch');
+        const body = fs.readFileSync(cachePath, 'utf8');
+        assert.match(body, /^version: 0\.1\.0$/m);
+        assert.match(body, /^source: package\.json$/m);
+        assert.match(body, /^recorded_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
+      } finally {
+        // Test isolation (Critic MINOR): leaving the seeded package.json behind
+        // would let the next test in this suite hit a different detection layer.
+        try { fs.rmSync(seededPkgPath, { force: true }); } catch {}
+        try { fs.rmSync(cachePath, { force: true }); } catch {}
+        try { fs.rmSync(path.dirname(cachePath), { recursive: true, force: true }); } catch {}
+      }
     });
   });
 

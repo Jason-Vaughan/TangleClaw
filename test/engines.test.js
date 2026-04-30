@@ -342,32 +342,13 @@ describe('engines', () => {
       assert.ok(rules.sessionMemoryGuide.includes('Session Memory'));
     });
 
-    it('should include project version recording guide', () => {
+    it('does not load a project version recording guide (#101 — TC owns the writer)', () => {
       const rules = engines._getRulesContent({});
-      assert.ok(rules.projectVersionGuide !== null, 'Should include project version recording guide');
-      assert.ok(typeof rules.projectVersionGuide === 'string');
-      assert.ok(rules.projectVersionGuide.includes('Project Version Recording'));
-      assert.ok(rules.projectVersionGuide.includes('.tangleclaw/project-version.txt'));
-    });
-
-    it('degrades gracefully when project version recording guide file is missing', () => {
-      const originalExistsSync = fs.existsSync;
-      fs.existsSync = (p) => {
-        if (typeof p === 'string' && p.endsWith('project-version-recording-guide.md')) return false;
-        return originalExistsSync(p);
-      };
-      try {
-        const rules = engines._getRulesContent({});
-        assert.equal(rules.projectVersionGuide, null, 'should be null when file missing');
-        // Other guides still populate (basic sanity — no wide blast radius from the stub).
-        assert.ok(rules.sessionMemoryGuide !== null, 'session memory guide should still load');
-      } finally {
-        fs.existsSync = originalExistsSync;
-      }
+      assert.equal(rules.projectVersionGuide, undefined, 'projectVersionGuide field is no longer surfaced');
     });
   });
 
-  describe('project version recording injection', () => {
+  describe('project version recording NOT injected (#101)', () => {
     const projectConfig = {
       rules: {
         core: {
@@ -381,7 +362,7 @@ describe('engines', () => {
     };
     const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
 
-    it('all generators with supportsConfigFile should include Project Version Recording section', () => {
+    it('no generator with supportsConfigFile includes a Project Version Recording section anymore', () => {
       const profiles = store.engines.list().filter(p =>
         p.capabilities && p.capabilities.supportsConfigFile
       );
@@ -390,13 +371,15 @@ describe('engines', () => {
       for (const profile of profiles) {
         const content = engines.generateConfig(profile.id, projectConfig, template);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
-        assert.ok(
+        assert.equal(
           content.includes('Project Version Recording'),
-          `${profile.id}: missing Project Version Recording section`
+          false,
+          `${profile.id}: should not contain Project Version Recording section (TC writes the cache file directly)`
         );
-        assert.ok(
+        assert.equal(
           content.includes('project-version.txt'),
-          `${profile.id}: missing project-version.txt cache-file reference`
+          false,
+          `${profile.id}: should not reference the cache file path`
         );
       }
     });
