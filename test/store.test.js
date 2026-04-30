@@ -155,6 +155,114 @@ describe('store', () => {
       assert.ok('supportsConfigFile' in updated.capabilities, 'supportsConfigFile should be backfilled');
     });
 
+    it('bundled claude profile has no preKeys on bypassPermissions (#119)', () => {
+      // Regression test: the "press 2 to confirm dangerous mode" dialog no
+      // longer exists in current Claude Code, so any preKeys here would land
+      // in chat as a stray first user message.
+      const bundled = JSON.parse(
+        fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'claude.json'), 'utf8')
+      );
+      const bypass = bundled.launchModes.bypassPermissions;
+      assert.ok(bypass, 'bypassPermissions mode should exist');
+      assert.ok(!('preKeys' in bypass), 'bypassPermissions should not declare preKeys');
+      assert.ok(!('preKeyDelay' in bypass), 'bypassPermissions should not declare preKeyDelay');
+    });
+
+    it('prunes stale ["2","Enter"] bypass preKeys from existing claude profile (#119)', () => {
+      // Simulate an existing install whose runtime claude.json still carries
+      // the stale preKeys baked in by older bundled versions.
+      const enginesDir = path.join(tmpDir, 'engines');
+      fs.mkdirSync(enginesDir, { recursive: true });
+      const stale = {
+        id: 'claude',
+        name: 'Claude Code',
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          default: { label: 'Interactive', args: [] },
+          bypassPermissions: {
+            label: 'Bypass',
+            args: ['--dangerously-skip-permissions'],
+            preKeys: ['2', 'Enter'],
+            preKeyDelay: 2000
+          }
+        }
+      };
+      fs.writeFileSync(path.join(enginesDir, 'claude.json'), JSON.stringify(stale, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'claude.json'), 'utf8'));
+      const bypass = updated.launchModes.bypassPermissions;
+      assert.ok(!('preKeys' in bypass), 'stale preKeys should be pruned');
+      assert.ok(!('preKeyDelay' in bypass), 'stale preKeyDelay should be pruned');
+      // Other bypass fields preserved
+      assert.equal(bypass.label, 'Bypass');
+      assert.deepStrictEqual(bypass.args, ['--dangerously-skip-permissions']);
+    });
+
+    it('bypass preKey prune is idempotent across reboots (#119)', () => {
+      // Once pruned, a second init must not re-trigger work or rewrite the file.
+      const enginesDir = path.join(tmpDir, 'engines');
+      fs.mkdirSync(enginesDir, { recursive: true });
+      const stale = {
+        id: 'claude',
+        name: 'Claude Code',
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          default: { label: 'Interactive', args: [] },
+          bypassPermissions: {
+            label: 'Bypass',
+            args: ['--dangerously-skip-permissions'],
+            preKeys: ['2', 'Enter'],
+            preKeyDelay: 2000
+          }
+        }
+      };
+      const livePath = path.join(enginesDir, 'claude.json');
+      fs.writeFileSync(livePath, JSON.stringify(stale, null, 2));
+
+      store.init();
+      const afterFirst = fs.readFileSync(livePath, 'utf8');
+
+      store.close();
+      store.init();
+      const afterSecond = fs.readFileSync(livePath, 'utf8');
+
+      assert.equal(afterFirst, afterSecond, 'Profile should be unchanged on second init');
+      const final = JSON.parse(afterSecond);
+      assert.ok(!('preKeys' in final.launchModes.bypassPermissions));
+    });
+
+    it('preserves user-customized bypass preKeys (#119)', () => {
+      // If a user has *intentionally* set non-default preKeys (e.g. for a
+      // forked Claude binary that still requires confirmation), the prune must
+      // not touch them. Equality match against ["2","Enter"] guards this.
+      const enginesDir = path.join(tmpDir, 'engines');
+      fs.mkdirSync(enginesDir, { recursive: true });
+      const custom = {
+        id: 'claude',
+        name: 'Claude Code',
+        launch: { shellCommand: 'claude', args: [] },
+        launchModes: {
+          default: { label: 'Interactive', args: [] },
+          bypassPermissions: {
+            label: 'Bypass',
+            args: ['--dangerously-skip-permissions'],
+            preKeys: ['y', 'Enter'],
+            preKeyDelay: 1500
+          }
+        }
+      };
+      fs.writeFileSync(path.join(enginesDir, 'claude.json'), JSON.stringify(custom, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'claude.json'), 'utf8'));
+      const bypass = updated.launchModes.bypassPermissions;
+      assert.deepStrictEqual(bypass.preKeys, ['y', 'Enter'], 'custom preKeys should be preserved');
+      assert.equal(bypass.preKeyDelay, 1500, 'custom preKeyDelay should be preserved');
+    });
+
     it('should not modify engine profiles when bundled has no new fields', () => {
       // Init once to get all bundled profiles
       store.init();
