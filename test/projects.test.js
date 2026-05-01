@@ -881,4 +881,125 @@ describe('projects', () => {
       assert.equal(enriched.version, '4.4.4');
     });
   });
+
+  // ── #103 chunk 2: silentPrime UI toggle (enrichment + updateProject) ──
+  describe('silentPrime (#103)', () => {
+    let primeDir;
+
+    before(() => {
+      primeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-silent-prime-'));
+    });
+
+    after(() => {
+      fs.rmSync(primeDir, { recursive: true, force: true });
+    });
+
+    it('enrichProject exposes silentPrime: false by default', () => {
+      const projPath = path.join(primeDir, 'sp-default');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'sp-default', path: projPath, engineId: 'claude' });
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.silentPrime, false);
+    });
+
+    it('enrichProject reflects silentPrime: true once set in projectConfig', () => {
+      const projPath = path.join(primeDir, 'sp-on');
+      fs.mkdirSync(projPath, { recursive: true });
+      const registered = store.projects.create({ name: 'sp-on', path: projPath, engineId: 'claude' });
+      const projConfig = store.projectConfig.load(projPath);
+      projConfig.silentPrime = true;
+      store.projectConfig.save(projPath, projConfig);
+      const enriched = projects.enrichProject(registered);
+      assert.equal(enriched.silentPrime, true);
+    });
+
+    it('updateProject persists silentPrime=true when engine supports it', () => {
+      const projPath = path.join(primeDir, 'sp-update-on');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-update-on', path: projPath, engineId: 'claude' });
+      const result = projects.updateProject('sp-update-on', { silentPrime: true });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, true);
+      const persisted = store.projectConfig.load(projPath);
+      assert.equal(persisted.silentPrime, true);
+    });
+
+    it('updateProject persists silentPrime=false (clearing the flag)', () => {
+      const projPath = path.join(primeDir, 'sp-update-off');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-update-off', path: projPath, engineId: 'claude' });
+      // Pre-seed to true so we can confirm the false update reaches disk
+      const seed = store.projectConfig.load(projPath);
+      seed.silentPrime = true;
+      store.projectConfig.save(projPath, seed);
+
+      const result = projects.updateProject('sp-update-off', { silentPrime: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, false);
+      assert.equal(store.projectConfig.load(projPath).silentPrime, false);
+    });
+
+    it('updateProject rejects silentPrime=true when engine lacks the capability', () => {
+      const projPath = path.join(primeDir, 'sp-update-bad');
+      fs.mkdirSync(projPath, { recursive: true });
+      // 'codex' / 'gemini' / 'aider' do not advertise supportsSilentPrime; using a definitely-missing id
+      // is even safer for this assertion.
+      store.projects.create({ name: 'sp-update-bad', path: projPath, engine: 'no-such-engine' });
+      const result = projects.updateProject('sp-update-bad', { silentPrime: true });
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
+      // And the file was not written
+      assert.equal(store.projectConfig.load(projPath).silentPrime, false);
+    });
+
+    it('updateProject rejects non-boolean silentPrime', () => {
+      const projPath = path.join(primeDir, 'sp-update-nonbool');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-update-nonbool', path: projPath, engineId: 'claude' });
+      const result = projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].toLowerCase().includes('boolean'));
+    });
+
+    it('updateProject silentPrime=false is accepted even on unsupported engines (always allowed to clear)', () => {
+      const projPath = path.join(primeDir, 'sp-clear-bad-engine');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-clear-bad-engine', path: projPath, engine: 'no-such-engine' });
+      const result = projects.updateProject('sp-clear-bad-engine', { silentPrime: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, false);
+    });
+
+    // Critic chunk-2 M1 regression: a same-PATCH engine change + silentPrime=true
+    // must NOT partially mutate disk state when the new engine lacks the capability.
+    // Pre-fix, the engine block wrote projConfig.engine and the engine config file
+    // before the silentPrime gate rejected, leaving DB and disk inconsistent.
+    it('updateProject rejects engine+silentPrime PATCH atomically when new engine lacks capability', () => {
+      const projPath = path.join(primeDir, 'sp-engine-race');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-engine-race', path: projPath, engine: 'claude' });
+
+      // Snapshot pre-PATCH disk state
+      const beforeProjConfig = store.projectConfig.load(projPath);
+      assert.equal(beforeProjConfig.engine || null, null, 'baseline: engine field empty (lazy-set on first session)');
+      const beforeRow = store.projects.getByName('sp-engine-race');
+
+      // Attempt the bad PATCH: switch to an engine without the capability AND enable silentPrime.
+      const result = projects.updateProject('sp-engine-race', {
+        engine: 'no-such-engine',
+        silentPrime: true
+      });
+      assert.equal(result.project, null);
+      assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
+
+      // Verify NO disk-state drift: the engine field on projConfig was not mutated.
+      const afterProjConfig = store.projectConfig.load(projPath);
+      assert.equal(afterProjConfig.engine || null, null, 'projConfig.engine must not have been written');
+      assert.equal(afterProjConfig.silentPrime, false, 'silentPrime must not have been written either');
+
+      // Verify NO DB drift: engine_id still points to the original engine.
+      const afterRow = store.projects.getByName('sp-engine-race');
+      assert.equal(afterRow.engineId, beforeRow.engineId);
+    });
+  });
 });

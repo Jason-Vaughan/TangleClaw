@@ -711,6 +711,20 @@ function openSettings(name) {
 
   const hasSession = project.session && project.session.active;
 
+  // Silent prime toggle (#103) — only render when the resolved engine advertises the capability.
+  // Gating on the engine profile's capability flag (not just engine.id === 'claude') keeps the UI
+  // honest if the capability is later added to other engines without needing a UI change.
+  const supportsSilent = !!(project.engine && project.engine.capabilities && project.engine.capabilities.supportsSilentPrime);
+  const silentPrimeBlock = supportsSilent ? `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Silent prime (hidden context)</span>
+        <input type="checkbox" id="settingsSilentPrime" ${project.silentPrime ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
+    </div>` : '';
+
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -733,7 +747,7 @@ function openSettings(name) {
       <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
              autocomplete="off" autocorrect="off" autocapitalize="off">
-    </div>`;
+    </div>${silentPrimeBlock}`;
 
   modal.classList.add('open');
 }
@@ -808,6 +822,11 @@ async function doSaveSettings() {
   };
   if (newName && newName !== settingsTarget) {
     body.name = newName;
+  }
+  // Silent prime (#103) — only present when the toggle was rendered (capability-gated)
+  const silentPrimeEl = document.getElementById('settingsSilentPrime');
+  if (silentPrimeEl) {
+    body.silentPrime = silentPrimeEl.checked;
   }
 
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
