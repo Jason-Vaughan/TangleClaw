@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Silent prime SessionStart hook now re-fires on `/clear` and `/resume` (#130)** — Chunk-1 set the matcher to `'startup'` only, leaving an unintended gap: when the user ran `/clear` or `/resume` mid-session, the model's context reset but the SessionStart hook didn't re-inject the prime, so methodology + last-session summary + active learnings disappeared until the next fresh session launch — the same regression class the original silent-prime feature was designed to prevent. Widened the matcher in `lib/engines.js:_buildBaselineHooks` from `'startup'` to `'startup|clear|resume'` (matching Prawduct's existing governance hook precedent for the same conceptual flag — symmetric matchers across coexisting hooks). `'compact'` is intentionally excluded because compaction summarizes context internally and a fresh prime would conflict with that summary. Three test updates (the existing `_buildBaselineHooks` matcher assertion + two `syncEngineHooks` integration tests that hardcoded the old matcher) plus 1 new test (`matcher includes startup, clear, and resume but not compact`) — total 1683 passing (was 1682). The prime file written at `launchSession` time is reused on every re-injection, which is correct: the AI sees the same launch-time prime context whether the session is fresh or post-`/clear`.
+
 ## [3.14.0] - 2026-05-01
 
 ### Added

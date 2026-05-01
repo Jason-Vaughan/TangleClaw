@@ -1245,7 +1245,17 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
       assert.ok(result.SessionStart, 'SessionStart should be present');
       assert.equal(result.SessionStart.length, 1);
-      assert.equal(result.SessionStart[0].matcher, 'startup');
+      assert.equal(result.SessionStart[0].matcher, 'startup|clear|resume');
+    });
+
+    it('matcher includes startup, clear, and resume but not compact (#130)', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
+      const matcher = result.SessionStart[0].matcher;
+      const sources = matcher.split('|');
+      assert.ok(sources.includes('startup'), 'must fire on fresh sessions');
+      assert.ok(sources.includes('clear'), 'must re-fire after /clear so AI keeps methodology');
+      assert.ok(sources.includes('resume'), 'must re-fire after /resume');
+      assert.ok(!sources.includes('compact'), 'must NOT include compact source — would conflict with compaction summary');
     });
 
     it('returns empty object when silentPrime is true but engine lacks supportsSilentPrime (Critic M1)', () => {
@@ -1348,7 +1358,7 @@ describe('engines', () => {
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 2, 'methodology + baseline coexist');
       assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|resume', 'methodology entry first');
-      assert.equal(settings.hooks.SessionStart[1].matcher, 'startup', 'baseline entry second');
+      assert.equal(settings.hooks.SessionStart[1].matcher, 'startup|clear|resume', 'baseline entry second (#130 widened from startup)');
       assert.ok(settings.hooks.Stop, 'Stop hook still present');
     });
 
@@ -1358,7 +1368,7 @@ describe('engines', () => {
 
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 1);
-      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|resume');
       assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
     });
 
