@@ -862,7 +862,7 @@ describe('eval-audit: scoreTier2_5', () => {
 describe('eval-audit: scoreWrapQuality', () => {
   const prawductMethodology = {
     wrap: {
-      steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'commit']
+      steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']
     }
   };
 
@@ -872,11 +872,12 @@ describe('eval-audit: scoreWrapQuality', () => {
       { agentResponse: 'Updated CHANGELOG.md with the new changes', userMessage: '' },
       { agentResponse: 'Key learnings from this session: patterns work well', userMessage: '' },
       { agentResponse: 'Next session prime: continue with chunk 4', userMessage: '' },
+      { agentResponse: 'Updated .tangleclaw/memories/MEMORY.md with this session work', userMessage: '' },
       { agentResponse: 'Created git commit with all changes', userMessage: '' }
     ];
     const result = evalAudit.scoreWrapQuality(exchanges, prawductMethodology);
     assert.equal(result.score, 1.0);
-    assert.equal(result.stepsFound.length, 5);
+    assert.equal(result.stepsFound.length, 6);
     assert.equal(result.stepsMissing.length, 0);
   });
 
@@ -890,6 +891,15 @@ describe('eval-audit: scoreWrapQuality', () => {
     assert.ok(result.stepsFound.includes('changelog-update'));
     assert.ok(result.stepsFound.includes('commit'));
     assert.ok(result.stepsMissing.includes('version-bump'));
+    assert.ok(result.stepsMissing.includes('memory-update'));
+  });
+
+  it('memory-update step matches MEMORY.md mentions', () => {
+    const exchanges = [
+      { agentResponse: 'Updated MEMORY.md with the v3.13.6 release window', userMessage: '' }
+    ];
+    const result = evalAudit.scoreWrapQuality(exchanges, prawductMethodology);
+    assert.ok(result.stepsFound.includes('memory-update'));
   });
 
   it('handles methodology with no wrap steps', () => {
@@ -904,7 +914,7 @@ describe('eval-audit: scoreWrapQuality', () => {
   it('handles empty exchanges array', () => {
     const result = evalAudit.scoreWrapQuality([], prawductMethodology);
     assert.equal(result.score, 0.0);
-    assert.equal(result.stepsMissing.length, 5);
+    assert.equal(result.stepsMissing.length, 6);
   });
 
   it('handles null methodology', () => {
