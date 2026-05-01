@@ -1057,6 +1057,7 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     engine: result.project.engine.id,
     methodology: result.project.methodology.id,
     tags: result.project.tags,
+    silentPrime: result.project.silentPrime,
     updatedAt: result.project.updatedAt
   };
 

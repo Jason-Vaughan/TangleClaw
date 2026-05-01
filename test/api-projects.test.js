@@ -197,6 +197,26 @@ describe('api-projects', () => {
       });
       assert.equal(status, 404);
     });
+
+    // #103 chunk 2 — per-project silentPrime opt-in via PATCH
+    it('persists silentPrime=true and surfaces it on the enriched response', async () => {
+      const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
+        silentPrime: true
+      });
+      assert.equal(status, 200);
+      assert.equal(data.silentPrime, true);
+
+      const { data: fetched } = await request('GET', '/api/projects/api-test-project');
+      assert.equal(fetched.silentPrime, true);
+    });
+
+    it('rejects silentPrime with non-boolean value', async () => {
+      const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
+        silentPrime: 'yes'
+      });
+      assert.equal(status, 400);
+      assert.ok(data.error.toLowerCase().includes('boolean'));
+    });
   });
 
   describe('DELETE /api/projects/:name', () => {
