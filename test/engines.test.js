@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1046,11 +1046,16 @@ describe('engines', () => {
   describe('syncEngineHooks', () => {
     let projectDir;
 
-    before(() => {
+    // Critic M2: switched from before/after to beforeEach/afterEach so each
+    // test gets a fresh project dir. With baseline-hooks merging now in play
+    // (#103), shared dir state between tests would let a future contributor
+    // accidentally pollute the null-template assertion via a leftover
+    // .tangleclaw/project.json with silentPrime: true.
+    beforeEach(() => {
       projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-test-'));
     });
 
-    after(() => {
+    afterEach(() => {
       fs.rmSync(projectDir, { recursive: true, force: true });
     });
 
@@ -1215,6 +1220,185 @@ describe('engines', () => {
       } finally {
         fs.rmSync(freshDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('_buildBaselineHooks (#103)', () => {
+    const supportingProfile = { capabilities: { supportsSilentPrime: true } };
+
+    it('returns empty object when silentPrime is false', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: false }, supportingProfile);
+      assert.deepStrictEqual(result, {});
+    });
+
+    it('returns empty object when silentPrime is missing (default off)', () => {
+      const result = engines._buildBaselineHooks({}, supportingProfile);
+      assert.deepStrictEqual(result, {});
+    });
+
+    it('returns empty object when projConfig is null', () => {
+      const result = engines._buildBaselineHooks(null, supportingProfile);
+      assert.deepStrictEqual(result, {});
+    });
+
+    it('returns SessionStart entry when silentPrime is true and engine supports it', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
+      assert.ok(result.SessionStart, 'SessionStart should be present');
+      assert.equal(result.SessionStart.length, 1);
+      assert.equal(result.SessionStart[0].matcher, 'startup');
+    });
+
+    it('returns empty object when silentPrime is true but engine lacks supportsSilentPrime (Critic M1)', () => {
+      const profileWithout = { capabilities: { supportsSilentPrime: false } };
+      const result = engines._buildBaselineHooks({ silentPrime: true }, profileWithout);
+      assert.deepStrictEqual(result, {}, 'baseline must gate on engine capability, not just projConfig');
+    });
+
+    it('returns empty object when engineProfile is omitted entirely (Critic M1)', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true });
+      assert.deepStrictEqual(result, {}, 'absent engine profile cannot satisfy the capability gate');
+    });
+
+    it('SessionStart entry references {{TANGLECLAW_DIR}} placeholder', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
+      const cmd = result.SessionStart[0].hooks[0].command;
+      assert.ok(cmd.includes('{{TANGLECLAW_DIR}}'), 'should use placeholder for portability');
+      assert.ok(cmd.endsWith('sessionstart-prime.sh'), 'should point at the bundled hook script');
+    });
+
+    it('SessionStart entry has command type and a status message', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
+      const hook = result.SessionStart[0].hooks[0];
+      assert.equal(hook.type, 'command');
+      assert.ok(hook.statusMessage, 'should set a statusMessage so the UI shows what is loading');
+    });
+  });
+
+  describe('_mergeHookObjects (#103)', () => {
+    it('merges two non-overlapping events', () => {
+      const a = { Stop: [{ matcher: 'a', hooks: [] }] };
+      const b = { SessionStart: [{ matcher: 'b', hooks: [] }] };
+      const merged = engines._mergeHookObjects(a, b);
+      assert.equal(merged.Stop.length, 1);
+      assert.equal(merged.SessionStart.length, 1);
+    });
+
+    it('concatenates entries under the same eventName, a before b', () => {
+      const a = { SessionStart: [{ matcher: 'first' }] };
+      const b = { SessionStart: [{ matcher: 'second' }] };
+      const merged = engines._mergeHookObjects(a, b);
+      assert.equal(merged.SessionStart.length, 2);
+      assert.equal(merged.SessionStart[0].matcher, 'first');
+      assert.equal(merged.SessionStart[1].matcher, 'second');
+    });
+
+    it('handles empty inputs', () => {
+      assert.deepStrictEqual(engines._mergeHookObjects({}, {}), {});
+      assert.deepStrictEqual(engines._mergeHookObjects(null, null), {});
+      assert.deepStrictEqual(engines._mergeHookObjects(null, { Stop: [{ matcher: 'x' }] }), { Stop: [{ matcher: 'x' }] });
+    });
+
+    it('deep-clones entries so mutating the result does not leak into inputs', () => {
+      const a = { SessionStart: [{ matcher: 'orig', hooks: [{ command: 'cmd' }] }] };
+      const merged = engines._mergeHookObjects(a, {});
+      merged.SessionStart[0].matcher = 'mutated';
+      merged.SessionStart[0].hooks[0].command = 'mutated';
+      assert.equal(a.SessionStart[0].matcher, 'orig');
+      assert.equal(a.SessionStart[0].hooks[0].command, 'cmd');
+    });
+  });
+
+  describe('syncEngineHooks silentPrime integration (#103)', () => {
+    let projectDir;
+
+    beforeEach(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-silentprime-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    function readSettings() {
+      return JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+    }
+
+    function writeProjConfig(config) {
+      const dir = path.join(projectDir, '.tangleclaw');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(config));
+    }
+
+    it('appends baseline SessionStart entry alongside methodology hooks', () => {
+      writeProjConfig({ engine: 'claude', silentPrime: true });
+      const template = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              hooks: [{ type: 'command', command: 'python3 prawduct-hook' }]
+            }],
+            Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 stop-hook' }] }]
+          }
+        }
+      };
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      assert.equal(settings.hooks.SessionStart.length, 2, 'methodology + baseline coexist');
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|resume', 'methodology entry first');
+      assert.equal(settings.hooks.SessionStart[1].matcher, 'startup', 'baseline entry second');
+      assert.ok(settings.hooks.Stop, 'Stop hook still present');
+    });
+
+    it('writes only the baseline entry when methodology has no hooks', () => {
+      writeProjConfig({ engine: 'claude', silentPrime: true });
+      engines.syncEngineHooks(projectDir, { id: 'minimal', hooks: {} });
+
+      const settings = readSettings();
+      assert.equal(settings.hooks.SessionStart.length, 1);
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
+      assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
+    });
+
+    it('writes only methodology hooks when silentPrime is off', () => {
+      writeProjConfig({ engine: 'claude', silentPrime: false });
+      const template = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup',
+              hooks: [{ type: 'command', command: 'python3 prawduct-hook' }]
+            }]
+          }
+        }
+      };
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = readSettings();
+      assert.equal(settings.hooks.SessionStart.length, 1);
+      assert.equal(settings.hooks.SessionStart[0].hooks[0].command, 'python3 prawduct-hook');
+    });
+
+    it('resolves {{TANGLECLAW_DIR}} in the baseline entry on disk', () => {
+      writeProjConfig({ engine: 'claude', silentPrime: true });
+      engines.syncEngineHooks(projectDir, null);
+
+      const settings = readSettings();
+      const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+      assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved before write');
+      assert.ok(path.isAbsolute(cmd), 'resolved path should be absolute');
+      assert.ok(cmd.endsWith('/data/hooks/sessionstart-prime.sh'));
+    });
+
+    it('does not run for non-claude engines even with silentPrime enabled', () => {
+      writeProjConfig({ engine: 'codex', silentPrime: true });
+      engines.syncEngineHooks(projectDir, null);
+
+      assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false,
+        'should not write .claude/settings.json for non-claude engine');
     });
   });
 });
