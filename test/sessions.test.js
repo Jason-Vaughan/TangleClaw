@@ -1609,5 +1609,74 @@ describe('sessions', () => {
         fs.rmSync(projDir, { recursive: true, force: true });
       }
     });
+
+    // ── Chunk 3: prime-file cleanup on silent→typed transition ──
+
+    it('_removePrimeFile removes session-prime.md and returns true', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      sessions._writePrimeFile(project.path, 'stale prime body');
+      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      assert.equal(fs.existsSync(primeFile), true, 'precondition: prime file written');
+
+      const result = sessions._removePrimeFile(project.path);
+      assert.equal(result, true);
+      assert.equal(fs.existsSync(primeFile), false, 'prime file should be gone');
+    });
+
+    it('_removePrimeFile returns false when prime file is absent (no-op)', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      // Ensure the file does NOT exist
+      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      try { fs.unlinkSync(primeFile); } catch {}
+
+      const result = sessions._removePrimeFile(project.path);
+      assert.equal(result, false);
+    });
+
+    it('_removePrimeFile is non-throwing when unlink itself fails (exercises catch arm)', () => {
+      // Pre-fix Mn2 from final Critic: the original test passed a missing path
+      // and exited via the `existsSync === false` branch, never reaching the
+      // catch. Stub fs.unlinkSync to throw so we genuinely test the catch path.
+      const project = store.projects.getByName('silent-prime-test');
+      sessions._writePrimeFile(project.path, 'will be unlinked');
+      const fs2 = require('node:fs');
+      const original = fs2.unlinkSync;
+      fs2.unlinkSync = () => { throw new Error('simulated EACCES'); };
+      try {
+        const result = sessions._removePrimeFile(project.path);
+        assert.equal(result, false, 'returns false when unlink throws');
+      } finally {
+        fs2.unlinkSync = original;
+        // Real cleanup so we don't leak the prime file into other tests.
+        try { fs2.unlinkSync(path.join(project.path, '.tangleclaw', 'session-prime.md')); } catch {}
+      }
+    });
+
+    it('launchSession removes stale prime file when silentPrime flips to false', () => {
+      // The transition path: silentPrime was on (file exists), user toggles off,
+      // next session launch should clean up the stale file so the SessionStart
+      // hook (still installed) doesn't replay yesterday's prime.
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const project = store.projects.getByName('silent-prime-test');
+      // Pre-seed a stale prime file (from a prior silent session)
+      sessions._writePrimeFile(project.path, '# stale prime from yesterday\n');
+      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      assert.equal(fs.existsSync(primeFile), true, 'precondition: stale file present');
+
+      // silentPrime now false (the off-by-default config)
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: false
+      });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+
+      assert.equal(fs.existsSync(primeFile), false,
+        'stale prime file should be removed when silentPrime is off');
+    });
   });
 });

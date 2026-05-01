@@ -711,20 +711,11 @@ function openSettings(name) {
 
   const hasSession = project.session && project.session.active;
 
-  // Silent prime toggle (#103) — only render when the resolved engine advertises the capability.
-  // Gating on the engine profile's capability flag (not just engine.id === 'claude') keeps the UI
-  // honest if the capability is later added to other engines without needing a UI change.
-  const supportsSilent = !!(project.engine && project.engine.capabilities && project.engine.capabilities.supportsSilentPrime);
-  const silentPrimeBlock = supportsSilent ? `
-    <div class="form-group">
-      <label class="gs-toggle-label">
-        <span>Silent prime (hidden context)</span>
-        <input type="checkbox" id="settingsSilentPrime" ${project.silentPrime ? 'checked' : ''}>
-        <span class="toggle-switch"></span>
-      </label>
-      <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
-    </div>` : '';
-
+  // Silent prime toggle (#103) — rendered into a stable container so we can
+  // re-render its contents when the user changes the engine dropdown without
+  // touching the rest of the modal. The container is always in the DOM; it just
+  // becomes empty for engines that don't advertise supportsSilentPrime.
+  const initialSilentChecked = !!project.silentPrime;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -747,9 +738,56 @@ function openSettings(name) {
       <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
              autocomplete="off" autocorrect="off" autocapitalize="off">
-    </div>${silentPrimeBlock}`;
+    </div>
+    <div id="settingsSilentPrimeContainer"></div>`;
+
+  // Initial render — based on the project's current engine
+  renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
+
+  // Re-render on engine dropdown change (chunk 3 polish — Critic Mn5). Without
+  // this, switching the dropdown to an engine that lacks supportsSilentPrime
+  // leaves a stale checkbox visible; the backend rejects gracefully but the user
+  // shouldn't be able to send a doomed request in the first place.
+  document.getElementById('settingsEngine').addEventListener('change', (e) => {
+    const checkbox = document.getElementById('settingsSilentPrime');
+    const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
+    renderSilentPrimeToggle(e.target.value, checkedNow);
+  });
 
   modal.classList.add('open');
+}
+
+/**
+ * Render (or clear) the silent-prime toggle inside #settingsSilentPrimeContainer
+ * based on the engine selected in the dropdown. Capability is read from the
+ * engine profile in `state.engines` (same source the dropdown is built from).
+ *
+ * Preserves the checkbox's `checked` value across engine switches: if the user
+ * toggles silent prime on, then clicks a different engine and back, their
+ * intent is remembered. When the new engine doesn't support the capability the
+ * markup is wiped (so doSaveSettings can't pick up a stale checkbox).
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ */
+function renderSilentPrimeToggle(engineId, preserveChecked) {
+  const container = document.getElementById('settingsSilentPrimeContainer');
+  if (!container) return;
+  const profile = (state.engines || []).find(e => e.id === engineId);
+  const supportsSilent = !!(profile && profile.capabilities && profile.capabilities.supportsSilentPrime);
+  if (!supportsSilent) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Silent prime (hidden context)</span>
+        <input type="checkbox" id="settingsSilentPrime" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
+    </div>`;
 }
 
 function closeSettings() {

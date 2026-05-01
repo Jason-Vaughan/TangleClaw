@@ -77,4 +77,46 @@ describe('sessionstart-prime.sh hook script (#103)', () => {
     const out = runHook(null);
     assert.equal(out, body);
   });
+
+  // ── Chunk 3 hardening: set -u + ${VAR:-} defaults ──
+
+  it('declares set -u for variable strictness (chunk 3 hardening)', () => {
+    // Locks in the chunk-3 hardening: hook script uses `set -u` so a typo in any
+    // env-var reference fails fast at install time rather than silently producing
+    // an empty prime. The original `set +e` was a no-op (errexit off by default)
+    // and is replaced by `set -u`.
+    const src = fs.readFileSync(HOOK_SCRIPT, 'utf8');
+    assert.match(src, /^\s*set -u\s*$/m);
+    assert.ok(!/^\s*set \+e\s*$/m.test(src), 'no-op `set +e` should be gone');
+  });
+
+  it('uses ${CLAUDE_PROJECT_DIR:-} default to survive set -u when env is unset', () => {
+    // Without the `:-` default, an unset CLAUDE_PROJECT_DIR would trip set -u and
+    // exit non-zero, violating the always-exit-0 contract. The defensive default
+    // is the structural reason the unset-env test (above) keeps passing.
+    const src = fs.readFileSync(HOOK_SCRIPT, 'utf8');
+    assert.match(src, /\$\{CLAUDE_PROJECT_DIR:-\}/);
+    // And there's no bare ${CLAUDE_PROJECT_DIR} reference (would fail under set -u).
+    const bareRefs = src.match(/\$\{CLAUDE_PROJECT_DIR\}/g) || [];
+    assert.equal(bareRefs.length, 0, 'no bare ${CLAUDE_PROJECT_DIR} dereferences under set -u');
+  });
+
+  it('cat is guarded by `|| true` to survive a race where the file vanishes', () => {
+    // Between the [ -f ] readability check and `cat`, an aggressive cleanup or
+    // a filesystem-removed-after-test could disappear the file. Without `|| true`
+    // a future addition of `set -e` would make that exit non-zero. The guard is
+    // a small forward-defense.
+    const src = fs.readFileSync(HOOK_SCRIPT, 'utf8');
+    assert.match(src, /cat "\$PRIME_FILE"\s*\|\|\s*true/);
+  });
+
+  it('survives an empty CLAUDE_PROJECT_DIR (set, but blank)', () => {
+    // Distinct from the unset case: an explicitly-blank env var would set
+    // PRIME_FILE='/.tangleclaw/session-prime.md' (root-level path) under naive
+    // expansion. The `[ -n "${CLAUDE_PROJECT_DIR:-}" ]` guard rejects empty
+    // strings before that path is consulted.
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: '' };
+    const out = execFileSync(HOOK_SCRIPT, [], { env, input: '', encoding: 'utf8' });
+    assert.equal(out, '');
+  });
 });
