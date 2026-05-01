@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-05-01
+
 ### Added
 
 - **Silent prime delivery via Claude Code SessionStart hook — polish + final Critic (#103, chunk 3)** — Closes #103 by addressing all chunk-1/chunk-2 carry-forwards plus the chunk-2 Critic Mn5 UX polish. Behavior is unchanged for opted-in projects; this chunk is hardening + housekeeping.
