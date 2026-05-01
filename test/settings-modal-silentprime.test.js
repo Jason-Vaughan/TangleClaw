@@ -28,36 +28,51 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
   });
 
   describe('openSettings render', () => {
-    it('declares a capability gate against project.engine.capabilities.supportsSilentPrime', () => {
-      // Gating on the engine profile's capability flag (not just engine.id) keeps the
-      // UI honest if the capability later applies to other engines.
-      assert.match(src, /project\.engine\.capabilities\.supportsSilentPrime/);
+    it('declares a capability gate via state.engines profile.capabilities.supportsSilentPrime', () => {
+      // The gate lives in the renderSilentPrimeToggle helper: it looks up the
+      // selected engine in `state.engines` and reads `profile.capabilities.supportsSilentPrime`.
+      // Gating on the capability flag (not on `engine.id === 'claude'`) keeps the
+      // UI honest if the capability is later added to other engines.
+      assert.match(src, /profile\.capabilities\.supportsSilentPrime/);
+      // Engine resolution from the dropdown's value, not from the project record.
+      assert.match(src, /state\.engines.*\.find\(e\s*=>\s*e\.id\s*===\s*engineId\)/);
     });
 
-    it('renders a #settingsSilentPrime checkbox tied to project.silentPrime', () => {
+    it('renders a #settingsSilentPrime checkbox tied to the preserved checked state', () => {
       assert.match(src, /id="settingsSilentPrime"/);
-      // The checkbox state must mirror project.silentPrime (so reopening the modal
-      // shows the persisted value, not always-unchecked).
-      assert.match(src, /\$\{project\.silentPrime\s*\?\s*'checked'\s*:\s*''\}/);
+      // The checkbox state mirrors the `preserveChecked` argument so the helper
+      // can carry the user's intent across engine-dropdown switches.
+      assert.match(src, /\$\{preserveChecked\s*\?\s*'checked'\s*:\s*''\}/);
     });
 
-    it('toggle markup sits inside the conditional block (not unconditionally emitted)', () => {
-      // Walk the surrounding JS: the silentPrimeBlock must be assigned a ternary
-      // gated on supportsSilent, not a plain string. This protects against a future
-      // edit that drops the gate.
-      const idx = src.indexOf('settingsSilentPrime');
-      assert.ok(idx >= 0);
-      const before = src.slice(Math.max(0, idx - 600), idx);
-      assert.match(before, /supportsSilent\s*\?/);
+    it('non-supportive engines wipe the container (Critic Mn2 regression)', () => {
+      // When supportsSilent is false, the helper sets container.innerHTML = ''
+      // and returns. This is the structural lock-in for the negative branch — a
+      // future refactor cannot accidentally emit toggle markup on a non-supportive
+      // engine.
+      assert.match(src, /if\s*\(\s*!supportsSilent\s*\)\s*\{[^}]*container\.innerHTML\s*=\s*['"]['"]/);
     });
 
-    it('non-supportive engines get an empty string from the gate (Critic Mn2 regression)', () => {
-      // Locks in the *negative* branch of the ternary: when supportsSilent is false,
-      // the silentPrimeBlock variable evaluates to '' (empty string). The structural
-      // assertion above only confirmed the gate exists. This one confirms what the
-      // gate actually produces when it falls through.
-      const m = src.match(/const silentPrimeBlock\s*=\s*supportsSilent\s*\?[\s\S]+?:\s*('|")\1\s*;/);
-      assert.ok(m, 'silentPrimeBlock must use a ternary that falls through to empty string');
+    it('initial render is wired into openSettings via renderSilentPrimeToggle', () => {
+      // openSettings must call renderSilentPrimeToggle(engineId, initialChecked)
+      // so the toggle's first paint reflects the project's current state.
+      const fnIdx = src.indexOf('function openSettings');
+      assert.ok(fnIdx >= 0);
+      const slice = src.slice(fnIdx, fnIdx + 5000);
+      assert.match(slice, /renderSilentPrimeToggle\(/);
+      assert.match(slice, /initialSilentChecked\s*=\s*!!project\.silentPrime/);
+    });
+
+    it('engine dropdown change re-renders the toggle (Critic Mn5 polish)', () => {
+      // A `change` listener on #settingsEngine calls renderSilentPrimeToggle
+      // with the dropdown's new value, so switching to a non-supportive engine
+      // hides the toggle and switching back restores it. Preserves the checkbox's
+      // current state across the swap.
+      const fnIdx = src.indexOf('function openSettings');
+      const slice = src.slice(fnIdx, fnIdx + 5000);
+      assert.match(slice, /getElementById\(['"]settingsEngine['"]\)\.addEventListener\(['"]change['"]/);
+      // The change handler must call renderSilentPrimeToggle (not just update state)
+      assert.match(slice, /addEventListener\(['"]change['"][\s\S]+?renderSilentPrimeToggle\(/);
     });
 
     it('explanatory hint mentions SessionStart hook so the user knows what they are opting into', () => {
