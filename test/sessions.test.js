@@ -1450,4 +1450,164 @@ describe('sessions', () => {
       assert.ok(Number.isNaN(sessions._parseSqliteUtcMs('')));
     });
   });
+
+  describe('silent prime delivery (#103)', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let sessions;
+    let originalHasSession;
+    let originalDetectEngine;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      const projDir = path.join(projectsDir, 'silent-prime-test');
+      fs.mkdirSync(projDir, { recursive: true });
+      store.projects.create({
+        name: 'silent-prime-test',
+        path: projDir,
+        engine: 'claude',
+        methodology: 'minimal'
+      });
+    });
+
+    beforeEach(() => {
+      originalHasSession = tmux.hasSession;
+      originalDetectEngine = enginesModule.detectEngine;
+    });
+
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      enginesModule.detectEngine = originalDetectEngine;
+      const project = store.projects.getByName('silent-prime-test');
+      if (project) {
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+        // Clean up prime file + project config so each test starts fresh
+        try { fs.rmSync(path.join(project.path, '.tangleclaw'), { recursive: true, force: true }); } catch {}
+      }
+      // Real tmux session may have been spawned by launchSession — clean it up
+      // so the next test starts without leftover state.
+      try { require('node:child_process').execSync('tmux kill-session -t silent-prime-test 2>/dev/null', { stdio: 'ignore' }); } catch {}
+    });
+
+    it('_writePrimeFile creates .tangleclaw/session-prime.md and returns its path', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const out = sessions._writePrimeFile(project.path, '# prime\nbody line\n');
+      const expected = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      assert.equal(out, expected);
+      assert.equal(fs.readFileSync(expected, 'utf8'), '# prime\nbody line\n');
+    });
+
+    it('_writePrimeFile creates .tangleclaw/ directory when missing', () => {
+      const project = store.projects.getByName('silent-prime-test');
+      const tcDir = path.join(project.path, '.tangleclaw');
+      try { fs.rmSync(tcDir, { recursive: true, force: true }); } catch {}
+      assert.equal(fs.existsSync(tcDir), false, 'precondition: .tangleclaw missing');
+
+      sessions._writePrimeFile(project.path, 'body');
+
+      assert.equal(fs.existsSync(tcDir), true);
+      assert.equal(fs.existsSync(path.join(tcDir, 'session-prime.md')), true);
+    });
+
+    it('_writePrimeFile returns null when the path is unwritable (non-throwing)', () => {
+      // Pass a path that cannot be created (parent is a file, not a dir).
+      const fakeProject = path.join(projectsDir, 'silent-prime-not-a-dir');
+      try { fs.rmSync(fakeProject, { force: true, recursive: true }); } catch {}
+      fs.writeFileSync(fakeProject, 'i am a file, not a project');
+      try {
+        const out = sessions._writePrimeFile(fakeProject, 'body');
+        assert.equal(out, null);
+      } finally {
+        fs.rmSync(fakeProject, { force: true });
+      }
+    });
+
+    it('launchSession writes prime file when projConfig.silentPrime is true', () => {
+      // Mirror the orphan-adoption pattern from the launchSession tests above:
+      // pretend a tmux session exists so launchSession kills+recreates rather
+      // than failing on whatever stale tmux state may exist on the test host.
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const project = store.projects.getByName('silent-prime-test');
+      // Enable silentPrime via project config
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: true
+      });
+
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+
+      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      assert.equal(fs.existsSync(primeFile), true, 'prime file should be written');
+      assert.ok(fs.readFileSync(primeFile, 'utf8').length > 0, 'prime file should be non-empty');
+    });
+
+    it('launchSession does NOT write prime file when silentPrime is false (default)', () => {
+      // Mirror the orphan-adoption pattern from the launchSession tests above:
+      // pretend a tmux session exists so launchSession kills+recreates rather
+      // than failing on whatever stale tmux state may exist on the test host.
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const project = store.projects.getByName('silent-prime-test');
+      // No projConfig save → DEFAULT_PROJECT_CONFIG.silentPrime is false
+      const result = sessions.launchSession('silent-prime-test');
+      assert.equal(result.error, null);
+
+      const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+      assert.equal(fs.existsSync(primeFile), false, 'prime file should not be written when silent is off');
+    });
+
+    it('launchSession does NOT write prime file when engine lacks supportsSilentPrime capability', () => {
+      // Stub the claude engine profile to drop the supportsSilentPrime capability,
+      // then assert silentPrime=true in projConfig is ignored gracefully.
+      // Mirror the orphan-adoption pattern from the launchSession tests above:
+      // pretend a tmux session exists so launchSession kills+recreates rather
+      // than failing on whatever stale tmux state may exist on the test host.
+      tmux.hasSession = (name) => name === 'silent-prime-test';
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const project = store.projects.getByName('silent-prime-test');
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: true
+      });
+
+      // launchSession reads the engine profile via store.engines.get (not the
+      // availability-enriched variant) — patch there so silentPrime resolves to false.
+      const origGet = store.engines.get;
+      store.engines.get = (id) => {
+        const real = origGet(id);
+        if (real && real.capabilities) {
+          return { ...real, capabilities: { ...real.capabilities, supportsSilentPrime: false } };
+        }
+        return real;
+      };
+      try {
+        const result = sessions.launchSession('silent-prime-test');
+        assert.equal(result.error, null);
+        const primeFile = path.join(project.path, '.tangleclaw', 'session-prime.md');
+        assert.equal(fs.existsSync(primeFile), false,
+          'engines without supportsSilentPrime should fall back to typed prime even if user opted in');
+      } finally {
+        store.engines.get = origGet;
+      }
+    });
+
+    it('DEFAULT_PROJECT_CONFIG.silentPrime is false (opt-in until proven)', () => {
+      const projDir = path.join(projectsDir, 'silentprime-default-check');
+      fs.mkdirSync(projDir, { recursive: true });
+      try {
+        const cfg = store.projectConfig.load(projDir);
+        assert.equal(cfg.silentPrime, false);
+      } finally {
+        fs.rmSync(projDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

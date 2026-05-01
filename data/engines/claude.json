@@ -37,7 +37,8 @@
     "supportsSlashCommands": true,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
-    "supportsCoAuthor": true
+    "supportsCoAuthor": true,
+    "supportsSilentPrime": true
   },
   "statusPage": {
     "adapter": "atlassian",
