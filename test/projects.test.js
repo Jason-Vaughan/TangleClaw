@@ -1069,6 +1069,72 @@ describe('projects', () => {
       assert.equal(fs.existsSync(primeFile), false, 'stale prime file should be removed by PATCH');
     });
 
+    // ── #140: engine PATCH must clear orphan .claude/settings.json hooks ──
+    it('updateProject clears orphan SessionStart hook when engine flips claude → non-claude (#140)', () => {
+      const projPath = path.join(primeDir, 'sp-engine-flip-orphan');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-engine-flip-orphan', path: projPath, engineId: 'claude' });
+
+      // Seed silentPrime=true via PATCH so the SessionStart hook is materialized
+      // as the canonical pre-flip state — same shape an existing install would
+      // have on disk before the engine change.
+      projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
+      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: SessionStart hook present after silentPrime=true');
+
+      // Inject a non-hook key so the test asserts the cleanup pass deletes ONLY
+      // hooks and preserves the rest of the settings file (Critic m1).
+      seeded.permissions = { allow: ['Read', 'Edit'] };
+      fs.writeFileSync(settingsFile, JSON.stringify(seeded, null, 2) + '\n');
+
+      // Flip engine away from claude WITHOUT touching silentPrime — exactly the
+      // scenario from #140's repro.
+      const result = projects.updateProject('sp-engine-flip-orphan', { engine: 'gemini' });
+      assert.deepEqual(result.errors, []);
+      assert.equal(store.projects.getByName('sp-engine-flip-orphan').engineId, 'gemini');
+
+      const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.equal(
+        after.hooks && after.hooks.SessionStart,
+        undefined,
+        'orphan SessionStart hook must be cleared on engine flip away from claude'
+      );
+      assert.deepEqual(
+        after.permissions,
+        { allow: ['Read', 'Edit'] },
+        'non-hook keys must be preserved across the cleanup pass'
+      );
+    });
+
+    it('updateProject materializes SessionStart hook when engine flips non-claude → claude with silentPrime=true (#140)', () => {
+      const projPath = path.join(primeDir, 'sp-engine-flip-onto-claude');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-engine-flip-onto-claude', path: projPath, engine: 'gemini' });
+
+      // Pre-seed silentPrime=true directly in projConfig — gemini lacks the
+      // capability so a PATCH would reject, but real projects can land in this
+      // state via a prior claude → gemini flip that left silentPrime=true on
+      // projConfig (the second half of the #140 repro).
+      const seed = store.projectConfig.load(projPath);
+      seed.engine = 'gemini';
+      seed.silentPrime = true;
+      store.projectConfig.save(projPath, seed);
+
+      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no .claude/settings.json yet');
+
+      // Flip onto claude. CHANGELOG claims the hook is materialized immediately
+      // rather than waiting for the next launchSession.
+      const result = projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
+      assert.deepEqual(result.errors, []);
+
+      assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.json should be written by syncEngineHooks');
+      const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(after.hooks && after.hooks.SessionStart, 'SessionStart hook should be materialized on flip onto claude');
+      assert.equal(after.hooks.SessionStart[0].matcher, 'startup');
+    });
+
     it('updateProject silentPrime=false is a no-op for prime cleanup when file is absent (#137)', () => {
       const projPath = path.join(primeDir, 'sp-prime-absent');
       fs.mkdirSync(projPath, { recursive: true });
