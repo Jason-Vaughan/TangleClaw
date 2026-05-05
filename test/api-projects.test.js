@@ -217,6 +217,22 @@ describe('api-projects', () => {
       assert.equal(status, 400);
       assert.ok(data.error.toLowerCase().includes('boolean'));
     });
+
+    // #137 — PATCH must sync .claude/settings.json hooks immediately, not defer to next launch
+    it('PATCH silentPrime=true writes SessionStart hook to .claude/settings.json on disk', async () => {
+      // Use a dedicated project so we don't entangle with the existing api-test-project assertions
+      await request('POST', '/api/projects', { name: 'sp-api-sync', methodology: 'minimal' });
+
+      const { status } = await request('PATCH', '/api/projects/sp-api-sync', { silentPrime: true });
+      assert.equal(status, 200);
+
+      const settingsFile = path.join(projectsDir, 'sp-api-sync', '.claude', 'settings.json');
+      assert.equal(fs.existsSync(settingsFile), true, 'settings.json should be written by PATCH');
+      const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(settings.hooks && settings.hooks.SessionStart, 'SessionStart hook should be present');
+      const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+      assert.ok(cmd.endsWith('sessionstart-prime.sh'), 'should point at the bundled hook script');
+    });
   });
 
   describe('DELETE /api/projects/:name', () => {
