@@ -97,6 +97,178 @@ describe('store', () => {
       assert.ok(fs.existsSync(templateFile), 'Should have minimal template');
     });
 
+    it('reconciles stale wrap.steps in existing methodology templates (#136)', () => {
+      const templatesDir = path.join(tmpDir, 'templates');
+      const prawductDir = path.join(templatesDir, 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      // Pre-v3.13.7 wrap.steps shape — missing memory-update.
+      const stale = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        type: 'methodology',
+        version: '1.0.0',
+        wrap: {
+          command: null,
+          steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'commit'],
+          captureFields: ['summary']
+        }
+      };
+      fs.writeFileSync(path.join(prawductDir, 'template.json'), JSON.stringify(stale, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(prawductDir, 'template.json'), 'utf8'));
+      assert.ok(updated.wrap.steps.includes('memory-update'), 'memory-update step should be added');
+      // Order matches bundled (memory-update inserted before commit)
+      const idx = updated.wrap.steps.indexOf('memory-update');
+      assert.equal(updated.wrap.steps[idx + 1], 'commit', 'memory-update should sit before commit');
+    });
+
+    it('preserves user-customized wrap.steps when merging templates (#136)', () => {
+      const templatesDir = path.join(tmpDir, 'templates');
+      const prawductDir = path.join(templatesDir, 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      // User added a custom step not present in the bundled template.
+      const custom = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        type: 'methodology',
+        version: '1.0.0',
+        wrap: {
+          command: null,
+          steps: ['version-bump', 'changelog-update', 'deploy-step', 'commit'],
+          captureFields: ['summary']
+        }
+      };
+      fs.writeFileSync(path.join(prawductDir, 'template.json'), JSON.stringify(custom, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(prawductDir, 'template.json'), 'utf8'));
+      // Custom step preserved; bundled steps not force-merged because user has customized.
+      assert.deepStrictEqual(
+        updated.wrap.steps,
+        ['version-bump', 'changelog-update', 'deploy-step', 'commit'],
+        'user-customized wrap.steps must not be overwritten'
+      );
+    });
+
+    it('backfills missing top-level keys in stale methodology templates (#136)', () => {
+      const templatesDir = path.join(tmpDir, 'templates');
+      const minimalDir = path.join(templatesDir, 'minimal');
+      fs.mkdirSync(minimalDir, { recursive: true });
+      // Older minimal template missing the `prime` block bundled today.
+      const stale = {
+        id: 'minimal',
+        name: 'Minimal',
+        type: 'methodology',
+        version: '1.0.0',
+        wrap: { command: null, steps: ['learnings-capture', 'memory-update', 'commit'], captureFields: ['summary'] }
+      };
+      fs.writeFileSync(path.join(minimalDir, 'template.json'), JSON.stringify(stale, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(minimalDir, 'template.json'), 'utf8'));
+      assert.ok(updated.prime, 'prime block should be backfilled from bundled');
+      assert.equal(updated.name, 'Minimal', 'existing user values preserved');
+    });
+
+    it('template merge is idempotent across reboots (#136)', () => {
+      const templatesDir = path.join(tmpDir, 'templates');
+      const prawductDir = path.join(templatesDir, 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      const stale = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        type: 'methodology',
+        version: '1.0.0',
+        wrap: {
+          command: null,
+          steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'commit'],
+          captureFields: ['summary']
+        }
+      };
+      const livePath = path.join(prawductDir, 'template.json');
+      fs.writeFileSync(livePath, JSON.stringify(stale, null, 2));
+
+      store.init();
+      const afterFirst = fs.readFileSync(livePath, 'utf8');
+
+      store.close();
+      store.init();
+      const afterSecond = fs.readFileSync(livePath, 'utf8');
+
+      assert.equal(afterFirst, afterSecond, 'Template should be unchanged on second init');
+    });
+
+    it('does not rewrite template.json when bundled and live already match (#136)', () => {
+      // First init seeds the runtime template from bundled.
+      store.init();
+      const livePath = path.join(tmpDir, 'templates', 'prawduct', 'template.json');
+      const before = fs.readFileSync(livePath, 'utf8');
+
+      // Backdate mtime so a same-content rewrite during the next init would
+      // produce a detectable mtime delta (independent of fs granularity).
+      const pastSec = Math.floor(Date.now() / 1000) - 60;
+      fs.utimesSync(livePath, pastSec, pastSec);
+      const beforeMtime = fs.statSync(livePath).mtimeMs;
+
+      store.close();
+      store.init();
+
+      const after = fs.readFileSync(livePath, 'utf8');
+      const afterMtime = fs.statSync(livePath).mtimeMs;
+      assert.equal(after, before, 'Content unchanged when live matches bundled');
+      assert.equal(afterMtime, beforeMtime, 'No rewrite when nothing to merge');
+    });
+
+    it('re-adds wrap.steps entries that the user deliberately removed (#136)', () => {
+      // Pins the additive-only contract: a runtime template with a wrap.steps
+      // array that is an ordered subsequence of bundled gets adopted, even if
+      // the user deliberately trimmed an entry. Trade-off documented on
+      // _mergeBundledTemplate's JSDoc — users who need to disable behavior
+      // should do so via project config, not by mutating the runtime template.
+      const prawductDir = path.join(tmpDir, 'templates', 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      const trimmed = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        type: 'methodology',
+        version: '1.0.0',
+        // Live drops `memory-update` — but every remaining step appears in
+        // bundled in the same order, so the merger cannot tell this apart
+        // from a stale pre-v3.13.7 install.
+        wrap: {
+          command: null,
+          steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'commit'],
+          captureFields: ['summary']
+        }
+      };
+      fs.writeFileSync(path.join(prawductDir, 'template.json'), JSON.stringify(trimmed, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(path.join(prawductDir, 'template.json'), 'utf8'));
+      assert.ok(updated.wrap.steps.includes('memory-update'), 'subsequence-only deletions are re-added by design');
+    });
+
+    it('bundled methodology templates ship memory-update in wrap.steps (#136)', () => {
+      // Tripwire: the entire fix exists to ensure post-v3.13.7 wrap.steps
+      // changes reach existing installs. If a future PR drops `memory-update`
+      // from a bundled template, this test fires before the regression ships.
+      const bundledDir = path.join(__dirname, '..', 'data', 'templates');
+      for (const id of ['prawduct', 'tilt', 'minimal']) {
+        const tmpl = JSON.parse(
+          fs.readFileSync(path.join(bundledDir, id, 'template.json'), 'utf8')
+        );
+        assert.ok(
+          Array.isArray(tmpl.wrap?.steps) && tmpl.wrap.steps.includes('memory-update'),
+          `bundled ${id} template must include memory-update in wrap.steps`
+        );
+      }
+    });
+
     it('should not overwrite existing engine profiles', () => {
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
