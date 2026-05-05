@@ -1001,5 +1001,86 @@ describe('projects', () => {
       const afterRow = store.projects.getByName('sp-engine-race');
       assert.equal(afterRow.engineId, beforeRow.engineId);
     });
+
+    // ── #137: PATCH must sync .claude/settings.json + prime file immediately ──
+    it('updateProject syncs SessionStart hook to .claude/settings.json on silentPrime=true (#137)', () => {
+      const projPath = path.join(primeDir, 'sp-sync-on');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-sync-on', path: projPath, engineId: 'claude' });
+
+      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.json yet');
+
+      const result = projects.updateProject('sp-sync-on', { silentPrime: true });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, true);
+
+      assert.equal(fs.existsSync(settingsFile), true, 'settings.json should be written by syncEngineHooks');
+      const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(settings.hooks, 'hooks block should exist');
+      assert.ok(settings.hooks.SessionStart, 'SessionStart entry should exist');
+      assert.equal(settings.hooks.SessionStart.length, 1);
+      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
+      const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+      assert.ok(cmd.endsWith('sessionstart-prime.sh'), 'command should point at the bundled hook script');
+      assert.equal(cmd.includes('{{TANGLECLAW_DIR}}'), false, 'placeholder should be resolved');
+    });
+
+    it('updateProject removes SessionStart hook from .claude/settings.json on silentPrime=false (#137)', () => {
+      const projPath = path.join(primeDir, 'sp-sync-off');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-sync-off', path: projPath, engineId: 'claude' });
+
+      // Seed silentPrime=true via PATCH so the baseline matches the on-disk shape PATCH would produce.
+      projects.updateProject('sp-sync-off', { silentPrime: true });
+      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: hook should be present after silentPrime=true');
+
+      const result = projects.updateProject('sp-sync-off', { silentPrime: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, false);
+
+      const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      // The SessionStart entry must be gone. The surrounding hooks block may or may
+      // not be present depending on what other baseline hooks exist (#103 may grow
+      // siblings) — we only care that the silentPrime entry specifically is cleared.
+      const sessionStart = after.hooks && after.hooks.SessionStart;
+      assert.equal(sessionStart, undefined, 'SessionStart entry should be cleared when silentPrime=false');
+    });
+
+    it('updateProject removes stale .tangleclaw/session-prime.md on silentPrime=false (#137)', () => {
+      const projPath = path.join(primeDir, 'sp-prime-cleanup');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-prime-cleanup', path: projPath, engineId: 'claude' });
+
+      // Pre-seed silentPrime=true and write a stale prime file directly.
+      const seed = store.projectConfig.load(projPath);
+      seed.silentPrime = true;
+      store.projectConfig.save(projPath, seed);
+      const tcDir = path.join(projPath, '.tangleclaw');
+      fs.mkdirSync(tcDir, { recursive: true });
+      const primeFile = path.join(tcDir, 'session-prime.md');
+      fs.writeFileSync(primeFile, '# stale prime from a previous session\n');
+      assert.equal(fs.existsSync(primeFile), true, 'baseline: stale prime file is on disk');
+
+      const result = projects.updateProject('sp-prime-cleanup', { silentPrime: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(fs.existsSync(primeFile), false, 'stale prime file should be removed by PATCH');
+    });
+
+    it('updateProject silentPrime=false is a no-op for prime cleanup when file is absent (#137)', () => {
+      const projPath = path.join(primeDir, 'sp-prime-absent');
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name: 'sp-prime-absent', path: projPath, engineId: 'claude' });
+
+      const primeFile = path.join(projPath, '.tangleclaw', 'session-prime.md');
+      assert.equal(fs.existsSync(primeFile), false, 'baseline: no prime file');
+
+      const result = projects.updateProject('sp-prime-absent', { silentPrime: false });
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.project.silentPrime, false);
+      assert.equal(fs.existsSync(primeFile), false, 'still absent — _removePrimeFile is non-throwing on missing');
+    });
   });
 });
