@@ -1223,6 +1223,239 @@ describe('engines', () => {
     });
   });
 
+  describe('_filterHookEntriesByRequires (#145)', () => {
+    let projectDir;
+
+    beforeEach(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-requires-test-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    function makeEntry(extra = {}) {
+      return {
+        matcher: 'startup',
+        hooks: [{ type: 'command', command: 'noop' }],
+        ...extra
+      };
+    }
+
+    it('keeps entries whose `requires` paths all exist', () => {
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '#!/bin/sh\n');
+      const hooks = { SessionStart: [makeEntry({ requires: ['tools/product-hook'] })] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.equal(filtered.SessionStart.length, 1, 'entry with satisfied requires should be kept');
+      assert.ok(!('requires' in filtered.SessionStart[0]), 'requires field should be stripped from output');
+    });
+
+    it('skips entries whose single `requires` path is missing', () => {
+      const hooks = { Stop: [makeEntry({ requires: ['tools/product-hook'] })] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.deepStrictEqual(filtered, {}, 'event key with no kept entries should be omitted');
+    });
+
+    it('skips entries when one of multiple `requires` paths is missing', () => {
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
+      const hooks = { Stop: [makeEntry({ requires: ['tools/present', 'tools/missing'] })] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.deepStrictEqual(filtered, {}, 'AND-semantics: any missing path skips the entry');
+    });
+
+    it('keeps entries without a `requires` field (backwards-compatible)', () => {
+      const hooks = { SessionStart: [makeEntry()] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.equal(filtered.SessionStart.length, 1, 'no-requires entry must inject unconditionally');
+    });
+
+    it('keeps entries with empty `requires` array (degenerate, no preconditions)', () => {
+      const hooks = { SessionStart: [makeEntry({ requires: [] })] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.equal(filtered.SessionStart.length, 1, 'empty requires array means no preconditions');
+      assert.ok(!('requires' in filtered.SessionStart[0]), 'requires field should still be stripped');
+    });
+
+    it('coerces non-empty string `requires` to a single-element array (Critic S1)', () => {
+      // Forgiving handling for the common single-precondition case where a
+      // template author writes `requires: "tools/x"` instead of an array.
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '');
+      const hooks = { Stop: [makeEntry({ requires: 'tools/product-hook' })] };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.equal(filtered.Stop.length, 1, 'string requires should be honored as single precondition');
+    });
+
+    it('skips entries whose `requires` contains an empty string or non-string entry (fail-closed)', () => {
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
+      const hooksEmpty = { Stop: [makeEntry({ requires: ['', 'tools/present'] })] };
+      const hooksNonString = { Stop: [makeEntry({ requires: [123, 'tools/present'] })] };
+
+      assert.deepStrictEqual(
+        engines._filterHookEntriesByRequires(hooksEmpty, projectDir),
+        {},
+        'empty-string entry must be treated as missing'
+      );
+      assert.deepStrictEqual(
+        engines._filterHookEntriesByRequires(hooksNonString, projectDir),
+        {},
+        'non-string entry must be treated as missing'
+      );
+    });
+
+    it('rejects path traversal and absolute paths in `requires` (Critic S2)', () => {
+      // Even if these paths resolve to a real file outside the project,
+      // `requires` is documented project-relative; anything else fails closed.
+      const traversal = { Stop: [makeEntry({ requires: ['../etc/hosts'] })] };
+      const absolute = { Stop: [makeEntry({ requires: ['/etc/hosts'] })] };
+      const nestedTraversal = { Stop: [makeEntry({ requires: ['tools/../../etc/hosts'] })] };
+
+      assert.deepStrictEqual(engines._filterHookEntriesByRequires(traversal, projectDir), {}, '../ rejected');
+      assert.deepStrictEqual(engines._filterHookEntriesByRequires(absolute, projectDir), {}, 'absolute path rejected');
+      assert.deepStrictEqual(engines._filterHookEntriesByRequires(nestedTraversal, projectDir), {}, 'nested .. segment rejected');
+    });
+
+    it('mixes kept and skipped entries within the same event', () => {
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
+      const hooks = {
+        SessionStart: [
+          makeEntry({ matcher: 'a', requires: ['tools/present'] }),
+          makeEntry({ matcher: 'b', requires: ['tools/missing'] }),
+          makeEntry({ matcher: 'c' })
+        ]
+      };
+
+      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
+
+      assert.equal(filtered.SessionStart.length, 2, 'kept = present-requires + no-requires');
+      assert.deepStrictEqual(
+        filtered.SessionStart.map((e) => e.matcher),
+        ['a', 'c'],
+        'order preserved among kept entries'
+      );
+    });
+  });
+
+  describe('syncEngineHooks + requires precondition (#145)', () => {
+    let projectDir;
+
+    beforeEach(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-sync-requires-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    it('strips orphan hook entries from .claude/settings.json (self-heal for existing affected projects)', () => {
+      // Simulate an existing project with a stale orphan hook block already
+      // written by a pre-#145 syncEngineHooks pass — exactly the RentalClaw
+      // / prawduct-test state. The bundled template now declares requires.
+      fs.mkdirSync(path.join(projectDir, '.claude'), { recursive: true });
+      const stale = {
+        permissions: { allow: ['Bash(ls)'] },
+        hooks: {
+          Stop: [{
+            matcher: '',
+            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+          }]
+        }
+      };
+      fs.writeFileSync(path.join(projectDir, '.claude', 'settings.json'), JSON.stringify(stale, null, 2));
+      const template = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            Stop: [{
+              matcher: '',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+
+      engines.syncEngineHooks(projectDir, template);
+
+      const settings = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+      assert.ok(!settings.hooks, 'orphan hook block must be removed when requires unmet');
+      assert.deepStrictEqual(settings.permissions, { allow: ['Bash(ls)'] }, 'non-hook keys preserved');
+    });
+
+    it('idempotency: orphan stays gone on re-sync; appears once requirement is installed', () => {
+      const template = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            Stop: [{
+              matcher: '',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+
+      // First pass: requirement missing — no hooks written.
+      engines.syncEngineHooks(projectDir, template);
+      const first = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+      assert.ok(!first.hooks, 'no hooks written when requirement missing');
+
+      // Install the runtime, re-sync — hook should now appear.
+      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '#!/bin/sh\n');
+      engines.syncEngineHooks(projectDir, template);
+      const second = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+      assert.ok(second.hooks && second.hooks.Stop, 'hook injected once requirement is satisfied');
+      assert.ok(!('requires' in second.hooks.Stop[0]), 'requires field stripped from .claude/settings.json');
+    });
+  });
+
+  describe('bundled prawduct template hook tripwire (#145)', () => {
+    it('every hook entry that calls tools/product-hook declares it in `requires`', () => {
+      // Tripwire: the entire #145 fix exists to ensure prawduct's runtime-
+      // dependent hooks declare their preconditions. If a future PR adds a
+      // hook entry referencing tools/product-hook without a `requires`
+      // annotation, this test fires before the orphan-injection regression
+      // ships.
+      const tmpl = JSON.parse(fs.readFileSync(
+        path.join(__dirname, '..', 'data', 'templates', 'prawduct', 'template.json'),
+        'utf8'
+      ));
+      const claudeHooks = tmpl.hooks && tmpl.hooks.claude;
+      assert.ok(claudeHooks, 'bundled prawduct template must declare claude hooks');
+
+      for (const [eventName, entries] of Object.entries(claudeHooks)) {
+        for (const entry of entries) {
+          const referencesProductHook = (entry.hooks || []).some((h) =>
+            typeof h.command === 'string' && h.command.includes('tools/product-hook')
+          );
+          if (!referencesProductHook) continue;
+          assert.ok(
+            Array.isArray(entry.requires) && entry.requires.includes('tools/product-hook'),
+            `${eventName} entry references tools/product-hook but does not declare it in \`requires\``
+          );
+        }
+      }
+    });
+  });
+
   describe('_buildBaselineHooks (#103)', () => {
     const supportingProfile = { capabilities: { supportsSilentPrime: true } };
 
