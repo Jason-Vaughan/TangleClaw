@@ -31,7 +31,9 @@ const state = {
   openclawTunnelStatus: {},
   auditOpen: false,
   auditSummaries: {},
-  auditLoaded: false
+  auditLoaded: false,
+  orphanHooks: null,
+  orphanHooksRepairInFlight: false
 };
 
 // ── API Helpers ──
@@ -274,6 +276,110 @@ async function loadProjects() {
     sum + ((p.evalAudit && p.evalAudit.openIncidents) || 0), 0);
   const countEl = document.getElementById('auditIncidentCount');
   if (countEl) countEl.textContent = totalIncidents;
+
+  // Refresh the orphan-hooks banner (#145, chunk 2). Skip while a repair is
+  // in flight so the polling tick can't briefly flash pre-repair state back
+  // (Critic N3). Console-log on failure rather than silently swallow so a
+  // permanent failure is visible without breaking the dashboard.
+  if (!state.orphanHooksRepairInFlight) {
+    loadOrphanHooksInventory().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('orphan-hooks scan failed', err);
+    });
+  }
+}
+
+// ── Orphan Hooks Banner (#145, chunk 2) ──
+// The Stop-hook infinite-loop incident that prompted chunk 2 lives in
+// projects whose .claude/settings.json points at a methodology runtime that
+// was never installed. The banner gives users a one-click escape hatch
+// without waiting for each project's next session-launch sync to self-heal.
+
+async function loadOrphanHooksInventory() {
+  const data = await api('/api/projects/orphan-hooks-scan');
+  state.orphanHooks = data || { projectsWithOrphans: [] };
+  renderOrphanHooksBanner();
+}
+
+function renderOrphanHooksBanner() {
+  const banner = document.getElementById('orphanHooksBanner');
+  const textEl = document.getElementById('orphanHooksBannerText');
+  if (!banner || !textEl) return;
+  const list = (state.orphanHooks && state.orphanHooks.projectsWithOrphans) || [];
+  if (list.length === 0) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const noun = list.length === 1 ? 'project has' : 'projects have';
+  textEl.textContent = `${list.length} ${noun} orphan Stop/SessionStart hooks (likely cause of infinite-loop session errors).`;
+  banner.classList.remove('hidden');
+}
+
+async function repairAllOrphanHooks() {
+  const list = (state.orphanHooks && state.orphanHooks.projectsWithOrphans) || [];
+  if (list.length === 0) return;
+  const names = list.map((p) => p.name).join(', ');
+  if (!window.confirm(`Strip orphan hook entries from ${list.length} project(s)?\n\n${names}\n\nNon-orphan hooks and all other settings keys are preserved.`)) return;
+  const toast = document.getElementById('toast');
+  // Gate the polling-driven scan refresh so it can't race the in-flight repair
+  // POST and briefly flash the pre-repair banner state back (Critic N3).
+  state.orphanHooksRepairInFlight = true;
+  try {
+    const data = await apiMutate('/api/projects/repair-orphan-hooks', 'POST', {});
+    if (!data) {
+      if (toast) {
+        toast.textContent = 'Repair failed (no response)';
+        toast.className = 'toast toast-warn visible';
+        setTimeout(() => { toast.className = 'toast'; }, 4000);
+      }
+      return;
+    }
+    const repairedN = Array.isArray(data.repaired) ? data.repaired.length : 0;
+    const errorN = Array.isArray(data.errors) ? data.errors.length : 0;
+    if (toast) {
+      if (errorN > 0) {
+        toast.textContent = `Repaired ${repairedN}, ${errorN} error${errorN > 1 ? 's' : ''}`;
+        toast.className = 'toast toast-warn visible';
+      } else {
+        toast.textContent = `Repaired ${repairedN} project(s)`;
+        toast.className = 'toast toast-ok visible';
+      }
+      setTimeout(() => { toast.className = 'toast'; }, 3000);
+    }
+    await loadProjects();
+  } finally {
+    state.orphanHooksRepairInFlight = false;
+  }
+}
+
+function showOrphanHooksDetails() {
+  const list = (state.orphanHooks && state.orphanHooks.projectsWithOrphans) || [];
+  if (list.length === 0) return;
+  const lines = list.map((p) => {
+    const orphans = p.orphans.map((o) => `  • ${o.event}${o.matcher ? ` (matcher: "${o.matcher}")` : ''} → missing: ${o.missing.join(', ')}`).join('\n');
+    return `${p.name}\n${orphans}`;
+  });
+  window.alert(`Orphan hooks detected:\n\n${lines.join('\n\n')}`);
+}
+
+function wireOrphanHooksBanner() {
+  const repairBtn = document.getElementById('orphanHooksRepairBtn');
+  const detailsBtn = document.getElementById('orphanHooksDetailsBtn');
+  if (repairBtn) {
+    repairBtn.addEventListener('click', () => {
+      repairAllOrphanHooks().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('orphan-hooks repair failed', err);
+        const toast = document.getElementById('toast');
+        if (toast) {
+          toast.textContent = `Repair failed: ${err && err.message ? err.message : 'unknown error'}`;
+          toast.className = 'toast toast-warn visible';
+          setTimeout(() => { toast.className = 'toast'; }, 4000);
+        }
+      });
+    });
+  }
+  if (detailsBtn) detailsBtn.addEventListener('click', showOrphanHooksDetails);
 }
 
 function collectTags() {
@@ -625,6 +731,7 @@ async function init() {
     return;
   }
 
+  wireOrphanHooksBanner();
   await loadProjects();
   await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus()]);
   checkPortImports();

@@ -283,6 +283,12 @@
 
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">
+    <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
+    <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">
+      <span class="orphan-banner-text" id="orphanHooksBannerText"></span>
+      <button type="button" class="btn btn-small orphan-banner-btn" id="orphanHooksRepairBtn">Repair All</button>
+      <button type="button" class="orphan-banner-details" id="orphanHooksDetailsBtn" aria-label="Show affected projects">Details</button>
+    </div>
     <div class="cards-grid" id="cardsGrid"></div>
   </main>
   </div>

@@ -883,6 +883,29 @@ route('POST', '/api/projects/attach', (_req, res, _params, body) => {
   jsonResponse(res, 201, response);
 });
 
+// GET /api/projects/orphan-hooks-scan — Read-only inventory of projects with
+// orphan hook entries in .claude/settings.json (#145, chunk 2). MUST be
+// registered before GET /api/projects/:name so the literal path wins.
+route('GET', '/api/projects/orphan-hooks-scan', (_req, res) => {
+  const result = projects.scanForOrphanHooks();
+  jsonResponse(res, 200, result);
+});
+
+// POST /api/projects/repair-orphan-hooks — Strip orphan hook entries from
+// affected projects. Body: `{ project?: string }` for single-target. Returns
+// `{ repaired, skipped, errors }` (#145, chunk 2).
+route('POST', '/api/projects/repair-orphan-hooks', (_req, res, _params, body) => {
+  if (body && body.project !== undefined && typeof body.project !== 'string') {
+    return errorResponse(res, 400, 'project must be a string', 'BAD_REQUEST');
+  }
+  const projectName = body && body.project ? body.project : null;
+  const result = projects.repairOrphanHooks(projectName);
+  if (projectName && result.errors.some((e) => e.error === 'Project not found')) {
+    return errorResponse(res, 404, `Project "${projectName}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, result);
+});
+
 // GET /api/projects/:name
 route('GET', '/api/projects/:name', (_req, res, params) => {
   const project = projects.getProject(params.name);
