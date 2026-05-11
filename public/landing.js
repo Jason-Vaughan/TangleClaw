@@ -88,7 +88,10 @@ async function loadVersion() {
 
 /**
  * Fetch update status and show notification pill if an update is available.
- * Dismissed state is persisted in localStorage keyed by version.
+ * Dismissed state is persisted in localStorage keyed by version. The version
+ * text is wrapped in an anchor to the GitHub release page (#149) when the
+ * backend supplies a `releaseUrl` — falls back to plain text otherwise so
+ * pre-#149 servers or non-GitHub remotes still surface the notification.
  */
 async function loadUpdateStatus() {
   const data = await api('/api/update-status');
@@ -100,7 +103,12 @@ async function loadUpdateStatus() {
   const pill = document.getElementById('updatePill');
   if (!pill) return;
 
-  pill.innerHTML = `v${esc(data.latestVersion)} available <button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
+  const versionLabel = `v${esc(data.latestVersion)}`;
+  const versionHtml = data.releaseUrl
+    ? `<a class="update-pill-link" href="${esc(data.releaseUrl)}" target="_blank" rel="noopener noreferrer" title="View release notes">${versionLabel}</a>`
+    : versionLabel;
+
+  pill.innerHTML = `${versionHtml} available <button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
   pill.classList.remove('hidden');
 
   pill.querySelector('.update-pill-dismiss').addEventListener('click', (e) => {
