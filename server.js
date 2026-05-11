@@ -977,7 +977,8 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 
     const detectedMethodology = methodologies.detect(projPath);
     const engineId = config.defaultEngine || 'claude';
-    const methodologyId = detectedMethodology ? detectedMethodology.id : (config.defaultMethodology || null);
+    // Every project has a methodology — minimal is the no-workflow option (#151)
+    const methodologyId = detectedMethodology ? detectedMethodology.id : (config.defaultMethodology || 'minimal');
 
     try {
       store.projects.create({

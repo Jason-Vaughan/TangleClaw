@@ -1229,23 +1229,83 @@ describe('projects', () => {
       assert(projPath);
     });
 
-    // Removal path (`PATCH methodology: null`) deliberately not tested here.
-    // The chunk-3 audit surfaced two stacked bugs on that path:
-    //   (1) ReferenceError at lib/projects.js:1174 — fixed in this chunk by
-    //       hoisting `currentTemplate` to outer scope.
-    //   (2) SQLite NOT NULL constraint at lib/store.js:521 — the schema is
-    //       `methodology TEXT NOT NULL DEFAULT 'minimal'` but the removal
-    //       branch sets `storeUpdates.methodology = null`. Three reasonable
-    //       fixes (schema NULL-allow + migration / treat-null-as-minimal /
-    //       reject-null-at-API) — decision deferred to its own session.
-    // Filed as #151. The placeholder below makes the gap discoverable in
-    // test-runner output and grep, not just in a prose comment.
-    it('TODO #151: PATCH methodology: null strips all methodology hooks (blocked on SQL constraint decision)', { skip: 'blocked on #151 — methodology TEXT NOT NULL constraint requires product decision' }, () => {
-      // When #151 lands, expand the body of this test to:
-      //   1. scaffoldPrawductProject('flip-to-null')
-      //   2. projects.updateProject('flip-to-null', { methodology: null })
-      //   3. assert no errors, no methodology in DB or projConfig, no hooks
-      //      key in settings.json, no product-hook references anywhere
+    // `PATCH methodology: null` is rejected as of #151. The chunk-3 audit
+    // surfaced two stacked bugs on what used to be the "removal" path —
+    // ReferenceError at lib/projects.js:1174 (fixed in chunk 3) layered on
+    // an SQL NOT NULL constraint. Rather than fixing both, #151 retired
+    // the null-methodology semantic: per docs/methodology-guide.md every
+    // project has a methodology, and `minimal` is the canonical no-workflow
+    // option. The API now rejects null with a 400-style error pointing the
+    // caller at `'minimal'`. See ADR 0001 §"Anti-patterns".
+    it('PATCH with combined name+null-methodology rejects without renaming on disk (#151 Critic Major)', () => {
+      // The null-rejection runs in the pre-mutation validation phase so a
+      // combined { name, methodology: null } payload doesn't rename the
+      // project on disk before the validation fires. Pre-fix, the rejection
+      // lived inside the methodology branch, after the rename branch had
+      // already mutated DB + filesystem.
+      const { projPath } = scaffoldPrawductProject('flip-combined-name-null');
+      const result = projects.updateProject('flip-combined-name-null', {
+        name: 'flip-combined-name-null-RENAMED',
+        methodology: null
+      });
+
+      assert.equal(result.project, null, 'expected null project on rejection');
+      assert.equal(result.errors.length, 1);
+      assert.match(result.errors[0], /methodology cannot be null/i);
+
+      // Name unchanged in DB
+      const oldByName = store.projects.getByName('flip-combined-name-null');
+      const newByName = store.projects.getByName('flip-combined-name-null-RENAMED');
+      assert.ok(oldByName, 'original name should still resolve');
+      assert.equal(newByName, null, 'attempted new name should not resolve');
+      // Directory unchanged on disk
+      assert.equal(fs.existsSync(projPath), true, 'original directory should remain');
+      assert.equal(fs.existsSync(projPath + '-RENAMED'), false, 'no renamed directory should appear');
+    });
+
+    it('projectConfig.load coerces on-disk methodology: null to \'minimal\' (#151 Critic Major)', () => {
+      // Pre-#151 installs may have project.json files with `methodology: null`
+      // explicitly written to disk (when DEFAULT_PROJECT_CONFIG.methodology was
+      // null). The merge loop in store.projectConfig.load propagates explicit
+      // fields from disk over the default, so without coercion an upgraded
+      // install would keep seeing null in projConfig even after this PR.
+      const projPath = path.join(methDir, 'legacy-projconfig');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      // Write a project.json with an explicit null methodology — what a pre-#151
+      // install left on disk
+      fs.writeFileSync(
+        path.join(projPath, '.tangleclaw', 'project.json'),
+        JSON.stringify({ engine: 'claude', methodology: null, rules: { extensions: {} } })
+      );
+      const loaded = store.projectConfig.load(projPath);
+      assert.equal(loaded.methodology, 'minimal', 'legacy null on disk should coerce to minimal on load');
+      assert.equal(loaded.engine, 'claude', 'other fields should still come through the merge');
+    });
+
+    it('store.DEFAULT_PROJECT_CONFIG.methodology is \'minimal\', not null (#151)', () => {
+      // Source-of-truth alignment with the DB schema's NOT NULL DEFAULT 'minimal'.
+      // Pre-#151, projConfig defaulted to null while the DB defaulted to 'minimal',
+      // leaving a split-brain where any reader had to know which source to trust.
+      assert.equal(store.DEFAULT_PROJECT_CONFIG.methodology, 'minimal');
+    });
+
+    it('PATCH methodology: null is rejected with a clear error pointing to \'minimal\' (#151)', () => {
+      const { settingsPath } = scaffoldPrawductProject('flip-to-null-rejected');
+      const result = projects.updateProject('flip-to-null-rejected', { methodology: null });
+
+      assert.equal(result.project, null, 'expected null project on rejection');
+      assert.equal(result.methodologySwitch, null);
+      assert.ok(
+        result.errors.some(e => /methodology cannot be null/i.test(e) && /'minimal'/.test(e)),
+        `expected an error mentioning null + 'minimal'; got: ${JSON.stringify(result.errors)}`
+      );
+
+      // Sanity: the project's state is unchanged after the rejected PATCH
+      const reloaded = store.projects.getByName('flip-to-null-rejected');
+      assert.equal(reloaded.methodology, 'prawduct', 'methodology unchanged after rejection');
+      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.ok(JSON.stringify(after.hooks || {}).includes('product-hook'),
+        'prawduct hooks still in place after rejection — no destructive partial mutation');
     });
 
     it('PATCH methodology preserves non-hook keys in .claude/settings.json across the flip', () => {
