@@ -142,6 +142,24 @@ The install script:
 
 Access the landing page at **http://localhost:3102**. On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
+## Stay Updated
+
+TangleClaw checks for newer releases automatically. Shortly after each server start, then once every 24 hours after that, it runs `git ls-remote --tags origin` against your installed remote and compares the highest semver tag to your current version. When a newer tag exists, a notification pill appears next to the version label on the dashboard — click the version to open the GitHub release page and see what's new, or dismiss the pill if you want to defer.
+
+- **Cadence:** ~60 seconds after server start, then every 24 hours
+- **Dismiss:** per-version (dismissed `v3.15.0` stays dismissed; `v3.15.1` re-notifies)
+- **Privacy:** one network request per day to whatever your `origin` remote points at (typically `github.com`). No telemetry, no install fingerprinting — just a tags lookup
+- **Offline:** silent fallback. The dashboard never blocks on the check
+- **Forks:** the pill links to your fork's release page, not the canonical repo, since the check follows your local `origin`
+
+To upgrade when you see the pill:
+
+```bash
+cd <your-TangleClaw-clone>
+git pull --ff-only
+./deploy/install.sh    # picks up plist changes if any; idempotent
+```
+
 ## Security Note
 
 TangleClaw runs an HTTP or HTTPS server with browser-based terminal access. HTTPS is supported via mkcert or any TLS certificate — enable it in config with `httpsEnabled`, `httpsCertPath`, and `httpsKeyPath`. There is no user authentication on the server itself — anyone who can reach the port can view your projects and open terminal sessions. The `deletePassword` config option protects destructive operations (project deletion, data reset) but does not gate general access.

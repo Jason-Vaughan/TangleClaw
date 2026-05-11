@@ -123,6 +123,12 @@ body {
   white-space: nowrap;
 }
 .update-pill.hidden { display: none; }
+.update-pill-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.update-pill-link:hover { text-decoration: none; }
 
 /* Orphan hooks repair banner (#145, chunk 2) */
 .orphan-banner {
