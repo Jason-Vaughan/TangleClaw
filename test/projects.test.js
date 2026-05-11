@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
+const engines = require('../lib/engines');
 
 describe('projects', () => {
   let tmpDir;
@@ -1147,6 +1148,191 @@ describe('projects', () => {
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
       assert.equal(fs.existsSync(primeFile), false, 'still absent — _removePrimeFile is non-throwing on missing');
+    });
+  });
+
+  describe('methodology flip cleanup audit (#145, chunk 3)', () => {
+    // Closes the audit gap on `PATCH methodology` — chunks 1+2 fixed the
+    // injection side (don't inject hooks whose runtime is missing; strip
+    // orphans on demand). This block locks in the cleanup side: flipping a
+    // project's methodology must rebuild `.claude/settings.json.hooks` from
+    // the new template, never carry forward the previous methodology's
+    // entries. Pattern is the symmetric-capability-gates ADR
+    // (`docs/adr/0001-symmetric-capability-gates.md`).
+    let methDir;
+
+    before(() => {
+      methDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-meth-flip-'));
+    });
+
+    after(() => {
+      fs.rmSync(methDir, { recursive: true, force: true });
+    });
+
+    /**
+     * Set up a registered prawduct project with the runtime materialized on
+     * disk so the chunk-1 `requires` filter ACCEPTS the prawduct hooks at
+     * `syncEngineHooks` time, then trigger the sync so hooks land in
+     * `.claude/settings.json`. Bypasses `projects.createProject` (which
+     * enforces a single configured `projectsDir`) and uses the same
+     * `store.projects.create({ path: ... })` pattern as the existing
+     * silentPrime engine-flip tests at line 1076.
+     */
+    function scaffoldPrawductProject(name) {
+      const projPath = path.join(methDir, name);
+      fs.mkdirSync(projPath, { recursive: true });
+      // Scaffold the runtime so chunk-1's requires filter accepts the hooks
+      fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
+
+      // Register project with methodology=prawduct in DB; sync projConfig so
+      // syncEngineHooks reads the right engine + methodology
+      store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'prawduct' });
+      const projConfig = store.projectConfig.load(projPath);
+      projConfig.methodology = 'prawduct';
+      store.projectConfig.save(projPath, projConfig);
+
+      // Trigger syncEngineHooks to inject prawduct's methodology hooks
+      const template = store.templates.get('prawduct');
+      engines.syncEngineHooks(projPath, template);
+
+      // Sanity — chunks 1+2 land the prawduct hooks
+      const settingsPath = path.join(projPath, '.claude', 'settings.json');
+      assert.ok(fs.existsSync(settingsPath), 'expected .claude/settings.json after sync');
+      const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.ok(before.hooks, 'expected .claude/settings.json.hooks to be populated after sync');
+      assert.ok(JSON.stringify(before.hooks).includes('product-hook'),
+        'expected prawduct product-hook reference in hooks before flip');
+      return { projPath, settingsPath };
+    }
+
+    it('PATCH methodology: prawduct → minimal rebuilds hooks without prawduct entries', () => {
+      const { projPath, settingsPath } = scaffoldPrawductProject('flip-to-minimal');
+
+      const result = projects.updateProject('flip-to-minimal', { methodology: 'minimal' });
+      assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
+      assert.ok(result.methodologySwitch, 'expected methodologySwitch to be populated');
+      assert.equal(result.methodologySwitch.from, 'prawduct');
+      assert.equal(result.methodologySwitch.to, 'minimal');
+
+      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      const afterStr = JSON.stringify(after);
+      assert.ok(!afterStr.includes('product-hook'),
+        `expected no product-hook references after flip; got: ${afterStr}`);
+      // Minimal has no hooks and silentPrime is off by default, so the hooks
+      // key should be absent entirely (matches `delete settings.hooks` branch
+      // of syncEngineHooks).
+      assert.equal(after.hooks, undefined, 'expected hooks key removed when new methodology has none');
+      // Project record reflects the new methodology
+      const reloaded = store.projects.getByName('flip-to-minimal');
+      assert.equal(reloaded.methodology, 'minimal');
+      assert(projPath);
+    });
+
+    // Removal path (`PATCH methodology: null`) deliberately not tested here.
+    // The chunk-3 audit surfaced two stacked bugs on that path:
+    //   (1) ReferenceError at lib/projects.js:1174 — fixed in this chunk by
+    //       hoisting `currentTemplate` to outer scope.
+    //   (2) SQLite NOT NULL constraint at lib/store.js:521 — the schema is
+    //       `methodology TEXT NOT NULL DEFAULT 'minimal'` but the removal
+    //       branch sets `storeUpdates.methodology = null`. Three reasonable
+    //       fixes (schema NULL-allow + migration / treat-null-as-minimal /
+    //       reject-null-at-API) — decision deferred to its own session.
+    // Filed as #151. The placeholder below makes the gap discoverable in
+    // test-runner output and grep, not just in a prose comment.
+    it('TODO #151: PATCH methodology: null strips all methodology hooks (blocked on SQL constraint decision)', { skip: 'blocked on #151 — methodology TEXT NOT NULL constraint requires product decision' }, () => {
+      // When #151 lands, expand the body of this test to:
+      //   1. scaffoldPrawductProject('flip-to-null')
+      //   2. projects.updateProject('flip-to-null', { methodology: null })
+      //   3. assert no errors, no methodology in DB or projConfig, no hooks
+      //      key in settings.json, no product-hook references anywhere
+    });
+
+    it('PATCH methodology preserves non-hook keys in .claude/settings.json across the flip', () => {
+      const { projPath, settingsPath } = scaffoldPrawductProject('flip-preserves-other-keys');
+      // Inject a non-hook key the user might depend on. Chunk 2's strip path
+      // documented this same preservation contract for the bulk-repair; the
+      // flip path must honor it too.
+      const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      existing.permissions = { allow: ['Bash(npm:*)'] };
+      existing.companyAnnouncements = ['Hello'];
+      fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2) + '\n');
+
+      const result = projects.updateProject('flip-preserves-other-keys', { methodology: 'minimal' });
+      assert.deepStrictEqual(result.errors, []);
+
+      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.deepStrictEqual(after.permissions, { allow: ['Bash(npm:*)'] }, 'permissions key must survive flip');
+      assert.deepStrictEqual(after.companyAnnouncements, ['Hello'], 'companyAnnouncements must survive flip');
+      assert.equal(after.hooks, undefined);
+      assert(projPath);
+    });
+
+    it('PATCH methodology: minimal → prawduct materializes prawduct hooks (reverse-direction coverage)', () => {
+      // ADR 0001 anti-pattern §4: "single-direction regression test ... both
+      // directions of every paired transition need coverage." The above
+      // tests cover the strip direction (prawduct → minimal); this test
+      // covers the materialize direction (minimal → prawduct), confirming
+      // that switching INTO a methodology with hooks injects them the same
+      // way `createProject` would.
+      const name = 'flip-minimal-to-prawduct';
+      const projPath = path.join(methDir, name);
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
+
+      // Start in the minimal state — no hooks
+      store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'minimal' });
+      const projConfig = store.projectConfig.load(projPath);
+      projConfig.methodology = 'minimal';
+      store.projectConfig.save(projPath, projConfig);
+      engines.syncEngineHooks(projPath, store.templates.get('minimal'));
+      const settingsPath = path.join(projPath, '.claude', 'settings.json');
+      const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.equal(before.hooks, undefined, 'expected no hooks in minimal pre-state');
+
+      // Flip into prawduct
+      const result = projects.updateProject(name, { methodology: 'prawduct' });
+      assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
+      assert.ok(result.methodologySwitch, 'expected methodologySwitch on materialize-direction flip');
+      assert.equal(result.methodologySwitch.from, 'minimal');
+      assert.equal(result.methodologySwitch.to, 'prawduct');
+
+      // Prawduct hooks should now be present
+      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.ok(after.hooks, 'expected hooks block after materialize-direction flip');
+      assert.ok(after.hooks.Stop, 'expected prawduct Stop hook materialized');
+      assert.ok(JSON.stringify(after.hooks).includes('product-hook'),
+        'expected product-hook reference after materialize-direction flip');
+    });
+
+    it('silentPrime baseline SessionStart hook survives methodology flip (capability-gate independent)', () => {
+      // The symmetric-capability-gates pattern: the silentPrime gate runs
+      // independently of the methodology gate. A flip that wipes methodology
+      // hooks must leave the silentPrime baseline hook alone, because that
+      // entry comes from `_buildBaselineHooks` against `projConfig.silentPrime`
+      // + the engine's `supportsSilentPrime` capability, not from the
+      // methodology template.
+      const { projPath, settingsPath } = scaffoldPrawductProject('flip-keeps-silentprime');
+
+      // Opt-in silentPrime so the baseline hook materializes
+      const enable = projects.updateProject('flip-keeps-silentprime', { silentPrime: true });
+      assert.deepStrictEqual(enable.errors, []);
+      const beforeFlip = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.ok(beforeFlip.hooks && beforeFlip.hooks.SessionStart, 'silentPrime SessionStart should be present pre-flip');
+      const hasSilentPrimeBefore = JSON.stringify(beforeFlip.hooks).includes('sessionstart-prime');
+      assert.ok(hasSilentPrimeBefore, 'expected sessionstart-prime baseline before flip');
+
+      // Now flip methodology — prawduct hooks should be stripped, baseline preserved
+      const flip = projects.updateProject('flip-keeps-silentprime', { methodology: 'minimal' });
+      assert.deepStrictEqual(flip.errors, []);
+
+      const afterFlip = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      assert.ok(afterFlip.hooks && afterFlip.hooks.SessionStart, 'silentPrime SessionStart must survive flip');
+      const afterStr = JSON.stringify(afterFlip.hooks);
+      assert.ok(afterStr.includes('sessionstart-prime'), 'expected sessionstart-prime baseline after flip');
+      assert.ok(!afterStr.includes('product-hook'), 'expected no product-hook references after flip');
+      assert(projPath);
     });
   });
 });
