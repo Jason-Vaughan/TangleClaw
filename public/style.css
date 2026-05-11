@@ -123,6 +123,40 @@ body {
   white-space: nowrap;
 }
 .update-pill.hidden { display: none; }
+
+/* Orphan hooks repair banner (#145, chunk 2) */
+.orphan-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--amber);
+  color: #1a1a1a;
+  padding: 10px 16px;
+  margin: 0 0 12px 0;
+  border-radius: var(--radius-card);
+  font-size: 13px;
+  font-weight: 500;
+}
+.orphan-banner.hidden { display: none; }
+.orphan-banner-text { flex: 1; }
+.orphan-banner-btn {
+  background: #1a1a1a;
+  color: var(--amber);
+  border: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.orphan-banner-btn:hover { background: #333; }
+.orphan-banner-details {
+  background: transparent;
+  border: 1px solid #1a1a1a;
+  color: #1a1a1a;
+  padding: 4px 10px;
+  border-radius: var(--radius-btn);
+  font-size: 12px;
+  cursor: pointer;
+}
+.orphan-banner-details:hover { background: rgba(0,0,0,0.08); }
 .update-pill-dismiss {
   background: none;
   border: none;
