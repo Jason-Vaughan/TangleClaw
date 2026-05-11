@@ -703,11 +703,13 @@ function openSettings(name) {
 
   const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
 
-  const currentMeth = project.methodology ? project.methodology.id : 'none';
-  const methOpts = `<option value="none" ${currentMeth === 'none' ? 'selected' : ''}>None</option>` +
-    state.methodologies.map(m =>
-      `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}</option>`
-    ).join('');
+  // Every project has a methodology (#151) — `minimal` is the no-workflow option,
+  // not a separate "None" sentinel. Pre-#151 the dropdown offered a None choice
+  // that POSTed `methodology: null` and crashed the backend; retired.
+  const currentMeth = project.methodology ? project.methodology.id : 'minimal';
+  const methOpts = state.methodologies.map(m =>
+    `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}</option>`
+  ).join('');
 
   const hasSession = project.session && project.session.active;
 
@@ -818,19 +820,15 @@ async function saveSettings() {
  * @param {string|null} toMeth - New methodology id
  */
 function openMethSwitchModal(projectName, fromMeth, toMeth) {
-  const fromName = fromMeth ? (state.methodologies.find(m => m.id === fromMeth) || {}).name || fromMeth : 'None';
-  const toName = toMeth ? (state.methodologies.find(m => m.id === toMeth) || {}).name || toMeth : 'None';
+  // Pre-#151 the modal handled a "None" pseudo-methodology for the (broken)
+  // removal path. Every project now has a methodology — fromMeth/toMeth are
+  // always real ids — so the null-fallback copy paths are gone.
+  const fromName = (state.methodologies.find(m => m.id === fromMeth) || {}).name || fromMeth;
+  const toName = (state.methodologies.find(m => m.id === toMeth) || {}).name || toMeth;
 
   let html = `<p style="font-size:15px;margin-bottom:12px"><strong>${esc(fromName)}</strong> &rarr; <strong>${esc(toName)}</strong></p>`;
-
-  if (fromMeth) {
-    html += `<p>The current <strong>${esc(fromName)}</strong> state will be archived (not deleted). Learnings, reflections, and other artifacts remain accessible.</p>`;
-  }
-  if (toMeth) {
-    html += `<p style="margin-top:8px">The new <strong>${esc(toName)}</strong> methodology will be initialized and session hooks updated.</p>`;
-  } else {
-    html += `<p style="margin-top:8px">Session governance hooks will be removed.</p>`;
-  }
+  html += `<p>The current <strong>${esc(fromName)}</strong> state will be archived (not deleted). Learnings, reflections, and other artifacts remain accessible.</p>`;
+  html += `<p style="margin-top:8px">The new <strong>${esc(toName)}</strong> methodology will be initialized and session hooks updated.</p>`;
   html += `<p style="margin-top:12px;font-size:12px;color:var(--text-muted)">Archived methodology state stays in the project directory and is referenced in generated configs so AI assistants can review prior context.</p>`;
 
   document.getElementById('methSwitchText').innerHTML = html;
@@ -855,7 +853,8 @@ async function doSaveSettings() {
   const newName = document.getElementById('settingsName').value.trim();
   const body = {
     engine: document.getElementById('settingsEngine').value,
-    methodology: methVal === 'none' ? null : methVal,
+    // Every project has a methodology (#151); methVal is always a real template id
+    methodology: methVal,
     tags: document.getElementById('settingsTags').value.split(',').map(t => t.trim()).filter(Boolean)
   };
   if (newName && newName !== settingsTarget) {
@@ -993,7 +992,7 @@ function openCreateDrawer() {
   createData = {
     name: '',
     engine: state.config ? state.config.defaultEngine || '' : '',
-    methodology: state.config ? state.config.defaultMethodology || 'none' : 'none',
+    methodology: state.config ? state.config.defaultMethodology || 'minimal' : 'minimal',
     tags: ''
   };
   renderCreateStep();
@@ -1033,7 +1032,9 @@ function renderCreateStep() {
       const sel = m.id === createData.methodology ? ' selected' : '';
       return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}</div>`;
     }).join('');
-    const selMeth = createData.methodology && createData.methodology !== 'none'
+    // Every project has a methodology (#151) — `minimal` is the no-workflow
+    // choice in the methodology picker, no separate "None" pseudo-option.
+    const selMeth = createData.methodology
       ? state.methodologies.find(m => m.id === createData.methodology) : null;
     const detailHtml = selMeth
       ? `<div class="meth-detail">
@@ -1047,11 +1048,8 @@ function renderCreateStep() {
         <select class="form-select" id="createEngine">${engineOpts}</select>
       </div>
       <div class="form-group">
-        <label class="form-label">Methodology <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
-        <div class="meth-picker">
-          <div class="meth-pill${!createData.methodology || createData.methodology === 'none' ? ' selected' : ''}" data-id="none" onclick="selectMethodology('none')">None</div>
-          ${methPills}
-        </div>
+        <label class="form-label">Methodology</label>
+        <div class="meth-picker">${methPills}</div>
         <div id="methDetail">${detailHtml}</div>
       </div>
       <div style="display:flex;gap:8px">
@@ -1069,7 +1067,7 @@ function renderCreateStep() {
       <div class="form-group">
         <div style="padding:12px;background:var(--elevated-bg);border-radius:6px;font-size:13px">
           <div><strong>${esc(createData.name)}</strong></div>
-          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)}${createData.methodology && createData.methodology !== 'none' ? ` &middot; Methodology: ${esc(createData.methodology)}` : ''}</div>
+          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)} &middot; Methodology: ${esc(createData.methodology)}</div>
         </div>
       </div>
       <div id="createError" class="form-error hidden" role="alert"></div>
@@ -1135,7 +1133,7 @@ async function submitCreate() {
   const result = await apiMutate('/api/projects', 'POST', {
     name: createData.name,
     engine: createData.engine,
-    methodology: createData.methodology === 'none' ? null : createData.methodology,
+    methodology: createData.methodology,
     tags
   });
 

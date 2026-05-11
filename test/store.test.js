@@ -499,7 +499,8 @@ describe('store', () => {
     it('should return defaults when no config file exists', () => {
       const config = store.projectConfig.load(projectDir);
       assert.equal(config.engine, null);
-      assert.equal(config.methodology, null);
+      // methodology default aligned with the DB schema's NOT NULL DEFAULT 'minimal' (#151)
+      assert.equal(config.methodology, 'minimal');
       assert.equal(config.methodologyPhase, null);
       assert.equal(config.rules.core.changelogPerChange, true);
       assert.equal(config.rules.extensions.identitySentry, false);
