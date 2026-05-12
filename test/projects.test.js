@@ -895,12 +895,14 @@ describe('projects', () => {
       fs.rmSync(primeDir, { recursive: true, force: true });
     });
 
-    it('enrichProject exposes silentPrime: false by default', () => {
+    it('enrichProject exposes silentPrime: true by default (#129)', () => {
+      // Pre-#129 the default was false (opt-in). Soak satisfied; silent prime
+      // is now the default. See lib/store.js:DEFAULT_PROJECT_CONFIG.
       const projPath = path.join(primeDir, 'sp-default');
       fs.mkdirSync(projPath, { recursive: true });
       const registered = store.projects.create({ name: 'sp-default', path: projPath, engineId: 'claude' });
       const enriched = projects.enrichProject(registered);
-      assert.equal(enriched.silentPrime, false);
+      assert.equal(enriched.silentPrime, true);
     });
 
     it('enrichProject reflects silentPrime: true once set in projectConfig', () => {
@@ -949,8 +951,12 @@ describe('projects', () => {
       const result = projects.updateProject('sp-update-bad', { silentPrime: true });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
-      // And the file was not written
-      assert.equal(store.projectConfig.load(projPath).silentPrime, false);
+      // No project.json was written by the rejected PATCH. (Pre-#129, this
+      // asserted `silentPrime === false` via the load default, but post-#129
+      // the default is true — so the intent-preserving check is "the file
+      // doesn't exist," not "the load returns false.")
+      const projConfigFile = path.join(projPath, '.tangleclaw', 'project.json');
+      assert.equal(fs.existsSync(projConfigFile), false, 'project.json should not be created on rejected PATCH');
     });
 
     it('updateProject rejects non-boolean silentPrime', () => {
@@ -993,10 +999,11 @@ describe('projects', () => {
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
 
-      // Verify NO disk-state drift: the engine field on projConfig was not mutated.
-      const afterProjConfig = store.projectConfig.load(projPath);
-      assert.equal(afterProjConfig.engine || null, null, 'projConfig.engine must not have been written');
-      assert.equal(afterProjConfig.silentPrime, false, 'silentPrime must not have been written either');
+      // Verify NO disk-state drift: no project.json was written by the
+      // rejected PATCH. (Post-#129, asserting `silentPrime === false` from
+      // load() would assert the default, not the file's absence.)
+      const projConfigFile = path.join(projPath, '.tangleclaw', 'project.json');
+      assert.equal(fs.existsSync(projConfigFile), false, 'project.json should not be created on rejected PATCH');
 
       // Verify NO DB drift: engine_id still points to the original engine.
       const afterRow = store.projects.getByName('sp-engine-race');
@@ -1186,10 +1193,14 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
 
       // Register project with methodology=prawduct in DB; sync projConfig so
-      // syncEngineHooks reads the right engine + methodology
+      // syncEngineHooks reads the right engine + methodology. Explicit
+      // silentPrime=false keeps the audit focused on methodology hooks only —
+      // post-#129 the default would inject the silentPrime baseline SessionStart
+      // hook and mask the methodology-strip assertion.
       store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'prawduct' });
       const projConfig = store.projectConfig.load(projPath);
       projConfig.methodology = 'prawduct';
+      projConfig.silentPrime = false;
       store.projectConfig.save(projPath, projConfig);
 
       // Trigger syncEngineHooks to inject prawduct's methodology hooks
@@ -1341,10 +1352,13 @@ describe('projects', () => {
       fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
       fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
 
-      // Start in the minimal state — no hooks
+      // Start in the minimal state — no hooks. Explicit silentPrime=false to
+      // keep the audit focused on methodology hooks only (post-#129 the
+      // default would inject the silentPrime baseline SessionStart entry).
       store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'minimal' });
       const projConfig = store.projectConfig.load(projPath);
       projConfig.methodology = 'minimal';
+      projConfig.silentPrime = false;
       store.projectConfig.save(projPath, projConfig);
       engines.syncEngineHooks(projPath, store.templates.get('minimal'));
       const settingsPath = path.join(projPath, '.claude', 'settings.json');

@@ -1546,7 +1546,7 @@ describe('sessions', () => {
       assert.ok(fs.readFileSync(primeFile, 'utf8').length > 0, 'prime file should be non-empty');
     });
 
-    it('launchSession does NOT write prime file when silentPrime is false (default)', () => {
+    it('launchSession does NOT write prime file when silentPrime is explicitly false', () => {
       // Mirror the orphan-adoption pattern from the launchSession tests above:
       // pretend a tmux session exists so launchSession kills+recreates rather
       // than failing on whatever stale tmux state may exist on the test host.
@@ -1554,7 +1554,13 @@ describe('sessions', () => {
       enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
 
       const project = store.projects.getByName('silent-prime-test');
-      // No projConfig save → DEFAULT_PROJECT_CONFIG.silentPrime is false
+      // Explicit silentPrime=false — post-#129 the default is true, so the
+      // test now has to be explicit about the silent-off state it's testing.
+      store.projectConfig.save(project.path, {
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: false
+      });
       const result = sessions.launchSession('silent-prime-test');
       assert.equal(result.error, null);
 
@@ -1599,12 +1605,17 @@ describe('sessions', () => {
       }
     });
 
-    it('DEFAULT_PROJECT_CONFIG.silentPrime is false (opt-in until proven)', () => {
+    it('DEFAULT_PROJECT_CONFIG.silentPrime is true (#129 — soak satisfied)', () => {
+      // Pre-#129 this was false (opt-in until proven stable). After ~2 weeks of
+      // soak with no regressions, the default flipped to true. Projects that
+      // explicitly persisted `silentPrime: false` continue to honor that; the
+      // capability gate (`engineProfile.capabilities.supportsSilentPrime`)
+      // protects non-Claude engines regardless of the default.
       const projDir = path.join(projectsDir, 'silentprime-default-check');
       fs.mkdirSync(projDir, { recursive: true });
       try {
         const cfg = store.projectConfig.load(projDir);
-        assert.equal(cfg.silentPrime, false);
+        assert.equal(cfg.silentPrime, true);
       } finally {
         fs.rmSync(projDir, { recursive: true, force: true });
       }
