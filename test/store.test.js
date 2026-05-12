@@ -278,6 +278,38 @@ describe('store', () => {
       const after = fs.readFileSync(codexPath, 'utf8');
       assert.equal(before, after, 'Profile should be unchanged when bundled has no new fields');
     });
+
+    it('reconciles stale runtime methodology template against bundled on init (#136)', () => {
+      // Integration test for the reconcile glue in _copyBundledTemplates →
+      // _mergeBundledTemplate. The unit tests above already prove the merge
+      // function works in isolation; this test locks in that init() actually
+      // calls it for existing template.json files.
+      const templatesDir = path.join(tmpDir, 'templates');
+      const prawductDir = path.join(templatesDir, 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      // Simulate a pre-v3.13.7 runtime template missing memory-update — the
+      // canonical #136 incident shape.
+      const stale = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        wrap: { command: null, steps: ['version-bump', 'changelog-update', 'commit'] }
+      };
+      const livePath = path.join(prawductDir, 'template.json');
+      fs.writeFileSync(livePath, JSON.stringify(stale, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(livePath, 'utf8'));
+      // The reconciler should have added the missing bundled steps in their
+      // bundled-order positions. Specific keys checked rather than the full
+      // array so a future bundled-step addition doesn't break this test.
+      assert.ok(updated.wrap.steps.includes('memory-update'),
+        'memory-update should be added from bundled (#136 incident shape)');
+      // Other bundled steps from the current data/templates/prawduct/template.json
+      // should also be present (additive — original steps remain in order).
+      assert.ok(updated.wrap.steps.indexOf('version-bump') < updated.wrap.steps.indexOf('commit'),
+        'order preserved: version-bump before commit');
+    });
   });
 
   describe('close', () => {
@@ -576,6 +608,218 @@ describe('store', () => {
       const cause = new Error('root cause');
       const err = new store.StoreError('wrapper', 'WRAPPED', cause);
       assert.equal(err.cause, cause);
+    });
+  });
+
+  describe('_isOrderedSubset (#136)', () => {
+    it('returns true when needle appears as ordered subsequence in haystack', () => {
+      assert.equal(store._isOrderedSubset(['a', 'b', 'c'], ['a', 'b', 'c']), true);
+      assert.equal(store._isOrderedSubset(['a', 'c'], ['a', 'b', 'c']), true);
+      assert.equal(store._isOrderedSubset(['b'], ['a', 'b', 'c']), true);
+      assert.equal(store._isOrderedSubset([], ['a', 'b', 'c']), true);
+    });
+
+    it('returns false when needle has elements not in haystack', () => {
+      assert.equal(store._isOrderedSubset(['a', 'x'], ['a', 'b', 'c']), false);
+      assert.equal(store._isOrderedSubset(['x'], ['a', 'b', 'c']), false);
+    });
+
+    it('returns false when needle order differs from haystack', () => {
+      assert.equal(store._isOrderedSubset(['b', 'a'], ['a', 'b', 'c']), false);
+      assert.equal(store._isOrderedSubset(['c', 'a'], ['a', 'b', 'c']), false);
+    });
+
+    it('returns false for non-array inputs', () => {
+      assert.equal(store._isOrderedSubset(null, ['a']), false);
+      assert.equal(store._isOrderedSubset(['a'], null), false);
+      assert.equal(store._isOrderedSubset('a', ['a']), false);
+    });
+
+    it('handles duplicate elements in needle and haystack correctly', () => {
+      // Needle ['a','a'] should match in ['a','a','b'] (two `a`s present in order)
+      // but not in ['a','b'] (only one `a`).
+      assert.equal(store._isOrderedSubset(['a', 'a'], ['a', 'a', 'b']), true);
+      assert.equal(store._isOrderedSubset(['a', 'a'], ['a', 'b']), false);
+      // Needle with duplicates non-contiguous in haystack
+      assert.equal(store._isOrderedSubset(['a', 'a'], ['a', 'b', 'a']), true);
+    });
+
+    it('handles empty haystack', () => {
+      assert.equal(store._isOrderedSubset(['a'], []), false);
+      assert.equal(store._isOrderedSubset([], []), true);
+    });
+  });
+
+  describe('_mergeBundledTemplate (#136)', () => {
+    let tmpDir;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-merge-tpl-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function writeJson(filename, obj) {
+      const p = path.join(tmpDir, filename);
+      fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
+      return p;
+    }
+
+    it('reconciles wrap.steps when live is a strict ordered subset of bundled (the #136 incident shape)', () => {
+      // The v3.13.7 case verbatim: bundled added `memory-update` to wrap.steps;
+      // existing install's runtime copy is missing that step but otherwise matches.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { command: null, steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { command: null, steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'commit'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps,
+        ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']);
+    });
+
+    it('does NOT replace wrap.steps when live has steps not in bundled (user customization)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'my-custom-step', 'b', 'c'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps, ['a', 'my-custom-step', 'b', 'c'],
+        'user customization should be preserved');
+    });
+
+    it('does NOT replace wrap.steps when live has reordered steps (user customization)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['b', 'a', 'c'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps, ['b', 'a', 'c']);
+    });
+
+    it('does NOT replace wrap.steps when live and bundled are identical (no-op)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'] }
+      });
+      const beforeMtime = fs.statSync(live).mtime.getTime();
+      // Wait a tick to ensure mtime would change if rewritten
+      const sleep10 = Date.now() + 10;
+      while (Date.now() < sleep10) { /* spin */ }
+      store._mergeBundledTemplate(bundled, live);
+      const afterMtime = fs.statSync(live).mtime.getTime();
+      assert.equal(beforeMtime, afterMtime, 'file should not be rewritten on no-op');
+    });
+
+    it('adds missing top-level fields from bundled (additive merge)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'minimal',
+        wrap: { steps: ['commit'] },
+        // A future top-level field
+        eval: { exchanges: { enabled: true } }
+      });
+      const live = writeJson('live.json', {
+        id: 'minimal',
+        wrap: { steps: ['commit'] }
+        // no eval block — picks up from bundled
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.eval, { exchanges: { enabled: true } });
+    });
+
+    it('preserves existing field values when bundled differs (additive only, never overwrites)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        description: 'Bundled description',
+        wrap: { steps: ['commit'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        description: 'User customized description',
+        wrap: { steps: ['commit'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.description, 'User customized description',
+        'existing field value preserved over bundled');
+    });
+
+    it('recursively adds missing nested keys without touching peer keys', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        init: { directories: ['.prawduct'], files: { 'BUILD.md': 'bundled-content' } }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        init: { directories: ['.prawduct'] } // no `files` key
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.init.directories, ['.prawduct']);
+      assert.deepStrictEqual(merged.init.files, { 'BUILD.md': 'bundled-content' });
+    });
+
+    it('silently skips malformed JSON files (fail-open)', () => {
+      const bundled = writeJson('bundled.json', { id: 'prawduct' });
+      const livePath = path.join(tmpDir, 'live.json');
+      fs.writeFileSync(livePath, '{not valid json');
+      // Should not throw
+      store._mergeBundledTemplate(bundled, livePath);
+      // Malformed file unchanged
+      assert.equal(fs.readFileSync(livePath, 'utf8'), '{not valid json');
+    });
+
+    it('treats user-removed step as stale-older and re-adds it on reconcile (acknowledged limitation, #136)', () => {
+      // The ordered-subset check cannot distinguish "user is on an older
+      // version missing some steps" from "user intentionally removed a step
+      // that's in bundled" — both produce a live array that's a strict
+      // ordered subset of bundled. The chosen policy is to re-add (treat as
+      // stale-older). Locking this in so a future contributor who wants the
+      // opposite behavior knows where to update the policy.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        // User intentionally removed 'b' — but live IS still an ordered
+        // subset of bundled (['a','c'] ⊂ ['a','b','c']), so the reconciler
+        // can't tell the difference and re-adds it.
+        wrap: { steps: ['a', 'c'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps, ['a', 'b', 'c'],
+        'user-removed step is re-added (policy choice — see #136 CHANGELOG entry)');
+    });
+
+    it('handles missing bundled file gracefully', () => {
+      const bundled = path.join(tmpDir, 'does-not-exist.json');
+      const live = writeJson('live.json', { id: 'prawduct', wrap: { steps: ['a'] } });
+      store._mergeBundledTemplate(bundled, live);
+      const stillThere = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(stillThere.wrap.steps, ['a']);
     });
   });
 });
