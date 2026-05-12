@@ -1051,8 +1051,20 @@ describe('engines', () => {
     // (#103), shared dir state between tests would let a future contributor
     // accidentally pollute the null-template assertion via a leftover
     // .tangleclaw/project.json with silentPrime: true.
+    //
+    // Post-#129: silentPrime defaults to true, so these methodology-hook
+    // tests would now pick up the silentPrime baseline SessionStart entry
+    // from the new default. Write an explicit projConfig with silentPrime:
+    // false to keep the tests focused on methodology-hook behavior only.
     beforeEach(() => {
       projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-test-'));
+      const tcDir = path.join(projectDir, '.tangleclaw');
+      fs.mkdirSync(tcDir, { recursive: true });
+      fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: false
+      }));
     });
 
     afterEach(() => {
@@ -1355,8 +1367,18 @@ describe('engines', () => {
   describe('syncEngineHooks + requires precondition (#145)', () => {
     let projectDir;
 
+    // Same pattern as the syncEngineHooks suite above — explicit silentPrime:false
+    // projConfig so the tests can focus on the requires-filter behavior without
+    // the post-#129 silentPrime baseline injecting a SessionStart entry.
     beforeEach(() => {
       projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-sync-requires-'));
+      const tcDir = path.join(projectDir, '.tangleclaw');
+      fs.mkdirSync(tcDir, { recursive: true });
+      fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({
+        engine: 'claude',
+        methodology: 'minimal',
+        silentPrime: false
+      }));
     });
 
     afterEach(() => {
