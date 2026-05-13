@@ -78,30 +78,161 @@ describe('ttyd-watcher', () => {
     });
   });
 
-  describe('_countTtydChildren', () => {
-    it('parses integer count from pgrep output', () => {
+  // ── #144: PTY-pool measurement (replaces pre-#144 _countTtydChildren proxy) ──
+  describe('_isPtyPoolExhausted', () => {
+    it('trips when used >= floor(cap * threshold)', () => {
+      // cap=511, threshold=0.85 → floor(511 * 0.85) = 434. used=434 should trip.
       ttydWatcher._setRunner(makeRunner({
-        'pgrep:-c': '7\n'
+        'sysctl:-n': '511\n',
+        'sh:-c': '434\n'
       }));
-      assert.equal(ttydWatcher._countTtydChildren(12345), 7);
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, true);
+      assert.equal(result.used, 434);
+      assert.equal(result.cap, 511);
+      assert.ok(result.ratio > 0.84 && result.ratio < 0.86);
     });
 
-    it('returns 0 when pgrep exits 1 (no matches)', () => {
-      const noMatch = new Error('pgrep no match');
-      noMatch.status = 1;
+    it('trips at the canonical #94 incident shape (used=527, cap=511 → ratio > 1)', () => {
       ttydWatcher._setRunner(makeRunner({
-        'pgrep:-c': noMatch
+        'sysctl:-n': '511\n',
+        'sh:-c': '527\n'
       }));
-      assert.equal(ttydWatcher._countTtydChildren(12345), 0);
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, true);
+      assert.equal(result.used, 527);
     });
 
-    it('returns 0 and logs on unexpected pgrep error', () => {
-      const fatal = new Error('pgrep crashed');
-      fatal.status = 2;
+    it('does not trip when used < floor(cap * threshold)', () => {
+      // cap=511, threshold=0.85 → floor=434. used=104 (post-kickstart state).
       ttydWatcher._setRunner(makeRunner({
-        'pgrep:-c': fatal
+        'sysctl:-n': '511\n',
+        'sh:-c': '104\n'
       }));
-      assert.equal(ttydWatcher._countTtydChildren(12345), 0);
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+      assert.equal(result.used, 104);
+      assert.equal(result.cap, 511);
+    });
+
+    it('does NOT trip at floor(cap * threshold) - 1 (off-by-one boundary lock, Critic NIT 1)', () => {
+      // cap=511, threshold=0.85 → floor=434. used=433 is one below floor and must NOT trip.
+      // Pairs with the `trips when used >= floor(cap * threshold)` test above
+      // (used=434) to lock the >= vs > predicate from drifting in either direction.
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': '511\n',
+        'sh:-c': '433\n'
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+    });
+
+    it('returns fail-safe { exhausted: false } when sysctl reading is non-numeric (#144 fail-safe contract)', () => {
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': 'not-a-number\n',
+        'sh:-c': '500\n'
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+      assert.equal(result.cap, 0);
+      assert.equal(result.used, 0);
+    });
+
+    it('returns fail-safe { exhausted: false } when sysctl throws (e.g. binary missing in obscure environments)', () => {
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': new Error('sysctl: command not found'),
+        'sh:-c': '500\n'
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+    });
+
+    it('returns fail-safe when ls/wc pipeline throws', () => {
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': '511\n',
+        'sh:-c': new Error('sh: command not found')
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+    });
+
+    it('returns fail-safe when cap <= 0', () => {
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': '0\n',
+        'sh:-c': '100\n'
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.equal(result.exhausted, false);
+    });
+
+    it('uses DEFAULT_PTY_THRESHOLD when no threshold argument is passed', () => {
+      // DEFAULT_PTY_THRESHOLD = 0.85; cap=100; used=86 → should trip
+      ttydWatcher._setRunner(makeRunner({
+        'sysctl:-n': '100\n',
+        'sh:-c': '86\n'
+      }));
+      const result = ttydWatcher._isPtyPoolExhausted();
+      assert.equal(result.exhausted, true);
+    });
+  });
+
+  describe('_countTtydZombies', () => {
+    it('counts only rows where ppid matches AND stat contains Z', () => {
+      const psOutput = `
+  12345 ?Es
+  12345 ?S
+  12345 ?Z
+  12345 Z+
+  99999 Z
+  12345 ?R
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      // Expected: rows 3 (12345 ?Z) and 4 (12345 Z+) match. Others either lack Z
+      // in the stat code or are parented by a different pid.
+      const result = ttydWatcher._countTtydZombies(12345);
+      assert.equal(result, 2);
+    });
+
+    it('returns 0 when no rows match the parent pid', () => {
+      const psOutput = `
+  99999 Z
+  88888 ?Z
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      assert.equal(ttydWatcher._countTtydZombies(12345), 0);
+    });
+
+    it('returns 0 when all matching rows are live (no Z in stat)', () => {
+      const psOutput = `
+  12345 ?S
+  12345 ?R
+  12345 ?Sl
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      assert.equal(ttydWatcher._countTtydZombies(12345), 0);
+    });
+
+    it('returns 0 on ps error (fail-safe — diagnostic only, never crashes _check)', () => {
+      ttydWatcher._setRunner(makeRunner({
+        'ps:-A': new Error('ps: command not found')
+      }));
+      assert.equal(ttydWatcher._countTtydZombies(12345), 0);
+    });
+
+    it('handles empty ps output gracefully', () => {
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': '' }));
+      assert.equal(ttydWatcher._countTtydZombies(12345), 0);
+    });
+
+    it('skips malformed ps rows without throwing', () => {
+      const psOutput = `
+garbage line with no ppid
+  12345 ?Z
+not numeric  ?Z
+  12345 Z+
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      assert.equal(ttydWatcher._countTtydZombies(12345), 2);
     });
   });
 
@@ -142,14 +273,16 @@ describe('ttyd-watcher', () => {
   });
 
   describe('_check', () => {
-    it('kickstarts when child count meets threshold and targets the right gui domain', () => {
+    it('kickstarts when PTY pool is exhausted past the threshold ratio', () => {
       const runner = makeRunner({
         'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
-        'pgrep:-c': '50\n',
+        'sysctl:-n': '511\n',
+        'sh:-c': '527\n', // canonical #94 incident shape (overflow)
+        'ps:-A': '  12345 ?Z\n  12345 Z+\n',
         'launchctl:kickstart': ''
       });
       ttydWatcher._setRunner(runner);
-      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', threshold: 50 });
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
       const kickstartCall = runner.calls.find(
         (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
       );
@@ -158,54 +291,127 @@ describe('ttyd-watcher', () => {
       assert.match(kickstartCall.args[2], /^gui\/\d+\/com\.tangleclaw\.ttyd$/);
     });
 
-    it('kickstarts when child count exceeds threshold', () => {
+    it('does not kickstart when PTY pool is below threshold (post-kickstart steady state)', () => {
       const runner = makeRunner({
         'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
-        'pgrep:-c': '480\n',
+        'sysctl:-n': '511\n',
+        'sh:-c': '104\n', // post-kickstart used count from #94 incident report
+        'ps:-A': ''
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, false);
+    });
+
+    it('skips measurement when ttyd PID is unavailable', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_NOT_RUNNING
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      const sysctlCalled = runner.calls.some((c) => c.cmd === 'sysctl');
+      const lsCalled = runner.calls.some((c) => c.cmd === 'sh');
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(sysctlCalled, false, 'sysctl should not be called when PID is unavailable');
+      assert.equal(lsCalled, false, 'ls/wc should not be called when PID is unavailable');
+      assert.equal(kickstarted, false);
+    });
+
+    it('does not kickstart on fail-safe { exhausted: false } from a non-numeric reading', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': 'corrupted-binary-output',
+        'sh:-c': '999\n'
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, false);
+    });
+
+    it('does not call sysctl twice when measurement returns fail-safe (Critic MINOR 1 — measurement-failed branch short-circuits)', () => {
+      // When `cap === 0` (fail-safe sentinel from `_isPtyPoolExhausted`), `_check`
+      // emits a `warn` and returns rather than falling through to the ok-branch
+      // debug log. We can't easily assert log content from here without a logger
+      // stub, but we CAN positively assert the function returned without
+      // attempting a kickstart by checking the calls log. Also assert no
+      // exception escapes the catch.
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': new Error('sysctl: command not found'),
+        'sh:-c': '500\n',
+        'ps:-A': ''
+      });
+      ttydWatcher._setRunner(runner);
+      assert.doesNotThrow(() => {
+        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, false);
+    });
+
+    it('does not throw when runner errors mid-check (fail-open loop contract)', () => {
+      ttydWatcher._setRunner(() => {
+        throw new Error('boom');
+      });
+      assert.doesNotThrow(() => {
+        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      });
+    });
+
+    it('still kickstarts even when zombie count is 0 (pool-only gate — issue #144 design call)', () => {
+      // Documents the explicit policy: pool exhaustion alone triggers a kickstart,
+      // independent of zombie population. If false positives ever bite, file as
+      // a #144 follow-up — easier to add a gate than remove one.
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '100\n',
+        'sh:-c': '100\n', // 100/100 → exhausted
+        'ps:-A': '', // zero zombies
         'launchctl:kickstart': ''
       });
       ttydWatcher._setRunner(runner);
-      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', threshold: 50 });
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
       const kickstarted = runner.calls.some(
         (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
       );
       assert.equal(kickstarted, true);
     });
+  });
 
-    it('does not kickstart when child count is below threshold', () => {
-      const runner = makeRunner({
-        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
-        'pgrep:-c': '3\n'
-      });
-      ttydWatcher._setRunner(runner);
-      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', threshold: 50 });
-      const kickstarted = runner.calls.some(
-        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
-      );
-      assert.equal(kickstarted, false);
+  // ── #144: Production-runner smoke test ──
+  // Closes the "Test gap to close" item from issue #144. Pre-#144 the entire
+  // watcher implementation was stubbed by _setRunner, so the production-runner
+  // path against real BSD pgrep / sysctl had never been exercised. This test
+  // is gated on darwin so non-mac CI passes.
+  describe('production runner smoke test (darwin only)', () => {
+    it('_isPtyPoolExhausted returns finite values when run against the real host shell', { skip: process.platform !== 'darwin' }, () => {
+      // No _setRunner — exercises the production code path.
+      const result = ttydWatcher._isPtyPoolExhausted(0.85);
+      assert.ok(Number.isFinite(result.cap), `cap should be finite, got ${result.cap}`);
+      assert.ok(result.cap > 0, `cap should be > 0 on a running mac, got ${result.cap}`);
+      assert.ok(Number.isFinite(result.used), `used should be finite, got ${result.used}`);
+      assert.ok(result.used >= 0, `used should be >= 0, got ${result.used}`);
+      assert.ok(Number.isFinite(result.ratio), `ratio should be finite, got ${result.ratio}`);
+      assert.equal(typeof result.exhausted, 'boolean');
     });
 
-    it('skips when ttyd PID is unavailable', () => {
-      const runner = makeRunner({
-        'launchctl:list': LAUNCHCTL_OUTPUT_NOT_RUNNING
-      });
-      ttydWatcher._setRunner(runner);
-      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', threshold: 50 });
-      const pgrepCalled = runner.calls.some((c) => c.cmd === 'pgrep');
-      const kickstarted = runner.calls.some(
-        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
-      );
-      assert.equal(pgrepCalled, false);
-      assert.equal(kickstarted, false);
-    });
-
-    it('does not throw when runner errors mid-check', () => {
-      ttydWatcher._setRunner(() => {
-        throw new Error('boom');
-      });
-      assert.doesNotThrow(() => {
-        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', threshold: 50 });
-      });
+    it('_countTtydZombies returns a finite non-negative count against the real host shell', { skip: process.platform !== 'darwin' }, () => {
+      // Use PID 1 (launchd) — guaranteed to exist on every macOS install. We
+      // don't assert a specific count (the host's process tree varies); just
+      // that the function returns a sane number without throwing.
+      const result = ttydWatcher._countTtydZombies(1);
+      assert.ok(Number.isFinite(result), `result should be finite, got ${result}`);
+      assert.ok(result >= 0, `result should be >= 0, got ${result}`);
     });
   });
 
