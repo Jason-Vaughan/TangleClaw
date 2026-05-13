@@ -351,4 +351,129 @@ describe('tunnel', () => {
       assert.equal(lease, null, 'port lease should be released');
     });
   });
+
+  describe('_formatTunnelError (#160)', () => {
+    it('returns a generic message when stderr is empty', () => {
+      assert.equal(
+        tunnel._formatTunnelError('', []),
+        'SSH tunnel spawned but port not connectable',
+        'empty stderr falls through to the pre-#160 generic message'
+      );
+      assert.equal(
+        tunnel._formatTunnelError('   \n  ', []),
+        'SSH tunnel spawned but port not connectable',
+        'whitespace-only stderr also treated as empty'
+      );
+      assert.equal(
+        tunnel._formatTunnelError(undefined, []),
+        'SSH tunnel spawned but port not connectable',
+        'missing stderr argument tolerated'
+      );
+    });
+
+    it('recognizes a local-bind conflict on a primary local port and names the port', () => {
+      const stderr = 'bind [127.0.0.1]:28789: Address already in use\nchannel_setup_fwd_listener_tcpip: cannot listen to port: 28789';
+      const msg = tunnel._formatTunnelError(stderr, []);
+      assert.match(msg, /Local port 28789 is already in use/);
+      assert.match(msg, /SSH refused the forward/i,
+        'message should mention why the tunnel failed');
+    });
+
+    it('recognizes a local-bind conflict on an extra forward and suggests clearing it (the canonical #160 incident)', () => {
+      const stderr = 'bind [127.0.0.1]:3201: Address already in use\nchannel_setup_fwd_listener_tcpip: cannot listen to port: 3201';
+      const extras = [{ localPort: 3201, remotePort: 3201 }];
+      const msg = tunnel._formatTunnelError(stderr, extras);
+      assert.match(msg, /Local port 3201 is already in use/);
+      assert.match(msg, /Clear the secondary forward/i,
+        'when the conflicting port matches an extra forward, hint at clearing it (Bridge Port)');
+    });
+
+    it('recognizes auth failures (Permission denied / publickey)', () => {
+      const msg = tunnel._formatTunnelError(
+        'jason@198.51.100.10: Permission denied (publickey).',
+        []
+      );
+      assert.match(msg, /SSH authentication failed:/);
+      assert.match(msg, /Permission denied/);
+    });
+
+    it('recognizes connection-level failures (refused, no route, DNS)', () => {
+      assert.match(
+        tunnel._formatTunnelError('ssh: connect to host 1.2.3.4 port 22: Connection refused', []),
+        /SSH connection failed:.*Connection refused/
+      );
+      assert.match(
+        tunnel._formatTunnelError('ssh: connect to host bad.example.com port 22: No route to host', []),
+        /SSH connection failed:.*No route to host/
+      );
+      assert.match(
+        tunnel._formatTunnelError('ssh: Could not resolve hostname not-a-host: nodename nor servname provided', []),
+        /SSH connection failed:.*Could not resolve hostname/
+      );
+    });
+
+    it('falls back to the first non-empty line for unrecognized stderr', () => {
+      const stderr = '\n\nSome unrecognized error happened\nfollow-up detail';
+      const msg = tunnel._formatTunnelError(stderr, []);
+      assert.equal(msg, 'SSH tunnel failed: Some unrecognized error happened');
+    });
+
+    it('handles multi-line bind error where address segment uses different bracket formatting', () => {
+      // Some SSH versions print `bind: 0.0.0.0:port` without brackets; the
+      // regex should still extract the port number.
+      const variants = [
+        'bind 0.0.0.0:28789: Address already in use',
+        'bind [0.0.0.0]:28789: Address already in use',
+        'bind 127.0.0.1:28789: Address already in use',
+        'bind [127.0.0.1]:28789: Address already in use'
+      ];
+      for (const v of variants) {
+        const msg = tunnel._formatTunnelError(v, []);
+        assert.match(msg, /Local port 28789 is already in use/, `failed for variant: ${v}`);
+      }
+    });
+
+    it('exports _formatTunnelError on the module', () => {
+      // The helper is exported specifically for unit-testability; if a future
+      // refactor inlines it, this canary will catch the drop.
+      assert.equal(typeof tunnel._formatTunnelError, 'function');
+    });
+
+    it('skips the `Warning: Permanently added` first-connect noise line (Critic MAJOR-1)', () => {
+      // Real-world stderr when SSH connects to a previously-unseen host. The
+      // Warning line was hijacking auth/network/fallback messages — failed
+      // auth would render "SSH authentication failed: Warning: Permanently
+      // added 'host' (ECDSA) to the list of known hosts." instead of the
+      // actual Permission-denied line.
+      const auth = tunnel._formatTunnelError(
+        "Warning: Permanently added '198.51.100.10' (ECDSA) to the list of known hosts.\njason@198.51.100.10: Permission denied (publickey).",
+        []
+      );
+      assert.match(auth, /SSH authentication failed:/);
+      assert.match(auth, /Permission denied/);
+      assert.doesNotMatch(auth, /Warning: Permanently added/);
+
+      const net = tunnel._formatTunnelError(
+        "Warning: Permanently added '198.51.100.10' (ECDSA) to the list of known hosts.\nssh: connect to host 198.51.100.10 port 22: Connection refused",
+        []
+      );
+      assert.match(net, /SSH connection failed:.*Connection refused/);
+      assert.doesNotMatch(net, /Warning: Permanently added/);
+
+      const fallback = tunnel._formatTunnelError(
+        "Warning: Permanently added '198.51.100.10' (ECDSA) to the list of known hosts.\nSomething unrecognized went wrong",
+        []
+      );
+      assert.match(fallback, /SSH tunnel failed: Something unrecognized went wrong/);
+    });
+
+    it('recognizes an IPv6 bind-conflict and extracts the port (Critic MINOR-1)', () => {
+      // SSH formats IPv6 bind addresses as `bind [::1]:port` — the pre-Critic
+      // regex `[^:]*:(\d+):` failed to match because the address segment
+      // itself contains colons.
+      const msg = tunnel._formatTunnelError('bind [::1]:28789: Address already in use', []);
+      assert.match(msg, /Local port 28789 is already in use/,
+        'IPv6 bind-conflict should be recognized like the IPv4 form');
+    });
+  });
 });

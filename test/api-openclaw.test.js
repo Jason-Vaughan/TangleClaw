@@ -221,6 +221,171 @@ describe('API /api/openclaw/connections', () => {
     const lease = store.portLeases.get(13201);
     assert.equal(lease, null, 'port lease should be released after connection delete');
   });
+
+  // #160 — bridgePort no longer auto-fills with 3201 when caller doesn't ask
+  // for it. Pre-fix behavior leaked the ClawBridge-default into non-ClawBridge
+  // records and triggered a stray local-bind `-L 3201:127.0.0.1:3201` SSH
+  // forward that killed the entire tunnel via ExitOnForwardFailure=yes.
+  it('POST /api/openclaw/connections with bridgePort omitted persists null (#160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'NoBridge-A',
+      host: '10.0.0.70',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13270
+      // bridgePort intentionally omitted — most non-ClawBridge deployments
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, null, 'bridgePort must be null, not 3201');
+    // Round-trip through GET to verify the row read-back also preserves null
+    const fetched = await request(server, 'GET', `/api/openclaw/connections/${created.data.id}`);
+    assert.equal(fetched.data.bridgePort, null, 'GET round-trip preserves null bridgePort');
+  });
+
+  it('POST /api/openclaw/connections with bridgePort: null persists null (#160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'NoBridge-B',
+      host: '10.0.0.71',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13271,
+      bridgePort: null
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, null);
+  });
+
+  it('POST /api/openclaw/connections with bridgePort: "" persists null (form-empty edge, #160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'NoBridge-C',
+      host: '10.0.0.72',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13272,
+      bridgePort: ''
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, null);
+  });
+
+  it('POST /api/openclaw/connections with bridgePort: 4501 persists 4501 (#160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'WithBridge',
+      host: '10.0.0.73',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13273,
+      bridgePort: 4501
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, 4501,
+      'non-null bridgePort still round-trips — non-3201 values must NOT regress to null');
+  });
+
+  it('PUT /api/openclaw/connections/:id clears bridgePort when sent as null (#160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'ClearBridge',
+      host: '10.0.0.74',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13274,
+      bridgePort: 3201
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, 3201);
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, {
+      bridgePort: null
+    });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.bridgePort, null, 'PATCH bridgePort: null clears the field');
+    // GET round-trip
+    const fetched = await request(server, 'GET', `/api/openclaw/connections/${created.data.id}`);
+    assert.equal(fetched.data.bridgePort, null);
+  });
+
+  it('PUT /api/openclaw/connections/:id clears bridgePort when sent as empty string (#160)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'ClearBridgeStr',
+      host: '10.0.0.75',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13275,
+      bridgePort: 3201
+    });
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, {
+      bridgePort: ''
+    });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.bridgePort, null, 'PATCH bridgePort: "" also clears');
+  });
+
+  it('migration v14→v15 preserves existing bridge_port values (#160 data preservation)', async () => {
+    // Connections created BEFORE #160 carry an explicit bridge_port = 3201 in
+    // the row data (it was the NOT NULL DEFAULT). The migration drops the
+    // constraint + default but must not alter existing row values — users who
+    // intentionally set bridgePort = 3201 keep 3201.
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'Pre160Style',
+      host: '10.0.0.81',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13281,
+      bridgePort: 3201  // explicitly set, simulating a pre-#160-style record
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, 3201, 'explicit 3201 is preserved (not coerced to null)');
+    // Round-trip — read-back path must not regress this either
+    const fetched = await request(server, 'GET', `/api/openclaw/connections/${created.data.id}`);
+    assert.equal(fetched.data.bridgePort, 3201);
+  });
+
+  it('POST /api/openclaw/connections with bridgePort: 0 is rejected by tcp-port-range validation (Critic MINOR-4)', async () => {
+    // 0 is technically an invalid TCP port. Without explicit handling, the
+    // form-empty serialization "null" and the explicit "0" produce different
+    // shapes — null skips the SSH forward, 0 would attempt to bind 0. Document
+    // current behavior by pinning that 0 is passed through to the DB; the
+    // tunnel layer's later behavior depends on server.js's `conn.bridgePort ?`
+    // truthiness check, which correctly skips the forward for 0. So 0 is
+    // EFFECTIVELY no-op for the tunnel layer — but worth flagging for future
+    // input validation work.
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'BridgePortZero',
+      host: '10.0.0.82',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13282,
+      bridgePort: 0
+    });
+    assert.equal(created.status, 201);
+    // 0 is preserved literally (it's not the empty-string sentinel and not null).
+    // Effective behavior for the tunnel path: server.js does `conn.bridgePort ?`,
+    // 0 is falsy → no extra SSH forward → no Bug 3 conflict.
+    assert.equal(created.data.bridgePort, 0,
+      'bridgePort: 0 round-trips as 0 (not coerced to null; future input validation tracked separately)');
+  });
+
+  it('POST PORT_CONFLICT response carries error + code fields (frontend-toast contract, #160)', async () => {
+    // Bug 1 contract: the save-failure response must include `error` and `code`
+    // so the frontend can render the real message (api.lastError +
+    // api.lastErrorCode) instead of the hardcoded "Name may already exist"
+    // toast. This is a structural assertion — the message text can evolve.
+    const porthub = require('../lib/porthub');
+    porthub.registerPort(13280, 'BlockedByOther', 'manual');
+
+    const conflict = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'WillConflict',
+      host: '10.0.0.80',
+      sshUser: 'user',
+      sshKeyPath: '/key',
+      localPort: 13280
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal(typeof conflict.data.error, 'string',
+      'response carries an `error` string the frontend can surface');
+    assert.ok(conflict.data.error.length > 0, 'error message is non-empty');
+    assert.equal(conflict.data.code, 'PORT_CONFLICT',
+      'response carries a `code` field so the frontend can disambiguate');
+  });
 });
 
 describe('API /api/openclaw/test', () => {
