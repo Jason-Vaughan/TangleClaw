@@ -310,6 +310,52 @@ describe('store', () => {
       assert.ok(updated.wrap.steps.indexOf('version-bump') < updated.wrap.steps.indexOf('commit'),
         'order preserved: version-bump before commit');
     });
+
+    it('reconciles stale runtime methodology template hook entries against bundled on init (#158)', () => {
+      // Same integration shape as the #136 case above, but exercising the
+      // hook-entry backfill path added in #158. Seeds a pre-#146 runtime
+      // template — hook entries present but missing the `requires` precondition
+      // — and asserts init() backfills requires from the bundled template.
+      const templatesDir = path.join(tmpDir, 'templates');
+      const prawductDir = path.join(templatesDir, 'prawduct');
+      fs.mkdirSync(prawductDir, { recursive: true });
+      const stale = {
+        id: 'prawduct',
+        name: 'Prawduct',
+        wrap: { command: null, steps: ['version-bump', 'changelog-update', 'memory-update', 'commit'] },
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              // NO requires — pre-#146 shape
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+      const livePath = path.join(prawductDir, 'template.json');
+      fs.writeFileSync(livePath, JSON.stringify(stale, null, 2));
+
+      store.init();
+
+      const updated = JSON.parse(fs.readFileSync(livePath, 'utf8'));
+      assert.ok(Array.isArray(updated.hooks.claude.SessionStart[0].requires),
+        'SessionStart[0].requires backfilled from bundled (#158 incident shape)');
+      assert.ok(updated.hooks.claude.SessionStart[0].requires.includes('tools/product-hook'),
+        'SessionStart[0].requires contains tools/product-hook');
+      assert.ok(Array.isArray(updated.hooks.claude.Stop[0].requires),
+        'Stop[0].requires backfilled from bundled');
+      assert.ok(updated.hooks.claude.Stop[0].requires.includes('tools/product-hook'),
+        'Stop[0].requires contains tools/product-hook');
+      // Inner hooks array preserved (chunk-1 filter strips `requires` from the
+      // emitted .claude/settings.json but the runtime template keeps it).
+      assert.equal(updated.hooks.claude.Stop[0].hooks[0].command,
+        'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop');
+    });
   });
 
   describe('close', () => {
@@ -820,6 +866,360 @@ describe('store', () => {
       store._mergeBundledTemplate(bundled, live);
       const stillThere = JSON.parse(fs.readFileSync(live, 'utf8'));
       assert.deepStrictEqual(stillThere.wrap.steps, ['a']);
+    });
+  });
+
+  describe('_mergeBundledHookEntries (#158)', () => {
+    it('backfills missing requires onto live hook entries matched by matcher (canonical #158 incident shape)', () => {
+      const bundled = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+      const live = {
+        id: 'prawduct',
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              // NO requires — pre-#146 shape
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      };
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, true, 'should report a change');
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[0].requires, ['tools/product-hook']);
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/product-hook']);
+      // Inner hooks array preserved verbatim
+      assert.equal(live.hooks.claude.Stop[0].hooks[0].command, 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop');
+    });
+
+    it('does NOT overwrite an existing requires on live (additive only, never overwrites)', () => {
+      const bundled = {
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/bundled-tool'] }] } }
+      };
+      const live = {
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/user-customized'] }] } }
+      };
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, false, 'no key added → no change reported');
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/user-customized']);
+    });
+
+    it('preserves user-added keys not present in bundled', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [{ matcher: 'startup', requires: ['tools/x'] }] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: [{ matcher: 'startup', userCustom: 'preserve me' }] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      assert.equal(live.hooks.claude.SessionStart[0].userCustom, 'preserve me');
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[0].requires, ['tools/x']);
+    });
+
+    it('does NOT cross-match entries with different matchers', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [{ matcher: 'startup', requires: ['tools/a'] }] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: [{ matcher: 'resume' }] } }
+      };
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, false, 'matcher mismatch → no backfill');
+      assert.equal('requires' in live.hooks.claude.SessionStart[0], false);
+    });
+
+    it('does NOT insert bundled-only entries that have no live match', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [
+          { matcher: 'startup', requires: ['tools/a'] },
+          { matcher: 'resume', requires: ['tools/b'] }
+        ] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: [{ matcher: 'startup' }] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      // First entry backfilled
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[0].requires, ['tools/a']);
+      // Second bundled entry NOT inserted
+      assert.equal(live.hooks.claude.SessionStart.length, 1, 'bundled-only entry must not be added');
+    });
+
+    it('falls back to index match when both sides lack a string matcher', () => {
+      const bundled = {
+        hooks: { claude: { Stop: [{ requires: ['tools/x'] }] } }
+      };
+      const live = {
+        hooks: { claude: { Stop: [{ hooks: [{ command: 'foo' }] }] } }
+      };
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, true);
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/x']);
+      assert.equal(live.hooks.claude.Stop[0].hooks[0].command, 'foo');
+    });
+
+    it('matches entries by matcher regardless of array position', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [
+          { matcher: 'startup', requires: ['tools/a'] },
+          { matcher: 'resume', requires: ['tools/b'] }
+        ] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: [
+          { matcher: 'resume' },  // reversed order from bundled
+          { matcher: 'startup' }
+        ] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[0].requires, ['tools/b'],
+        'resume entry (at live index 0) gets resume requires');
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[1].requires, ['tools/a'],
+        'startup entry (at live index 1) gets startup requires');
+      // Live order preserved — entries are not reordered.
+      assert.equal(live.hooks.claude.SessionStart[0].matcher, 'resume');
+      assert.equal(live.hooks.claude.SessionStart[1].matcher, 'startup');
+    });
+
+    it('handles duplicate matchers on live via FIFO index queue (acknowledged limitation)', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [
+          { matcher: 'startup', requires: ['tools/first'] },
+          { matcher: 'startup', requires: ['tools/second'] }
+        ] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: [
+          { matcher: 'startup', tag: 'live-A' },
+          { matcher: 'startup', tag: 'live-B' }
+        ] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[0].requires, ['tools/first']);
+      assert.deepStrictEqual(live.hooks.claude.SessionStart[1].requires, ['tools/second']);
+      // Tags preserved — live entries identified by appearance order, not destroyed.
+      assert.equal(live.hooks.claude.SessionStart[0].tag, 'live-A');
+      assert.equal(live.hooks.claude.SessionStart[1].tag, 'live-B');
+    });
+
+    it('fails open on malformed nested shapes (e.g. live.hooks.claude.SessionStart is not an array)', () => {
+      const bundled = {
+        hooks: { claude: { SessionStart: [{ matcher: 'startup', requires: ['tools/x'] }] } }
+      };
+      const live = {
+        hooks: { claude: { SessionStart: 'not-an-array' } }
+      };
+      assert.doesNotThrow(() => store._mergeBundledHookEntries(bundled, live));
+      // Malformed value preserved untouched
+      assert.equal(live.hooks.claude.SessionStart, 'not-an-array');
+    });
+
+    it('reconciles multiple engines independently when bundled defines both', () => {
+      const bundled = {
+        hooks: {
+          claude: { Stop: [{ matcher: '', requires: ['tools/claude-tool'] }] },
+          codex: { Stop: [{ matcher: '', requires: ['tools/codex-tool'] }] }
+        }
+      };
+      const live = {
+        hooks: {
+          claude: { Stop: [{ matcher: '' }] },
+          codex: { Stop: [{ matcher: '' }] }
+        }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/claude-tool']);
+      assert.deepStrictEqual(live.hooks.codex.Stop[0].requires, ['tools/codex-tool']);
+    });
+
+    it('deep-clones backfilled values — later mutation of bundled does not leak into live', () => {
+      const bundled = {
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/x'] }] } }
+      };
+      const live = {
+        hooks: { claude: { Stop: [{ matcher: '' }] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      // Mutate bundled afterwards
+      bundled.hooks.claude.Stop[0].requires.push('tools/y');
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/x'],
+        'live must not share array reference with bundled');
+    });
+
+    it('no-op when live has no hooks block', () => {
+      const bundled = {
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/x'] }] } }
+      };
+      const live = { id: 'prawduct' };  // no hooks key at all
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, false);
+      assert.equal('hooks' in live, false, 'live.hooks not auto-created');
+    });
+
+    it('no-op when bundled has no hooks block', () => {
+      const bundled = { id: 'prawduct' };
+      const live = {
+        hooks: { claude: { Stop: [{ matcher: '' }] } }
+      };
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, false);
+    });
+
+    it('skips silently when live is missing an engine key that bundled defines (additive-at-entry-level contract)', () => {
+      // Critic MAJOR-2: documented contract is "additive at entry level only".
+      // When live has no entry for an engine that bundled defines, the helper
+      // does NOT auto-create the engine block — that's `addMissing`'s job
+      // upstream in _mergeBundledTemplate (which adds the bundled engine
+      // block as a reference before this helper runs). Direct callers of the
+      // exported helper that bypass _mergeBundledTemplate get silent skip,
+      // not silent insert.
+      const bundled = {
+        hooks: { codex: { Stop: [{ matcher: '', requires: ['tools/codex-tool'] }] } }
+      };
+      const live = { hooks: {} };  // engine entirely absent on live
+      const changed = store._mergeBundledHookEntries(bundled, live);
+      assert.equal(changed, false, 'helper does not auto-add missing engine blocks');
+      assert.equal('codex' in live.hooks, false, 'live.hooks.codex still absent — not silently inserted');
+    });
+
+    it('skips malformed bundled or live entries (null/string in the array) without throwing', () => {
+      // Critic MINOR-3: defensive branches in the forEach loops are not
+      // covered by other tests. Pin the contract: malformed entries are
+      // skipped, well-formed entries still backfill correctly.
+      const bundled = {
+        hooks: { claude: { Stop: [null, { matcher: 'x', requires: ['tools/a'] }] } }
+      };
+      const live = {
+        hooks: { claude: { Stop: ['malformed', { matcher: 'x' }] } }
+      };
+      assert.doesNotThrow(() => store._mergeBundledHookEntries(bundled, live));
+      assert.deepStrictEqual(live.hooks.claude.Stop[1].requires, ['tools/a'],
+        'well-formed entry still backfilled despite malformed sibling');
+      assert.equal(live.hooks.claude.Stop[0], 'malformed',
+        'malformed live entry left untouched');
+    });
+
+    it('does NOT recurse into entry.hooks[] inner command objects (entry-level keys only)', () => {
+      // Critic MINOR-1: pin the documented entry-level-only contract.
+      // bundled entry has statusMessage on its inner hook[0]; live entry
+      // lacks it. The helper backfills entry-level keys but does NOT recurse
+      // into the inner `hooks` array of command objects.
+      const bundled = {
+        hooks: { claude: { Stop: [{
+          matcher: '',
+          requires: ['tools/x'],
+          hooks: [{ type: 'command', command: 'echo bundled', statusMessage: 'Bundled status' }]
+        }] } }
+      };
+      const live = {
+        hooks: { claude: { Stop: [{
+          matcher: '',
+          hooks: [{ type: 'command', command: 'echo bundled' }]  // no statusMessage
+        }] } }
+      };
+      store._mergeBundledHookEntries(bundled, live);
+      assert.deepStrictEqual(live.hooks.claude.Stop[0].requires, ['tools/x'],
+        'top-level requires backfilled');
+      assert.equal('statusMessage' in live.hooks.claude.Stop[0].hooks[0], false,
+        'inner hook[0].statusMessage NOT backfilled — entry-level keys only');
+    });
+  });
+
+  describe('_mergeBundledTemplate hook-entry reconciliation integration (#158)', () => {
+    let tmpDir;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-merge-tpl-158-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function writeJson(filename, obj) {
+      const p = path.join(tmpDir, filename);
+      fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
+      return p;
+    }
+
+    it('end-to-end via _mergeBundledTemplate: pre-#146 live template gets requires backfilled, written back to disk', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['commit'] },
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              requires: ['tools/product-hook'],
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['commit'] },
+        hooks: {
+          claude: {
+            SessionStart: [{
+              matcher: 'startup|clear|resume',
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
+            }],
+            Stop: [{
+              matcher: '',
+              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
+            }]
+          }
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.hooks.claude.SessionStart[0].requires, ['tools/product-hook']);
+      assert.deepStrictEqual(merged.hooks.claude.Stop[0].requires, ['tools/product-hook']);
+    });
+
+    it('no-op leaves file byte-identical when live already has requires (no rewrite when nothing to add)', () => {
+      // Critic MINOR-2: mtime comparisons are unreliable on coarse-resolution
+      // filesystems (HFS+, NFS). Byte-equal check is filesystem-agnostic.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['commit'] },
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/product-hook'] }] } }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['commit'] },
+        hooks: { claude: { Stop: [{ matcher: '', requires: ['tools/product-hook'] }] } }
+      });
+      const before = fs.readFileSync(live);
+      store._mergeBundledTemplate(bundled, live);
+      const after = fs.readFileSync(live);
+      assert.ok(before.equals(after), 'no-op should not rewrite the file');
     });
   });
 });
