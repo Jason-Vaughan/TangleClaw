@@ -117,8 +117,8 @@ Same path: `gateway.auth.token`.
 | **Gateway Port** | OpenClaw gateway port (default `18789`) | Remote port |
 | **Gateway Token** | The token from Step 2 | Required for remote access |
 | **Local Port** | Local tunnel port (default `18789`) | Must not conflict with other tunnels |
-| **Bridge Port** | ClawBridge port (default `3201`) | For sidecar process visibility |
-| **Bridge Token** | ClawBridge authentication token | Required for sidecar polling |
+| **Bridge Port** | ClawBridge port — leave blank for non-ClawBridge OpenClaw deployments | Only set when deploying ClawBridge alongside OpenClaw (typically `3201`). Leaving blank skips the extra SSH forward and is the right default for a vanilla OpenClaw install (#160). |
+| **Bridge Token** | ClawBridge authentication token | Required only when Bridge Port is set |
 | **Available as Engine** | Toggle on if you want to use it as a project engine | Optional |
 
 5. Click **"Test Connection"** to verify SSH and gateway connectivity
@@ -186,7 +186,7 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 
 ### How it works
 
-1. TangleClaw's SSH tunnel forwards both the gateway port (18789) and the bridge port (3201)
+1. TangleClaw's SSH tunnel forwards the gateway port (18789), plus the configured Bridge Port (typically `3201`) when one is set on the connection. Non-ClawBridge connections leave Bridge Port blank and skip this extra forward (#160).
 2. The sidecar polls `GET /api/processes` on the ClawBridge every 10 seconds
 3. Status pills appear in the OpenClaw viewer banner — colored by status (running, completed, errored)
 4. Click a pill to open the detail panel with timestamps, exit code, working directory, and last output

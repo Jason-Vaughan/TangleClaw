@@ -1867,7 +1867,10 @@ async function openConnectionModal(connId) {
     document.getElementById('ocGatewayToken').value = data.gatewayToken || '';
     document.getElementById('ocCliCommand').value = data.cliCommand || 'openclaw-cli';
     document.getElementById('ocLocalPort').value = data.localPort || 18789;
-    document.getElementById('ocBridgePort').value = data.bridgePort || 3201;
+    // Leave blank when bridgePort is null/0 (most non-ClawBridge connections)
+    // so re-saving without touching the field doesn't re-introduce the stray
+    // 3201 placeholder default (#160).
+    document.getElementById('ocBridgePort').value = data.bridgePort != null && data.bridgePort !== 0 ? data.bridgePort : '';
     document.getElementById('ocBridgeToken').value = data.bridgeToken || '';
     document.getElementById('ocAvailableAsEngine').checked = !!data.availableAsEngine;
     document.getElementById('ocDeleteBtn').classList.remove('hidden');
@@ -1880,7 +1883,9 @@ async function openConnectionModal(connId) {
     document.getElementById('ocGatewayToken').value = '';
     document.getElementById('ocCliCommand').value = 'openclaw-cli';
     document.getElementById('ocLocalPort').value = '18789';
-    document.getElementById('ocBridgePort').value = '3201';
+    // Leave blank by default; the field's placeholder shows 3201 as a hint
+    // but only takes effect when the user actually fills it in (#160).
+    document.getElementById('ocBridgePort').value = '';
     document.getElementById('ocBridgeToken').value = '';
     document.getElementById('ocAvailableAsEngine').checked = false;
     document.getElementById('ocDeleteBtn').classList.add('hidden');
@@ -1922,7 +1927,15 @@ async function saveConnection() {
     gatewayToken: document.getElementById('ocGatewayToken').value.trim() || null,
     cliCommand: document.getElementById('ocCliCommand').value.trim() || 'openclaw-cli',
     localPort: parseInt(document.getElementById('ocLocalPort').value, 10) || 18789,
-    bridgePort: parseInt(document.getElementById('ocBridgePort').value, 10) || 3201,
+    bridgePort: (() => {
+      // Empty field → null (no Bridge port; no extra -L SSH forward). Pre-#160
+      // this fell through to `|| 3201` and silently fabricated a phantom bind
+      // for every non-ClawBridge connection.
+      const raw = document.getElementById('ocBridgePort').value.trim();
+      if (raw === '') return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    })(),
     bridgeToken: document.getElementById('ocBridgeToken').value.trim() || null,
     availableAsEngine: document.getElementById('ocAvailableAsEngine').checked
   };
@@ -1935,7 +1948,14 @@ async function saveConnection() {
   }
 
   if (!result) {
-    document.getElementById('ocError').textContent = 'Save failed. Name may already exist.';
+    // Surface the actual server error if api.lastError captured it from the
+    // JSON response (api-helper.js, PR #84 / issue #80) — covers PORT_CONFLICT,
+    // CONFLICT, BAD_REQUEST, etc. Falls back to the previous generic message
+    // only when no error payload was returned (e.g. network failure mid-save).
+    const code = api.lastErrorCode ? ` (${api.lastErrorCode})` : '';
+    document.getElementById('ocError').textContent = api.lastError
+      ? `Save failed: ${api.lastError}${code}`
+      : 'Save failed. Name may already exist.';
     document.getElementById('ocError').classList.remove('hidden');
     return;
   }

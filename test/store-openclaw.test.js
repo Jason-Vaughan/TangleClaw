@@ -53,7 +53,9 @@ describe('store.openclawConnections', () => {
       assert.equal(conn.cliCommand, 'openclaw-cli');
       assert.equal(conn.availableAsEngine, false);
       assert.equal(conn.gatewayToken, null);
-      assert.equal(conn.bridgePort, 3201);
+      // Post-#160: bridgePort defaults to null (not 3201) so non-ClawBridge
+      // deployments don't get a stray `-L 3201` SSH forward.
+      assert.equal(conn.bridgePort, null);
       assert.ok(conn.createdAt);
     });
 
@@ -160,7 +162,8 @@ describe('store.openclawConnections', () => {
 
     it('should update bridgePort', () => {
       const conn = createConnection();
-      assert.equal(conn.bridgePort, 3201);
+      // Post-#160: default is null, not 3201.
+      assert.equal(conn.bridgePort, null);
       const updated = store.openclawConnections.update(conn.id, { bridgePort: 4201 });
       assert.equal(updated.bridgePort, 4201);
     });
@@ -228,12 +231,98 @@ describe('store.openclawConnections', () => {
       assert.equal(list[0].name, 'RentalClaw');
     });
 
+    it('v14→v15 migration preserves existing bridge_port row data verbatim (#160)', () => {
+      // Critic MAJOR-2: the canonical migration test. Builds a fresh tmpDir
+      // with the PRE-#160 schema (bridge_port INTEGER NOT NULL DEFAULT 3201),
+      // seeds rows with two distinct existing bridge_port values, marks
+      // schema_version = 14, then runs `store.init()` which fires
+      // `_runMigrations` and exercises the v14→v15 recreate-table path. After
+      // the run, both rows must still carry their original bridge_port values.
+      store.close();
+      const tmpDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-openclaw-mig-'));
+      try {
+        // Seed a pre-#160 SQLite DB using node:sqlite (the same engine
+        // `lib/store.js` uses — DatabaseSync). Land the exact pre-#160 schema
+        // shape via `.exec`.
+        const { DatabaseSync } = require('node:sqlite');
+        const dbPath = path.join(tmpDir2, 'tangleclaw.db');
+        const seed = new DatabaseSync(dbPath);
+        seed.exec(`
+          CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO schema_version (version) VALUES (14);
+          CREATE TABLE openclaw_connections (
+            id                TEXT PRIMARY KEY,
+            name              TEXT NOT NULL UNIQUE,
+            host              TEXT NOT NULL,
+            port              INTEGER NOT NULL DEFAULT 18789,
+            ssh_user          TEXT NOT NULL,
+            ssh_key_path      TEXT NOT NULL,
+            gateway_token     TEXT,
+            cli_command       TEXT DEFAULT 'openclaw-cli',
+            local_port        INTEGER NOT NULL DEFAULT 18789,
+            available_as_engine INTEGER NOT NULL DEFAULT 0,
+            default_mode      TEXT NOT NULL DEFAULT 'ssh',
+            audit_secret      TEXT,
+            bridge_port       INTEGER NOT NULL DEFAULT 3201,
+            bridge_token      TEXT,
+            created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO openclaw_connections
+            (id, name, host, port, ssh_user, ssh_key_path, local_port, default_mode, bridge_port)
+          VALUES
+            ('row-3201', 'PreBridge3201', '10.0.0.1', 18789, 'user', '/key', 18790, 'ssh', 3201),
+            ('row-4501', 'PreBridge4501', '10.0.0.2', 18789, 'user', '/key', 18791, 'ssh', 4501);
+        `);
+        seed.close();
+
+        // Run the actual migration via store.init().
+        store._setBasePath(tmpDir2);
+        store.init();
+
+        const db = store.getDb();
+        // Schema version advanced to 15.
+        const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+        assert.equal(ver.version, 15);
+        // Column constraint actually changed.
+        const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
+        const bridgeCol = cols.find((c) => c.name === 'bridge_port');
+        assert.equal(bridgeCol.notnull, 0, 'post-migration: bridge_port nullable');
+        assert.equal(bridgeCol.dflt_value, null, 'post-migration: no SQL DEFAULT');
+        // Data preservation: both rows survive with their original bridge_port.
+        const row3201 = db.prepare('SELECT bridge_port FROM openclaw_connections WHERE id = ?').get('row-3201');
+        const row4501 = db.prepare('SELECT bridge_port FROM openclaw_connections WHERE id = ?').get('row-4501');
+        assert.equal(row3201.bridge_port, 3201, 'pre-existing 3201 row preserved');
+        assert.equal(row4501.bridge_port, 4501, 'pre-existing 4501 row preserved');
+        // Post-migration: inserts with bridge_port = null now work.
+        const created = store.openclawConnections.create({
+          name: 'PostMigration',
+          host: '10.0.0.3',
+          sshUser: 'user',
+          sshKeyPath: '/key',
+          localPort: 18792,
+          bridgePort: null
+        });
+        assert.equal(created.bridgePort, null, 'post-migration: null bridgePort accepted');
+      } finally {
+        try { store.close(); } catch { /* already closed */ }
+        fs.rmSync(tmpDir2, { recursive: true, force: true });
+        // Restore the test-suite's own tmpDir so afterEach() runs cleanly.
+        store._setBasePath(tmpDir);
+        store.init();
+      }
+    });
+
     it('should have bridge_port column after migration', () => {
       const db = store.getDb();
       const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
       const bridgeCol = cols.find(c => c.name === 'bridge_port');
       assert.ok(bridgeCol, 'bridge_port column should exist');
-      assert.equal(bridgeCol.dflt_value, '3201');
+      // Post-#160 (schema v15): NOT NULL constraint dropped + DEFAULT removed.
+      assert.equal(bridgeCol.notnull, 0, 'bridge_port should be nullable');
+      assert.equal(bridgeCol.dflt_value, null, 'bridge_port should have no SQL DEFAULT');
     });
   });
 });
