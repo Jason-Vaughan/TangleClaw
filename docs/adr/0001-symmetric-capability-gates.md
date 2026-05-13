@@ -2,7 +2,7 @@
 
 **Status:** Accepted (2026-05-11)
 **Source issue:** #145 chunk 3 (audit closeout)
-**Related issues:** #103, #119, #136, #137, #140, #145, #151
+**Related issues:** #103, #119, #136, #137, #140, #145, #151, #158
 **Source feedback:** `feedback_symmetric_capability_gates.md` (Critic-surfaced on #103 PR #125)
 
 ---
@@ -31,6 +31,7 @@ We have hit this class of bug repeatedly over the past two months. Each incident
 - **#145 chunk 2** — The cleanup half of #145. Chunk 1 fixed the creation gate; existing affected projects needed a one-pass strip without waiting for the next session launch. Dashboard banner + `POST /api/projects/repair-orphan-hooks` filled the gap. Also reinforced that the strip path must preserve non-orphan hooks and non-hook keys symmetrically — same logical contract `syncEngineHooks` honors on the methodology-flip path.
 - **#145 chunk 3** — The audit (this ADR). Verified the methodology-flip path's cleanup behavior. Found a latent ReferenceError on the `PATCH methodology: null` removal branch (`currentTemplate` declared inside an inner block, referenced outside) that had never been exercised by tests. Hoist-fix shipped; the deeper SQL-constraint blocker that surfaced after the hoist-fix filed as #151.
 - **#151** — Retired the `methodology: null` semantic entirely rather than fixing the (unreachable) removal path. Per `docs/methodology-guide.md` *"Each project gets one methodology"* — `minimal` is the canonical no-workflow option. The API now rejects null with a 400 pointing the caller at `'minimal'`. The dead removal branch in `updateProject` (~40 lines) was deleted; `DEFAULT_PROJECT_CONFIG.methodology` was changed from `null` to `'minimal'` to align projConfig with the DB schema's `NOT NULL DEFAULT 'minimal'`. The three sources of truth (DB schema, projConfig default, API contract) now agree.
+- **#158** — Chunk-1's `requires` filter (the runtime-precondition gate) is load-bearing for the orphan-hook-loop protection, but only effective when the runtime methodology template has the `requires` field on each hook entry. `_mergeBundledTemplate` (#136 / PR #156) reconciled `wrap.steps` and missing top-level *object* fields but did NOT traverse `hooks.<engine>[].entries[]` to backfill `requires`. Pre-#146 runtime templates therefore stayed `requires`-less even after v3.16.0's reconciler shipped, and chunk-1's filter passed those entries through as a no-op — every prawduct project on a pre-#146 install kept hitting the loop. Closed by `_mergeBundledHookEntries` in `lib/store.js`, which walks hook entries inside the reconciler and backfills missing keys additively, matched by `matcher` string with index fallback. Confirmed live on TC-v3 itself on 2026-05-12 against server already running v3.16.0.
 
 The recurrence is the lesson. The pattern is real, named, and worth enforcing.
 
@@ -97,6 +98,7 @@ When adding a new flag/field that affects on-disk state:
 - **"Merge into existing instead of rebuild from intent."** If the methodology switches from prawduct to minimal, the new `.claude/settings.json.hooks` must come *only* from minimal's template + baseline. NOT "minimal's hooks + whatever was there before." Rebuild from intent; never carry forward unintended.
 - **"Single-direction regression test."** Testing only A → B doesn't prove B → A works. Both directions of every paired transition need coverage.
 - **"Split-brain default values."** When a field has two sources of truth (e.g. DB schema default + in-memory config object default), both must agree on the canonical value. Pre-#151, methodology defaulted to `'minimal'` in the DB but `null` in projConfig — every reader had to know which source to trust. Resolve by picking one canonical value at both layers and rejecting the unreachable third state at the API.
+- **"Protective sync exists but doesn't traverse the data shape required to deliver the protection."** A reconciler that only covers a subset of the bundled→live state class leaves the gate it was meant to protect un-protected for existing installs. Pre-#158, `_mergeBundledTemplate` reconciled `wrap.steps` + top-level object fields but did not traverse `hooks.<engine>[].entries[]` to backfill `requires`. The chunk-1 protection looked deployed (filter code shipped) but was a no-op everywhere the runtime template predated chunk 1. Resolve by: when adding a sync function intended to protect gate G, write a test that proves the sync actually delivers the protection on the canonical legacy data shape, not just on freshly-generated state.
 
 ---
 
@@ -108,6 +110,7 @@ When adding a new flag/field that affects on-disk state:
 - #140 — engine PATCH-sync gap (closed the engine gate)
 - #145 — methodology hook `requires` field + bulk-repair (added the runtime-precondition gate)
 - #151 — methodology-removal path (currentTemplate hoist + open SQL constraint decision)
+- #158 — chunk-1 protection gap on pre-#146 runtime templates; reconciler scope extended to hook entries
 - `feedback_symmetric_capability_gates.md` — the user-feedback rule that drove this pattern's discovery
 - `test/projects.test.js → describe('methodology flip cleanup audit (#145, chunk 3)')` — the regression test suite locking in the methodology-flip half of this ADR
 - `test/projects.test.js → describe('silentPrime (#103)')` — the regression test suite locking in the silentPrime half of this ADR (engine-flip orphan-hook cleanup tests at lines 1074, 1111)
