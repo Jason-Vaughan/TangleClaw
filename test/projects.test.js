@@ -627,7 +627,14 @@ describe('projects', () => {
       assert.equal(enriched.version, '9.9.9-rc1');
     });
 
-    it('layer 1: cache file should win over CHANGELOG, version.json, and package.json', () => {
+    it('layer 1: live source overrides stale cache and self-heals (#165 — semantic inversion of pre-#165 cache-wins)', () => {
+      // Pre-#165: cache was the highest-priority source and a divergent on-disk
+      // CHANGELOG/version.json/package.json never reached the dashboard label
+      // until the next session launch/wrap.
+      // Post-#165: live sources win on every enrichment, and the cache is
+      // rewritten so the next reader (and the test of cache contents) sees
+      // the corrected state. See `_detectProjectVersion self-heal (#165)`
+      // describe block below for the full contract.
       const projPath = path.join(versionDir, 'cache-precedence');
       fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
       fs.writeFileSync(
@@ -640,7 +647,7 @@ describe('projects', () => {
 
       const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engineId: 'claude-code' });
       const enriched = projects.enrichProject(registered);
-      assert.equal(enriched.version, '1.0.0-from-cache');
+      assert.equal(enriched.version, '2.0.0-from-changelog');
     });
 
     it('layer 1: malformed cache file falls through to next layer', () => {
@@ -880,6 +887,172 @@ describe('projects', () => {
       const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engineId: 'claude-code' });
       const enriched = projects.enrichProject(registered);
       assert.equal(enriched.version, '4.4.4');
+    });
+  });
+
+  // ── #165: Read-time self-heal of stale project-version cache ──
+  describe('_detectProjectVersion self-heal (#165)', () => {
+    let healDir;
+
+    before(() => {
+      healDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cache-heal-'));
+    });
+
+    after(() => {
+      fs.rmSync(healDir, { recursive: true, force: true });
+    });
+
+    it('rewrites cache when on-disk version.json is newer than cached value', () => {
+      const projPath = path.join(healDir, 'stale-vs-versionjson');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+      fs.writeFileSync(
+        cachePath,
+        'version: 3.14.0\nrecorded_at: 2026-05-05T18:30:36Z\nsource: CHANGELOG.md\n'
+      );
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.16.1' }));
+
+      const result = projects._detectProjectVersion(projPath);
+      assert.equal(result, '3.16.1');
+
+      // Cache file should have been rewritten with live value + correct source label
+      const rewritten = fs.readFileSync(cachePath, 'utf8');
+      assert.match(rewritten, /^version: 3\.16\.1$/m);
+      assert.match(rewritten, /^source: version\.json$/m);
+      // recorded_at should be present and in ISO-without-ms format (Z suffix, no `.NNN` block)
+      assert.match(rewritten, /^recorded_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
+    });
+
+    it('rewrites cache when CHANGELOG.md is newer than cached value (priority: CHANGELOG over version.json)', () => {
+      const projPath = path.join(healDir, 'stale-vs-changelog');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+      fs.writeFileSync(cachePath, 'version: 0.0.0-old\nsource: package.json\n');
+      fs.writeFileSync(
+        path.join(projPath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [Unreleased]\n\n## [5.0.0] - 2026-05-13\n'
+      );
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '4.0.0' }));
+
+      const result = projects._detectProjectVersion(projPath);
+      assert.equal(result, '5.0.0');
+
+      const rewritten = fs.readFileSync(cachePath, 'utf8');
+      assert.match(rewritten, /^version: 5\.0\.0$/m);
+      assert.match(rewritten, /^source: CHANGELOG\.md$/m);
+    });
+
+    it('does not rewrite cache when cached value matches live value (steady state)', () => {
+      const projPath = path.join(healDir, 'steady-state');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+      const originalBody = 'version: 2.5.0\nrecorded_at: 2026-04-01T12:00:00Z\nsource: version.json\n';
+      fs.writeFileSync(cachePath, originalBody);
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.5.0' }));
+
+      const result = projects._detectProjectVersion(projPath);
+      assert.equal(result, '2.5.0');
+
+      // Byte-equal preservation — no recorded_at bump, no source rewrite. Filesystem-agnostic
+      // (avoids mtime brittleness on coarse-resolution filesystems).
+      const afterBytes = fs.readFileSync(cachePath, 'utf8');
+      assert.equal(afterBytes, originalBody);
+    });
+
+    it('preserves cache when no on-disk live source exists (git-tag-derived cache survives)', () => {
+      const projPath = path.join(healDir, 'git-tag-only-cache');
+      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+      const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+      // Simulates `lib/project-version.js:recordVersion` having recorded a git-tag-derived
+      // value — `lib/projects.js`'s live chain (CHANGELOG/version.json/package.json) cannot
+      // reproduce this and must NOT clobber it.
+      const originalBody = 'version: 1.2.3\nrecorded_at: 2026-04-01T12:00:00Z\nsource: git tag\n';
+      fs.writeFileSync(cachePath, originalBody);
+      // No CHANGELOG.md, no version.json, no package.json in projPath.
+
+      const result = projects._detectProjectVersion(projPath);
+      assert.equal(result, '1.2.3');
+
+      const afterBytes = fs.readFileSync(cachePath, 'utf8');
+      assert.equal(afterBytes, originalBody);
+    });
+
+    it('returns live value without crashing when cache write fails (fail-open contract)', () => {
+      const projPath = path.join(healDir, 'write-failure');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '9.9.9' }));
+
+      // Force the write path to fail by stubbing fs.writeFileSync to throw.
+      // This is the only reliable cross-platform way to exercise the catch
+      // block: chmod-based approaches can succeed silently on macOS when the
+      // target file already exists in a r-o directory (POSIX semantics), and
+      // would no-op when running as root. The stub closes both gaps and lets
+      // us positively assert the fail-open path.
+      const realWrite = fs.writeFileSync;
+      let writeAttempts = 0;
+      fs.writeFileSync = function stubWrite(...args) {
+        writeAttempts += 1;
+        const err = new Error('EACCES: simulated write failure');
+        err.code = 'EACCES';
+        throw err;
+      };
+      try {
+        const result = projects._detectProjectVersion(projPath);
+        // Must return the live value even though the cache rewrite failed.
+        assert.equal(result, '9.9.9');
+        // Positive proof the failure path was exercised — the stub recorded an attempt.
+        assert.equal(writeAttempts, 1, 'fs.writeFileSync should have been invoked once');
+        // Cache file should NOT exist (the write threw before any bytes hit disk).
+        const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+        assert.equal(
+          fs.existsSync(cachePath),
+          false,
+          'cache file should not have been created when the write threw'
+        );
+      } finally {
+        fs.writeFileSync = realWrite;
+      }
+    });
+
+    it('creates .tangleclaw/ if missing when self-healing a project that never had a cache', () => {
+      const projPath = path.join(healDir, 'no-tc-dir-yet');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '7.7.7' }));
+      // Deliberately no .tangleclaw/ directory.
+
+      const result = projects._detectProjectVersion(projPath);
+      assert.equal(result, '7.7.7');
+
+      // The self-heal write should have created the directory and the cache file.
+      const cachePath = path.join(projPath, '.tangleclaw', 'project-version.txt');
+      assert.ok(fs.existsSync(cachePath), '.tangleclaw/project-version.txt should be created');
+      const body = fs.readFileSync(cachePath, 'utf8');
+      assert.match(body, /^version: 7\.7\.7$/m);
+      assert.match(body, /^source: version\.json$/m);
+    });
+
+    it('returns null for non-existent project path without throwing', () => {
+      const result = projects._detectProjectVersion('/nonexistent/path/for-165-test');
+      assert.equal(result, null);
+    });
+
+    it('_detectLiveVersion returns null when no on-disk live source exists', () => {
+      const projPath = path.join(healDir, 'no-live-sources');
+      fs.mkdirSync(projPath, { recursive: true });
+      assert.equal(projects._detectLiveVersion(projPath), null);
+    });
+
+    it('_detectLiveVersion reports source label matching the reader that hit', () => {
+      const projPath = path.join(healDir, 'live-source-labels');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+      assert.deepEqual(projects._detectLiveVersion(projPath), { version: '1.0.0', source: 'package.json' });
+
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.0.0' }));
+      assert.deepEqual(projects._detectLiveVersion(projPath), { version: '2.0.0', source: 'version.json' });
+
+      fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [3.0.0] - 2026-05-13\n');
+      assert.deepEqual(projects._detectLiveVersion(projPath), { version: '3.0.0', source: 'CHANGELOG.md' });
     });
   });
 
