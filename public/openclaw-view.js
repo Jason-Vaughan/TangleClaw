@@ -31,6 +31,24 @@ function showToast(text, type, duration = 3000) {
 const api = window.tcCreateApi();
 
 /**
+ * Set the iframe's src after clearing any stale cross-connection localStorage
+ * cache (#162). Every site that mutates `terminalFrame.src` must go through
+ * this helper so the cache-bust is symmetric — Critic MINOR-1/MINOR-2 caught
+ * the original wiring where only the initial `init()` site cleared, leaving
+ * the post-pairing reload at line 114 without the same protection. The
+ * `typeof === 'function'` guard means a missing helper script doesn't crash
+ * the iframe load (the cache-bust is best-effort defence-in-depth).
+ * @param {HTMLIFrameElement} frame - The terminal iframe.
+ * @param {string} url - The full URL to navigate to (including any token fragment).
+ */
+function setFrameSrc(frame, url) {
+  if (typeof tcClearStaleOpenclawCache === 'function') {
+    tcClearStaleOpenclawCache(connId);
+  }
+  frame.src = url;
+}
+
+/**
  * Initialize the OpenClaw viewer: start tunnel, load iframe, auto-approve pairing.
  */
 async function init() {
@@ -72,7 +90,7 @@ async function init() {
   // Load the proxy URL in the iframe
   const frame = document.getElementById('terminalFrame');
   const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
-  frame.src = `/openclaw-direct/${encodeURIComponent(connId)}/chat?session=main${tokenParam}`;
+  setFrameSrc(frame, `/openclaw-direct/${encodeURIComponent(connId)}/chat?session=main${tokenParam}`);
 
   // Start sidecar polling + wire event listeners
   initSidecar();
@@ -108,10 +126,12 @@ function startAutoApprove() {
       if (result && result.approved) {
         showToast('Device paired successfully', 'ok');
         stopped = true;
-        // Reload iframe after brief delay to pick up the approved pairing
+        // Reload iframe after brief delay to pick up the approved pairing.
+        // Route through setFrameSrc so the cache-bust runs again — symmetric
+        // with the initial init() load (Critic MINOR-1).
         setTimeout(() => {
           const frame = document.getElementById('terminalFrame');
-          frame.src = frame.src;
+          setFrameSrc(frame, frame.src);
         }, 1000);
         return;
       }
