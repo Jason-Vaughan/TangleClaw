@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.16.1] - 2026-05-13
+
+> 🛟 **Recommended bug-fix release.** Three OpenClaw / methodology-hook fixes since v3.16.0: **chunk-1 orphan-hook protection now reaches pre-#146 runtime templates** (#158) — closes the session-killing infinite Stop-hook loop that resurfaced on TC-v3 itself when chunk-1's `requires` filter silently no-op'd on pre-v3.15.0 runtime templates; **OpenClaw connection flow fixes** (#160) — surfaces real save errors, fixes Bridge Port silently defaulting to 3201 for non-ClawBridge deployments, and replaces the generic "check SSH connectivity" message with the actual SSH failure (local-bind conflict, auth failure, network error); **OpenClaw Web UI cached-WS-URL routing fix** (#162) — clicking a second OpenClaw connection's Web UI button no longer loads the first connection's dashboard via stale localStorage cache. Anyone on v3.16.0 will get the update-pill notification with a clickable link to this release page.
+
 ### Fixed
 
 - **OpenClaw Web UI: clicking a second connection's Web UI button loaded the first connection's dashboard via cached localStorage WS URL (#162)** — When TC proxies multiple OpenClaw connections through `/openclaw-direct/<connId>/...` on the same TC origin, the iframe-loaded OpenClaw dashboard caches its derived WebSocket URL in localStorage (e.g. `wss://192.168.10.99:3102/openclaw-direct/<connId>`). Because the dashboard reads localStorage on subsequent loads instead of re-deriving from the iframe URL, the second OpenClaw's Web UI button would silently route WebSocket traffic to the *first* OpenClaw's tunnel. Symptom: clicking Claw-Node-01's Web UI button opens RentalClaw's dashboard. The iframe URL is correct; the dashboard's WebSocket connection is wrong.
