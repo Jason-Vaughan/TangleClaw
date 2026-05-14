@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.16.2] - 2026-05-13
+
+> 🛟 **Recommended bug-fix release.** Two patch-class fixes since v3.16.1: **ttyd-watcher actually fires on macOS** (#144) — closes a 6+-month silent regression where the watcher's `pgrep -c` proxy exited 2 on every BSD invocation, leaving #94's session-killing PTY-exhaustion bug unprotected since #95 merged; users had been manually `launchctl kickstart`-ing ttyd on every incident. The replacement measures `kern.tty.ptmx_max` vs `/dev/ttys*` directly and trips at 85% pool saturation. **Dashboard project-version label self-heals on enrichment** (#165) — closes the stale-label gap where external version bumps (release-PR merges, manual `version.json` edits) didn't reach the dashboard until the next TC-managed session launch or wrap on the same project. Anyone on v3.16.1 will get the update-pill notification with a clickable link to this release page.
+
 ### Fixed
 
 - **ttyd-watcher now actually fires on macOS — measures PTY pool, not broken `pgrep -c` proxy (#144)** — `lib/ttyd-watcher.js` shipped in PR #95 to auto-recover from #94's session-killing PTY-exhaustion bug. It has been a silent no-op on every macOS install since merge. `_countTtydChildren` invoked `pgrep -c -P <pid>` — but BSD `pgrep` (`/usr/bin/pgrep` on macOS) has no `-c` flag and exits 2 with `illegal option -- c`. The catch only special-cased `err.status === 1` (no matches), so exit 2 fell through to a `pgrep failed` warn that has been logged every 5 minutes since at least 2026-05-02. The kickstart never fired; users have been manually running `launchctl kickstart -k gui/$UID/com.tangleclaw.ttyd` to recover from every incident. The PR #95 unit tests stubbed the runner via `_setRunner`, so the production code path against real BSD `pgrep` was never exercised by CI — three defects compounded into a silent regression that took 6+ months to surface.
