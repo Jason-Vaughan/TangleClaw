@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **CHANGELOG.md structural-invariants test (#168)** — `test/changelog-structure.test.js` asserts four structural invariants on `CHANGELOG.md`: every release banner (`> 🛟` / `> 🚀`) is inside a `## [X.Y.Z] - YYYY-MM-DD` section (catches the PR #166-class regression where a heading was silently consumed); released-version headings appear in descending semver order (catches cherry-pick / backport misorderings); no released-version heading appears twice (catches bad merge resolutions); the top released-version heading agrees with `version.json` (the load-bearing invariant — would have caught PR #166 directly, where the cache self-heal then propagated `3.16.0` to dashboards on every install). Invariant detectors are factored as pure functions so a second describe block exercises them against a synthesized post-#166 / pre-#167 file shape, proving the regression is detected. ~180 lines, 9 tests, runs in < 40ms inside the standard `node --test 'test/*.test.js'` sweep — no new tooling. Structural-only; lints body content of release entries is intentionally out of scope (style / completeness remains Critic territory).
+
 ## [3.16.2] - 2026-05-13
 
 > 🛟 **Recommended bug-fix release.** Two patch-class fixes since v3.16.1: **ttyd-watcher actually fires on macOS** (#144) — closes a 6+-month silent regression where the watcher's `pgrep -c` proxy exited 2 on every BSD invocation, leaving #94's session-killing PTY-exhaustion bug unprotected since #95 merged; users had been manually `launchctl kickstart`-ing ttyd on every incident. The replacement measures `kern.tty.ptmx_max` vs `/dev/ttys*` directly and trips at 85% pool saturation. **Dashboard project-version label self-heals on enrichment** (#165) — closes the stale-label gap where external version bumps (release-PR merges, manual `version.json` edits) didn't reach the dashboard until the next TC-managed session launch or wrap on the same project. Anyone on v3.16.1 will get the update-pill notification with a clickable link to this release page.
