@@ -696,6 +696,83 @@ describe('store', () => {
     });
   });
 
+  describe('_reconcileOrderedSubset (#155 Chunk 1)', () => {
+    it('returns a copy of bundled when live is a strict ordered subset', () => {
+      const result = store._reconcileOrderedSubset(['a', 'c'], ['a', 'b', 'c']);
+      assert.deepStrictEqual(result, ['a', 'b', 'c']);
+    });
+
+    it('returns null when live and bundled are identical (no rewrite needed)', () => {
+      assert.equal(store._reconcileOrderedSubset(['a', 'b', 'c'], ['a', 'b', 'c']), null);
+    });
+
+    it('returns null when live has elements not in bundled (user customization)', () => {
+      assert.equal(store._reconcileOrderedSubset(['a', 'custom', 'b'], ['a', 'b']), null);
+    });
+
+    it('returns null when live is reordered relative to bundled (user customization)', () => {
+      assert.equal(store._reconcileOrderedSubset(['b', 'a'], ['a', 'b']), null);
+    });
+
+    it('returns null on non-array inputs', () => {
+      assert.equal(store._reconcileOrderedSubset(null, ['a']), null);
+      assert.equal(store._reconcileOrderedSubset(['a'], null), null);
+      assert.equal(store._reconcileOrderedSubset('a', ['a']), null);
+    });
+
+    it('returns a new array (not the bundled reference) to avoid aliasing', () => {
+      const bundled = ['a', 'b'];
+      const result = store._reconcileOrderedSubset(['a'], bundled);
+      assert.notStrictEqual(result, bundled, 'result must be a fresh array');
+      assert.deepStrictEqual(result, bundled);
+    });
+  });
+
+  describe('_reconcileSetUnion (#155 Chunk 1)', () => {
+    it('appends bundled entries missing from live in bundled order', () => {
+      const result = store._reconcileSetUnion(['a'], ['a', 'b', 'c']);
+      assert.deepStrictEqual(result, ['a', 'b', 'c']);
+    });
+
+    it('preserves live order at the front; new bundled entries go at the end', () => {
+      // Live order ['c','a'] preserved; 'b' (in bundled, missing from live) appended.
+      const result = store._reconcileSetUnion(['c', 'a'], ['a', 'b', 'c']);
+      assert.deepStrictEqual(result, ['c', 'a', 'b']);
+    });
+
+    it('returns null when live already contains every bundled entry (no rewrite needed)', () => {
+      assert.equal(store._reconcileSetUnion(['a', 'b', 'c'], ['a', 'b']), null);
+      assert.equal(store._reconcileSetUnion(['a', 'b'], ['a', 'b']), null);
+    });
+
+    it('preserves user-added entries not in bundled', () => {
+      const result = store._reconcileSetUnion(['user-added'], ['bundled-only']);
+      assert.deepStrictEqual(result, ['user-added', 'bundled-only']);
+    });
+
+    it('handles empty live (returns copy of bundled)', () => {
+      const result = store._reconcileSetUnion([], ['a', 'b']);
+      assert.deepStrictEqual(result, ['a', 'b']);
+    });
+
+    it('returns null on empty bundled', () => {
+      assert.equal(store._reconcileSetUnion(['a'], []), null);
+    });
+
+    it('returns null on non-array inputs', () => {
+      assert.equal(store._reconcileSetUnion(null, ['a']), null);
+      assert.equal(store._reconcileSetUnion(['a'], null), null);
+    });
+
+    it('does not duplicate entries that already exist in live', () => {
+      // bundled has 'a' twice — live's existing 'a' satisfies both. No dupes.
+      const result = store._reconcileSetUnion(['a'], ['a', 'a', 'b']);
+      // 'b' is the only missing entry. Both bundled 'a' instances should be
+      // filtered out because membership in live is sufficient.
+      assert.deepStrictEqual(result, ['a', 'b']);
+    });
+  });
+
   describe('_mergeBundledTemplate (#136)', () => {
     let tmpDir;
 
@@ -866,6 +943,144 @@ describe('store', () => {
       store._mergeBundledTemplate(bundled, live);
       const stillThere = JSON.parse(fs.readFileSync(live, 'utf8'));
       assert.deepStrictEqual(stillThere.wrap.steps, ['a']);
+    });
+
+    // #155 Chunk 1 — table-driven plain-array reconciliation extends the same
+    // policy across `prime.sections`, `wrap.captureFields`, `init.directories`.
+
+    it('reconciles prime.sections when live is a strict ordered subset (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        prime: { sections: ['methodology-rules', 'current-phase', 'active-learnings', 'last-session-summary', 'project-state'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        prime: { sections: ['methodology-rules', 'active-learnings', 'last-session-summary'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.prime.sections,
+        ['methodology-rules', 'current-phase', 'active-learnings', 'last-session-summary', 'project-state'],
+      );
+    });
+
+    it('does NOT replace prime.sections when live has user-added section (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        prime: { sections: ['a', 'b'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        prime: { sections: ['a', 'custom', 'b'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.prime.sections, ['a', 'custom', 'b']);
+    });
+
+    it('appends missing bundled entries onto wrap.captureFields (setUnion, #155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { captureFields: ['summary', 'nextSteps', 'learnings'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { captureFields: ['summary'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.captureFields, ['summary', 'nextSteps', 'learnings']);
+    });
+
+    it('preserves user-added captureFields entries; appends only missing bundled (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { captureFields: ['summary', 'nextSteps'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { captureFields: ['summary', 'user-added-field'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // Live order preserved at front; bundled-only 'nextSteps' appended.
+      assert.deepStrictEqual(merged.wrap.captureFields, ['summary', 'user-added-field', 'nextSteps']);
+    });
+
+    it('appends missing bundled entries onto init.directories (setUnion, #155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        init: { directories: ['.tangleclaw', '.prawduct'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        init: { directories: ['.tangleclaw'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.init.directories, ['.tangleclaw', '.prawduct']);
+    });
+
+    it('does NOT rewrite when every registered array is already in sync (no-op, #155)', () => {
+      // Asserts the fail-open posture: when every policy returns null and
+      // the addMissing recursive pass finds nothing, the file is left alone.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a'], captureFields: ['summary'] },
+        prime: { sections: ['x'] },
+        init: { directories: ['.d'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a'], captureFields: ['summary'] },
+        prime: { sections: ['x'] },
+        init: { directories: ['.d'] }
+      });
+      const beforeMtime = fs.statSync(live).mtime.getTime();
+      const sleep10 = Date.now() + 10;
+      while (Date.now() < sleep10) { /* spin */ }
+      store._mergeBundledTemplate(bundled, live);
+      const afterMtime = fs.statSync(live).mtime.getTime();
+      assert.equal(beforeMtime, afterMtime, 'identical templates must not trigger a rewrite');
+    });
+
+    it('reconciles multiple drifting arrays in a single pass (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b', 'c'], captureFields: ['summary', 'nextSteps'] },
+        prime: { sections: ['rules', 'phase', 'state'] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'c'], captureFields: ['summary'] },
+        prime: { sections: ['rules', 'state'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps, ['a', 'b', 'c']);
+      assert.deepStrictEqual(merged.wrap.captureFields, ['summary', 'nextSteps']);
+      assert.deepStrictEqual(merged.prime.sections, ['rules', 'phase', 'state']);
+    });
+
+    it('table-driven driver does not touch unregistered arrays (#155)', () => {
+      // `phases` is registered for Chunk 2 (mergeById); Chunk 1's driver
+      // must leave it alone even when it drifts. Pinning this so the
+      // refactor stays scoped.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a'] },
+        phases: [{ id: 'discovery' }, { id: 'planning' }]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a'] },
+        phases: [{ id: 'discovery' }]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.phases, [{ id: 'discovery' }],
+        'phases must NOT be reconciled in Chunk 1 — deferred to Chunk 2');
     });
   });
 
