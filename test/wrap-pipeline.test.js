@@ -287,11 +287,13 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 });
 
 describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
-  // Each stub must return the canonical no-op result. Pinning every
-  // stub individually so a future "let me just inline the implementation
-  // halfway" change to one file fails this test instead of silently
-  // changing pipeline semantics.
-  const kinds = ['pr-check', 'lint', 'test', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'commit'];
+  // Each remaining stub must return the canonical no-op result. Pinning
+  // every stub individually so a future "let me just inline the
+  // implementation halfway" change to one file fails this test instead
+  // of silently changing pipeline semantics. `lint` and `test` left this
+  // list in #139 Chunk 4 — their real-handler tests live in their own
+  // describe blocks below.
+  const kinds = ['pr-check', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'commit'];
 
   for (const kind of kinds) {
     it(`${kind} returns the canonical {ok:true,status:'done',output:null,blockers:[]}`, async () => {
@@ -300,4 +302,428 @@ describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
       assert.deepStrictEqual(result, { ok: true, status: 'done', output: null, blockers: [] });
     });
   }
+});
+
+// ── #139 Chunk 4: real `test` and `lint` step handlers ──
+
+describe('wrap-step test (#139 Chunk 4)', () => {
+  const testStep = require('../lib/wrap-steps/test');
+  let tmpDir;
+  let projectPath;
+  let originalExec;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-test-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'sandbox');
+    fs.mkdirSync(projectPath, { recursive: true });
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    store.projects.create({
+      name: 'test-step-sandbox',
+      path: projectPath,
+      methodology: 'prawduct'
+    });
+    originalExec = testStep._internal.execShell;
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    // Reset projConfig and exec stub between tests so each case starts clean.
+    testStep._internal.execShell = originalExec;
+    const cfgPath = path.join(projectPath, '.tangleclaw', 'project.json');
+    if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
+  });
+
+  /**
+   * Build a minimal context object that satisfies the handler's contract.
+   * @param {object} step - Step spec (`blocker`, `allowOverride`, ...)
+   * @param {object} [options] - Caller options (`skipTests`, ...)
+   */
+  function buildContext(step, options) {
+    return {
+      project: store.projects.getByName('test-step-sandbox'),
+      session: null,
+      step,
+      previousResults: [],
+      staged: {},
+      options: options || {}
+    };
+  }
+
+  /**
+   * Write a projConfig with the given fields merged onto defaults.
+   * @param {object} overrides
+   */
+  function writeConfig(overrides) {
+    const cfgPath = path.join(projectPath, '.tangleclaw', 'project.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(overrides));
+  }
+
+  it('skips when projConfig.testCommand is null (default)', async () => {
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /no testCommand/);
+    assert.deepStrictEqual(result.blockers, []);
+  });
+
+  it('marks status done with exitCode 0 when the command passes', async () => {
+    writeConfig({ testCommand: 'npm test' });
+    testStep._internal.execShell = async (cmd, opts) => {
+      assert.equal(cmd, 'npm test');
+      assert.equal(opts.cwd, projectPath);
+      return { exitCode: 0, stdout: 'all green\n', stderr: '', error: null };
+    };
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.deepStrictEqual(result.output, { exitCode: 0 });
+    assert.deepStrictEqual(result.blockers, []);
+  });
+
+  it('returns ok:false blocked with stderr tail on non-zero exit', async () => {
+    writeConfig({ testCommand: 'pytest' });
+    testStep._internal.execShell = async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'FAILED test_foo.py::test_bar\nAssertionError: 1 != 2\n',
+      error: null
+    });
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.exitCode, 1);
+    assert.ok(result.blockers[0].includes('Tests failed (exit 1)'));
+    assert.ok(result.blockers.some((b) => b.includes('AssertionError')),
+      'stderr tail must appear in blockers[]');
+  });
+
+  it('honors allowOverride+skipTests by reporting skipped with override flag', async () => {
+    writeConfig({ testCommand: 'npm test' });
+    let execCalled = false;
+    testStep._internal.execShell = async () => {
+      execCalled = true;
+      return { exitCode: 0, stdout: '', stderr: '', error: null };
+    };
+    const result = await testStep.run(buildContext(
+      { id: 'test', blocker: true, allowOverride: true },
+      { skipTests: true }
+    ));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.override, true);
+    assert.equal(execCalled, false, 'must not exec when override applies');
+  });
+
+  it('ignores skipTests when step does not declare allowOverride', async () => {
+    writeConfig({ testCommand: 'npm test' });
+    let execCalled = false;
+    testStep._internal.execShell = async () => {
+      execCalled = true;
+      return { exitCode: 0, stdout: '', stderr: '', error: null };
+    };
+    const result = await testStep.run(buildContext(
+      { id: 'test', blocker: true }, // no allowOverride
+      { skipTests: true }
+    ));
+    assert.equal(execCalled, true, 'must still exec — override not allowed by step spec');
+    assert.equal(result.status, 'done');
+  });
+});
+
+describe('wrap-step lint (#139 Chunk 4)', () => {
+  const lintStep = require('../lib/wrap-steps/lint');
+  let tmpDir;
+  let projectPath;
+  let originalExec;
+  let originalDetect;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-lint-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'sandbox');
+    fs.mkdirSync(projectPath, { recursive: true });
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    store.projects.create({
+      name: 'lint-step-sandbox',
+      path: projectPath,
+      methodology: 'prawduct'
+    });
+    originalExec = lintStep._internal.execShell;
+    originalDetect = lintStep._internal.detectChangedFiles;
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    lintStep._internal.execShell = originalExec;
+    lintStep._internal.detectChangedFiles = originalDetect;
+    const cfgPath = path.join(projectPath, '.tangleclaw', 'project.json');
+    if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
+  });
+
+  /**
+   * Build a minimal context for the lint handler.
+   * @param {object} step
+   */
+  function buildContext(step) {
+    return {
+      project: store.projects.getByName('lint-step-sandbox'),
+      session: null,
+      step,
+      previousResults: [],
+      staged: {},
+      options: {}
+    };
+  }
+
+  /**
+   * Write a projConfig with the given fields merged onto defaults.
+   * @param {object} overrides
+   */
+  function writeConfig(overrides) {
+    const cfgPath = path.join(projectPath, '.tangleclaw', 'project.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(overrides));
+  }
+
+  it('skips when projConfig.lintCommand is null', async () => {
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: 'errors-only' }));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /no lintCommand/);
+  });
+
+  it('skips when no files changed in session', async () => {
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => [];
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: 'errors-only' }));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /no in-session changes/);
+  });
+
+  it('returns ok:false blocked on exit ≠ 0 with blocker:"errors-only"', async () => {
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js', 'src/bar.js'];
+    let observedCmd;
+    lintStep._internal.execShell = async (cmd) => {
+      observedCmd = cmd;
+      return { exitCode: 1, stdout: 'src/foo.js:3 error\n', stderr: '', error: null };
+    };
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: 'errors-only' }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.filesLinted, 2);
+    assert.ok(observedCmd.includes("'src/foo.js'") && observedCmd.includes("'src/bar.js'"),
+      'file paths must be single-quoted when appended to the command');
+    assert.ok(observedCmd.includes(' -- '),
+      '`--` end-of-options separator must precede file args (defense against filenames like "-rf.js")');
+    assert.ok(result.blockers[0].includes('Lint failed (exit 1)'));
+  });
+
+  it('returns ok:true done on exit 0 (warnings or clean) with blocker:"errors-only"', async () => {
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 0,
+      stdout: 'src/foo.js:5 warning\n',
+      stderr: '',
+      error: null
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: 'errors-only' }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.filesLinted, 1);
+    assert.match(result.output.warnings, /warning/);
+  });
+
+  it('with blocker:false, exit ≠ 0 stays informational (ok:true done)', async () => {
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 1,
+      stdout: 'src/foo.js:3 error\n',
+      stderr: '',
+      error: null
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
+    assert.equal(result.ok, true, 'blocker:false must keep ok:true even on lint errors');
+    assert.equal(result.status, 'done');
+    assert.match(result.output.warnings, /error/);
+  });
+
+  it('shell-quotes file paths containing spaces and single quotes', async () => {
+    // Direct unit test of the quoting helper — visible from public API
+    // so the test pins the contract.
+    assert.equal(lintStep._shellQuote('simple.js'), "'simple.js'");
+    assert.equal(lintStep._shellQuote('with space.js'), "'with space.js'");
+    assert.equal(lintStep._shellQuote("it's.js"), "'it'\\''s.js'");
+  });
+
+  it('detectChangedFiles returns the working-tree change set against a real git repo', async () => {
+    // Integration test — exercises the real `git status --porcelain` path
+    // against a throwaway repo to guard against parsing regressions.
+    const realRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-lint-realgit-'));
+    try {
+      const { execSync } = require('node:child_process');
+      execSync('git init --quiet', { cwd: realRepo });
+      execSync('git config user.email t@example.com && git config user.name Test',
+        { cwd: realRepo, shell: '/bin/sh' });
+      fs.writeFileSync(path.join(realRepo, 'tracked.js'), 'console.log(1)\n');
+      execSync('git add tracked.js && git commit --quiet -m init',
+        { cwd: realRepo, shell: '/bin/sh' });
+      // Modify the tracked file and add an untracked one.
+      fs.writeFileSync(path.join(realRepo, 'tracked.js'), 'console.log(2)\n');
+      fs.writeFileSync(path.join(realRepo, 'new.js'), 'console.log(3)\n');
+
+      const files = await originalDetect(realRepo);
+      assert.ok(files.includes('tracked.js'), 'modified tracked file must appear');
+      assert.ok(files.includes('new.js'), 'untracked file must appear');
+    } finally {
+      fs.rmSync(realRepo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
+  let tmpDir;
+  let projectPath;
+  const wrapPipelineMod = require('../lib/wrap-pipeline');
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pipeline-errors-only-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'project');
+    fs.mkdirSync(projectPath, { recursive: true });
+    store.projects.create({
+      name: 'errors-only-test',
+      path: projectPath,
+      methodology: 'prawduct'
+    });
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('halts the pipeline when a `blocker: "errors-only"` step returns ok:false', async () => {
+    const original = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
+      run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['simulated error'] })
+    };
+    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+    const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
+    aiStep.blocker = 'errors-only';
+    store.templates.save(prawduct);
+
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
+      assert.equal(result.ok, false);
+      assert.equal(result.blockedAt, aiStep.id,
+        '"errors-only" must halt the pipeline on !ok (Chunk 4 contract)');
+    } finally {
+      wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
+      delete aiStep.blocker;
+      store.templates.save(prawduct);
+    }
+  });
+
+  it('does NOT halt for a non-blocker enum value', async () => {
+    const original = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
+      run: async () => ({ ok: false, status: 'done', output: null, blockers: [] })
+    };
+    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+    const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
+    aiStep.blocker = 'not-a-recognized-enum';
+    store.templates.save(prawduct);
+
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
+      assert.equal(result.ok, true,
+        'unrecognized blocker enums must NOT halt — only "true" and "errors-only" do');
+      assert.equal(result.blockedAt, null);
+    } finally {
+      wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
+      delete aiStep.blocker;
+      store.templates.save(prawduct);
+    }
+  });
+});
+
+describe('runWrapPipeline — options threading (#139 Chunk 4)', () => {
+  let tmpDir;
+  let projectPath;
+  const wrapPipelineMod = require('../lib/wrap-pipeline');
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pipeline-options-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'project');
+    fs.mkdirSync(projectPath, { recursive: true });
+    store.projects.create({
+      name: 'options-test',
+      path: projectPath,
+      methodology: 'prawduct'
+    });
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('forwards `options` to each step handler via context.options', async () => {
+    const seen = [];
+    const original = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
+      run: async (ctx) => {
+        seen.push(ctx.options);
+        return { ok: true, status: 'done', output: null, blockers: [] };
+      }
+    };
+
+    try {
+      const opts = { skipTests: true, customMarker: 'flag-A' };
+      await wrapPipelineMod.runWrapPipeline('options-test', opts);
+      assert.ok(seen.length >= 1, 'at least one ai-content step must run');
+      for (const seenOpts of seen) {
+        assert.equal(seenOpts.skipTests, true);
+        assert.equal(seenOpts.customMarker, 'flag-A');
+      }
+    } finally {
+      wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
+    }
+  });
+
+  it('passes an empty object when no options are provided (handlers can read .skipTests etc safely)', async () => {
+    const seen = [];
+    const original = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
+      run: async (ctx) => {
+        seen.push(ctx.options);
+        return { ok: true, status: 'done', output: null, blockers: [] };
+      }
+    };
+
+    try {
+      await wrapPipelineMod.runWrapPipeline('options-test');
+      for (const seenOpts of seen) {
+        assert.equal(typeof seenOpts, 'object',
+          'context.options must always be an object — handlers must not need to defend against undefined');
+      }
+    } finally {
+      wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
+    }
+  });
 });
