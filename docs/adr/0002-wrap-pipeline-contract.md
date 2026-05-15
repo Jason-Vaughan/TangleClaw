@@ -1,6 +1,6 @@
 # ADR 0002: Wrap Pipeline Contract
 
-**Status:** Accepted (2026-05-14, drafted in #139 Chunk 2). Extended 2026-05-15 (#139 Chunk 3 — runner skeleton + `wrapV2` opt-in shipped behind the flag).
+**Status:** Accepted (2026-05-14, drafted in #139 Chunk 2). Extended 2026-05-15 (#139 Chunk 3 — runner skeleton + `wrapV2` opt-in shipped behind the flag; #139 Chunk 4 — real `lint` / `test` step handlers + runner halt-condition broadened to `blocker: "errors-only"`).
 **Source issue:** #139 — Methodology-aware single-button session wrap
 **Related issues:** #136 (template reconciler), #145 (hook precondition gate), #155 (generalized template-array reconciliation), #158 (hook-entry backfill)
 **Related ADR:** ADR 0001 — Symmetric Capability Gates (the read-once shim mandated below is an instance of this rule)
@@ -70,7 +70,9 @@ async function runWrapPipeline(projectName, options) {
 }
 ```
 
-Each step returns `{ok: boolean, status: 'done'|'blocked'|'skipped', output: any, blockers: string[]}`. Steps with `blocker: true` halt the pipeline on `!ok`. The runner is **single-transaction**: server-side mutations stage in memory or a per-pipeline scratch dir; only the `commit` step touches the project's git index. A failure produces no commit; success produces one commit (or zero on a clean session).
+Each step returns `{ok: boolean, status: 'done'|'blocked'|'skipped', output: any, blockers: string[]}`. The runner halts the pipeline on `!ok` whenever `step.blocker === true` OR `step.blocker === "errors-only"` — both forms are halt-class. The handler is responsible for deciding what counts as an "error" in the enum case (e.g. lint exits non-zero → `ok: false`); the runner then halts. Any other `blocker` value (`false`, `undefined`, unrecognized strings) never halts — the step result is informational only. The runner is **single-transaction**: server-side mutations stage in memory or a per-pipeline scratch dir; only the `commit` step touches the project's git index. A failure produces no commit; success produces one commit (or zero on a clean session).
+
+The Chunk 4 broadening of the halt condition from `=== true` only to `=== true || === "errors-only"` is deliberate: the schema's `blocker: "errors-only"` form was always specified to "block on lint errors but not warnings" (see the step-kind table above), and an enum that doesn't halt the pipeline would have been misleadingly named. The Chunk 3 runner's `=== true` only check was a placeholder while no real handler returned `!ok`; Chunk 4 collapses the placeholder. Callers reading `step.blocker` for any other purpose MUST use the same disjunction (`=== true || === "errors-only"`) — per ADR 0001 (Symmetric Capability Gates), drift here re-creates the PR #125 incident class.
 
 ### Back-compat shim (Chunk 2)
 
@@ -128,6 +130,7 @@ The runner ships behind `projConfig.wrapV2` (default `false`, Chunk 3). Existing
 1. **Chunk 2 (landed 2026-05-14):** Bundled templates ship `wrap_pipeline` block. Legacy `wrap` block removed from bundles. Shim reads both; existing installs continue to function on the legacy path until reconcile picks up the new bundled schema.
 2. **Chunk 3 (landed 2026-05-15):** Runner skeleton (`lib/wrap-pipeline.js:runWrapPipeline`) + per-kind step modules under `lib/wrap-steps/` + `projConfig.wrapV2` opt-in flag (default `false`). All eight step kinds dispatch to no-op stubs returning the canonical `{ok:true, status:'done', output:null, blockers:[]}` result. Block-true halt semantics, unknown-kind skip, and thrown-error capture are wired in the runner up-front — Chunks 4–9 only need to fill in step bodies, not touch the dispatch or error-handling skeleton.
 3. **Chunks 4–10:** Real step implementations + frontend UI ship behind `wrapV2: false`. Legacy `triggerWrap` path remains the default; new path is dogfooded on opt-in projects.
+   - **Chunk 4 (landed 2026-05-15):** Real `lint` and `test` handlers replace the Chunk 3 no-op stubs at `lib/wrap-steps/lint.js` and `lib/wrap-steps/test.js`. Both shell out to `projConfig.lintCommand` / `projConfig.testCommand` (Chunk 3 defaults: `null` → skipped). Test handler honors `step.allowOverride === true` + `options.skipTests === true` → `skipped` with override flag. Lint handler uses `git status --porcelain` to scope to in-session changes; file args are appended after a `--` end-of-options separator and each is single-quote-escaped (`'\''` close-reopen idiom for embedded quotes). Runner extended: (a) `_buildStepContext` threads `options` into `context.options` (defaults to `{}`); (b) halt condition broadened from `=== true` to `=== true || === "errors-only"` per the contract above.
 4. **Chunk 11:** `DEFAULT_PROJECT_CONFIG.wrapV2` flips to `true`. Existing projects with explicit `wrapV2: false` keep the legacy path. Migration docs updated.
 5. **Post-#139 follow-up release:** Delete the legacy `wrap`-block branch from `wrapShapeFromTemplate`. Remove inert `wrap.steps` / `wrap.captureFields` reconciler entries from `ARRAY_RECONCILERS`. Delete the legacy NL-prompt code from `triggerWrap`. Schema migration complete.
 
