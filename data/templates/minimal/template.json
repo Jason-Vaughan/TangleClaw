@@ -16,10 +16,16 @@
     "strategy": "file",
     "target": ".tangleclaw/project.json"
   },
-  "wrap": {
-    "command": null,
-    "steps": ["learnings-capture", "memory-update", "commit"],
-    "captureFields": ["summary"]
+  "wrap_pipeline": {
+    "schemaVersion": "1.0",
+    "promptTemplates": {
+      "claude": "Perform a session wrap. Commit all uncommitted work, then output a wrap summary."
+    },
+    "steps": [
+      { "id": "learnings-capture", "kind": "ai-content", "prompt": "" },
+      { "id": "memory-update",     "kind": "ai-content", "prompt": "", "captureFields": ["summary"] },
+      { "id": "commit",            "kind": "commit" }
+    ]
   },
   "prime": {
     "format": "markdown",

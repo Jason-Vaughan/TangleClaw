@@ -71,6 +71,99 @@ describe('skills', () => {
       const wrap = skills.getWrapSkill('nonexistent');
       assert.equal(wrap, null);
     });
+
+    // #139 Chunk 2 — behavior preservation. The shim must produce the same
+    // legacy `{command, steps, captureFields}` shape that `lib/sessions.js:
+    // triggerWrap` consumed before the schema migration. If this snapshot
+    // changes, the wrap NL prompt sent to the AI engine changes — that's a
+    // user-visible regression masquerading as a refactor.
+    //
+    // Pins the two public bundled templates (prawduct + minimal). The
+    // unreleased `tilt` template is gitignored, so it isn't asserted here
+    // to keep the test robust on fresh clones.
+    it('synthesizes legacy shape from wrap_pipeline byte-equal to pre-migration (#139 Chunk 2)', () => {
+      assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
+        command: null,
+        steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit'],
+        captureFields: ['summary', 'nextSteps', 'learnings']
+      });
+      assert.deepStrictEqual(skills.getWrapSkill('minimal'), {
+        command: null,
+        steps: ['learnings-capture', 'memory-update', 'commit'],
+        captureFields: ['summary']
+      });
+    });
+  });
+
+  describe('wrapShapeFromTemplate (#139 Chunk 2)', () => {
+    it('synthesizes legacy shape from wrap_pipeline (steps map from id; captureFields flatten/union)', () => {
+      const result = skills.wrapShapeFromTemplate({
+        wrap_pipeline: {
+          schemaVersion: '1.0',
+          steps: [
+            { id: 'version-bump', kind: 'version-bump' },
+            { id: 'memory-update', kind: 'ai-content', captureFields: ['summary', 'nextSteps'] },
+            { id: 'summary-derive', kind: 'ai-content', captureFields: ['learnings', 'summary'] },
+            { id: 'commit', kind: 'commit' }
+          ]
+        }
+      });
+      assert.deepStrictEqual(result, {
+        command: null,
+        steps: ['version-bump', 'memory-update', 'summary-derive', 'commit'],
+        // Union across all steps' captureFields; deduped; order = first-seen.
+        captureFields: ['summary', 'nextSteps', 'learnings']
+      });
+    });
+
+    it('falls back to legacy wrap block when wrap_pipeline is absent (back-compat for pre-migrated installs)', () => {
+      const result = skills.wrapShapeFromTemplate({
+        wrap: { command: null, steps: ['a', 'b'], captureFields: ['x'] }
+      });
+      assert.deepStrictEqual(result, {
+        command: null,
+        steps: ['a', 'b'],
+        captureFields: ['x']
+      });
+    });
+
+    it('preserves a non-null command from legacy wrap block', () => {
+      const result = skills.wrapShapeFromTemplate({
+        wrap: { command: 'custom-wrap', steps: [], captureFields: [] }
+      });
+      assert.equal(result.command, 'custom-wrap');
+    });
+
+    it('prefers wrap_pipeline over wrap when both are present', () => {
+      const result = skills.wrapShapeFromTemplate({
+        wrap_pipeline: { steps: [{ id: 'new-step', kind: 'commit' }] },
+        wrap: { command: null, steps: ['old-step'], captureFields: [] }
+      });
+      assert.deepStrictEqual(result.steps, ['new-step']);
+    });
+
+    it('returns null for template with neither wrap nor wrap_pipeline', () => {
+      assert.equal(skills.wrapShapeFromTemplate({ id: 'whatever' }), null);
+    });
+
+    it('returns null for null/undefined input', () => {
+      assert.equal(skills.wrapShapeFromTemplate(null), null);
+      assert.equal(skills.wrapShapeFromTemplate(undefined), null);
+    });
+
+    it('skips steps without an id (defensive — malformed entries do not crash the shim)', () => {
+      const result = skills.wrapShapeFromTemplate({
+        wrap_pipeline: {
+          steps: [
+            { id: 'good', kind: 'commit' },
+            { kind: 'ai-content' }, // no id
+            null,                    // null entry
+            { id: 42, kind: 'ai-content' } // non-string id
+          ]
+        }
+      });
+      assert.deepStrictEqual(result.steps, ['good']);
+    });
   });
 
   describe('getProjectSkills', () => {

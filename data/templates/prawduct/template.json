@@ -42,20 +42,18 @@
     "strategy": "directory",
     "target": ".prawduct"
   },
-  "wrap": {
-    "command": null,
+  "wrap_pipeline": {
+    "schemaVersion": "1.0",
+    "promptTemplates": {
+      "claude": "Perform a session wrap. Commit all uncommitted work, then output a wrap summary."
+    },
     "steps": [
-      "version-bump",
-      "changelog-update",
-      "learnings-capture",
-      "next-session-prime",
-      "memory-update",
-      "commit"
-    ],
-    "captureFields": [
-      "summary",
-      "nextSteps",
-      "learnings"
+      { "id": "version-bump",       "kind": "version-bump", "blocker": false },
+      { "id": "changelog-update",   "kind": "ai-content",   "prompt": "" },
+      { "id": "learnings-capture",  "kind": "ai-content",   "prompt": "" },
+      { "id": "next-session-prime", "kind": "priming-roll" },
+      { "id": "memory-update",      "kind": "ai-content",   "prompt": "", "captureFields": ["summary", "nextSteps", "learnings"] },
+      { "id": "commit",             "kind": "commit" }
     ]
   },
   "prime": {

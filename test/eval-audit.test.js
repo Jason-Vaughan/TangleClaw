@@ -925,6 +925,38 @@ describe('eval-audit: scoreWrapQuality', () => {
     assert.equal(result.score, 1.0);
     assert.equal(result.totalSteps, 0);
   });
+
+  // #139 Chunk 2 — scoreWrapQuality must read wrap steps through the same
+  // shim that lib/sessions.js:triggerWrap uses, so methodology templates on
+  // the new schema (wrap_pipeline) score identically to legacy-shape ones.
+  it('reads wrap steps from wrap_pipeline schema (#139 Chunk 2 — shim parity)', () => {
+    const pipelineMethodology = {
+      wrap_pipeline: {
+        schemaVersion: '1.0',
+        steps: [
+          { id: 'version-bump',       kind: 'version-bump' },
+          { id: 'changelog-update',   kind: 'ai-content' },
+          { id: 'learnings-capture',  kind: 'ai-content' },
+          { id: 'next-session-prime', kind: 'priming-roll' },
+          { id: 'memory-update',      kind: 'ai-content' },
+          { id: 'commit',             kind: 'commit' }
+        ]
+      }
+    };
+    const exchanges = [
+      { agentResponse: 'I bumped the version to v3.6.0 and updated version.json', userMessage: '' },
+      { agentResponse: 'Updated CHANGELOG.md with the new changes', userMessage: '' },
+      { agentResponse: 'Key learnings from this session: patterns work well', userMessage: '' },
+      { agentResponse: 'Next session prime: continue with chunk 4', userMessage: '' },
+      { agentResponse: 'Updated .tangleclaw/memories/MEMORY.md with this session work', userMessage: '' },
+      { agentResponse: 'Created git commit with all changes', userMessage: '' }
+    ];
+    const result = evalAudit.scoreWrapQuality(exchanges, pipelineMethodology);
+    assert.equal(result.score, 1.0);
+    assert.equal(result.totalSteps, 6);
+    assert.equal(result.stepsFound.length, 6);
+    assert.equal(result.stepsMissing.length, 0);
+  });
 });
 
 describe('eval-audit: aggregateTrends', () => {
