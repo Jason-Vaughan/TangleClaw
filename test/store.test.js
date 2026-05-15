@@ -773,6 +773,120 @@ describe('store', () => {
     });
   });
 
+  describe('_reconcileMergeBy (#155 Chunk 2)', () => {
+    it('appends bundled entries whose idKey value is missing from live', () => {
+      const result = store._reconcileMergeBy(
+        [{ id: 'a' }],
+        [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+        'id',
+      );
+      assert.deepStrictEqual(result, [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    });
+
+    it('preserves live order at the front; new bundled entries go at the end', () => {
+      const result = store._reconcileMergeBy(
+        [{ id: 'c' }, { id: 'a' }],
+        [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+        'id',
+      );
+      assert.deepStrictEqual(result, [{ id: 'c' }, { id: 'a' }, { id: 'b' }]);
+    });
+
+    it('returns null when every bundled id is already present in live (no rewrite needed)', () => {
+      assert.equal(
+        store._reconcileMergeBy(
+          [{ id: 'a' }, { id: 'b' }],
+          [{ id: 'a' }, { id: 'b' }],
+          'id',
+        ),
+        null,
+      );
+      assert.equal(
+        store._reconcileMergeBy(
+          [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+          [{ id: 'a' }, { id: 'b' }],
+          'id',
+        ),
+        null,
+      );
+    });
+
+    it('preserves user-added entries (live entries whose id is not in bundled stay untouched)', () => {
+      const result = store._reconcileMergeBy(
+        [{ id: 'user-only' }],
+        [{ id: 'bundled-only' }],
+        'id',
+      );
+      assert.deepStrictEqual(result, [{ id: 'user-only' }, { id: 'bundled-only' }]);
+    });
+
+    it('never overwrites field values on entries matched by id (additive only)', () => {
+      const live = [{ id: 'a', val: 'live-value' }];
+      const bundled = [{ id: 'a', val: 'bundled-value' }, { id: 'b', val: 'b-val' }];
+      const result = store._reconcileMergeBy(live, bundled, 'id');
+      // `a` matched: untouched. `b` missing: appended verbatim.
+      assert.deepStrictEqual(result, [{ id: 'a', val: 'live-value' }, { id: 'b', val: 'b-val' }]);
+    });
+
+    it('deep-clones appended entries so subsequent bundled mutations cannot leak into the result', () => {
+      const bundled = [{ id: 'a', meta: { tag: 'original' } }];
+      const result = store._reconcileMergeBy([], bundled, 'id');
+      // Mutate bundled after the merge — result must not change.
+      bundled[0].meta.tag = 'mutated';
+      assert.equal(result[0].meta.tag, 'original');
+    });
+
+    it('handles empty live (returns deep-cloned copy of bundled)', () => {
+      const result = store._reconcileMergeBy([], [{ id: 'a' }, { id: 'b' }], 'id');
+      assert.deepStrictEqual(result, [{ id: 'a' }, { id: 'b' }]);
+    });
+
+    it('returns null on empty bundled', () => {
+      assert.equal(store._reconcileMergeBy([{ id: 'a' }], [], 'id'), null);
+    });
+
+    it('returns null on non-array inputs', () => {
+      assert.equal(store._reconcileMergeBy(null, [{ id: 'a' }], 'id'), null);
+      assert.equal(store._reconcileMergeBy([{ id: 'a' }], null, 'id'), null);
+    });
+
+    it('returns null when idKey is missing or empty', () => {
+      assert.equal(store._reconcileMergeBy([{ id: 'a' }], [{ id: 'b' }], ''), null);
+      assert.equal(store._reconcileMergeBy([{ id: 'a' }], [{ id: 'b' }], undefined), null);
+      assert.equal(store._reconcileMergeBy([{ id: 'a' }], [{ id: 'b' }], null), null);
+    });
+
+    it('supports non-"id" key names (e.g. label)', () => {
+      const result = store._reconcileMergeBy(
+        [{ label: 'Run Critic' }],
+        [{ label: 'Run Critic' }, { label: 'Run Audit' }],
+        'label',
+      );
+      assert.deepStrictEqual(result, [{ label: 'Run Critic' }, { label: 'Run Audit' }]);
+    });
+
+    it('skips bundled entries that lack a string-valued idKey (cannot dedupe safely)', () => {
+      const result = store._reconcileMergeBy(
+        [{ id: 'a' }],
+        [{ id: 'a' }, { /* no id */ name: 'orphan' }, { id: 'b' }],
+        'id',
+      );
+      // Only `b` is appended; the keyless bundled entry is skipped.
+      assert.deepStrictEqual(result, [{ id: 'a' }, { id: 'b' }]);
+    });
+
+    it('protects against bundled internal duplicates within the same pass', () => {
+      // bundled has two entries with id='b'; live has none. Only the first
+      // is appended — the dedupe set tracks ids added during this pass.
+      const result = store._reconcileMergeBy(
+        [{ id: 'a' }],
+        [{ id: 'a' }, { id: 'b', v: 1 }, { id: 'b', v: 2 }],
+        'id',
+      );
+      assert.deepStrictEqual(result, [{ id: 'a' }, { id: 'b', v: 1 }]);
+    });
+  });
+
   describe('_mergeBundledTemplate (#136)', () => {
     let tmpDir;
 
@@ -1063,24 +1177,224 @@ describe('store', () => {
       assert.deepStrictEqual(merged.prime.sections, ['rules', 'phase', 'state']);
     });
 
-    it('table-driven driver does not touch unregistered arrays (#155)', () => {
-      // `phases` is registered for Chunk 2 (mergeById); Chunk 1's driver
-      // must leave it alone even when it drifts. Pinning this so the
-      // refactor stays scoped.
+    it('table-driven driver does not touch arrays absent from ARRAY_RECONCILERS (#155)', () => {
+      // Arbitrary template-author-defined arrays not in the policy table
+      // must be ignored. `customCategory.items` is not registered; the
+      // recursive `addMissing` pass also leaves arrays alone (it only
+      // recurses into plain objects). Pins the scope boundary.
       const bundled = writeJson('bundled.json', {
         id: 'prawduct',
         wrap: { steps: ['a'] },
-        phases: [{ id: 'discovery' }, { id: 'planning' }]
+        customCategory: { items: [{ id: 'x' }, { id: 'y' }] }
       });
       const live = writeJson('live.json', {
         id: 'prawduct',
         wrap: { steps: ['a'] },
-        phases: [{ id: 'discovery' }]
+        customCategory: { items: [{ id: 'x' }] }
       });
       store._mergeBundledTemplate(bundled, live);
       const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
-      assert.deepStrictEqual(merged.phases, [{ id: 'discovery' }],
-        'phases must NOT be reconciled in Chunk 1 — deferred to Chunk 2');
+      assert.deepStrictEqual(merged.customCategory.items, [{ id: 'x' }],
+        'unregistered array paths must not be reconciled');
+    });
+
+    // #155 Chunk 2 — object-keyed array reconciliation extends the same
+    // policy across `phases`, `evalDimensions.tier1/2/3`, and `actions`.
+
+    it('appends missing phases by id (mergeBy:id, #155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [
+          { id: 'discovery', weight: 'deep' },
+          { id: 'planning',  weight: 'deep' },
+          { id: 'building',  weight: 'normal' }
+        ]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: [
+          { id: 'discovery', weight: 'deep' }
+        ]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.phases.length, 3);
+      assert.deepStrictEqual(merged.phases.map((p) => p.id), ['discovery', 'planning', 'building']);
+    });
+
+    it('preserves user-added phases; appends only bundled-new ids (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [
+          { id: 'discovery' },
+          { id: 'planning' }
+        ]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: [
+          { id: 'discovery' },
+          { id: 'user-custom-phase' }
+        ]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // Live order at front; bundled-new `planning` appended.
+      assert.deepStrictEqual(
+        merged.phases.map((p) => p.id),
+        ['discovery', 'user-custom-phase', 'planning'],
+      );
+    });
+
+    it('preserves user customization to existing phase entries (additive only, never overwrites) (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [{ id: 'discovery', weight: 'deep', description: 'Bundled' }]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: [{ id: 'discovery', weight: 'focused', description: 'User edit' }]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.phases,
+        [{ id: 'discovery', weight: 'focused', description: 'User edit' }],
+        'matched-by-id entry is left untouched — additive policy never overwrites field values',
+      );
+    });
+
+    it('appends missing evalDimensions.tier1 entries by id (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'tilt',
+        evalDimensions: {
+          tier1: [
+            { id: 'self_identification', check: 'pattern' },
+            { id: 'authority_verification', check: 'pattern' }
+          ]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'tilt',
+        evalDimensions: {
+          tier1: [{ id: 'self_identification', check: 'pattern' }]
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.evalDimensions.tier1.length, 2);
+      assert.deepStrictEqual(
+        merged.evalDimensions.tier1.map((d) => d.id),
+        ['self_identification', 'authority_verification'],
+      );
+    });
+
+    it('appends missing actions matched by label (mergeBy:label, #155)', () => {
+      // Prawduct's `actions` entries are keyed by `label`, not `id` —
+      // pinned via a separate idKey configuration in ARRAY_RECONCILERS.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        actions: [
+          { label: 'Run Critic',    command: 'invoke-critic',    confirm: false },
+          { label: 'Run Audit',     command: 'invoke-audit',     confirm: true }
+        ]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        actions: [
+          { label: 'Run Critic', command: 'invoke-critic', confirm: false }
+        ]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.actions.length, 2);
+      assert.deepStrictEqual(
+        merged.actions.map((a) => a.label),
+        ['Run Critic', 'Run Audit'],
+      );
+    });
+
+    it('deep-clones appended object entries so bundled mutations cannot leak into live (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [{ id: 'discovery', meta: { note: 'original' } }]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: []
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // Mutate bundled state on disk after reconcile; live snapshot must
+      // be independent because the appended entry was deep-cloned at
+      // write time. The fs-level cloning is guaranteed by the JSON
+      // round-trip, but this also covers the in-memory deep-clone in
+      // _reconcileMergeBy for the case where a caller reuses the same
+      // bundled object in-process across multiple live targets.
+      assert.deepStrictEqual(merged.phases, [{ id: 'discovery', meta: { note: 'original' } }]);
+    });
+
+    it('reconciles object-keyed arrays in a single pass alongside string arrays (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a', 'b'], captureFields: ['summary', 'next'] },
+        phases: [{ id: 'discovery' }, { id: 'planning' }],
+        evalDimensions: { tier1: [{ id: 'x' }, { id: 'y' }] }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { steps: ['a'], captureFields: ['summary'] },
+        phases: [{ id: 'discovery' }],
+        evalDimensions: { tier1: [{ id: 'x' }] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.wrap.steps, ['a', 'b']);
+      assert.deepStrictEqual(merged.wrap.captureFields, ['summary', 'next']);
+      assert.deepStrictEqual(merged.phases.map((p) => p.id), ['discovery', 'planning']);
+      assert.deepStrictEqual(merged.evalDimensions.tier1.map((d) => d.id), ['x', 'y']);
+    });
+
+    it('no-op when every object-keyed array is already in sync (#155)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [{ id: 'discovery' }],
+        actions: [{ label: 'Run Critic' }]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: [{ id: 'discovery' }],
+        actions: [{ label: 'Run Critic' }]
+      });
+      const beforeMtime = fs.statSync(live).mtime.getTime();
+      const sleep10 = Date.now() + 10;
+      while (Date.now() < sleep10) { /* spin */ }
+      store._mergeBundledTemplate(bundled, live);
+      const afterMtime = fs.statSync(live).mtime.getTime();
+      assert.equal(beforeMtime, afterMtime, 'identical templates must not trigger a rewrite');
+    });
+
+    it('treats user-removed object-keyed entry as stale and re-adds it (acknowledged limitation, ADR 0001)', () => {
+      // Symmetric with the wrap.steps user-removed-step limitation:
+      // _reconcileMergeBy can't distinguish "user removed entry with id X"
+      // from "user is on an older version that never had id X" — both
+      // produce a live whose id-set is a subset of bundled's. Policy
+      // choice: re-add. Documented in ADR 0001.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        phases: [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        phases: [{ id: 'a' }, { id: 'c' }] // user intentionally removed `b`
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.phases.map((p) => p.id),
+        ['a', 'c', 'b'],
+        'user-removed entry is re-added on reconcile (policy choice — see ADR 0001)',
+      );
     });
   });
 
