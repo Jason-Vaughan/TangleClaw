@@ -1251,13 +1251,13 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 });
 
 // POST /api/sessions/:project/wrap — Trigger wrap skill
-route('POST', '/api/sessions/:project/wrap', (_req, res, params, body) => {
+route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
   }
 
-  const result = sessions.triggerWrap(params.project);
+  const result = await sessions.triggerWrap(params.project);
   if (!result.ok) {
     if (result.error.includes('not found') || result.error.includes('No active')) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');

@@ -1,6 +1,6 @@
 # ADR 0002: Wrap Pipeline Contract
 
-**Status:** Accepted (2026-05-14, drafted in #139 Chunk 2)
+**Status:** Accepted (2026-05-14, drafted in #139 Chunk 2). Extended 2026-05-15 (#139 Chunk 3 — runner skeleton + `wrapV2` opt-in shipped behind the flag).
 **Source issue:** #139 — Methodology-aware single-button session wrap
 **Related issues:** #136 (template reconciler), #145 (hook precondition gate), #155 (generalized template-array reconciliation), #158 (hook-entry backfill)
 **Related ADR:** ADR 0001 — Symmetric Capability Gates (the read-once shim mandated below is an instance of this rule)
@@ -125,9 +125,10 @@ The runner ships behind `projConfig.wrapV2` (default `false`, Chunk 3). Existing
 
 ## Migration path (Chunk 2 → Chunk 11)
 
-1. **Chunk 2 (this PR):** Bundled templates ship `wrap_pipeline` block. Legacy `wrap` block removed from bundles. Shim reads both; existing installs continue to function on the legacy path until reconcile picks up the new bundled schema.
-2. **Chunk 3–10:** Runner + step kinds + frontend UI ship behind `wrapV2: false`. Legacy `triggerWrap` path remains the default; new path is dogfooded on opt-in projects.
-3. **Chunk 11:** `DEFAULT_PROJECT_CONFIG.wrapV2` flips to `true`. Existing projects with explicit `wrapV2: false` keep the legacy path. Migration docs updated.
-4. **Post-#139 follow-up release:** Delete the legacy `wrap`-block branch from `wrapShapeFromTemplate`. Remove inert `wrap.steps` / `wrap.captureFields` reconciler entries from `ARRAY_RECONCILERS`. Delete the legacy NL-prompt code from `triggerWrap`. Schema migration complete.
+1. **Chunk 2 (landed 2026-05-14):** Bundled templates ship `wrap_pipeline` block. Legacy `wrap` block removed from bundles. Shim reads both; existing installs continue to function on the legacy path until reconcile picks up the new bundled schema.
+2. **Chunk 3 (landed 2026-05-15):** Runner skeleton (`lib/wrap-pipeline.js:runWrapPipeline`) + per-kind step modules under `lib/wrap-steps/` + `projConfig.wrapV2` opt-in flag (default `false`). All eight step kinds dispatch to no-op stubs returning the canonical `{ok:true, status:'done', output:null, blockers:[]}` result. Block-true halt semantics, unknown-kind skip, and thrown-error capture are wired in the runner up-front — Chunks 4–9 only need to fill in step bodies, not touch the dispatch or error-handling skeleton.
+3. **Chunks 4–10:** Real step implementations + frontend UI ship behind `wrapV2: false`. Legacy `triggerWrap` path remains the default; new path is dogfooded on opt-in projects.
+4. **Chunk 11:** `DEFAULT_PROJECT_CONFIG.wrapV2` flips to `true`. Existing projects with explicit `wrapV2: false` keep the legacy path. Migration docs updated.
+5. **Post-#139 follow-up release:** Delete the legacy `wrap`-block branch from `wrapShapeFromTemplate`. Remove inert `wrap.steps` / `wrap.captureFields` reconciler entries from `ARRAY_RECONCILERS`. Delete the legacy NL-prompt code from `triggerWrap`. Schema migration complete.
 
 This ADR is the durable home for the architectural pattern. The self-deleting auto-memory `project-issue-139-methodology-wrap.md` retires once #139 closes; this file persists.
