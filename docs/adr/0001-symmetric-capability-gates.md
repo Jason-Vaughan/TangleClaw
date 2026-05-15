@@ -1,8 +1,8 @@
 # ADR 0001: Symmetric Capability Gates
 
-**Status:** Accepted (2026-05-11)
+**Status:** Accepted (2026-05-11), extended (2026-05-14 with #155 — generalized template-array reconciliation)
 **Source issue:** #145 chunk 3 (audit closeout)
-**Related issues:** #103, #119, #136, #137, #140, #145, #151, #158
+**Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158
 **Source feedback:** `feedback_symmetric_capability_gates.md` (Critic-surfaced on #103 PR #125)
 
 ---
@@ -102,6 +102,36 @@ When adding a new flag/field that affects on-disk state:
 
 ---
 
+## Generalized template-array reconciliation (#155 extension)
+
+The bundled-template-drift class introduced by #119 and #136 is a single-direction sync: `data/templates/<id>/template.json` (bundled, ships with each release) → `~/.tangleclaw/templates/<id>/template.json` (live runtime cache, written on first launch and reconciled on every server start). It is not a paired-state gate in the strict sense, but the same anti-pattern bit us repeatedly: a hardcoded reconciler covered one path and missed the rest, so each new array path that drifted needed its own targeted incident before being plumbed in. #136 covered `wrap.steps`. #158 covered hook-entry `requires` backfill. Everything else (the audit table in #155) stayed un-reconciled and accumulated drift.
+
+#155 generalizes the reconciler by replacing path-hardcoded logic with a declarative policy table — `lib/store.js:ARRAY_RECONCILERS`. Adding a newly-tracked array path is a one-line registry entry: `{ path, reconcile, label, idKey? }`. The driver inside `_mergeBundledTemplate` dispatches identically across every registered path.
+
+### Policies
+
+| Policy | Used for | Behavior |
+|---|---|---|
+| `_reconcileOrderedSubset` | `wrap.steps`, `prime.sections` | If `live` is a strict ordered subset of `bundled`, replace with `bundled`. Otherwise leave alone. Original #136 incident shape. |
+| `_reconcileSetUnion` | `wrap.captureFields`, `init.directories` | Append bundled entries not present in `live`, preserving live order at the front. String elements only. |
+| `_reconcileMergeBy` | `phases`, `evalDimensions.tier1`, `evalDimensions.tier2`, `evalDimensions.tier3`, `actions` | Match by string equality on `entry[idKey]` (`id` for the first four, `label` for `actions`). Append bundled entries whose idKey value is absent from `live`. Never overwrite a matched entry's field values — additive only. Appended entries are deep-cloned to prevent aliasing. |
+
+Hook arrays (`hooks.<engine>.<event>[]`) remain handled separately by `_mergeBundledHookEntries` (#158) because they have match-by-matcher semantics with an index-fallback policy that doesn't fit the plain-array driver.
+
+### Acknowledged limitations
+
+Both `_reconcileOrderedSubset` and `_reconcileMergeBy` cannot distinguish "user is on an older bundled version that never had entry X" from "user intentionally removed entry X." Both shapes produce a `live` whose contents (or id-set, for `mergeBy`) are a subset of `bundled`'s. The policy choice for both is to re-add — symmetric across the two reconcilers, documented in their JSDoc, and pinned by regression tests in `test/store.test.js` (`treats user-removed step as stale-older and re-adds it on reconcile` for orderedSubsetReplace; `treats user-removed object-keyed entry as stale and re-adds it` for mergeBy).
+
+Tombstones (e.g. a `_removed: [...]` array in `live`) would let the reconciler honor intentional removals, but expand the live-template schema and the reconciler's surface meaningfully. Out of scope for #155; can be added in a future chunk if a real removal-intent incident materializes.
+
+### Rule
+
+When adding a new array to any bundled template, add a one-line entry to `ARRAY_RECONCILERS` in the same PR that introduces the array. If no existing policy fits (rare — three policies cover string lists, string sets, and object-keyed lists between them), add a new policy function alongside the new entry. The reconciler-update is part of "doing the array right," not a follow-up chore.
+
+The cost of forgetting this is exactly the cost #119, #136, and #158 each paid: an incident, an emergency reconciler patch, and a chunk's worth of cleanup work to re-derive the right state on every install.
+
+---
+
 ## References
 
 - #103 — silentPrime feature; established the pattern in PR #125 Critic review
@@ -111,6 +141,7 @@ When adding a new flag/field that affects on-disk state:
 - #145 — methodology hook `requires` field + bulk-repair (added the runtime-precondition gate)
 - #151 — methodology-removal path (currentTemplate hoist + open SQL constraint decision)
 - #158 — chunk-1 protection gap on pre-#146 runtime templates; reconciler scope extended to hook entries
+- #155 — generalized template-array reconciliation; introduced the `ARRAY_RECONCILERS` policy table and the `mergeBy` policy (Chunk 1: string-array policies; Chunk 2: object-keyed policy + ADR extension)
 - `feedback_symmetric_capability_gates.md` — the user-feedback rule that drove this pattern's discovery
 - `test/projects.test.js → describe('methodology flip cleanup audit (#145, chunk 3)')` — the regression test suite locking in the methodology-flip half of this ADR
 - `test/projects.test.js → describe('silentPrime (#103)')` — the regression test suite locking in the silentPrime half of this ADR (engine-flip orphan-hook cleanup tests at lines 1074, 1111)
