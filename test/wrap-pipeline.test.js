@@ -67,16 +67,37 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
   describe('runWrapPipeline — no-op stubs', () => {
     it('runs all stubs end-to-end and returns ok:true', async () => {
-      const result = await wrapPipeline.runWrapPipeline('pipeline-test');
-      assert.equal(result.ok, true);
-      assert.equal(result.blockedAt, null);
-      assert.equal(result.commitSha, null);
-      assert.equal(result.summary, null);
-      assert.equal(result.error, null);
-      assert.equal(result.results.length, 6, 'prawduct has six pipeline steps');
-      for (const stepResult of result.results) {
-        assert.equal(stepResult.status, 'done');
-        assert.deepStrictEqual(stepResult.blockers, []);
+      // Chunks 4+ replaced no-op stubs with real handlers (lint, test,
+      // ai-content) that require live OS state (a configured command, a
+      // tmux session, etc). To keep this regression test focused on the
+      // *runner skeleton* — "the pipeline can iterate every step end-to-
+      // end and aggregate results" — we monkey-patch every dispatch
+      // entry to the canonical no-op result for this test only. The
+      // real-handler behavior is covered by per-handler describes below.
+      const realKinds = ['lint', 'test', 'ai-content'];
+      const originals = {};
+      const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+      for (const kind of realKinds) {
+        originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
+        wrapPipeline.STEP_DISPATCH[kind] = { run: noopRun };
+      }
+
+      try {
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+        assert.equal(result.ok, true);
+        assert.equal(result.blockedAt, null);
+        assert.equal(result.commitSha, null);
+        assert.equal(result.summary, null);
+        assert.equal(result.error, null);
+        assert.equal(result.results.length, 6, 'prawduct has six pipeline steps');
+        for (const stepResult of result.results) {
+          assert.equal(stepResult.status, 'done');
+          assert.deepStrictEqual(stepResult.blockers, []);
+        }
+      } finally {
+        for (const kind of realKinds) {
+          wrapPipeline.STEP_DISPATCH[kind] = originals[kind];
+        }
       }
     });
 
@@ -291,9 +312,9 @@ describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
   // every stub individually so a future "let me just inline the
   // implementation halfway" change to one file fails this test instead
   // of silently changing pipeline semantics. `lint` and `test` left this
-  // list in #139 Chunk 4 — their real-handler tests live in their own
-  // describe blocks below.
-  const kinds = ['pr-check', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'commit'];
+  // list in #139 Chunk 4; `ai-content` left in #139 Chunk 5 — their
+  // real-handler tests live in their own describe blocks below.
+  const kinds = ['pr-check', 'critic-check', 'priming-roll', 'version-bump', 'commit'];
 
   for (const kind of kinds) {
     it(`${kind} returns the canonical {ok:true,status:'done',output:null,blockers:[]}`, async () => {
@@ -725,5 +746,348 @@ describe('runWrapPipeline — options threading (#139 Chunk 4)', () => {
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
     }
+  });
+});
+
+// ── #139 Chunk 5: real `ai-content` step handler ──
+
+describe('wrap-step ai-content — pure helpers (#139 Chunk 5)', () => {
+  const aiContent = require('../lib/wrap-steps/ai-content');
+
+  describe('_interpolatePrompt', () => {
+    it('substitutes {previousMemoryBlock} with the prior memory-update step output', () => {
+      const previousResults = [
+        { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+          output: { capturedText: 'PRIOR MEMORY' } }
+      ];
+      const out = aiContent._interpolatePrompt(
+        'Read this:\n{previousMemoryBlock}\nNow derive summary.',
+        previousResults
+      );
+      assert.match(out, /PRIOR MEMORY/);
+      assert.ok(!out.includes('{previousMemoryBlock}'),
+        'token must be replaced, not duplicated');
+    });
+
+    it('substitutes with empty string when no prior memory-update result exists', () => {
+      const out = aiContent._interpolatePrompt(
+        'Read:\n{previousMemoryBlock}',
+        []
+      );
+      assert.equal(out, 'Read:\n');
+    });
+
+    it('passes through unrecognized brace tokens verbatim', () => {
+      const out = aiContent._interpolatePrompt('Hello {whoever}', []);
+      assert.equal(out, 'Hello {whoever}');
+    });
+
+    it('returns empty string for null/empty prompt', () => {
+      assert.equal(aiContent._interpolatePrompt('', []), '');
+      assert.equal(aiContent._interpolatePrompt(null, []), '');
+    });
+
+    it('skips prior steps whose status is not "done"', () => {
+      const previousResults = [
+        { stepId: 'memory-update', kind: 'ai-content', status: 'blocked',
+          output: { capturedText: 'SHOULD NOT APPEAR' } }
+      ];
+      const out = aiContent._interpolatePrompt('{previousMemoryBlock}', previousResults);
+      assert.equal(out, '');
+    });
+  });
+
+  describe('_parseFields', () => {
+    it('parses ## Heading blocks against captureFields', () => {
+      const raw = '## Summary\nWrap text here\n## NextSteps\nDo X then Y\n';
+      const parsed = aiContent._parseFields(raw, ['summary', 'nextSteps']);
+      assert.equal(parsed.summary, 'Wrap text here');
+      assert.equal(parsed.nextSteps, 'Do X then Y');
+    });
+
+    it('matches headings case-insensitively', () => {
+      const raw = '## SUMMARY\ncontent\n';
+      const parsed = aiContent._parseFields(raw, ['summary']);
+      assert.equal(parsed.summary, 'content');
+    });
+
+    it('returns empty object when captureFields are absent', () => {
+      assert.deepStrictEqual(aiContent._parseFields('## anything\n', []), {});
+      assert.deepStrictEqual(aiContent._parseFields('## anything\n', null), {});
+    });
+
+    it('returns empty object for empty rawOutput', () => {
+      assert.deepStrictEqual(aiContent._parseFields('', ['x']), {});
+    });
+
+    it('skips ## headings whose name is not in captureFields', () => {
+      const raw = '## Other\nignored\n## summary\nkept\n';
+      const parsed = aiContent._parseFields(raw, ['summary']);
+      assert.equal(parsed.summary, 'kept');
+      assert.equal(parsed.Other, undefined);
+    });
+  });
+});
+
+describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
+  const aiContent = require('../lib/wrap-steps/ai-content');
+  let originals;
+
+  before(() => {
+    originals = { ...aiContent._internal };
+  });
+
+  beforeEach(() => {
+    // Restore every internal between tests so a stub doesn't leak.
+    Object.assign(aiContent._internal, originals);
+    // Default fast-sleep so the polling loop doesn't block the test runner.
+    aiContent._internal.sleep = async () => {};
+  });
+
+  /**
+   * Build a minimal context for the ai-content handler.
+   * @param {object} step - Step spec
+   * @param {object} [overrides] - Override context fields (e.g. session, previousResults)
+   */
+  function buildContext(step, overrides = {}) {
+    return {
+      project: { name: 'sandbox', path: '/tmp/sandbox', id: 1 },
+      session: overrides.session !== undefined
+        ? overrides.session
+        : { id: 1, tmuxSession: 'tc-sandbox' },
+      step,
+      previousResults: overrides.previousResults || [],
+      staged: overrides.staged !== undefined ? overrides.staged : {},
+      options: {}
+    };
+  }
+
+  it('blocks when context.session is missing', async () => {
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'do the thing' },
+      { session: null }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /active tmux session/);
+  });
+
+  it('blocks when step.prompt is empty', async () => {
+    const result = await aiContent.run(buildContext({ id: 'memory-update' }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /no prompt configured/);
+  });
+
+  it('sends the prompt and reports done on idle with adequate response (no captureFields)', async () => {
+    let sentText;
+    aiContent._internal.sendKeys = (sess, text) => { sentText = text; };
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({
+      lines: ['the AI produced a meaningful response here'],
+      alternateScreen: false
+    });
+
+    const staged = {};
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'Update MEMORY.md' },
+      { staged }
+    ));
+
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.equal(sentText, 'Update MEMORY.md');
+    assert.equal(result.output.parsedFields, null);
+    assert.ok(staged['memory-update'], 'must stage captured output for the commit step');
+    assert.match(staged['memory-update'].capturedText, /meaningful response/);
+  });
+
+  it('blocks when AI response is too short (no captureFields validation path)', async () => {
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({ lines: ['ok'], alternateScreen: false });
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'do thing' }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /too short/);
+  });
+
+  it('passes the MIN_RESPONSE_CHARS=20 boundary (exactly 20 chars trimmed → ok:true)', async () => {
+    // 20 chars exactly — pin the boundary so a future "let me lower the
+    // threshold by 1" change is caught.
+    const exactlyTwenty = 'a'.repeat(20);
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({ lines: [exactlyTwenty], alternateScreen: false });
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'do thing' }
+    ));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+  });
+
+  it('blocks at MIN_RESPONSE_CHARS-1 (exactly 19 chars trimmed → ok:false)', async () => {
+    const nineteen = 'a'.repeat(19);
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({ lines: [nineteen], alternateScreen: false });
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'do thing' }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /too short \(19 chars/);
+  });
+
+  it('validates captureFields and reports done when all are present', async () => {
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({
+      lines: [
+        'AI scratchpad ramble...',
+        '## Summary',
+        'This session shipped Chunk 5.',
+        '## NextSteps',
+        'Run the Critic next.',
+        '## Learnings',
+        'tmux idle detection works.'
+      ],
+      alternateScreen: false
+    });
+
+    const staged = {};
+    const result = await aiContent.run(buildContext(
+      {
+        id: 'summary-derive',
+        prompt: 'Derive structured output.',
+        captureFields: ['summary', 'nextSteps', 'learnings']
+      },
+      { staged }
+    ));
+
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.parsedFields.summary, 'This session shipped Chunk 5.');
+    assert.equal(result.output.parsedFields.nextSteps, 'Run the Critic next.');
+    assert.equal(result.output.parsedFields.learnings, 'tmux idle detection works.');
+    assert.ok(staged['summary-derive'], 'staged under stepId');
+  });
+
+  it('blocks when a required captureField is missing or empty', async () => {
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({
+      lines: ['## Summary', 'present', '## Learnings', ''],
+      alternateScreen: false
+    });
+
+    const result = await aiContent.run(buildContext({
+      id: 'summary-derive',
+      prompt: 'go',
+      captureFields: ['summary', 'nextSteps', 'learnings']
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    // Both `nextSteps` (heading absent) and `learnings` (heading present but empty)
+    // must surface as separate blockers.
+    const blockerText = result.blockers.join('\n');
+    assert.match(blockerText, /nextSteps/);
+    assert.match(blockerText, /learnings/);
+  });
+
+  it('interpolates {previousMemoryBlock} into the prompt before sending', async () => {
+    let sentText;
+    aiContent._internal.sendKeys = (sess, text) => { sentText = text; };
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => ({
+      lines: ['## Summary', 'fine', '## NextSteps', 'ok', '## Learnings', 'good'],
+      alternateScreen: false
+    });
+
+    await aiContent.run(buildContext(
+      {
+        id: 'summary-derive',
+        prompt: 'Read:\n{previousMemoryBlock}\nDerive.',
+        captureFields: ['summary', 'nextSteps', 'learnings']
+      },
+      {
+        previousResults: [
+          { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+            output: { capturedText: 'MEM BLOCK CONTENT' } }
+        ]
+      }
+    ));
+    assert.match(sentText, /MEM BLOCK CONTENT/);
+    assert.ok(!sentText.includes('{previousMemoryBlock}'));
+  });
+
+  it('blocks on idle timeout when detectIdle never returns idle', async () => {
+    aiContent._internal.sendKeys = () => {};
+    // Idle always false → polling loop runs until MAX_WAIT_MS elapses.
+    aiContent._internal.detectIdle = () => ({ idle: false, lastOutputAge: 0 });
+    aiContent._internal.capturePane = () => ({ lines: [], alternateScreen: false });
+
+    // Skip wall-clock waiting: stub sleep to advance "time" by pretending
+    // it slept for the requested interval. We monkey-patch Date.now so
+    // the elapsed-time check exits the loop after one iteration.
+    const realDateNow = Date.now;
+    let virtualNow = realDateNow();
+    Date.now = () => virtualNow;
+    aiContent._internal.sleep = async (ms) => { virtualNow += ms; };
+    // Also bump past INITIAL_SETTLE_MS — first sleep before the loop:
+    // the stub above already advances past it.
+
+    try {
+      const result = await aiContent.run(buildContext(
+        { id: 'memory-update', prompt: 'try' }
+      ));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.match(result.blockers[0], /AI did not return within/);
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
+
+  it('blocks when sendKeys throws (tmux session died before send)', async () => {
+    aiContent._internal.sendKeys = () => { throw new Error('no such session'); };
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'go' }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Failed to send prompt to tmux: no such session/);
+  });
+
+  it('blocks when detectIdle throws (tmux session died mid-poll)', async () => {
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => { throw new Error('tmux session gone'); };
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'go' }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Idle detection failed/);
+  });
+
+  it('blocks when capturePane throws after idle detected', async () => {
+    aiContent._internal.sendKeys = () => {};
+    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.capturePane = () => { throw new Error('capture failed'); };
+
+    const result = await aiContent.run(buildContext(
+      { id: 'memory-update', prompt: 'go' }
+    ));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Failed to capture pane/);
   });
 });
