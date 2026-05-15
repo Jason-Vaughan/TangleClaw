@@ -2,7 +2,8 @@
 
 **Status:** Accepted (2026-05-11), extended (2026-05-14 with #155 — generalized template-array reconciliation)
 **Source issue:** #145 chunk 3 (audit closeout)
-**Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158
+**Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158, #139
+**Related ADRs:** ADR 0002 — Wrap Pipeline Contract (the `wrapShapeFromTemplate` shim it mandates is an instance of this ADR's "one read predicate per conceptual state" rule)
 **Source feedback:** `feedback_symmetric_capability_gates.md` (Critic-surfaced on #103 PR #125)
 
 ---
@@ -142,6 +143,7 @@ The cost of forgetting this is exactly the cost #119, #136, and #158 each paid: 
 - #151 — methodology-removal path (currentTemplate hoist + open SQL constraint decision)
 - #158 — chunk-1 protection gap on pre-#146 runtime templates; reconciler scope extended to hook entries
 - #155 — generalized template-array reconciliation; introduced the `ARRAY_RECONCILERS` policy table and the `mergeBy` policy (Chunk 1: string-array policies; Chunk 2: object-keyed policy + ADR extension)
+- #139 — methodology-aware single-button session wrap; Chunk 2 introduces `wrap_pipeline` schema and the `wrapShapeFromTemplate` read-once shim (see ADR 0002 for the pipeline contract)
 - `feedback_symmetric_capability_gates.md` — the user-feedback rule that drove this pattern's discovery
 - `test/projects.test.js → describe('methodology flip cleanup audit (#145, chunk 3)')` — the regression test suite locking in the methodology-flip half of this ADR
 - `test/projects.test.js → describe('silentPrime (#103)')` — the regression test suite locking in the silentPrime half of this ADR (engine-flip orphan-hook cleanup tests at lines 1074, 1111)

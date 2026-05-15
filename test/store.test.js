@@ -279,16 +279,21 @@ describe('store', () => {
       assert.equal(before, after, 'Profile should be unchanged when bundled has no new fields');
     });
 
-    it('reconciles stale runtime methodology template against bundled on init (#136)', () => {
+    it('reconciles stale runtime methodology template against bundled on init (#136 / #139 Chunk 2)', () => {
       // Integration test for the reconcile glue in _copyBundledTemplates →
       // _mergeBundledTemplate. The unit tests above already prove the merge
       // function works in isolation; this test locks in that init() actually
       // calls it for existing template.json files.
+      //
+      // Post-#139 Chunk 2: bundled prawduct/template.json ships `wrap_pipeline`
+      // instead of `wrap`. A pre-#139 runtime template still has the legacy
+      // `wrap` block. The reconciler's job here is to propagate the new
+      // `wrap_pipeline` from bundled into live via `addMissing`, while
+      // leaving the legacy `wrap` block intact (the inert safety-net
+      // behavior — see ARRAY_RECONCILERS comment in lib/store.js).
       const templatesDir = path.join(tmpDir, 'templates');
       const prawductDir = path.join(templatesDir, 'prawduct');
       fs.mkdirSync(prawductDir, { recursive: true });
-      // Simulate a pre-v3.13.7 runtime template missing memory-update — the
-      // canonical #136 incident shape.
       const stale = {
         id: 'prawduct',
         name: 'Prawduct',
@@ -300,15 +305,17 @@ describe('store', () => {
       store.init();
 
       const updated = JSON.parse(fs.readFileSync(livePath, 'utf8'));
-      // The reconciler should have added the missing bundled steps in their
-      // bundled-order positions. Specific keys checked rather than the full
-      // array so a future bundled-step addition doesn't break this test.
-      assert.ok(updated.wrap.steps.includes('memory-update'),
-        'memory-update should be added from bundled (#136 incident shape)');
-      // Other bundled steps from the current data/templates/prawduct/template.json
-      // should also be present (additive — original steps remain in order).
-      assert.ok(updated.wrap.steps.indexOf('version-bump') < updated.wrap.steps.indexOf('commit'),
+      // `wrap_pipeline` propagated from bundled.
+      assert.ok(updated.wrap_pipeline, 'wrap_pipeline should be added from bundled');
+      const ids = updated.wrap_pipeline.steps.map((s) => s.id);
+      assert.ok(ids.includes('memory-update'),
+        'memory-update step should be present in wrap_pipeline (#139 Chunk 2)');
+      assert.ok(ids.indexOf('version-bump') < ids.indexOf('commit'),
         'order preserved: version-bump before commit');
+      // Legacy `wrap` block left untouched as the inert safety net.
+      assert.deepStrictEqual(updated.wrap,
+        { command: null, steps: ['version-bump', 'changelog-update', 'commit'] },
+        'legacy wrap block must be preserved as-is when bundled drops it');
     });
 
     it('reconciles stale runtime methodology template hook entries against bundled on init (#158)', () => {
@@ -1395,6 +1402,151 @@ describe('store', () => {
         ['a', 'c', 'b'],
         'user-removed entry is re-added on reconcile (policy choice — see ADR 0001)',
       );
+    });
+
+    // #139 Chunk 2 — wrap_pipeline.steps reconciliation via mergeBy:id.
+    // The new wrap schema's typed step objects each carry an `id`; the
+    // policy mirrors `phases` and `actions` so adding a new bundled
+    // pipeline step propagates additively without disturbing user edits.
+
+    it('appends missing wrap_pipeline.steps by id (mergeBy:id, #139 Chunk 2)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          schemaVersion: '1.0',
+          steps: [
+            { id: 'version-bump', kind: 'version-bump' },
+            { id: 'memory-update', kind: 'ai-content', prompt: '' },
+            { id: 'commit', kind: 'commit' }
+          ]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          schemaVersion: '1.0',
+          steps: [
+            { id: 'version-bump', kind: 'version-bump' }
+          ]
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.wrap_pipeline.steps.map((s) => s.id),
+        ['version-bump', 'memory-update', 'commit'],
+      );
+    });
+
+    it('preserves user-added wrap_pipeline.steps; appends only bundled-new ids (#139 Chunk 2)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'memory-update', kind: 'ai-content' },
+            { id: 'commit',        kind: 'commit' }
+          ]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'memory-update',       kind: 'ai-content' },
+            { id: 'user-custom-step',    kind: 'ai-content', prompt: 'custom' }
+          ]
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // Live order at front; bundled-new `commit` appended.
+      assert.deepStrictEqual(
+        merged.wrap_pipeline.steps.map((s) => s.id),
+        ['memory-update', 'user-custom-step', 'commit'],
+      );
+    });
+
+    it('preserves user customization on existing wrap_pipeline.steps entries (additive only, #139 Chunk 2)', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'memory-update', kind: 'ai-content', prompt: 'Bundled prompt', blocker: false }
+          ]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'memory-update', kind: 'ai-content', prompt: 'User customized prompt', blocker: true }
+          ]
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.wrap_pipeline.steps,
+        [{ id: 'memory-update', kind: 'ai-content', prompt: 'User customized prompt', blocker: true }],
+        'matched-by-id entry is left untouched — additive policy never overwrites field values',
+      );
+    });
+
+    it('treats user-removed wrap_pipeline.step as stale and re-adds it (ADR 0001 limitation, #139 Chunk 2)', () => {
+      // Same policy choice as phases / actions / wrap.steps: when live's
+      // id-set is a subset of bundled's, the reconciler can't distinguish
+      // intentional removal from older-version state, so re-adds. The
+      // wrap pipeline inherits the documented limitation.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'a', kind: 'ai-content' },
+            { id: 'b', kind: 'ai-content' },
+            { id: 'c', kind: 'commit' }
+          ]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [
+            { id: 'a', kind: 'ai-content' },
+            { id: 'c', kind: 'commit' }
+          ] // user intentionally removed `b`
+        }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(
+        merged.wrap_pipeline.steps.map((s) => s.id),
+        ['a', 'c', 'b'],
+        'user-removed step is re-added on reconcile (policy choice — see ADR 0001)',
+      );
+    });
+
+    it('inert legacy wrap.steps/wrap.captureFields reconcilers skip when bundled drops the legacy block (#139 Chunk 2)', () => {
+      // After #139 migrates bundled templates from `wrap` to `wrap_pipeline`,
+      // the legacy reconciler entries remain in ARRAY_RECONCILERS as a
+      // safety net for live templates that still have a `wrap` block from
+      // before the migration. With no bundled `wrap.steps`, the reconciler
+      // must short-circuit (Array.isArray check) and leave the live wrap
+      // block untouched. Pins this safety-net behavior.
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        wrap_pipeline: {
+          steps: [{ id: 'commit', kind: 'commit' }]
+        }
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap: { command: null, steps: ['legacy-step'], captureFields: ['legacy-field'] }
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // wrap block is preserved as-is; wrap_pipeline is added from bundled
+      assert.deepStrictEqual(merged.wrap, { command: null, steps: ['legacy-step'], captureFields: ['legacy-field'] });
+      assert.deepStrictEqual(merged.wrap_pipeline.steps.map((s) => s.id), ['commit']);
     });
   });
 

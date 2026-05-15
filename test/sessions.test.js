@@ -981,6 +981,30 @@ describe('sessions', () => {
       assert.ok(Array.isArray(result.captureFields));
     });
 
+    // #139 Chunk 2 — pin the actual NL prompt triggerWrap sends to tmux.
+    // The build plan's Acceptance line called for a byte-equal snapshot of
+    // the pre-migration wrap command after the schema swap. The shape-pin
+    // tests in skills.test.js cover this transitively, but if a future
+    // refactor reshapes triggerWrap's join (e.g. wraps fields differently
+    // or reorders), the shape pin won't catch it — this snapshot will.
+    it('sends byte-equal NL wrap prompt for prawduct after schema migration (#139 Chunk 2)', () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-byteq-test'
+      });
+
+      sessions.triggerWrap('prime-test');
+      const expected =
+        'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
+        'Wrap steps: version-bump, changelog-update, learnings-capture, next-session-prime, memory-update, commit\n' +
+        'Output these fields as ## markdown headings: summary, nextSteps, learnings';
+      assert.equal(sentCommand, expected,
+        'wrap NL prompt must be byte-equal to pre-migration; any drift means triggerWrap behavior changed');
+    });
+
     it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({

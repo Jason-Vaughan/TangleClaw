@@ -126,7 +126,9 @@ describe('GET /api/methodologies/:id', () => {
     assert.equal(data.phases.length, 3);
     assert.ok(data.statusContract);
     assert.ok(data.detection);
-    assert.ok(data.wrap);
+    // #139 Chunk 2 — wrap block replaced with wrap_pipeline in bundled templates.
+    assert.ok(data.wrap_pipeline, 'prawduct should expose the wrap_pipeline schema');
+    assert.ok(Array.isArray(data.wrap_pipeline.steps));
     assert.ok(data.prime);
     assert.ok(data.init);
     assert.ok(data.defaultRules);
