@@ -575,14 +575,14 @@ describe('sessions', () => {
       sessions = require('../lib/sessions');
     });
 
-    it('returns error for unknown project', () => {
-      const result = sessions.triggerWrap('nonexistent');
+    it('returns error for unknown project', async () => {
+      const result = await sessions.triggerWrap('nonexistent');
       assert.equal(result.ok, false);
       assert.ok(result.error.includes('not found'));
     });
 
-    it('returns error when no active session', () => {
-      const result = sessions.triggerWrap('prime-test');
+    it('returns error when no active session', async () => {
+      const result = await sessions.triggerWrap('prime-test');
       assert.equal(result.ok, false);
       assert.ok(result.error.includes('No active session'));
     });
@@ -949,7 +949,7 @@ describe('sessions', () => {
       }
     });
 
-    it('sets session to wrapping status', () => {
+    it('sets session to wrapping status', async () => {
       const project = store.projects.getByName('prime-test');
       const session = store.sessions.start({
         projectId: project.id,
@@ -957,7 +957,7 @@ describe('sessions', () => {
         tmuxSession: 'trigger-wrap-test'
       });
 
-      const result = sessions.triggerWrap('prime-test');
+      const result = await sessions.triggerWrap('prime-test');
       assert.ok(result.ok);
       assert.equal(result.sessionId, session.id);
 
@@ -967,7 +967,7 @@ describe('sessions', () => {
       assert.equal(wrapping.id, session.id);
     });
 
-    it('returns wrapSteps and captureFields', () => {
+    it('returns wrapSteps and captureFields', async () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({
         projectId: project.id,
@@ -975,7 +975,7 @@ describe('sessions', () => {
         tmuxSession: 'trigger-wrap-fields-test'
       });
 
-      const result = sessions.triggerWrap('prime-test');
+      const result = await sessions.triggerWrap('prime-test');
       assert.ok(result.ok);
       assert.ok(Array.isArray(result.wrapSteps));
       assert.ok(Array.isArray(result.captureFields));
@@ -987,7 +987,7 @@ describe('sessions', () => {
     // tests in skills.test.js cover this transitively, but if a future
     // refactor reshapes triggerWrap's join (e.g. wraps fields differently
     // or reorders), the shape pin won't catch it — this snapshot will.
-    it('sends byte-equal NL wrap prompt for prawduct after schema migration (#139 Chunk 2)', () => {
+    it('sends byte-equal NL wrap prompt for prawduct after schema migration (#139 Chunk 2)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
@@ -996,7 +996,7 @@ describe('sessions', () => {
         tmuxSession: 'trigger-wrap-byteq-test'
       });
 
-      sessions.triggerWrap('prime-test');
+      await sessions.triggerWrap('prime-test');
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
         'Wrap steps: version-bump, changelog-update, learnings-capture, next-session-prime, memory-update, commit\n' +
@@ -1005,7 +1005,7 @@ describe('sessions', () => {
         'wrap NL prompt must be byte-equal to pre-migration; any drift means triggerWrap behavior changed');
     });
 
-    it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', () => {
+    it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', async () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({
         projectId: project.id,
@@ -1013,13 +1013,13 @@ describe('sessions', () => {
         tmuxSession: 'trigger-wrap-version-test'
       });
 
-      sessions.triggerWrap('prime-test');
+      await sessions.triggerWrap('prime-test');
       assert.ok(sentCommand, 'should have sent a command');
       assert.equal(sentCommand.includes('project-version.txt'), false, 'wrap command should not reference version cache file');
       assert.equal(sentCommand.includes('re-check the project version'), false, 'wrap command should not include re-record instruction');
     });
 
-    it('writes project-version.txt directly during wrap (#101)', () => {
+    it('writes project-version.txt directly during wrap (#101)', async () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({
         projectId: project.id,
@@ -1031,7 +1031,7 @@ describe('sessions', () => {
       // Remove any prior recording so we can detect this wrap's write.
       try { fs.rmSync(cachePath, { force: true }); } catch {}
 
-      sessions.triggerWrap('prime-test');
+      await sessions.triggerWrap('prime-test');
       assert.ok(fs.existsSync(cachePath), 'wrap should produce the version cache file');
       const body = fs.readFileSync(cachePath, 'utf8');
       assert.match(body, /^version:\s*\S+/m, 'cache file should contain a version: line');
@@ -1039,7 +1039,7 @@ describe('sessions', () => {
       assert.match(body, /^recorded_at:\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m, 'recorded_at should be ISO-8601 UTC');
     });
 
-    it('preserves custom wrap command without injecting any version protocol (#101)', () => {
+    it('preserves custom wrap command without injecting any version protocol (#101)', async () => {
       const skills = require('../lib/skills');
       const originalGetWrapSkill = skills.getWrapSkill;
       skills.getWrapSkill = () => ({
@@ -1056,7 +1056,7 @@ describe('sessions', () => {
           tmuxSession: 'trigger-wrap-custom-cmd-test'
         });
 
-        sessions.triggerWrap('prime-test');
+        await sessions.triggerWrap('prime-test');
         assert.ok(sentCommand, 'should have sent a command');
         assert.ok(sentCommand.includes('/custom-wrap --fast'), 'should start with custom command');
         assert.equal(sentCommand.includes('project-version.txt'), false, 'custom-command wrap should not include version protocol');
@@ -1064,6 +1064,101 @@ describe('sessions', () => {
       } finally {
         skills.getWrapSkill = originalGetWrapSkill;
       }
+    });
+
+    // #139 Chunk 3 — `projConfig.wrapV2` opt-in routes to the new
+    // server-side pipeline runner. Default `false` keeps every legacy
+    // assertion above byte-equal (already pinned by the existing tests
+    // in this block, which run with the default config). These two
+    // tests pin the opt-in branch behavior.
+    it('wrapV2:true routes through the wrap pipeline runner and does NOT send tmux command (#139 Chunk 3)', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-v2-test'
+      });
+      // Toggle wrapV2 in the on-disk project config.
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      try {
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true, 'V2 pipeline of no-op stubs returns ok:true');
+        assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
+        assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
+        assert.equal(result.pipelineResult.results.length, 6,
+          'prawduct pipeline runs all six steps');
+        assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
+      } finally {
+        // Restore default
+        const cfg = store.projectConfig.load(project.path);
+        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
+      }
+    });
+
+    it('wrapV2 absent from projConfig (older on-disk state) falls back to legacy path (#139 Chunk 3 Critic nit)', async () => {
+      // Older project.json files written before #139 won't carry a
+      // `wrapV2` field. `store.projectConfig.load` deep-merges with
+      // DEFAULT_PROJECT_CONFIG so `wrapV2` becomes `false` post-merge —
+      // but pin the invariant against a future refactor of the merge
+      // semantics: an absent flag means legacy-path execution.
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const cfgPath = path.join(project.path, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+      // Persist a config that explicitly OMITS wrapV2.
+      const cfgNoFlag = JSON.parse(JSON.stringify(store.projectConfig.load(project.path)));
+      delete cfgNoFlag.wrapV2;
+      fs.writeFileSync(cfgPath, JSON.stringify(cfgNoFlag, null, 2));
+
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-v2-absent-test'
+      });
+
+      try {
+        await sessions.triggerWrap('prime-test');
+        // Legacy path ran → sentCommand is the legacy NL prompt.
+        assert.ok(sentCommand, 'legacy path must have sent a tmux command');
+        assert.ok(sentCommand.startsWith('Perform a session wrap.'),
+          'absent wrapV2 must default to legacy NL-prompt path');
+      } finally {
+        // Restore a clean default config so other tests are unaffected.
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+      }
+    });
+
+    it('wrapV2:false (default) uses the legacy NL-prompt path byte-equal to pre-#139 (regression pin)', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      // Explicitly persist wrapV2:false so this test is self-contained.
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: false
+      });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-v2-false-test'
+      });
+
+      await sessions.triggerWrap('prime-test');
+      // Identical to the Chunk 2 byte-equal NL pin — proves the opt-in
+      // default leaves the legacy path untouched.
+      const expected =
+        'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
+        'Wrap steps: version-bump, changelog-update, learnings-capture, next-session-prime, memory-update, commit\n' +
+        'Output these fields as ## markdown headings: summary, nextSteps, learnings';
+      assert.equal(sentCommand, expected,
+        'wrapV2:false default must produce the exact pre-#139 NL prompt');
     });
   });
 
