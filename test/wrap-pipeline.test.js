@@ -74,7 +74,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // end and aggregate results" — we monkey-patch every dispatch
       // entry to the canonical no-op result for this test only. The
       // real-handler behavior is covered by per-handler describes below.
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check'];
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -314,7 +314,7 @@ describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
   // of silently changing pipeline semantics. `lint` and `test` left this
   // list in #139 Chunk 4; `ai-content` left in #139 Chunk 5 — their
   // real-handler tests live in their own describe blocks below.
-  const kinds = ['pr-check', 'version-bump', 'commit'];
+  const kinds = ['version-bump', 'commit'];
 
   for (const kind of kinds) {
     it(`${kind} returns the canonical {ok:true,status:'done',output:null,blockers:[]}`, async () => {
@@ -2162,5 +2162,382 @@ describe('wrap-step critic-check — defaultLoadCriticRuns (#139 Chunk 7)', () =
     const out = criticCheck._internal.loadCriticRuns(p);
     assert.equal(out.length, 1);
     assert.equal(out[0].branchName, 'good');
+  });
+});
+
+// ── #139 Chunk 8: real `pr-check` step handler ──
+
+describe('wrap-step pr-check — pure helpers (#139 Chunk 8)', () => {
+  const prCheck = require('../lib/wrap-steps/pr-check');
+
+  describe('_filterPrs', () => {
+    it('drops drafts by default', () => {
+      const prs = [
+        { number: 1, isDraft: false },
+        { number: 2, isDraft: true },
+        { number: 3, isDraft: false }
+      ];
+      const out = prCheck._filterPrs(prs, {});
+      assert.deepStrictEqual(out.map((p) => p.number), [1, 3]);
+    });
+
+    it('keeps drafts when step.includeDrafts === true', () => {
+      const prs = [
+        { number: 1, isDraft: false },
+        { number: 2, isDraft: true }
+      ];
+      const out = prCheck._filterPrs(prs, { includeDrafts: true });
+      assert.equal(out.length, 2);
+    });
+
+    it('treats missing isDraft as not-a-draft (keeps the PR)', () => {
+      const prs = [{ number: 1 }]; // isDraft absent
+      assert.equal(prCheck._filterPrs(prs, {}).length, 1);
+    });
+  });
+
+  describe('_partitionPrs', () => {
+    it('puts PRs whose headRefName matches currentBranch in sessionScoped', () => {
+      const prs = [
+        { number: 1, headRefName: 'feat/x' },
+        { number: 2, headRefName: 'feat/y' },
+        { number: 3, headRefName: 'feat/x' }
+      ];
+      const out = prCheck._partitionPrs(prs, 'feat/x');
+      assert.deepStrictEqual(out.sessionScoped.map((p) => p.number), [1, 3]);
+      assert.deepStrictEqual(out.otherOpen.map((p) => p.number), [2]);
+    });
+
+    it('returns everything in otherOpen when currentBranch is null', () => {
+      const prs = [
+        { number: 1, headRefName: 'feat/x' },
+        { number: 2, headRefName: 'main' }
+      ];
+      const out = prCheck._partitionPrs(prs, null);
+      assert.deepStrictEqual(out.sessionScoped, []);
+      assert.equal(out.otherOpen.length, 2);
+    });
+
+    it('handles empty input cleanly', () => {
+      const out = prCheck._partitionPrs([], 'feat/x');
+      assert.deepStrictEqual(out, { sessionScoped: [], otherOpen: [] });
+    });
+
+    it('puts PRs with null/empty headRefName in otherOpen (defensive pin)', () => {
+      // gh can return null/empty headRefName for orphaned PRs whose
+      // source branch was deleted. `null === currentBranch` is false,
+      // so they correctly fall into otherOpen. Pin so a future
+      // `pr.headRefName.startsWith(...)` refactor doesn't NPE.
+      const out = prCheck._partitionPrs(
+        [{ number: 1, headRefName: null }, { number: 2, headRefName: '' }],
+        'feat/x'
+      );
+      assert.deepStrictEqual(out.sessionScoped, []);
+      assert.equal(out.otherOpen.length, 2);
+    });
+  });
+
+  describe('GH_PR_JSON_FIELDS shape pin', () => {
+    it('exports the documented JSON field list (downstream-consumer contract)', () => {
+      // Snapshot pin: the gh JSON fields are an exported surface and
+      // downstream consumers (Chunk 9 commit step body builder; Chunk 10
+      // UI renderers) rely on the shape. A rename / reorder here MUST
+      // be paired with a CHANGELOG callout — this test forces the
+      // conversation.
+      assert.equal(
+        prCheck.GH_PR_JSON_FIELDS,
+        'number,title,headRefName,baseRefName,url,createdAt,isDraft,author'
+      );
+    });
+  });
+
+  describe('_normalizeHandling', () => {
+    const sessionScoped = [
+      { number: 100, headRefName: 'feat/x' },
+      { number: 200, headRefName: 'feat/x' }
+    ];
+
+    it('returns empty resolutions/invalid for undefined/null prHandling', () => {
+      assert.deepStrictEqual(prCheck._normalizeHandling(undefined, sessionScoped),
+        { resolutions: {}, invalid: [] });
+      assert.deepStrictEqual(prCheck._normalizeHandling(null, sessionScoped),
+        { resolutions: {}, invalid: [] });
+    });
+
+    it('applies a string shortcut to every session-scoped PR', () => {
+      const out = prCheck._normalizeHandling('merge', sessionScoped);
+      assert.deepStrictEqual(out.resolutions, { 100: 'merge', 200: 'merge' });
+      assert.deepStrictEqual(out.invalid, []);
+    });
+
+    it('rejects unknown string shortcuts with a clear invalid entry', () => {
+      const out = prCheck._normalizeHandling('squash-bomb', sessionScoped);
+      assert.deepStrictEqual(out.resolutions, {});
+      assert.equal(out.invalid.length, 1);
+      assert.match(out.invalid[0], /Unknown prHandling shortcut/);
+    });
+
+    it('accepts a per-PR object map', () => {
+      const out = prCheck._normalizeHandling({ 100: 'merge', 200: 'defer' }, sessionScoped);
+      assert.deepStrictEqual(out.resolutions, { 100: 'merge', 200: 'defer' });
+      assert.deepStrictEqual(out.invalid, []);
+    });
+
+    it('flags unknown PR numbers in the object map', () => {
+      const out = prCheck._normalizeHandling({ 999: 'merge' }, sessionScoped);
+      assert.deepStrictEqual(out.resolutions, {});
+      assert.match(out.invalid[0], /999 does not match any session-scoped open PR/);
+    });
+
+    it('flags bad handling values in the object map', () => {
+      const out = prCheck._normalizeHandling({ 100: 'rebase-and-pray' }, sessionScoped);
+      assert.deepStrictEqual(out.resolutions, {});
+      assert.match(out.invalid[0], /prHandling\[100\].*not one of merge\|defer\|ignore/);
+    });
+
+    it('rejects array prHandling shape (must be string or object map)', () => {
+      const out = prCheck._normalizeHandling(['merge'], sessionScoped);
+      assert.match(out.invalid[0], /must be a string shortcut or an object map/);
+    });
+
+    it('coerces numeric keys consistently with PR number string lookup', () => {
+      // Both the map key and the PR number can be number-or-string; pin
+      // that the lookup normalizes both sides to string.
+      const out = prCheck._normalizeHandling({ '100': 'merge' }, sessionScoped);
+      assert.deepStrictEqual(out.resolutions, { 100: 'merge' });
+    });
+  });
+});
+
+describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
+  const prCheck = require('../lib/wrap-steps/pr-check');
+  let originals;
+  let projectPath;
+
+  before(() => {
+    originals = { ...prCheck._internal };
+  });
+
+  // Restore `_internal` after the suite so a sibling describe block
+  // (e.g. defaultListOpenPrs JSON handling below) captures the truly-
+  // original `_internal` rather than this suite's last-test stubs.
+  // Without this `after` hook, the JSON handling suite's `originals`
+  // snapshot would be polluted by whatever the final handler test
+  // stubbed (`listOpenPrs = async () => {...}`).
+  after(() => {
+    Object.assign(prCheck._internal, originals);
+  });
+
+  beforeEach(() => {
+    Object.assign(prCheck._internal, originals);
+    projectPath = '/tmp/sandbox-pr-check';
+  });
+
+  /** Build a minimal context; stubs default to "gh present, no PRs." */
+  function buildContext(step, options) {
+    prCheck._internal.isGhAvailable = async () => true;
+    prCheck._internal.getCurrentBranch = async () => 'feat/x';
+    prCheck._internal.listOpenPrs = async () => ({ ok: true, prs: [], reason: null });
+    return {
+      project: { name: 'sandbox', path: projectPath, id: 1 },
+      session: null,
+      step,
+      previousResults: [],
+      staged: {},
+      options: options || {}
+    };
+  }
+
+  it('always returns ok:true — never blocks', async () => {
+    const result = await prCheck.run({
+      project: { name: 'no-path', id: 1 },
+      step: { id: 'pr-check' },
+      previousResults: [],
+      staged: {},
+      options: {}
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /requires context\.project\.path/);
+  });
+
+  it('skips with reason when gh is not available', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.isGhAvailable = async () => false;
+    const result = await prCheck.run(ctx);
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /gh CLI not available/);
+    assert.deepStrictEqual(ctx.staged, {}, 'gh-missing must not stage anything');
+  });
+
+  it('skips with detail when gh pr list returns non-zero (no auth / not a repo)', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: false, prs: [], reason: 'no logged-in github account', exitCode: 4
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /could not enumerate/);
+    assert.match(result.output.detail, /no logged-in github account/);
+    assert.equal(result.output.ghExitCode, 4);
+  });
+
+  it('done with empty buckets when there are no open PRs', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.counts.openTotal, 0);
+    assert.equal(result.output.counts.sessionScoped, 0);
+    assert.equal(result.output.counts.otherOpen, 0);
+    assert.deepStrictEqual(ctx.staged, {}, 'no PRs → nothing staged');
+  });
+
+  it('surfaces a session-scoped PR and stages it for Chunk 9 commit', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [
+        { number: 42, title: 'WIP', headRefName: 'feat/x', isDraft: false, url: 'https://example.com/pr/42' },
+        { number: 7,  title: 'other', headRefName: 'feat/y', isDraft: false, url: 'https://example.com/pr/7' }
+      ],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.counts.sessionScoped, 1);
+    assert.equal(result.output.counts.otherOpen, 1);
+    assert.equal(result.output.sessionScoped[0].number, 42);
+    assert.equal(result.output.otherOpen[0].number, 7);
+    assert.ok(ctx.staged['pr-check'], 'session-scoped PR must stage');
+    assert.equal(ctx.staged['pr-check'].sessionScoped[0].number, 42);
+  });
+
+  it('hides drafts by default; includeDrafts=true keeps them', async () => {
+    const listing = async () => ({
+      ok: true,
+      prs: [
+        { number: 1, headRefName: 'feat/x', isDraft: false },
+        { number: 2, headRefName: 'feat/x', isDraft: true }
+      ],
+      reason: null
+    });
+    // Default: drafts hidden
+    const ctxDefault = buildContext({ id: 'pr-check' });
+    prCheck._internal.listOpenPrs = listing;
+    const def = await prCheck.run(ctxDefault);
+    assert.equal(def.output.counts.openTotal, 1);
+    assert.equal(def.output.counts.rawTotal, 2,
+      'rawTotal must surface the unfiltered count for UI "hidden drafts" hint');
+
+    // Opt-in: drafts kept
+    const ctxOptIn = buildContext({ id: 'pr-check', includeDrafts: true });
+    prCheck._internal.listOpenPrs = listing;
+    const opt = await prCheck.run(ctxOptIn);
+    assert.equal(opt.output.counts.openTotal, 2);
+  });
+
+  it('threads options.prHandling resolutions through to staged scratch', async () => {
+    const ctx = buildContext(
+      { id: 'pr-check' },
+      { prHandling: { 42: 'merge' } }
+    );
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.output.resolutions[42], 'merge');
+    assert.equal(ctx.staged['pr-check'].resolutions[42], 'merge');
+  });
+
+  it('stages even when sessionScoped is empty but caller resolved something invalid (so UI can show the error)', async () => {
+    const ctx = buildContext(
+      { id: 'pr-check' },
+      { prHandling: { 999: 'merge' } }
+    );
+    const result = await prCheck.run(ctx);
+    // No session-scoped PRs, so the resolution targets nothing real.
+    assert.equal(result.output.invalidHandling.length, 1);
+    // No staging since both sessionScoped and resolutions are empty.
+    assert.deepStrictEqual(ctx.staged, {},
+      'invalid-only handling should NOT stage — nothing for commit step to do');
+  });
+
+  it('skips when isGhAvailable throws (always-ok contract via outer try/catch)', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.isGhAvailable = async () => { throw new Error('exec spawn fail'); };
+    const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true, 'always-ok contract MUST hold');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /pr-check probe failed/);
+    assert.match(result.output.error, /exec spawn fail/);
+  });
+
+  it('puts all PRs in otherOpen when current branch is unresolvable (null)', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.getCurrentBranch = async () => null;
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 1, headRefName: 'feat/x', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.output.counts.sessionScoped, 0);
+    assert.equal(result.output.counts.otherOpen, 1);
+    assert.deepStrictEqual(ctx.staged, {},
+      'no current branch + no session-scoped match + no resolutions → nothing staged');
+  });
+});
+
+describe('wrap-step pr-check — defaultListOpenPrs JSON handling (#139 Chunk 8)', () => {
+  const prCheck = require('../lib/wrap-steps/pr-check');
+  let originals;
+
+  before(() => {
+    originals = { ...prCheck._internal };
+  });
+
+  beforeEach(() => {
+    Object.assign(prCheck._internal, originals);
+  });
+
+  it('reports ok:false reason when gh exits non-zero', async () => {
+    prCheck._internal.exec = async () => ({
+      exitCode: 4, stdout: '', stderr: 'gh: To get started with GitHub CLI, please run: gh auth login\n', error: null
+    });
+    const r = await originals.listOpenPrs('/tmp/x');
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /gh auth login/);
+    assert.equal(r.exitCode, 4);
+  });
+
+  it('reports ok:false reason on malformed JSON stdout', async () => {
+    prCheck._internal.exec = async () => ({
+      exitCode: 0, stdout: 'not-json-at-all', stderr: '', error: null
+    });
+    const r = await originals.listOpenPrs('/tmp/x');
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /malformed JSON/);
+  });
+
+  it('reports ok:false reason when stdout is a JSON non-array (object/null)', async () => {
+    prCheck._internal.exec = async () => ({
+      exitCode: 0, stdout: '{"error":"oops"}', stderr: '', error: null
+    });
+    const r = await originals.listOpenPrs('/tmp/x');
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /non-array JSON/);
+  });
+
+  it('returns ok:true with parsed PR array on happy path', async () => {
+    prCheck._internal.exec = async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify([{ number: 1, title: 'x' }]),
+      stderr: '', error: null
+    });
+    const r = await originals.listOpenPrs('/tmp/x');
+    assert.equal(r.ok, true);
+    assert.equal(r.prs[0].number, 1);
   });
 });
