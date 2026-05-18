@@ -53,7 +53,7 @@
       { "id": "learnings-capture",  "kind": "ai-content",   "prompt": "" },
       { "id": "next-session-prime", "kind": "priming-roll" },
       { "id": "memory-update",      "kind": "ai-content",   "prompt": "", "captureFields": ["summary", "nextSteps", "learnings"] },
-      { "id": "commit",             "kind": "commit" }
+      { "id": "commit",             "kind": "commit",       "blocker": true }
     ]
   },
   "prime": {

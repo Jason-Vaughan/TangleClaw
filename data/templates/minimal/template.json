@@ -24,7 +24,7 @@
     "steps": [
       { "id": "learnings-capture", "kind": "ai-content", "prompt": "" },
       { "id": "memory-update",     "kind": "ai-content", "prompt": "", "captureFields": ["summary"] },
-      { "id": "commit",            "kind": "commit" }
+      { "id": "commit",            "kind": "commit",      "blocker": true }
     ]
   },
   "prime": {
