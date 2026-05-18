@@ -1085,6 +1085,23 @@ describe('sessions', () => {
         wrapV2: true
       });
 
+      // Chunk 9 made the `commit` step a real handler — it would
+      // shell out to `git status` on the test project's path, which
+      // isn't a git repo. Stub it back to a no-op for this routing-
+      // contract test; real commit-step behavior is covered in
+      // `test/wrap-pipeline.test.js`. Also stub the other real Chunk
+      // 4–8 handlers that hit live OS state (lint/test/ai-content/
+      // priming-roll/critic-check/pr-check) so the routing assertion
+      // doesn't accidentally trip on a missing tmux session.
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit'];
+      const dispatchOrig = {};
+      const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+      for (const kind of realKinds) {
+        dispatchOrig[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
+        wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
+      }
+
       try {
         const result = await sessions.triggerWrap('prime-test');
         assert.equal(result.ok, true, 'V2 pipeline of no-op stubs returns ok:true');
@@ -1097,6 +1114,9 @@ describe('sessions', () => {
         // Restore default
         const cfg = store.projectConfig.load(project.path);
         store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
+        for (const kind of realKinds) {
+          wrapPipelineMod.STEP_DISPATCH[kind] = dispatchOrig[kind];
+        }
       }
     });
 
