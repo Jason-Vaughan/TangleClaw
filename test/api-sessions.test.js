@@ -194,6 +194,223 @@ describe('api-sessions', () => {
     });
   });
 
+  describe('POST /api/sessions/:project/wrap response (V2 — #139 Chunk 10)', () => {
+    it('threads options from body to runWrapPipeline and surfaces pipelineResult', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-v2-options-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      // Stub the runner — Chunk 10's options-threading contract is what
+      // we're pinning here, not the runner's internal behavior.
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let receivedOptions;
+      wrapPipelineMod.runWrapPipeline = async (_name, options) => {
+        receivedOptions = options;
+        return {
+          ok: true,
+          blockedAt: null,
+          results: [{ stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'deadbeef' }, blockers: [] }],
+          commitSha: 'deadbeef',
+          summary: null,
+          error: null
+        };
+      };
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+          options: { skipTests: true, criticSkipRationale: 'short turn' }
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.ok, true);
+        assert.deepEqual(receivedOptions, { skipTests: true, criticSkipRationale: 'short turn' });
+        assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
+        assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
+        assert.equal(res.body.status, 'wrapping');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+        // Clean up the active session.
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+
+    it('returns 200 with status:"blocked" when pipeline halts (not 500)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-v2-blocked-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => ({
+        ok: false,
+        blockedAt: 'test',
+        results: [
+          { stepId: 'test', kind: 'test', status: 'blocked', output: { exitCode: 1 }, blockers: ['Test suite failed (exit 1)'] }
+        ],
+        commitSha: null,
+        summary: null,
+        error: null
+      });
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        // A blocked pipeline is NOT a server error — drawer needs the
+        // structured result to render decision widgets. HTTP 200.
+        assert.equal(res.status, 200);
+        assert.equal(res.body.ok, false);
+        assert.equal(res.body.status, 'blocked');
+        assert.equal(res.body.pipelineResult.blockedAt, 'test');
+        assert.equal(res.body.pipelineResult.results[0].status, 'blocked');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+
+    it('returns 500 when pipeline throws (pipelineResult absent)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-v2-threw-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => { throw new Error('synthetic'); };
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
+        assert.equal(res.status, 500);
+        assert.match(res.body.error || '', /synthetic/);
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+
+    it('threads prHandling map verbatim from request body to runner (M5)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-v2-prhandling-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let receivedOptions;
+      wrapPipelineMod.runWrapPipeline = async (_n, opts) => {
+        receivedOptions = opts;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+          options: { prHandling: { '42': 'merge', '43': 'defer' } }
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(receivedOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
+
+        // Pin the key-type contract: string-keyed PR numbers reach the
+        // runner unchanged, matching `_normalizeHandling`'s
+        // `String(key)` lookup (lib/wrap-steps/pr-check.js).
+        assert.equal(typeof Object.keys(receivedOptions.prHandling)[0], 'string');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+
+    it('ignores non-object options bodies (defensive coercion)', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-v2-bad-options-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let received = 'sentinel';
+      wrapPipelineMod.runWrapPipeline = async (_n, opts) => {
+        received = opts;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
+          options: 'not-an-object'
+        });
+        assert.equal(res.status, 200);
+        assert.equal(received, undefined,
+          'non-object options bodies must be discarded before reaching the runner');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: false
+        });
+        const wrapping = store.sessions.getWrapping(project.id);
+        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.kill(active.id, 'cleanup');
+      }
+    });
+  });
+
   describe('POST /api/sessions/:project/wrap response', () => {
     it('includes wrapSteps and captureFields in response', async () => {
       // Create an active session to wrap
