@@ -68,13 +68,15 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('runWrapPipeline — no-op stubs', () => {
     it('runs all stubs end-to-end and returns ok:true', async () => {
       // Chunks 4+ replaced no-op stubs with real handlers (lint, test,
-      // ai-content) that require live OS state (a configured command, a
-      // tmux session, etc). To keep this regression test focused on the
+      // ai-content, priming-roll, critic-check, pr-check, commit) that
+      // require live OS state (a configured command, a tmux session, a
+      // git repo, etc). To keep this regression test focused on the
       // *runner skeleton* — "the pipeline can iterate every step end-to-
-      // end and aggregate results" — we monkey-patch every dispatch
-      // entry to the canonical no-op result for this test only. The
-      // real-handler behavior is covered by per-handler describes below.
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check'];
+      // end and aggregate results" — we monkey-patch every real-handler
+      // dispatch entry to the canonical no-op result for this test only.
+      // The real-handler behavior is covered by per-handler describes
+      // below.
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -242,8 +244,13 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // blockers (e.g. "errors-only") are handled inside the handler;
       // a !ok with blocker:false is informational, pipeline continues.
       const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const origCommit = wrapPipeline.STEP_DISPATCH['commit'];
       wrapPipeline.STEP_DISPATCH['ai-content'] = {
         run: async () => ({ ok: false, status: 'done', output: null, blockers: ['informational only'] })
+      };
+      // Stub the real commit handler — this test's project is not a git repo.
+      wrapPipeline.STEP_DISPATCH['commit'] = {
+        run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
       };
 
       try {
@@ -253,6 +260,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.blockedAt, null);
       } finally {
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
+        wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
       }
     });
 
@@ -292,6 +300,12 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       );
       store.templates.save(prawduct);
 
+      // Stub the real commit handler — this test's project is not a git repo.
+      const origCommit = wrapPipeline.STEP_DISPATCH['commit'];
+      wrapPipeline.STEP_DISPATCH['commit'] = {
+        run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
+      };
+
       try {
         const result = await wrapPipeline.runWrapPipeline('pipeline-test');
         assert.equal(result.ok, true,
@@ -302,6 +316,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       } finally {
         prawduct.wrap_pipeline.steps.shift();
         store.templates.save(prawduct);
+        wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
       }
     });
   });
@@ -312,9 +327,11 @@ describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
   // every stub individually so a future "let me just inline the
   // implementation halfway" change to one file fails this test instead
   // of silently changing pipeline semantics. `lint` and `test` left this
-  // list in #139 Chunk 4; `ai-content` left in #139 Chunk 5 — their
-  // real-handler tests live in their own describe blocks below.
-  const kinds = ['version-bump', 'commit'];
+  // list in #139 Chunk 4; `ai-content` left in #139 Chunk 5;
+  // `priming-roll` in Chunk 6; `critic-check` in Chunk 7; `pr-check` in
+  // Chunk 8; `commit` in Chunk 9 — their real-handler tests live in
+  // their own describe blocks below.
+  const kinds = ['version-bump'];
 
   for (const kind of kinds) {
     it(`${kind} returns the canonical {ok:true,status:'done',output:null,blockers:[]}`, async () => {
@@ -660,8 +677,13 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
 
   it('does NOT halt for a non-blocker enum value', async () => {
     const original = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
     wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
       run: async () => ({ ok: false, status: 'done', output: null, blockers: [] })
+    };
+    // Stub the real commit handler — this test's project is not a git repo.
+    wrapPipelineMod.STEP_DISPATCH['commit'] = {
+      run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
     };
     const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
     const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
@@ -675,6 +697,7 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
       assert.equal(result.blockedAt, null);
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
+      wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
       delete aiStep.blocker;
       store.templates.save(prawduct);
     }
@@ -2539,5 +2562,798 @@ describe('wrap-step pr-check — defaultListOpenPrs JSON handling (#139 Chunk 8)
     const r = await originals.listOpenPrs('/tmp/x');
     assert.equal(r.ok, true);
     assert.equal(r.prs[0].number, 1);
+  });
+});
+
+// ── #139 Chunk 9 — commit step (single-transaction flush + lastWrapSha) ──
+
+describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
+  const commitStep = require('../lib/wrap-steps/commit');
+
+  describe('_buildSubject', () => {
+    it('extracts chunk tag from a feat/chunk-N-... branch', () => {
+      const s = commitStep._buildSubject('feat/chunk-9-commit-orchestration');
+      assert.equal(s, 'Session wrap (chunk 9)');
+    });
+
+    it('extracts dotted/lettered chunk ids', () => {
+      assert.equal(
+        commitStep._buildSubject('feat/chunk-10c.2-foo'),
+        'Session wrap (chunk 10c.2)'
+      );
+    });
+
+    it('falls back to branch name when no chunk tag', () => {
+      assert.equal(
+        commitStep._buildSubject('feat/some-feature'),
+        'Session wrap on feat/some-feature'
+      );
+    });
+
+    it('falls back to generic when branch is null', () => {
+      assert.equal(commitStep._buildSubject(null), 'Session wrap');
+    });
+
+    it('truncates oversized subjects to MAX_SUBJECT_LEN with ellipsis', () => {
+      const longBranch = 'feat/' + 'x'.repeat(200);
+      const s = commitStep._buildSubject(longBranch);
+      assert.ok(s.length <= commitStep.MAX_SUBJECT_LEN,
+        `subject ${s.length} chars must be ≤ MAX_SUBJECT_LEN (${commitStep.MAX_SUBJECT_LEN})`);
+      assert.ok(s.endsWith('…'), 'truncated subject must end with ellipsis');
+    });
+  });
+
+  describe('_buildBodyLines', () => {
+    it('renders the priming-roll pointer when staged', () => {
+      const lines = commitStep._buildBodyLines({
+        'next-session-prime': {
+          primingPath: '/x/priming.md',
+          newContent: 'irrelevant',
+          changed: true,
+          pointer: {
+            current: { id: '9', title: 'Commit step', blockedOn: null },
+            next: null,
+            allDone: false
+          }
+        }
+      });
+      assert.deepStrictEqual(lines, ['- Priming rolled to Chunk 9 — Commit step']);
+    });
+
+    it('renders blockedOn under the priming pointer', () => {
+      const lines = commitStep._buildBodyLines({
+        'next-session-prime': {
+          primingPath: '/x', newContent: 'x', changed: true,
+          pointer: { current: { id: '5', title: 'T', blockedOn: 'dep-X' }, next: null, allDone: false }
+        }
+      });
+      assert.deepStrictEqual(lines, [
+        '- Priming rolled to Chunk 5 — T',
+        '  (blocked on: dep-X)'
+      ]);
+    });
+
+    it('renders allDone when the plan has no more chunks', () => {
+      const lines = commitStep._buildBodyLines({
+        'next-session-prime': {
+          primingPath: '/x', newContent: 'x', changed: true,
+          pointer: { current: null, next: null, allDone: true }
+        }
+      });
+      assert.deepStrictEqual(lines, ['- Priming: all chunks in plan marked done (next-session-prime)']);
+    });
+
+    it('renders a body line when priming-roll has no parseable chunks (current:null, allDone:false)', () => {
+      // Critic MINOR pin (#139 Chunk 9): priming-roll's _selectPointer
+      // returns `{current:null, next:null, allDone:false}` when the
+      // plan has no `### Chunk N:` headings at all. The handler still
+      // stages a priming write — the commit message must mention it
+      // rather than silently swallowing the file change.
+      const lines = commitStep._buildBodyLines({
+        'next-session-prime': {
+          primingPath: '/x', newContent: 'x', changed: true,
+          pointer: { current: null, next: null, allDone: false }
+        }
+      });
+      assert.deepStrictEqual(lines, [
+        '- Priming refreshed (next-session-prime): plan has no parseable chunks'
+      ]);
+    });
+
+    it('renders ai-content captures with parsed fields', () => {
+      const lines = commitStep._buildBodyLines({
+        'memory-update': {
+          capturedText: 'long-text',
+          parsedFields: { summary: 'a', nextSteps: 'b', learnings: 'c' }
+        }
+      });
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /AI content \(memory-update\): captured fields \[summary, nextSteps, learnings\]/);
+    });
+
+    it('renders ai-content captures without parsed fields as the minimal form', () => {
+      const lines = commitStep._buildBodyLines({
+        'learnings-capture': { capturedText: 'long-text', parsedFields: null }
+      });
+      assert.deepStrictEqual(lines, ['- AI content (learnings-capture): captured']);
+    });
+
+    it('renders critic-check skip rationale', () => {
+      const lines = commitStep._buildBodyLines({
+        'critic-check': {
+          warning: true,
+          owedRationale: 'small refactor, no Critic needed',
+          isMediumPlus: true,
+          criticRan: false
+        }
+      });
+      assert.deepStrictEqual(lines, [
+        '- Critic skip rationale: small refactor, no Critic needed'
+      ]);
+    });
+
+    it('renders critic-check warning without rationale (user did not provide one)', () => {
+      const lines = commitStep._buildBodyLines({
+        'critic-check': { warning: true, owedRationale: null }
+      });
+      assert.deepStrictEqual(lines, [
+        '- Critic warning: medium+ work without Critic dispatch (no rationale provided)'
+      ]);
+    });
+
+    it('renders pr-check session-scoped count + per-PR resolutions', () => {
+      const lines = commitStep._buildBodyLines({
+        'pr-check': {
+          branch: 'feat/x',
+          sessionScoped: [
+            { number: 42, title: 'foo' },
+            { number: 43, title: 'bar' }
+          ],
+          resolutions: { '42': 'merge', '43': 'defer' },
+          invalidHandling: []
+        }
+      });
+      assert.deepStrictEqual(lines, [
+        '- Open session-scoped PRs: 2',
+        '  - PR #42: merge',
+        '  - PR #43: defer'
+      ]);
+    });
+
+    it('ignores staged entries that do not match any known shape', () => {
+      const lines = commitStep._buildBodyLines({
+        'something-future': { totallyUnrelated: 'shape' }
+      });
+      assert.deepStrictEqual(lines, []);
+    });
+
+    it('returns [] for null/undefined staged maps', () => {
+      assert.deepStrictEqual(commitStep._buildBodyLines(null), []);
+      assert.deepStrictEqual(commitStep._buildBodyLines(undefined), []);
+      assert.deepStrictEqual(commitStep._buildBodyLines({}), []);
+    });
+  });
+
+  describe('_buildMessage', () => {
+    it('returns subject only when staged body is empty', () => {
+      assert.equal(commitStep._buildMessage({}, null), 'Session wrap');
+    });
+
+    it('assembles subject + blank line + body', () => {
+      const msg = commitStep._buildMessage(
+        {
+          'critic-check': { warning: true, owedRationale: 'tiny change' }
+        },
+        'feat/chunk-9-x'
+      );
+      assert.equal(
+        msg,
+        'Session wrap (chunk 9)\n\n- Critic skip rationale: tiny change'
+      );
+    });
+  });
+
+  describe('_flushStagedWrites', () => {
+    it('skips entries without primingPath/newContent', () => {
+      const commitStepLocal = require('../lib/wrap-steps/commit');
+      const writes = [];
+      const orig = { ...commitStepLocal._internal };
+      commitStepLocal._internal.writeFileSync = (p, c) => writes.push({ p, c });
+      commitStepLocal._internal.mkdirSync = () => {};
+      try {
+        const flushed = commitStepLocal._flushStagedWrites({
+          'pr-check': { sessionScoped: [], resolutions: {} },
+          'memory-update': { capturedText: 'x', parsedFields: null }
+        });
+        assert.deepStrictEqual(flushed, []);
+        assert.deepStrictEqual(writes, []);
+      } finally {
+        Object.assign(commitStepLocal._internal, orig);
+      }
+    });
+
+    it('skips entries with changed:false (idempotent re-wrap)', () => {
+      const commitStepLocal = require('../lib/wrap-steps/commit');
+      const writes = [];
+      const orig = { ...commitStepLocal._internal };
+      commitStepLocal._internal.writeFileSync = (p, c) => writes.push({ p, c });
+      commitStepLocal._internal.mkdirSync = () => {};
+      try {
+        const flushed = commitStepLocal._flushStagedWrites({
+          'next-session-prime': { primingPath: '/x.md', newContent: 'unchanged', changed: false }
+        });
+        assert.deepStrictEqual(flushed, []);
+        assert.deepStrictEqual(writes, []);
+      } finally {
+        Object.assign(commitStepLocal._internal, orig);
+      }
+    });
+
+    it('writes when changed is true', () => {
+      const commitStepLocal = require('../lib/wrap-steps/commit');
+      const writes = [];
+      const mkdirs = [];
+      const orig = { ...commitStepLocal._internal };
+      commitStepLocal._internal.writeFileSync = (p, c) => writes.push({ p, c });
+      commitStepLocal._internal.mkdirSync = (p, opts) => mkdirs.push({ p, opts });
+      try {
+        const flushed = commitStepLocal._flushStagedWrites({
+          'next-session-prime': { primingPath: '/proj/.claude/priming/build-session.md', newContent: 'new body', changed: true }
+        });
+        assert.deepStrictEqual(flushed, [
+          { stepId: 'next-session-prime', path: '/proj/.claude/priming/build-session.md' }
+        ]);
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].p, '/proj/.claude/priming/build-session.md');
+        assert.equal(writes[0].c, 'new body');
+        assert.equal(mkdirs[0].opts.recursive, true,
+          'parent directory must be created with recursive:true');
+      } finally {
+        Object.assign(commitStepLocal._internal, orig);
+      }
+    });
+
+    it('writes when changed is missing (treated as needs-write — defensive default)', () => {
+      const commitStepLocal = require('../lib/wrap-steps/commit');
+      const writes = [];
+      const orig = { ...commitStepLocal._internal };
+      commitStepLocal._internal.writeFileSync = (p, c) => writes.push({ p, c });
+      commitStepLocal._internal.mkdirSync = () => {};
+      try {
+        commitStepLocal._flushStagedWrites({
+          x: { primingPath: '/a.md', newContent: 'b' }
+        });
+        assert.equal(writes.length, 1, 'missing `changed` must default to write');
+      } finally {
+        Object.assign(commitStepLocal._internal, orig);
+      }
+    });
+
+    it('returns [] for null/undefined staged maps', () => {
+      const commitStepLocal = require('../lib/wrap-steps/commit');
+      assert.deepStrictEqual(commitStepLocal._flushStagedWrites(null), []);
+      assert.deepStrictEqual(commitStepLocal._flushStagedWrites(undefined), []);
+    });
+  });
+});
+
+describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', () => {
+  const commitStep = require('../lib/wrap-steps/commit');
+  const { execSync } = require('node:child_process');
+  let tmpDir;
+  let projectPath;
+  let originals;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-commit-'));
+    originals = { ...commitStep._internal };
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    // Fresh sandbox repo per test — git state must not leak between cases.
+    Object.assign(commitStep._internal, originals);
+    projectPath = fs.mkdtempSync(path.join(tmpDir, 'repo-'));
+    execSync('git init --quiet', { cwd: projectPath });
+    execSync('git config user.email t@example.com && git config user.name Test',
+      { cwd: projectPath, shell: '/bin/sh' });
+    fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
+    execSync('git add README.md && git commit --quiet -m init',
+      { cwd: projectPath, shell: '/bin/sh' });
+  });
+
+  /** Build a minimal context for the commit handler. */
+  function buildContext(staged, projectOverride) {
+    return {
+      project: projectOverride || { name: 'sandbox', path: projectPath, id: 1 },
+      session: null,
+      step: { id: 'commit', kind: 'commit', blocker: true },
+      previousResults: [],
+      staged: staged || {},
+      options: {}
+    };
+  }
+
+  it('blocks when context.project.path is missing', async () => {
+    const result = await commitStep.run({
+      project: { name: 'no-path', id: 1 },
+      step: { id: 'commit', kind: 'commit' },
+      staged: {}
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /requires context\.project\.path/);
+  });
+
+  it('skips with no commit when working tree is clean and no staged writes', async () => {
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.commitSha, null);
+    assert.match(result.output.reason, /no changes to commit/);
+
+    // Verify no new commit was added.
+    const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+    assert.equal(log.trim().split('\n').length, 1, 'commit step must not have added a commit');
+  });
+
+  it('skips when staged priming entry has changed:false and tree is clean', async () => {
+    const ctx = buildContext({
+      'next-session-prime': {
+        primingPath: path.join(projectPath, '.claude/priming/build-session.md'),
+        newContent: 'would-not-write',
+        changed: false,
+        pointer: { current: { id: '1', title: 'x', blockedOn: null }, next: null, allDone: false }
+      }
+    });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.status, 'skipped',
+      'changed:false must not produce a write, and a clean tree must not produce a commit');
+    assert.equal(fs.existsSync(path.join(projectPath, '.claude/priming/build-session.md')), false,
+      'changed:false must not flush to disk');
+  });
+
+  it('flushes a priming-roll staged write and produces one commit', async () => {
+    const primingPath = path.join(projectPath, '.claude/priming/build-session.md');
+    const ctx = buildContext({
+      'next-session-prime': {
+        primingPath,
+        newContent: '<!-- TANGLECLAW:PRIMING-ROLL:BEGIN -->\nActive: Chunk 9 — Commit\n<!-- TANGLECLAW:PRIMING-ROLL:END -->\n',
+        changed: true,
+        pointer: { current: { id: '9', title: 'Commit', blockedOn: null }, next: null, allDone: false }
+      }
+    });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.ok(result.output.commitSha, 'must capture commit SHA');
+    assert.match(result.output.commitSha, /^[0-9a-f]{7,40}$/, 'SHA must be hex');
+    assert.equal(fs.existsSync(primingPath), true, 'staged write must be flushed');
+    assert.match(fs.readFileSync(primingPath, 'utf8'), /Chunk 9 — Commit/);
+    assert.equal(result.output.flushed.length, 1);
+    assert.equal(result.output.flushed[0].stepId, 'next-session-prime');
+
+    // Exactly one new commit landed.
+    const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+    assert.equal(log.trim().split('\n').length, 2, 'init + one wrap commit');
+  });
+
+  it('picks up a working-tree change (AI-style MEMORY.md edit) the AI made before commit step ran', async () => {
+    // Simulate the ai-content step having the AI write to MEMORY.md
+    // in the working tree (the AI does its own writes; capturedText is
+    // just metadata staged for the commit message).
+    const memoryDir = path.join(projectPath, '.tangleclaw/memories');
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), '# Memory\n\n## Last Session\n…\n');
+
+    const ctx = buildContext({
+      'memory-update': {
+        capturedText: 'whatever',
+        parsedFields: { summary: 's' }
+      }
+    });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.ok(result.output.commitSha);
+    const files = execSync('git show --name-only --format= HEAD', { cwd: projectPath }).toString();
+    assert.match(files, /\.tangleclaw\/memories\/MEMORY\.md/,
+      'AI-written MEMORY.md must be included in the wrap commit');
+  });
+
+  it('stamps lastWrapSha on projConfig after a successful commit', async () => {
+    // projectConfig.load/save are file-based on the project's own
+    // `.tangleclaw/project.json` — no store DB init needed.
+    const storeMod = require('../lib/store');
+    fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.ok(result.output.commitSha);
+    assert.equal(result.output.stamped, true);
+
+    const cfg = storeMod.projectConfig.load(projectPath);
+    assert.equal(cfg.lastWrapSha, result.output.commitSha,
+      'projConfig.lastWrapSha must equal the commit SHA');
+  });
+
+  it('returns blocked when git commit exits non-zero (pre-commit hook rejection)', async () => {
+    // Install a pre-commit hook that rejects everything.
+    const hookDir = path.join(projectPath, '.git/hooks');
+    const hookPath = path.join(hookDir, 'pre-commit');
+    fs.writeFileSync(hookPath, '#!/bin/sh\necho "rejected by hook" >&2\nexit 1\n');
+    fs.chmodSync(hookPath, 0o755);
+
+    fs.writeFileSync(path.join(projectPath, 'change.txt'), 'hi\n');
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /git commit failed/);
+    assert.match(result.blockers[0], /rejected by hook/);
+
+    // No commit landed.
+    const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+    assert.equal(log.trim().split('\n').length, 1, 'hook rejection must leave commit unmade');
+  });
+
+  it('blocks with explanatory message when git status fails (non-repo)', async () => {
+    // Replace the exec internal to simulate a non-repo or git-missing
+    // environment — easier to mock than to delete .git from under a
+    // running test.
+    commitStep._internal.exec = async () => ({
+      exitCode: 128,
+      stdout: '',
+      stderr: 'fatal: not a git repository\n'
+    });
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /git status failed/);
+    assert.match(result.blockers[0], /not a git repository/);
+  });
+
+  it('surfaces flush errors as blockers, never as runner exceptions', async () => {
+    commitStep._internal.writeFileSync = () => { throw new Error('EROFS'); };
+    const ctx = buildContext({
+      'next-session-prime': {
+        primingPath: path.join(projectPath, '.claude/priming/build-session.md'),
+        newContent: 'x',
+        changed: true,
+        pointer: { current: { id: '1', title: 'x', blockedOn: null }, next: null, allDone: false }
+      }
+    });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Failed to flush staged write/);
+    assert.match(result.blockers[0], /EROFS/);
+  });
+
+  it('builds a session-content commit message from staged content', async () => {
+    const primingPath = path.join(projectPath, '.claude/priming/build-session.md');
+    // Simulate the AI edit AND priming staging both happening before commit.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw/memories'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw/memories/MEMORY.md'), '# Memory\n');
+    execSync('git checkout -b feat/chunk-9-msg-test --quiet', { cwd: projectPath });
+
+    const ctx = buildContext({
+      'next-session-prime': {
+        primingPath, newContent: 'pri\n', changed: true,
+        pointer: { current: { id: '9', title: 'Commit step', blockedOn: null }, next: null, allDone: false }
+      },
+      'memory-update': { capturedText: 'mem', parsedFields: { summary: 's' } },
+      'critic-check': { warning: true, owedRationale: 'trivial change' }
+    });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    const subjAndBody = execSync('git log -1 --pretty=%B', { cwd: projectPath }).toString();
+    assert.match(subjAndBody, /^Session wrap \(chunk 9\)/);
+    assert.match(subjAndBody, /Priming rolled to Chunk 9 — Commit step/);
+    assert.match(subjAndBody, /AI content \(memory-update\): captured fields \[summary\]/);
+    assert.match(subjAndBody, /Critic skip rationale: trivial change/);
+  });
+
+  it('uses generic subject when HEAD is detached (no branch)', async () => {
+    fs.writeFileSync(path.join(projectPath, 'change.txt'), 'a\n');
+    // Detach HEAD.
+    const sha = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
+    execSync(`git checkout --quiet ${sha}`, { cwd: projectPath });
+
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    const subj = execSync('git log -1 --pretty=%s', { cwd: projectPath }).toString().trim();
+    assert.equal(subj, 'Session wrap',
+      'detached HEAD has no branch → subject falls back to generic');
+  });
+
+  // ── Critic MINOR pins (#139 Chunk 9): failure-path test coverage ──
+
+  it('returns ok:true with stamped:false when projConfig.save throws but commit succeeded', async () => {
+    // Critic MINOR: the _stampLastWrapSha path is non-fatal — the commit
+    // already landed, the stamp is a hint for Chunks 4/7 range detection.
+    // Mock the store.projectConfig.save to throw and assert the run
+    // result stays ok:true with output.stamped:false.
+    const storeMod = require('../lib/store');
+    const origSave = storeMod.projectConfig.save;
+    storeMod.projectConfig.save = () => { throw new Error('EACCES from save mock'); };
+    try {
+      fs.writeFileSync(path.join(projectPath, 'something.txt'), 'x\n');
+      const ctx = buildContext({});
+      const result = await commitStep.run(ctx);
+      assert.equal(result.ok, true, 'commit landed; stamp failure is non-fatal');
+      assert.equal(result.status, 'done');
+      assert.ok(result.output.commitSha, 'commit SHA still captured');
+      assert.equal(result.output.stamped, false,
+        'output.stamped must reflect the failure so Chunk 10 UI can surface "stamp failed"');
+    } finally {
+      storeMod.projectConfig.save = origSave;
+    }
+  });
+
+  it('returns ok:true with commitSha:null when git rev-parse HEAD fails after commit succeeded', async () => {
+    // Critic MINOR: the rev-parse-after-commit failure path is
+    // documented as non-blocking in commit.js — the commit already
+    // landed, we just can't capture the SHA. Verify the run result
+    // surfaces commitSha:null + stamped:false on this path.
+    fs.writeFileSync(path.join(projectPath, 'rev-parse-test.txt'), 'x\n');
+
+    // Replace exec so the LAST call (rev-parse HEAD) returns non-zero
+    // while the prior three (status, add, commit) hit the real git.
+    const realExec = commitStep._internal.exec;
+    let callIdx = 0;
+    commitStep._internal.exec = async (file, args, opts) => {
+      callIdx++;
+      if (file === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') {
+        return { exitCode: 1, stdout: '', stderr: 'fake rev-parse failure' };
+      }
+      return realExec(file, args, opts);
+    };
+    try {
+      const ctx = buildContext({});
+      const result = await commitStep.run(ctx);
+      assert.equal(result.ok, true,
+        'commit landed; rev-parse failure must not block the pipeline');
+      assert.equal(result.output.commitSha, null,
+        'rev-parse failure → commitSha:null');
+      assert.equal(result.output.stamped, false,
+        'no SHA → no stamp');
+      // The commit DID land — verify via git log directly.
+      const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+      assert.equal(log.trim().split('\n').length, 2,
+        'init + the wrap commit must both be present');
+    } finally {
+      commitStep._internal.exec = realExec;
+    }
+  });
+
+  it('blocks when git add -A exits non-zero', async () => {
+    // Critic MINOR: only `git status` and `git commit` failure paths
+    // were tested. Cover `git add` failure too — completes the three-
+    // path matrix.
+    fs.writeFileSync(path.join(projectPath, 'add-test.txt'), 'x\n');
+
+    const realExec = commitStep._internal.exec;
+    commitStep._internal.exec = async (file, args, opts) => {
+      if (file === 'git' && args[0] === 'add') {
+        return { exitCode: 128, stdout: '', stderr: 'fatal: git add mock failure\n' };
+      }
+      return realExec(file, args, opts);
+    };
+    try {
+      const ctx = buildContext({});
+      const result = await commitStep.run(ctx);
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.match(result.blockers[0], /git add -A failed/);
+      assert.match(result.blockers[0], /git add mock failure/);
+      // No new commit landed.
+      const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+      assert.equal(log.trim().split('\n').length, 1,
+        'git add failure must leave commit unmade');
+    } finally {
+      commitStep._internal.exec = realExec;
+    }
+  });
+});
+
+describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
+  const wrapPipelineMod = require('../lib/wrap-pipeline');
+  let tmpDir;
+  let projectPath;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pipeline-commitsha-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    projectPath = path.join(tmpDir, 'project');
+    fs.mkdirSync(projectPath, { recursive: true });
+    store.projects.create({
+      name: 'commitsha-test',
+      path: projectPath,
+      methodology: 'prawduct'
+    });
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('surfaces the commit step output.commitSha on the runner return shape', async () => {
+    // Stub every other step to no-op so the runner reaches the commit step.
+    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'version-bump'];
+    const originals = {};
+    const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+    for (const kind of realKinds) {
+      originals[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
+      wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
+    }
+    const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
+    wrapPipelineMod.STEP_DISPATCH['commit'] = {
+      run: async () => ({
+        ok: true,
+        status: 'done',
+        output: { commitSha: 'deadbeefcafe1234567890abcdef01234567890a', message: 'x', flushed: [], stamped: true },
+        blockers: []
+      })
+    };
+
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('commitsha-test');
+      assert.equal(result.ok, true);
+      assert.equal(result.commitSha, 'deadbeefcafe1234567890abcdef01234567890a',
+        'runner must surface commit step output.commitSha at the top level');
+    } finally {
+      for (const kind of realKinds) {
+        wrapPipelineMod.STEP_DISPATCH[kind] = originals[kind];
+      }
+      wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
+    }
+  });
+
+  it('keeps commitSha null when commit step skips (clean session)', async () => {
+    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'version-bump'];
+    const originals = {};
+    const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+    for (const kind of realKinds) {
+      originals[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
+      wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
+    }
+    const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
+    wrapPipelineMod.STEP_DISPATCH['commit'] = {
+      run: async () => ({
+        ok: true,
+        status: 'skipped',
+        output: { reason: 'no changes to commit', flushed: [], commitSha: null },
+        blockers: []
+      })
+    };
+
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('commitsha-test');
+      assert.equal(result.ok, true);
+      assert.equal(result.commitSha, null,
+        'a skipped (clean) commit step must leave runner commitSha null');
+    } finally {
+      for (const kind of realKinds) {
+        wrapPipelineMod.STEP_DISPATCH[kind] = originals[kind];
+      }
+      wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
+    }
+  });
+
+  it('keeps commitSha null when the pipeline halts before reaching commit', async () => {
+    const origAiContent = wrapPipelineMod.STEP_DISPATCH['ai-content'];
+    const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
+    // Make the FIRST ai-content step block, with the prawduct template's
+    // version-bump → ai-content chain. We need to swap the template's
+    // first ai-content step to blocker:true so the runner halts.
+    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+    const firstAiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
+    firstAiStep.blocker = true;
+    store.templates.save(prawduct);
+
+    wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
+      run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['x'] })
+    };
+    wrapPipelineMod.STEP_DISPATCH['commit'] = {
+      run: async () => {
+        throw new Error('commit step must not have run after pipeline halt');
+      }
+    };
+
+    try {
+      const result = await wrapPipelineMod.runWrapPipeline('commitsha-test');
+      assert.equal(result.ok, false);
+      assert.equal(result.commitSha, null,
+        'halted pipeline must leave commitSha null');
+    } finally {
+      wrapPipelineMod.STEP_DISPATCH['ai-content'] = origAiContent;
+      wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
+      delete firstAiStep.blocker;
+      store.templates.save(prawduct);
+    }
+  });
+});
+
+describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9)', () => {
+  // The bundled prawduct / minimal / tilt templates must declare
+  // `blocker: true` on the commit step so a git failure halts the
+  // pipeline. The back-compat shim ignores the `blocker` field, so
+  // adding it here doesn't change the legacy NL prompt byte-equal pin.
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pipeline-commit-bundled-'));
+    store._setBasePath(tmpDir);
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('prawduct commit step has blocker:true', () => {
+    const t = store.templates.get('prawduct');
+    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
+    assert.ok(commitStep, 'prawduct must have a commit step');
+    assert.equal(commitStep.blocker, true,
+      'commit step must declare blocker:true so failures halt the pipeline');
+  });
+
+  it('minimal commit step has blocker:true', () => {
+    const t = store.templates.get('minimal');
+    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
+    assert.ok(commitStep);
+    assert.equal(commitStep.blocker, true);
+  });
+
+  // The `tilt` bundled template is gitignored (`.gitignore:24` — "Unreleased
+  // methodology templates"), so a CI clone may not have it on disk. When
+  // present locally we still want to verify it carries the same blocker:true
+  // contract so a future un-gitignore lands cleanly.
+  it('tilt commit step has blocker:true (skipped when tilt not present)', () => {
+    const t = store.templates.get('tilt');
+    if (!t) return; // skip — tilt not in this checkout
+    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
+    assert.ok(commitStep);
+    assert.equal(commitStep.blocker, true);
+  });
+});
+
+describe('projConfig — lastWrapSha default (#139 Chunk 9)', () => {
+  let tmpDir;
+  let projectPath;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-projconfig-lastwrapsha-'));
+    projectPath = path.join(tmpDir, 'project');
+    fs.mkdirSync(projectPath, { recursive: true });
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('DEFAULT_PROJECT_CONFIG includes lastWrapSha:null', () => {
+    assert.equal(store.DEFAULT_PROJECT_CONFIG.lastWrapSha, null,
+      'lastWrapSha must default to null so Chunks 4/7 fallbacks remain authoritative for un-wrapped projects');
+  });
+
+  it('round-trips lastWrapSha through load/save', () => {
+    const cfg = store.projectConfig.load(projectPath);
+    assert.equal(cfg.lastWrapSha, null);
+    cfg.lastWrapSha = 'abc123def456';
+    store.projectConfig.save(projectPath, cfg);
+    const reloaded = store.projectConfig.load(projectPath);
+    assert.equal(reloaded.lastWrapSha, 'abc123def456');
   });
 });
