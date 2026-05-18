@@ -1120,6 +1120,62 @@ describe('sessions', () => {
       }
     });
 
+    it('wrapV2:true forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-v2-options-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      // Capture the options the runner receives by patching the module
+      // export. The runner's full execution is exercised in
+      // wrap-pipeline tests; here we only pin the options-threading
+      // contract introduced in Chunk 10.
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let receivedOptions;
+      wrapPipelineMod.runWrapPipeline = async (projectName, options) => {
+        receivedOptions = options;
+        return {
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: null,
+          summary: null,
+          error: null
+        };
+      };
+
+      try {
+        const opts = {
+          skipTests: true,
+          criticSkipRationale: 'rationale text',
+          prHandling: { '42': 'merge' }
+        };
+        await sessions.triggerWrap('prime-test', opts);
+        assert.deepEqual(receivedOptions, opts,
+          'options object must reach runWrapPipeline unchanged');
+
+        // Undefined options on the entry call surfaces as undefined at
+        // the runner (NOT silently coerced to {}) so the runner's own
+        // default-param can govern.
+        receivedOptions = 'sentinel-not-set';
+        await sessions.triggerWrap('prime-test');
+        assert.equal(receivedOptions, undefined,
+          'omitted options must reach the runner as undefined');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        const cfg = store.projectConfig.load(project.path);
+        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
+      }
+    });
+
     it('wrapV2 absent from projConfig (older on-disk state) falls back to legacy path (#139 Chunk 3 Critic nit)', async () => {
       // Older project.json files written before #139 won't carry a
       // `wrapV2` field. `store.projectConfig.load` deep-merges with

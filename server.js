@@ -1251,29 +1251,40 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 });
 
 // POST /api/sessions/:project/wrap — Trigger wrap skill
+// Body: { password?, options? } — `options` is V2-only and carries per-wrap
+// user choices the drawer collected on retry after a blocked step
+// (`{skipTests, criticSkipRationale, prHandling}`). Legacy V1 path ignores it.
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
   }
 
-  const result = await sessions.triggerWrap(params.project);
-  if (!result.ok) {
-    if (result.error.includes('not found') || result.error.includes('No active')) {
+  const options = body && typeof body.options === 'object' && body.options !== null ? body.options : undefined;
+  const result = await sessions.triggerWrap(params.project, options);
+  // V2 may return ok:false from the pipeline (a blocked step). That's not a
+  // server error — it's an expected pipeline outcome the drawer renders.
+  // Surface it with HTTP 200 + `pipelineResult` so the frontend can paint
+  // per-step status and collect retry inputs.
+  if (!result.ok && !result.pipelineResult) {
+    if (result.error && (result.error.includes('not found') || result.error.includes('No active'))) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');
     }
-    return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
+    return errorResponse(res, 500, result.error || 'Wrap failed', 'INTERNAL_ERROR');
   }
 
-  jsonResponse(res, 200, {
-    ok: true,
+  const payload = {
+    ok: result.ok,
     sessionId: result.sessionId,
     project: params.project,
-    status: 'wrapping',
+    status: result.ok ? 'wrapping' : 'blocked',
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
     captureFields: result.captureFields
-  });
+  };
+  if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
+  if (!result.ok && result.error) payload.error = result.error;
+  jsonResponse(res, 200, payload);
 });
 
 // POST /api/sessions/:project/wrap/complete — Manual wrap completion

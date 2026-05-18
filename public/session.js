@@ -1500,6 +1500,12 @@ function closeWrapModal() {
 
 /**
  * Confirm and execute wrap.
+ *
+ * V1 path (legacy NL-prompt-via-tmux wrap, `wrapV2:false`) returns no
+ * `pipelineResult`; the modal closes and the existing polling loop
+ * waits for tmux to settle. V2 path returns `pipelineResult` carrying
+ * the runner's per-step results — the multi-step drawer takes over
+ * (#139 Chunk 10).
  */
 async function confirmWrap() {
   const pw = document.getElementById('wrapPassword').value;
@@ -1519,12 +1525,427 @@ async function confirmWrap() {
   }
 
   closeWrapModal();
-  // Immediately show wrapping state
+
+  if (data.pipelineResult) {
+    // V2 path — pipeline ran server-side; render the drawer with the
+    // per-step result. The drawer drives any retry-with-options round
+    // trips itself; the legacy wrapping bar + polling don't apply.
+    // Hand the password down so retries can re-authenticate without
+    // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
+    // every call, V1 and V2 alike).
+    openWrapDrawer(data.pipelineResult, pw);
+    return;
+  }
+
+  // V1 legacy path — pipeline still in flight inside the AI session.
   sessionState.wrapping = true;
   showWrappingState();
   // Increase poll frequency during wrapping
   sessionState.pollInterval = 2000;
   startPolling();
+}
+
+// ── Wrap Pipeline Drawer (#139 Chunk 10) ──
+
+/**
+ * Cached wrap password from the original `confirmWrap`. The wrap
+ * endpoint enforces `deleteProtected` on every call (server.js
+ * `checkDeletePassword`), so retries must include the same password
+ * the initial POST authenticated with. Cleared on drawer close.
+ * @type {string}
+ */
+let currentWrapPassword = '';
+
+/**
+ * Open the wrap drawer with a rendered pipeline result and wire its
+ * action buttons for the current state (retry / done / close).
+ *
+ * @param {object} pipelineResult - From `POST /wrap` response body.
+ * @param {string} [password] - Password collected by the initial wrap
+ *   modal, replayed on every retry. Empty string on
+ *   non-delete-protected installs.
+ */
+function openWrapDrawer(pipelineResult, password) {
+  if (typeof password === 'string') currentWrapPassword = password;
+  renderWrapDrawer(pipelineResult);
+  document.getElementById('wrapDrawerBackdrop').classList.add('open');
+  document.getElementById('wrapDrawer').classList.add('open');
+}
+
+/**
+ * Hide the drawer and clear retained state.
+ */
+function closeWrapDrawer() {
+  document.getElementById('wrapDrawerBackdrop').classList.remove('open');
+  document.getElementById('wrapDrawer').classList.remove('open');
+  currentWrapPassword = '';
+}
+
+/**
+ * Render the drawer body from a pipeline result. Pure DOM mutation;
+ * all shape-to-view-model decisions live in `tcWrapDrawerHelpers`.
+ *
+ * @param {object} pipelineResult
+ */
+function renderWrapDrawer(pipelineResult) {
+  const H = window.tcWrapDrawerHelpers;
+  const status = H.summarizePipelineStatus(pipelineResult);
+
+  // Status banner
+  const statusEl = document.getElementById('wrapDrawerStatus');
+  statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
+  statusEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = status.label;
+  statusEl.appendChild(label);
+  if (status.detail) {
+    const detail = document.createElement('span');
+    detail.className = 'wrap-drawer-status-detail';
+    detail.textContent = status.detail;
+    statusEl.appendChild(detail);
+  }
+
+  // Build all view-model rows once; both the step list and the
+  // decision-widget loop consume the same array (N6 — avoid double-
+  // computing per render and keep the helper a single source of truth).
+  const results = Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
+  const rows = results.map((r) => ({
+    row: H.buildStepRow(r, { blockedAt: pipelineResult.blockedAt }),
+    raw: r
+  }));
+
+  // Step list
+  const listEl = document.getElementById('wrapStepList');
+  listEl.innerHTML = '';
+  for (const { row } of rows) {
+    listEl.appendChild(renderStepRow(row));
+  }
+
+  // Decision widget — for the blocked step OR for any ok:true step
+  // that surfaced a non-blocking warning (e.g. critic-check) OR a
+  // pr-check with unresolved session-scoped PRs.
+  const decisionEl = document.getElementById('wrapDrawerDecision');
+  decisionEl.innerHTML = '';
+  let widgetRendered = false;
+  let warningOnly = false;
+  for (const { row, raw } of rows) {
+    if (row.isBlocker) {
+      const widget = H.decisionWidgetForBlockedStep(row);
+      if (widget) {
+        decisionEl.appendChild(renderDecisionWidget(widget));
+        widgetRendered = true;
+      }
+      // Blocker takes precedence over any later warning widgets — the
+      // user must address it before anything else matters.
+      break;
+    }
+    if (row.warning) {
+      const widget = H.warningWidgetForStep(row);
+      if (widget) {
+        decisionEl.appendChild(renderDecisionWidget(widget));
+        widgetRendered = true;
+        warningOnly = true;
+      }
+    }
+    if (row.kind === 'pr-check') {
+      // pr-check produces a resolution widget when there are
+      // unresolved session-scoped PRs regardless of warning state —
+      // ok:true with sessionScoped > 0 still wants resolution.
+      const prWidget = H.prCheckResolutionWidget(row, raw.output);
+      if (prWidget) {
+        decisionEl.appendChild(renderPrResolutionWidget(prWidget));
+        widgetRendered = true;
+        warningOnly = true;
+      }
+    }
+  }
+  decisionEl.classList.toggle('hidden', !widgetRendered);
+
+  // Action buttons:
+  // - Retry: visible whenever there's something actionable (blocker OR
+  //   an unresolved widget). A retry on a warning-only state re-runs
+  //   the whole pipeline, which produces a SECOND commit on top of the
+  //   one that already landed — surfaced inline in the decision widget
+  //   so the user can choose Done instead (M4).
+  // - Done: visible on clean ok:true AND on warning-only state — the
+  //   latter lets the user accept the warnings as-is without producing
+  //   a second commit.
+  // - Cancel/Close: always available.
+  const retryBtn = document.getElementById('wrapDrawerRetryBtn');
+  const doneBtn = document.getElementById('wrapDrawerDoneBtn');
+  const cancelBtn = document.getElementById('wrapDrawerCancelBtn');
+  const blocked = Boolean(pipelineResult.blockedAt);
+  if (blocked) {
+    retryBtn.classList.remove('hidden');
+    doneBtn.classList.add('hidden');
+    cancelBtn.textContent = 'Cancel';
+  } else if (widgetRendered && warningOnly) {
+    // ok:true + warnings: Retry re-runs (double commit if commit step
+    // already landed); Done accepts current state as-is.
+    retryBtn.classList.remove('hidden');
+    doneBtn.classList.remove('hidden');
+    cancelBtn.textContent = 'Close';
+  } else {
+    retryBtn.classList.add('hidden');
+    doneBtn.classList.remove('hidden');
+    cancelBtn.textContent = 'Close';
+  }
+}
+
+/**
+ * Build a `<li>` for one pipeline step view-model.
+ *
+ * @param {object} row - From `tcWrapDrawerHelpers.buildStepRow`.
+ * @returns {HTMLLIElement}
+ */
+function renderStepRow(row) {
+  const li = document.createElement('li');
+  li.className = 'wrap-step-row';
+  if (row.isBlocker) li.classList.add('wrap-step-row--blocker');
+  else if (row.warning) li.classList.add('wrap-step-row--warning');
+  li.dataset.stepId = row.id;
+  li.dataset.kind = row.kind;
+
+  const main = document.createElement('div');
+  main.className = 'wrap-step-main';
+
+  const labelLine = document.createElement('span');
+  labelLine.className = 'wrap-step-label';
+  labelLine.textContent = `${row.kindLabel} — ${row.id}`;
+  main.appendChild(labelLine);
+
+  if (row.detail) {
+    const detailLine = document.createElement('span');
+    detailLine.className = 'wrap-step-detail';
+    detailLine.textContent = row.detail;
+    main.appendChild(detailLine);
+  }
+
+  if (row.blockers && row.blockers.length > 0) {
+    const blockersLine = document.createElement('span');
+    blockersLine.className = 'wrap-step-blockers';
+    blockersLine.textContent = row.blockers.join('; ');
+    main.appendChild(blockersLine);
+  }
+
+  const status = document.createElement('span');
+  status.className = `wrap-step-status wrap-step-status--${row.statusTone}`;
+  status.textContent = row.statusLabel;
+
+  li.appendChild(main);
+  li.appendChild(status);
+  return li;
+}
+
+/**
+ * Build the inline decision widget (checkbox OR textarea) for a single
+ * blocked-step kind. PR-list widgets are handled separately by
+ * `renderPrResolutionWidget` because they need iteration.
+ *
+ * @param {object} widget - From `decisionWidgetForBlockedStep` or
+ *   `warningWidgetForStep`.
+ * @returns {HTMLDivElement}
+ */
+function renderDecisionWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision';
+  wrap.dataset.optionsKey = widget.optionsKey;
+  wrap.dataset.kind = widget.kind;
+
+  if (widget.inputType === 'checkbox') {
+    const row = document.createElement('label');
+    row.className = 'wrap-decision-checkbox-row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = `wrapDecisionInput_${widget.optionsKey}`;
+    input.dataset.optionsKey = widget.optionsKey;
+    row.appendChild(input);
+    const text = document.createElement('span');
+    text.textContent = widget.label;
+    row.appendChild(text);
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  if (widget.inputType === 'textarea') {
+    const label = document.createElement('label');
+    label.className = 'wrap-decision-label';
+    label.textContent = widget.label;
+    label.setAttribute('for', `wrapDecisionInput_${widget.optionsKey}`);
+    const ta = document.createElement('textarea');
+    ta.className = 'wrap-decision-textarea';
+    ta.id = `wrapDecisionInput_${widget.optionsKey}`;
+    ta.dataset.optionsKey = widget.optionsKey;
+    wrap.appendChild(label);
+    wrap.appendChild(ta);
+    return wrap;
+  }
+
+  // Unknown input type — surface as plain label, don't break the render.
+  const fallback = document.createElement('p');
+  fallback.textContent = widget.label;
+  wrap.appendChild(fallback);
+  return wrap;
+}
+
+/**
+ * Build the PR-resolution widget — one row per unresolved
+ * session-scoped PR with a per-PR dropdown. PR title doubles as the
+ * anchor to the PR page (T3) so users can review before resolving.
+ *
+ * @param {object} widget - From `prCheckResolutionWidget`.
+ * @returns {HTMLDivElement}
+ */
+function renderPrResolutionWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--prlist';
+  wrap.dataset.optionsKey = 'prHandling';
+  wrap.dataset.kind = 'pr-check';
+
+  const label = document.createElement('label');
+  label.className = 'wrap-decision-label';
+  label.textContent = `Resolve ${widget.prs.length} open PR${widget.prs.length === 1 ? '' : 's'} on this branch:`;
+  wrap.appendChild(label);
+
+  const list = document.createElement('div');
+  list.className = 'wrap-decision-prlist';
+  for (const pr of widget.prs) {
+    const row = document.createElement('div');
+    row.className = 'wrap-decision-prrow';
+    row.dataset.prNumber = String(pr.number);
+
+    // Title is an anchor when we have a URL (T3) — opens in a new tab
+    // with safe rel attribute. Falls back to span when URL absent so
+    // pr-check output without `url` still renders.
+    let titleEl;
+    if (pr.url) {
+      titleEl = document.createElement('a');
+      titleEl.href = pr.url;
+      titleEl.target = '_blank';
+      titleEl.rel = 'noopener noreferrer';
+    } else {
+      titleEl = document.createElement('span');
+    }
+    titleEl.className = 'wrap-decision-prtitle';
+    titleEl.textContent = `#${pr.number} ${pr.title}`;
+    titleEl.title = pr.url || '';
+
+    const sel = document.createElement('select');
+    sel.className = 'wrap-decision-prselect';
+    sel.dataset.prNumber = String(pr.number);
+    for (const opt of [
+      { v: '', label: '— pick —' },
+      { v: 'merge', label: 'Merge before wrap' },
+      { v: 'defer', label: 'Defer (note in commit)' },
+      { v: 'ignore', label: 'Ignore' }
+    ]) {
+      const o = document.createElement('option');
+      o.value = opt.v;
+      o.textContent = opt.label;
+      sel.appendChild(o);
+    }
+    row.appendChild(titleEl);
+    row.appendChild(sel);
+    list.appendChild(row);
+  }
+  wrap.appendChild(list);
+
+  // Inline note: re-running pr-check after a commit step already landed
+  // produces a second commit. Surfaces the trade-off so the user can
+  // choose Done instead of Retry when appropriate (M4 — paired with
+  // the warning-state Done-button visibility in `renderWrapDrawer`).
+  const note = document.createElement('p');
+  note.className = 'wrap-decision-note';
+  note.textContent = 'Retry re-runs the whole pipeline — if a commit already landed, a second commit will be created. Click Done to accept the current state as-is.';
+  wrap.appendChild(note);
+  return wrap;
+}
+
+/**
+ * Surface a retry-time error inline in the drawer status banner.
+ * Used when `apiMutate` returns `null` on retry (auth, server error,
+ * dropped session) so the user gets a real explanation instead of a
+ * frozen drawer (M3).
+ *
+ * @param {string} message - Human-readable error message.
+ */
+function renderWrapDrawerError(message) {
+  const statusEl = document.getElementById('wrapDrawerStatus');
+  statusEl.className = 'wrap-drawer-status wrap-drawer-status--error';
+  statusEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = 'Retry failed';
+  statusEl.appendChild(label);
+  const detail = document.createElement('span');
+  detail.className = 'wrap-drawer-status-detail';
+  detail.textContent = message;
+  statusEl.appendChild(detail);
+}
+
+/**
+ * Collect decision-widget DOM into an options object and POST a retry.
+ */
+async function retryWrap() {
+  const H = window.tcWrapDrawerHelpers;
+  const decisionEl = document.getElementById('wrapDrawerDecision');
+  const accessors = {
+    skipTests: () => {
+      const el = decisionEl.querySelector('input[data-options-key="skipTests"]');
+      return el ? el.checked === true : false;
+    },
+    criticSkipRationale: () => {
+      const el = decisionEl.querySelector('textarea[data-options-key="criticSkipRationale"]');
+      return el ? el.value : '';
+    },
+    prHandling: () => {
+      const selects = decisionEl.querySelectorAll('select.wrap-decision-prselect');
+      if (selects.length === 0) return null;
+      const out = {};
+      for (const sel of selects) {
+        if (sel.value) out[sel.dataset.prNumber] = sel.value;
+      }
+      return out;
+    }
+  };
+
+  const options = H.collectOptionsFromAccessors(accessors);
+
+  // M1: replay the password collected at the initial wrap modal so a
+  // delete-protected install can retry without re-prompting.
+  const body = { options };
+  if (currentWrapPassword) body.password = currentWrapPassword;
+
+  const retryBtn = document.getElementById('wrapDrawerRetryBtn');
+  retryBtn.disabled = true;
+  try {
+    const data = await apiMutate(
+      `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
+      'POST',
+      body
+    );
+    if (data && data.pipelineResult) {
+      // Re-render in place; password stays cached via openWrapDrawer's
+      // typeof-string guard so undefined here won't clobber it.
+      openWrapDrawer(data.pipelineResult);
+    } else if (data) {
+      // Server returned a V1-shaped response on retry — shouldn't happen
+      // for the same project mid-wrap, but surface gracefully.
+      closeWrapDrawer();
+      sessionState.wrapping = true;
+      showWrappingState();
+      sessionState.pollInterval = 2000;
+      startPolling();
+    } else {
+      // M3: apiMutate returned null — surface api.lastError inline so
+      // the user sees what went wrong (401/403/404/500/network).
+      // apiMutate is a thin wrapper; the side-channel error lives on
+      // the underlying api() function (api-helper.js:33-49).
+      const lastErr = (typeof api !== 'undefined' && api.lastError) || 'Retry failed — see browser console.';
+      renderWrapDrawerError(lastErr);
+    }
+  } finally {
+    retryBtn.disabled = false;
+  }
 }
 
 // ── Terminal Touch Scroll Shim ──
@@ -1842,6 +2263,13 @@ function bindEvents() {
   $('wrapModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeWrapModal();
   });
+
+  // Wrap pipeline drawer (#139 Chunk 10)
+  $('wrapDrawerCloseBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerCancelBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerDoneBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerRetryBtn').addEventListener('click', retryWrap);
+  $('wrapDrawerBackdrop').addEventListener('click', closeWrapDrawer);
 
   // Audio context initialization on first interaction (mobile requirement)
   document.addEventListener('touchstart', initAudio, { once: true });
