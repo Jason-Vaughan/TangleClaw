@@ -81,10 +81,14 @@ describe('skills', () => {
     // Pins the two public bundled templates (prawduct + minimal). The
     // unreleased `tilt` template is gitignored, so it isn't asserted here
     // to keep the test robust on fresh clones.
-    it('synthesizes legacy shape from wrap_pipeline byte-equal to pre-migration (#139 Chunk 2)', () => {
+    it('synthesizes legacy shape from wrap_pipeline (post-Chunk-11c step list for prawduct)', () => {
+      // #139 Chunk 11c added `open-pr-check` + `critic-check` to prawduct's
+      // wrap_pipeline.steps[]. The shim flattens every step.id into the
+      // legacy steps array, so the surface order here reflects the
+      // template-level addition.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit'],
+        steps: ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {

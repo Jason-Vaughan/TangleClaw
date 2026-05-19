@@ -197,6 +197,24 @@ Methodology templates: `~/.tangleclaw/templates/`
 
 See the [Configuration Reference](docs/configuration-reference.md) for all fields, types, and defaults.
 
+### Session Wrap (V2 default, opt-out path)
+
+After #139 Chunk 11c lands, the Session Wrap button drives a **server-side pipeline** (`wrap_pipeline`) instead of the legacy natural-language-prompt-via-tmux flow. The pipeline runs deterministic steps server-side and invokes the AI engine only at explicit `ai-content` handoffs. A single transaction stages all changes; failure blocks the pipeline with no commit; success produces one commit (or zero on a clean session).
+
+**Prawduct's bundled pipeline** wires the following step kinds: `pr-check` (surfaces open session-scoped PRs), `critic-check` (heuristic for missed Critic review on medium+ work), `version-bump` (Chunk-3 stub — placeholder for a future real handler), three `ai-content` placeholder steps (`changelog-update`, `learnings-capture`, `memory-update` — methodology declares them but ships them with empty prompts; the runner reports them as `skipped` in the drawer until prompt content lands), `priming-roll` (rolls the next-session pointer in `.claude/priming/build-session.md`), and `commit` (single-transaction flush). `lint` / `test` step kinds exist as real handlers but are not wired into prawduct's pipeline yet; methodology authors can opt them in via the `wrap_pipeline.steps[]` block of their own templates.
+
+**To opt back to the legacy NL-prompt flow on a per-project basis**, set `wrapV2: false` in `<project-path>/.tangleclaw/project.json`:
+
+```json
+{
+  "wrapV2": false
+}
+```
+
+Existing projects that already had a `project.json` file persisted before this release will continue to load with whatever `wrapV2` value they had on disk (deep-merge preserves explicit overrides). Brand-new projects and projects whose on-disk config predates the field both pick up the `true` default. The legacy code path remains for one release cycle, then is removed in a follow-up release.
+
+ADR 0002 (`docs/adr/0002-wrap-pipeline-contract.md`) is the durable home for the pipeline contract, step kinds, and migration timeline.
+
 ## Development
 
 ### Running Tests
