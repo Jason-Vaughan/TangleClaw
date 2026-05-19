@@ -347,6 +347,48 @@ body {
   gap: 4px;
   flex-wrap: wrap;
 }
+
+/* #139 Chunk 11b — methodology-declared action buttons (e.g. prawduct's
+   "Run Critic"). Slight accent so users can tell methodology actions
+   apart from the always-visible Wrap / Kill / Cmd / Peek controls. */
+.methodology-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.methodology-action-btn {
+  border-color: var(--accent, #6c63ff) !important;
+  color: var(--accent, #6c63ff);
+}
+.methodology-action-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.methodology-action-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  padding: 10px 16px;
+  border-radius: var(--radius-btn);
+  background: var(--elevated-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+.methodology-action-toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.methodology-action-toast--error {
+  border: 1px solid #e25555;
+  color: #e25555;
+}
 .banner-btn {
   display: flex;
   align-items: center;

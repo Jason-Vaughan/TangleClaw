@@ -197,6 +197,102 @@ async function loadProject() {
 
   // Render group pills in banner
   renderBannerGroups(data.groups || []);
+
+  // #139 Chunk 11b \u2014 methodology-declared action buttons (e.g. prawduct's
+  // "Run Critic"). Hidden when the methodology has no actions[].
+  renderMethodologyActions(data.methodology ? data.methodology.actions || [] : []);
+}
+
+/**
+ * Render methodology-declared action buttons in the banner.
+ * Server validates the command against the methodology's `actions[]`,
+ * so we can safely POST whatever the user clicks.
+ * @param {Array<{label: string, command: string, confirm: boolean}>} actions
+ */
+function renderMethodologyActions(actions) {
+  const container = document.getElementById('methodologyActions');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!Array.isArray(actions) || actions.length === 0) return;
+
+  for (const action of actions) {
+    if (!action || typeof action.label !== 'string' || typeof action.command !== 'string') continue;
+    const btn = document.createElement('button');
+    btn.className = 'banner-btn methodology-action-btn';
+    btn.textContent = action.label;
+    btn.setAttribute('data-command', action.command);
+    btn.setAttribute('aria-label', `${action.label} (methodology action)`);
+    btn.addEventListener('click', () => invokeMethodologyAction(action));
+    container.appendChild(btn);
+  }
+}
+
+/**
+ * Invoke a methodology action via the server. Shows a brief feedback
+ * toast in the banner status area on success/failure.
+ * @param {{label: string, command: string, confirm: boolean}} action
+ */
+async function invokeMethodologyAction(action) {
+  if (action.confirm) {
+    const yes = window.confirm(`Run "${action.label}" for this project?`);
+    if (!yes) return;
+  }
+  // `CSS.escape` defends against methodology-template-supplied command
+  // strings that contain selector-syntax characters. Today every
+  // shipped template uses `[a-z-]+` only, so this is belt-and-suspenders.
+  const selectorCommand = (typeof CSS !== 'undefined' && CSS.escape)
+    ? CSS.escape(action.command)
+    : action.command.replace(/["\\]/g, '\\$&');
+  const btn = document.querySelector(`.methodology-action-btn[data-command="${selectorCommand}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = `${action.label}\u2026`;
+  }
+  try {
+    const result = await apiMutate(
+      `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
+      'POST',
+      {}
+    );
+    if (result && result.ok) {
+      showMethodologyActionToast(`${action.label}: recorded`);
+    } else {
+      // `api.lastError` is a string set by `apiMutate` on !res.ok (see
+      // public/api-helper.js). Earlier draft accessed `.message` which
+      // is undefined on a string and silently hid the real server error.
+      const msg = (result && result.error) || api.lastError || 'failed';
+      showMethodologyActionToast(`${action.label}: ${msg}`, true);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = action.label;
+    }
+  }
+}
+
+/**
+ * Brief banner-anchored toast for methodology-action feedback. Hides
+ * after 3.5s. Uses inline DOM rather than a global toast system to keep
+ * the surface area of this chunk small.
+ * @param {string} message
+ * @param {boolean} [isError]
+ */
+function showMethodologyActionToast(message, isError) {
+  let toast = document.getElementById('methodologyActionToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'methodologyActionToast';
+    toast.className = 'methodology-action-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.toggle('methodology-action-toast--error', !!isError);
+  toast.classList.add('methodology-action-toast--visible');
+  clearTimeout(showMethodologyActionToast._timer);
+  showMethodologyActionToast._timer = setTimeout(() => {
+    toast.classList.remove('methodology-action-toast--visible');
+  }, 3500);
 }
 
 /**
