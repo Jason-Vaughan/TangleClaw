@@ -1212,6 +1212,384 @@ describe('sessions', () => {
       }
     });
 
+    // #139 Chunk 11a — V2 session-lifecycle transition. A successful V2
+    // wrap that produced a commit ends the session record (status
+    // 'wrapped'), kills tmux, releases doc locks, and clears caches —
+    // symmetric with the legacy `completeWrap` teardown minus
+    // `_autoCommitIfDirty` (V2's commit step already flushed). Halted /
+    // thrown / clean-session (ok + null SHA) runs leave the session
+    // active.
+    describe('V2 lifecycle transition (#139 Chunk 11a)', () => {
+      let wrapPipelineMod;
+      let originalRun;
+      let originalKill;
+      let originalReleaseBySession;
+      let killCalls;
+      let releaseCalls;
+
+      beforeEach(() => {
+        wrapPipelineMod = require('../lib/wrap-pipeline');
+        originalRun = wrapPipelineMod.runWrapPipeline;
+        originalKill = tmux.killSession;
+        originalReleaseBySession = store.documentLocks.releaseBySession;
+        killCalls = [];
+        releaseCalls = [];
+        tmux.killSession = (name) => { killCalls.push(name); };
+        store.documentLocks.releaseBySession = (sid) => { releaseCalls.push(sid); return 0; };
+
+        const project = store.projects.getByName('prime-test');
+        store.projects.update(project.id, { methodology: 'prawduct' });
+        store.projectConfig.save(project.path, {
+          ...store.projectConfig.load(project.path),
+          wrapV2: true
+        });
+      });
+
+      afterEach(() => {
+        wrapPipelineMod.runWrapPipeline = originalRun;
+        tmux.killSession = originalKill;
+        store.documentLocks.releaseBySession = originalReleaseBySession;
+        const project = store.projects.getByName('prime-test');
+        if (project) {
+          store.projectConfig.save(project.path, {
+            ...store.projectConfig.load(project.path),
+            wrapV2: false
+          });
+        }
+      });
+
+      /**
+       * Stub runWrapPipeline to return a fixed result so the test can
+       * pin the lifecycle behavior without exercising real step handlers.
+       */
+      function stubPipeline(result) {
+        wrapPipelineMod.runWrapPipeline = async () => result;
+      }
+
+      it('ok + commitSha → wraps the session and runs full teardown', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-ok'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+              output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+          ],
+          commitSha: 'abc123',
+          summary: null,
+          error: null
+        });
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true);
+
+        const active = store.sessions.getActive(project.id);
+        assert.equal(active, null, 'session must no longer be active');
+
+        // getLatest orders by started_at DESC; sessions created in the
+        // same second tie. Find this test's wrapped record by id.
+        const wrappeds = store.sessions.list(project.id, { status: 'wrapped', limit: 100 });
+        const wrapped = wrappeds.find((s) => s.id === session.id);
+        assert.ok(wrapped, 'wrapped session record must exist');
+        assert.equal(wrapped.status, 'wrapped');
+        assert.equal(wrapped.wrapSummary, 'wrapped via V2');
+        assert.deepEqual(killCalls, ['wrap-v2-lifecycle-ok'], 'tmux session killed');
+        assert.deepEqual(releaseCalls, [session.id], 'doc locks released for this session');
+      });
+
+      it('ok + null commitSha (clean session) → session stays active', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-clean'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: null,
+          summary: null,
+          error: null
+        });
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true);
+        const active = store.sessions.getActive(project.id);
+        assert.ok(active, 'session must remain active on clean-session wrap');
+        assert.deepEqual(killCalls, [], 'tmux not killed on clean-session wrap');
+        assert.deepEqual(releaseCalls, [], 'doc locks not released on clean-session wrap');
+      });
+
+      it('halted (!ok) → session stays active', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-halted'
+        });
+
+        stubPipeline({
+          ok: false,
+          blockedAt: 'commit',
+          results: [
+            { stepId: 'commit', kind: 'commit', status: 'blocked', output: null, blockers: ['pre-commit hook rejected'] }
+          ],
+          // Commit step that blocked never set its own output.commitSha
+          // but the runner could theoretically have surfaced one from a
+          // prior step. Pin: a halt always preserves the session.
+          commitSha: 'abc123',
+          summary: null,
+          error: null
+        });
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, false);
+        const active = store.sessions.getActive(project.id);
+        assert.ok(active, 'session must remain active on halted wrap');
+        assert.deepEqual(killCalls, [], 'tmux not killed on halted wrap');
+      });
+
+      it('runner thrown → session stays active', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-thrown'
+        });
+
+        wrapPipelineMod.runWrapPipeline = async () => { throw new Error('boom'); };
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, false);
+        assert.ok(result.error.includes('boom'));
+        const active = store.sessions.getActive(project.id);
+        assert.ok(active, 'session must remain active when the runner throws');
+        assert.deepEqual(killCalls, [], 'tmux not killed when the runner throws');
+      });
+
+      /**
+       * Find this test's just-wrapped session record by id. `getLatest`
+       * ties on `started_at` when sessions are created in the same
+       * second, so we list by status and pick by id.
+       */
+      function findWrappedById(projectId, sessionId) {
+        const wrappeds = store.sessions.list(projectId, { status: 'wrapped', limit: 200 });
+        return wrappeds.find((s) => s.id === sessionId);
+      }
+
+      it('summary: parsedFields.summary wins over capturedText', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-summary-parsed'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            // First result has capturedText only — would be a fallback hit.
+            { stepId: 'changelog-update', kind: 'ai-content', status: 'done',
+              output: { capturedText: 'raw text' }, blockers: [] },
+            // Second result has parsedFields.summary — should win.
+            { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+              output: { parsedFields: { summary: 'parsed summary text' } }, blockers: [] }
+          ],
+          commitSha: 'abc123',
+          summary: null,
+          error: null
+        });
+
+        await sessions.triggerWrap('prime-test');
+        const wrapped = findWrappedById(project.id, session.id);
+        assert.ok(wrapped, 'wrapped session record must exist');
+        assert.equal(wrapped.wrapSummary, 'parsed summary text');
+      });
+
+      it('summary: capturedText is fallback when no parsedFields.summary', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-summary-captured'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            { stepId: 'changelog-update', kind: 'ai-content', status: 'done',
+              output: { capturedText: 'just captured text' }, blockers: [] }
+          ],
+          commitSha: 'def456',
+          summary: null,
+          error: null
+        });
+
+        await sessions.triggerWrap('prime-test');
+        const wrapped = findWrappedById(project.id, session.id);
+        assert.ok(wrapped, 'wrapped session record must exist');
+        assert.equal(wrapped.wrapSummary, 'just captured text');
+      });
+
+      it('summary: null when no step output carries summary signal', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-summary-null'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            { stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'abc' }, blockers: [] }
+          ],
+          commitSha: 'abc',
+          summary: null,
+          error: null
+        });
+
+        await sessions.triggerWrap('prime-test');
+        const wrapped = findWrappedById(project.id, session.id);
+        assert.ok(wrapped, 'wrapped session record must exist');
+        assert.equal(wrapped.wrapSummary, null);
+      });
+
+      it('tmux.killSession failure is non-fatal — session still wraps', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-tmux-throws'
+        });
+
+        tmux.killSession = () => { throw new Error('tmux gone'); };
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: 'abc',
+          summary: null,
+          error: null
+        });
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true);
+        const active = store.sessions.getActive(project.id);
+        assert.equal(active, null, 'session must still be wrapped despite tmux.killSession throwing');
+        assert.deepEqual(releaseCalls.length, 1, 'doc-lock release still attempted after tmux failure');
+      });
+
+      it('store.sessions.wrap failure is non-fatal — teardown still runs', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-wrap-throws'
+        });
+
+        // Stub store.sessions.wrap to throw — verifies the helper's
+        // try/catch isolates the wrap call from the rest of teardown.
+        const originalWrap = store.sessions.wrap;
+        store.sessions.wrap = () => { throw new Error('wrap update boom'); };
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: 'abc',
+          summary: null,
+          error: null
+        });
+
+        try {
+          const result = await sessions.triggerWrap('prime-test');
+          // The runner returned ok:true so _triggerWrapV2 also returns
+          // ok:true — the wrap-update throw is swallowed inside the
+          // teardown helper and surfaces only via log.warn.
+          assert.equal(result.ok, true);
+          assert.deepEqual(killCalls.length, 1, 'tmux kill still attempted after wrap-update failure');
+          assert.deepEqual(releaseCalls.length, 1, 'doc-lock release still attempted after wrap-update failure');
+        } finally {
+          store.sessions.wrap = originalWrap;
+          // Drain the still-active row so afterEach's cleanup doesn't trip.
+          const active = store.sessions.getActive(project.id);
+          if (active) originalWrap(active.id, 'test cleanup');
+          else originalWrap(session.id, 'test cleanup');
+        }
+      });
+
+      it('second triggerWrap after a successful V2 wrap returns "No active session"', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-idempotent'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: 'first-sha',
+          summary: null,
+          error: null
+        });
+
+        const first = await sessions.triggerWrap('prime-test');
+        assert.equal(first.ok, true, 'first wrap succeeds');
+
+        // Second invocation: session is no longer active, so the
+        // entry-point pre-check rejects before reaching the runner.
+        // Pins the idempotency contract at the call-site level.
+        const callCountBefore = killCalls.length;
+        const second = await sessions.triggerWrap('prime-test');
+        assert.equal(second.ok, false);
+        assert.ok(second.error && second.error.includes('No active session'),
+          'second wrap returns no-active-session error');
+        assert.equal(killCalls.length, callCountBefore,
+          'tmux kill must not run a second time');
+      });
+
+      it('releaseBySession failure is non-fatal — session still wraps', async () => {
+        const project = store.projects.getByName('prime-test');
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-locks-throw'
+        });
+
+        store.documentLocks.releaseBySession = () => { throw new Error('lock release boom'); };
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [],
+          commitSha: 'abc',
+          summary: null,
+          error: null
+        });
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true);
+        const active = store.sessions.getActive(project.id);
+        assert.equal(active, null, 'session must still be wrapped despite releaseBySession throwing');
+        assert.deepEqual(killCalls.length, 1, 'tmux kill still attempted after lock-release failure');
+      });
+    });
+
     it('wrapV2:false (default) uses the legacy NL-prompt path byte-equal to pre-#139 (regression pin)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
