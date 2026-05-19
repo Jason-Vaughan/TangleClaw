@@ -12,6 +12,7 @@ const tmux = require('./lib/tmux');
 const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
 const tunnel = require('./lib/tunnel');
@@ -1109,6 +1110,34 @@ route('GET', '/api/methodologies/:id', (_req, res, params) => {
     return errorResponse(res, 404, `Methodology "${params.id}" not found`, 'NOT_FOUND');
   }
   jsonResponse(res, 200, template);
+});
+
+// POST /api/projects/:name/actions/:command — Run a methodology-declared action
+// (#139 Chunk 11b). Body is the handler's `options` (forwarded verbatim;
+// undefined when absent). Returns the handler's `{ok, output, error}` result.
+// Status codes: 200 ok or handler-soft-fail; 404 project / unknown command;
+// 500 handler thrown.
+route('POST', '/api/projects/:name/actions/:command', (_req, res, params, body) => {
+  const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
+  const result = actions.runAction(params.name, params.command, options);
+
+  if (!result.ok) {
+    if (result.error && result.error.includes('not found')) {
+      return errorResponse(res, 404, result.error, 'NOT_FOUND');
+    }
+    if (result.error && result.error.includes('does not declare action')) {
+      return errorResponse(res, 404, result.error, 'NOT_FOUND');
+    }
+    if (result.error && result.error.includes('threw')) {
+      return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
+    }
+    // Soft fail (e.g. detached HEAD, missing project.path, fs error) —
+    // return 200 with `ok:false` so the frontend can surface the
+    // handler's specific error message inline.
+    return jsonResponse(res, 200, result);
+  }
+
+  jsonResponse(res, 200, result);
 });
 
 // POST /api/sessions/:project — Launch session
