@@ -91,7 +91,9 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.commitSha, null);
         assert.equal(result.summary, null);
         assert.equal(result.error, null);
-        assert.equal(result.results.length, 6, 'prawduct has six pipeline steps');
+        // #139 Chunk 11c — prawduct now ships 8 pipeline steps
+        // (`open-pr-check` + `critic-check` added).
+        assert.equal(result.results.length, 8, 'prawduct has eight pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -107,7 +109,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']
+        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']
       );
     });
 
@@ -115,7 +117,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['version-bump', 'ai-content', 'ai-content', 'priming-roll', 'ai-content', 'commit']);
+        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'ai-content', 'commit']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -139,7 +141,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 6, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, 8, 'every prawduct step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {
@@ -895,11 +897,26 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     assert.match(result.blockers[0], /active tmux session/);
   });
 
-  it('blocks when step.prompt is empty', async () => {
+  it('skips cleanly when step.prompt is empty (#139 Chunk 11c — placeholder semantics)', async () => {
     const result = await aiContent.run(buildContext({ id: 'memory-update' }));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /no prompt configured/);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.deepEqual(result.blockers, []);
+    assert.equal(result.output, null);
+  });
+
+  it('skips cleanly when step.prompt is whitespace-only (#139 Chunk 11c)', async () => {
+    const result = await aiContent.run(buildContext({ id: 'memory-update', prompt: '   \n  ' }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+  });
+
+  it('skips cleanly when step.prompt is missing entirely (#139 Chunk 11c)', async () => {
+    const ctx = buildContext({ id: 'memory-update' });
+    delete ctx.step.prompt;
+    const result = await aiContent.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
   });
 
   it('sends the prompt and reports done on idle with adequate response (no captureFields)', async () => {
