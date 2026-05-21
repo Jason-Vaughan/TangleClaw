@@ -18,6 +18,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const store = require('../lib/store');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PRAWDUCT_TEMPLATE_PATH = path.join(
@@ -109,6 +110,89 @@ describe('prawduct ai-content prompts (open-queue #2)', () => {
         `step ${step.id} prompt has neither captureFields nor a ## Result tail — wrap response will be unstructured`
       );
     }
+  });
+});
+
+describe('prawduct ai-content prompts — drift guards (Critic coverage gaps)', () => {
+  const prawduct = JSON.parse(fs.readFileSync(PRAWDUCT_TEMPLATE_PATH, 'utf8'));
+
+  it('every captureField on memory-update appears as a ## Heading literal in the prompt (lockstep)', () => {
+    // If a future PR adds `risks` to captureFields without adding `## Risks`
+    // to the prompt, every wrap silently blocks with "Required captureField
+    // missing." This pins the forward direction.
+    const step = prawduct.wrap_pipeline.steps.find((s) => s.id === 'memory-update');
+    for (const field of step.captureFields) {
+      // Build the expected heading using the field's original casing (the
+      // matcher itself is case-insensitive, but our prompt convention uses
+      // the camelCase / PascalCase form to match how the existing wrap-pipeline
+      // tests fixture the AI response).
+      const heading = `## ${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+      assert.ok(
+        step.prompt.includes(heading),
+        `captureField "${field}" not mentioned as "${heading}" literal in memory-update prompt`
+      );
+    }
+  });
+
+  it('every ## Heading other than ## Result corresponds to a captureField entry (inverse drift)', () => {
+    // If a future PR adds `## Risks` to the prompt without adding `risks`
+    // to captureFields, the AI emits a block the parser ignores and the
+    // wrap commit subject deriver in _completeV2Wrap can't see it.
+    const steps = prawduct.wrap_pipeline.steps.filter((s) => s.kind === 'ai-content');
+    for (const step of steps) {
+      // Pull every "## X" instructional heading from the prompt. Exclude the
+      // free-form-step tail convention `## Result`. Exclude the in-body
+      // YYYY-MM-DD heading convention from learnings-capture (it's the
+      // *user's* heading they'll write to learnings.md, not a parser anchor).
+      const matches = [...step.prompt.matchAll(/^## (\w[\w-]*)/gm)].map((m) => m[1]);
+      const captureFields = step.captureFields || [];
+      const expected = new Set(captureFields.map((f) => f.toLowerCase()));
+      for (const heading of matches) {
+        const norm = heading.toLowerCase();
+        if (norm === 'result') continue; // free-form tail
+        assert.ok(
+          expected.has(norm),
+          `step "${step.id}" prompt has "## ${heading}" but no matching captureField`
+        );
+      }
+    }
+  });
+
+  it('none of the prawduct prompts contain {...} interpolation tokens', () => {
+    // Build-plan out-of-scope decision: this PR does not expand the Chunk-5
+    // interpolation surface. Pin that decision so a future edit doesn't
+    // accidentally introduce a `{recentCommits}` token that silently passes
+    // through verbatim (per `_interpolatePrompt`'s unrecognized-braces
+    // contract).
+    const steps = prawduct.wrap_pipeline.steps.filter((s) => s.kind === 'ai-content');
+    for (const step of steps) {
+      const tokens = step.prompt.match(/\{[a-zA-Z][\w]*\}/g);
+      assert.equal(
+        tokens,
+        null,
+        `step "${step.id}" prompt contains interpolation tokens ${JSON.stringify(tokens)} — Chunk 5 only recognizes {previousMemoryBlock}; out of scope for this chunk`
+      );
+    }
+  });
+
+  it('_reconcileMergeBy preserves existing empty prompts on bundled-template reconcile (migration-note behavior pin)', () => {
+    // The CHANGELOG migration note tells existing users their on-disk
+    // template's empty `prompt: ""` survives reconcile. This pin grounds
+    // the documented behavior so the recipe stays accurate.
+    const bundledSteps = prawduct.wrap_pipeline.steps;
+    // Simulate an existing on-disk template (live) with the same step ids
+    // but empty prompts on the three ai-content steps.
+    const liveSteps = bundledSteps.map((s) => {
+      if (s.kind === 'ai-content') {
+        return { ...s, prompt: '' };
+      }
+      return { ...s };
+    });
+    const result = store._reconcileMergeBy(liveSteps, bundledSteps, 'id');
+    // null = no change — the reconciler did not append any new entries and
+    // did not modify the existing ones. Per ADR 0001's additive-only
+    // contract, the live empty prompts are preserved on boot.
+    assert.equal(result, null, 'reconciler should return null (no change) when all step ids already exist on disk');
   });
 });
 
