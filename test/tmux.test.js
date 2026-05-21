@@ -212,6 +212,85 @@ describe('tmux', () => {
     });
   });
 
+  describe('createSession - launch env injection', () => {
+    const testSession = '__tc_test_launchenv__';
+
+    it('makes options.env visible to the spawned launch command (regression: #189 / Aider override)', () => {
+      try {
+        // The launch command writes its PROCESS env to a file. If the
+        // env vars were set on the session BEFORE the command spawned,
+        // the file will contain the values; if they were set after (the
+        // pre-fix behavior), the file is missing them and the smoke
+        // test for the Aider engine override breaks the same way it
+        // did during Monad-1 ↔ LiteLLM integration.
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const { execSync } = require('node:child_process');
+
+        const envDumpPath = path.join(os.tmpdir(), `tc-launchenv-${Date.now()}.txt`);
+        try {
+          // `sh -c` writes the two env vars we care about, then keeps
+          // the session alive so we have time to inspect before tmux
+          // tears it down on command exit.
+          const command = `sh -c 'printf "OPENAI_API_KEY=%s\\nOPENAI_API_BASE=%s\\n" "$OPENAI_API_KEY" "$OPENAI_API_BASE" > ${envDumpPath}; exec sleep 5'`;
+          tmux.createSession(testSession, {
+            command,
+            env: {
+              OPENAI_API_KEY: 'sk-test-launchenv-pin',
+              OPENAI_API_BASE: 'http://example.test:4000'
+            }
+          });
+          execSync('sleep 0.5');
+
+          assert.ok(fs.existsSync(envDumpPath), `Expected env dump file at ${envDumpPath}`);
+          const dumped = fs.readFileSync(envDumpPath, 'utf8');
+          assert.match(dumped, /OPENAI_API_KEY=sk-test-launchenv-pin/,
+            `Launch command must inherit OPENAI_API_KEY from options.env. Got:\n${dumped}`);
+          assert.match(dumped, /OPENAI_API_BASE=http:\/\/example\.test:4000/,
+            `Launch command must inherit OPENAI_API_BASE from options.env. Got:\n${dumped}`);
+        } finally {
+          try { fs.unlinkSync(envDumpPath); } catch (_) {}
+        }
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('escapes values containing shell metacharacters in env injection', () => {
+      try {
+        const fs = require('node:fs');
+        const os = require('node:os');
+        const path = require('node:path');
+        const { execSync } = require('node:child_process');
+
+        // Values with spaces, quotes, $, and ; would break a naive
+        // unescaped `-e KEY=VAL` concatenation. _escapeArg wraps in
+        // single quotes and escapes embedded quotes, so the value
+        // reaches the child process byte-intact.
+        const tricky = `a b'c$d;e"f`;
+        const envDumpPath = path.join(os.tmpdir(), `tc-launchenv-tricky-${Date.now()}.txt`);
+        try {
+          const command = `sh -c 'printf "TRICKY=%s\\n" "$TRICKY" > ${envDumpPath}; exec sleep 5'`;
+          tmux.createSession(testSession, {
+            command,
+            env: { TRICKY: tricky }
+          });
+          execSync('sleep 0.5');
+
+          assert.ok(fs.existsSync(envDumpPath));
+          const dumped = fs.readFileSync(envDumpPath, 'utf8');
+          assert.equal(dumped.trim(), `TRICKY=${tricky}`,
+            `Tricky env value must reach the child byte-intact. Got: ${dumped.trim()}`);
+        } finally {
+          try { fs.unlinkSync(envDumpPath); } catch (_) {}
+        }
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+  });
+
   describe('capturePane - full mode', () => {
     const testSession = '__tc_test_fullcap__';
 
