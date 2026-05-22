@@ -3535,7 +3535,7 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
     it('options.bumpLevel override wins over heuristic', () => {
       assert.equal(versionBump._decideBumpLevel(parsed(['Added']), { bumpLevel: 'patch' }), 'patch');
       assert.equal(versionBump._decideBumpLevel(parsed(['Fixed']), { bumpLevel: 'major' }), 'major');
-      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'BREAKING change'), { bumpLevel: 'patch' }),
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'BREAKING: change'), { bumpLevel: 'patch' }),
         'patch', 'override beats BREAKING marker');
     });
 
@@ -3545,9 +3545,22 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
     });
 
     it('BREAKING marker in body forces major (sans override)', () => {
-      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'A line with BREAKING in it'), {}), 'major');
+      // Marker must look intentional — `BREAKING:` or `BREAKING(scope)`
+      // — per the tightened regex (PR #202 Critic n1).
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'A line with BREAKING: api change'), {}), 'major');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], '- BREAKING(api): renamed thing'), {}), 'major');
       assert.equal(versionBump._decideBumpLevel(parsed(['Added'], 'normal entry'), {}), 'minor',
         'no BREAKING → falls through to subsection vote');
+    });
+
+    it('casual uppercase BREAKING without a marker does NOT force major (PR #202 Critic n1)', () => {
+      // Pre-tightening, `\bBREAKING\b` would have falsely matched
+      // these. New regex requires `:` or `(` immediately following
+      // the BREAKING word.
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added'], '## NOT BREAKING — just renamed'), {}), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], '- discussed BREAKING changes but none shipped'), {}), 'patch');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], '- BREAKING discussion was wrong'), {}), 'patch',
+        'BREAKING followed by space-and-letter must NOT match');
     });
 
     it('minor-trigger subsections: Added, Changed, Removed, Deprecated', () => {
@@ -3639,6 +3652,126 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
       const after = versionBump._promoteUnreleased(before, '1.1.0', '2026-05-22');
       assert.match(after, /## \[1\.1\.0\] - 2026-05-22[\s\S]*Feature with a long description[\s\S]*Nested sub-point one[\s\S]*Nested sub-point two[\s\S]*Another feature/);
     });
+
+    it('emits exactly one blank line between [Unreleased] heading and the new dated release heading (PR #202 Critic coverage gap)', () => {
+      // Byte-exact whitespace pin — a stray double-blank-line between the
+      // [Unreleased] heading and the new release heading would render
+      // weirdly in `gh pr view` and look messy in editor diffs.
+      const before = [
+        '## [Unreleased]', '',
+        '### Added', '- thing', '',
+        '## [1.0.0] - 2026-01-01'
+      ].join('\n');
+      const after = versionBump._promoteUnreleased(before, '1.1.0', '2026-05-22');
+      const lines = after.split('\n');
+      const unreleasedIdx = lines.findIndex((l) => /^## \[Unreleased\]/.test(l));
+      const newReleaseIdx = lines.findIndex((l) => /^## \[1\.1\.0\] - 2026-05-22/.test(l));
+      assert.equal(newReleaseIdx - unreleasedIdx, 2,
+        `expected exactly one blank line between [Unreleased] (line ${unreleasedIdx}) and new release (line ${newReleaseIdx}), got ${newReleaseIdx - unreleasedIdx - 1} blank line(s)`);
+      assert.equal(lines[unreleasedIdx + 1].trim(), '', 'the line between must be blank');
+    });
+
+    it('promoted CHANGELOG output satisfies the structural invariants from test/changelog-structure.test.js (PR #202 Critic coverage gap)', () => {
+      // Cross-file integrity pin: run the bump output through the same
+      // detectors `test/changelog-structure.test.js` uses to gate the
+      // real CHANGELOG.md. Regexes duplicated here (source of truth:
+      // test/changelog-structure.test.js:12-13). Drift would surface as
+      // a test failure in BOTH places, which is the desired symmetry.
+      const RELEASE_HEADING_RE = /^## \[(\d+)\.(\d+)\.(\d+)\] - \d{4}-\d{2}-\d{2}\s*$/;
+      const UNRELEASED_HEADING_RE = /^## \[Unreleased\]\s*$/;
+
+      const before = [
+        '# Changelog', '',
+        '## [Unreleased]', '',
+        '### Added', '- thing', '',
+        '## [3.16.2] - 2026-05-13', '', '### Fixed', '- earlier', '',
+        '## [3.16.1] - 2026-05-13', '', '### Fixed', '- earlier-earlier'
+      ].join('\n');
+      const after = versionBump._promoteUnreleased(before, '3.17.0', '2026-05-22');
+      const lines = after.split('\n');
+
+      // 1. Heading sequence: parseable + descending semver order + no dups
+      const headings = [];
+      lines.forEach((line) => {
+        const m = line.match(RELEASE_HEADING_RE);
+        if (m) headings.push({ v: [Number(m[1]), Number(m[2]), Number(m[3])], s: `${m[1]}.${m[2]}.${m[3]}` });
+      });
+      assert.equal(headings.length, 3, 'three released headings expected (3.17.0 + 3.16.2 + 3.16.1)');
+      // Descending order
+      for (let i = 1; i < headings.length; i++) {
+        const a = headings[i - 1].v;
+        const b = headings[i].v;
+        const aGt = a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])));
+        assert.ok(aGt || (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]),
+          `headings out of order: ${headings[i - 1].s} should be >= ${headings[i].s}`);
+      }
+      // No duplicates
+      const seen = new Set();
+      for (const h of headings) {
+        assert.ok(!seen.has(h.s), `duplicate heading detected: ${h.s}`);
+        seen.add(h.s);
+      }
+      // [Unreleased] still present
+      assert.ok(lines.some((l) => UNRELEASED_HEADING_RE.test(l)), '[Unreleased] heading must survive promotion');
+    });
+  });
+});
+
+describe('wrap-step version-bump — integration with commit._flushStagedWrites (PR #202 Critic coverage gap)', () => {
+  const versionBump = require('../lib/wrap-steps/version-bump');
+  const commitStep = require('../lib/wrap-steps/commit');
+  let tmpRoot;
+
+  before(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vb-flush-'));
+  });
+
+  after(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('two composite-keyed staged entries flush correctly through commit._flushStagedWrites', async () => {
+    // Bridge test between handler + commit step: version-bump's
+    // staging is duck-typed at `commit.js:_flushStagedWrites`. This
+    // pin proves the two composite-keyed entries both make it to
+    // disk in a single flush call.
+    const projDir = fs.mkdtempSync(path.join(tmpRoot, 'proj-'));
+    fs.writeFileSync(path.join(projDir, 'version.json'), JSON.stringify({ version: '3.16.2', name: 'sample' }));
+    fs.writeFileSync(path.join(projDir, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n### Added\n- A new feature\n\n## [3.16.0] - 2026-05-12\n');
+
+    const origToday = versionBump._internal.todayIso;
+    versionBump._internal.todayIso = () => '2026-05-22';
+    try {
+      const ctx = {
+        project: { name: 'flush-bridge', path: projDir },
+        step: { id: 'version-bump', kind: 'version-bump' },
+        staged: {},
+        options: {}
+      };
+      const result = await versionBump.run(ctx);
+      assert.equal(result.status, 'done');
+
+      const flushed = commitStep._flushStagedWrites(ctx.staged);
+      // Both staged entries must flush (paths differ by file).
+      assert.equal(flushed.length, 2, 'both staged entries must flush');
+      const flushedPaths = flushed.map((f) => f.path).sort();
+      assert.deepStrictEqual(flushedPaths, [
+        path.join(projDir, 'CHANGELOG.md'),
+        path.join(projDir, 'version.json')
+      ]);
+
+      // Confirm bytes on disk match the staged content.
+      const writtenVj = JSON.parse(fs.readFileSync(path.join(projDir, 'version.json'), 'utf8'));
+      assert.equal(writtenVj.version, '3.17.0', 'version.json on disk reflects the bump');
+      assert.equal(writtenVj.name, 'sample', 'sibling fields preserved on disk');
+
+      const writtenCl = fs.readFileSync(path.join(projDir, 'CHANGELOG.md'), 'utf8');
+      assert.match(writtenCl, /## \[3\.17\.0\] - 2026-05-22/);
+      assert.match(writtenCl, /## \[Unreleased\]/);
+    } finally {
+      versionBump._internal.todayIso = origToday;
+    }
   });
 });
 
