@@ -140,10 +140,8 @@
         return null;
       }
       case 'version-bump':
-        // version-bump is still the Chunk-3 no-op stub (output:null
-        // returns null earlier). Once the real handler lands it can
-        // emit `{from, to}` or `{skipped, reason}` and this case
-        // surfaces both without a renderer-side change.
+        // version-bump emits `{from, to, bumpLevel, detail}` on done,
+        // `{skipped, reason, detail}` on skip — open-queue #3 (post-#139).
         if (output.skipped) return output.detail || output.reason || 'Skipped';
         if (output.from && output.to) return `${output.from} → ${output.to}`;
         if (output.to) return String(output.to);
