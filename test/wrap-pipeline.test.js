@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit'];
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -324,16 +324,15 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   });
 });
 
-describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
-  // Each remaining stub must return the canonical no-op result. Pinning
-  // every stub individually so a future "let me just inline the
-  // implementation halfway" change to one file fails this test instead
-  // of silently changing pipeline semantics. `lint` and `test` left this
-  // list in #139 Chunk 4; `ai-content` left in #139 Chunk 5;
-  // `priming-roll` in Chunk 6; `critic-check` in Chunk 7; `pr-check` in
-  // Chunk 8; `commit` in Chunk 9 — their real-handler tests live in
-  // their own describe blocks below.
-  const kinds = ['version-bump'];
+describe('wrap-pipeline step stubs (#139 Chunk 3) — all kinds now real', () => {
+  // Stubs that returned the canonical no-op result existed only during
+  // the #139 build-out: `lint` + `test` left in Chunk 4; `ai-content`
+  // in Chunk 5; `priming-roll` in Chunk 6; `critic-check` in Chunk 7;
+  // `pr-check` in Chunk 8; `commit` in Chunk 9; `version-bump` was
+  // the last stub and shipped its real handler in open-queue #3
+  // (post-#139). Per-handler real-behavior tests live in their own
+  // describe blocks above and below.
+  const kinds = []; // empty after open-queue #3 closed
 
   for (const kind of kinds) {
     it(`${kind} returns the canonical {ok:true,status:'done',output:null,blockers:[]}`, async () => {
@@ -342,6 +341,14 @@ describe('wrap-pipeline step stubs (#139 Chunk 3)', () => {
       assert.deepStrictEqual(result, { ok: true, status: 'done', output: null, blockers: [] });
     });
   }
+
+  // Milestone pin: if a future chunk introduces a new stub, add its
+  // kind to the array above so the canonical no-op shape stays
+  // enforced AND the reminder to replace it is visible in this block.
+  it('every wrap-step kind has a real (non-stub) handler as of open-queue #3', () => {
+    assert.equal(kinds.length, 0,
+      'open-queue #3 replaced the last stub; future stubs must be added to this list');
+  });
 });
 
 // ── #139 Chunk 4: real `test` and `lint` step handlers ──
@@ -2744,6 +2751,43 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
       assert.deepStrictEqual(lines, []);
     });
 
+    it('renders a version-bump line from staged metadata (open-queue #3)', () => {
+      const lines = commitStep._buildBodyLines({
+        'version-bump:version-json': {
+          primingPath: '/proj/version.json',
+          newContent: '{"version":"3.17.0"}\n',
+          changed: true,
+          oldVersion: '3.16.2',
+          newVersion: '3.17.0',
+          bumpLevel: 'minor'
+        }
+      });
+      assert.deepStrictEqual(lines, ['- Bumped 3.16.2 → 3.17.0 (minor)']);
+    });
+
+    it('dedupes version-bump body line across two staged write entries (version-json + changelog)', () => {
+      // version-bump stages two entries — both carry the bump metadata
+      // so the body-line builder must emit exactly ONE "Bumped …" line,
+      // not one per file. Pin both insertion orders to make sure the
+      // dedupe holds regardless of which entry the iterator sees first.
+      const stagedA = {
+        'version-bump:version-json': {
+          primingPath: '/proj/version.json', newContent: 'x', changed: true,
+          oldVersion: '3.16.2', newVersion: '3.17.0', bumpLevel: 'minor'
+        },
+        'version-bump:changelog': {
+          primingPath: '/proj/CHANGELOG.md', newContent: 'y', changed: true,
+          oldVersion: '3.16.2', newVersion: '3.17.0', bumpLevel: 'minor'
+        }
+      };
+      const stagedB = {
+        'version-bump:changelog': stagedA['version-bump:changelog'],
+        'version-bump:version-json': stagedA['version-bump:version-json']
+      };
+      assert.deepStrictEqual(commitStep._buildBodyLines(stagedA), ['- Bumped 3.16.2 → 3.17.0 (minor)']);
+      assert.deepStrictEqual(commitStep._buildBodyLines(stagedB), ['- Bumped 3.16.2 → 3.17.0 (minor)']);
+    });
+
     it('returns [] for null/undefined staged maps', () => {
       assert.deepStrictEqual(commitStep._buildBodyLines(null), []);
       assert.deepStrictEqual(commitStep._buildBodyLines(undefined), []);
@@ -3372,5 +3416,443 @@ describe('projConfig — lastWrapSha default (#139 Chunk 9)', () => {
     store.projectConfig.save(projectPath, cfg);
     const reloaded = store.projectConfig.load(projectPath);
     assert.equal(reloaded.lastWrapSha, 'abc123def456');
+  });
+});
+
+describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', () => {
+  const versionBump = require('../lib/wrap-steps/version-bump');
+
+  describe('_parseSemver', () => {
+    it('parses canonical x.y.z', () => {
+      assert.deepStrictEqual(versionBump._parseSemver('3.16.2'), { major: 3, minor: 16, patch: 2 });
+      assert.deepStrictEqual(versionBump._parseSemver('0.0.1'), { major: 0, minor: 0, patch: 1 });
+      assert.deepStrictEqual(versionBump._parseSemver('10.20.30'), { major: 10, minor: 20, patch: 30 });
+    });
+
+    it('returns null for invalid forms', () => {
+      assert.equal(versionBump._parseSemver(''), null);
+      assert.equal(versionBump._parseSemver('v3.16.2'), null, 'no `v` prefix accepted');
+      assert.equal(versionBump._parseSemver('3.16'), null);
+      assert.equal(versionBump._parseSemver('3.16.2-beta'), null, 'pre-release not supported');
+      assert.equal(versionBump._parseSemver('not a version'), null);
+      assert.equal(versionBump._parseSemver(null), null);
+      assert.equal(versionBump._parseSemver(undefined), null);
+    });
+  });
+
+  describe('_bumpSemver', () => {
+    it('patch increments only the patch component', () => {
+      assert.equal(versionBump._bumpSemver('3.16.2', 'patch'), '3.16.3');
+      assert.equal(versionBump._bumpSemver('0.0.1', 'patch'), '0.0.2');
+    });
+
+    it('minor increments minor and resets patch', () => {
+      assert.equal(versionBump._bumpSemver('3.16.2', 'minor'), '3.17.0');
+      assert.equal(versionBump._bumpSemver('0.0.5', 'minor'), '0.1.0');
+    });
+
+    it('major increments major and resets minor + patch', () => {
+      assert.equal(versionBump._bumpSemver('3.16.2', 'major'), '4.0.0');
+      assert.equal(versionBump._bumpSemver('0.9.9', 'major'), '1.0.0');
+    });
+
+    it('returns null for invalid semver input', () => {
+      assert.equal(versionBump._bumpSemver('not-a-version', 'patch'), null);
+      assert.equal(versionBump._bumpSemver(null, 'minor'), null);
+    });
+
+    it('returns null for invalid bump level', () => {
+      assert.equal(versionBump._bumpSemver('3.16.2', 'huge'), null);
+      assert.equal(versionBump._bumpSemver('3.16.2', null), null);
+    });
+  });
+
+  describe('_parseUnreleased', () => {
+    it('finds the [Unreleased] block and categorizes subsections', () => {
+      const text = [
+        '# Changelog', '',
+        '## [Unreleased]', '',
+        '### Added', '- New thing', '',
+        '### Fixed', '- Old bug', '',
+        '## [3.16.2] - 2026-05-13', '',
+        '### Fixed', '- Earlier release fix'
+      ].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      assert.equal(r.ok, true);
+      assert.deepStrictEqual(r.subsections, ['Added', 'Fixed']);
+      assert.equal(r.hasEntries, true);
+    });
+
+    it('endIdx stops at the next ## [ heading (does not bleed past)', () => {
+      const text = [
+        '## [Unreleased]', '',
+        '### Added', '- One', '',
+        '## [1.0.0] - 2026-01-01', '',
+        '### Fixed', '- Earlier fix'
+      ].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      // Subsections should only contain "Added" (from [Unreleased]), not "Fixed" from [1.0.0].
+      assert.deepStrictEqual(r.subsections, ['Added']);
+    });
+
+    it('reports hasEntries:false when [Unreleased] body has only blank lines or comments', () => {
+      const text = ['## [Unreleased]', '', '', '## [1.0.0] - 2026-01-01'].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      assert.equal(r.ok, true);
+      assert.equal(r.hasEntries, false);
+      assert.deepStrictEqual(r.subsections, []);
+    });
+
+    it('reports ok:false when [Unreleased] heading is missing', () => {
+      const text = ['# Changelog', '', '## [3.16.0] - 2026-05-12', '### Added', '- thing'].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      assert.equal(r.ok, false);
+    });
+
+    it('handles empty / nullish input safely', () => {
+      assert.equal(versionBump._parseUnreleased('').ok, false);
+      assert.equal(versionBump._parseUnreleased(null).ok, false);
+      assert.equal(versionBump._parseUnreleased(undefined).ok, false);
+    });
+
+    it('dedupes subsections that appear twice (legal but unusual)', () => {
+      const text = [
+        '## [Unreleased]', '',
+        '### Added', '- One', '',
+        '### Added', '- Two', '',
+        '## [1.0.0] - 2026-01-01'
+      ].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      assert.deepStrictEqual(r.subsections, ['Added']);
+    });
+  });
+
+  describe('_decideBumpLevel', () => {
+    function parsed(subsections, body = '') {
+      return { subsections, bodyLines: body.split('\n') };
+    }
+
+    it('options.bumpLevel override wins over heuristic', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added']), { bumpLevel: 'patch' }), 'patch');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed']), { bumpLevel: 'major' }), 'major');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'BREAKING change'), { bumpLevel: 'patch' }),
+        'patch', 'override beats BREAKING marker');
+    });
+
+    it('rejects unknown override values and falls through to heuristic', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added']), { bumpLevel: 'huge' }), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed']), { bumpLevel: '' }), 'patch');
+    });
+
+    it('BREAKING marker in body forces major (sans override)', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed'], 'A line with BREAKING in it'), {}), 'major');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added'], 'normal entry'), {}), 'minor',
+        'no BREAKING → falls through to subsection vote');
+    });
+
+    it('minor-trigger subsections: Added, Changed, Removed, Deprecated', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added']), {}), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Changed']), {}), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Removed']), {}), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Deprecated']), {}), 'minor');
+    });
+
+    it('patch-only when only Fixed or Security entries present', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed']), {}), 'patch');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Security']), {}), 'patch');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed', 'Security']), {}), 'patch');
+    });
+
+    it('mixed Added + Fixed → minor (Added trumps)', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed(['Added', 'Fixed']), {}), 'minor');
+      assert.equal(versionBump._decideBumpLevel(parsed(['Fixed', 'Added']), {}), 'minor',
+        'order within subsections must not matter');
+    });
+
+    it('defaults to patch when no subsections (defensive)', () => {
+      assert.equal(versionBump._decideBumpLevel(parsed([]), {}), 'patch');
+    });
+  });
+
+  describe('_promoteUnreleased', () => {
+    it('promotes the [Unreleased] body to a dated release section', () => {
+      const before = [
+        '# Changelog', '',
+        '## [Unreleased]', '',
+        '### Added', '- New feature', '',
+        '## [3.16.2] - 2026-05-13', '',
+        '### Fixed', '- Old bug'
+      ].join('\n');
+      const after = versionBump._promoteUnreleased(before, '3.17.0', '2026-05-22');
+
+      // [Unreleased] still present + empty
+      const lines = after.split('\n');
+      const unreleasedIdx = lines.findIndex((l) => /^## \[Unreleased\]/.test(l));
+      const newReleaseIdx = lines.findIndex((l) => /^## \[3\.17\.0\] - 2026-05-22/.test(l));
+      const oldReleaseIdx = lines.findIndex((l) => /^## \[3\.16\.2\]/.test(l));
+      assert.ok(unreleasedIdx !== -1, '[Unreleased] should still exist');
+      assert.ok(newReleaseIdx > unreleasedIdx, 'new release section appears after [Unreleased]');
+      assert.ok(oldReleaseIdx > newReleaseIdx, 'new release section appears before the prior release');
+
+      // [Unreleased] body is now empty (no entries between [Unreleased] and new release)
+      const unreleasedBody = lines.slice(unreleasedIdx + 1, newReleaseIdx).join('\n').trim();
+      assert.equal(unreleasedBody, '', 'old [Unreleased] body must be moved, not duplicated');
+
+      // New release section carries the original Added entry
+      const newReleaseBody = lines.slice(newReleaseIdx + 1, oldReleaseIdx).join('\n');
+      assert.match(newReleaseBody, /### Added/);
+      assert.match(newReleaseBody, /- New feature/);
+
+      // Prior release section preserved byte-for-byte
+      const priorBody = lines.slice(oldReleaseIdx).join('\n');
+      assert.match(priorBody, /### Fixed/);
+      assert.match(priorBody, /- Old bug/);
+    });
+
+    it('does NOT auto-insert a `> 🛟` or `> 🚀` banner (curated decision per repo convention)', () => {
+      const before = [
+        '## [Unreleased]', '',
+        '### Fixed', '- Patch bug', '',
+        '## [1.0.0] - 2026-01-01'
+      ].join('\n');
+      const after = versionBump._promoteUnreleased(before, '1.0.1', '2026-05-22');
+      assert.ok(!/^> 🛟/m.test(after), 'must not auto-insert 🛟 bug-fix banner');
+      assert.ok(!/^> 🚀/m.test(after), 'must not auto-insert 🚀 feature banner');
+    });
+
+    it('returns the input unchanged when [Unreleased] is missing', () => {
+      const before = '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Fixed\n- thing\n';
+      assert.equal(versionBump._promoteUnreleased(before, '1.0.1', '2026-05-22'), before);
+    });
+
+    it('preserves multi-paragraph entries with nested bullets', () => {
+      const before = [
+        '## [Unreleased]', '',
+        '### Added', '',
+        '- Feature with a long description',
+        '  - Nested sub-point one',
+        '  - Nested sub-point two',
+        '',
+        '- Another feature', '',
+        '## [1.0.0] - 2026-01-01'
+      ].join('\n');
+      const after = versionBump._promoteUnreleased(before, '1.1.0', '2026-05-22');
+      assert.match(after, /## \[1\.1\.0\] - 2026-05-22[\s\S]*Feature with a long description[\s\S]*Nested sub-point one[\s\S]*Nested sub-point two[\s\S]*Another feature/);
+    });
+  });
+});
+
+describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => {
+  const versionBump = require('../lib/wrap-steps/version-bump');
+  let tmpDir;
+  let origInternal;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vb-'));
+    origInternal = { ...versionBump._internal };
+  });
+
+  after(() => {
+    Object.assign(versionBump._internal, origInternal);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeProject(name) {
+    const dir = fs.mkdtempSync(path.join(tmpDir, `${name}-`));
+    return { name, path: dir };
+  }
+
+  function freshContext(project, options) {
+    return {
+      project,
+      step: { id: 'version-bump', kind: 'version-bump' },
+      staged: {},
+      options: options || {}
+    };
+  }
+
+  beforeEach(() => {
+    versionBump._internal.todayIso = () => '2026-05-22';
+  });
+
+  it('skips when project.path is missing', async () => {
+    const result = await versionBump.run({ step: {}, staged: {}, options: {} });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.skipped, true);
+    assert.match(result.output.reason, /no project path/i);
+  });
+
+  it('skips when version.json is missing', async () => {
+    const project = makeProject('no-version-json');
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /version\.json not found/i);
+  });
+
+  it('skips when version.json is malformed JSON', async () => {
+    const project = makeProject('bad-json');
+    fs.writeFileSync(path.join(project.path, 'version.json'), '{not valid');
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /unreadable|invalid/i);
+  });
+
+  it('skips when version.json "version" field is non-semver', async () => {
+    const project = makeProject('non-semver');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: 'v3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /non-semver|missing/i);
+  });
+
+  it('skips when CHANGELOG.md is missing', async () => {
+    const project = makeProject('no-changelog');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /CHANGELOG\.md not found/i);
+  });
+
+  it('skips when [Unreleased] section is missing', async () => {
+    const project = makeProject('no-unreleased');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '# Changelog\n\n## [3.16.0] - 2026-05-12\n### Added\n- thing\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /\[Unreleased\] section not found/i);
+  });
+
+  it('skips when [Unreleased] has no entries (already released)', async () => {
+    const project = makeProject('empty-unreleased');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n## [3.16.0] - 2026-05-12\n### Added\n- thing\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /no entries/i);
+  });
+
+  it('done path stages both writes and returns output with from/to/bumpLevel/detail', async () => {
+    const project = makeProject('happy');
+    fs.writeFileSync(path.join(project.path, 'version.json'),
+      JSON.stringify({ version: '3.16.2', name: 'sample' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n### Added\n- A new feature\n\n## [3.16.0] - 2026-05-12\n### Added\n- thing\n');
+    const ctx = freshContext(project);
+    const result = await versionBump.run(ctx);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.from, '3.16.2');
+    assert.equal(result.output.to, '3.17.0', 'Added subsection → minor bump');
+    assert.equal(result.output.bumpLevel, 'minor');
+    assert.equal(result.output.detail, '3.16.2 → 3.17.0 (minor)');
+
+    // Two staged writes under composite keys
+    assert.ok(ctx.staged['version-bump:version-json'], 'version-json staging missing');
+    assert.ok(ctx.staged['version-bump:changelog'], 'changelog staging missing');
+    const vjEntry = ctx.staged['version-bump:version-json'];
+    const clEntry = ctx.staged['version-bump:changelog'];
+    assert.equal(vjEntry.primingPath, path.join(project.path, 'version.json'));
+    assert.equal(clEntry.primingPath, path.join(project.path, 'CHANGELOG.md'));
+    assert.equal(vjEntry.changed, true);
+    assert.equal(clEntry.changed, true);
+    assert.equal(vjEntry.bumpLevel, 'minor');
+    assert.equal(vjEntry.oldVersion, '3.16.2');
+    assert.equal(vjEntry.newVersion, '3.17.0');
+
+    // version.json content preserves sibling fields and bumps version
+    const newVj = JSON.parse(vjEntry.newContent);
+    assert.equal(newVj.version, '3.17.0');
+    assert.equal(newVj.name, 'sample', 'sibling fields must be preserved');
+
+    // CHANGELOG content promoted with today's date
+    assert.match(clEntry.newContent, /## \[3\.17\.0\] - 2026-05-22/);
+    assert.match(clEntry.newContent, /## \[Unreleased\]/);
+  });
+
+  it('options.bumpLevel override wins over the Added → minor heuristic', async () => {
+    const project = makeProject('override');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n### Added\n- thing\n\n## [3.16.0] - 2026-05-12\n');
+    const ctx = freshContext(project, { bumpLevel: 'major' });
+    const result = await versionBump.run(ctx);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.to, '4.0.0', 'override must win');
+    assert.equal(result.output.bumpLevel, 'major');
+  });
+
+  it('BREAKING marker forces major bump without override', async () => {
+    const project = makeProject('breaking');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n### Fixed\n- BREAKING: a transformative fix\n\n## [3.16.0] - 2026-05-12\n');
+    const ctx = freshContext(project);
+    const result = await versionBump.run(ctx);
+    assert.equal(result.output.to, '4.0.0');
+    assert.equal(result.output.bumpLevel, 'major');
+  });
+
+  it('idempotent on re-wrap: after a bump, a second run skips ("no entries")', async () => {
+    const project = makeProject('idempotent');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n### Added\n- One feature\n\n## [3.16.0] - 2026-05-12\n');
+
+    // First run: real wrap pipeline would have the commit step flush
+    // the staged writes; here we simulate that by writing the new
+    // CHANGELOG content to disk ourselves.
+    const ctx1 = freshContext(project);
+    const result1 = await versionBump.run(ctx1);
+    assert.equal(result1.status, 'done');
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      ctx1.staged['version-bump:changelog'].newContent);
+    fs.writeFileSync(path.join(project.path, 'version.json'),
+      ctx1.staged['version-bump:version-json'].newContent);
+
+    // Second run should observe empty [Unreleased] and skip
+    const ctx2 = freshContext(project);
+    const result2 = await versionBump.run(ctx2);
+    assert.equal(result2.status, 'skipped', 'idempotent re-wrap must skip');
+    assert.equal(Object.keys(ctx2.staged).length, 0, 'no staging on skip');
+  });
+
+  it('only Fixed in [Unreleased] → patch bump', async () => {
+    const project = makeProject('patch-only');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n### Fixed\n- Bug fix\n\n## [3.16.0] - 2026-05-12\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.output.to, '3.16.3');
+    assert.equal(result.output.bumpLevel, 'patch');
+  });
+
+  it('never blocks — runner contract is "ok:true always"', async () => {
+    // Sweep every skip path verified above + the happy path; assert ok===true
+    // and no blockers across the lot. This is the contract pin.
+    const scenarios = [
+      { setup: () => ({ step: {}, staged: {}, options: {} }) },
+      { setup: () => freshContext(makeProject('no-vj')) },
+      { setup: () => {
+          const p = makeProject('happy-sweep');
+          fs.writeFileSync(path.join(p.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+          fs.writeFileSync(path.join(p.path, 'CHANGELOG.md'),
+            '## [Unreleased]\n### Added\n- x\n\n## [3.16.0] - 2026-05-12\n');
+          return freshContext(p);
+        }
+      }
+    ];
+    for (const { setup } of scenarios) {
+      const ctx = setup();
+      const result = await versionBump.run(ctx);
+      assert.equal(result.ok, true, `scenario must return ok:true; got ${JSON.stringify(result)}`);
+      assert.deepStrictEqual(result.blockers, [], `scenario must have empty blockers`);
+    }
   });
 });
