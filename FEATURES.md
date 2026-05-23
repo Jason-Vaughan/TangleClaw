@@ -5,45 +5,50 @@ Maintained automatically: the wrap-step handler appends
 stubs when PRs touch new files. Fill in descriptions before
 next wrap.
 
-Format: - **Name** — short description. file.js:line, file2.js:line.
+Format: - **Name** — short description. file.js:line[, file2.js:line, ...].
+Sub-pointer prefixes ("Backend:", "Handler:", "Core:") are allowed for
+entries that span multiple co-equal locations.
 -->
 
 ## UI / Web
 
-- **Landing page** — project list, port stats, system stats, group rendering. `public/landing.html`, `public/landing.js`.
-- **Session view** — per-project app shell, banner, settings, wrap controls. `public/index.html`, `public/session.js`.
+- **Landing + session shells** — `public/index.html` is the single HTML host; it loads `/landing.js` (project list, port stats, system stats) and `/session.js` (per-project app shell) via the same document. `public/index.html`, `public/landing.js`, `public/session.js`.
 - **Settings modal** — per-project config editor (engine, methodology, silentPrime, featureIndexEnabled, rules). `public/ui.js:697`.
 - **Silent-prime toggle** — engine-gated capability toggle. `public/ui.js:779`.
 - **Feature Index toggle** (#207) — opt-in flag that seeds `FEATURES.md` on first enable. `public/ui.js:808`.
 - **Banner group pills** — group membership chips on the session banner. `public/session.js:302`.
 - **Methodology action buttons** — `actions[]` from `template.json` (e.g. "Run Critic"). `public/session.js:212`. Handler: `lib/actions/invoke-critic.js`. Toast: `public/session.js:281`.
 - **Stale-server banner** (#199) — runtime-vs-disk SHA delta; no dismiss UI today. `public/landing.js:131`, `public/index.html:287`. Backend: `lib/server-info.js`.
-- **Orphan-hooks repair banner** (#145) — scans projects for hook config drift. `public/landing.js:354`, `public/index.html:290`.
+- **Orphan-hooks repair banner** (#145) — scans projects for hook config drift. Section banner: `public/landing.js:364`. HTML: `public/index.html:290`.
 - **Update-available pill** — GitHub release check with localStorage dismiss-per-version. `public/landing.js:160`.
 - **Session Wrap drawer** — step-by-step wrap status, BLOCKED/SKIPPED/DONE rendering. `public/wrap-drawer.js`.
 - **OpenClaw view** — remote-engine project cache + view. `public/openclaw-view.js`, `public/openclaw-cache.js`.
 
 ## Server / API
 
-- **HTTP entrypoint + route table** — `server.js` (single-file router; `route(method, path, handler)` registrations throughout).
-- **`GET /api/projects`** — project list with enrichment. `server.js:854`. Enrichment: `lib/projects.js:559` (`enrichProject`).
-- **`POST /api/projects/attach`** — register an existing directory as a project. `server.js:868`. `lib/projects.js:1111`.
-- **`PATCH /api/projects/:name`** — update fields (silentPrime, featureIndexEnabled, methodology, engine, rules…). `lib/projects.js:1224` (`updateProject`).
-- **`POST /api/projects/repair-orphan-hooks`** — strip orphan hook entries. `server.js:907`.
-- **`GET /api/server-info`** (#199) — startup SHA, current disk SHA, isStale, uptimeSeconds. `server.js:324`. `lib/server-info.js`.
-- **PortHub leasing** — `POST /api/ports/lease` `server.js:805`, `POST /api/ports/release` `:834`, `POST /api/ports/heartbeat` `:843`, `GET /api/ports` `:781`. Backend: `lib/porthub.js`.
-- **Session lifecycle** — `POST /api/sessions/:project` (launch) `server.js:1162`, `DELETE` (kill) `:1232`, `GET /status` `:1265`, `POST /command` `:1274`. Core: `lib/sessions.js:51` (`launchSession`).
-- **Session prime prompt builder** — assembles SessionStart prime text (last-session summary, eval-audit, Feature Index, etc.). `lib/sessions.js:340` (`generatePrimePrompt`).
-- **Session Wrap pipeline** — `POST /api/sessions/:project/wrap` `server.js:1304`. Runner: `lib/wrap-pipeline.js:135` (`runWrapPipeline`).
-- **Methodology-action dispatcher** — invokes declared template actions (write side of "Run Critic"). `lib/actions.js:68` (`runAction`).
-- **Skills / wrap-shape registry** — looks up the wrap skill for a methodology. `lib/skills.js:108` (`getWrapSkill`).
-- **Eval Audit** — Tier-1 exchange scoring + watchdog. `lib/eval-audit.js:55` (`runTier1`), `:238` (`watchSession`).
+- **HTTP entrypoint + route table** — `server.js` (single-file router; `route(method, path, handler)` registrations throughout). API families summarized below; line numbers point at the first route in each family.
+- **Projects family** — `GET /api/projects` `server.js:855`, `POST /api/projects` `:932`, `GET /api/projects/:name` `:923`, `PATCH` `:1079`, `DELETE` `:1031`, `POST .../archive` `:1057`, `POST .../unarchive` `:1068`, `POST /api/projects/attach` `:869`, `POST /api/projects/import` `:962`, orphan-hooks scan `:902` / repair `:910`. Enrichment: `lib/projects.js:559` (`enrichProject`). Updates: `lib/projects.js:1224` (`updateProject`).
+- **Methodology-action invocation** — `POST /api/projects/:name/actions/:command` `server.js:1138`. Dispatcher: `lib/actions.js:68` (`runAction`).
+- **Methodologies registry** — `GET /api/methodologies` `server.js:1119`, `GET /api/methodologies/:id` `:1125`. Backend: `lib/methodologies.js:235` (`initialize`), `:614` (`listTemplates`).
+- **Sessions family** — `POST /api/sessions/:project` (launch) `:1162`, `DELETE` (kill) `:1232`, `GET /status` `:1265`, `POST /command` `:1274`, `POST /wrap` `:1304`, `POST /wrap/complete` `:1338`, `GET /peek` `:1354`, `GET /history` `:1374`. Core: `lib/sessions.js:51` (`launchSession`), `:335` (`generatePrimePrompt` docstring).
+- **Wrap pipeline runner** — `lib/wrap-pipeline.js:135` (`runWrapPipeline`).
+- **Server-info endpoint** (#199) — `GET /api/server-info` `server.js:324`. Backend: `lib/server-info.js`.
+- **PortHub leasing** — `POST /api/ports/lease` `:805`, `POST /api/ports/release` `:834`, `POST /api/ports/heartbeat` `:843`, `GET /api/ports` `:781`, `POST /api/ports/sync` `:828`. Backend: `lib/porthub.js`.
+- **Groups family** — `GET /api/groups` `server.js:1493`, `POST` `:1505`, `GET/PUT/DELETE /:id` `:1521`/`:1536`/`:1555`, `POST /:id/sync` `:1568`, `GET/POST/DELETE /:id/members` `:1583`/`:1598`/`:1615`.
+- **Shared-docs family** — `GET /api/shared-docs` `server.js:1627`, `POST` `:1637`, `GET/PUT/DELETE /:id` `:1659`/`:1670`/`:1689`, lock CRUD `:1704`/`:1723`/`:1733`.
+- **OpenClaw connections family** — `GET /api/openclaw/connections` `server.js:1745`, `POST` `:1751`, `GET/PUT/DELETE /:id` `:1777`/`:1786`/`:1818`, `POST /api/openclaw/test` `:1839`, tunnel CRUD `:1887`/`:1921`/`:1941`, approve-pending `:1980`.
+- **Eval Audit ingest** — `POST /api/audit/ingest` `server.js:2504`, `POST /api/audit/heartbeat` `:2770`. Backend: `lib/eval-audit.js:55` (`runTier1`), `:238` (`watchSession`).
+- **Activity feed** — `GET /api/activity` `server.js:1394`.
+- **Uploads** — `POST /api/upload` `server.js:1435`, `GET /api/uploads` `:1462`. Backend: `lib/uploads.js`.
+- **Tmux mouse mode** — `GET /api/tmux/mouse/:session` `server.js:1480`.
+- **Sidecar processes** — `GET /api/sidecar/:project/processes` `server.js:2724`, `GET /api/sidecar/connection/:connId/processes` `:2747`. Backend: `lib/sidecar.js`.
+- **Skills / wrap-shape registry** — `lib/skills.js:108` (`getWrapSkill`).
 - **Project store / DB** — SQLite-backed project records, project-config persistence. `lib/store.js` (`DEFAULT_PROJECT_CONFIG`, `store.projects.*`).
-- **Engine profiles + config generation** — detect installed engines, generate per-engine config files (`CLAUDE.md`, `.gemini/`, `.aider.conf.yml`, etc.). `lib/engines.js:16` (`detect`), `:214` (`generateConfig`).
+- **Engine profiles + config generation** — detect installed engines, generate per-engine config files (`CLAUDE.md`, `.gemini/`, `.aider.conf.yml`, etc.). `lib/engines.js:16` (`detect`), `:214` (`generateConfig`), `:935` (`_buildBaselineHooks`).
 
 ## Methodologies / Engines
 
-- **Methodology registry** — loads `data/templates/<id>/template.json` + `playbook.md`. `lib/methodologies.js`.
+- **Methodology registry** — loads `data/templates/<id>/template.json` + `playbook.md`. `lib/methodologies.js:235` (`initialize`).
 - **Prawduct template** — methodology shipped in repo. `data/templates/prawduct/template.json`, `data/templates/prawduct/playbook.md`.
 - **Engine profiles** — claude, codex, gemini, aider, genesis, openclaw. `data/engines/<id>.json`. Capability gates (`supportsSilentPrime`, `supportsPrimePrompt`, etc.) consumed throughout `lib/sessions.js`, `lib/engines.js`.
 - **SessionStart hook (Claude Code)** — shell script Claude Code runs on session start; reads `<project>/.tangleclaw/session-prime.md` and emits it as the prime context. `data/hooks/sessionstart-prime.sh`. Hook plumbing: `lib/engines.js:935` (`_buildBaselineHooks`).
@@ -57,9 +62,13 @@ Format: - **Name** — short description. file.js:line, file2.js:line.
 - **Wrap step: `ai-content`** — prompts injected into the AI session for changelog / learnings / memory updates. `lib/wrap-steps/ai-content.js`.
 - **Wrap step: `test`** / **`lint`** — test + lint hooks. `lib/wrap-steps/test.js`, `lib/wrap-steps/lint.js`.
 - **Run Critic action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification tracked in issue #230.
+- **Project version reader** — surfaces `version.json` semver to the UI. `lib/project-version.js`.
+- **Model status monitor** — polls engine providers (Atlassian / Google status pages) for outage detection. `lib/model-status.js:202` (`_pollEngine`), `:303` (`startMonitor`).
 
 ## CLI / Tooling
 
+- **Git helpers** — repo detection, branch/dirty/tag/commit-age info, commits, internal cache. `lib/git.js:33` (`isGitRepo`), `:47` (`getInfo`), `:171` (`commit`).
+- **Tmux helpers** — session create/kill/list, send-keys, capture-pane, mouse mode. `lib/tmux.js:100` (`createSession`), `:177` (`sendKeys`), `:251` (`capturePane`), `:298` (`setMouse`).
 - **TTYD watcher** — keeps the shared ttyd alive; restart hook on PTY exhaustion (#94). `lib/ttyd-watcher.js`.
 - **Tunnel** — Cloudflare tunnel lifecycle for remote access. `lib/tunnel.js`.
 - **Sidecar** — supplementary process supervisor. `lib/sidecar.js`.
