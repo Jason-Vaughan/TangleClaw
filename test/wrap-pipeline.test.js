@@ -39,7 +39,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     it('covers every step kind referenced by the contract (ADR 0002 dispatch table)', () => {
       const expected = [
         'pr-check', 'lint', 'test', 'critic-check',
-        'ai-content', 'priming-roll', 'version-bump', 'commit'
+        'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'commit'
       ];
       for (const kind of expected) {
         assert.ok(wrapPipeline.STEP_DISPATCH[kind],
@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump'];
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -91,9 +91,9 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.commitSha, null);
         assert.equal(result.summary, null);
         assert.equal(result.error, null);
-        // #139 Chunk 11c — prawduct now ships 8 pipeline steps
-        // (`open-pr-check` + `critic-check` added).
-        assert.equal(result.results.length, 8, 'prawduct has eight pipeline steps');
+        // #207 Chunk 3 added `features-toc` between `next-session-prime`
+        // and `memory-update` — prawduct now ships 9 pipeline steps.
+        assert.equal(result.results.length, 9, 'prawduct has nine pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -109,7 +109,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']
+        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit']
       );
     });
 
@@ -117,7 +117,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'ai-content', 'commit']);
+        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'features-toc', 'ai-content', 'commit']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -127,7 +127,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // every step. We capture the live reference each stub sees and
       // assert the post-run state.
       const capturedStaged = [];
-      const wrapKinds = ['pr-check', 'lint', 'test', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'commit'];
+      const wrapKinds = ['pr-check', 'lint', 'test', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'commit'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -141,7 +141,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 8, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, 9, 'every prawduct step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {

@@ -1207,7 +1207,7 @@ describe('sessions', () => {
       await sessions.triggerWrap('prime-test');
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, memory-update, commit\n' +
+        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'wrap NL prompt must include the post-Chunk-11c step list; any drift in join structure means triggerWrap behavior changed');
@@ -1302,7 +1302,7 @@ describe('sessions', () => {
       // priming-roll/critic-check/pr-check) so the routing assertion
       // doesn't accidentally trip on a missing tmux session.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit'];
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc'];
       const dispatchOrig = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -1315,10 +1315,10 @@ describe('sessions', () => {
         assert.equal(result.ok, true, 'V2 pipeline of no-op stubs returns ok:true');
         assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
         assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
-        // #139 Chunk 11c added `open-pr-check` + `critic-check` to
-        // prawduct's pipeline (8 steps total, up from 6).
-        assert.equal(result.pipelineResult.results.length, 8,
-          'prawduct pipeline runs all eight steps');
+        // #207 Chunk 3 added `features-toc` between `next-session-prime`
+        // and `memory-update` — prawduct now ships 9 pipeline steps.
+        assert.equal(result.pipelineResult.results.length, 9,
+          'prawduct pipeline runs all nine steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         // Restore default
@@ -1874,7 +1874,7 @@ describe('sessions', () => {
       await sessions.triggerWrap('prime-test');
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, memory-update, commit\n' +
+        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-Chunk-11c step list');
