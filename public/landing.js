@@ -87,6 +87,70 @@ async function loadVersion() {
 }
 
 /**
+ * Fetch server-info and render the stale-server banner (#199) when the
+ * running process's startup SHA differs from the current on-disk HEAD.
+ * No-op on the no-git fallback (`startupSha === null`) or when the
+ * endpoint isn't available (older server without the route).
+ */
+async function loadServerInfo() {
+  const data = await api('/api/server-info');
+  if (!data || !data.isStale) return;
+  renderStaleServerBanner(data);
+}
+
+/**
+ * Format a non-negative integer of seconds as a compact "Xh Ym" /
+ * "Xm Ys" / "Xs" string. Used by the stale-server banner so the
+ * operator sees at a glance how long the running process has been
+ * out of date.
+ * @param {number} totalSec
+ * @returns {string}
+ */
+function formatUptime(totalSec) {
+  const s = Math.max(0, Number(totalSec) | 0);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+/**
+ * Populate + reveal the stale-server banner. Defensive-by-default:
+ * every value that ends up in `innerHTML` is either passed through
+ * `esc()` (strings) or cast to a clamped integer (numerics). The
+ * server-side source already produces sane shapes, but the boundary
+ * cast here matches the broader rest-of-file convention so a future
+ * server bug that leaks a non-numeric `commitsAhead` cannot inject
+ * markup.
+ *
+ * @param {{startupSha: string|null, currentDiskSha: string|null, commitsAhead: number, uptimeSeconds: number|null}} info
+ */
+function renderStaleServerBanner(info) {
+  const banner = document.getElementById('staleServerBanner');
+  const textEl = document.getElementById('staleServerBannerText');
+  if (!banner || !textEl) return;
+
+  const commitsAhead = Math.max(0, Number(info.commitsAhead) | 0);
+  const aheadStr = commitsAhead > 0
+    ? `${commitsAhead} new commit${commitsAhead === 1 ? '' : 's'} on disk`
+    : 'newer code on disk';
+  const shortStartup = info.startupSha ? esc(info.startupSha.slice(0, 7)) : '?';
+  const shortDisk = info.currentDiskSha ? esc(info.currentDiskSha.slice(0, 7)) : '?';
+  const uptimeStr = (typeof info.uptimeSeconds === 'number' && info.uptimeSeconds >= 0)
+    ? ` Running for ${esc(formatUptime(info.uptimeSeconds))}.`
+    : '';
+
+  textEl.innerHTML =
+    '⚠ <strong>TC server is out of date.</strong> ' +
+    `Running <code>${shortStartup}</code>; <code>${shortDisk}</code> on disk ` +
+    `(${aheadStr}).${uptimeStr} Restart TC to load the latest code.`;
+  banner.classList.remove('hidden');
+}
+
+/**
  * Fetch update status and show notification pill if an update is available.
  * Dismissed state is persisted in localStorage keyed by version. The version
  * text is wrapped in an anchor to the GitHub release page (#149) when the
@@ -741,7 +805,7 @@ async function init() {
 
   wireOrphanHooksBanner();
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -769,6 +833,10 @@ function startPolling() {
   loop(loadModelStatus, 120000);
   loop(loadGroups, 30000);
   loop(loadOpenclawConnections, 30000);
+  // Stale-server detection (#199) — polls so the banner surfaces mid-session
+  // when the operator merges/pulls while a tab is open. Slower cadence than
+  // the others because it shells out to git on the server every tick.
+  loop(loadServerInfo, 60000);
 }
 
 if ('serviceWorker' in navigator) {

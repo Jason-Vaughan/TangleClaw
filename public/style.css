@@ -144,6 +144,19 @@ body {
   font-weight: 500;
 }
 .orphan-banner.hidden { display: none; }
+/* Stale-server variant (#199). Same shape as orphan-banner; different colour
+   so the two banners read distinctly when both surface together. */
+.stale-server-banner {
+  background: var(--danger, #c53030);
+  color: #fff;
+}
+.stale-server-banner .orphan-banner-text { color: inherit; }
+.stale-server-banner code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
 .orphan-banner-text { flex: 1; }
 .orphan-banner-btn {
   background: #1a1a1a;
