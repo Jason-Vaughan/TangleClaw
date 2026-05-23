@@ -97,6 +97,38 @@ describe('store.projects', () => {
     it('getByName returns null for unknown name', () => {
       assert.equal(store.projects.getByName('nonexistent'), null);
     });
+
+    describe('getByNameCaseInsensitive (#221 — case-insensitive identity lookup)', () => {
+      it('matches across casing differences', () => {
+        store.projects.create({ name: 'Case-Lookup', path: '/tmp/case-lookup' });
+        const found = store.projects.getByNameCaseInsensitive('case-lookup');
+        assert.ok(found, 'lowercase request must match mixed-case row');
+        assert.equal(found.name, 'Case-Lookup', 'returned row preserves original casing for display');
+
+        const found2 = store.projects.getByNameCaseInsensitive('CASE-LOOKUP');
+        assert.ok(found2, 'uppercase request must match mixed-case row');
+        assert.equal(found2.name, 'Case-Lookup');
+      });
+
+      it('exact-case match still works (back-compat)', () => {
+        store.projects.create({ name: 'exact-ci', path: '/tmp/exact-ci' });
+        const found = store.projects.getByNameCaseInsensitive('exact-ci');
+        assert.ok(found);
+        assert.equal(found.name, 'exact-ci');
+      });
+
+      it('returns null for unknown name (no row matches in any case)', () => {
+        assert.equal(store.projects.getByNameCaseInsensitive('absent-ci'), null);
+      });
+
+      it('is distinct from getByName — getByName stays exact-case (regression pin)', () => {
+        store.projects.create({ name: 'Distinct-CI', path: '/tmp/distinct-ci' });
+        assert.ok(store.projects.getByNameCaseInsensitive('distinct-ci'),
+          'case-insensitive variant matches');
+        assert.equal(store.projects.getByName('distinct-ci'), null,
+          'exact-case variant does NOT match — preserves the legacy contract that callers expecting exact case still get it');
+      });
+    });
   });
 
   describe('list', () => {

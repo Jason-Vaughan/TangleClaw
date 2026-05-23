@@ -638,10 +638,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         continue;
       }
 
-      // Skip if already registered
-      const existing = store.projects.getByName(proj.name);
+      // Skip if already registered — case-insensitive identity check (#221)
+      // so the startup-sync doesn't silently double-register a case-collision.
+      const existing = store.projects.getByNameCaseInsensitive(proj.name);
       if (existing) {
-        warnings.push(`Project "${proj.name}" already registered, skipped`);
+        const msg = existing.name === proj.name
+          ? `Project "${proj.name}" already registered, skipped`
+          : `Project "${proj.name}" already registered as "${existing.name}" (case-insensitive match), skipped`;
+        warnings.push(msg);
         continue;
       }
 
@@ -966,9 +970,15 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
   const warnings = [];
 
   for (const name of body.names) {
-    const existing = store.projects.getByName(name);
+    // Case-insensitive identity (#221) — symmetric with createProject /
+    // attachProject so import can't introduce a case-collision the other
+    // paths would reject.
+    const existing = store.projects.getByNameCaseInsensitive(name);
     if (existing) {
-      warnings.push(`"${name}" already registered`);
+      const msg = existing.name === name
+        ? `"${name}" already registered`
+        : `"${name}" already registered as "${existing.name}" (case-insensitive match)`;
+      warnings.push(msg);
       continue;
     }
 

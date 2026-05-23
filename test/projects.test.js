@@ -241,6 +241,67 @@ describe('projects', () => {
       assert.ok(result.project);
       assert.ok(!fs.existsSync(path.join(projectsDir, 'no-git', '.git')));
     });
+
+    describe('case-insensitive duplicate rejection (#221, sibling to #188)', () => {
+      it('rejects creating "Foo-Case" when "foo-case" already exists (lowercase first)', () => {
+        const first = projects.createProject({ name: 'foo-case', methodology: 'minimal' });
+        assert.ok(first.project, 'lowercase precondition project created');
+
+        const dup = projects.createProject({ name: 'Foo-Case', methodology: 'minimal' });
+        assert.equal(dup.project, null, 'mixed-case dup must be rejected');
+        assert.equal(dup.errors.length, 1);
+        // Error message reflects the existing project's actual casing so
+        // the operator can find it in the projects list.
+        assert.match(dup.errors[0], /foo-case/);
+        assert.match(dup.errors[0], /case-insensitive/i,
+          'error must call out the case-collision so the operator understands the rejection reason');
+      });
+
+      it('rejects creating "case-second" when "Case-Second" already exists (mixed-case first)', () => {
+        const first = projects.createProject({ name: 'Case-Second', methodology: 'minimal' });
+        assert.ok(first.project);
+
+        const dup = projects.createProject({ name: 'case-second', methodology: 'minimal' });
+        assert.equal(dup.project, null);
+        assert.match(dup.errors[0], /Case-Second/, 'error names the existing project');
+      });
+
+      it('preserves the original-casing error format when names match exactly (back-compat)', () => {
+        const first = projects.createProject({ name: 'exact-match', methodology: 'minimal' });
+        assert.ok(first.project);
+
+        const dup = projects.createProject({ name: 'exact-match', methodology: 'minimal' });
+        assert.equal(dup.project, null);
+        // When the case matches exactly, the legacy error format is preserved
+        // — no spurious "case-insensitive match" suffix that would suggest
+        // a casing difference where none exists.
+        assert.equal(dup.errors[0], 'Project "exact-match" already exists');
+      });
+
+      it('attachProject also rejects case-collision (#221 symmetric gate audit)', () => {
+        // Create a project, then create a sibling directory with case-only
+        // difference, then try to attach that directory. The attach path
+        // must reject for the same reason createProject does — otherwise
+        // attach is the case-collision back door.
+        projects.createProject({ name: 'attach-case', methodology: 'minimal' });
+        const otherDir = path.join(projectsDir, 'Attach-Case');
+        // Skip the test if the OS already collapsed the directory name
+        // (case-insensitive filesystem) — the attach path would hit the
+        // generic "already exists" fs error before reaching the case-collision
+        // guard. The guard still gets exercised on case-sensitive filesystems
+        // and via the store-level test below.
+        try { fs.mkdirSync(otherDir); } catch { return; }
+        try {
+          const result = projects.attachProject('Attach-Case');
+          assert.equal(result.project, null, 'attach must reject case-collision');
+          assert.match(result.errors[0], /already registered/);
+          assert.match(result.errors[0], /case-insensitive|attach-case/i,
+            'error must cite the existing project or call out the case-collision');
+        } finally {
+          fs.rmSync(otherDir, { recursive: true, force: true });
+        }
+      });
+    });
   });
 
   describe('getProject / listProjects', () => {
@@ -352,6 +413,55 @@ describe('projects', () => {
       assert.ok(result.project);
       const projConfig = store.projectConfig.load(result.project.path);
       assert.deepEqual(projConfig.quickCommands, cmds);
+    });
+
+    describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
+      it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
+        // Set up a discrete project so other tests' state doesn't interfere.
+        projects.createProject({ name: 'self-rename-src', methodology: 'minimal' });
+
+        // Case-only directory rename only works on case-sensitive filesystems.
+        // On macOS APFS-CI (the common dev environment) `fs.existsSync` collapses
+        // case, so the rename block's "directory already exists" guard at
+        // `lib/projects.js:1294` blocks the rename. This is a separate FS-layer
+        // concern from the DB-level validator gate we're testing here. Probe
+        // case-sensitivity by checking whether the project's own directory
+        // can be observed under its uppercased name.
+        const srcProject = store.projects.getByName('self-rename-src');
+        const upperPath = srcProject.path.replace(/self-rename-src$/, 'Self-Rename-Src');
+        if (fs.existsSync(upperPath)) {
+          t.skip('case-insensitive filesystem — DB-level self-rename gate is exercised in the cross-rename tests below');
+          return;
+        }
+
+        const result = projects.updateProject('self-rename-src', { name: 'Self-Rename-Src' });
+        assert.ok(result.project, 'case-only self-rename must be allowed by the validator');
+        assert.equal(result.errors.length, 0);
+        assert.equal(result.project.name, 'Self-Rename-Src',
+          'the new name takes effect; existing project keeps its id (same row, new casing)');
+      });
+
+      it('rejects renaming to a name that case-collides with a DIFFERENT existing project', () => {
+        projects.createProject({ name: 'collision-dest', methodology: 'minimal' });
+        projects.createProject({ name: 'rename-src', methodology: 'minimal' });
+
+        const result = projects.updateProject('rename-src', { name: 'Collision-Dest' });
+        assert.equal(result.project, null, 'cross-rename to a case-collision must be rejected');
+        assert.ok(result.errors.length > 0);
+        assert.match(result.errors[0], /collision-dest/, 'error cites the OTHER project');
+        assert.match(result.errors[0], /case-insensitive/i,
+          'error message calls out the case-collision so the operator understands the rejection');
+      });
+
+      it('preserves exact-case error format when rename target matches an existing name exactly', () => {
+        projects.createProject({ name: 'exact-rename-target', methodology: 'minimal' });
+        projects.createProject({ name: 'rename-source-2', methodology: 'minimal' });
+
+        const result = projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
+        assert.equal(result.project, null);
+        assert.equal(result.errors[0], 'Project "exact-rename-target" already exists',
+          'exact-case collision keeps the legacy error format — no spurious case-insensitive suffix');
+      });
     });
   });
 
