@@ -19,6 +19,7 @@ const tunnel = require('./lib/tunnel');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
+const serverInfo = require('./lib/server-info');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
@@ -315,6 +316,13 @@ route('GET', '/api/health', (_req, res) => {
 // GET /api/version
 route('GET', '/api/version', (_req, res) => {
   jsonResponse(res, 200, { version: _getVersion() });
+});
+
+// GET /api/server-info — runtime-vs-disk diff (#199). Browser polls this
+// (or fetches on page load) to surface a banner when the running process
+// is older than the on-disk code. See `lib/server-info.js` docstring.
+route('GET', '/api/server-info', (_req, res) => {
+  jsonResponse(res, 200, serverInfo.getServerInfo());
 });
 
 // GET /api/config
@@ -3064,6 +3072,11 @@ if (require.main === module) {
   if (envLogLevel) {
     setLevel(envLogLevel);
   }
+
+  // Capture git HEAD SHA at boot for stale-server detection (#199).
+  // Doing this before store.init keeps the snapshot honest — any code
+  // paths the store init triggers run against the SHA we just stamped.
+  serverInfo.captureStartup();
 
   // Initialize store (needed for config before PID check)
   store.init();

@@ -283,6 +283,10 @@
 
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">
+    <!-- Stale-server banner (#199). Hidden until /api/server-info reports isStale. -->
+    <div id="staleServerBanner" class="orphan-banner stale-server-banner hidden" role="alert">
+      <span class="orphan-banner-text" id="staleServerBannerText"></span>
+    </div>
     <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
     <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">
       <span class="orphan-banner-text" id="orphanHooksBannerText"></span>
