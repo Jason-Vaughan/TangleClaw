@@ -3794,6 +3794,25 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
         assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Changed']), {}), 'minor');
       });
 
+      it('Internal + Removed → minor and Internal + Deprecated → minor (table↔test parity)', () => {
+        // Pins the remaining two minor-trigger subsections against
+        // Internal so the bump-level table in CLAUDE.md is fully
+        // covered. Critic-recommended (#231 PR review).
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Removed']), {}), 'minor');
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Deprecated']), {}), 'minor');
+      });
+
+      it('`options.bumpLevel: \'minor\'` override on Internal-only [Unreleased] still bumps minor', () => {
+        // The override path short-circuits the subsection vote (see
+        // `_decideBumpLevel` precedence). Pinning this guarantees an
+        // operator can still force minor on a refactor-only release
+        // — #231's "stays patch by *default*" half is asserted, but
+        // the override escape hatch is preserved.
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal']), { bumpLevel: 'minor' }), 'minor');
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal']), { bumpLevel: 'major' }), 'major',
+          'major override also wins over Internal-only patch-default');
+      });
+
       it('BREAKING marker still wins over Internal-only body', () => {
         assert.equal(
           versionBump._decideBumpLevel(parsed(['Internal'], '- BREAKING: API renamed'), {}),
