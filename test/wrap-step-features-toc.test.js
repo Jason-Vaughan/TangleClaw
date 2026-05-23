@@ -21,6 +21,83 @@ const featuresToc = require('../lib/wrap-steps/features-toc');
 const commitStep = require('../lib/wrap-steps/commit');
 
 describe('wrap-step features-toc (#207 Chunk 3)', () => {
+  describe('_todayIsoLocal (#205 parity — local-zoned date)', () => {
+    // Mirrors the version-bump fix in PR #216. The bundled
+    // `## TODO (auto-stubbed YYYY-MM-DD)` heading date must reflect
+    // the operator's local clock, not UTC. Same three pins as the
+    // version-bump test set: shape, local-vs-UTC behavior, wiring.
+
+    it('returns YYYY-MM-DD shape (10 chars, separators at correct positions)', () => {
+      const out = featuresToc._todayIsoLocal();
+      assert.equal(typeof out, 'string');
+      assert.equal(out.length, 10, 'should be exactly 10 characters');
+      assert.equal(out[4], '-', 'separator at index 4');
+      assert.equal(out[7], '-', 'separator at index 7');
+      assert.match(out, /^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('returns LOCAL date (not UTC) when the host is in a non-UTC zone', (t) => {
+      // The bug pattern is UTC emission; the fix uses local-zone date
+      // components. To EXERCISE the bug-vs-fix distinction we need a
+      // wall-clock moment where LOCAL date differs from UTC date —
+      // i.e. a host TZ with a non-zero offset. On a UTC-host CI
+      // (Linux containers default to UTC), local == UTC and the bug
+      // never surfaces, so the distinguishing assertion is vacuous.
+      // Skip in that case; the wiring pin below still catches
+      // regressions on any host.
+      if (new Date().getTimezoneOffset() === 0) {
+        t.skip('host is in UTC; local-vs-UTC distinction is unobservable here');
+        return;
+      }
+
+      const origDate = global.Date;
+      try {
+        // Construct candidate UTC moments and pick the one whose
+        // LOCAL projection lives on a different calendar day than UTC.
+        // Negative-offset hosts (Americas) split on the first; positive-
+        // offset hosts (most of the world) split on the second.
+        const candidates = [
+          new origDate(origDate.UTC(2026, 4, 23, 6, 30, 0)),
+          new origDate(origDate.UTC(2026, 4, 22, 18, 0, 0))
+        ];
+        const pinned = candidates.find((m) => {
+          const utcDay = m.toISOString().slice(0, 10);
+          const pad = (n) => String(n).padStart(2, '0');
+          const localDay = `${m.getFullYear()}-${pad(m.getMonth() + 1)}-${pad(m.getDate())}`;
+          return utcDay !== localDay;
+        });
+        if (!pinned) {
+          t.skip('could not construct a UTC/LOCAL date-mismatch moment for this host TZ');
+          return;
+        }
+
+        global.Date = class extends origDate {
+          constructor(...args) {
+            super(...(args.length === 0 ? [pinned.getTime()] : args));
+          }
+        };
+
+        const out = featuresToc._todayIsoLocal();
+        const pad = (n) => String(n).padStart(2, '0');
+        const expectedLocal = `${pinned.getFullYear()}-${pad(pinned.getMonth() + 1)}-${pad(pinned.getDate())}`;
+        assert.equal(out, expectedLocal,
+          `must reflect local date ${expectedLocal} for the pinned UTC moment; got ${out}`);
+        assert.notEqual(out, pinned.toISOString().slice(0, 10),
+          'must NOT equal the UTC slice — that would mean the UTC-emitting pattern still ships');
+      } finally {
+        global.Date = origDate;
+      }
+    });
+
+    it('default _internal.todayIso is wired to the local-zoned helper (regression pin)', () => {
+      // Host-independent regression safety: a future refactor that
+      // reverts to a UTC default fails this assertion on any host
+      // regardless of TZ. Mirrors the wiring pin from PR #216.
+      assert.equal(featuresToc._internal.todayIso, featuresToc._todayIsoLocal,
+        '_internal.todayIso must point to _todayIsoLocal (the local-zoned formatter)');
+    });
+  });
+
   describe('_isIndexableCandidate', () => {
     const { _isIndexableCandidate } = featuresToc;
 
