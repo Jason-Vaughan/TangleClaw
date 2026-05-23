@@ -146,6 +146,18 @@ Substantive milestones become tagged releases on GitHub. Releases create permane
 - Create the GitHub release: `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for hand-curated notes from CHANGELOG).
 - Maintain a `CHANGELOG.md` in Keep a Changelog format with `[Unreleased]` section + dated release entries. Each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
 
+**Rule: TC's `version-bump` wrap step picks the bump level from `[Unreleased]` content. Author CHANGELOG entries under the subsection that produces the intended bump.**
+
+| `[Unreleased]` content | Bump |
+|---|---|
+| `BREAKING:` or `BREAKING(` marker anywhere in body | **major** |
+| Any `### Added`, `### Changed`, `### Removed`, or `### Deprecated` | **minor** |
+| Only `### Fixed`, `### Security`, or `### Internal` | **patch** |
+
+`### Internal` is a non-Keep-a-Changelog subsection (introduced in #231) for refactors, test-only changes, dev tooling, CI tweaks, and doc-only edits that don't change user-facing behavior. Entries logged here still appear in `CHANGELOG.md` for full auditable history, but the wrap step treats them as patch-tier so a release made up entirely of internal churn doesn't inflate the minor counter.
+
+Pick the subsection by **user-visible impact**, not file footprint: a one-line behavior change for the user is `### Added` / `### Changed`; a 500-line refactor with zero user-visible effect is `### Internal`. When in doubt between `### Changed` and `### Internal`, ask "would an operator notice a difference next session?" — yes → `### Changed`, no → `### Internal`.
+
 ## Repository Standards
 
 Every repo should look professional and ready for visitors — future-self, contributors, and hiring evaluators reviewing the user's portfolio.

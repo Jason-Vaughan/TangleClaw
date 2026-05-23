@@ -3695,6 +3695,23 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
       const r = versionBump._parseUnreleased(text);
       assert.deepStrictEqual(r.subsections, ['Added']);
     });
+
+    it('recognizes the `### Internal` subsection (#231) and surfaces it alongside the Keep-a-Changelog set', () => {
+      // Pin: SUBSECTION_RE must include `Internal` so the parser
+      // surfaces it for the bump-level decider. The bump-level
+      // exclusion happens in `_decideBumpLevel`, not here.
+      const text = [
+        '## [Unreleased]', '',
+        '### Internal', '- Refactor: extract helper', '',
+        '### Added', '- New user-visible feature', '',
+        '## [1.0.0] - 2026-01-01'
+      ].join('\n');
+      const r = versionBump._parseUnreleased(text);
+      assert.equal(r.ok, true);
+      assert.equal(r.hasEntries, true);
+      assert.deepStrictEqual(r.subsections, ['Internal', 'Added'],
+        'both subsections must be surfaced in source order');
+    });
   });
 
   describe('_decideBumpLevel', () => {
@@ -3754,6 +3771,36 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
 
     it('defaults to patch when no subsections (defensive)', () => {
       assert.equal(versionBump._decideBumpLevel(parsed([]), {}), 'patch');
+    });
+
+    describe('`### Internal` subsection (#231)', () => {
+      it('Internal-only [Unreleased] → patch (refactor-only releases stay at patch)', () => {
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal']), {}), 'patch');
+      });
+
+      it('Internal + Fixed → patch (both are patch-tier; no minor escalation)', () => {
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Fixed']), {}), 'patch');
+        assert.equal(versionBump._decideBumpLevel(parsed(['Fixed', 'Internal']), {}), 'patch',
+          'order must not matter');
+      });
+
+      it('Internal + Added → minor (user-visible Added wins; Internal does not veto)', () => {
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Added']), {}), 'minor');
+        assert.equal(versionBump._decideBumpLevel(parsed(['Added', 'Internal']), {}), 'minor',
+          'order must not matter');
+      });
+
+      it('Internal + Changed → minor (Changed is user-visible per Keep-a-Changelog)', () => {
+        assert.equal(versionBump._decideBumpLevel(parsed(['Internal', 'Changed']), {}), 'minor');
+      });
+
+      it('BREAKING marker still wins over Internal-only body', () => {
+        assert.equal(
+          versionBump._decideBumpLevel(parsed(['Internal'], '- BREAKING: API renamed'), {}),
+          'major',
+          'BREAKING precedence is unchanged by the #231 work'
+        );
+      });
     });
   });
 
