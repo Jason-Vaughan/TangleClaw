@@ -3422,6 +3422,91 @@ describe('projConfig — lastWrapSha default (#139 Chunk 9)', () => {
 describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', () => {
   const versionBump = require('../lib/wrap-steps/version-bump');
 
+  describe('_todayIsoLocal (#205 — local-zoned date)', () => {
+    it('returns YYYY-MM-DD shape (10 chars, separators in correct positions)', () => {
+      const out = versionBump._todayIsoLocal();
+      assert.equal(typeof out, 'string');
+      assert.equal(out.length, 10, 'should be exactly 10 characters');
+      assert.equal(out[4], '-', 'separator at index 4');
+      assert.equal(out[7], '-', 'separator at index 7');
+      assert.match(out, /^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('returns LOCAL date (not UTC) when the host is in a non-UTC zone (#205 bug-distinguishing pin)', (t) => {
+      // The bug was UTC emission; the fix uses local-zone date components.
+      // To EXERCISE the bug-vs-fix distinction we need a wall-clock moment
+      // where LOCAL date differs from UTC date — i.e. a host TZ with a
+      // non-zero offset. On a UTC-host CI (Linux containers default to
+      // UTC), local == UTC and the bug never surfaces, so the
+      // distinguishing assertion is vacuous. Skip in that case; the wiring
+      // pin test below still catches regressions on any host.
+      if (new Date().getTimezoneOffset() === 0) {
+        t.skip('host is in UTC; local-vs-UTC distinction is unobservable here');
+        return;
+      }
+
+      const origDate = global.Date;
+      try {
+        // Pick a UTC moment that lives on a DIFFERENT calendar day than
+        // the LOCAL projection of that same moment. `Date.UTC(2026, 4, 23,
+        // 6, 30, 0)` = 2026-05-23 06:30 UTC. On every host with a negative
+        // offset (Americas), the local projection is 2026-05-22. On every
+        // host with a positive offset less than +24h (most of the world),
+        // the local projection is also 2026-05-23 but at a different hour
+        // — still distinguishable from UTC by `.getDate()` only on the
+        // negative-offset half. To stay portable across positive-offset
+        // hosts, also try a complementary moment: `Date.UTC(2026, 4, 22,
+        // 18, 0, 0)` = 2026-05-22 18:00 UTC. On a Tokyo host (+09:00) this
+        // is 2026-05-23 03:00 LOCAL — local IS the date-after.
+        //
+        // We pick whichever moment puts UTC and LOCAL on different days
+        // for the host, then assert the LOCAL date matches what the
+        // formatter returns AND differs from `toISOString().slice(0,10)`.
+        const candidates = [
+          new origDate(origDate.UTC(2026, 4, 23, 6, 30, 0)),   // negative-offset hosts split here
+          new origDate(origDate.UTC(2026, 4, 22, 18, 0, 0))    // positive-offset hosts split here
+        ];
+        const pinned = candidates.find((m) => {
+          const utcDay = m.toISOString().slice(0, 10);
+          const pad = (n) => String(n).padStart(2, '0');
+          const localDay = `${m.getFullYear()}-${pad(m.getMonth() + 1)}-${pad(m.getDate())}`;
+          return utcDay !== localDay;
+        });
+        if (!pinned) {
+          // Should not occur in practice — host offset would have to be
+          // exactly 0 or a multiple of 24h. Defensive skip rather than a
+          // false-positive failure.
+          t.skip('could not construct a UTC/LOCAL date-mismatch moment for this host TZ');
+          return;
+        }
+
+        global.Date = class extends origDate {
+          constructor(...args) {
+            super(...(args.length === 0 ? [pinned.getTime()] : args));
+          }
+        };
+
+        const out = versionBump._todayIsoLocal();
+        const pad = (n) => String(n).padStart(2, '0');
+        const expectedLocal = `${pinned.getFullYear()}-${pad(pinned.getMonth() + 1)}-${pad(pinned.getDate())}`;
+        assert.equal(out, expectedLocal,
+          `must reflect local date ${expectedLocal} for the pinned UTC moment; got ${out}`);
+        assert.notEqual(out, pinned.toISOString().slice(0, 10),
+          'must NOT equal the UTC slice — that would mean the old bug still ships');
+      } finally {
+        global.Date = origDate;
+      }
+    });
+
+    it('default _internal.todayIso is wired to the local-zoned helper (regression pin for #205)', () => {
+      // The bug was the default factory shipping `() => new Date().toISOString().slice(0, 10)`
+      // (UTC). The fix wires `_internal.todayIso` to `_todayIsoLocal`. Pin
+      // the wiring so a future refactor cannot quietly revert.
+      assert.equal(versionBump._internal.todayIso, versionBump._todayIsoLocal,
+        '_internal.todayIso must point to _todayIsoLocal (the local-zoned formatter)');
+    });
+  });
+
   describe('_parseSemver', () => {
     it('parses canonical x.y.z', () => {
       assert.deepStrictEqual(versionBump._parseSemver('3.16.2'), { major: 3, minor: 16, patch: 2 });
