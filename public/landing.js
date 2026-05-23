@@ -726,22 +726,48 @@ function esc(str) {
 // ── Initialization ──
 
 /**
+ * Canonical form for project-name identity comparisons (#221). TC
+ * preserves the operator's chosen capitalization for display
+ * everywhere; the canonical form is only ever used for set membership
+ * and equality checks. Lowercase is chosen because case-insensitive
+ * filesystems (macOS HFS+, Windows) collapse to it, and programmatic
+ * PortHub registrations conventionally slug-style lowercase.
+ *
+ * Defensive against non-string input — coerces to '' so map/filter
+ * pipelines don't throw on a malformed lease record.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function _canonicalProjectName(name) {
+  return String(name == null ? '' : name).toLowerCase();
+}
+
+/**
  * Check if any port leases reference projects not registered in TangleClaw.
  * If found, render an import notification banner with details.
  */
 function checkPortImports() {
   if (!state.ports.length || !state.projects.length) return;
 
-  const registeredNames = new Set(state.projects.map(p => p.name));
-  const ignored = getIgnoredLeaseProjects();
+  // Identity is case-insensitive (#221) — TC's storage layer preserves
+  // the operator's chosen capitalization for display, but two names
+  // that differ only in case refer to the SAME project. Normalize both
+  // sides before comparison so a lease registered as "monad-1" against
+  // a TC project named "Monad-1" doesn't falsely advertise an import.
+  const registeredNames = new Set(state.projects.map(p => _canonicalProjectName(p.name)));
+  const ignored = new Set([...getIgnoredLeaseProjects()].map(_canonicalProjectName));
 
   // OpenClaw direct-connect tunnels register under oc-direct-<connId> — not orphan projects
   const ocConnIds = new Set((state.openclawConnections || []).map(c => `oc-direct-${c.id}`));
 
-  // Group ports by unregistered project name
+  // Group ports by unregistered project name. Bucket by the lease's
+  // ORIGINAL casing so the banner shows what's actually on the wire,
+  // not a normalized form.
   const unregistered = {};
   for (const lease of state.ports) {
-    if (!registeredNames.has(lease.project) && !ignored.has(lease.project) && !ocConnIds.has(lease.project)) {
+    const key = _canonicalProjectName(lease.project);
+    if (!registeredNames.has(key) && !ignored.has(key) && !ocConnIds.has(lease.project)) {
       if (!unregistered[lease.project]) unregistered[lease.project] = [];
       unregistered[lease.project].push(lease);
     }
@@ -750,9 +776,10 @@ function checkPortImports() {
   const importable = Object.entries(unregistered).map(([name, leases]) => ({
     name,
     ports: leases.map(l => ({ port: l.port, service: l.service })),
-    // Check for conflicts with registered projects' ports
+    // Conflict detection also runs case-insensitively — a registered
+    // project Foo holding port 3200 conflicts with a lease foo:3200.
     conflicts: leases.filter(l =>
-      state.ports.some(p => p.port === l.port && registeredNames.has(p.project))
+      state.ports.some(p => p.port === l.port && registeredNames.has(_canonicalProjectName(p.project)))
     ).map(l => l.port)
   }));
 
