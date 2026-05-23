@@ -23,6 +23,11 @@
     "args": [],
     "env": {}
   },
+  "launchModes": {
+    "default": { "label": "Interactive", "args": [], "description": "Confirms before each change" },
+    "yesAlways": { "label": "YOLO", "args": ["--yes-always"], "description": "Auto-confirms all prompts (aider --yes-always)", "warning": "Only use in isolated environments (containers/VMs)" }
+  },
+  "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
     "supportsSlashCommands": true,

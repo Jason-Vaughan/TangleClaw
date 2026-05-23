@@ -22,6 +22,11 @@
     "preKeyDelay": 3000,
     "startupDelay": 2000
   },
+  "launchModes": {
+    "default": { "label": "Interactive", "args": [], "description": "Asks for approval per action" },
+    "fullAuto": { "label": "Full Auto", "args": ["--full-auto"], "description": "Low-friction sandboxed automatic execution (codex --full-auto). Sandboxed but skips approval prompts.", "warning": "Sandboxed but unattended — review the generated diffs before merging." }
+  },
+  "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
     "supportsSlashCommands": false,
