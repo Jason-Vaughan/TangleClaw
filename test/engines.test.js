@@ -180,6 +180,83 @@ describe('engines', () => {
       assert.ok(Array.isArray(claude.launchModes.auto.args), 'Auto mode should have args array');
       assert.equal(claude.defaultLaunchMode, 'default');
     });
+
+    // #209 — YOLO mode parity across engines. Each non-Claude engine that supports
+    // an unattended/skip-permissions equivalent gets a `launchModes` block so the
+    // session-launch modal renders and the flag flows through `_buildLaunchCommand`.
+    // These tests pin (a) the YOLO key exists, (b) the flag args match the upstream
+    // CLI's documented flag — a future flag rename in any of these CLIs will fail
+    // here loudly rather than silently routing users into the wrong mode.
+    describe('launchModes parity across engines (#209)', () => {
+      it('gemini exposes yolo via --yolo', () => {
+        const gemini = engines.listWithAvailability().find(e => e.id === 'gemini');
+        assert.ok(gemini.launchModes, 'gemini should have launchModes');
+        assert.equal(gemini.defaultLaunchMode, 'default');
+        assert.deepEqual(gemini.launchModes.yolo.args, ['--yolo']);
+        assert.ok(gemini.launchModes.yolo.warning, 'YOLO mode must carry a warning');
+        // Approval-mode parity with Claude (default / auto-equivalent / plan / yolo)
+        assert.deepEqual(gemini.launchModes.autoEdit.args, ['--approval-mode', 'auto_edit']);
+        assert.deepEqual(gemini.launchModes.plan.args, ['--approval-mode', 'plan']);
+        assert.deepEqual(gemini.launchModes.default.args, []);
+      });
+
+      it('aider exposes yolo via --yes-always', () => {
+        const aider = engines.listWithAvailability().find(e => e.id === 'aider');
+        assert.ok(aider.launchModes, 'aider should have launchModes');
+        assert.equal(aider.defaultLaunchMode, 'default');
+        assert.deepEqual(aider.launchModes.yesAlways.args, ['--yes-always']);
+        assert.ok(aider.launchModes.yesAlways.warning, 'YOLO mode must carry a warning');
+        assert.deepEqual(aider.launchModes.default.args, []);
+      });
+
+      it('codex exposes fullAuto via --full-auto (sandboxed, not true YOLO)', () => {
+        const codex = engines.listWithAvailability().find(e => e.id === 'codex');
+        assert.ok(codex.launchModes, 'codex should have launchModes');
+        assert.equal(codex.defaultLaunchMode, 'default');
+        assert.deepEqual(codex.launchModes.fullAuto.args, ['--full-auto']);
+        assert.ok(codex.launchModes.fullAuto.warning, 'fullAuto must carry a warning even though sandboxed');
+        // Label calls out the distinction from Claude/Gemini YOLO — codex is sandboxed.
+        assert.equal(codex.launchModes.fullAuto.label, 'Full Auto');
+      });
+
+      it('every engine with launchModes has a default key that matches defaultLaunchMode', () => {
+        const list = engines.listWithAvailability();
+        const withModes = list.filter(e => e.launchModes);
+        assert.ok(withModes.length >= 4, `expected ≥4 engines with launchModes, got ${withModes.length}`);
+        for (const engine of withModes) {
+          assert.ok(
+            engine.launchModes[engine.defaultLaunchMode],
+            `engine "${engine.id}" defaultLaunchMode="${engine.defaultLaunchMode}" must exist in launchModes`
+          );
+        }
+      });
+
+      it('every engine with launchModes has >1 mode so the modal renders', () => {
+        // public/landing.js:470 renders the modal only when Object.keys(launchModes).length > 1.
+        // A single-entry launchModes block would silently skip the picker.
+        const list = engines.listWithAvailability();
+        for (const engine of list.filter(e => e.launchModes)) {
+          assert.ok(
+            Object.keys(engine.launchModes).length > 1,
+            `engine "${engine.id}" must have >1 launchMode or the picker won't render`
+          );
+        }
+      });
+
+      it('openclaw intentionally has no launchModes yet (follow-up scoped separately)', () => {
+        // Sentinel pin — if someone adds launchModes to openclaw without thinking
+        // through what YOLO means for the in-house wrapper, this fails and they
+        // come back to design it deliberately. listWithAvailability surfaces
+        // `launchModes: null` for engines whose JSON omits the field, so accept
+        // either null or undefined.
+        const openclaw = engines.listWithAvailability().find(e => e.id === 'openclaw');
+        assert.ok(openclaw, 'openclaw engine should exist');
+        assert.ok(
+          !openclaw.launchModes,
+          'openclaw must NOT declare launchModes until the wrapper\'s YOLO semantics are designed (see #209 OpenClaw follow-up)'
+        );
+      });
+    });
   });
 
   describe('getWithAvailability', () => {

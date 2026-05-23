@@ -19,6 +19,13 @@
     "args": [],
     "env": {}
   },
+  "launchModes": {
+    "default": { "label": "Interactive", "args": [], "description": "Prompts for approval on every action" },
+    "autoEdit": { "label": "Auto Edit", "args": ["--approval-mode", "auto_edit"], "description": "Auto-approves edit tools; prompts for shell/other actions" },
+    "plan": { "label": "Plan Only", "args": ["--approval-mode", "plan"], "description": "Read-only mode; no code changes" },
+    "yolo": { "label": "YOLO", "args": ["--yolo"], "description": "Auto-approve all actions (gemini --yolo)", "warning": "Only use in isolated environments (containers/VMs)" }
+  },
+  "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
     "supportsSlashCommands": false,
