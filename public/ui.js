@@ -718,6 +718,8 @@ function openSettings(name) {
   // touching the rest of the modal. The container is always in the DOM; it just
   // becomes empty for engines that don't advertise supportsSilentPrime.
   const initialSilentChecked = !!project.silentPrime;
+  // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
+  const initialFeatureIndexChecked = !!project.featureIndexEnabled;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -741,10 +743,12 @@ function openSettings(name) {
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
              autocomplete="off" autocorrect="off" autocapitalize="off">
     </div>
-    <div id="settingsSilentPrimeContainer"></div>`;
+    <div id="settingsSilentPrimeContainer"></div>
+    <div id="settingsFeatureIndexContainer"></div>`;
 
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
+  renderFeatureIndexToggle(initialFeatureIndexChecked);
 
   // Re-render on engine dropdown change (chunk 3 polish — Critic Mn5). Without
   // this, switching the dropdown to an engine that lacks supportsSilentPrime
@@ -789,6 +793,29 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
+    </div>`;
+}
+
+/**
+ * Render the Feature Index toggle (#207, chunk 1). Engine-agnostic — always
+ * rendered because the FEATURES.md file and (future) wrap-step parity work
+ * regardless of which engine the project uses. SessionStart injection
+ * (chunk 2) layers its own engine-capability gate on top at the injection
+ * site.
+ *
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ */
+function renderFeatureIndexToggle(preserveChecked) {
+  const container = document.getElementById('settingsFeatureIndexContainer');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Feature Index</span>
+        <input type="checkbox" id="settingsFeatureIndex" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Maintain a FEATURES.md at the project root mapping feature names to file paths. Enabling creates a template stub at &lt;project-root&gt;/FEATURES.md (existing files are preserved). Edit the file directly to add entries.</div>
     </div>`;
 }
 
@@ -864,6 +891,11 @@ async function doSaveSettings() {
   const silentPrimeEl = document.getElementById('settingsSilentPrime');
   if (silentPrimeEl) {
     body.silentPrime = silentPrimeEl.checked;
+  }
+  // Feature Index (#207, chunk 1) — always present (engine-agnostic)
+  const featureIndexEl = document.getElementById('settingsFeatureIndex');
+  if (featureIndexEl) {
+    body.featureIndexEnabled = featureIndexEl.checked;
   }
 
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
