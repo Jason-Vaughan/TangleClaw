@@ -282,6 +282,189 @@ describe('sessions', () => {
       const minimalPrompt = sessions.generatePrimePrompt(store.projects.getByName('prime-test'), engine);
       assert.equal(minimalPrompt.includes('## Project Version Recording'), false, 'minimal prime should not include version recording');
     });
+
+    describe('Feature Index injection (#207, chunk 2)', () => {
+      // Use a dedicated project to keep config + FEATURES.md state isolated
+      // from the other generatePrimePrompt tests above.
+      let fiProject;
+      let fiProjectPath;
+      let featuresPath;
+
+      before(() => {
+        fiProjectPath = path.join(projectsDir, 'fi-prime-test');
+        fs.mkdirSync(fiProjectPath, { recursive: true });
+        store.projects.create({
+          name: 'fi-prime-test',
+          path: fiProjectPath,
+          engine: 'claude',
+          methodology: 'minimal'
+        });
+        fiProject = store.projects.getByName('fi-prime-test');
+        featuresPath = path.join(fiProjectPath, 'FEATURES.md');
+      });
+
+      beforeEach(() => {
+        // Reset project config + filesystem between cases so each test starts
+        // from a known state. Default: both gates off, no FEATURES.md.
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: false,
+          featureIndexEnabled: false
+        });
+        try { fs.rmSync(featuresPath, { force: true }); } catch {}
+      });
+
+      it('injects FEATURES.md contents under "## Feature Index" when all three gates are true', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath, '# Feature Index\n\n## UI / Web\n- **Pill** — lib/pill.js:42\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.ok(prompt.includes('## Feature Index'), 'prime should contain Feature Index heading');
+        assert.ok(prompt.includes('**Pill**'), 'prime should contain authored entry');
+        assert.ok(prompt.includes('lib/pill.js:42'), 'prime should contain the file pointer');
+      });
+
+      it('is skipped when featureIndexEnabled is false (even with silentPrime + capability)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: false
+        });
+        fs.writeFileSync(featuresPath, '# Feature Index\n\n- entry\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false);
+      });
+
+      it('is skipped when silentPrime is false (symmetric gate — #125 ADR 0001)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: false,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath, '# Feature Index\n\n- entry\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'silentPrime=false must short-circuit even when the project toggle is on');
+      });
+
+      it('is skipped when the engine lacks supportsSilentPrime capability', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath, '# Feature Index\n\n- entry\n');
+
+        // Synthesize an engine profile that declares no silent-prime support.
+        const engineWithoutCapability = {
+          id: 'no-silent',
+          capabilities: { supportsSilentPrime: false }
+        };
+
+        const prompt = sessions.generatePrimePrompt(fiProject, engineWithoutCapability);
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'engine capability gate must short-circuit injection');
+      });
+
+      it('is skipped when engineProfile.capabilities is missing entirely (defensive gate)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath, '# Feature Index\n\n- entry\n');
+
+        const prompt = sessions.generatePrimePrompt(fiProject, { id: 'no-caps' });
+        assert.equal(prompt.includes('## Feature Index'), false);
+      });
+
+      it('is skipped gracefully when FEATURES.md is missing (no throw, no section)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        // FEATURES.md intentionally absent (beforeEach removed it).
+        assert.equal(fs.existsSync(featuresPath), false, 'precondition: file absent');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'missing FEATURES.md must skip silently — not throw and not insert an empty section');
+      });
+
+      it('is skipped when FEATURES.md is whitespace-only (no empty section in prime)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath, '   \n\n\t  \n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'whitespace-only FEATURES.md should not produce an empty section');
+      });
+
+      it('respects template.prime.maxTokens truncation when FEATURES.md pushes prompt over budget', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+
+        // Build a FEATURES.md large enough to exceed any reasonable maxTokens.
+        // The minimal template's prime.maxTokens is small; the existing
+        // truncation at lines 408-413 (maxChars = maxTokens * 4) should kick in.
+        const huge = '# Feature Index\n\n' + ('- entry padding word '.repeat(2000)) + '\n';
+        fs.writeFileSync(featuresPath, huge);
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        const template = store.templates.get('minimal');
+        // Hard precondition: if the template schema ever renames or drops
+        // prime.maxTokens this test must fail loudly, not pass silently.
+        assert.ok(template, 'precondition: minimal template loadable');
+        assert.ok(template.prime, 'precondition: minimal template has prime config');
+        assert.ok(template.prime.maxTokens, 'precondition: minimal template has prime.maxTokens');
+
+        const maxChars = template.prime.maxTokens * 4;
+        assert.ok(prompt.length <= maxChars + 30,
+          `prompt length ${prompt.length} should respect maxChars budget ${maxChars} (+truncation marker)`);
+      });
+
+      after(() => {
+        // Clean up the dedicated FI project so it does not leak into sibling
+        // describe blocks that iterate all projects.
+        try { fs.rmSync(featuresPath, { force: true }); } catch {}
+        try { fs.rmSync(path.join(fiProjectPath, '.tangleclaw'), { recursive: true, force: true }); } catch {}
+      });
+    });
   });
 
   describe('_buildLaunchCommand', () => {
