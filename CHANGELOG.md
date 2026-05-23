@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Feature Index dogfooded on TC-v3 (#207 Chunk 4)** — closes out the four-chunk Feature Index build. `featureIndexEnabled` is now `true` on TC-v3's own project config, and `FEATURES.md` ships at the repo root with hand-authored pointer entries across UI / Web, Server / API, Methodologies / Engines, and CLI / Tooling. The Chunk-1 stub-seeding helper was verified end-to-end via a `PATCH /api/projects/TangleClaw-v3 {"featureIndexEnabled": true}` API call: the seed template lands when the toggle flips, and the hand-authored content replaces the placeholder sections. **Verification deferred.** Two parts of the plan's verification matrix can only run in *future* sessions and are intentionally not part of this PR: (1) starting a fresh Claude Code session on TC-v3 to confirm the Chunk-2 SessionStart injection actually pastes `## Feature Index` into the prime context, and (2) producing a PR that touches a brand-new file to confirm Chunk-3's `features-toc` wrap-step appends a TBD stub. Both will happen organically as the project continues; if either misbehaves, the regression is captured in a follow-up issue rather than blocking the dogfood landing. **Cross-references.** `MEMORY.md` gains a `reference_features_index.md` entry pointing at `FEATURES.md` as the canonical "where does feature X live?" lookup, so future sessions know to consult it before spawning Explore agents.
+
 ## [3.18.0] - 2026-05-23
 
 ### Fixed
