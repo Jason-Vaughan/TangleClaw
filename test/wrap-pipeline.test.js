@@ -858,6 +858,91 @@ describe('wrap-step ai-content — pure helpers (#139 Chunk 5)', () => {
       assert.equal(parsed.summary, 'kept');
       assert.equal(parsed.Other, undefined);
     });
+
+    describe('heading normalization (#201 — natural-English variants)', () => {
+      it('matches "## Next Steps" (space-separated) against captureField "nextSteps"', () => {
+        const raw = '## Next Steps\n- do x\n- do y\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        assert.equal(parsed.nextSteps, '- do x\n- do y',
+          '## Next Steps must match nextSteps — the canonical fragility from PR #200 Critic n1');
+      });
+
+      it('matches "## next-steps" (kebab) against "nextSteps"', () => {
+        const raw = '## next-steps\nbody\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        assert.equal(parsed.nextSteps, 'body');
+      });
+
+      it('matches "## NEXT_STEPS" (screaming snake) against "nextSteps"', () => {
+        const raw = '## NEXT_STEPS\nbody\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        assert.equal(parsed.nextSteps, 'body');
+      });
+
+      it('matches "## Next.Steps" (dotted) against "nextSteps"', () => {
+        const raw = '## Next.Steps\nbody\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        assert.equal(parsed.nextSteps, 'body');
+      });
+
+      it('still matches the exact canonical form "## nextSteps"', () => {
+        const raw = '## nextSteps\nbody\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        assert.equal(parsed.nextSteps, 'body', 'normalization must be a superset of equality — never narrower');
+      });
+
+      it('handles multiple captureFields with mixed-style headings simultaneously', () => {
+        const raw =
+          '## Summary\nshipped X\n' +
+          '## Next Steps\n- a\n- b\n' +
+          '## Learnings\nnone\n';
+        const parsed = aiContent._parseFields(raw, ['summary', 'nextSteps', 'learnings']);
+        assert.equal(parsed.summary, 'shipped X');
+        assert.equal(parsed.nextSteps, '- a\n- b');
+        assert.equal(parsed.learnings, 'none');
+      });
+
+      it('returns the captureField under its DECLARED key, not the heading\'s normalized form', () => {
+        const raw = '## Next Steps\nbody\n';
+        const parsed = aiContent._parseFields(raw, ['nextSteps']);
+        // Map key must be the literal field name the caller passed in
+        // ('nextSteps'), NOT the normalized form ('nextsteps') — otherwise
+        // _parseFields-consuming code (the handler's missing-field check,
+        // captureFields lockstep tests in test/prawduct-aicontent-prompts.test.js)
+        // would have to also normalize.
+        assert.equal(parsed.nextSteps, 'body');
+        assert.equal(parsed.nextsteps, undefined,
+          'output key must be the declared field name, not the normalized matcher key');
+      });
+    });
+
+    describe('_normalizeFieldKey (#201 — helper exposed for cross-module checks)', () => {
+      it('strips every non-alphanumeric character', () => {
+        assert.equal(aiContent._normalizeFieldKey('Next Steps'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('next-steps'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('next_steps'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('next.steps'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('next/steps'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('next   steps'), 'nextsteps');
+      });
+
+      it('lowercases', () => {
+        assert.equal(aiContent._normalizeFieldKey('NEXTSTEPS'), 'nextsteps');
+        assert.equal(aiContent._normalizeFieldKey('NextSteps'), 'nextsteps');
+      });
+
+      it('preserves digits', () => {
+        assert.equal(aiContent._normalizeFieldKey('field42'), 'field42');
+        assert.equal(aiContent._normalizeFieldKey('v1.2 stuff'), 'v12stuff');
+      });
+
+      it('handles defensive inputs', () => {
+        assert.equal(aiContent._normalizeFieldKey(''), '');
+        assert.equal(aiContent._normalizeFieldKey(null), '');
+        assert.equal(aiContent._normalizeFieldKey(undefined), '');
+        assert.equal(aiContent._normalizeFieldKey(42), '42', 'numbers coerce to strings before normalization');
+      });
+    });
   });
 });
 
