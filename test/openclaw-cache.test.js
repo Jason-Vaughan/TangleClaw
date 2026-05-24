@@ -204,6 +204,47 @@ describe('clearStaleOpenclawCache (#162)', () => {
     assert.equal(storage.getItem('oc-list'), null);
   });
 
+  it('clears stale entries whose URL has JSON-escaped forward slashes (#162-followup)', () => {
+    // OpenClaw's bundled dashboard serializes its gatewayUrl via JSON, and
+    // some build configurations escape forward slashes (`\/`) — a valid
+    // JSON encoding the raw regex doesn't match. Normalize before matching.
+    const storage = makeStorage({
+      'openclaw.control.settings.v1:default': `{"gatewayUrl":"wss:\\/\\/h\\/openclaw-direct\\/${STALE}"}`
+    });
+    const removed = clearStaleOpenclawCache(CURRENT, storage);
+    assert.equal(removed, 1, 'JSON-escaped slashes still classified as stale');
+    assert.equal(storage.getItem('openclaw.control.settings.v1:default'), null);
+  });
+
+  it('clears stale entries whose URL has URL-encoded slashes (%2F)', () => {
+    const storage = makeStorage({
+      'oc-recent': `wss://h%2Fopenclaw-direct%2F${STALE}`
+    });
+    const removed = clearStaleOpenclawCache(CURRENT, storage);
+    assert.equal(removed, 1, 'URL-encoded slashes still classified as stale');
+    assert.equal(storage.getItem('oc-recent'), null);
+  });
+
+  it('clears stale entries whose URL has unicode-escaped slashes (\\u002F)', () => {
+    const storage = makeStorage({
+      'oc-cached': `wss:\\u002F\\u002Fh\\u002Fopenclaw-direct\\u002F${STALE}`
+    });
+    const removed = clearStaleOpenclawCache(CURRENT, storage);
+    assert.equal(removed, 1, 'unicode-escaped slashes still classified as stale');
+    assert.equal(storage.getItem('oc-cached'), null);
+  });
+
+  it('preserves same-connection entries even when slashes are escape-encoded', () => {
+    const storage = makeStorage({
+      'json-self': `{"gatewayUrl":"wss:\\/\\/h\\/openclaw-direct\\/${CURRENT}"}`,
+      'percent-self': `wss://h%2Fopenclaw-direct%2F${CURRENT}`
+    });
+    const removed = clearStaleOpenclawCache(CURRENT, storage);
+    assert.equal(removed, 0, 'escape-form encoding of current connId is still current, not stale');
+    assert.ok(storage.getItem('json-self'));
+    assert.ok(storage.getItem('percent-self'));
+  });
+
   it('refuses to touch storage when currentConnId is malformed (Critic MINOR-4)', () => {
     // Defensive: a malformed connId (non-UUID-shape) should not unleash a
     // localStorage walk that potentially deletes legitimate entries. The

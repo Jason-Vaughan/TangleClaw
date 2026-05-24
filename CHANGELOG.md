@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenClaw cache-bust now catches JSON-escaped / URL-encoded / unicode-escaped slashes (#162-followup)** — `public/openclaw-cache.js#clearStaleOpenclawCache` previously matched the raw substring `/openclaw-direct/<connId>` only. The OpenClaw dashboard bundle (`openclaw.control.settings.v1*` keys) serializes its `gatewayUrl` through `JSON.stringify` and some downstream encodings emit `\/`, `%2F`, or `/` instead of a raw forward slash. A stale URL stored in any of those escape forms slipped through the cache-bust, so opening the Volta viewer after a RentalClaw session left the iframe's dashboard auto-filled with RentalClaw's wss URL — Connect then produced the OpenClaw UI's "Protocol mismatch" banner because the Volta-served Control UI bundle tried to handshake against RentalClaw's gateway. **Fix.** Normalize those three escape forms to `/` before running the existing `OPENCLAW_DIRECT_REF` regex. Stale-detection semantics unchanged: composite values containing the current connId in any escape form are still preserved (Critic MAJOR-2 contract). The scope-honesty note in the original #162 commit explicitly called this followup out as the next failure mode. **Tests.** +4 cases in `test/openclaw-cache.test.js` covering JSON-escaped, URL-encoded, unicode-escaped stale entries (all classified stale → removed), plus a symmetric preservation case for same-connection escape-form encodings. Full openclaw-cache suite 21/21 pass.
+
 ## [3.19.0] - 2026-05-23
 
 ### Fixed
