@@ -7,44 +7,62 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 
-describe('store.globalRules', () => {
+describe('store.globalRules (#240 canonical-source model)', () => {
   let tempDir;
+  let tempRulesPath;
 
   before(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-globalrules-test-'));
     store._setBasePath(tempDir);
     store.init();
+    // Redirect BUNDLED_GLOBAL_RULES to a writable tmp file so tests
+    // don't clobber the repo's data/global-rules.md.
+    tempRulesPath = path.join(tempDir, 'data', 'global-rules.md');
+    fs.mkdirSync(path.dirname(tempRulesPath), { recursive: true });
+    // Seed with a minimal canonical file so load() has something to return.
+    fs.writeFileSync(tempRulesPath, '# Global Rules\n\n- Seed rule from test\n');
+    store.globalRules._setBundledGlobalRulesPath(tempRulesPath);
   });
 
   after(() => {
+    store.globalRules._resetBundledGlobalRulesPath();
     store.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('should load defaults when no user file exists', () => {
+  it('should load content from the canonical tracked file', () => {
     const content = store.globalRules.load();
-    assert.ok(content.includes('Global Rules'), 'Should contain default header');
+    assert.ok(content.includes('Global Rules'), 'Should contain the canonical header');
     assert.ok(content.length > 0);
   });
 
-  it('should create user file from defaults on first load', () => {
-    const userFile = path.join(tempDir, 'global-rules.md');
-    assert.ok(fs.existsSync(userFile), 'User file should be created');
-  });
-
-  it('should return saved content on subsequent loads', () => {
+  it('should return saved content on subsequent loads (round-trip)', () => {
     const custom = '# My Custom Rules\n\n- Rule one\n- Rule two\n';
     store.globalRules.save(custom);
     const loaded = store.globalRules.load();
     assert.equal(loaded, custom);
   });
 
-  it('should reset to bundled defaults', () => {
-    store.globalRules.save('# Totally custom stuff');
-    const defaults = store.globalRules.reset();
-    assert.ok(defaults.includes('Global Rules'), 'Reset should restore default header');
-    const loaded = store.globalRules.load();
-    assert.equal(loaded, defaults);
+  it('save() writes to the canonical path (not a per-install copy)', () => {
+    const custom = '# Canonical Save Test\n\n- Verify the write target\n';
+    store.globalRules.save(custom);
+    const onDisk = fs.readFileSync(tempRulesPath, 'utf8');
+    assert.equal(onDisk, custom,
+      'save() must write to the BUNDLED_GLOBAL_RULES path (tracked canonical), not a separate per-install file');
+  });
+
+  it('reset() is a no-op that returns current content unchanged (#240)', () => {
+    // Pre-#240 reset() restored the per-install file from bundled
+    // defaults. Under the canonical-source model there is no separate
+    // "default" \u2014 the tracked file IS the canonical version. reset()
+    // returns current content + logs a warning; callers (e.g. the UI
+    // "Reset" button) should be updated to use `git checkout` instead.
+    const customBefore = '# Custom content before reset\n\n- I should survive reset\n';
+    store.globalRules.save(customBefore);
+    const returned = store.globalRules.reset();
+    assert.equal(returned, customBefore, 'reset() returns current content unchanged');
+    const afterReset = store.globalRules.load();
+    assert.equal(afterReset, customBefore, 'content on disk is unchanged after reset()');
   });
 
   it('should save empty content', () => {
@@ -62,13 +80,21 @@ describe('store.globalRules', () => {
 
 describe('store.globalRules normalization (#100)', () => {
   let tmpDir;
+  let tempRulesPath;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-store-rules-norm-'));
     store._setBasePath(tmpDir);
+    // #240 — redirect the canonical global-rules path to a tmp file so
+    // tests don't clobber the real data/global-rules.md. tmpDir doubles
+    // as both the basePath (for session DB etc.) and the parent of the
+    // tracked-file equivalent under test.
+    tempRulesPath = path.join(tmpDir, 'global-rules.md');
+    store.globalRules._setBundledGlobalRulesPath(tempRulesPath);
   });
 
   afterEach(() => {
+    store.globalRules._resetBundledGlobalRulesPath();
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -184,13 +210,13 @@ describe('store.globalRules normalization (#100)', () => {
   describe('save() applies normalization', () => {
     it('strips trailing whitespace before persisting', () => {
       store.globalRules.save('# Rules   \n\n- item  \n');
-      const onDisk = fs.readFileSync(path.join(tmpDir, 'global-rules.md'), 'utf8');
+      const onDisk = fs.readFileSync(tempRulesPath, 'utf8');
       assert.equal(onDisk, '# Rules\n\n- item\n');
     });
 
     it('strips uniform body indent before persisting', () => {
       store.globalRules.save('# Rules\n\n  - item one\n  - item two\n');
-      const onDisk = fs.readFileSync(path.join(tmpDir, 'global-rules.md'), 'utf8');
+      const onDisk = fs.readFileSync(tempRulesPath, 'utf8');
       assert.equal(onDisk, '# Rules\n\n- item one\n- item two\n');
     });
 
@@ -205,7 +231,7 @@ describe('store.globalRules normalization (#100)', () => {
 
   describe('load() auto-heals legacy polluted files', () => {
     it('rewrites a polluted file in place on first read', () => {
-      const userFile = path.join(tmpDir, 'global-rules.md');
+      const userFile = tempRulesPath;
       const dirty = '# Rules   \n\n  - item  \n  - other\n';
       fs.mkdirSync(tmpDir, { recursive: true });
       fs.writeFileSync(userFile, dirty, 'utf8');
@@ -217,7 +243,7 @@ describe('store.globalRules normalization (#100)', () => {
     });
 
     it('does not rewrite a clean file', () => {
-      const userFile = path.join(tmpDir, 'global-rules.md');
+      const userFile = tempRulesPath;
       const clean = '# Rules\n\n- one\n';
       fs.mkdirSync(tmpDir, { recursive: true });
       fs.writeFileSync(userFile, clean, 'utf8');
@@ -229,12 +255,20 @@ describe('store.globalRules normalization (#100)', () => {
     });
   });
 
-  describe('reset() applies normalization to bundled defaults', () => {
-    it('written defaults have no trailing whitespace', () => {
-      const out = store.globalRules.reset();
-      assert.equal(/[ \t]+\n/.test(out), false);
-      const onDisk = fs.readFileSync(path.join(tmpDir, 'global-rules.md'), 'utf8');
-      assert.equal(onDisk, out);
+  describe('reset() under the #240 canonical-source model', () => {
+    it('is a no-op — does not write to disk, returns current content unchanged', () => {
+      // Pre-#240 reset() restored the per-install file from bundled
+      // defaults. Under the canonical-source model, there is no
+      // separate "default" — the tracked file at `data/global-rules.md`
+      // IS canonical. To revert, use `git checkout`. reset() now
+      // returns current loaded content + logs a warning.
+      const seeded = '# Canonical Content\n\n- existing rule\n';
+      fs.writeFileSync(tempRulesPath, seeded);
+      const before = store.globalRules.load();
+      const returned = store.globalRules.reset();
+      assert.equal(returned, before, 'reset() returns current content unchanged');
+      const onDisk = fs.readFileSync(tempRulesPath, 'utf8');
+      assert.equal(onDisk, before, 'reset() does not modify the on-disk file');
     });
   });
 });
