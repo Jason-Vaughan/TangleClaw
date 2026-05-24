@@ -42,7 +42,7 @@ describe('skills', () => {
     it('loads action skills from methodology template', () => {
       const result = skills.loadSkills('prawduct');
       const actionSkills = result.skills.filter((s) => s.type === 'action');
-      // prawduct has "Run Critic" action
+      // prawduct has "Mark Critic Run" action (renamed in #230)
       assert.ok(actionSkills.length > 0);
     });
 

@@ -230,11 +230,23 @@ function renderMethodologyActions(actions) {
 /**
  * Invoke a methodology action via the server. Shows a brief feedback
  * toast in the banner status area on success/failure.
- * @param {{label: string, command: string, confirm: boolean}} action
+ *
+ * Per-action wording overrides (#230): the methodology template may
+ * supply `confirmMessage` and `successToast` strings on an action
+ * declaration. When present they replace the generic
+ * `Run "<label>" for this project?` / `<label>: recorded` defaults.
+ * The Critic-style "this button records, doesn't run" contract is
+ * misread by operators when the generic wording stands alone, so
+ * template authors can clarify the contract at the surface.
+ *
+ * @param {{label: string, command: string, confirm: boolean, confirmMessage?: string, successToast?: string}} action
  */
 async function invokeMethodologyAction(action) {
   if (action.confirm) {
-    const yes = window.confirm(`Run "${action.label}" for this project?`);
+    const confirmMessage = (typeof action.confirmMessage === 'string' && action.confirmMessage.length > 0)
+      ? action.confirmMessage
+      : `Run "${action.label}" for this project?`;
+    const yes = window.confirm(confirmMessage);
     if (!yes) return;
   }
   // `CSS.escape` defends against methodology-template-supplied command
@@ -255,7 +267,20 @@ async function invokeMethodologyAction(action) {
       {}
     );
     if (result && result.ok) {
-      showMethodologyActionToast(`${action.label}: recorded`);
+      let successToast = (typeof action.successToast === 'string' && action.successToast.length > 0)
+        ? action.successToast
+        : `${action.label}: recorded`;
+      // #230 — `{branchName}` placeholder support. The invoke-critic
+      // handler returns `output.entry.branchName` (see
+      // `lib/actions/invoke-critic.js:175`); future actions following
+      // the same shape can reuse the substitution. Fallback "this
+      // branch" preserves the toast when no branch resolved (detached
+      // HEAD, non-git project, handler didn't supply one).
+      if (successToast.includes('{branchName}')) {
+        const branchName = (result.output && result.output.entry && result.output.entry.branchName) || 'this branch';
+        successToast = successToast.replace(/\{branchName\}/g, branchName);
+      }
+      showMethodologyActionToast(successToast);
     } else {
       // `api.lastError` is a string set by `apiMutate` on !res.ok (see
       // public/api-helper.js). Earlier draft accessed `.message` which

@@ -17,7 +17,7 @@ entries that span multiple co-equal locations.
 - **Silent-prime toggle** — engine-gated capability toggle. `public/ui.js:779`.
 - **Feature Index toggle** (#207) — opt-in flag that seeds `FEATURES.md` on first enable. `public/ui.js:808`.
 - **Banner group pills** — group membership chips on the session banner. `public/session.js:302`.
-- **Methodology action buttons** — `actions[]` from `template.json` (e.g. "Run Critic"). `public/session.js:212`. Handler: `lib/actions/invoke-critic.js`. Toast: `public/session.js:281`.
+- **Methodology action buttons** — `actions[]` from `template.json` (e.g. "Mark Critic Run", renamed in #230). `public/session.js:212`. Optional per-action wording fields (`confirmMessage`, `successToast` with `{branchName}` placeholder) at `public/session.js:235`. Handler: `lib/actions/invoke-critic.js`. Toast: `public/session.js:281`.
 - **Stale-server banner** (#199) — runtime-vs-disk SHA delta; no dismiss UI today. `public/landing.js:131`, `public/index.html:287`. Backend: `lib/server-info.js`.
 - **Orphan-hooks repair banner** (#145) — scans projects for hook config drift. Section banner: `public/landing.js:364`. HTML: `public/index.html:290`.
 - **Update-available pill** — GitHub release check with localStorage dismiss-per-version. `public/landing.js:160`.
@@ -61,7 +61,7 @@ entries that span multiple co-equal locations.
 - **Wrap step: `pr-check`** — surfaces open PRs. `lib/wrap-steps/pr-check.js`.
 - **Wrap step: `ai-content`** — prompts injected into the AI session for changelog / learnings / memory updates. `lib/wrap-steps/ai-content.js`.
 - **Wrap step: `test`** / **`lint`** — test + lint hooks. `lib/wrap-steps/test.js`, `lib/wrap-steps/lint.js`.
-- **Run Critic action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification tracked in issue #230.
+- **Mark Critic Run action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification (label + confirm + toast) landed in #230.
 - **Project version reader** — surfaces `version.json` semver to the UI. `lib/project-version.js`.
 - **Model status monitor** — polls engine providers (Atlassian / Google status pages) for outage detection. `lib/model-status.js:202` (`_pollEngine`), `:303` (`startMonitor`).
 
