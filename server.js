@@ -325,6 +325,54 @@ route('GET', '/api/server-info', (_req, res) => {
   jsonResponse(res, 200, serverInfo.getServerInfo());
 });
 
+// POST /api/server/restart — kick the TC server via the platform's
+// process manager (#235). 202 Accepted is sent BEFORE the exec so the
+// browser sees a clean response, then ~80ms later the launchctl
+// kickstart kills this process. The browser polls /api/server-info to
+// detect when the new process is up and reloads. Returns 501 when no
+// restart mechanism is available (e.g. bare-node, Linux today) so the
+// frontend can hide the button cleanly.
+route('POST', '/api/server/restart', (_req, res) => {
+  const mechanism = serverInfo.detectRestartMechanism();
+  if (!mechanism) {
+    jsonResponse(res, 501, {
+      ok: false,
+      error: 'no restart mechanism available on this host (macOS launchd plist not detected; Linux support is a follow-up)'
+    });
+    return;
+  }
+  const command = serverInfo.buildRestartCommand(mechanism);
+  if (!command) {
+    // Defensive: detectRestartMechanism returned non-null but
+    // buildRestartCommand didn't recognize it. Bug, not user error.
+    jsonResponse(res, 500, {
+      ok: false,
+      error: `internal: no command builder for mechanism "${mechanism}"`
+    });
+    return;
+  }
+  jsonResponse(res, 202, {
+    ok: true,
+    mechanism,
+    detail: 'restart scheduled; poll /api/server-info to detect when the new process is up'
+  });
+  // Delay so the response actually flushes to the socket before
+  // launchctl SIGKILLs us. 80ms is empirically enough for localhost +
+  // tunnel + remote browser; bump if remote operators see truncated
+  // responses. `setTimeout` defers to the next tick AFTER the response
+  // write has been queued.
+  setTimeout(() => {
+    try {
+      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5000 });
+    } catch (err) {
+      // We're about to be killed anyway; log for the next process to
+      // notice on tail, but don't crash before SIGKILL arrives.
+      // eslint-disable-next-line no-console
+      console.error('[server-restart] exec failed:', err && err.message);
+    }
+  }, 80);
+});
+
 // GET /api/config
 route('GET', '/api/config', (_req, res) => {
   const config = store.config.load();

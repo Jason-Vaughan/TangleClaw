@@ -18,7 +18,8 @@ entries that span multiple co-equal locations.
 - **Feature Index toggle** (#207) — opt-in flag that seeds `FEATURES.md` on first enable. `public/ui.js:808`.
 - **Banner group pills** — group membership chips on the session banner. `public/session.js:302`.
 - **Methodology action buttons** — `actions[]` from `template.json` (e.g. "Mark Critic Run", renamed in #230). `public/session.js:212`. Optional per-action wording fields (`confirmMessage`, `successToast` with `{branchName}` placeholder) at `public/session.js:235`. Handler: `lib/actions/invoke-critic.js`. Toast: `public/session.js:281`.
-- **Stale-server banner** (#199) — runtime-vs-disk SHA delta; no dismiss UI today. `public/landing.js:131`, `public/index.html:287`. Backend: `lib/server-info.js`.
+- **Stale-server banner** (#199) — runtime-vs-disk SHA delta; carries a *Restart TangleClaw* button (#235) when the server reports a non-null `restartMechanism`. `public/landing.js:131`, `public/index.html:287`. Backend: `lib/server-info.js`.
+- **Restart TangleClaw button** (#235) — banner + Global Settings → Diagnostics surfaces; one-click restart via the platform process manager (macOS launchd today; Linux is a follow-up). Handler: `public/landing.js#triggerServerRestart`. Endpoint: `POST /api/server/restart`. Modal section: `public/ui.js#openGlobalSettings`.
 - **Orphan-hooks repair banner** (#145) — scans projects for hook config drift. Section banner: `public/landing.js:364`. HTML: `public/index.html:290`.
 - **Update-available pill** — GitHub release check with localStorage dismiss-per-version. `public/landing.js:160`.
 - **Session Wrap drawer** — step-by-step wrap status, BLOCKED/SKIPPED/DONE rendering. `public/wrap-drawer.js`.
@@ -32,7 +33,8 @@ entries that span multiple co-equal locations.
 - **Methodologies registry** — `GET /api/methodologies` `server.js:1119`, `GET /api/methodologies/:id` `:1125`. Backend: `lib/methodologies.js:235` (`initialize`), `:614` (`listTemplates`).
 - **Sessions family** — `POST /api/sessions/:project` (launch) `:1162`, `DELETE` (kill) `:1232`, `GET /status` `:1265`, `POST /command` `:1274`, `POST /wrap` `:1304`, `POST /wrap/complete` `:1338`, `GET /peek` `:1354`, `GET /history` `:1374`. Core: `lib/sessions.js:51` (`launchSession`), `:335` (`generatePrimePrompt` docstring).
 - **Wrap pipeline runner** — `lib/wrap-pipeline.js:135` (`runWrapPipeline`).
-- **Server-info endpoint** (#199) — `GET /api/server-info` `server.js:324`. Backend: `lib/server-info.js`.
+- **Server-info endpoint** (#199, #235) — `GET /api/server-info` `server.js:324` (now includes `restartMechanism`). Backend: `lib/server-info.js`.
+- **Server-restart endpoint** (#235) — `POST /api/server/restart` (next to `/api/server-info`). 202 Accepted before exec; 501 when no mechanism. Backend: `lib/server-info.js#detectRestartMechanism`, `#buildRestartCommand`.
 - **PortHub leasing** — `POST /api/ports/lease` `:805`, `POST /api/ports/release` `:834`, `POST /api/ports/heartbeat` `:843`, `GET /api/ports` `:781`, `POST /api/ports/sync` `:828`. Backend: `lib/porthub.js`.
 - **Groups family** — `GET /api/groups` `server.js:1493`, `POST` `:1505`, `GET/PUT/DELETE /:id` `:1521`/`:1536`/`:1555`, `POST /:id/sync` `:1568`, `GET/POST/DELETE /:id/members` `:1583`/`:1598`/`:1615`.
 - **Shared-docs family** — `GET /api/shared-docs` `server.js:1627`, `POST` `:1637`, `GET/PUT/DELETE /:id` `:1659`/`:1670`/`:1689`, lock CRUD `:1704`/`:1723`/`:1733`.

@@ -284,8 +284,11 @@
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">
     <!-- Stale-server banner (#199). Hidden until /api/server-info reports isStale. -->
+    <!-- Restart button (#235) is rendered only when /api/server-info reports a
+         non-null restartMechanism; otherwise the banner shows text only. -->
     <div id="staleServerBanner" class="orphan-banner stale-server-banner hidden" role="alert">
       <span class="orphan-banner-text" id="staleServerBannerText"></span>
+      <button type="button" class="btn btn-small orphan-banner-btn hidden" id="staleServerRestartBtn">Restart TangleClaw</button>
     </div>
     <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
     <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">

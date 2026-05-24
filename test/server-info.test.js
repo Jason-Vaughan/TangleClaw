@@ -311,4 +311,109 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
   });
+
+  describe('detectRestartMechanism (#235)', () => {
+    it("returns 'launchctl' on macOS when the per-user plist exists", () => {
+      serverInfo._internal.platform = () => 'darwin';
+      serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null on macOS when the plist is absent (e.g. node started manually)', () => {
+      serverInfo._internal.platform = () => 'darwin';
+      serverInfo._internal.existsSync = () => false;
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null on Linux today (deliberate follow-up, not a regression)', () => {
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = () => true; // even with a stray file, Linux returns null
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null on unknown platforms (Windows, etc.)', () => {
+      serverInfo._internal.platform = () => 'win32';
+      serverInfo._internal.existsSync = () => true;
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('caches the detection result — second call does not re-stat the plist', () => {
+      // The plist file lives at a fixed location chosen at install
+      // time; re-detecting every poll wastes filesystem calls. Pin
+      // the caching invariant so a future refactor cannot quietly
+      // drop it.
+      let existsCalls = 0;
+      serverInfo._internal.platform = () => 'darwin';
+      serverInfo._internal.existsSync = () => { existsCalls++; return true; };
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
+        assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
+        assert.equal(serverInfo.detectRestartMechanism(), 'launchctl');
+        assert.equal(existsCalls, 1, 'plist existence must be probed at most once per process');
+      } finally {
+        restoreInternal();
+      }
+    });
+  });
+
+  describe('buildRestartCommand (#235)', () => {
+    it("emits the correct launchctl kickstart command for 'launchctl'", () => {
+      const cmd = serverInfo.buildRestartCommand('launchctl');
+      // gui/$(id -u)/com.tangleclaw.server — the per-user GUI domain.
+      // Pin the exact shape so a future refactor (e.g. switching to
+      // `launchctl bootout` followed by `bootstrap`) is caught.
+      assert.equal(cmd, 'launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server');
+    });
+
+    it('returns null for an unknown mechanism (defensive — should never reach the exec path)', () => {
+      assert.equal(serverInfo.buildRestartCommand('systemctl'), null);
+      assert.equal(serverInfo.buildRestartCommand('unknown'), null);
+      assert.equal(serverInfo.buildRestartCommand(null), null);
+      assert.equal(serverInfo.buildRestartCommand(undefined), null);
+    });
+  });
+
+  describe('getServerInfo — restartMechanism surface (#235)', () => {
+    it('includes restartMechanism in the snapshot', () => {
+      serverInfo._internal.execSync = () => 'sha-1\n';
+      serverInfo._internal.platform = () => 'darwin';
+      serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+      try {
+        serverInfo.captureStartup();
+        const info = serverInfo.getServerInfo();
+        assert.equal(info.restartMechanism, 'launchctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it("restartMechanism is null when no mechanism is available — frontend hides the button on this signal", () => {
+      serverInfo._internal.execSync = () => 'sha-1\n';
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = () => false;
+      try {
+        serverInfo.captureStartup();
+        const info = serverInfo.getServerInfo();
+        assert.equal(info.restartMechanism, null);
+      } finally {
+        restoreInternal();
+      }
+    });
+  });
 });
