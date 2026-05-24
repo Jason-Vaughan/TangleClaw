@@ -184,4 +184,75 @@ describe('API — system, engines, tmux', () => {
       assert.ok(data.error.includes('No-Such-Project-v99'), 'should reference normalized tmux name');
     });
   });
+
+  describe('POST /api/server/restart (#235)', () => {
+    // Override the serverInfo module's exported functions to keep the
+    // restart route's setTimeout-based exec from actually killing the
+    // test process. The route reads `detectRestartMechanism` and
+    // `buildRestartCommand` via the module import; reassigning on the
+    // module object intercepts both. Restored in each test's finally.
+    const serverInfo = require('../lib/server-info');
+
+    it('returns 501 with a descriptive error when no restart mechanism is available', async () => {
+      const origDetect = serverInfo.detectRestartMechanism;
+      serverInfo.detectRestartMechanism = () => null;
+      try {
+        const { status, data } = await request('POST', '/api/server/restart');
+        assert.equal(status, 501);
+        assert.equal(data.ok, false);
+        assert.match(data.error, /no restart mechanism available/i,
+          'error must signal that the mechanism is absent so the frontend can hide the button cleanly');
+      } finally {
+        serverInfo.detectRestartMechanism = origDetect;
+      }
+    });
+
+    it('returns 202 + mechanism in the body when a mechanism is available', async () => {
+      const origDetect = serverInfo.detectRestartMechanism;
+      const origBuild = serverInfo.buildRestartCommand;
+      serverInfo.detectRestartMechanism = () => 'launchctl';
+      // `true` is the POSIX shell builtin that exits 0. Using it as
+      // the restart command means the route's setTimeout-fired exec
+      // is a no-op that completes instantly — no chance of killing
+      // the test process; no orphan handles to clean up.
+      serverInfo.buildRestartCommand = () => 'true';
+      try {
+        const { status, data } = await request('POST', '/api/server/restart');
+        assert.equal(status, 202,
+          '202 Accepted because the actual restart happens asynchronously after the response flushes');
+        assert.equal(data.ok, true);
+        assert.equal(data.mechanism, 'launchctl');
+        assert.ok(typeof data.detail === 'string' && data.detail.length > 0,
+          'detail must explain the polling contract for the frontend');
+        // Wait past the route's 300ms exec-delay timeout so the
+        // (no-op) exec completes before the test's after() tears down
+        // the server. (Delay was bumped from 80ms → 300ms on the #235
+        // PR Critic to cover Cloudflare-tunnel RTT for remote operators.)
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      } finally {
+        serverInfo.detectRestartMechanism = origDetect;
+        serverInfo.buildRestartCommand = origBuild;
+      }
+    });
+
+    it('returns 500 when detectRestartMechanism returns non-null but buildRestartCommand returns null (internal inconsistency)', async () => {
+      // Defensive path — never reachable through normal flow, but
+      // pinned so a future refactor that adds a mechanism token
+      // without updating buildRestartCommand fails loudly here
+      // rather than silently no-op-ing in production.
+      const origDetect = serverInfo.detectRestartMechanism;
+      const origBuild = serverInfo.buildRestartCommand;
+      serverInfo.detectRestartMechanism = () => 'systemctl';
+      serverInfo.buildRestartCommand = () => null;
+      try {
+        const { status, data } = await request('POST', '/api/server/restart');
+        assert.equal(status, 500);
+        assert.equal(data.ok, false);
+        assert.match(data.error, /no command builder for mechanism "systemctl"/);
+      } finally {
+        serverInfo.detectRestartMechanism = origDetect;
+        serverInfo.buildRestartCommand = origBuild;
+      }
+    });
+  });
 });

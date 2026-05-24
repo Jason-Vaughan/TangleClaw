@@ -976,7 +976,35 @@ function openGlobalSettings() {
       <input type="number" class="form-input" id="gsPortScannerInterval" value="${scannerIntervalSec}" min="10" max="600">
       <div class="form-hint">Min 10s, max 600s (10 min)</div>
     </div>
+
+    <div class="gs-section-label">Diagnostics</div>
+    <div class="form-group">
+      <button type="button" class="btn" id="gsRestartBtn"
+              ${state.restartMechanism ? '' : 'disabled'}
+              title="${state.restartMechanism ? 'Restart the TC server process' : 'Restart mechanism not available on this host'}">
+        Restart TangleClaw
+      </button>
+      <div class="form-hint">
+        ${state.restartMechanism
+          ? 'Restarts the TC server process via the platform process manager. Active tmux sessions survive; the browser reconnects when the server returns (~3s).'
+          : 'Disabled: no restart mechanism detected on this host (macOS launchd plist not present; Linux support is a follow-up — see GitHub issue #235).'}
+      </div>
+    </div>
   `;
+
+  // #235 — wire the restart button. Inline (rather than at page init)
+  // because the button only exists once the modal opens. No-op when
+  // disabled (no mechanism); state.restartInFlight guards double-click
+  // coalescing across the banner + modal surfaces.
+  const restartBtn = document.getElementById('gsRestartBtn');
+  if (restartBtn && state.restartMechanism && typeof triggerServerRestart === 'function') {
+    restartBtn.addEventListener('click', () => {
+      triggerServerRestart().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('server restart failed', err);
+      });
+    });
+  }
 
   document.getElementById('globalSettingsModal').classList.add('open');
 }

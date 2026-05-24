@@ -33,7 +33,13 @@ const state = {
   auditSummaries: {},
   auditLoaded: false,
   orphanHooks: null,
-  orphanHooksRepairInFlight: false
+  orphanHooksRepairInFlight: false,
+  // #235 — cached restart-mechanism token from /api/server-info. `null`
+  // means no mechanism available on this host (button hidden);
+  // `'launchctl'` enables the macOS path. Read by both the stale-server
+  // banner and the global settings modal Diagnostics section.
+  restartMechanism: null,
+  restartInFlight: false
 };
 
 // ── API Helpers ──
@@ -87,14 +93,24 @@ async function loadVersion() {
 }
 
 /**
- * Fetch server-info and render the stale-server banner (#199) when the
- * running process's startup SHA differs from the current on-disk HEAD.
- * No-op on the no-git fallback (`startupSha === null`) or when the
- * endpoint isn't available (older server without the route).
+ * Fetch server-info, cache the restart mechanism (#235), and render the
+ * stale-server banner (#199) when the running process's startup SHA
+ * differs from the current on-disk HEAD. No-op on the no-git fallback
+ * (`startupSha === null`) or when the endpoint isn't available (older
+ * server without the route).
+ *
+ * `restartMechanism` is cached on `state` even when the banner doesn't
+ * fire — the global settings modal Diagnostics section reads it
+ * independently. Older servers without #235 return undefined here,
+ * which falls through to `null` and hides the button cleanly.
  */
 async function loadServerInfo() {
   const data = await api('/api/server-info');
-  if (!data || !data.isStale) return;
+  if (!data) return;
+  state.restartMechanism = (typeof data.restartMechanism === 'string' && data.restartMechanism.length > 0)
+    ? data.restartMechanism
+    : null;
+  if (!data.isStale) return;
   renderStaleServerBanner(data);
 }
 
@@ -148,6 +164,135 @@ function renderStaleServerBanner(info) {
     `Running <code>${shortStartup}</code>; <code>${shortDisk}</code> on disk ` +
     `(${aheadStr}).${uptimeStr} Restart TC to load the latest code.`;
   banner.classList.remove('hidden');
+
+  // #235 — toggle the restart button visibility based on the
+  // restart-mechanism token captured in loadServerInfo. The button is
+  // hidden when no mechanism is available (e.g. Linux today,
+  // bare-node), so operators on those hosts see text-only guidance
+  // rather than an action that would 501.
+  const restartBtn = document.getElementById('staleServerRestartBtn');
+  if (restartBtn) {
+    const mech = (typeof info.restartMechanism === 'string' && info.restartMechanism.length > 0)
+      ? info.restartMechanism
+      : null;
+    if (mech) {
+      restartBtn.classList.remove('hidden');
+    } else {
+      restartBtn.classList.add('hidden');
+    }
+  }
+}
+
+/**
+ * Trigger a TC server restart (#235) and poll /api/server-info until
+ * the new process is up. On success, full-page reload so the browser
+ * picks up any fresh static assets. On failure, restore the button
+ * and surface an alert.
+ *
+ * Idempotent — guarded by `state.restartInFlight` so double-clicks
+ * (banner + modal + accidental retry) coalesce to one POST.
+ *
+ * @returns {Promise<void>}
+ */
+async function triggerServerRestart() {
+  if (state.restartInFlight) return;
+  state.restartInFlight = true;
+
+  // Re-query inside setBtnState rather than capturing references at
+  // function entry — if the user opens the global settings modal
+  // *after* clicking the banner restart, the modal button (`gsRestartBtn`)
+  // won't exist at capture time but DOES exist later. Re-querying
+  // every call keeps both surfaces in sync. Critic-caught on #235 PR.
+  const setBtnState = (label, disabled) => {
+    for (const id of ['staleServerRestartBtn', 'gsRestartBtn']) {
+      const btn = document.getElementById(id);
+      if (!btn) continue;
+      btn.textContent = label;
+      btn.disabled = disabled;
+    }
+  };
+
+  setBtnState('Restarting…', true);
+
+  // Confirm dialog so an accidental click doesn't kill the operator's
+  // browser session mid-task.
+  const proceed = window.confirm(
+    'Restart TangleClaw?\n\n' +
+    'Active tmux sessions will survive the restart; the browser will reconnect when the server returns (~3 seconds).'
+  );
+  if (!proceed) {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+    return;
+  }
+
+  // Capture the startup SHA we expect to be replaced. After restart
+  // the new process will have a fresh `startedAt`, which is what
+  // signals "we're back" — comparing startedAt is more reliable than
+  // comparing SHA (the SHA might happen to match if the operator
+  // restarted without pulling new code).
+  //
+  // Bail out if the pre-fetch fails. Without a baseline `startedAt`,
+  // the poll comparison `info.startedAt !== null` would be trivially
+  // true on the first successful response, causing a false-positive
+  // page reload that hides whatever connectivity problem prevented
+  // the pre-fetch. Critic-caught on #235 PR.
+  let oldStartedAt = null;
+  try {
+    const pre = await api('/api/server-info');
+    if (pre && pre.startedAt) oldStartedAt = pre.startedAt;
+  } catch { /* fall through to the null-baseline check below */ }
+  if (!oldStartedAt) {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+    window.alert('Could not read server state before restart. Aborting — check that TC is reachable, then try again.');
+    return;
+  }
+
+  let postResp;
+  try {
+    postResp = await apiMutate('/api/server/restart', 'POST', {});
+  } catch (err) {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+    window.alert(`Restart failed: ${err && err.message ? err.message : 'request did not complete'}`);
+    return;
+  }
+  if (!postResp || !postResp.ok) {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+    const msg = (postResp && postResp.error) || api.lastError || 'unknown error';
+    window.alert(`Restart not started: ${msg}`);
+    return;
+  }
+
+  // Poll /api/server-info until startedAt changes (new process up) or
+  // we hit the timeout budget. 30 polls at 500ms = 15s of patience;
+  // the restart itself typically takes ~3s. Each poll uses a short
+  // fetch timeout to avoid pile-up during the in-between window when
+  // the old process is dead but the new one hasn't bound the port yet.
+  const POLL_INTERVAL_MS = 500;
+  const POLL_MAX_ATTEMPTS = 30;
+  let attempt = 0;
+  const poll = setInterval(async () => {
+    attempt++;
+    try {
+      const info = await api('/api/server-info');
+      if (info && info.startedAt && info.startedAt !== oldStartedAt) {
+        clearInterval(poll);
+        // Full reload picks up any new static assets (banner code,
+        // settings modal text, etc.) that shipped in the restart.
+        window.location.reload();
+        return;
+      }
+    } catch { /* expected during the dead window */ }
+    if (attempt >= POLL_MAX_ATTEMPTS) {
+      clearInterval(poll);
+      state.restartInFlight = false;
+      setBtnState('Restart TangleClaw', false);
+      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — try refreshing the page in a moment.');
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 /**
@@ -452,6 +597,24 @@ function wireOrphanHooksBanner() {
     });
   }
   if (detailsBtn) detailsBtn.addEventListener('click', showOrphanHooksDetails);
+}
+
+/**
+ * Wire the stale-server banner's restart button (#235). Idempotent —
+ * called once at page init. The button visibility is managed
+ * separately in `renderStaleServerBanner()` based on the server's
+ * `restartMechanism` capability.
+ */
+function wireStaleServerBanner() {
+  const btn = document.getElementById('staleServerRestartBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      triggerServerRestart().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('server restart failed', err);
+      });
+    });
+  }
 }
 
 function collectTags() {
@@ -831,6 +994,7 @@ async function init() {
   }
 
   wireOrphanHooksBanner();
+  wireStaleServerBanner();
   await loadProjects();
   await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
   checkPortImports();
