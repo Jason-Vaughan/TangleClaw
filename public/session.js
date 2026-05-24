@@ -267,9 +267,19 @@ async function invokeMethodologyAction(action) {
       {}
     );
     if (result && result.ok) {
-      const successToast = (typeof action.successToast === 'string' && action.successToast.length > 0)
+      let successToast = (typeof action.successToast === 'string' && action.successToast.length > 0)
         ? action.successToast
         : `${action.label}: recorded`;
+      // #230 — `{branchName}` placeholder support. The invoke-critic
+      // handler returns `output.entry.branchName` (see
+      // `lib/actions/invoke-critic.js:175`); future actions following
+      // the same shape can reuse the substitution. Fallback "this
+      // branch" preserves the toast when no branch resolved (detached
+      // HEAD, non-git project, handler didn't supply one).
+      if (successToast.includes('{branchName}')) {
+        const branchName = (result.output && result.output.entry && result.output.entry.branchName) || 'this branch';
+        successToast = successToast.replace(/\{branchName\}/g, branchName);
+      }
       showMethodologyActionToast(successToast);
     } else {
       // `api.lastError` is a string set by `apiMutate` on !res.ok (see

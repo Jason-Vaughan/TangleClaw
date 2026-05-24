@@ -38,7 +38,7 @@ Best for: projects where you want TangleClaw's session management without a pres
 - **Prime sections**: methodology-rules, current-phase, active-learnings, last-session-summary, project-state
 - **Status**: reads `work_in_progress.description` from `.prawduct/project-state.yaml`
 - **Detection**: looks for `.prawduct/` directory
-- **Actions**: "Run Critic" button in session wrapper
+- **Actions**: "Mark Critic Run" button in session wrapper (records that an Independent Critic review was completed; does not auto-run a Critic — see issue #230 for the contract clarification)
 - **Hooks**: Prawduct's `product-hook` runs on session start (briefing + sync) and session stop (governance gates). Hooks reference the product's own `tools/product-hook` — updated automatically via framework sync on each session start
 
 Best for: structured development with governance, planning artifacts, and independent review. See the [Prawduct README](https://github.com/brookstalley/prawduct) for installation and full documentation.

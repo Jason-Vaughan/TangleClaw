@@ -203,6 +203,19 @@ describe('api-actions (#139 Chunk 11b)', () => {
       assert.equal(typeof invokeCritic.successToast, 'string',
         'per-action successToast (#230) replaces the generic "X: recorded" toast');
       assert.ok(invokeCritic.successToast.length > 0, 'successToast is non-empty');
+      assert.ok(invokeCritic.successToast.includes('{branchName}'),
+        'successToast carries the {branchName} placeholder (#230) so the UI interpolates the actual branch from the handler response');
+      // Allow-list pin (#230): exactly these keys may appear on the wire.
+      // A future template author adding `secretKey` or similar to the
+      // action declaration must NOT have it leak through enrichProject's
+      // explicit-property allow-list. The methodology authoritatively
+      // decides what's *dispatchable* (server-side), but the wire shape
+      // is independently restrictive (frontend-side).
+      assert.deepStrictEqual(
+        Object.keys(invokeCritic).sort(),
+        ['command', 'confirm', 'confirmMessage', 'label', 'successToast'],
+        'no fields beyond the documented allow-list may surface on the wire'
+      );
     });
 
     it('minimal project response has empty actions[]', async () => {
