@@ -224,9 +224,11 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.mechanism, 'launchctl');
         assert.ok(typeof data.detail === 'string' && data.detail.length > 0,
           'detail must explain the polling contract for the frontend');
-        // Wait past the 80ms setTimeout so the (no-op) exec completes
-        // before the test's after() tears down the server.
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        // Wait past the route's 300ms exec-delay timeout so the
+        // (no-op) exec completes before the test's after() tears down
+        // the server. (Delay was bumped from 80ms → 300ms on the #235
+        // PR Critic to cover Cloudflare-tunnel RTT for remote operators.)
+        await new Promise((resolve) => setTimeout(resolve, 400));
       } finally {
         serverInfo.detectRestartMechanism = origDetect;
         serverInfo.buildRestartCommand = origBuild;

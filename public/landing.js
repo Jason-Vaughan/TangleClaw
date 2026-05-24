@@ -198,10 +198,14 @@ async function triggerServerRestart() {
   if (state.restartInFlight) return;
   state.restartInFlight = true;
 
-  const bannerBtn = document.getElementById('staleServerRestartBtn');
-  const modalBtn = document.getElementById('gsRestartBtn');
+  // Re-query inside setBtnState rather than capturing references at
+  // function entry — if the user opens the global settings modal
+  // *after* clicking the banner restart, the modal button (`gsRestartBtn`)
+  // won't exist at capture time but DOES exist later. Re-querying
+  // every call keeps both surfaces in sync. Critic-caught on #235 PR.
   const setBtnState = (label, disabled) => {
-    for (const btn of [bannerBtn, modalBtn]) {
+    for (const id of ['staleServerRestartBtn', 'gsRestartBtn']) {
+      const btn = document.getElementById(id);
       if (!btn) continue;
       btn.textContent = label;
       btn.disabled = disabled;
@@ -211,9 +215,7 @@ async function triggerServerRestart() {
   setBtnState('Restarting…', true);
 
   // Confirm dialog so an accidental click doesn't kill the operator's
-  // browser session mid-task. Skipped when `state.restartInFlight`
-  // means a programmatic / queued restart (won't happen today, but
-  // defensive against future automation).
+  // browser session mid-task.
   const proceed = window.confirm(
     'Restart TangleClaw?\n\n' +
     'Active tmux sessions will survive the restart; the browser will reconnect when the server returns (~3 seconds).'
@@ -229,11 +231,23 @@ async function triggerServerRestart() {
   // signals "we're back" — comparing startedAt is more reliable than
   // comparing SHA (the SHA might happen to match if the operator
   // restarted without pulling new code).
+  //
+  // Bail out if the pre-fetch fails. Without a baseline `startedAt`,
+  // the poll comparison `info.startedAt !== null` would be trivially
+  // true on the first successful response, causing a false-positive
+  // page reload that hides whatever connectivity problem prevented
+  // the pre-fetch. Critic-caught on #235 PR.
   let oldStartedAt = null;
   try {
     const pre = await api('/api/server-info');
     if (pre && pre.startedAt) oldStartedAt = pre.startedAt;
-  } catch { /* ignore — fall back to poll-for-response */ }
+  } catch { /* fall through to the null-baseline check below */ }
+  if (!oldStartedAt) {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+    window.alert('Could not read server state before restart. Aborting — check that TC is reachable, then try again.');
+    return;
+  }
 
   let postResp;
   try {

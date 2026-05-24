@@ -356,11 +356,18 @@ route('POST', '/api/server/restart', (_req, res) => {
     mechanism,
     detail: 'restart scheduled; poll /api/server-info to detect when the new process is up'
   });
-  // Delay so the response actually flushes to the socket before
-  // launchctl SIGKILLs us. 80ms is empirically enough for localhost +
-  // tunnel + remote browser; bump if remote operators see truncated
-  // responses. `setTimeout` defers to the next tick AFTER the response
-  // write has been queued.
+  // Delay so the response actually drains through the network before
+  // `launchctl kickstart -k` SIGKILLs us. SIGKILL closes sockets with
+  // RST (not FIN) on macOS, so any bytes still in the kernel TX buffer
+  // are dropped without delivery. On localhost the handover is
+  // sub-millisecond; on a Cloudflare tunnel to a remote browser
+  // (per the `reference_remote_setup` access path: elkaholic → cursatory)
+  // RTT can be 50-150ms, so the 202 response needs a margin past the
+  // pure kernel-flush time. 300ms covers typical tunnel RTT plus
+  // queue/processing slack without being noticeably slow to the
+  // operator (the dialog closes, then ~300ms later polling begins —
+  // visually instantaneous). Bumped from 80ms after Critic-flagged
+  // remote-truncation risk on #235.
   setTimeout(() => {
     try {
       require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5000 });
@@ -370,7 +377,7 @@ route('POST', '/api/server/restart', (_req, res) => {
       // eslint-disable-next-line no-console
       console.error('[server-restart] exec failed:', err && err.message);
     }
-  }, 80);
+  }, 300);
 });
 
 // GET /api/config
