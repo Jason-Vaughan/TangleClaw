@@ -74,7 +74,17 @@
         if (!key) continue;
         const val = storage.getItem(key);
         if (typeof val !== 'string') continue;
-        const matches = [...val.matchAll(OPENCLAW_DIRECT_REF)];
+        // #162-followup: OpenClaw's dashboard (`openclaw.control.settings.v1*`
+        // and friends) serializes its gateway URL with escape forms the raw
+        // regex misses — JSON-escaped slashes (`\/`), URL-encoded slashes
+        // (`%2F`), unicode-escaped slashes (`/`). Normalize before
+        // matching so cached `wss://h/openclaw-direct/<staleId>` survives any
+        // of those encodings and still gets caught.
+        const normalized = val
+          .replace(/\\\//g, '/')
+          .replace(/%2[Ff]/g, '/')
+          .replace(/\\u002[Ff]/g, '/');
+        const matches = [...normalized.matchAll(OPENCLAW_DIRECT_REF)];
         if (matches.length === 0) continue;
         let hasStale = false;
         let hasCurrent = false;
