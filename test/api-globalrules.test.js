@@ -57,12 +57,19 @@ function request(server, method, urlPath, body) {
 
 describe('API /api/rules/global', () => {
   let tmpDir;
+  let tempRulesPath;
   let server;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-globalrules-'));
     store._setBasePath(tmpDir);
     store.init();
+    // #240 — redirect canonical global-rules to tmp and seed with a
+    // realistic baseline so GET returns something with "Global Rules"
+    // in it (matching the public API contract).
+    tempRulesPath = path.join(tmpDir, 'global-rules.md');
+    fs.writeFileSync(tempRulesPath, '# Global Rules\n\n- Seed baseline for API test\n');
+    store.globalRules._setBundledGlobalRulesPath(tempRulesPath);
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -70,6 +77,7 @@ describe('API /api/rules/global', () => {
 
   after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    store.globalRules._resetBundledGlobalRulesPath();
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -107,18 +115,25 @@ describe('API /api/rules/global', () => {
     });
   });
 
-  describe('POST /api/rules/global/reset', () => {
-    it('should reset to bundled defaults', async () => {
-      // Save custom first
-      await request(server, 'PUT', '/api/rules/global', { content: '# Custom' });
+  describe('POST /api/rules/global/reset (#240 no-op contract)', () => {
+    it('returns current content unchanged — reset is a no-op under the canonical-source model', async () => {
+      // Pre-#240 reset restored the per-install file from bundled
+      // defaults. Under the canonical-source model the tracked file
+      // IS canonical; reset returns current content + the route stays
+      // for back-compat with the UI button (which should be removed
+      // in a follow-up; today it just becomes a no-op refresh).
+      const custom = '# Custom Pre-Reset\n\n- this should survive reset\n';
+      await request(server, 'PUT', '/api/rules/global', { content: custom });
 
       const { status, data } = await request(server, 'POST', '/api/rules/global/reset');
       assert.equal(status, 200);
-      assert.ok(data.content.includes('Global Rules'), 'Should return default content');
+      assert.equal(data.content, custom,
+        'reset returns current content unchanged (no-op)');
 
-      // Verify persisted
+      // Verify the on-disk file was not modified
       const { data: loaded } = await request(server, 'GET', '/api/rules/global');
-      assert.equal(loaded.content, data.content);
+      assert.equal(loaded.content, custom,
+        'reset did not modify the canonical file');
     });
   });
 
