@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-05-23
+
 ### Fixed
 
 - **CLAUDE.md regeneration no longer silently clobbers PR-driven rule edits (closes #240)** — `data/global-rules.md` (renamed from `data/default-global-rules.md` and populated with the full 191-line ruleset) becomes the single canonical source for global rules. `store.globalRules.load/save` read/write the tracked file directly; the legacy `~/.tangleclaw/global-rules.md` is ignored with a one-time warn + auto-backup to `*.pre-240-backup`. New `engines.writeEngineConfig` helper wraps every engine-config write with drift detection — warns loudly when the on-disk file differs from regenerated content, surfacing the silent-clobber failure mode at all four write sites (`createProject`, `syncAllProjects`, `updateProject` engine-switch, `launchSession`). Comparator normalizes CRLF→LF + trims so Windows editors and auto-formatters don't false-positive. Helper returns `{skipped: true, ...}` for engines without config files (openclaw, genesis) so callers don't surface spurious errors. **Going forward:** PR-driven rule changes edit `data/global-rules.md` and commit; UI/API edits land in the same file. The competing-sources-of-truth class of bug is structurally impossible. Reset button in the Global Rules editor is now a no-op pending UI cleanup in #243. Full suite 2463/2464 pass.
