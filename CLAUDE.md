@@ -37,6 +37,14 @@ Claude Code stores plan files globally at `~/.claude/plans/`. This causes proble
 - Never reference plans with ambiguous relative paths like `.claude/plans/...` _ always use absolute paths.
 - Each project's plans live inside that project. Do not rely on `~/.claude/plans/` as the source of truth across sessions.
 
+**Rule: Archive plans whose chunk has shipped.**
+
+A plan file outlives its purpose the moment the corresponding chunk's PR merges. Leaving shipped plans next to active ones traps future sessions into treating closed work as ready-to-execute — exactly the failure mode that bit the 2026-05-23 session (recommended #137 as next chunk because `build-plan.md` was present at the repo root; the issue had been closed 18 days earlier).
+
+- When a plan's referenced issue closes (or its PR merges), **move the plan to `<project-root>/.claude/plans/archive/`** rather than deleting. Archive preserves the design rationale for historical greppability without polluting the active plan listing.
+- Sessions starting work on a "next chunk" must verify the referenced issue is still **OPEN** via `gh issue view <N> --json state -q .state` before treating any plan as canonical, even if the file is in the active (non-archive) directory. This is the structural guard — archiving is the convention, the issue-state check is the contract.
+- The `.claude/plans/` directory and `build-plan*.md` at the repo root are gitignored on TC; the archive is local-only. A fresh clone has no archive — only this clone benefits from the historical record. That's fine; the issue-state check is what protects across clones.
+
 ## Memory Hygiene
 
 Memory entries that exist only to bridge a specific gap (e.g., "decisions ratified in chat that haven't yet landed in the canonical plan", "context for an in-progress
