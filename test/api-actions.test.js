@@ -193,8 +193,16 @@ describe('api-actions (#139 Chunk 11b)', () => {
       assert.ok(Array.isArray(data.methodology.actions));
       const invokeCritic = data.methodology.actions.find((a) => a.command === 'invoke-critic');
       assert.ok(invokeCritic, 'invoke-critic action is surfaced');
-      assert.equal(invokeCritic.label, 'Run Critic');
-      assert.equal(typeof invokeCritic.confirm, 'boolean');
+      assert.equal(invokeCritic.label, 'Mark Critic Run',
+        'label renamed (#230) so operators do not expect the button to auto-run a Critic');
+      assert.equal(invokeCritic.confirm, true,
+        'confirm flipped to true (#230) so the contract-clarifying dialog actually fires');
+      assert.equal(typeof invokeCritic.confirmMessage, 'string',
+        'per-action confirmMessage (#230) replaces the generic "Run X for this project?" prompt');
+      assert.ok(invokeCritic.confirmMessage.length > 0, 'confirmMessage is non-empty');
+      assert.equal(typeof invokeCritic.successToast, 'string',
+        'per-action successToast (#230) replaces the generic "X: recorded" toast');
+      assert.ok(invokeCritic.successToast.length > 0, 'successToast is non-empty');
     });
 
     it('minimal project response has empty actions[]', async () => {

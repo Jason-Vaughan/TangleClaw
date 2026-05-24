@@ -103,9 +103,11 @@
   },
   "actions": [
     {
-      "label": "Run Critic",
+      "label": "Mark Critic Run",
       "command": "invoke-critic",
-      "confirm": false
+      "confirm": true,
+      "confirmMessage": "Confirm an Independent Critic review was completed for this branch.\n\nThis button does NOT run a Critic automatically — it records that you (or a separate review agent) have completed one, so the wrap step's critic-check passes. Continue?",
+      "successToast": "Critic review recorded for this branch"
     }
   ],
   "hooks": {
