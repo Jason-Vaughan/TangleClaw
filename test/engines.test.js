@@ -824,31 +824,66 @@ describe('engines', () => {
       assert.equal(result.drifted, false, 'pure whitespace differences must not register as drift');
     });
 
-    it('returns error when generateConfig produces empty content', () => {
-      const projectPath = fs.mkdtempSync(path.join(writeDir, 'empty-'));
-      // 'minimal' engine has no configFormat path (it doesn't generate
-      // a config file). writeEngineConfig must surface this as an error
-      // rather than silently no-op'ing.
-      const minimalEngine = store.engines.get('minimal');
-      if (!minimalEngine || !minimalEngine.configFormat) {
-        // Some engine registries don't include 'minimal' — fall through to
-        // the alternate negative test via a profile-only override.
-        const fakeProfile = { id: 'claude', configFormat: null };
-        const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, fakeProfile, prawduct);
-        assert.equal(result.written, false);
-        assert.match(result.error, /configFormat/i);
-        return;
-      }
-      const result = engines.writeEngineConfig('minimal', projectPath, minimalProjConfig, minimalEngine, prawduct);
-      assert.equal(result.written, false);
-    });
-
-    it('returns error when engineProfile has no configFormat.filename', () => {
+    it('returns skipped (not error) when engineProfile has no configFormat — openclaw / genesis path', () => {
+      // Pre-Critic this returned an error string for what is intentional
+      // behavior (engines without config files: openclaw, genesis). The
+      // 4 call sites would surface that as "Failed to write engine
+      // config" on every createProject / launchSession for such engines.
+      // The helper now returns `{skipped: true, skipReason, error: null}`
+      // and callers gate on `!skipped` before pushing errors.
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'noformat-'));
       const fakeProfile = { id: 'phantom' };
       const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, fakeProfile, prawduct);
       assert.equal(result.written, false);
-      assert.match(result.error, /configFormat/i);
+      assert.equal(result.skipped, true);
+      assert.equal(result.error, null, 'skipped must NOT surface as an error');
+      assert.match(result.skipReason, /configFormat/i);
+    });
+
+    it("returns skipped when configFormat exists but filename is null (real openclaw / genesis shape)", () => {
+      // Pin: openclaw's actual shape is `configFormat: {filename: null, ...}`
+      // — truthy as an object, but no usable filename. Earlier guard
+      // `if (engineProfile.configFormat)` would pass and the helper
+      // would emit an error. Fixed by checking `configFormat.filename`
+      // directly.
+      const projectPath = fs.mkdtempSync(path.join(writeDir, 'nullfilename-'));
+      const openclawShape = { id: 'fake-openclaw', configFormat: { filename: null, syntax: null, generator: null } };
+      const result = engines.writeEngineConfig('fake-openclaw', projectPath, minimalProjConfig, openclawShape, prawduct);
+      assert.equal(result.written, false);
+      assert.equal(result.skipped, true);
+      assert.equal(result.error, null);
+    });
+
+    it('returns skipped when generateConfig produces empty content (no error)', () => {
+      // For engines with `supportsConfigFile: false` the generator
+      // returns null/empty even though configFormat may exist. Helper
+      // must treat this as a deliberate skip, not an error.
+      const projectPath = fs.mkdtempSync(path.join(writeDir, 'emptygen-'));
+      // Synthesize an engineId that has no registered generator —
+      // generateConfig returns null. Profile-shape is borrowed from
+      // claude so the configFormat.filename check passes first.
+      const fakeProfile = { id: 'no-such-engine', configFormat: claudeProfile.configFormat };
+      const result = engines.writeEngineConfig('no-such-engine', projectPath, minimalProjConfig, fakeProfile, prawduct);
+      assert.equal(result.written, false);
+      assert.equal(result.skipped, true);
+      assert.equal(result.error, null);
+      assert.match(result.skipReason, /generateConfig|empty/i);
+    });
+
+    it('CRLF line endings in the on-disk file do NOT register as drift (#240 Critic n1)', () => {
+      // Windows editors save with CRLF; the regenerator emits LF.
+      // Without normalization, every session launch on a Windows-saved
+      // file would emit a drift warning that doesn't represent a real
+      // semantic change.
+      const projectPath = fs.mkdtempSync(path.join(writeDir, 'crlf-'));
+      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const configFilePath = first.configFilePath;
+      // Convert the file's line endings to CRLF in-place, semantically
+      // identical content.
+      const lf = fs.readFileSync(configFilePath, 'utf8');
+      fs.writeFileSync(configFilePath, lf.replace(/\n/g, '\r\n'));
+      const second = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      assert.equal(second.drifted, false, 'CRLF-vs-LF must not register as drift');
     });
   });
 
