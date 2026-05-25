@@ -977,6 +977,22 @@ function openGlobalSettings() {
       <div class="form-hint">Min 10s, max 600s (10 min)</div>
     </div>
 
+    <div class="gs-section-label">Commit hygiene</div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Strip AI co-author trailers from commits</span>
+        <input type="checkbox" id="gsStripAiCoauthors" ${c.stripAiCoauthors !== false ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">
+        Installs a <code>commit-msg</code> git hook in every TC-managed project that strips
+        <code>Co-Authored-By:</code> trailers naming an AI coding assistant (Claude, GPT, Gemini,
+        Copilot, Aider, Cursor) before the commit lands. Forward-only — never touches history.
+        Human co-authors (including humans at AI vendor email domains) pass through. Foreign
+        commit-msg hooks (commitlint, etc.) are left alone.
+      </div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -1031,7 +1047,8 @@ async function saveGlobalSettings() {
     defaultMethodology: document.getElementById('gsDefaultMethodology').value,
     projectsDir: document.getElementById('gsProjectsDir').value.trim(),
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
-    portScannerIntervalMs: intervalMs
+    portScannerIntervalMs: intervalMs,
+    stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked
   };
 
   const data = await apiMutate('/api/config', 'PATCH', patch);
