@@ -214,6 +214,35 @@ describe('API endpoints', () => {
       assert.equal(status, 400);
     });
 
+    // #247 — stripAiCoauthors field. Boolean validation + persistence.
+    it('should accept stripAiCoauthors boolean', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        stripAiCoauthors: false
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.stripAiCoauthors, false);
+      // Restore default
+      await request(server, 'PATCH', '/api/config', { stripAiCoauthors: true });
+    });
+
+    it('should reject non-boolean stripAiCoauthors', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        stripAiCoauthors: 'yes'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.match(data.error, /stripAiCoauthors must be a boolean/);
+    });
+
+    it('should default stripAiCoauthors to true on GET when unset', async () => {
+      // The DEFAULT_CONFIG sets stripAiCoauthors: true; a fresh config
+      // (or any patched config that doesn't explicitly include the field)
+      // must surface as true.
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.stripAiCoauthors, true,
+        'default ON — Critic-driven default to make the security default safe');
+    });
+
     it('should accept chimeMuted boolean', async () => {
       const { status, data } = await request(server, 'PATCH', '/api/config', {
         chimeMuted: true

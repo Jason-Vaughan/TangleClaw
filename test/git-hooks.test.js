@@ -138,6 +138,59 @@ describe('installCommitMsgHook', () => {
     }
   });
 
+  // F8 (#247 hardening) — `.git` as a SYMLINK to a real directory must also
+  // be treated as no-git in v1. `statSync` would follow the symlink and
+  // report `isDirectory() === true`, defeating the worktree carve-out;
+  // `lstatSync` is the load-bearing call.
+  it('treats a symlinked .git as no-git for v1 (symlink carve-out)', () => {
+    const realGit = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-githooks-shared-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-githooks-symlink-'));
+    try {
+      fs.mkdirSync(path.join(realGit, 'hooks'), { recursive: true });
+      fs.symlinkSync(realGit, path.join(root, '.git'));
+      const result = gitHooks.installCommitMsgHook(root);
+      assert.equal(result.installed, false);
+      assert.equal(result.reason, 'no-git', 'symlinked .git should be treated as no-git in v1');
+      // Confirm nothing was written into the symlink target — the v1
+      // exclusion exists specifically to avoid clobbering shared gitdirs.
+      assert.equal(fs.existsSync(path.join(realGit, 'hooks', 'commit-msg')), false);
+    } finally {
+      rmrf(root);
+      rmrf(realGit);
+    }
+  });
+
+  // F9 (#247 hardening) — operator's foreign hook may legitimately mention
+  // the TC-OWNED-HOOK marker text in a docstring/comment ("this hook
+  // coexists with TC-OWNED-HOOK: strip-ai-coauthors") without being
+  // TC-managed. A bare substring check would misclassify it; the anchored
+  // line check protects against the clobber.
+  it('does NOT misclassify a foreign hook that mentions the marker text in a body comment', () => {
+    const hookPath = path.join(projectPath, '.git', 'hooks', 'commit-msg');
+    const foreign = '#!/bin/sh\n' +
+      '# operator-authored commitlint wrapper.\n' +
+      '# Note: this coexists with TC-OWNED-HOOK: strip-ai-coauthors v1 when both are installed.\n' +
+      'commitlint --edit "$1"\n';
+    fs.writeFileSync(hookPath, foreign, { mode: 0o755 });
+
+    const result = gitHooks.installCommitMsgHook(projectPath);
+    assert.equal(result.installed, false, 'must NOT clobber foreign hook that merely mentions marker');
+    assert.equal(result.reason, 'foreign-hook');
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), foreign, 'foreign hook content preserved');
+  });
+
+  it('does NOT misclassify when the marker appears beyond the first 20 lines', () => {
+    const hookPath = path.join(projectPath, '.git', 'hooks', 'commit-msg');
+    const filler = Array.from({ length: 25 }, (_, i) => `# foreign line ${i + 1}`).join('\n');
+    const foreign = `#!/bin/sh\n${filler}\n# TC-OWNED-HOOK: strip-ai-coauthors v1\nexit 0\n`;
+    fs.writeFileSync(hookPath, foreign, { mode: 0o755 });
+
+    const result = gitHooks.installCommitMsgHook(projectPath);
+    assert.equal(result.installed, false, 'marker beyond the header line limit must NOT count as TC-owned');
+    assert.equal(result.reason, 'foreign-hook');
+    assert.equal(fs.readFileSync(hookPath, 'utf8'), foreign);
+  });
+
   it('returns source-missing when the source script path is broken', () => {
     gitHooks.__setSourceScriptPath('/no/such/script/anywhere.sh');
     try {

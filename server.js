@@ -398,6 +398,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   const config = store.config.load();
+  // Snapshot of pre-mutation values for fields whose downstream effects
+  // are conditional on whether the value actually changed (#247 hardening
+  // — saveGlobalSettings POSTs the field on every Save click, so unrelated
+  // UI saves were triggering an N-project filesystem walk).
+  const oldStripAiCoauthors = config.stripAiCoauthors;
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
@@ -491,11 +496,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   // #247 — toggling stripAiCoauthors re-syncs the commit-msg hook across
-  // every registered project. Symmetric with the install path: turn ON →
-  // install everywhere; turn OFF → uninstall everywhere (drift-aware —
-  // foreign hooks are preserved by syncGitHooks).
-  if ('stripAiCoauthors' in body) {
-    const all = store.projects.list({ archived: false });
+  // EVERY registered project (including archived ones — Critic flagged
+  // that filtering on `{archived: false}` would leave orphan hooks on
+  // archived projects after a toggle-OFF). Symmetric with the install
+  // path: turn ON → install everywhere a `.git/` exists; turn OFF →
+  // uninstall everywhere (drift-aware — foreign hooks are preserved by
+  // syncGitHooks). Gated on actual value change so a Save click that
+  // didn't touch this toggle doesn't trigger an N-project filesystem
+  // walk (#247 hardening).
+  if ('stripAiCoauthors' in body && body.stripAiCoauthors !== oldStripAiCoauthors) {
+    const all = store.projects.list(); // no archived filter — see above
     for (const project of all) {
       if (!project.path) continue;
       try {
