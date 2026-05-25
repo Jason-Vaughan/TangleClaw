@@ -8,6 +8,7 @@ const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
 const system = require('./lib/system');
 const engines = require('./lib/engines');
+const gitHooks = require('./lib/git-hooks');
 const tmux = require('./lib/tmux');
 const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
@@ -397,12 +398,18 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   const config = store.config.load();
+  // Snapshot of pre-mutation values for fields whose downstream effects
+  // are conditional on whether the value actually changed (#247 hardening
+  // — saveGlobalSettings POSTs the field on every Save click, so unrelated
+  // UI saves were triggering an N-project filesystem walk).
+  const oldStripAiCoauthors = config.stripAiCoauthors;
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
-    'httpsEnabled', 'httpsCertPath', 'httpsKeyPath'
+    'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
+    'stripAiCoauthors'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -440,6 +447,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
+    }
+    if (key === 'stripAiCoauthors' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'stripAiCoauthors must be a boolean', 'BAD_REQUEST');
     }
     if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && value !== null && typeof value !== 'string') {
       return errorResponse(res, 400, `${key} must be a string or null`, 'BAD_REQUEST');
@@ -482,6 +492,29 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     portScanner.stopScanner();
     if (config.portScannerEnabled) {
       portScanner.startScanner(config.portScannerIntervalMs);
+    }
+  }
+
+  // #247 — toggling stripAiCoauthors re-syncs the commit-msg hook across
+  // EVERY registered project (including archived ones — Critic flagged
+  // that filtering on `{archived: false}` would leave orphan hooks on
+  // archived projects after a toggle-OFF). Symmetric with the install
+  // path: turn ON → install everywhere a `.git/` exists; turn OFF →
+  // uninstall everywhere (drift-aware — foreign hooks are preserved by
+  // syncGitHooks). Gated on actual value change so a Save click that
+  // didn't touch this toggle doesn't trigger an N-project filesystem
+  // walk (#247 hardening).
+  if ('stripAiCoauthors' in body && body.stripAiCoauthors !== oldStripAiCoauthors) {
+    const all = store.projects.list(); // no archived filter — see above
+    for (const project of all) {
+      if (!project.path) continue;
+      try {
+        gitHooks.syncGitHooks(project.path, config);
+      } catch (err) {
+        log.warn('Failed to sync git hooks after stripAiCoauthors toggle', {
+          project: project.name, error: err.message
+        });
+      }
     }
   }
 
