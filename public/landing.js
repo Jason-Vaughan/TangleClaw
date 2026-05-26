@@ -691,12 +691,19 @@ async function launchProject(name) {
     return navigateToSession(name);
   }
 
-  // Check if engine has launch modes — show picker if so
+  // Check if engine has launch modes — show picker if so. Disabled modes
+  // (Phase 1 of #210 ships openclaw's launchModes block scaffolded but with
+  // every mode marked `disabled: true` until Phase 2 wires the propagation
+  // to ClawBridge through the SSH tunnel) don't count toward the picker
+  // gate; an engine whose modes are ALL disabled launches with no mode.
   const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
   const engine = (state.engines || []).find(e => e.id === engineId);
-  if (engine && engine.launchModes && Object.keys(engine.launchModes).length > 1) {
-    openLaunchModeModal(name, engine);
-    return;
+  if (engine && engine.launchModes) {
+    const enabledModes = Object.values(engine.launchModes).filter(m => !m.disabled);
+    if (enabledModes.length > 1) {
+      openLaunchModeModal(name, engine);
+      return;
+    }
   }
 
   await doLaunchProject(name, null);
