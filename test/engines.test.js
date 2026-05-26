@@ -250,18 +250,38 @@ describe('engines', () => {
         }
       });
 
-      it('openclaw intentionally has no launchModes yet (follow-up scoped separately)', () => {
-        // Sentinel pin — if someone adds launchModes to openclaw without thinking
-        // through what YOLO means for the in-house wrapper, this fails and they
-        // come back to design it deliberately. listWithAvailability surfaces
-        // `launchModes: null` for engines whose JSON omits the field, so accept
-        // either null or undefined.
+      it('openclaw launchModes mirror ClawBridge permissionMode values (#210 Phase 1)', () => {
+        // Phase 1 of #210 (2026-05-26): ship the engine-profile scaffold +
+        // sentinel update, with every openclaw mode marked `disabled: true`
+        // so the picker gate at public/landing.js doesn't fire until Phase
+        // 2 wires the propagation through the SSH tunnel to ClawBridge.
+        // The sentinel that previously asserted "openclaw has no
+        // launchModes" was retired here once ClawBridge v1.6.0 shipped the
+        // permissionMode field on POST /v2/session/start (PR ClawBridge#3).
+        //
+        // Phase 2 will (a) add the lib/clawbridge.js HTTP helper for
+        // POST /v2/session/start through the existing tunnel, (b) wire it
+        // into lib/sessions.js#launchWebuiSession when launchMode is set,
+        // (c) flip every mode's `disabled: false` here, and (d) this test
+        // gets updated to assert disabled === false.
         const openclaw = engines.listWithAvailability().find(e => e.id === 'openclaw');
         assert.ok(openclaw, 'openclaw engine should exist');
-        assert.ok(
-          !openclaw.launchModes,
-          'openclaw must NOT declare launchModes until the wrapper\'s YOLO semantics are designed (see #209 OpenClaw follow-up)'
-        );
+        assert.ok(openclaw.launchModes, 'openclaw must declare launchModes once #210 Phase 1 lands');
+        const BRIDGE_ACCEPTS = new Set(['default', 'acceptEdits', 'bypassPermissions', 'auto', 'plan', 'dontAsk']);
+        for (const [key, mode] of Object.entries(openclaw.launchModes)) {
+          assert.ok(BRIDGE_ACCEPTS.has(key),
+            `openclaw mode key "${key}" must be one of ClawBridge's accepted permissionMode values: ${[...BRIDGE_ACCEPTS].join(', ')}`);
+          assert.equal(typeof mode.bridgePermissionMode, 'string',
+            `openclaw mode "${key}" must declare a string bridgePermissionMode for the future tunnel-direct POST to read`);
+          assert.ok(BRIDGE_ACCEPTS.has(mode.bridgePermissionMode),
+            `openclaw mode "${key}".bridgePermissionMode "${mode.bridgePermissionMode}" must be one of ClawBridge's accepted enum`);
+          // Phase 1 contract: every openclaw mode is shipped disabled.
+          // When this fails, Phase 2 has either landed (intentional) or
+          // someone forgot to flip the flag (regression). Update the
+          // assertion to `=== false` when Phase 2 lands.
+          assert.equal(mode.disabled, true,
+            `openclaw mode "${key}" must declare disabled: true while Phase 1 ships without propagation`);
+        }
       });
     });
   });
