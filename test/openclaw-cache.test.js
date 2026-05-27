@@ -335,3 +335,98 @@ describe('OpenClaw view wiring for cache-bust (#162)', () => {
       'guard prevents init() from throwing if the helper script failed to load');
   });
 });
+
+describe('service worker cache strategy for cache-bust scripts (#246)', () => {
+  let swSrc;
+
+  beforeEach(() => {
+    swSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+  });
+
+  it('CACHE_NAME is bumped to v3-12 or higher (post-#246 unblock)', () => {
+    // #246 root cause: existing operators with an active SW had
+    // tangleclaw-v3-11's cache holding the pre-#245 openclaw-cache.js
+    // script. Bumping CACHE_NAME triggers the install + activate event
+    // pair that clears the old cache. This test pins the bump so a
+    // future hand-edit reverting to v3-11 (or earlier) fails loud
+    // rather than silently re-stranding the fix.
+    const match = swSrc.match(/CACHE_NAME\s*=\s*['"]tangleclaw-v3-(\d+)['"]/);
+    assert.ok(match, 'CACHE_NAME must follow the tangleclaw-v3-N pattern');
+    const version = parseInt(match[1], 10);
+    assert.ok(version >= 12, `CACHE_NAME version must be >= 12 (post-#246); found v3-${version}`);
+  });
+
+  it('/openclaw-cache.js is in NETWORK_FIRST_PATHS (cache-first branch carve-out)', () => {
+    // The structural fix in #246: openclaw-cache.js must NOT be served
+    // from the SW's cache-first branch, since its whole job is cache
+    // invalidation and a stale copy is by definition wrong. Without
+    // this carve-out, every future change to the script gets stranded
+    // until the operator manually clears their SW cache.
+    assert.match(swSrc, /NETWORK_FIRST_PATHS/,
+      'sw.js must declare a NETWORK_FIRST_PATHS set/list (#246)');
+    assert.match(swSrc, /['"]\/openclaw-cache\.js['"]/,
+      '/openclaw-cache.js must be present in the network-first carve-out');
+  });
+
+  it('fetch handler consults NETWORK_FIRST_PATHS alongside /api/ and navigate', () => {
+    // Pin that the carve-out is wired into the routing decision, not
+    // just declared as dead code. The branch that triggers network-
+    // first treatment must reference NETWORK_FIRST_PATHS — otherwise
+    // adding entries to the set silently has no effect.
+    assert.match(swSrc, /NETWORK_FIRST_PATHS\.has\(url\.pathname\)/,
+      'fetch handler must invoke NETWORK_FIRST_PATHS.has(url.pathname) to route the request');
+  });
+});
+
+describe('clearStaleOpenclawCache diagnostic instrumentation (#246)', () => {
+  let originalConsoleWarn;
+  let warnCalls;
+
+  beforeEach(() => {
+    warnCalls = [];
+    originalConsoleWarn = console.warn;
+    console.warn = (...args) => { warnCalls.push(args); };
+  });
+
+  function restore() { console.warn = originalConsoleWarn; }
+
+  it('emits a console.warn naming the removed count when entries are cleared', () => {
+    const connA = '7923a71f-b6da-49a3-805a-b063c3b22af8';
+    const connB = '90df52c9-3782-4ad0-8dc2-927ef4d57f89';
+    const storage = makeStorage({
+      'openclaw.control.settings.v1':
+        `{"gatewayUrl":"wss://host:3102/openclaw-direct/${connA}"}`
+    });
+
+    try {
+      const removed = clearStaleOpenclawCache(connB, storage);
+      assert.equal(removed, 1, 'precondition: removal should have occurred');
+      assert.equal(warnCalls.length, 1, 'console.warn must fire when entries are removed');
+      // Message includes the removed count + the current connId so an
+      // operator looking at devtools can correlate.
+      const msg = warnCalls[0].join(' ');
+      assert.match(msg, /\[oc-cache\] removed 1/);
+      assert.match(msg, new RegExp(connB));
+    } finally {
+      restore();
+    }
+  });
+
+  it('is quiet (no console.warn) on the common case of zero removed entries', () => {
+    const connA = '7923a71f-b6da-49a3-805a-b063c3b22af8';
+    const storage = makeStorage({
+      // Same-connection value → not stale → not removed.
+      'openclaw.control.settings.v1':
+        `{"gatewayUrl":"wss://host:3102/openclaw-direct/${connA}"}`
+    });
+
+    try {
+      const removed = clearStaleOpenclawCache(connA, storage);
+      assert.equal(removed, 0);
+      assert.equal(warnCalls.length, 0,
+        'normal page loads must not log — only removed > 0 should be visible');
+    } finally {
+      restore();
+    }
+  });
+});

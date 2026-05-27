@@ -101,6 +101,18 @@
     } catch (_err) {
       // Storage may be unavailable (incognito / disabled) — fail open.
     }
+    // #246 — surface the removed-count in the browser console when
+    // non-zero. Operators debugging "stale cache wasn't cleared" can
+    // now see at a glance whether this function fired (and how many
+    // entries it touched) vs. silently failed. Quiet on the common
+    // case (count=0) so normal page loads don't spam the console. The
+    // log itself is the breadcrumb the #246 next-investigation-step
+    // asked for: if removed > 0 yet stale data persists, the SW is no
+    // longer the suspect — look at the dashboard's restore-from-
+    // sibling-storage path.
+    if (removed > 0 && typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('[oc-cache] removed', removed, 'stale entries for connId', currentConnId);
+    }
     return removed;
   }
 
