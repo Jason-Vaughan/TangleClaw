@@ -378,6 +378,29 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
   });
 });
 
+describe('service worker registration (#258)', () => {
+  let landingJs;
+
+  beforeEach(() => {
+    landingJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+  });
+
+  it("serviceWorker.register passes updateViaCache: 'none' to bypass the HTTP cache on SW updates", () => {
+    // #258 — without this option, the browser may cache `/sw.js` per the
+    // HTTP cache (default `'imports'` mode caches importScripts but
+    // still respects HTTP Cache-Control on the top-level SW). Server
+    // sends `Cache-Control: no-cache` but aggressive proxies can hold
+    // the old SW for up to 24h. `'none'` is belt-and-suspenders so a
+    // bumped CACHE_NAME (the immediate-unblock tool for future SW
+    // cache bugs — see #246) propagates without waiting on cache TTL.
+    assert.match(
+      landingJs,
+      /navigator\.serviceWorker\.register\(\s*['"]\/sw\.js['"]\s*,\s*\{[^}]*updateViaCache:\s*['"]none['"]/,
+      "register('/sw.js', { updateViaCache: 'none' }) — option must be on the registration call"
+    );
+  });
+});
+
 describe('clearStaleOpenclawCache diagnostic instrumentation (#246)', () => {
   let originalConsoleWarn;
   let warnCalls;

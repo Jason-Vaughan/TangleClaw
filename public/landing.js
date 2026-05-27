@@ -1038,7 +1038,15 @@ function startPolling() {
 }
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // #258 — `updateViaCache: 'none'` makes the browser bypass the HTTP
+  // cache when fetching `/sw.js` during update checks, so a bumped
+  // `CACHE_NAME` (the one-time unblock for any future SW-cache-related
+  // bug — see #246) propagates immediately instead of waiting up to 24h
+  // for the browser's default `'imports'` SW cache to expire. Server
+  // already sends `Cache-Control: no-cache` on the SW response, but
+  // this is a belt-and-suspenders fix against aggressive intermediate
+  // proxies and browser-quirk edge cases.
+  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
 }
 
 init();
