@@ -97,62 +97,78 @@ describe('store', () => {
       assert.ok(fs.existsSync(templateFile), 'Should have minimal template');
     });
 
-    it('should not overwrite existing engine profiles', () => {
+    it('preserves operator-added custom engine profiles (files in user-local with no bundled counterpart)', () => {
+      // #251 — canonical-source semantics overwrite drift in bundled-named
+      // profiles but leave files alone that aren't shipped with TC. An
+      // operator who hand-wrote `~/.tangleclaw/engines/my-custom.json` and
+      // registered it via the (currently unused) `store.engines.save`
+      // primitive must not see it disappear on restart.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
       fs.writeFileSync(path.join(enginesDir, 'custom.json'), JSON.stringify({ id: 'custom' }));
 
       store.init();
 
-      // Custom engine should still exist, bundled should NOT have been copied
       const engines = fs.readdirSync(enginesDir);
-      assert.ok(engines.includes('custom.json'), 'Custom engine should remain');
+      assert.ok(engines.includes('custom.json'), 'operator-added engine must be preserved');
+      // And bundled profiles must also exist alongside.
+      assert.ok(engines.includes('claude.json'), 'bundled profiles must seed alongside operator-added');
     });
 
-    it('should merge new bundled fields into existing engine profiles', () => {
-      // Simulate an older codex.json that's missing launch.preKeys
+    it('canonical-source: stale on-disk engine profile gets overwritten from bundle (#251)', () => {
+      // #251 root case: simulate a pre-#251 install whose runtime
+      // codex.json is missing every field that bundled has added since.
+      // Pre-#251 behaviour was add-missing-only (`_mergeBundledProfile`):
+      // VALUE changes to existing keys silently stranded. Post-#251 the
+      // bundled file wins outright — the whole profile is reconciled to
+      // bundled content on startup.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
-      const oldProfile = {
+      const stale = {
         id: 'codex',
-        name: 'Codex',
+        name: 'Codex (stale label)',
         launch: { shellCommand: 'codex', args: [], env: {} }
       };
-      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(oldProfile, null, 2));
+      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(stale, null, 2));
 
       store.init();
 
       const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'codex.json'), 'utf8'));
-      // New fields from bundled profile should be backfilled
-      assert.deepStrictEqual(updated.launch.preKeys, ['Enter', 'Enter']);
-      assert.equal(updated.launch.preKeyDelay, 3000);
-      assert.equal(updated.launch.startupDelay, 2000);
-      // Existing values should NOT be overwritten
-      assert.equal(updated.launch.shellCommand, 'codex');
+      const bundled = JSON.parse(
+        fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')
+      );
+      assert.deepStrictEqual(updated, bundled,
+        'runtime profile must match bundled byte-for-byte after canonical-source sync');
     });
 
-    it('should not overwrite user-customized values when merging bundled profiles', () => {
+    it('canonical-source: operator hand-edits to bundled profiles get clobbered with a warn (#251)', () => {
+      // Pre-#251, operator hand-edits were preserved. Post-#251 they get
+      // overwritten — engine profiles have no UI/API edit surface, so any
+      // drift is treated as stale-from-prior-TC-version. The `log.warn`
+      // emitted from `_syncBundledEngines` is the breadcrumb operators
+      // get if they had intentionally hand-edited the file. To preserve
+      // a custom value, the change has to land in `data/engines/`.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
-      const customProfile = {
+      const handEdit = {
         id: 'codex',
         name: 'My Custom Codex',
-        launch: { shellCommand: 'my-codex', args: ['--flag'], env: { CUSTOM: '1' } },
-        capabilities: { supportsPrimePrompt: false }
+        launch: { shellCommand: 'my-codex', args: ['--flag'], env: { CUSTOM: '1' } }
       };
-      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(customProfile, null, 2));
+      fs.writeFileSync(path.join(enginesDir, 'codex.json'), JSON.stringify(handEdit, null, 2));
 
       store.init();
 
       const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'codex.json'), 'utf8'));
-      // User's custom values must be preserved
-      assert.equal(updated.name, 'My Custom Codex');
-      assert.equal(updated.launch.shellCommand, 'my-codex');
-      assert.deepStrictEqual(updated.launch.args, ['--flag']);
-      assert.equal(updated.capabilities.supportsPrimePrompt, false);
-      // New fields from bundled should still be added
-      assert.ok('preKeys' in updated.launch, 'preKeys should be backfilled');
-      assert.ok('supportsConfigFile' in updated.capabilities, 'supportsConfigFile should be backfilled');
+      const bundled = JSON.parse(
+        fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8')
+      );
+      assert.equal(updated.name, bundled.name,
+        'operator hand-edit to `name` must be clobbered by canonical-source');
+      assert.equal(updated.launch.shellCommand, bundled.launch.shellCommand,
+        'operator hand-edit to `shellCommand` must be clobbered');
+      assert.deepStrictEqual(updated, bundled,
+        'whole profile reconciles to bundled');
     });
 
     it('bundled claude profile has no preKeys on bypassPermissions (#119)', () => {
@@ -168,9 +184,11 @@ describe('store', () => {
       assert.ok(!('preKeyDelay' in bypass), 'bypassPermissions should not declare preKeyDelay');
     });
 
-    it('prunes stale ["2","Enter"] bypass preKeys from existing claude profile (#119)', () => {
-      // Simulate an existing install whose runtime claude.json still carries
-      // the stale preKeys baked in by older bundled versions.
+    it('canonical-source strips stale ["2","Enter"] bypass preKeys from existing claude profile (#119 → #251)', () => {
+      // #119 originally addressed this via a one-shot prune. #251 subsumes
+      // the prune: canonical-source overwrite from bundled (which has no
+      // preKeys on bypassPermissions) achieves the same end state without
+      // a special-case branch.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
       const stale = {
@@ -193,15 +211,15 @@ describe('store', () => {
 
       const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'claude.json'), 'utf8'));
       const bypass = updated.launchModes.bypassPermissions;
-      assert.ok(!('preKeys' in bypass), 'stale preKeys should be pruned');
-      assert.ok(!('preKeyDelay' in bypass), 'stale preKeyDelay should be pruned');
-      // Other bypass fields preserved
-      assert.equal(bypass.label, 'Bypass');
-      assert.deepStrictEqual(bypass.args, ['--dangerously-skip-permissions']);
+      assert.ok(!('preKeys' in bypass), 'stale preKeys gone after canonical-source overwrite');
+      assert.ok(!('preKeyDelay' in bypass), 'stale preKeyDelay gone after canonical-source overwrite');
     });
 
-    it('bypass preKey prune is idempotent across reboots (#119)', () => {
-      // Once pruned, a second init must not re-trigger work or rewrite the file.
+    it('canonical-source is idempotent across reboots (#119 → #251)', () => {
+      // Once the profile matches bundled, a second init must not rewrite
+      // it. The structural-equivalence check in `_engineProfileEquivalent`
+      // (recursive sorted-keys canonicalization via `_canonicalize`) is
+      // what makes this hold.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
       const stale = {
@@ -228,15 +246,18 @@ describe('store', () => {
       store.init();
       const afterSecond = fs.readFileSync(livePath, 'utf8');
 
-      assert.equal(afterFirst, afterSecond, 'Profile should be unchanged on second init');
-      const final = JSON.parse(afterSecond);
-      assert.ok(!('preKeys' in final.launchModes.bypassPermissions));
+      assert.equal(afterFirst, afterSecond, 'Profile unchanged on second init (idempotent)');
     });
 
-    it('preserves user-customized bypass preKeys (#119)', () => {
-      // If a user has *intentionally* set non-default preKeys (e.g. for a
-      // forked Claude binary that still requires confirmation), the prune must
-      // not touch them. Equality match against ["2","Enter"] guards this.
+    it('canonical-source clobbers operator-customized bypass preKeys (#119 → #251 contract change)', () => {
+      // Pre-#251 the prune was equality-matched against the EXACT
+      // ["2","Enter"] default so operator-customized preKeys (e.g. ['y',
+      // 'Enter'] for a forked Claude binary that still requires
+      // confirmation) were preserved. #251 retires that contract:
+      // canonical-source wins, the operator hand-edit gets clobbered, and
+      // the operator must move the customization to `data/engines/claude.json`
+      // to make it survive. The `log.warn` emitted from
+      // `_syncBundledEngines` is the breadcrumb pointing at the overwrite.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
       const custom = {
@@ -258,9 +279,11 @@ describe('store', () => {
       store.init();
 
       const updated = JSON.parse(fs.readFileSync(path.join(enginesDir, 'claude.json'), 'utf8'));
-      const bypass = updated.launchModes.bypassPermissions;
-      assert.deepStrictEqual(bypass.preKeys, ['y', 'Enter'], 'custom preKeys should be preserved');
-      assert.equal(bypass.preKeyDelay, 1500, 'custom preKeyDelay should be preserved');
+      const bundled = JSON.parse(
+        fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'claude.json'), 'utf8')
+      );
+      assert.deepStrictEqual(updated, bundled,
+        'custom preKeys clobbered — runtime profile now matches bundled byte-for-byte');
     });
 
     it('should not modify engine profiles when bundled has no new fields', () => {
