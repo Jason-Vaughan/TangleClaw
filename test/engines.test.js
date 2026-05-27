@@ -250,37 +250,35 @@ describe('engines', () => {
         }
       });
 
-      it('openclaw launchModes mirror ClawBridge permissionMode values (#210 Phase 1)', () => {
-        // Phase 1 of #210 (2026-05-26): ship the engine-profile scaffold +
-        // sentinel update, with every openclaw mode marked `disabled: true`
-        // so the picker gate at public/landing.js doesn't fire until Phase
-        // 2 wires the propagation through the SSH tunnel to ClawBridge.
-        // The sentinel that previously asserted "openclaw has no
-        // launchModes" was retired here once ClawBridge v1.6.0 shipped the
-        // permissionMode field on POST /v2/session/start (PR ClawBridge#3).
+      it('openclaw launchModes mirror ClawBridge permissionMode values (#210 Phase 2 — picker active end-to-end)', () => {
+        // Phase 2 of #210: ClawBridge v1.7.0 shipped `attachIfExists` on
+        // /v2/session/start. TC now pre-creates the bridge session with
+        // the picked permissionMode inside launchWebuiSession (via the
+        // new lib/clawbridge.js HTTP helper); the chat UI then attaches
+        // to the existing session via the bridge's idempotent attach.
+        // Every openclaw mode flips disabled: false here so the picker
+        // renders end-to-end for OpenClaw connections that carry a
+        // bridgePort.
         //
-        // Phase 2 will (a) add the lib/clawbridge.js HTTP helper for
-        // POST /v2/session/start through the existing tunnel, (b) wire it
-        // into lib/sessions.js#launchWebuiSession when launchMode is set,
-        // (c) flip every mode's `disabled: false` here, and (d) this test
-        // gets updated to assert disabled === false.
+        // History: Phase 1 (PR #249) shipped the engine-profile scaffold
+        // with disabled: true; the assertion below was `=== true` then.
+        // Phase 2 flips the flags and adds the HTTP helper.
         const openclaw = engines.listWithAvailability().find(e => e.id === 'openclaw');
         assert.ok(openclaw, 'openclaw engine should exist');
-        assert.ok(openclaw.launchModes, 'openclaw must declare launchModes once #210 Phase 1 lands');
+        assert.ok(openclaw.launchModes, 'openclaw must declare launchModes');
         const BRIDGE_ACCEPTS = new Set(['default', 'acceptEdits', 'bypassPermissions', 'auto', 'plan', 'dontAsk']);
         for (const [key, mode] of Object.entries(openclaw.launchModes)) {
           assert.ok(BRIDGE_ACCEPTS.has(key),
             `openclaw mode key "${key}" must be one of ClawBridge's accepted permissionMode values: ${[...BRIDGE_ACCEPTS].join(', ')}`);
           assert.equal(typeof mode.bridgePermissionMode, 'string',
-            `openclaw mode "${key}" must declare a string bridgePermissionMode for the future tunnel-direct POST to read`);
+            `openclaw mode "${key}" must declare a string bridgePermissionMode for clawbridge.startSession to read`);
           assert.ok(BRIDGE_ACCEPTS.has(mode.bridgePermissionMode),
             `openclaw mode "${key}".bridgePermissionMode "${mode.bridgePermissionMode}" must be one of ClawBridge's accepted enum`);
-          // Phase 1 contract: every openclaw mode is shipped disabled.
-          // When this fails, Phase 2 has either landed (intentional) or
-          // someone forgot to flip the flag (regression). Update the
-          // assertion to `=== false` when Phase 2 lands.
-          assert.equal(mode.disabled, true,
-            `openclaw mode "${key}" must declare disabled: true while Phase 1 ships without propagation`);
+          // Phase 2 contract: every openclaw mode is enabled now that
+          // propagation is wired. If this regresses to true, the picker
+          // would silently swallow the choice — surface loudly.
+          assert.equal(mode.disabled, false,
+            `openclaw mode "${key}" must declare disabled: false now that #210 Phase 2 has shipped`);
         }
       });
     });
