@@ -821,7 +821,9 @@ route('GET', '/api/rules/global', (_req, res) => {
 // from the landing-page editor or the API — was returning 413. 256 KB
 // gives ~18x headroom over current size; even a 10x growth in the
 // ruleset stays well under the limit. Other large-body routes use the
-// same per-route override pattern (see `server.js:71`).
+// same per-route override pattern — see `/api/audit/ingest` at the
+// 512 KB cap (`server.js:2834`) and the upload route at 15 MB
+// (`server.js:1574`).
 route('PUT', '/api/rules/global', (_req, res, _params, body) => {
   if (typeof body.content !== 'string') {
     return errorResponse(res, 400, 'content (string) is required', 'BAD_REQUEST');

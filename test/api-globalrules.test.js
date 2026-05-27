@@ -164,6 +164,11 @@ describe('API /api/rules/global', () => {
       // Issue's canonical reproduction: read the bundled rules content,
       // PUT it back unmodified, GET it again. Pre-#212 this failed with
       // 413 because the bundled content was already over the 10 KB cap.
+      // Equality check uses `store.globalRules._normalize` rather than a
+      // partial regex — the #100 normalizer covers more transforms (CRLF,
+      // fence-aware whitespace, uniform-indent strip) than a naked trailing-
+      // whitespace replace; using the canonical helper keeps the test
+      // honest if the bundled file gains content matching those patterns.
       const bundledPath = path.join(__dirname, '..', 'data', 'global-rules.md');
       const bundled = fs.readFileSync(bundledPath, 'utf8');
       assert.ok(bundled.length > 10 * 1024,
@@ -173,8 +178,22 @@ describe('API /api/rules/global', () => {
       assert.equal(status, 200, 'PUT must succeed at the bundled content size');
 
       const { data } = await request(server, 'GET', '/api/rules/global');
-      assert.equal(data.content, bundled.replace(/[ \t]+$/gm, ''),
-        'round-trip preserves content (modulo #100 trailing-whitespace strip)');
+      assert.equal(data.content, store.globalRules._normalize(bundled),
+        'round-trip preserves content (modulo #100 normalization)');
+    });
+
+    it('still rejects payloads above the new 256 KB cap (pins both ends of the contract)', async () => {
+      // Pin the upper bound. The cap is a security property (DoS resilience
+      // — an unbounded body would let one request OOM the process), so a
+      // regression that pushed it too high should fail loud too. 300 KB
+      // sits above the 256 KB cap with margin for JSON wrapping overhead.
+      const tooBig = 'x'.repeat(300 * 1024);
+      assert.ok(tooBig.length > 256 * 1024,
+        'precondition: payload must exceed the new 256 KB cap');
+
+      const { status, data } = await request(server, 'PUT', '/api/rules/global', { content: tooBig });
+      assert.equal(status, 413, '413 must still fire above the new cap');
+      assert.equal(data.code, 'BODY_TOO_LARGE');
     });
   });
 
