@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-05-27
+
 ### Internal
 
 - **`serviceWorker.register('/sw.js', { updateViaCache: 'none' })` to speed `CACHE_NAME` bump propagation (closes #258)** — without `updateViaCache: 'none'`, the browser uses the default `'imports'` mode and respects HTTP `Cache-Control` on the top-level SW script. Server already sends `Cache-Control: no-cache` on the SW response, but aggressive intermediate proxies or browser-quirk edge cases can hold the old SW for up to 24h. Setting `updateViaCache: 'none'` forces a network fetch on every update check, so a bumped `CACHE_NAME` (the immediate-unblock tool for any future SW-cache-related bug — see #246) propagates without waiting on TTL. **Belt-and-suspenders relative to #246's structural `NETWORK_FIRST_PATHS` carve-out** — the structural fix already protects cache-bust-critical script delivery; this option makes the `CACHE_NAME` mechanism itself faster for any other cache class. One-line change in `public/landing.js:1041` plus a source-level test pin in `test/openclaw-cache.test.js`. Full suite 2576/2577 pass (1 pre-existing skip; net +1).
