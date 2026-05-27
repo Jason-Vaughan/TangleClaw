@@ -9,6 +9,7 @@ const store = require('./lib/store');
 const system = require('./lib/system');
 const engines = require('./lib/engines');
 const gitHooks = require('./lib/git-hooks');
+const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
 const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
@@ -515,6 +516,18 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
           project: project.name, error: err.message
         });
       }
+    }
+    // #252 — also flip the global git template so non-TC-managed repos
+    // pick the hook up on next `git init` / `git clone`. Independent of
+    // the per-project walk above: the template covers FUTURE repos
+    // anywhere on the host; the per-project loop covers EXISTING
+    // TC-managed repos. Both must run on every toggle.
+    try {
+      gitTemplate.syncGlobalTemplate(config);
+    } catch (err) {
+      log.warn('Failed to sync global git template after stripAiCoauthors toggle', {
+        error: err.message
+      });
     }
   }
 
