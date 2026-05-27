@@ -23,12 +23,12 @@
     "supportsModes": ["ssh", "webui"]
   },
   "launchModes": {
-    "default":           { "label": "Interactive",  "args": [], "bridgePermissionMode": "default",           "disabled": true, "description": "Prompts for permission on every action — surfaces ClawBridge's structured permission-review channel" },
-    "acceptEdits":       { "label": "Accept Edits", "args": [], "bridgePermissionMode": "acceptEdits",       "disabled": true, "description": "Auto-accepts file reads and edits" },
-    "plan":              { "label": "Plan Only",    "args": [], "bridgePermissionMode": "plan",              "disabled": true, "description": "Read-only, no code changes" },
-    "auto":              { "label": "Auto",         "args": [], "bridgePermissionMode": "auto",              "disabled": true, "description": "Claude Code's auto-mode classifier decides" },
-    "bypassPermissions": { "label": "Bypass",       "args": [], "bridgePermissionMode": "bypassPermissions", "disabled": true, "description": "Accepts everything (containers/VMs only)", "warning": "Only use in isolated environments" },
-    "dontAsk":           { "label": "Don't Ask",    "args": [], "bridgePermissionMode": "dontAsk",           "disabled": true, "description": "Skip prompts but stop on dangerous actions" }
+    "default":           { "label": "Interactive",  "args": [], "bridgePermissionMode": "default",           "disabled": false, "description": "Prompts for permission on every action — surfaces ClawBridge's structured permission-review channel" },
+    "acceptEdits":       { "label": "Accept Edits", "args": [], "bridgePermissionMode": "acceptEdits",       "disabled": false, "description": "Auto-accepts file reads and edits" },
+    "plan":              { "label": "Plan Only",    "args": [], "bridgePermissionMode": "plan",              "disabled": false, "description": "Read-only, no code changes" },
+    "auto":              { "label": "Auto",         "args": [], "bridgePermissionMode": "auto",              "disabled": false, "description": "Claude Code's auto-mode classifier decides" },
+    "bypassPermissions": { "label": "Bypass",       "args": [], "bridgePermissionMode": "bypassPermissions", "disabled": false, "description": "Accepts everything (containers/VMs only)", "warning": "Only use in isolated environments" },
+    "dontAsk":           { "label": "Don't Ask",    "args": [], "bridgePermissionMode": "dontAsk",           "disabled": false, "description": "Skip prompts but stop on dangerous actions" }
   },
   "defaultLaunchMode": "default",
   "statusPage": null,

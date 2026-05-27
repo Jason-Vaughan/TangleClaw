@@ -1262,7 +1262,14 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
 
   // Web UI mode — delegate to async launch path
   if (result.webui) {
-    const launchOpts = { force: body ? body.force === true : false };
+    const launchOpts = {
+      force: body ? body.force === true : false,
+      // #210 Phase 2 — forward the launch-mode picker choice through to
+      // launchWebuiSession so it can pre-create a ClawBridge session
+      // with the matching permissionMode (resolved against the engine
+      // profile's bridgePermissionMode mapping).
+      launchMode: body ? body.launchMode : null
+    };
     sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project, launchOpts)
       .then((webuiResult) => {
         if (webuiResult.error) {
