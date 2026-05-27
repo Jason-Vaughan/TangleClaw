@@ -137,6 +137,66 @@ describe('API /api/rules/global', () => {
     });
   });
 
+  describe('body cap (#212)', () => {
+    it('accepts a PUT body well above the default 10 KB cap', async () => {
+      // Default MAX_BODY_SIZE is 10 KB. The route now overrides to 256 KB.
+      // Pin the contract with a 50 KB payload — large enough that the
+      // default cap would have rejected, comfortably under the new cap.
+      // Lorem-style content (not real rules) to keep the test independent
+      // of whatever the canonical ruleset currently contains.
+      const big = '# Big Rules\n\n' + 'a '.repeat(25000) + '\n';
+      assert.ok(big.length > 10 * 1024,
+        'precondition: payload must exceed the default 10 KB cap');
+
+      const { status, data } = await request(server, 'PUT', '/api/rules/global', { content: big });
+      assert.equal(status, 200, 'PUT must succeed at 50 KB; #212 regression check');
+      assert.ok(data.ok);
+
+      const { data: loaded } = await request(server, 'GET', '/api/rules/global');
+      // Normalization (#100) strips trailing whitespace and uniform body
+      // indent, so the round-trip won't be byte-identical to `big` — but
+      // it must still be a non-empty string starting with the H1.
+      assert.ok(typeof loaded.content === 'string');
+      assert.ok(loaded.content.startsWith('# Big Rules'));
+    });
+
+    it('round-trips the bundled global-rules.md verbatim through GET → PUT → GET (#212)', async () => {
+      // Issue's canonical reproduction: read the bundled rules content,
+      // PUT it back unmodified, GET it again. Pre-#212 this failed with
+      // 413 because the bundled content was already over the 10 KB cap.
+      // Equality check uses `store.globalRules._normalize` rather than a
+      // partial regex — the #100 normalizer covers more transforms (CRLF,
+      // fence-aware whitespace, uniform-indent strip) than a naked trailing-
+      // whitespace replace; using the canonical helper keeps the test
+      // honest if the bundled file gains content matching those patterns.
+      const bundledPath = path.join(__dirname, '..', 'data', 'global-rules.md');
+      const bundled = fs.readFileSync(bundledPath, 'utf8');
+      assert.ok(bundled.length > 10 * 1024,
+        'precondition: bundled global-rules.md must exceed the default 10 KB cap to make this test meaningful');
+
+      const { status } = await request(server, 'PUT', '/api/rules/global', { content: bundled });
+      assert.equal(status, 200, 'PUT must succeed at the bundled content size');
+
+      const { data } = await request(server, 'GET', '/api/rules/global');
+      assert.equal(data.content, store.globalRules._normalize(bundled),
+        'round-trip preserves content (modulo #100 normalization)');
+    });
+
+    it('still rejects payloads above the new 256 KB cap (pins both ends of the contract)', async () => {
+      // Pin the upper bound. The cap is a security property (DoS resilience
+      // — an unbounded body would let one request OOM the process), so a
+      // regression that pushed it too high should fail loud too. 300 KB
+      // sits above the 256 KB cap with margin for JSON wrapping overhead.
+      const tooBig = 'x'.repeat(300 * 1024);
+      assert.ok(tooBig.length > 256 * 1024,
+        'precondition: payload must exceed the new 256 KB cap');
+
+      const { status, data } = await request(server, 'PUT', '/api/rules/global', { content: tooBig });
+      assert.equal(status, 413, '413 must still fire above the new cap');
+      assert.equal(data.code, 'BODY_TOO_LARGE');
+    });
+  });
+
   describe('normalization on save (#100)', () => {
     it('strips trailing whitespace and uniform body indent on PUT round-trip', async () => {
       // Mirrors the live ~/.tangleclaw/global-rules.md pollution: H1 at col 0,

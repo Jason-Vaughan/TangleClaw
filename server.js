@@ -815,13 +815,22 @@ route('GET', '/api/rules/global', (_req, res) => {
 });
 
 // PUT /api/rules/global
+// #212 — bumped body cap to 256 KB. The default MAX_BODY_SIZE of 10 KB
+// was below the size of the canonical bundled `data/global-rules.md`
+// (14 KB and growing as new conventions land), so every PUT — whether
+// from the landing-page editor or the API — was returning 413. 256 KB
+// gives ~18x headroom over current size; even a 10x growth in the
+// ruleset stays well under the limit. Other large-body routes use the
+// same per-route override pattern — see `/api/audit/ingest` at the
+// 512 KB cap (`server.js:2834`) and the upload route at 15 MB
+// (`server.js:1574`).
 route('PUT', '/api/rules/global', (_req, res, _params, body) => {
   if (typeof body.content !== 'string') {
     return errorResponse(res, 400, 'content (string) is required', 'BAD_REQUEST');
   }
   store.globalRules.save(body.content);
   jsonResponse(res, 200, { ok: true });
-});
+}, { maxBodySize: 256 * 1024 });
 
 // POST /api/rules/global/reset
 route('POST', '/api/rules/global/reset', (_req, res) => {
