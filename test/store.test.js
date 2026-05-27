@@ -218,7 +218,8 @@ describe('store', () => {
     it('canonical-source is idempotent across reboots (#119 → #251)', () => {
       // Once the profile matches bundled, a second init must not rewrite
       // it. The structural-equivalence check in `_engineProfileEquivalent`
-      // (`JSON.stringify(JSON.parse(...))`) is what makes this hold.
+      // (recursive sorted-keys canonicalization via `_canonicalize`) is
+      // what makes this hold.
       const enginesDir = path.join(tmpDir, 'engines');
       fs.mkdirSync(enginesDir, { recursive: true });
       const stale = {

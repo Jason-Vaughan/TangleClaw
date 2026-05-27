@@ -146,8 +146,8 @@ describe('engine profile sync — drift propagation (#251)', () => {
 
   it('is idempotent — second init does not rewrite a profile that already matches bundled', () => {
     // After first init, on-disk content matches bundled. Structural
-    // equivalence check (`JSON.stringify(JSON.parse(...))`) must short-
-    // circuit on second init so mtime doesn't churn.
+    // equivalence check via `_canonicalize` must short-circuit on second
+    // init so mtime doesn't churn.
     store.init();
     const enginesDir = path.join(tmpDir, 'engines');
     const claudePath = path.join(enginesDir, 'claude.json');
