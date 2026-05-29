@@ -34,6 +34,44 @@ def get_prawduct_dir(project_dir: Path) -> Path:
     return project_dir / ".prawduct"
 
 
+# --- Active build-plan resolution (inline mirror of tools/lib/core.py) ---
+# product-hook is standalone in product repos and cannot import tools/lib, so
+# the resolver is duplicated here. Kept in sync with
+# core.resolve_build_plan_path / core.read_str_yaml_key by a parity test
+# (same discipline as the GITIGNORE_ENTRIES / _SESSION_GITIGNORED_PATHS mirror).
+_BUILD_PLAN_POINTER_KEY = "active_build_plan"
+_DEFAULT_BUILD_PLAN_REL = "artifacts/build-plan.md"
+
+
+def _read_str_yaml_key(state_path: Path, key: str) -> str | None:
+    """Value of a top-level (column-0) ``key: value`` scalar, or None."""
+    try:
+        content = state_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    needle = f"{key}:"
+    for raw in content.splitlines():
+        if raw[:1] in (" ", "\t"):
+            continue
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.startswith(needle):
+            continue
+        value = line.split(":", 1)[1].strip().strip("\"'")
+        return value or None
+    return None
+
+
+def _resolve_build_plan_path(prawduct_dir: Path) -> Path:
+    """Resolve the active build plan via the ``active_build_plan:`` pointer
+    (relative to ``.prawduct/``); fall back to ``artifacts/build-plan.md`` when
+    unset, so repos without the pointer are unchanged. May not exist — callers
+    treat a missing plan as no active build plan."""
+    pointer = _read_str_yaml_key(prawduct_dir / "project-state.yaml", _BUILD_PLAN_POINTER_KEY)
+    if pointer:
+        return prawduct_dir / pointer
+    return prawduct_dir / _DEFAULT_BUILD_PLAN_REL
+
+
 # =============================================================================
 # Sync trigger (best-effort on session start)
 # =============================================================================
@@ -426,10 +464,30 @@ _SESSION_GITIGNORED_PATHS = (
     ".prawduct/.subagent-briefing.md",
     ".prawduct/.gates-waived",
     ".prawduct/.sync-pending",
+    ".prawduct/.advisories.json",
     ".prawduct/reflections.md",
     ".prawduct/sync-manifest.json",
     ".prawduct/artifacts/build-plan.md",
 )
+
+
+def _read_advisory_store(prawduct_dir: Path) -> dict:
+    """Read `.prawduct/.advisories.json` (the post-sync nag log).
+
+    Standalone read — product-hook ships into product repos without access to
+    tools/lib, so it cannot import advisory_store. Missing/unreadable/malformed
+    → empty store; never raises (briefing must not break on a bad file).
+    """
+    path = prawduct_dir / ".advisories.json"
+    if not path.is_file():
+        return {"schema_version": 1, "advisories": []}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": 1, "advisories": []}
+    if not isinstance(data, dict) or not isinstance(data.get("advisories"), list):
+        return {"schema_version": 1, "advisories": []}
+    return data
 
 
 def _untrack_session_files(project_dir: Path) -> list[str]:
@@ -864,7 +922,8 @@ def staleness_scan(project_dir: Path) -> list[str]:
             pass
 
     # 4. Stale build plan detection — check Status section first, fall back to WIP
-    build_plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    build_plan_path = _resolve_build_plan_path(prawduct_dir)
+    build_plan_label = f".prawduct/{build_plan_path.relative_to(prawduct_dir).as_posix()}"
     if build_plan_path.is_file():
         try:
             status = _parse_build_plan_status(prawduct_dir)
@@ -873,7 +932,7 @@ def staleness_scan(project_dir: Path) -> list[str]:
             elif status.get("_has_status_items"):
                 # All items checked — work complete
                 findings.append(
-                    "build plan: .prawduct/artifacts/build-plan.md has all chunks complete — "
+                    f"build plan: {build_plan_label} has all chunks complete — "
                     "if work is done, delete the plan"
                 )
             else:
@@ -882,7 +941,7 @@ def staleness_scan(project_dir: Path) -> list[str]:
                 wip = _parse_wip(prawduct_dir, branch=current_branch)
                 if not wip.get("description"):
                     findings.append(
-                        "build plan: .prawduct/artifacts/build-plan.md exists but no active work — "
+                        f"build plan: {build_plan_label} exists but no active work — "
                         "if work is complete, delete the plan"
                     )
         except Exception:  # prawduct:ok-broad-except — staleness scan is best-effort
@@ -1084,7 +1143,7 @@ def _parse_build_plan_status(prawduct_dir: Path) -> dict[str, str]:
     description, size, type, current_chunk, context, governance_level.
     Returns empty dict if no build plan or no Status section.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return {}
     try:
@@ -1378,6 +1437,72 @@ def assemble_session_briefing(
         for adv in advisories:
             msg = adv.get("message", "template drift detected")
             lines.append(f"  - {msg}")
+
+    # ADVISORIES (post-sync) — v1.6.0 Phase 1. The per-clone nag log written by
+    # sync's probe step (`.prawduct/.advisories.json`). Read directly here
+    # because product-hook is standalone and cannot import tools/lib. Active
+    # advisories are listed priority-ordered (urgent→warn→info, then newest
+    # first), capped at 5. Empty active set with nothing newly resolved → omit
+    # the section entirely (spec §5.2 / A5 — no "0 active" noise). Phase 1
+    # ships an empty production probe roster, so this section stays silent
+    # until a feature registers a probe.
+    adv_store = _read_advisory_store(prawduct_dir)
+    adv_all = adv_store.get("advisories", []) if isinstance(adv_store, dict) else []
+    active_adv = [a for a in adv_all if isinstance(a, dict) and a.get("state") == "active"]
+    # Stable two-pass sort: newest-first within each priority band.
+    active_adv.sort(key=lambda a: a.get("triggered_at") or "", reverse=True)
+    _adv_prio = {"urgent": 0, "warn": 1, "info": 2}
+    active_adv.sort(key=lambda a: _adv_prio.get(a.get("priority", "info"), 2))
+    # "Resolved/Dismissed since last session" — entries that transitioned at or
+    # after this session's start stamp (the just-run sync resolves; dismissals
+    # carry their own timestamp).
+    resolved_since = 0
+    dismissed_since = 0
+    session_start_path = prawduct_dir / ".session-start"
+    if session_start_path.is_file():
+        try:
+            session_start_ts = session_start_path.read_text().strip()
+        except OSError:
+            session_start_ts = ""
+        if session_start_ts:
+            resolved_since = sum(
+                1
+                for a in adv_all
+                if isinstance(a, dict)
+                and a.get("state") == "resolved"
+                and (a.get("resolved_at") or "") >= session_start_ts
+            )
+            dismissed_since = sum(
+                1
+                for a in adv_all
+                if isinstance(a, dict)
+                and a.get("state") == "dismissed"
+                and (a.get("dismissed_at") or "") >= session_start_ts
+            )
+    if active_adv or resolved_since or dismissed_since:
+        if active_adv:
+            lines.append(f"ADVISORIES (post-sync, {len(active_adv)} active):")
+            for adv in active_adv[:5]:
+                feature = adv.get("feature", "?")
+                summary = adv.get("trigger_summary", "")
+                lines.append(f"  • [{feature}] {summary}")
+                action = adv.get("recommended_action", "")
+                if action:
+                    aid = adv.get("id", "")
+                    lines.append(f"    → Run {action} (or /prawduct-advisory dismiss {aid})")
+            if len(active_adv) > 5:
+                lines.append(
+                    f"  ... and {len(active_adv) - 5} more (run /prawduct-advisory list)"
+                )
+        else:
+            lines.append("ADVISORIES (post-sync):")
+        if dismissed_since:
+            lines.append(
+                f"  Dismissed since last session: {dismissed_since} "
+                f"(run /prawduct-advisory list --state=dismissed to see)"
+            )
+        if resolved_since:
+            lines.append(f"  Resolved since last session: {resolved_since}")
 
     # F5a sync-pending marker — surfaces when sync couldn't auto-commit
     # framework drift because a precondition (WIP, protected branch,
@@ -2399,7 +2524,7 @@ def _count_build_plan_chunks(prawduct_dir: Path) -> tuple[int, int]:
     section, or has no chunk items. Mirrors the parsing rules in
     ``_parse_build_plan_status`` (skip HTML comments; exit on next ``## ``).
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return 0, 0
     try:
@@ -3014,7 +3139,7 @@ def _parse_build_plan_chunk_refs(prawduct_dir: Path, chunk_id: str) -> dict:
     see Chunk 02 plan-vs-execution divergence (commit message).
     """
     result: dict = {"file_paths": [], "error": None}
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         result["error"] = f"missing build-plan: {plan_path}"
         return result
@@ -3097,7 +3222,7 @@ def _parse_build_plan_chunk_type(
     on ``### Chunk <chunk_id>:`` with leading-zero tolerance; fenced code
     blocks are skipped.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return None, f"missing build-plan: {plan_path}"
     try:
@@ -3163,7 +3288,7 @@ def _parse_build_plan_chunk_trivial_rationale(
     name-anchored on ``### Chunk <chunk_id>:`` with leading-zero
     tolerance; fenced code blocks are skipped.
     """
-    plan_path = prawduct_dir / "artifacts" / "build-plan.md"
+    plan_path = _resolve_build_plan_path(prawduct_dir)
     if not plan_path.is_file():
         return None, f"missing build-plan: {plan_path}"
     try:
@@ -4124,13 +4249,37 @@ def cmd_infer_critic_mode(project_dir: Path, args: str | None) -> int:
     return 0
 
 
+def cmd_advisory(project_dir: Path, argv: list[str]) -> int:
+    """Dispatch the ``/prawduct-advisory`` management CLI (spec §6, Chunk 05).
+
+    Thin wrapper around ``tools.lib.advisory_cmd.run`` — the subcommand exists so
+    the skill's ``allowed-tools`` can be scoped to ``Bash(python3 tools/product-hook
+    advisory*)`` instead of arbitrary code execution, mirroring the
+    ``infer-critic-mode`` pattern. ``argv`` is ``sys.argv[2:]`` (everything after
+    ``advisory``).
+
+    Fail-safe: when ``tools/lib`` is absent (a product repo that has not yet
+    received the lib propagation), print a clear message and return 1 rather than
+    crashing — the advisory CLI is informational, never a gate.
+    """
+    tools_dir = str(Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    try:
+        from lib import advisory_cmd  # noqa: PLC0415 — lazy keeps top-level cheap
+    except ImportError:
+        print("advisory CLI unavailable (tools/lib not present in this repo)", file=sys.stderr)
+        return 1
+    return advisory_cmd.run(project_dir, argv)
+
+
 _USAGE = (
     "Usage: product-hook "
     "{clear|stop|test-status|validate-evidence|check-cumulative-critic|"
     "verify-chunk-refs [chunk_id]|verify-coverage|"
     "check-operator-verification|accept-operator-verification <rationale>|"
     "check-pr-doc-only|check-pr-trivial|regen-views|infer-critic-mode [args]|"
-    "compute-verify-resolutions-scope}"
+    "compute-verify-resolutions-scope|advisory <subcmd> [args]}"
 )
 
 
@@ -4173,6 +4322,8 @@ def main() -> int:
         return cmd_infer_critic_mode(project_dir, args)
     elif command == "compute-verify-resolutions-scope":
         return cmd_compute_verify_resolutions_scope(project_dir)
+    elif command == "advisory":
+        return cmd_advisory(project_dir, sys.argv[2:])
     else:
         print(_USAGE, file=sys.stderr)
         return 1
