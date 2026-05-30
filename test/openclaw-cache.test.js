@@ -368,6 +368,19 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
       '/openclaw-cache.js must be present in the network-first carve-out');
   });
 
+  it('#271 — core UI assets are in NETWORK_FIRST_PATHS (prevents stale-UI bug recurrence)', () => {
+    // #267 verification pass surfaced that the new findings panel didn't
+    // render until `Cmd+Shift+R` because the SW served a stale
+    // session.js. This pattern recurs every time a feature PR touches
+    // public/session.js, public/landing.js, public/session.css, or
+    // public/landing.css. Pin each path so a future SW edit can't
+    // silently drop the carve-out and let the bug come back.
+    for (const p of ['/session.js', '/session.css', '/landing.js', '/landing.css']) {
+      assert.match(swSrc, new RegExp(`['"]${p.replace(/[/\\.]/g, '\\$&')}['"]`),
+        `${p} must be present in NETWORK_FIRST_PATHS so feature-PR UI changes reach operators without hard-reload`);
+    }
+  });
+
   it('fetch handler consults NETWORK_FIRST_PATHS alongside /api/ and navigate', () => {
     // Pin that the carve-out is wired into the routing decision, not
     // just declared as dead code. The branch that triggers network-
