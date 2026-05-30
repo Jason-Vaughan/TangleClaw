@@ -1972,10 +1972,14 @@ describe('wrap-step critic-check — handler (#139 Chunk 7)', () => {
     );
   }
 
-  it('always returns ok:true status done — never blocks', async () => {
-    // The blocker contract is `false` per ADR 0002; even on a
-    // misconfigured project (missing path) the handler returns
-    // ok:true with status skipped, so the pipeline never halts here.
+  it('misconfigured project (missing path) returns ok:true status skipped, never blocks', async () => {
+    // Defensive: a misconfigured project should NEVER halt the wrap
+    // pipeline even after the #264 amendment. The pre-#264 contract
+    // ("always returns ok:true") was narrowed to "returns ok:true
+    // unless explicit blocking findings exist and no override is
+    // set" — but misconfiguration / probe-failure cases are still
+    // ok:true status:skipped to preserve the original ADR 0002
+    // resilience guarantee for non-finding-related failures.
     const result = await criticCheck.run({
       project: { name: 'no-path', id: 1 },
       step: { id: 'critic-check' },
@@ -2210,6 +2214,184 @@ describe('wrap-step critic-check — handler (#139 Chunk 7)', () => {
       assert.equal(result.output.owedRationale, null,
         `non-string rationale ${JSON.stringify(bad)} must not be staged`);
     }
+  });
+
+  // ============================================================
+  // #264 (halt on Critic blocking): critic-check halts the pipeline
+  // when .tangleclaw/critic-runs.json contains an entry on the
+  // current branch with `ranAt:"actual"` and at least one finding
+  // of `severity:"blocking"`. Operator-override via
+  // `options.criticBlockingOverride === true` proceeds anyway but
+  // stages the override for the commit-message footer.
+  // ============================================================
+
+  it('#264 — halts (ok:false status:blocked) when a blocking finding exists on current branch', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [
+          { severity: 'blocking', summary: 'load-bearing bug not fixed' }
+        ]
+      }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.blockingFindingCount, 1);
+    assert.equal(result.output.blockingFindings.length, 1);
+    assert.match(result.blockers[0], /1 BLOCKING finding\(s\)/);
+    assert.match(result.blockers[1], /load-bearing bug/);
+    assert.match(result.blockers[result.blockers.length - 1], /criticBlockingOverride/);
+  });
+
+  it('#264 — case-insensitive severity match — "BLOCKING" also halts', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [{ severity: 'BLOCKING', summary: 'uppercase shape' }]
+      }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, false);
+    assert.equal(result.output.blockingFindingCount, 1);
+  });
+
+  it('#264 — ranAt:"ack" entries (pre-#267 schema) are NEVER treated as blocking', async () => {
+    // The ack-only / legacy ack predicate path stays warning-only —
+    // only #267-era real-invocation entries can carry findings that
+    // halt. This pins backward compat for projects whose Critic was
+    // run externally / via the legacy button.
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'ack',
+        findings: [{ severity: 'blocking', summary: 'should not halt' }]
+      },
+      // pre-#267 entry (no ranAt at all) — also must not halt
+      { branchName: 'feat/x', timestamp: '2026-05-29T18:00:00.000Z' }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, true, 'ranAt:"ack" / no-ranAt entries do NOT halt the pipeline');
+    assert.equal(result.output.blockingFindingCount, 0);
+    assert.equal(result.output.criticRan, true,
+      'criticRan predicate still true — these entries satisfy the warning-suppression role');
+  });
+
+  it('#264 — non-blocking findings (warning / note) do NOT halt', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [
+          { severity: 'warning', summary: 'noise' },
+          { severity: 'note', summary: 'fyi' }
+        ]
+      }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.blockingFindingCount, 0);
+  });
+
+  it('#264 — blocking findings on a DIFFERENT branch do NOT halt the current-branch wrap', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/other',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [{ severity: 'blocking', summary: 'on other branch' }]
+      }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, true,
+      'sibling branch blockers must not bleed into current-branch wrap');
+    assert.equal(result.output.blockingFindingCount, 0);
+  });
+
+  it('#264 — operator override (criticBlockingOverride:true) bypasses halt and stages audit trail', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [
+          { severity: 'blocking', summary: 'fix-A' },
+          { severity: 'blocking', summary: 'fix-B' }
+        ]
+      }
+    ]);
+    const ctx = buildContext(
+      { id: 'critic-check' },
+      {
+        criticBlockingOverride: true,
+        criticBlockingOverrideReason: 'hotfix incident #911 — ship now, fix forward'
+      }
+    );
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, true, 'override flips back to ok:true');
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.blockingFindingCount, 2);
+    assert.equal(result.output.blockingOverrideApplied, true);
+    assert.equal(result.output.blockingOverrideReason, 'hotfix incident #911 — ship now, fix forward');
+    const stagedEntry = ctx.staged['critic-check-blocking-override'];
+    assert.ok(stagedEntry, 'override entry must be staged for the commit step');
+    assert.equal(stagedEntry.overrideBlockingFindings, true);
+    assert.equal(stagedEntry.findingCount, 2);
+    assert.equal(stagedEntry.reason, 'hotfix incident #911 — ship now, fix forward');
+  });
+
+  it('#264 — override without rationale still bypasses halt (stages null reason)', async () => {
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [{ severity: 'blocking', summary: 'x' }]
+      }
+    ]);
+    const ctx = buildContext(
+      { id: 'critic-check' },
+      { criticBlockingOverride: true }
+    );
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.blockingOverrideReason, null,
+      'rationale is optional — but its absence is recorded so the commit body shows "(no rationale provided)"');
+    assert.equal(ctx.staged['critic-check-blocking-override'].reason, null);
+  });
+
+  it('#264 — heuristic warning + blocking finding coexist: warning is suppressed by criticRan, halt still fires', async () => {
+    // Mid-session medium+ scenario: tripping the heuristic AND having
+    // a blocking finding. The warning path checks criticRan (true →
+    // suppressed) while the halt path checks blocking findings (present
+    // → halt). Pin that the two predicates are independent.
+    writeCriticRuns([
+      {
+        branchName: 'feat/x',
+        timestamp: '2026-05-30T18:00:00.000Z',
+        ranAt: 'actual',
+        findings: [{ severity: 'blocking', summary: 'real issue' }]
+      }
+    ]);
+    const ctx = buildContext({ id: 'critic-check' });
+    criticCheck._internal.getCommitCount = async () => 20; // trip medium+
+    const result = await criticCheck.run(ctx);
+    assert.equal(result.ok, false, 'blocking finding wins — pipeline halts');
+    assert.equal(result.output.warning, false,
+      'criticRan suppresses the heuristic warning even though medium+ tripped');
+    assert.equal(result.output.isMediumPlus, true);
+    assert.equal(result.output.blockingFindingCount, 1);
   });
 });
 
@@ -3307,6 +3489,128 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       commitStep._internal.exec = realExec;
     }
   });
+
+  // ============================================================
+  // #264 (auto-branch on main): commit step redirects wrap commits
+  // away from `main`/`master` to `wrap/<ts>-<slug>` branches unless
+  // operator explicitly opts out via `options.allowDirectToMain`.
+  // ============================================================
+
+  it('#264 — auto-branches off main into wrap/<ts>-<slug> when context.options.allowDirectToMain is not set', async () => {
+    // Default test repo is on the init branch named "main" or "master"
+    // depending on git config. Normalize to "main" so the auto-branch
+    // path fires deterministically.
+    execSync('git branch -M main', { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'TODO.md'), 'work\n');
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.autoBranched, true);
+    assert.equal(result.output.originalBranch, 'main');
+    assert.match(result.output.branch, /^wrap\/\d{14}-sandbox$/,
+      'auto-branch name should be wrap/<YYYYMMDDHHmmss>-<project-slug>');
+    // Verify the commit landed on the new branch, NOT on main
+    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectPath }).toString().trim();
+    assert.equal(currentBranch, result.output.branch,
+      'working tree HEAD must be on the new wrap branch after auto-branch');
+    const mainLog = execSync('git log main --oneline', { cwd: projectPath }).toString();
+    assert.equal(mainLog.trim().split('\n').length, 1,
+      'main must NOT have the wrap commit (still just the init commit)');
+  });
+
+  it('#264 — auto-branches off master too (treats master as protected like main)', async () => {
+    execSync('git branch -M master', { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'TODO.md'), 'work\n');
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.autoBranched, true);
+    assert.equal(result.output.originalBranch, 'master');
+  });
+
+  it('#264 — allowDirectToMain:true commits directly to main (operator escape hatch)', async () => {
+    execSync('git branch -M main', { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'TODO.md'), 'work\n');
+    const ctx = buildContext({});
+    ctx.options = { allowDirectToMain: true };
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.autoBranched, false);
+    assert.equal(result.output.originalBranch, 'main');
+    assert.equal(result.output.branch, 'main');
+    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectPath }).toString().trim();
+    assert.equal(currentBranch, 'main', 'escape hatch keeps HEAD on main');
+  });
+
+  it('#264 — feature branches are NEVER auto-branched (no behavioral change)', async () => {
+    execSync('git checkout -b feat/some-feature', { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'TODO.md'), 'work\n');
+    const ctx = buildContext({});
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.autoBranched, false);
+    assert.equal(result.output.originalBranch, 'feat/some-feature');
+    assert.equal(result.output.branch, 'feat/some-feature',
+      'feature-branch wraps are unchanged');
+  });
+
+  it('#264 — auto-branch git checkout failure blocks the wrap cleanly', async () => {
+    execSync('git branch -M main', { cwd: projectPath });
+    fs.writeFileSync(path.join(projectPath, 'TODO.md'), 'work\n');
+    // Pre-create the wrap branch name so `git checkout -b` fails with
+    // "branch already exists." Mock the timestamp seam isn't exposed,
+    // but pre-creating any branch whose name our generator could pick
+    // works because the failing checkout returns exit ≠ 0 regardless.
+    const realExec = commitStep._internal.exec;
+    commitStep._internal.exec = async (file, args, opts) => {
+      if (file === 'git' && args[0] === 'checkout' && args[1] === '-b') {
+        return { exitCode: 128, stdout: '', stderr: 'fatal: A branch named already exists.\n' };
+      }
+      return realExec(file, args, opts);
+    };
+    try {
+      const ctx = buildContext({});
+      const result = await commitStep.run(ctx);
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.match(result.blockers[0], /Auto-branch failed/);
+      assert.match(result.blockers[1], /allowDirectToMain/,
+        'block message must surface the escape-hatch option');
+      // main is unchanged
+      const log = execSync('git log --oneline', { cwd: projectPath }).toString();
+      assert.equal(log.trim().split('\n').length, 1,
+        'auto-branch failure must leave main untouched');
+    } finally {
+      commitStep._internal.exec = realExec;
+    }
+  });
+
+  it('#264 — commit body line "Critic-override: …" renders when override entry is staged', () => {
+    // _buildBodyLines is pure — test directly without git involvement.
+    const lines = commitStep._buildBodyLines({
+      'critic-check-blocking-override': {
+        overrideBlockingFindings: true,
+        findingCount: 3,
+        reason: 'shipping the regression intentionally',
+        branchName: 'main'
+      }
+    });
+    assert.ok(lines.some((l) => /^- Critic-override: shipping the regression intentionally \(3 blocking finding\(s\) ignored\)$/.test(l)),
+      'Override line must render the rationale + finding count for audit trail');
+  });
+
+  it('#264 — commit body line "Critic-override (no rationale provided)" when reason absent', () => {
+    const lines = commitStep._buildBodyLines({
+      'critic-check-blocking-override': {
+        overrideBlockingFindings: true,
+        findingCount: 1,
+        reason: null,
+        branchName: 'main'
+      }
+    });
+    assert.ok(lines.some((l) => /\(no rationale provided\)/.test(l)),
+      'Missing rationale must still produce an audit-trail line');
+  });
 });
 
 describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
@@ -3472,6 +3776,21 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
     const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
     assert.ok(commitStep);
     assert.equal(commitStep.blocker, true);
+  });
+
+  // #264 / ADR 0002 amendment: critic-check step's blocker was
+  // intentionally flipped from `false` to `"errors-only"` in the
+  // prawduct bundled template so the runner's halt-on-!ok check fires
+  // when blocking findings are present (since the handler now returns
+  // ok:false in that case). Pin the contract here so a future
+  // template-author can't silently revert it without a CI failure.
+  it('#264 — prawduct critic-check step has blocker:"errors-only"', () => {
+    const t = store.templates.get('prawduct');
+    const criticStep = t.wrap_pipeline.steps.find((s) => s.kind === 'critic-check');
+    assert.ok(criticStep, 'prawduct must declare a critic-check step');
+    assert.equal(criticStep.blocker, 'errors-only',
+      'critic-check must declare blocker:"errors-only" so the runner halts on ok:false ' +
+      '(handler returns ok:false only when blocking findings exist + no override) per ADR 0002 amendment');
   });
 });
 
