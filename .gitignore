@@ -50,7 +50,5 @@ __pycache__/
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
-
-# Prawduct session files
 .prawduct/.sync-pending
 .prawduct/.advisories.json
