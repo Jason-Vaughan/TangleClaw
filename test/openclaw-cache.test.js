@@ -372,10 +372,12 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
     // #267 verification pass surfaced that the new findings panel didn't
     // render until `Cmd+Shift+R` because the SW served a stale
     // session.js. This pattern recurs every time a feature PR touches
-    // public/session.js, public/landing.js, public/session.css, or
-    // public/landing.css. Pin each path so a future SW edit can't
-    // silently drop the carve-out and let the bug come back.
-    for (const p of ['/session.js', '/session.css', '/landing.js', '/landing.css']) {
+    // public/session.js, public/landing.js, or public/session.css. Pin
+    // each path so a future SW edit can't silently drop the carve-out
+    // and let the bug come back. Landing has no dedicated CSS today
+    // (style.css covers the landing surface) — `/landing.css` is
+    // intentionally omitted; add it when/if the asset materializes.
+    for (const p of ['/session.js', '/session.css', '/landing.js']) {
       assert.match(swSrc, new RegExp(`['"]${p.replace(/[/\\.]/g, '\\$&')}['"]`),
         `${p} must be present in NETWORK_FIRST_PATHS so feature-PR UI changes reach operators without hard-reload`);
     }
