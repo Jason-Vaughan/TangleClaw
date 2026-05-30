@@ -38,8 +38,7 @@ const NETWORK_FIRST_PATHS = new Set([
   '/openclaw-cache.js',
   '/session.js',
   '/session.css',
-  '/landing.js',
-  '/landing.css'
+  '/landing.js'
 ]);
 
 self.addEventListener('install', (event) => {
