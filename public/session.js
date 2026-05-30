@@ -260,12 +260,44 @@ async function invokeMethodologyAction(action) {
     btn.disabled = true;
     btn.textContent = `${action.label}\u2026`;
   }
+  // #267 (Critic finding on PR #269): methodology-action POSTs can be
+  // long-running on the server side — invoke-critic's real-invocation
+  // path can run up to 5 minutes while the Critic skill executes. The
+  // shared `apiMutate` helper doesn't expose `signal`, so for this
+  // single call we use raw `fetch` with an AbortController bounded to
+  // ACTION_TIMEOUT_MS (matches the server-side MAX_WAIT_MS). On VPN /
+  // flaky-connection scenarios, this prevents an indefinitely hung
+  // POST from wedging the UI; the operator sees a clear "timed out"
+  // error instead of a spinner-of-doom. Other callers continue to use
+  // `apiMutate` for its uniform `api.lastError` plumbing.
+  const ACTION_TIMEOUT_MS = 5 * 60 * 1000 + 30 * 1000; // server cap + 30s buffer
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), ACTION_TIMEOUT_MS);
   try {
-    const result = await apiMutate(
-      `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
-      'POST',
-      {}
-    );
+    let result;
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+          signal: abortController.signal
+        }
+      );
+      result = await response.json();
+    } catch (err) {
+      // `AbortError` is the AbortController firing; surface a clear
+      // timeout message rather than the generic "fetch failed."
+      if (err && err.name === 'AbortError') {
+        showMethodologyActionToast(`${action.label}: timed out after ${Math.round(ACTION_TIMEOUT_MS / 1000)}s`, true);
+        return;
+      }
+      showMethodologyActionToast(`${action.label}: ${err && err.message ? err.message : 'request failed'}`, true);
+      return;
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (result && result.ok) {
       let successToast = (typeof action.successToast === 'string' && action.successToast.length > 0)
         ? action.successToast
@@ -291,7 +323,6 @@ async function invokeMethodologyAction(action) {
           : 0;
         successToast = successToast.replace(/\{findingCount\}/g, String(findingCount));
       }
-      showMethodologyActionToast(successToast);
       // #267 — when the handler returned findings (real-invocation
       // mode), surface them in the session UI alongside the toast.
       // Minimal V1 renders a structured list panel; richer per-
@@ -299,13 +330,25 @@ async function invokeMethodologyAction(action) {
       // deliberately deferred so this PR stays scoped to "button
       // actually does what it says."
       if (result.output && Array.isArray(result.output.findings) && result.output.findings.length > 0) {
+        showMethodologyActionToast(successToast);
         renderActionFindings(action.label, result.output);
       } else if (result.output && result.output.fallbackReason) {
         // Real invocation attempted but fell back to ack-only — show
         // the reason so the operator understands why no findings
         // appeared (degraded engine, no active session, idle timeout,
         // missing findings file, etc.).
+        //
+        // Critic finding on PR #269: previously we showed the success
+        // toast *and* the fallback panel, which read contradictorily
+        // ("Critic completed for X — 0 finding(s)" on top of "ack-only
+        // fallback"). On fallback, suppress the success toast — the
+        // fallback panel is the authoritative status surface. The
+        // toast was authored for the happy path.
         renderActionFallback(action.label, result.output.fallbackReason);
+      } else {
+        // Neither findings nor fallback — show the toast as the only
+        // signal (ack-mode wrap-pipeline-driven dispatch lands here).
+        showMethodologyActionToast(successToast);
       }
     } else {
       // `api.lastError` is a string set by `apiMutate` on !res.ok (see

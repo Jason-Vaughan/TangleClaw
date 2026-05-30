@@ -245,7 +245,7 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
     assert.equal(result.output.entry.ranAt, 'ack');
   });
 
-  it('records ranAt:"ack" with degradedEngine fallback when engine != claude', async () => {
+  it('records ranAt:"ack" with degradedEngine fallback when engine != claude (legacy `engine` field)', async () => {
     const result = await invokeCritic.run(
       { path: projectPath, name: 'p' },
       { session: { tmuxSession: 'fake', engine: 'gemini' } }
@@ -254,6 +254,44 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
     assert.equal(result.output.mode, 'ack');
     assert.equal(result.output.fallbackReason, 'degradedEngine:gemini');
     assert.equal(result.output.entry.ranAt, 'ack');
+  });
+
+  it('records degradedEngine fallback when engine != claude (production `engineId` field — Critic regression pin)', async () => {
+    // Critic finding on PR #269: the production session record from
+    // `store.sessions.getActive` exposes `engineId`, not `engine`. The
+    // engine guard MUST read either field. This test pins that
+    // contract — without it, the BLOCKING bug shipped silently because
+    // every other test hand-constructed sessions with `engine: ...`.
+    const result = await invokeCritic.run(
+      { path: projectPath, name: 'p' },
+      { session: { tmuxSession: 'fake', engineId: 'gemini' } }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.output.mode, 'ack');
+    assert.equal(result.output.fallbackReason, 'degradedEngine:gemini');
+  });
+
+  it('treats engine prefixes like `openclaw:<conn>` as degraded (not bare "claude")', async () => {
+    // OpenClaw engines surface as `openclaw:<connection-id>` —
+    // string-equality against `"claude"` is the right test (substring
+    // matches like `engine.includes("claude")` would mistakenly pass
+    // these too).
+    const result = await invokeCritic.run(
+      { path: projectPath, name: 'p' },
+      { session: { tmuxSession: 'fake', engineId: 'openclaw:remote-1' } }
+    );
+    assert.equal(result.output.fallbackReason, 'degradedEngine:openclaw:remote-1');
+  });
+
+  it('records degradedEngine:unknown when session has tmuxSession but no engine field at all', async () => {
+    // Defensive: a corrupt or partial session record should still
+    // surface a structured fallback reason rather than silently
+    // attempting the /critic dispatch on an unknown-engine session.
+    const result = await invokeCritic.run(
+      { path: projectPath, name: 'p' },
+      { session: { tmuxSession: 'fake' } }
+    );
+    assert.equal(result.output.fallbackReason, 'degradedEngine:unknown');
   });
 
   it('forces ack-only path via options.ackOnly even when session looks valid', async () => {

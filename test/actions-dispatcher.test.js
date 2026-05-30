@@ -127,4 +127,60 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
       actions.ACTION_DISPATCH['invoke-critic'].run = original;
     }
   });
+
+  it('injects the active session from store.sessions.getActive into handler options (#267)', async () => {
+    // Critic regression pin: the dispatcher's session-injection
+    // contract was unverified by the original test suite — only the
+    // BLOCKING engine-field bug surfaced it. This test pins that
+    // (a) a real active session created via `store.sessions.create`
+    // is looked up and injected as `options.session`, AND
+    // (b) the injected record carries the production `engineId` field
+    // so handlers reading the right field receive the engine identifier.
+    const project = makeProject('disp-session-inject', 'prawduct');
+    const session = store.sessions.start({
+      projectId: project.id,
+      engineId: 'claude',
+      tmuxSession: 'tc-test-session-inject',
+      primePrompt: ''
+    });
+    // Capture what the handler actually received via the dispatch path.
+    let receivedOptions = null;
+    const original = actions.ACTION_DISPATCH['invoke-critic'].run;
+    actions.ACTION_DISPATCH['invoke-critic'].run = (project, options) => {
+      receivedOptions = options;
+      return { ok: true, output: { entry: { branchName: 'test', timestamp: 'x' } }, error: null };
+    };
+    try {
+      await actions.runAction('disp-session-inject', 'invoke-critic');
+      assert.ok(receivedOptions, 'handler was invoked');
+      assert.ok(receivedOptions.session, 'dispatcher injected session into options');
+      assert.equal(receivedOptions.session.id, session.id,
+        'injected session matches the active session for this project');
+      assert.equal(receivedOptions.session.engineId, 'claude',
+        'session record carries the engineId field that the engine-guard reads');
+      assert.equal(receivedOptions.session.tmuxSession, 'tc-test-session-inject',
+        'session record carries the tmuxSession field that the dispatch path needs');
+    } finally {
+      actions.ACTION_DISPATCH['invoke-critic'].run = original;
+      store.sessions.kill(session.id, 'test cleanup');
+    }
+  });
+
+  it('does NOT overwrite explicit options.session from the caller (test-injection seam preserved)', async () => {
+    makeProject('disp-session-seam', 'prawduct');
+    const fakeSession = { id: 'caller-supplied', tmuxSession: 'fake', engineId: 'gemini' };
+    let receivedOptions = null;
+    const original = actions.ACTION_DISPATCH['invoke-critic'].run;
+    actions.ACTION_DISPATCH['invoke-critic'].run = (project, options) => {
+      receivedOptions = options;
+      return { ok: true, output: {}, error: null };
+    };
+    try {
+      await actions.runAction('disp-session-seam', 'invoke-critic', { session: fakeSession });
+      assert.equal(receivedOptions.session, fakeSession,
+        'caller-supplied session passes through unchanged — dispatcher does not stomp');
+    } finally {
+      actions.ACTION_DISPATCH['invoke-critic'].run = original;
+    }
+  });
 });
