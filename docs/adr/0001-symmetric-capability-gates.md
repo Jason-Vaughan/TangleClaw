@@ -1,8 +1,8 @@
 # ADR 0001: Symmetric Capability Gates
 
-**Status:** Accepted (2026-05-11), extended (2026-05-14 with #155 — generalized template-array reconciliation)
+**Status:** Accepted (2026-05-11), extended (2026-05-14 with #155 — generalized template-array reconciliation), extended (2026-05-30 with #275 — framework-owned subtree sync for value-updates/reorders/renames)
 **Source issue:** #145 chunk 3 (audit closeout)
-**Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158, #139
+**Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158, #139, #264, #266, #275
 **Related ADRs:** ADR 0002 — Wrap Pipeline Contract (the `wrapShapeFromTemplate` shim it mandates is an instance of this ADR's "one read predicate per conceptual state" rule)
 **Source feedback:** `feedback_symmetric_capability_gates.md` (Critic-surfaced on #103 PR #125)
 
@@ -133,6 +133,37 @@ The cost of forgetting this is exactly the cost #119, #136, and #158 each paid: 
 
 ---
 
+## Framework-owned subtree sync — value-updates, reorders, renames (#275 extension)
+
+**Status:** extended 2026-05-30 (#275).
+
+The #155 reconcilers are all **additive**: `addMissing` adds absent keys, `_reconcileMergeBy` appends entries with an absent `idKey`, `_reconcileSetUnion` appends absent set members, `_reconcileOrderedSubset` replaces only a strict-subset stale list. None of them **update a matched entry's field values, reorder an array, or drop a renamed-away entry.** That was a deliberate anti-clobber stance (the limitation documented above). But it left a structural blind spot: a bundled change that is a *value-update*, *reorder*, or *rename of an existing entry* never reaches an existing install.
+
+#275 is the incident that named it. Three bundled changes shipped green but were inert on every existing install because each mutated an *existing* entry rather than adding a new one:
+
+| Bundled change | Why additive reconcile missed it | User-visible effect on existing installs |
+|---|---|---|
+| #264: `critic-check.blocker` `false`→`"errors-only"` | `mergeBy:id` matched `critic-check` → left field values alone | Wrap pipeline never halted on a blocking Critic finding — the safety fix was dead |
+| #264: `commit` reordered after `critic-check` | no reconciler reorders | Even if it halted, `commit` had already run |
+| #230: action label `"Mark Critic Run"`→`"Run Critic"` | `mergeBy:label` saw a *new* label → appended it, never removed the old | Two buttons; the stale one was vestigial (#266) |
+
+### Policy
+
+Framework methodology policy that lives in specific template subtrees — the wrap-pipeline step list (order + each step's `blocker`/`kind`) and the methodology action buttons (`actions`) — is **framework-owned**, not user-owned. The supported customization path is forking a new methodology `id` via `templates.save`; the settings UI edits project config (engine, methodology, rules), never these subtrees in place.
+
+For framework-owned subtrees we therefore accept a bounded clobber where the additive policy refuses one. `_reconcileFrameworkSubtrees` (`lib/store.js`) replaces the `FRAMEWORK_OWNED_PATHS` subtrees wholesale from bundled, gated by a monotonic integer `schemaRevision` on the bundled template:
+
+- Fires only when `bundled.schemaRevision > live.schemaRevision` (missing/non-integer reads as 0). A bundled template that never sets `schemaRevision` keeps the pure-additive behavior — so `minimal` and any un-revisioned template are untouched, opt-in by construction.
+- Fires **exactly once per bump**: after syncing, `live.schemaRevision` is stamped to the bundled value, bounding the clobber to one event per revision and leaving an auditable stamp.
+- Never deletes: a path absent from bundled is skipped, not removed from live.
+- The live revision is captured **before** `addMissing` runs, because `addMissing` would otherwise copy `schemaRevision` from bundled into live and pre-close the gate.
+
+### Rule
+
+When a bundled-template change mutates an **existing** entry's value, reorders steps, or renames an entry (anything the additive reconcilers structurally cannot deliver), it MUST be paired with a `schemaRevision` bump on that bundled template in the same PR, and the changed subtree must be covered by `FRAMEWORK_OWNED_PATHS`. Pin it with a test that exercises the canonical stale-install shape through `_mergeBundledTemplate` (not just freshly-generated state) — the same "prove the sync delivers the protection on the legacy data shape" rule the #158 anti-pattern established. A bundled value-change without a `schemaRevision` bump is the #275 incident waiting to recur.
+
+---
+
 ## References
 
 - #103 — silentPrime feature; established the pattern in PR #125 Critic review
@@ -143,6 +174,7 @@ The cost of forgetting this is exactly the cost #119, #136, and #158 each paid: 
 - #151 — methodology-removal path (currentTemplate hoist + open SQL constraint decision)
 - #158 — chunk-1 protection gap on pre-#146 runtime templates; reconciler scope extended to hook entries
 - #155 — generalized template-array reconciliation; introduced the `ARRAY_RECONCILERS` policy table and the `mergeBy` policy (Chunk 1: string-array policies; Chunk 2: object-keyed policy + ADR extension)
+- #275 — additive reconcile blind spot for value-updates/reorders/renames; introduced `_reconcileFrameworkSubtrees` + `FRAMEWORK_OWNED_PATHS` + the bundled-template `schemaRevision` gate. Inerted #264 (halt) and left #266 (vestigial action) live on existing installs. Pinned by `test/store.test.js → describe('framework-owned subtree sync — schemaRevision gate (#275)')`
 - #139 — methodology-aware single-button session wrap; Chunk 2 introduces `wrap_pipeline` schema and the `wrapShapeFromTemplate` read-once shim (see ADR 0002 for the pipeline contract)
 - `feedback_symmetric_capability_gates.md` — the user-feedback rule that drove this pattern's discovery
 - `test/projects.test.js → describe('methodology flip cleanup audit (#145, chunk 3)')` — the regression test suite locking in the methodology-flip half of this ADR

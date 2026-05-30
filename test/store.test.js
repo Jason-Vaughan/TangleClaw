@@ -1601,6 +1601,148 @@ describe('store', () => {
     });
   });
 
+  describe('framework-owned subtree sync — schemaRevision gate (#275)', () => {
+    let tmpDir;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fw-subtree-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function writeJson(filename, obj) {
+      const p = path.join(tmpDir, filename);
+      fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
+      return p;
+    }
+
+    // The verbatim production shape that hid #264/#266/#267 on existing
+    // installs: a runtime template whose value-changes / reorders / renames
+    // never propagated because the additive reconcile only ADDS keys/entries.
+    function staleLive() {
+      return {
+        id: 'prawduct',
+        // no schemaRevision — reads as 0, so a bundled rev >= 1 opens the gate
+        wrap_pipeline: {
+          steps: [
+            { id: 'version-bump', kind: 'version-bump', blocker: false },
+            { id: 'commit', kind: 'commit', blocker: true },
+            { id: 'critic-check', kind: 'critic-check', blocker: false } // stale: should be "errors-only", should precede commit
+          ]
+        },
+        actions: [
+          { label: 'Run Critic', confirmMessage: 'old wording — does NOT run a Critic' },
+          { label: 'Mark Critic Run', confirmMessage: 'vestigial duplicate left by the #230 rename' }
+        ]
+      };
+    }
+    function fixedBundled(rev = 1) {
+      return {
+        id: 'prawduct',
+        schemaRevision: rev,
+        wrap_pipeline: {
+          steps: [
+            { id: 'critic-check', kind: 'critic-check', blocker: 'errors-only' },
+            { id: 'version-bump', kind: 'version-bump', blocker: false },
+            { id: 'commit', kind: 'commit', blocker: true }
+          ]
+        },
+        actions: [
+          { label: 'Run Critic', confirmMessage: 'new #267 wording' }
+        ]
+      };
+    }
+
+    it('propagates step reorder + per-step blocker change + action rename-dedupe on a schemaRevision bump (the #275 incident shape)', () => {
+      const bundled = writeJson('bundled.json', fixedBundled(1));
+      const live = writeJson('live.json', staleLive());
+      const ret = store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // #264 facet: critic-check now halts (blocker flipped) and precedes commit.
+      const cc = merged.wrap_pipeline.steps.find((s) => s.id === 'critic-check');
+      assert.equal(cc.blocker, 'errors-only', 'critic-check.blocker must be synced from bundled');
+      assert.deepStrictEqual(merged.wrap_pipeline.steps.map((s) => s.id),
+        ['critic-check', 'version-bump', 'commit'], 'step order must follow bundled');
+      // #266 facet: the vestigial "Mark Critic Run" duplicate is gone.
+      assert.deepStrictEqual(merged.actions.map((a) => a.label), ['Run Critic'],
+        'renamed-away action duplicate must be dropped');
+      // #267 facet: action wording is refreshed.
+      assert.equal(merged.actions[0].confirmMessage, 'new #267 wording');
+      // Revision stamped so the gate is one-shot.
+      assert.equal(merged.schemaRevision, 1);
+    });
+
+    it('does NOT touch framework subtrees when bundled has NO schemaRevision (pre-#275 additive behavior preserved)', () => {
+      const bundled = writeJson('bundled.json', { ...fixedBundled(1), schemaRevision: undefined });
+      const live = writeJson('live.json', staleLive());
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      // Un-revisioned bundled → gate never opens → stale values survive.
+      assert.equal(merged.wrap_pipeline.steps.find((s) => s.id === 'critic-check').blocker, false);
+      assert.equal(merged.actions.length, 2, 'no rev → additive-only, duplicate action remains');
+      assert.equal(merged.schemaRevision, undefined);
+    });
+
+    it('does NOT re-sync when live is already at the bundled revision (one-shot per bump)', () => {
+      // Live carries a USER edit to a framework subtree AND is already at rev 1.
+      const userEdited = { ...staleLive(), schemaRevision: 1 };
+      const bundled = writeJson('bundled.json', fixedBundled(1));
+      const live = writeJson('live.json', userEdited);
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.wrap_pipeline.steps.find((s) => s.id === 'critic-check').blocker, false,
+        'gate closed at equal revision — live (even if user-edited) is left as-is');
+      assert.equal(merged.actions.length, 2);
+    });
+
+    it('re-fires on a SUBSEQUENT bundled bump (rev 1 → rev 2)', () => {
+      const live = writeJson('live.json', { ...staleLive(), schemaRevision: 1 });
+      const bundled = writeJson('bundled.json', fixedBundled(2));
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.wrap_pipeline.steps.find((s) => s.id === 'critic-check').blocker, 'errors-only');
+      assert.equal(merged.schemaRevision, 2);
+    });
+
+    it('stamps the revision even when subtrees already match (so the gate does not re-evaluate every boot)', () => {
+      const bundled = writeJson('bundled.json', fixedBundled(2));
+      // Live already has the correct subtrees but a stale revision number.
+      const live = writeJson('live.json', { ...fixedBundled(1) });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.equal(merged.schemaRevision, 2, 'revision is stamped forward');
+    });
+
+    it('never DELETES a framework subtree absent from bundled', () => {
+      const bundled = writeJson('bundled.json', {
+        id: 'prawduct',
+        schemaRevision: 1,
+        wrap_pipeline: { steps: [{ id: 'commit', kind: 'commit', blocker: true }] }
+        // no `actions` key in bundled
+      });
+      const live = writeJson('live.json', {
+        id: 'prawduct',
+        wrap_pipeline: { steps: [{ id: 'commit', kind: 'commit', blocker: true }] },
+        actions: [{ label: 'Custom Action' }]
+      });
+      store._mergeBundledTemplate(bundled, live);
+      const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+      assert.deepStrictEqual(merged.actions, [{ label: 'Custom Action' }],
+        'a path absent from bundled must not be removed from live');
+      assert.equal(merged.schemaRevision, 1);
+    });
+
+    it('_reconcileFrameworkSubtrees returns false (no mutation) when bundled is not ahead', () => {
+      const bundled = { id: 'prawduct', schemaRevision: 1, actions: [{ label: 'X' }] };
+      const live = { id: 'prawduct', schemaRevision: 1, actions: [{ label: 'Y' }] };
+      const changed = store._reconcileFrameworkSubtrees(bundled, live);
+      assert.equal(changed, false);
+      assert.deepStrictEqual(live.actions, [{ label: 'Y' }], 'live untouched when gate closed');
+    });
+  });
+
   describe('_mergeBundledHookEntries (#158)', () => {
     it('backfills missing requires onto live hook entries matched by matcher (canonical #158 incident shape)', () => {
       const bundled = {
