@@ -49,7 +49,7 @@
     },
     "steps": [
       {"id": "open-pr-check", "kind": "pr-check", "blocker": false},
-      {"id": "critic-check", "kind": "critic-check", "blocker": false},
+      {"id": "critic-check", "kind": "critic-check", "blocker": "errors-only"},
       {"id": "version-bump", "kind": "version-bump", "blocker": false},
       {
         "id": "changelog-update",
