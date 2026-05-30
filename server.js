@@ -1245,9 +1245,9 @@ route('GET', '/api/methodologies/:id', (_req, res, params) => {
 // undefined when absent). Returns the handler's `{ok, output, error}` result.
 // Status codes: 200 ok or handler-soft-fail; 404 project / unknown command;
 // 500 handler thrown.
-route('POST', '/api/projects/:name/actions/:command', (_req, res, params, body) => {
+route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, body) => {
   const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
-  const result = actions.runAction(params.name, params.command, options);
+  const result = await actions.runAction(params.name, params.command, options);
 
   if (!result.ok) {
     if (result.error && result.error.includes('not found')) {

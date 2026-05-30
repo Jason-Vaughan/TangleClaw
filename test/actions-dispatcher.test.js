@@ -64,45 +64,45 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     }
   });
 
-  it('runs invoke-critic for a prawduct project', () => {
+  it('runs invoke-critic for a prawduct project', async () => {
     const project = makeProject('disp-prawduct', 'prawduct');
-    const result = actions.runAction('disp-prawduct', 'invoke-critic');
+    const result = await actions.runAction('disp-prawduct', 'invoke-critic');
     assert.equal(result.ok, true);
     assert.equal(typeof result.output.entry.branchName, 'string');
     assert.ok(fs.existsSync(path.join(project.path, '.tangleclaw', 'critic-runs.json')));
   });
 
-  it('rejects an action not declared by the project methodology', () => {
+  it('rejects an action not declared by the project methodology', async () => {
     makeProject('disp-minimal', 'minimal');
     // `minimal` template does not declare invoke-critic in `actions[]`.
-    const result = actions.runAction('disp-minimal', 'invoke-critic');
+    const result = await actions.runAction('disp-minimal', 'invoke-critic');
     assert.equal(result.ok, false);
     assert.ok(result.error.includes('does not declare action'));
   });
 
-  it('rejects an unknown command even if methodology declared something else', () => {
+  it('rejects an unknown command even if methodology declared something else', async () => {
     makeProject('disp-prawduct-2', 'prawduct');
-    const result = actions.runAction('disp-prawduct-2', 'frobnicate');
+    const result = await actions.runAction('disp-prawduct-2', 'frobnicate');
     assert.equal(result.ok, false);
     assert.ok(result.error.includes('does not declare action'));
   });
 
-  it('returns "Project not found" for missing project', () => {
-    const result = actions.runAction('nonexistent', 'invoke-critic');
+  it('returns "Project not found" for missing project', async () => {
+    const result = await actions.runAction('nonexistent', 'invoke-critic');
     assert.equal(result.ok, false);
     assert.ok(result.error.includes('not found'));
   });
 
-  it('validates input parameters', () => {
-    assert.equal(actions.runAction(null, 'invoke-critic').ok, false);
-    assert.equal(actions.runAction('', 'invoke-critic').ok, false);
-    assert.equal(actions.runAction('any', null).ok, false);
-    assert.equal(actions.runAction('any', '').ok, false);
+  it('validates input parameters', async () => {
+    assert.equal((await actions.runAction(null, 'invoke-critic')).ok, false);
+    assert.equal((await actions.runAction('', 'invoke-critic')).ok, false);
+    assert.equal((await actions.runAction('any', null)).ok, false);
+    assert.equal((await actions.runAction('any', '')).ok, false);
   });
 
-  it('forwards options to the handler', () => {
+  it('forwards options to the handler', async () => {
     const project = makeProject('disp-opts', 'prawduct');
-    const result = actions.runAction('disp-opts', 'invoke-critic', {
+    const result = await actions.runAction('disp-opts', 'invoke-critic', {
       branchName: 'forwarded/branch',
       now: () => new Date('2026-05-19T05:00:00.000Z')
     });
@@ -114,12 +114,12 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     assert.equal(arr[0].timestamp, '2026-05-19T05:00:00.000Z');
   });
 
-  it('catches a handler that throws and reports a structured error', () => {
+  it('catches a handler that throws and reports a structured error', async () => {
     makeProject('disp-throw', 'prawduct');
     const original = actions.ACTION_DISPATCH['invoke-critic'].run;
     actions.ACTION_DISPATCH['invoke-critic'].run = () => { throw new Error('handler exploded'); };
     try {
-      const result = actions.runAction('disp-throw', 'invoke-critic');
+      const result = await actions.runAction('disp-throw', 'invoke-critic');
       assert.equal(result.ok, false);
       assert.ok(result.error.includes('threw'));
       assert.ok(result.error.includes('handler exploded'));

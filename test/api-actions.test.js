@@ -193,8 +193,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
       assert.ok(Array.isArray(data.methodology.actions));
       const invokeCritic = data.methodology.actions.find((a) => a.command === 'invoke-critic');
       assert.ok(invokeCritic, 'invoke-critic action is surfaced');
-      assert.equal(invokeCritic.label, 'Mark Critic Run',
-        'label renamed (#230) so operators do not expect the button to auto-run a Critic');
+      assert.equal(invokeCritic.label, 'Run Critic',
+        'label renamed (#267) — handler now actually spawns a Critic via tmux (with ack-only fallback for unsupported engines/no-session cases)');
       assert.equal(invokeCritic.confirm, true,
         'confirm flipped to true (#230) so the contract-clarifying dialog actually fires');
       assert.equal(typeof invokeCritic.confirmMessage, 'string',
