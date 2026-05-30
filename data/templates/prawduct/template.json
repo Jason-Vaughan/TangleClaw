@@ -103,11 +103,11 @@
   },
   "actions": [
     {
-      "label": "Mark Critic Run",
+      "label": "Run Critic",
       "command": "invoke-critic",
       "confirm": true,
-      "confirmMessage": "Confirm an Independent Critic review was completed for this branch.\n\nThis button does NOT run a Critic automatically — it records that you (or a separate review agent) have completed one, so the wrap step's critic-check passes. Continue?",
-      "successToast": "Critic review recorded for {branchName}"
+      "confirmMessage": "Spawn an Independent Critic review for this branch.\n\nThe Critic will review the current diff against your project state, then surface findings in the session UI. This typically takes 30 seconds to 2 minutes. The wrap step's critic-check will pass once findings are recorded. Continue?",
+      "successToast": "Critic completed for {branchName} — {findingCount} finding(s)"
     }
   ],
   "hooks": {

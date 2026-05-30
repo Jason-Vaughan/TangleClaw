@@ -260,19 +260,51 @@ async function invokeMethodologyAction(action) {
     btn.disabled = true;
     btn.textContent = `${action.label}\u2026`;
   }
+  // #267 (Critic finding on PR #269): methodology-action POSTs can be
+  // long-running on the server side — invoke-critic's real-invocation
+  // path can run up to 5 minutes while the Critic skill executes. The
+  // shared `apiMutate` helper doesn't expose `signal`, so for this
+  // single call we use raw `fetch` with an AbortController bounded to
+  // ACTION_TIMEOUT_MS (matches the server-side MAX_WAIT_MS). On VPN /
+  // flaky-connection scenarios, this prevents an indefinitely hung
+  // POST from wedging the UI; the operator sees a clear "timed out"
+  // error instead of a spinner-of-doom. Other callers continue to use
+  // `apiMutate` for its uniform `api.lastError` plumbing.
+  const ACTION_TIMEOUT_MS = 5 * 60 * 1000 + 30 * 1000; // server cap + 30s buffer
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), ACTION_TIMEOUT_MS);
   try {
-    const result = await apiMutate(
-      `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
-      'POST',
-      {}
-    );
+    let result;
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+          signal: abortController.signal
+        }
+      );
+      result = await response.json();
+    } catch (err) {
+      // `AbortError` is the AbortController firing; surface a clear
+      // timeout message rather than the generic "fetch failed."
+      if (err && err.name === 'AbortError') {
+        showMethodologyActionToast(`${action.label}: timed out after ${Math.round(ACTION_TIMEOUT_MS / 1000)}s`, true);
+        return;
+      }
+      showMethodologyActionToast(`${action.label}: ${err && err.message ? err.message : 'request failed'}`, true);
+      return;
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (result && result.ok) {
       let successToast = (typeof action.successToast === 'string' && action.successToast.length > 0)
         ? action.successToast
         : `${action.label}: recorded`;
       // #230 — `{branchName}` placeholder support. The invoke-critic
       // handler returns `output.entry.branchName` (see
-      // `lib/actions/invoke-critic.js:175`); future actions following
+      // `lib/actions/invoke-critic.js`); future actions following
       // the same shape can reuse the substitution. Fallback "this
       // branch" preserves the toast when no branch resolved (detached
       // HEAD, non-git project, handler didn't supply one).
@@ -280,7 +312,44 @@ async function invokeMethodologyAction(action) {
         const branchName = (result.output && result.output.entry && result.output.entry.branchName) || 'this branch';
         successToast = successToast.replace(/\{branchName\}/g, branchName);
       }
-      showMethodologyActionToast(successToast);
+      // #267 — `{findingCount}` placeholder support for actions that
+      // return structured findings (e.g. invoke-critic in real-
+      // invocation mode). Falls back to "0" when no count was
+      // returned, which makes the toast read sensibly in ack-only
+      // fallback mode too.
+      if (successToast.includes('{findingCount}')) {
+        const findingCount = (result.output && typeof result.output.findingCount === 'number')
+          ? result.output.findingCount
+          : 0;
+        successToast = successToast.replace(/\{findingCount\}/g, String(findingCount));
+      }
+      // #267 — when the handler returned findings (real-invocation
+      // mode), surface them in the session UI alongside the toast.
+      // Minimal V1 renders a structured list panel; richer per-
+      // finding interaction (dismiss/resolve/jump-to-file) is
+      // deliberately deferred so this PR stays scoped to "button
+      // actually does what it says."
+      if (result.output && Array.isArray(result.output.findings) && result.output.findings.length > 0) {
+        showMethodologyActionToast(successToast);
+        renderActionFindings(action.label, result.output);
+      } else if (result.output && result.output.fallbackReason) {
+        // Real invocation attempted but fell back to ack-only — show
+        // the reason so the operator understands why no findings
+        // appeared (degraded engine, no active session, idle timeout,
+        // missing findings file, etc.).
+        //
+        // Critic finding on PR #269: previously we showed the success
+        // toast *and* the fallback panel, which read contradictorily
+        // ("Critic completed for X — 0 finding(s)" on top of "ack-only
+        // fallback"). On fallback, suppress the success toast — the
+        // fallback panel is the authoritative status surface. The
+        // toast was authored for the happy path.
+        renderActionFallback(action.label, result.output.fallbackReason);
+      } else {
+        // Neither findings nor fallback — show the toast as the only
+        // signal (ack-mode wrap-pipeline-driven dispatch lands here).
+        showMethodologyActionToast(successToast);
+      }
     } else {
       // `api.lastError` is a string set by `apiMutate` on !res.ok (see
       // public/api-helper.js). Earlier draft accessed `.message` which
@@ -318,6 +387,136 @@ function showMethodologyActionToast(message, isError) {
   showMethodologyActionToast._timer = setTimeout(() => {
     toast.classList.remove('methodology-action-toast--visible');
   }, 3500);
+}
+
+/**
+ * Render structured findings from a methodology action (e.g.
+ * invoke-critic's real-invocation result) into a panel anchored at
+ * the bottom of the viewport. Stays visible until explicitly
+ * dismissed — unlike toasts, finding-content must remain readable
+ * (per TC #268). Uses inline DOM to keep this PR's surface area small;
+ * a richer per-finding interaction layer (dismiss/resolve/jump-to-file)
+ * is deferred work.
+ *
+ * @param {string} actionLabel - e.g. "Run Critic"
+ * @param {object} actionOutput - The handler's `output` block; must
+ *   include `findings: Array<object>`, may include `mode`, `entry`,
+ *   and `criticSummary` (the parsed `.critic-findings.json`).
+ */
+function renderActionFindings(actionLabel, actionOutput) {
+  const existing = document.getElementById('actionFindingsPanel');
+  if (existing) existing.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'actionFindingsPanel';
+  panel.className = 'action-findings-panel';
+
+  const header = document.createElement('div');
+  header.className = 'action-findings-panel__header';
+
+  const title = document.createElement('strong');
+  const findingCount = actionOutput.findings.length;
+  const mode = actionOutput.mode || 'actual';
+  const inferredMode = actionOutput.criticSummary && actionOutput.criticSummary.mode;
+  title.textContent = `${actionLabel} — ${findingCount} finding${findingCount === 1 ? '' : 's'}` +
+    (inferredMode ? ` (${inferredMode})` : '') +
+    (mode === 'ack' ? ' [ack-only]' : '');
+  header.appendChild(title);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'action-findings-panel__close';
+  closeBtn.setAttribute('aria-label', 'Close findings panel');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => panel.remove());
+  header.appendChild(closeBtn);
+
+  panel.appendChild(header);
+
+  const list = document.createElement('ul');
+  list.className = 'action-findings-panel__list';
+  for (const finding of actionOutput.findings) {
+    const li = document.createElement('li');
+    li.className = 'action-findings-panel__item';
+    const severity = (finding && finding.severity) ? String(finding.severity) : 'note';
+    li.setAttribute('data-severity', severity);
+
+    const badge = document.createElement('span');
+    badge.className = `action-findings-panel__severity action-findings-panel__severity--${severity.toLowerCase()}`;
+    badge.textContent = severity.toUpperCase();
+    li.appendChild(badge);
+
+    const msg = document.createElement('span');
+    msg.className = 'action-findings-panel__message';
+    msg.textContent = (finding && (finding.message || finding.summary || JSON.stringify(finding))) || '(no message)';
+    li.appendChild(msg);
+
+    if (finding && finding.recommendation) {
+      const rec = document.createElement('div');
+      rec.className = 'action-findings-panel__recommendation';
+      rec.textContent = `Recommendation: ${finding.recommendation}`;
+      li.appendChild(rec);
+    }
+
+    if (finding && (finding.file || finding.location)) {
+      const loc = document.createElement('div');
+      loc.className = 'action-findings-panel__location';
+      loc.textContent = `Location: ${finding.file || finding.location}${finding.line ? `:${finding.line}` : ''}`;
+      li.appendChild(loc);
+    }
+
+    list.appendChild(li);
+  }
+  panel.appendChild(list);
+
+  document.body.appendChild(panel);
+}
+
+/**
+ * Render a fallback explanation when a real-invocation action couldn't
+ * run end-to-end and fell back to ack-only mode (e.g. degraded engine,
+ * idle timeout, missing findings file). Surfaces the reason verbatim
+ * to the operator so they understand why no findings appeared without
+ * mistaking it for a successful real Critic run.
+ *
+ * @param {string} actionLabel
+ * @param {string} reason - e.g. "degradedEngine:gemini", "idleTimeout"
+ */
+function renderActionFallback(actionLabel, reason) {
+  const existing = document.getElementById('actionFindingsPanel');
+  if (existing) existing.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'actionFindingsPanel';
+  panel.className = 'action-findings-panel action-findings-panel--fallback';
+
+  const header = document.createElement('div');
+  header.className = 'action-findings-panel__header';
+  const title = document.createElement('strong');
+  title.textContent = `${actionLabel} — ack-only fallback`;
+  header.appendChild(title);
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'action-findings-panel__close';
+  closeBtn.setAttribute('aria-label', 'Close fallback panel');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => panel.remove());
+  header.appendChild(closeBtn);
+  panel.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'action-findings-panel__fallback-body';
+  const reasonExplain = {
+    'degradedEngine': 'The active engine doesn’t support real Critic invocation yet. The button recorded an ack for the wrap pipeline.',
+    'noActiveSession': 'No active tmux session was found for this project. Launch a session first, then click again.',
+    'tmuxSendFailed': 'Failed to send the /critic command to the tmux session. The session may have died.',
+    'idleDetectFailed': 'Idle detection failed during the Critic run. The session may have died or output may have stalled.',
+    'idleTimeout': 'The Critic did not finish within the 5-minute timeout. The session may be stuck.',
+    'noFindingsFile': '.prawduct/.critic-findings.json did not appear after the Critic finished. The skill may have errored without writing.'
+  };
+  const shortKey = (reason || '').split(':')[0];
+  body.textContent = reasonExplain[shortKey] || `Fallback reason: ${reason || 'unknown'}`;
+  panel.appendChild(body);
+
+  document.body.appendChild(panel);
 }
 
 /**
