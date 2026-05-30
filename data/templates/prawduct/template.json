@@ -4,6 +4,7 @@
   "description": "Structured governance with discovery, planning, building, and independent Critic review.",
   "type": "methodology",
   "version": "1.0.0",
+  "schemaRevision": 1,
   "phases": [
     {
       "id": "discovery",
