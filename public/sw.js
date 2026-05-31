@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-13';
+const CACHE_NAME = 'tangleclaw-v3-14';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -37,6 +37,12 @@ const STATIC_ASSETS = [
 const NETWORK_FIRST_PATHS = new Set([
   '/openclaw-cache.js',
   '/session.js',
+  // wrap-drawer.js is the pure-helper sibling of session.js: session.js
+  // (network-first) calls its helpers directly, so a stale wrap-drawer.js
+  // served from cache against a fresh session.js is a version skew that
+  // throws on a missing helper (e.g. shouldStartEndedCountdown, #268). Keep
+  // the two in lockstep by making both network-first.
+  '/wrap-drawer.js',
   '/session.css',
   '/landing.js'
 ]);
