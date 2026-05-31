@@ -483,3 +483,52 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
     assert.deepEqual(plain(opts), {});
   });
 });
+
+describe('wrap-drawer helpers — buildReportText (#268)', () => {
+  const H = loadHelpers();
+
+  it('serializes a blocked pipeline with the full step output', () => {
+    const text = H.buildReportText({
+      blockedAt: 'commit',
+      results: [
+        { stepId: 'test', kind: 'test', status: 'done', output: { exitCode: 0 }, blockers: [] },
+        {
+          stepId: 'commit',
+          kind: 'commit',
+          status: 'blocked',
+          output: {},
+          blockers: ['git commit failed (exit 1)', 'FAIL src/medusa/medusa-server.test.js']
+        }
+      ]
+    });
+    // Header carries the blocked status + reason (first blocker of the blocked step).
+    assert.match(text, /Session Wrap — Blocked at "commit"/);
+    assert.match(text, /git commit failed \(exit 1\)/);
+    // Every step appears, with its status label.
+    assert.match(text, /\[Done\] Run tests — test/);
+    assert.match(text, /\[Blocked\] Commit — commit/);
+    // The full failure output (not just the first line) is captured.
+    assert.match(text, /FAIL src\/medusa\/medusa-server\.test\.js/);
+  });
+
+  it('does not throw on a malformed / empty pipeline result', () => {
+    assert.match(H.buildReportText(null), /Wrap result unavailable/);
+    assert.match(H.buildReportText({}), /Session Wrap —/);
+    // No results array → header only, no step blocks.
+    assert.equal(H.buildReportText({ commitSha: 'abc123def456' }).split('\n\n').length, 1);
+  });
+});
+
+describe('wrap-drawer helpers — shouldStartEndedCountdown (#268)', () => {
+  const H = loadHelpers();
+
+  it('suppresses the auto-redirect countdown while the drawer is open', () => {
+    assert.equal(H.shouldStartEndedCountdown({ wrapDrawerOpen: true }), false);
+  });
+
+  it('allows the countdown when the drawer is closed or state is absent', () => {
+    assert.equal(H.shouldStartEndedCountdown({ wrapDrawerOpen: false }), true);
+    assert.equal(H.shouldStartEndedCountdown({}), true);
+    assert.equal(H.shouldStartEndedCountdown(undefined), true);
+  });
+});

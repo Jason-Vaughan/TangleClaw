@@ -28,7 +28,8 @@ const sessionState = {
   wrapping: false,
   mouseOn: false,
   launchGraceRemaining: 0,
-  wrapCompleting: false
+  wrapCompleting: false,
+  wrapDrawerOpen: false
 };
 
 // ── Storage Helpers ──
@@ -980,9 +981,18 @@ function handleSessionEnded(statusData) {
   const endedBar = document.getElementById('sessionEnded');
   endedBar.classList.remove('hidden');
 
-  // Countdown redirect
-  let remaining = 10;
+  // Countdown redirect — suppressed while the wrap drawer is open, so a
+  // blocked-wrap report the operator is still reading is never navigated
+  // away by the auto-redirect (#268). The operator dismisses the drawer
+  // themselves; the ended bar then carries the manual "Back to Projects".
   const countdownEl = document.getElementById('countdown');
+  const H = window.tcWrapDrawerHelpers;
+  const allowCountdown = !H || H.shouldStartEndedCountdown({ wrapDrawerOpen: sessionState.wrapDrawerOpen });
+  if (!allowCountdown) {
+    countdownEl.textContent = '';
+    return;
+  }
+  let remaining = 10;
   countdownEl.textContent = `Returning in ${remaining}s`;
   countdownTimer = setInterval(() => {
     remaining--;
@@ -1877,6 +1887,14 @@ async function confirmWrap() {
 let currentWrapPassword = '';
 
 /**
+ * Last pipeline result rendered into the drawer. Retained so the "Copy
+ * report" button can serialize the full report on demand (#268). Cleared
+ * on drawer close.
+ * @type {object|null}
+ */
+let currentWrapPipelineResult = null;
+
+/**
  * Open the wrap drawer with a rendered pipeline result and wire its
  * action buttons for the current state (retry / done / close).
  *
@@ -1887,6 +1905,10 @@ let currentWrapPassword = '';
  */
 function openWrapDrawer(pipelineResult, password) {
   if (typeof password === 'string') currentWrapPassword = password;
+  currentWrapPipelineResult = pipelineResult;
+  // Flag the open drawer so a concurrent session-ended poll doesn't start
+  // the auto-redirect countdown and navigate the blocked report away (#268).
+  sessionState.wrapDrawerOpen = true;
   renderWrapDrawer(pipelineResult);
   document.getElementById('wrapDrawerBackdrop').classList.add('open');
   document.getElementById('wrapDrawer').classList.add('open');
@@ -1899,6 +1921,32 @@ function closeWrapDrawer() {
   document.getElementById('wrapDrawerBackdrop').classList.remove('open');
   document.getElementById('wrapDrawer').classList.remove('open');
   currentWrapPassword = '';
+  currentWrapPipelineResult = null;
+  sessionState.wrapDrawerOpen = false;
+}
+
+/**
+ * Copy the full wrap report (status + every step's output) to the
+ * clipboard so the operator can paste it into an issue or share it. The
+ * blocked report is the operator's primary source of truth for why a wrap
+ * halted, so it must be capturable, not just readable (#268).
+ */
+async function copyWrapReport() {
+  if (!currentWrapPipelineResult || !window.tcWrapDrawerHelpers) return;
+  const text = window.tcWrapDrawerHelpers.buildReportText(currentWrapPipelineResult);
+  const toast = document.getElementById('toast');
+  const flash = (msg, cls) => {
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.className = `toast ${cls} visible`;
+    setTimeout(() => { toast.classList.remove('visible'); }, 3000);
+  };
+  try {
+    await navigator.clipboard.writeText(text);
+    flash('Wrap report copied to clipboard', 'toast-ok');
+  } catch (_) {
+    flash('Could not copy — select the report text manually', 'toast-warn');
+  }
 }
 
 /**
@@ -2586,6 +2634,7 @@ function bindEvents() {
 
   // Wrap pipeline drawer (#139 Chunk 10)
   $('wrapDrawerCloseBtn').addEventListener('click', closeWrapDrawer);
+  $('wrapDrawerCopyBtn').addEventListener('click', copyWrapReport);
   $('wrapDrawerCancelBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerDoneBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerRetryBtn').addEventListener('click', retryWrap);

@@ -1605,6 +1605,10 @@ body {
   font-size: 0.8rem;
   color: #ef4444;
   margin-top: 4px;
+  /* Blocker output is the full failure text (e.g. husky + jest output); wrap
+     and preserve newlines so it stays readable instead of clipping (#268). */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .wrap-step-status {
   font-size: 0.75rem;

@@ -294,6 +294,50 @@
     return options;
   }
 
+  /**
+   * Serialize a pipeline result into a plain-text report the operator can
+   * copy to the clipboard (paste into an issue, share with a collaborator).
+   * Mirrors what the drawer renders — the status banner plus one block per
+   * step (status, label, detail, and the full blocker output) — so the
+   * copied text is the same source of truth as the on-screen report (#268).
+   *
+   * @param {object} pipelineResult - Runner return (`POST /wrap` body).
+   * @returns {string} Multi-line report. Never throws on a malformed shape.
+   */
+  function buildReportText(pipelineResult) {
+    const status = summarizePipelineStatus(pipelineResult);
+    const lines = [`Session Wrap — ${status.label}`];
+    if (status.detail) lines.push(status.detail);
+
+    const results = pipelineResult && Array.isArray(pipelineResult.results)
+      ? pipelineResult.results
+      : [];
+    const blockedAt = pipelineResult && pipelineResult.blockedAt ? pipelineResult.blockedAt : null;
+    for (const r of results) {
+      const row = buildStepRow(r, { blockedAt });
+      lines.push('');
+      lines.push(`[${row.statusLabel}] ${row.kindLabel} — ${row.id}`);
+      if (row.detail) lines.push(`  ${row.detail}`);
+      for (const b of row.blockers) lines.push(`  ${b}`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Whether `handleSessionEnded`'s auto-redirect countdown should start.
+   * When the wrap drawer is open it is showing the operator's blocked /
+   * warning report — the report is the primary source of truth for why a
+   * wrap halted and must stay readable until the operator dismisses it, so
+   * the page must NOT navigate away on its own (#268). Returns false in
+   * that case; the ended bar is shown without a countdown instead.
+   *
+   * @param {object} state - `{wrapDrawerOpen: boolean}`.
+   * @returns {boolean}
+   */
+  function shouldStartEndedCountdown(state) {
+    return !(state && state.wrapDrawerOpen === true);
+  }
+
   const helpers = {
     KIND_LABELS,
     STATUS_META,
@@ -303,7 +347,9 @@
     decisionWidgetForBlockedStep,
     warningWidgetForStep,
     prCheckResolutionWidget,
-    collectOptionsFromAccessors
+    collectOptionsFromAccessors,
+    buildReportText,
+    shouldStartEndedCountdown
   };
 
   // Browser: attach to window so session.js can call helpers.

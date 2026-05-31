@@ -377,7 +377,11 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
     // and let the bug come back. Landing has no dedicated CSS today
     // (style.css covers the landing surface) — `/landing.css` is
     // intentionally omitted; add it when/if the asset materializes.
-    for (const p of ['/session.js', '/session.css', '/landing.js']) {
+    // /wrap-drawer.js (#268): session.js (network-first) calls its pure
+    // helpers directly, so a stale cached wrap-drawer.js against a fresh
+    // session.js is a version skew that throws on a missing helper. Pin it
+    // alongside the #271 set so the two stay in lockstep.
+    for (const p of ['/session.js', '/session.css', '/landing.js', '/wrap-drawer.js']) {
       assert.match(swSrc, new RegExp(`['"]${p.replace(/[/\\.]/g, '\\$&')}['"]`),
         `${p} must be present in NETWORK_FIRST_PATHS so feature-PR UI changes reach operators without hard-reload`);
     }
