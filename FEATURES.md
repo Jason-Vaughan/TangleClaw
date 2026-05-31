@@ -22,7 +22,7 @@ entries that span multiple co-equal locations.
 - **Restart TangleClaw button** (#235) — banner + Global Settings → Diagnostics surfaces; one-click restart via the platform process manager (macOS launchd today; Linux is a follow-up). Handler: `public/landing.js#triggerServerRestart`. Endpoint: `POST /api/server/restart`. Modal section: `public/ui.js#openGlobalSettings`.
 - **Orphan-hooks repair banner** (#145) — scans projects for hook config drift. Section banner: `public/landing.js:364`. HTML: `public/index.html:290`.
 - **Update-available pill** — GitHub release check with localStorage dismiss-per-version. `public/landing.js:160`.
-- **Session Wrap drawer** — step-by-step wrap status, BLOCKED/SKIPPED/DONE rendering. Sticky blocked-report: stays open until dismissed (suppresses the session-ended auto-redirect, #268), with a "Copy report" button (`buildReportText`). `public/wrap-drawer.js`, `public/session.js:openWrapDrawer`.
+- **Session Wrap drawer** — step-by-step wrap status, BLOCKED/SKIPPED/DONE rendering. Sticky blocked-report: stays open until dismissed (suppresses the session-ended auto-redirect, #268), with a "Copy report" button (`buildReportText`). Status badges carry `title` tooltips (#222, `STATUS_META`); blocked steps show a collapsible "How to fix this" remediation from the handler's `output.remediation` (#223). `public/wrap-drawer.js`, `public/session.js:openWrapDrawer`/`renderStepRow`. Handler remediation lives in each `lib/wrap-steps/*.js` blocked return.
 - **OpenClaw view** — remote-engine project cache + view. `public/openclaw-view.js`, `public/openclaw-cache.js`.
 
 ## Server / API

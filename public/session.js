@@ -2096,9 +2096,29 @@ function renderStepRow(row) {
     main.appendChild(blockersLine);
   }
 
+  // "How to fix this" — handler-supplied remediation for a blocked step
+  // (#223). Collapsible <details> so it doesn't crowd the row but is one
+  // click from the operator. Absent remediation → nothing rendered, the
+  // raw blocker line above stays the only signal (back-compat).
+  if (row.remediation) {
+    const fix = document.createElement('details');
+    fix.className = 'wrap-step-remediation';
+    const summary = document.createElement('summary');
+    summary.textContent = 'How to fix this';
+    fix.appendChild(summary);
+    const body = document.createElement('p');
+    body.className = 'wrap-step-remediation-body';
+    body.textContent = row.remediation;
+    fix.appendChild(body);
+    main.appendChild(fix);
+  }
+
   const status = document.createElement('span');
   status.className = `wrap-step-status wrap-step-status--${row.statusTone}`;
   status.textContent = row.statusLabel;
+  // Plain `title` tooltip explaining what the status means (#222) — no JS,
+  // no dependency, accessible. Text comes from STATUS_META in wrap-drawer.js.
+  if (row.statusTooltip) status.title = row.statusTooltip;
 
   li.appendChild(main);
   li.appendChild(status);

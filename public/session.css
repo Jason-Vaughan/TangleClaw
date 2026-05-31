@@ -1610,6 +1610,27 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* "How to fix this" remediation disclosure for a blocked step (#223). */
+.wrap-step-remediation {
+  margin-top: 6px;
+  font-size: 0.8rem;
+}
+.wrap-step-remediation > summary {
+  cursor: pointer;
+  color: var(--primary, #3b82f6);
+  font-weight: 600;
+}
+.wrap-step-remediation-body {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--elevated-bg);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Status badges carry a `title` tooltip (#222) — hint it's hoverable. */
+.wrap-step-status[title] { cursor: help; }
 .wrap-step-status {
   font-size: 0.75rem;
   font-weight: 600;

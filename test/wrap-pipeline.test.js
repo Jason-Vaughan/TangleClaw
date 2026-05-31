@@ -448,6 +448,10 @@ describe('wrap-step test (#139 Chunk 4)', () => {
     assert.ok(result.blockers[0].includes('Tests failed (exit 1)'));
     assert.ok(result.blockers.some((b) => b.includes('AssertionError')),
       'stderr tail must appear in blockers[]');
+    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.ok(result.output.remediation.includes('skip tests'),
+      'test remediation must mention the skip-tests override');
   });
 
   it('honors allowOverride+skipTests by reporting skipped with override flag', async () => {
@@ -573,6 +577,10 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     assert.ok(observedCmd.includes(' -- '),
       '`--` end-of-options separator must precede file args (defense against filenames like "-rf.js")');
     assert.ok(result.blockers[0].includes('Lint failed (exit 1)'));
+    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.ok(result.output.remediation.toLowerCase().includes('lint'),
+      'lint remediation must reference fixing lint errors');
   });
 
   it('returns ok:true done on exit 0 (warnings or clean) with blocker:"errors-only"', async () => {
@@ -1573,6 +1581,9 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(result.ok, false);
     assert.match(result.blockers[0], /Multiple .md plans/);
     assert.match(result.blockers[0], /step\.planPath to disambiguate/);
+    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.match(result.output.remediation, /planPath/);
   });
 
   it('honors step.planPath when set (project-relative)', async () => {
@@ -1631,6 +1642,9 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
     assert.match(result.blockers[0], /No "### Chunk N: Title" headings/);
+    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.match(result.output.remediation, /Chunk/);
   });
 
   it('rolls a fresh priming file (creates managed block) when none exists', async () => {
@@ -2245,6 +2259,11 @@ describe('wrap-step critic-check — handler (#139 Chunk 7)', () => {
     assert.match(result.blockers[0], /1 BLOCKING finding\(s\)/);
     assert.match(result.blockers[1], /load-bearing bug/);
     assert.match(result.blockers[result.blockers.length - 1], /criticBlockingOverride/);
+    // #223 — blocked output carries operator remediation for the drawer
+    // (merged into the existing output object, not clobbering it).
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.match(result.output.remediation, /verify-resolutions/);
+    assert.equal(result.output.blockingFindingCount, 1, 'existing output fields preserved alongside remediation');
   });
 
   it('#264 — case-insensitive severity match — "BLOCKING" also halts', async () => {
@@ -3323,6 +3342,9 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.equal(result.status, 'blocked');
     assert.match(result.blockers[0], /git commit failed/);
     assert.match(result.blockers[0], /rejected by hook/);
+    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(typeof result.output.remediation, 'string');
+    assert.match(result.output.remediation, /pre-commit hook/);
 
     // No commit landed.
     const log = execSync('git log --oneline', { cwd: projectPath }).toString();
