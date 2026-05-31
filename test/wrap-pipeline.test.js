@@ -3978,6 +3978,34 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
     });
   });
 
+  describe('_compareSemver / _topReleasedVersion (#203)', () => {
+    it('_compareSemver orders by major, then minor, then patch', () => {
+      const sv = (s) => versionBump._parseSemver(s);
+      assert.equal(versionBump._compareSemver(sv('3.16.1'), sv('3.16.2')), -1);
+      assert.equal(versionBump._compareSemver(sv('3.16.2'), sv('3.16.2')), 0);
+      assert.equal(versionBump._compareSemver(sv('3.17.0'), sv('3.16.9')), 1);
+      assert.equal(versionBump._compareSemver(sv('4.0.0'), sv('3.99.99')), 1);
+      assert.equal(versionBump._compareSemver(sv('2.9.9'), sv('3.0.0')), -1);
+    });
+
+    it('_topReleasedVersion returns the first dated release heading', () => {
+      const text = [
+        '# Changelog', '',
+        '## [Unreleased]', '', '### Added', '- x', '',
+        '## [3.16.2] - 2026-05-13', '', '### Fixed', '- y', '',
+        '## [3.16.1] - 2026-05-13'
+      ].join('\n');
+      assert.deepStrictEqual(versionBump._topReleasedVersion(text), { major: 3, minor: 16, patch: 2 });
+    });
+
+    it('_topReleasedVersion is null when no dated release heading exists', () => {
+      assert.equal(versionBump._topReleasedVersion('## [Unreleased]\n### Added\n- only unreleased\n'), null);
+      assert.equal(versionBump._topReleasedVersion(''), null);
+      assert.equal(versionBump._topReleasedVersion(null), null);
+      assert.equal(versionBump._topReleasedVersion(undefined), null);
+    });
+  });
+
   describe('_parseUnreleased', () => {
     it('finds the [Unreleased] block and categorizes subsections', () => {
       const text = [
@@ -4484,6 +4512,40 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
     // CHANGELOG content promoted with today's date
     assert.match(clEntry.newContent, /## \[3\.17\.0\] - 2026-05-22/);
     assert.match(clEntry.newContent, /## \[Unreleased\]/);
+  });
+
+  it('skips (drift guard #203) when newVersion is not strictly greater than CHANGELOG top released', async () => {
+    // version.json trails the changelog: version.json says 3.16.0, but the
+    // changelog already publishes 3.16.2 at top. A patch bump → 3.16.1 ≤
+    // 3.16.2, so promoting would insert an out-of-order heading. Refuse.
+    const project = makeProject('drift');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.0' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n### Fixed\n- a bug\n\n## [3.16.2] - 2026-05-13\n### Fixed\n- earlier\n');
+    const ctx = freshContext(project);
+    const result = await versionBump.run(ctx);
+
+    assert.equal(result.ok, true, 'must skip, never block (ADR 0002)');
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.skipped, true);
+    assert.match(result.output.reason, /refusing to bump/i);
+    assert.match(result.output.reason, /3\.16\.1/, 'reason names the rejected newVersion');
+    assert.match(result.output.reason, /3\.16\.2/, 'reason names the top released version');
+    assert.match(result.output.reason, /drift/i);
+    // No writes staged — nothing should be promoted on the drift path.
+    assert.equal(ctx.staged['version-bump:version-json'], undefined);
+    assert.equal(ctx.staged['version-bump:changelog'], undefined);
+  });
+
+  it('proceeds when newVersion equals top-released +1 patch (boundary — not a drift)', async () => {
+    // version.json 3.16.2, top released 3.16.2, patch bump → 3.16.3 > 3.16.2: OK.
+    const project = makeProject('boundary-ok');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n### Fixed\n- a bug\n\n## [3.16.2] - 2026-05-13\n### Fixed\n- earlier\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.to, '3.16.3');
   });
 
   it('options.bumpLevel override wins over the Added → minor heuristic', async () => {
