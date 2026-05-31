@@ -2107,12 +2107,16 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
   const keyPath = conn.sshKeyPath.replace(/^~/, process.env.HOME || '');
   const { execSync } = require('node:child_process');
 
-  // List pending devices via the gateway's WebSocket CLI
+  // List pending devices via the gateway's WebSocket CLI.
+  // Filter by published gateway port so we pick the right container on multi-tenant
+  // hosts (e.g. habitat runs RentalClaw, UCI services, and TiLT Claw side-by-side).
+  // Falls back to head -1 as a safety net if multiple containers somehow publish the
+  // same port (shouldn't happen given PortHub registration).
   let pending;
   try {
     const listOutput = execSync(
       `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker ps --format '{{.Names}}' | head -1"`,
+      `"\\$HOME/.local/bin/docker ps --filter 'publish=${conn.port}' --format '{{.Names}}' | head -1"`,
       { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
 
@@ -2137,17 +2141,27 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
     return jsonResponse(res, 200, { approved: false, reason: 'No pending requests' });
   }
 
-  // Approve the latest pending request
+  // Approve the latest pending request — same publish-port filter as above.
+  // `openclaw devices approve --latest` is a PREVIEW (returns which request
+  // would be approved, doesn't approve); the actual approval requires the
+  // requestId as a positional argument. Sort pending by `ts` desc and use
+  // the most recent one's requestId.
+  const latestPending = pending.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+  const requestId = latestPending && latestPending.requestId;
+  if (!requestId) {
+    return jsonResponse(res, 200, { approved: false, reason: 'Pending entry missing requestId' });
+  }
+
   try {
     const containerName = execSync(
       `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker ps --format '{{.Names}}' | head -1"`,
+      `"\\$HOME/.local/bin/docker ps --filter 'publish=${conn.port}' --format '{{.Names}}' | head -1"`,
       { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
 
     execSync(
       `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices approve --latest --token ${conn.gatewayToken} --json"`,
+      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices approve ${requestId} --token ${conn.gatewayToken} --json"`,
       { timeout: 15000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
     );
 
