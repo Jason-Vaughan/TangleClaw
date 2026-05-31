@@ -12,6 +12,10 @@ All notable changes to TangleClaw are documented in this file.
 
 - **Wrap blocked-report drawer no longer auto-closes before the operator can read it (closes #268).** When the wrap pipeline halted at any step (commit-hook failure, lint/test failure, Critic blocking finding), the blocked report — the operator's primary source of truth for *why* a wrap stopped — was visible only "for a few seconds" and then vanished. Root cause was a race, not a timer on the drawer itself: the wrap-block drawer (`public/session.js` `openWrapDrawer`) is sticky and has no self-dismiss, but when the underlying session subsequently went inactive, the status poller's `handleSessionEnded()` started its 10-second auto-redirect `countdownTimer` and navigated the whole page to `/`, taking the open drawer with it. **Fix:** `openWrapDrawer`/`closeWrapDrawer` now track `sessionState.wrapDrawerOpen`, and `handleSessionEnded` gates its countdown through a new pure helper `tcWrapDrawerHelpers.shouldStartEndedCountdown({wrapDrawerOpen})` — while the drawer is open the redirect is suppressed (the ended bar shows with no countdown; the operator dismisses the drawer and uses the manual "Back to Projects" themselves). Consistent with the no-timer-driven-UI-lifecycle stance (#98, #268) — the fix removes/guards the timer rather than lengthening it. **Copyable report:** new "Copy report" button in the drawer actions copies the full report (status banner + every step's label, status, detail, and complete blocker output) to the clipboard via a new pure serializer `tcWrapDrawerHelpers.buildReportText(pipelineResult)`, so operators can paste a halt into an issue or share it. **Not clipped:** `.wrap-step-blockers` now renders with `white-space: pre-wrap; word-break: break-word` so multi-line failure output (e.g. husky + jest output) wraps and stays readable inside the already-scrollable (`max-height: 80vh`, `flex` column) drawer rather than being truncated. **Tests.** 4 new tests in `test/wrap-drawer.test.js`: `buildReportText` serializes a blocked pipeline with full step output + tolerates a malformed/empty result; `shouldStartEndedCountdown` suppresses the countdown when the drawer is open and allows it when closed/absent. **SW delivery:** `/wrap-drawer.js` added to `NETWORK_FIRST_PATHS` (it's the pure-helper sibling of the already-network-first `session.js`; a stale cached copy against a fresh `session.js` would throw on the new helpers) and `CACHE_NAME` bumped `tangleclaw-v3-13` → `tangleclaw-v3-14` so operators evict the old cache on next SW activation; pinned in `test/openclaw-cache.test.js`. Full suite 2616/2617 (1 pre-existing skip; net +4).
 
+### Internal
+
+- **CHANGELOG: reconstructed orphaned v3.2.3–v3.2.9 release sections; removed buried duplicate `## [Unreleased]` (closes #281).** A stray second `## [Unreleased]` heading sat mid-file (between `[3.3.0]` and `[3.2.2]`) holding the entire OpenClaw build's release notes — they were never stamped with their version numbers when v3.2.3–v3.2.9 shipped (2026-03-21), so the changelog was missing those seven dated sections and carried a duplicate `[Unreleased]`. The orphaned content was **not** a duplicate of any released section (the original mis-diagnosis on #281); deleting it would have lost history. Reconstructed faithfully using the unambiguous chunk/test-count→version mapping from the release commit subjects: `[3.2.9]` PortHub regression fixes; `[3.2.8]` standalone access (viewer, auto-pair, HTTPS, proxy auth); `[3.2.7]`–`[3.2.4]` Web UI/tunnel/integration Chunks 6→3; `[3.2.3]` build plan + connection-registry Chunks 1–2. Entry text preserved verbatim; only regrouped under dated headers in descending order. **Guard:** `test/changelog-structure.test.js` gains invariant #5 (exactly one `## [Unreleased]` heading) + a detector test for the buried-duplicate shape, so this can't recur silently.
+
 ## [3.22.0] - 2026-05-30
 
 ### Changed
@@ -964,7 +968,7 @@ All notable changes to TangleClaw are documented in this file.
   - **OnDeck-V2 extraction** (`ondeck-v2.md`): 3 unique patterns — critical incidents log (failures → prevention rules feedback loop), AI config sync system (single source of truth for multi-engine rules), session priming files (dedicated next-session planning with timestamp discipline).
   - **Prawduct reference** (`prawduct.md`): Not extracted — Prawduct is already a designed framework (13,400 lines, Python tools, 27 templates, agent definitions). Referenced as TangleMeth's target output rather than dissected.
 
-## [Unreleased]
+## [3.2.9] - 2026-03-21
 
 ### Fixed
 
@@ -974,20 +978,47 @@ All notable changes to TangleClaw are documented in this file.
 - **PortHub: connection delete releases port and kills tunnel**: Deleting an OpenClaw connection now releases its port lease from PortHub and kills any active standalone tunnel
 - **PortHub: orphan cleanup recognizes OpenClaw connections**: `_cleanupOrphanLeases()` no longer removes port leases registered under `oc-direct-<id>` patterns when the corresponding OpenClaw connection still exists
 
+## [3.2.8] - 2026-03-21
+
 ### Added
 
-- **OpenClaw engine build plan**: Designed and documented full implementation plan for OpenClaw as a new engine type. Two-tier architecture: connection registry (define OpenClaw instances independently) + engine integration (optionally expose as AI engine in project create wizard). Two connection modes: SSH (tmux-based) and Web UI (iframe-based). 6 session chunks planned. See `build-plan.md`.
-- **OpenClaw connection registry — backend** (Chunk 1/6): Schema v5 migration adds `openclaw_connections` table. Full CRUD store methods (`store.openclawConnections.list/get/create/update/delete`) with validation, name uniqueness, and activity logging. API routes: `GET/POST /api/openclaw/connections`, `GET/PUT/DELETE /api/openclaw/connections/:id`, `POST /api/openclaw/test` (SSH + gateway health check). 36 new tests (961 total).
-- **OpenClaw connection registry — frontend** (Chunk 2/6): "OpenClaw" button in dashboard bar with expandable connections panel. Connection list shows name, host:port, engine badge, and expandable detail grid (SSH user, key path, CLI command, local port). Add/Edit modal with all connection fields, "Test Connection" button (shows SSH/gateway status inline), "Available as Engine" toggle, and delete confirmation. 11 new tests (972 total).
-- **OpenClaw engine integration + SSH launch** (Chunk 3/6): OpenClaw connections with `availableAsEngine` now appear as virtual engines in the engine dropdown under an "OpenClaw" optgroup category. Engine ID format: `openclaw:<connectionId>`. `_buildLaunchCommand()` builds SSH command from connection config (`ssh -t -i <key> <user>@<host> "<cliCommand>"`). `enrichProject()` resolves OpenClaw engine names and capabilities from the connection registry. Wrap button hidden for engines without `supportsPrimePrompt`. New `data/engines/openclaw.json` base engine profile (remote, no config file, no prime prompt). 20 new tests (992 total).
-- **Tunnel manager + schema v6** (Chunk 4/6): New `lib/tunnel.js` — lightweight SSH tunnel manager with no npm dependencies. `ensureTunnel()` detects existing tunnels via TCP probe before spawning, `killTunnel()` cleans up by PID and port lookup, `checkHealth()` probes `/healthz` endpoint. Schema v6 migration adds `session_mode` column to sessions table (`'tmux'` default, `'webui'` for iframe-based OpenClaw sessions). `sessions.start()` and `_rowToSession()` updated to handle session mode. 21 new tests (1013 total).
-- **Web UI mode — backend** (Chunk 5/6): Schema v7 adds `default_mode` column to `openclaw_connections` (`'ssh'` or `'webui'`). New `launchWebuiSession()` async function skips tmux, ensures SSH tunnel via `tunnel.ensureTunnel()`, health-checks via `tunnel.checkHealth()`, records session with `sessionMode: 'webui'`, and returns `iframeUrl` for iframe-based OpenClaw access. `getSessionStatus()` returns health-based status for webui sessions (no tmux, idle always false). `killSession()` tears down SSH tunnel instead of tmux for webui sessions. `injectCommand()` and `peek()` gracefully reject webui sessions. Launch API (`POST /api/sessions/:project`) supports `mode` body param to override connection default, and response includes `sessionMode` and `iframeUrl` fields. 17 new tests (1030 total).
-- **Web UI mode — frontend + proxy** (Chunk 6/6): OpenClaw reverse proxy at `/openclaw/:project/*` forwards HTTP and WebSocket traffic to the connection's local tunnel port, enabling same-origin iframe embedding. Session wrapper (`public/session.js`) detects webui mode from status poll and loads `iframeUrl` into the iframe instead of ttyd. Peek, Cmd, Select, and Upload buttons disabled for webui sessions (no tmux). Kill modal shows "tears down the SSH tunnel" instead of "terminates the tmux session". tmux mouse toggle hidden in settings for webui. Status endpoint includes `iframeUrl` for webui sessions (enables reconnect on page reload). 9 new tests (1039 total).
 - **Standalone OpenClaw access buttons**: "Web UI" and "SSH" action buttons on each connection in the OpenClaw panel. "Web UI" opens the OpenClaw viewer page. "SSH" copies the SSH command to clipboard. New API endpoint `POST /api/openclaw/connections/:id/tunnel` for standalone tunnel startup. Direct proxy handles both HTTP and WebSocket traffic independently of project assignment.
 - **OpenClaw viewer page** (`/openclaw-view/:connId`): Dedicated page with TangleClaw header + iframe embedding the OpenClaw Control UI via the direct proxy. Starts tunnel automatically, shows connection name and host in the banner.
 - **Auto-approve device pairing**: New endpoint `POST /api/openclaw/connections/:id/approve-pending` auto-approves pending OpenClaw device pairing requests via SSH + docker exec on the gateway host. The viewer page polls this endpoint for 30 seconds after load so new browsers are paired automatically without manual CLI intervention. Approval only runs server-side from TangleClaw.
 - **HTTPS support**: TangleClaw can now serve over HTTPS via `httpsEnabled`, `httpsCertPath`, `httpsKeyPath` config options. Required for OpenClaw Control UI's secure context (device identity/crypto). Uses mkcert-generated certs.
 - **OpenClaw proxy auth**: All proxy paths (HTTP + WebSocket, both direct and project-based) now rewrite `Origin`/`Referer` headers to match the gateway's local address and inject `Authorization: Bearer <token>` from the connection's gateway token, enabling transparent authentication without device pairing for proxied requests.
+
+## [3.2.7] - 2026-03-21
+
+### Added
+
+- **Web UI mode — frontend + proxy** (Chunk 6/6): OpenClaw reverse proxy at `/openclaw/:project/*` forwards HTTP and WebSocket traffic to the connection's local tunnel port, enabling same-origin iframe embedding. Session wrapper (`public/session.js`) detects webui mode from status poll and loads `iframeUrl` into the iframe instead of ttyd. Peek, Cmd, Select, and Upload buttons disabled for webui sessions (no tmux). Kill modal shows "tears down the SSH tunnel" instead of "terminates the tmux session". tmux mouse toggle hidden in settings for webui. Status endpoint includes `iframeUrl` for webui sessions (enables reconnect on page reload). 9 new tests (1039 total).
+
+## [3.2.6] - 2026-03-21
+
+### Added
+
+- **Web UI mode — backend** (Chunk 5/6): Schema v7 adds `default_mode` column to `openclaw_connections` (`'ssh'` or `'webui'`). New `launchWebuiSession()` async function skips tmux, ensures SSH tunnel via `tunnel.ensureTunnel()`, health-checks via `tunnel.checkHealth()`, records session with `sessionMode: 'webui'`, and returns `iframeUrl` for iframe-based OpenClaw access. `getSessionStatus()` returns health-based status for webui sessions (no tmux, idle always false). `killSession()` tears down SSH tunnel instead of tmux for webui sessions. `injectCommand()` and `peek()` gracefully reject webui sessions. Launch API (`POST /api/sessions/:project`) supports `mode` body param to override connection default, and response includes `sessionMode` and `iframeUrl` fields. 17 new tests (1030 total).
+
+## [3.2.5] - 2026-03-21
+
+### Added
+
+- **Tunnel manager + schema v6** (Chunk 4/6): New `lib/tunnel.js` — lightweight SSH tunnel manager with no npm dependencies. `ensureTunnel()` detects existing tunnels via TCP probe before spawning, `killTunnel()` cleans up by PID and port lookup, `checkHealth()` probes `/healthz` endpoint. Schema v6 migration adds `session_mode` column to sessions table (`'tmux'` default, `'webui'` for iframe-based OpenClaw sessions). `sessions.start()` and `_rowToSession()` updated to handle session mode. 21 new tests (1013 total).
+
+## [3.2.4] - 2026-03-21
+
+### Added
+
+- **OpenClaw engine integration + SSH launch** (Chunk 3/6): OpenClaw connections with `availableAsEngine` now appear as virtual engines in the engine dropdown under an "OpenClaw" optgroup category. Engine ID format: `openclaw:<connectionId>`. `_buildLaunchCommand()` builds SSH command from connection config (`ssh -t -i <key> <user>@<host> "<cliCommand>"`). `enrichProject()` resolves OpenClaw engine names and capabilities from the connection registry. Wrap button hidden for engines without `supportsPrimePrompt`. New `data/engines/openclaw.json` base engine profile (remote, no config file, no prime prompt). 20 new tests (992 total).
+
+## [3.2.3] - 2026-03-21
+
+### Added
+
+- **OpenClaw engine build plan**: Designed and documented full implementation plan for OpenClaw as a new engine type. Two-tier architecture: connection registry (define OpenClaw instances independently) + engine integration (optionally expose as AI engine in project create wizard). Two connection modes: SSH (tmux-based) and Web UI (iframe-based). 6 session chunks planned. See `build-plan.md`.
+- **OpenClaw connection registry — backend** (Chunk 1/6): Schema v5 migration adds `openclaw_connections` table. Full CRUD store methods (`store.openclawConnections.list/get/create/update/delete`) with validation, name uniqueness, and activity logging. API routes: `GET/POST /api/openclaw/connections`, `GET/PUT/DELETE /api/openclaw/connections/:id`, `POST /api/openclaw/test` (SSH + gateway health check). 36 new tests (961 total).
+- **OpenClaw connection registry — frontend** (Chunk 2/6): "OpenClaw" button in dashboard bar with expandable connections panel. Connection list shows name, host:port, engine badge, and expandable detail grid (SSH user, key path, CLI command, local port). Add/Edit modal with all connection fields, "Test Connection" button (shows SSH/gateway status inline), "Available as Engine" toggle, and delete confirmation. 11 new tests (972 total).
 
 ## [3.2.2] - 2026-03-20
 

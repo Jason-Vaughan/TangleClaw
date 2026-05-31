@@ -75,6 +75,14 @@ function findOutOfOrderPairs(headings) {
   return violations;
 }
 
+function findUnreleasedHeadings(text) {
+  const lines = [];
+  text.split('\n').forEach((line, i) => {
+    if (UNRELEASED_HEADING_RE.test(line)) lines.push(i + 1);
+  });
+  return lines;
+}
+
 describe('CHANGELOG.md structural invariants (#168)', () => {
   const changelog = fs.readFileSync(CHANGELOG_PATH, 'utf8');
   const versionJson = JSON.parse(fs.readFileSync(VERSION_JSON_PATH, 'utf8'));
@@ -114,6 +122,17 @@ describe('CHANGELOG.md structural invariants (#168)', () => {
       top.versionString,
       versionJson.version,
       `version.json says ${versionJson.version} but the top released CHANGELOG heading is [${top.versionString}] (line ${top.line}). PR #166-class regression: a release-version heading was deleted while its content remained.`,
+    );
+  });
+
+  it('exactly one [Unreleased] heading exists (invariant #5 — #281)', () => {
+    const unreleased = findUnreleasedHeadings(changelog);
+    assert.equal(
+      unreleased.length,
+      1,
+      unreleased.length === 1
+        ? undefined
+        : `CHANGELOG.md must have exactly one "## [Unreleased]" heading; found ${unreleased.length} at line(s) ${unreleased.join(', ')}. A second [Unreleased] is the #281 failure shape — release notes that were never promoted to a dated section (the version-bump left the heading behind).`,
     );
   });
 
@@ -179,5 +198,27 @@ describe('CHANGELOG.md invariant detectors flag the post-#166 / pre-#167 regress
     const dupes = findDuplicateHeadings(parseReleaseHeadings(DUPED));
     assert.equal(dupes.length, 1);
     assert.equal(dupes[0].versionString, '3.16.0');
+  });
+
+  it('a buried second [Unreleased] heading is detected (invariant #5 — #281 shape)', () => {
+    // The #281 reproduction: a stray [Unreleased] mid-file holding release
+    // notes that were never stamped with their version (e.g. v3.2.3–v3.2.9
+    // collapsed under one orphaned heading).
+    const BURIED = [
+      '## [Unreleased]',
+      '',
+      '## [3.3.0] - 2026-03-23',
+      '',
+      '## [Unreleased]',
+      '',
+      '### Added',
+      '- orphaned note never promoted',
+      '',
+      '## [3.2.2] - 2026-03-20',
+      '',
+    ].join('\n');
+    const unreleased = findUnreleasedHeadings(BURIED);
+    assert.equal(unreleased.length, 2);
+    assert.deepEqual(unreleased, [1, 5]);
   });
 });
