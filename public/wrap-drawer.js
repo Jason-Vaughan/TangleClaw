@@ -30,11 +30,31 @@
    * @type {Object<string, {label: string, tone: string}>}
    */
   const STATUS_META = {
-    pending: { label: 'Pending', tone: 'pending' },
-    running: { label: 'Running', tone: 'running' },
-    done: { label: 'Done', tone: 'done' },
-    blocked: { label: 'Blocked', tone: 'blocked' },
-    skipped: { label: 'Skipped', tone: 'skipped' }
+    pending: {
+      label: 'Pending',
+      tone: 'pending',
+      tooltip: 'Step queued but didn’t run because a blocker:true step earlier in the pipeline failed.'
+    },
+    running: {
+      label: 'Running',
+      tone: 'running',
+      tooltip: 'Step is currently running.'
+    },
+    done: {
+      label: 'Done',
+      tone: 'done',
+      tooltip: 'Step completed successfully.'
+    },
+    blocked: {
+      label: 'Blocked',
+      tone: 'blocked',
+      tooltip: 'Step reported a problem. Whether the wrap continued depends on the step’s blocker flag in the methodology template — see the error message in this row.'
+    },
+    skipped: {
+      label: 'Skipped',
+      tone: 'skipped',
+      tooltip: 'Step ran but had nothing to do (e.g. ai-content with an empty prompt, version-bump with no [Unreleased] entries). Not a failure.'
+    }
   };
 
   /**
@@ -54,8 +74,10 @@
    *   status: string,
    *   statusLabel: string,
    *   statusTone: string,
+   *   statusTooltip: string,
    *   blockers: string[],
    *   detail: string|null,
+   *   remediation: string|null,
    *   isBlocker: boolean,
    *   warning: boolean
    * }}
@@ -63,13 +85,20 @@
   function buildStepRow(stepResult, ctx) {
     const blockedAt = ctx && ctx.blockedAt ? ctx.blockedAt : null;
     const status = stepResult.status || 'pending';
-    const meta = STATUS_META[status] || { label: status, tone: 'pending' };
+    const meta = STATUS_META[status] || { label: status, tone: 'pending', tooltip: '' };
     const blockers = Array.isArray(stepResult.blockers) ? stepResult.blockers : [];
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
     // Warning flag is currently emitted by `critic-check` (blocker:false
     // step that surfaces medium+ work without Critic). Other kinds may
     // adopt the same pattern; check the field, don't hard-code the kind.
     const warning = Boolean(output && output.warning === true);
+    // Optional `output.remediation` — a handler-supplied "how to fix this"
+    // string for a blocked step (#223). Absent/blank falls through to the
+    // existing raw-blocker rendering (back-compat with handlers that don't
+    // emit it yet).
+    const remediation = output && typeof output.remediation === 'string' && output.remediation.trim()
+      ? output.remediation.trim()
+      : null;
     return {
       id: stepResult.stepId,
       kind: stepResult.kind,
@@ -77,8 +106,10 @@
       status,
       statusLabel: meta.label,
       statusTone: meta.tone,
+      statusTooltip: meta.tooltip || '',
       blockers,
       detail: deriveDetail(stepResult),
+      remediation,
       isBlocker: blockedAt !== null && stepResult.stepId === blockedAt,
       warning
     };
@@ -319,6 +350,7 @@
       lines.push(`[${row.statusLabel}] ${row.kindLabel} — ${row.id}`);
       if (row.detail) lines.push(`  ${row.detail}`);
       for (const b of row.blockers) lines.push(`  ${b}`);
+      if (row.remediation) lines.push(`  How to fix: ${row.remediation}`);
     }
     return lines.join('\n');
   }

@@ -532,3 +532,65 @@ describe('wrap-drawer helpers — shouldStartEndedCountdown (#268)', () => {
     assert.equal(H.shouldStartEndedCountdown(undefined), true);
   });
 });
+
+describe('wrap-drawer helpers — status tooltips (#222)', () => {
+  const H = loadHelpers();
+
+  it('every known status has a non-empty tooltip', () => {
+    for (const status of ['pending', 'running', 'done', 'blocked', 'skipped']) {
+      const row = H.buildStepRow({ stepId: 's', kind: 'test', status, output: null, blockers: [] });
+      assert.equal(typeof row.statusTooltip, 'string');
+      assert.ok(row.statusTooltip.length > 0, `${status} must carry a tooltip`);
+    }
+  });
+
+  it('unknown status falls back to an empty tooltip without throwing', () => {
+    const row = H.buildStepRow({ stepId: 's', kind: 'test', status: 'weird', output: null, blockers: [] });
+    assert.equal(row.statusTooltip, '');
+    assert.equal(row.statusLabel, 'weird');
+  });
+});
+
+describe('wrap-drawer helpers — remediation surfacing (#223)', () => {
+  const H = loadHelpers();
+
+  it('surfaces output.remediation on a blocked step', () => {
+    const row = H.buildStepRow({
+      stepId: 'commit',
+      kind: 'commit',
+      status: 'blocked',
+      output: { remediation: 'Fix the pre-commit hook output, then re-run.' },
+      blockers: ['git commit failed']
+    });
+    assert.equal(row.remediation, 'Fix the pre-commit hook output, then re-run.');
+  });
+
+  it('trims remediation and treats blank/absent/non-string as null (back-compat)', () => {
+    const mk = (output) => H.buildStepRow({ stepId: 's', kind: 'test', status: 'blocked', output, blockers: [] }).remediation;
+    assert.equal(mk({ remediation: '  spaced  ' }), 'spaced');
+    assert.equal(mk({ remediation: '   ' }), null);
+    assert.equal(mk({ remediation: 42 }), null);
+    assert.equal(mk({}), null);
+    assert.equal(mk(null), null);
+  });
+
+  it('buildReportText appends a "How to fix" line when remediation is present', () => {
+    const text = H.buildReportText({
+      blockedAt: 'commit',
+      results: [
+        { stepId: 'commit', kind: 'commit', status: 'blocked', output: { remediation: 'Do the thing.' }, blockers: ['boom'] }
+      ]
+    });
+    assert.match(text, /How to fix: Do the thing\./);
+  });
+
+  it('buildReportText omits the "How to fix" line when remediation is absent', () => {
+    const text = H.buildReportText({
+      blockedAt: 'commit',
+      results: [
+        { stepId: 'commit', kind: 'commit', status: 'blocked', output: {}, blockers: ['boom'] }
+      ]
+    });
+    assert.equal(/How to fix:/.test(text), false);
+  });
+});
