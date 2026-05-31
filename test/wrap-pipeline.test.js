@@ -1574,16 +1574,64 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.match(result.blockers[0], /No \.md plans found/);
   });
 
-  it('blocks with disambiguation message when multiple plans exist', async () => {
+  it('blocks when multiple plans are in progress and none can be auto-picked (#226)', async () => {
+    // Both plans have an undone chunk → both in-progress → can't disambiguate.
     writePlan('one.md', '### Chunk 1: A\n');
     writePlan('two.md', '### Chunk 1: A\n');
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
-    assert.match(result.blockers[0], /Multiple .md plans/);
-    assert.match(result.blockers[0], /step\.planPath to disambiguate/);
-    // #223 — blocked output carries operator remediation for the drawer.
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /Multiple in-progress plans/);
+    assert.match(result.blockers[0], /one\.md/);
+    assert.match(result.blockers[0], /two\.md/);
+    // Blocked output carries operator remediation for the drawer (#223/#226).
     assert.equal(typeof result.output.remediation, 'string');
     assert.match(result.output.remediation, /planPath/);
+    assert.match(result.output.remediation, /activePlan/);
+  });
+
+  it('auto-picks the single in-progress plan when others are complete (#226)', async () => {
+    writePlan('shipped.md', '### Chunk 1: A ✅\n### Chunk 2: B ✅\n');
+    writePlan('active.md', '### Chunk 1: A ✅\n### Chunk 2: B\n');
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.match(result.output.planPath, /active\.md$/, 'must resolve to the in-progress plan');
+  });
+
+  it('skips (not blocks) when every plan is complete (#226)', async () => {
+    writePlan('done-a.md', '### Chunk 1: A ✅\n');
+    writePlan('done-b.md', '### Chunk 1: B ✅\n### Chunk 2: C ✅\n');
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true, 'a finished project must not block its own wrap');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /No in-progress plan/i);
+  });
+
+  it('honors activePlan in .tangleclaw/project.json as the escape hatch (#226)', async () => {
+    // Two in-progress plans would otherwise block — activePlan disambiguates.
+    writePlan('pick-me.md', '### Chunk 1: A\n');
+    writePlan('not-me.md', '### Chunk 1: A\n');
+    const tcDir = path.join(projectPath, '.tangleclaw');
+    fs.mkdirSync(tcDir, { recursive: true });
+    fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({ activePlan: 'pick-me.md' }));
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.match(result.output.planPath, /pick-me\.md$/);
+  });
+
+  it('blocks with remediation when activePlan points at a missing file (#226)', async () => {
+    writePlan('one.md', '### Chunk 1: A\n');
+    writePlan('two.md', '### Chunk 1: A\n');
+    const tcDir = path.join(projectPath, '.tangleclaw');
+    fs.mkdirSync(tcDir, { recursive: true });
+    fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({ activePlan: 'ghost.md' }));
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /activePlan "ghost\.md".*does not exist/);
+    assert.match(result.output.remediation, /activePlan/);
   });
 
   it('honors step.planPath when set (project-relative)', async () => {
