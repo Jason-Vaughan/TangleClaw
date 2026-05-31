@@ -4417,7 +4417,7 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
     const result = await versionBump.run({ step: {}, staged: {}, options: {} });
     assert.equal(result.ok, true);
     assert.equal(result.status, 'skipped');
-    assert.equal(result.output.skipped, true);
+    assert.equal(result.output.skipped, undefined, '#204: output.skipped no longer set — status is the canonical skip signal');
     assert.match(result.output.reason, /no project path/i);
   });
 
@@ -4527,7 +4527,6 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
 
     assert.equal(result.ok, true, 'must skip, never block (ADR 0002)');
     assert.equal(result.status, 'skipped');
-    assert.equal(result.output.skipped, true);
     assert.match(result.output.reason, /refusing to bump/i);
     assert.match(result.output.reason, /3\.16\.1/, 'reason names the rejected newVersion');
     assert.match(result.output.reason, /3\.16\.2/, 'reason names the top released version');
