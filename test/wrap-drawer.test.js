@@ -193,15 +193,36 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.equal(row.detail, '3.16.2 → 3.17.0');
   });
 
-  it('surfaces version-bump skipped reason', () => {
+  it('surfaces version-bump skipped reason from status, with no output.skipped flag (#204)', () => {
     const row = H.buildStepRow({
       stepId: 'version',
       kind: 'version-bump',
       status: 'skipped',
-      output: { skipped: true, reason: 'No [Unreleased] entries' },
+      output: { reason: 'No [Unreleased] entries', detail: 'No [Unreleased] entries' },
       blockers: []
     }, {});
     assert.equal(row.detail, 'No [Unreleased] entries');
+  });
+
+  it('derives skip detail from status for any kind, even those with no skip branch (#204)', () => {
+    // lint/critic-check/ai-content previously had no `output.skipped` branch;
+    // the canonical status check now surfaces their skip reason uniformly.
+    const mk = (kind, output) => H.buildStepRow({ stepId: kind, kind, status: 'skipped', output, blockers: [] }, {}).detail;
+    assert.equal(mk('lint', { reason: 'no lintCommand configured' }), 'no lintCommand configured');
+    assert.equal(mk('test', { override: true, reason: 'user opted to skip tests' }), 'user opted to skip tests');
+    assert.equal(mk('commit', { reason: 'no changes to commit' }), 'no changes to commit');
+    // detail wins over reason; bare skip with no output → 'Skipped'.
+    assert.equal(mk('pr-check', { detail: 'Skipped', reason: 'ignored' }), 'Skipped');
+    assert.equal(mk('ai-content', null), 'Skipped');
+  });
+
+  it('does not treat a stale output.skipped on a non-skipped step as a skip (#204)', () => {
+    // Canonical signal is status, not the (now-removed) output.skipped flag.
+    const row = H.buildStepRow({
+      stepId: 'commit', kind: 'commit', status: 'done',
+      output: { skipped: true, commitSha: 'abc123def456' }, blockers: []
+    }, {});
+    assert.equal(row.detail, 'abc123def456'.slice(0, 12));
   });
 });
 

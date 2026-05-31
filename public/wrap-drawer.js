@@ -125,10 +125,17 @@
    */
   function deriveDetail(stepResult) {
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
+    // Canonical skip signal is the step status (#204). Handle it once, above
+    // the switch, so every kind's skip renders uniformly from the handler's
+    // own `detail`/`reason` — no handler has to redundantly set
+    // `output.skipped`, which only `version-bump` ever did and which left the
+    // per-case `if (output.skipped)` branches dead for the others.
+    if (stepResult.status === 'skipped') {
+      return (output && (output.detail || output.reason)) || 'Skipped';
+    }
     if (!output) return null;
     switch (stepResult.kind) {
       case 'pr-check': {
-        if (output.skipped) return output.detail || 'Skipped';
         const counts = output.counts || {};
         const parts = [];
         if (counts.sessionScoped) parts.push(`${counts.sessionScoped} session PR${counts.sessionScoped === 1 ? '' : 's'}`);
@@ -136,7 +143,6 @@
         return parts.length ? parts.join(', ') : 'No open PRs';
       }
       case 'test':
-        if (output.skipped) return 'Skipped via override';
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
       case 'lint':
@@ -148,12 +154,10 @@
         return 'Below medium-plus threshold';
       }
       case 'priming-roll':
-        if (output.skipped) return output.detail || 'Skipped';
         if (output.allDone) return 'All chunks done';
         if (output.current) return `→ chunk ${output.current}`;
         return null;
       case 'commit':
-        if (output.skipped) return output.detail || 'Clean — no commit';
         if (output.commitSha) return output.commitSha.slice(0, 12);
         return null;
       case 'ai-content': {
@@ -171,9 +175,8 @@
         return null;
       }
       case 'version-bump':
-        // version-bump emits `{from, to, bumpLevel, detail}` on done,
-        // `{skipped, reason, detail}` on skip — open-queue #3 (post-#139).
-        if (output.skipped) return output.detail || output.reason || 'Skipped';
+        // version-bump emits `{from, to, bumpLevel, detail}` on done. Skips
+        // are handled by the status check above (#204).
         if (output.from && output.to) return `${output.from} → ${output.to}`;
         if (output.to) return String(output.to);
         return null;
