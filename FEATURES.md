@@ -62,7 +62,7 @@ entries that span multiple co-equal locations.
 - **Wrap step: `critic-check`** — surfaces medium+ work without Critic dispatch; halts wrap on `severity:"blocking"` findings in `.tangleclaw/critic-runs.json` entries for current branch with `ranAt:"actual"` (#264). Operator override: `options.criticBlockingOverride` + `criticBlockingOverrideReason` proceeds and stages an audit-trail entry. `lib/wrap-steps/critic-check.js`.
 - **Wrap step: `commit`** — flushes staged writes, makes the wrap commit. Auto-branches to `wrap/<YYYYMMDDHHmmss>-<slug>` when wrap fires on `main`/`master` (#264); `options.allowDirectToMain` bypasses for trivial doc edits / hot-fixes. `lib/wrap-steps/commit.js`.
 - **Wrap step: `features-toc`** (#207 Chunk 3) — append-stub for files touched in PR not yet in FEATURES.md. `lib/wrap-steps/features-toc.js`.
-- **Wrap step: `priming-roll`** — roll the next-session priming pointer. `lib/wrap-steps/priming-roll.js`.
+- **Wrap step: `priming-roll`** — roll the next-session priming pointer. Resolves the build plan by precedence: `step.planPath` → `activePlan` in `.tangleclaw/project.json` → the single in-progress plan among many → skip if all complete (#226). `lib/wrap-steps/priming-roll.js`.
 - **Wrap step: `pr-check`** — surfaces open PRs. `lib/wrap-steps/pr-check.js`.
 - **Wrap step: `ai-content`** — prompts injected into the AI session for changelog / learnings / memory updates. `lib/wrap-steps/ai-content.js`.
 - **Wrap step: `test`** / **`lint`** — test + lint hooks. `lib/wrap-steps/test.js`, `lib/wrap-steps/lint.js`.
