@@ -2086,9 +2086,15 @@ route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params
     }
   }
 
+  // #288: report whether the port was actually freed — the old route returned
+  // ok:true unconditionally, hiding the exact zombie-survives-kill case this
+  // fix exists to surface. `released:false` means the operator still has a
+  // stuck tunnel and should escalate (manual kill), not assume recovery.
   jsonResponse(res, 200, {
-    ok: true,
+    ok: byPort.released !== false,
     killedPid: byPort.pid,
+    released: byPort.released,
+    error: byPort.error || null,
     localPort: conn.localPort
   });
 });

@@ -516,6 +516,7 @@ describe('API /api/openclaw/connections/:id/tunnel', () => {
     const { status, data } = await request(server, 'DELETE', `/api/openclaw/connections/${connId}/tunnel`);
     assert.equal(status, 200);
     assert.equal(data.ok, true);
+    assert.equal(data.released, true, '#288: route surfaces whether the port was actually freed (nothing was bound here)');
     assert.equal(data.localPort, 19994);
   });
 
