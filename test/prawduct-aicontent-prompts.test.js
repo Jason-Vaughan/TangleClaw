@@ -88,6 +88,18 @@ describe('prawduct ai-content prompts (open-queue #2)', () => {
     // captureFields stays in lockstep with the prompt above.
     assert.deepEqual(step.captureFields, ['summary', 'nextSteps', 'learnings']);
 
+    // #287: the structured block is parsed from a FILE, not the pane —
+    // `capture-pane -p` strips the literal `##` that the TUI renders away,
+    // so heading-parsing the pane never matched. The step must declare a
+    // `captureFile` AND the prompt must instruct the AI to write the block
+    // there; otherwise the handler falls back to the (broken-for-Claude)
+    // pane path. Lockstep guard so neither half can drift away alone.
+    assert.equal(step.captureFile, '.tangleclaw/.wrap-summary.md');
+    assert.ok(
+      step.prompt.includes(step.captureFile),
+      'memory-update prompt must instruct the AI to write the block to its captureFile'
+    );
+
     // The prompt must explain WHY these blocks matter (so future
     // methodology authors editing this prompt don't strip the
     // structured-response section as "verbose").
