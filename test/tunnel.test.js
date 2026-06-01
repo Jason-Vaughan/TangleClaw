@@ -14,6 +14,25 @@ const store = require('../lib/store');
 const porthub = require('../lib/porthub');
 const tunnel = require('../lib/tunnel');
 
+// #288/#291 test helpers. `httpServer` answers any request with an HTTP status
+// → `httpRoundTrip` reads it as alive. `zombieServer` accepts the TCP
+// connection (port is bound/connectable) but never responds — the exact shape
+// of a half-dead SSH forward, so the round-trip times out → dead.
+function httpServer(status = 200) {
+  return net.createServer((socket) => {
+    socket.on('data', () => {
+      socket.write(`HTTP/1.1 ${status} OK\r\nContent-Length: 2\r\n\r\nok`);
+      socket.end();
+    });
+  });
+}
+function zombieServer() {
+  return net.createServer(() => { /* accept, never respond */ });
+}
+function listen(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+}
+
 describe('tunnel', () => {
   let tmpDir;
 
@@ -60,10 +79,9 @@ describe('tunnel', () => {
   });
 
   describe('ensureTunnel', () => {
-    it('should detect an already-up port and skip spawning', async () => {
-      const server = net.createServer();
-      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const port = server.address().port;
+    it('should detect an already-up port (end-to-end round-trip) and skip spawning', async () => {
+      const server = httpServer();
+      const port = await listen(server);
 
       try {
         const result = await tunnel.ensureTunnel('test-project', {
@@ -232,17 +250,29 @@ describe('tunnel', () => {
     });
   });
 
-  describe('detectTunnel', () => {
-    it('should detect active tunnel when port is connectable', async () => {
-      const server = net.createServer();
-      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const port = server.address().port;
-
+  describe('detectTunnel (#288 end-to-end)', () => {
+    it('reports active when the round-trip succeeds', async () => {
+      const server = httpServer();
+      const port = await listen(server);
       try {
         const result = await tunnel.detectTunnel(port);
         assert.equal(result.active, true);
         assert.equal(result.connectable, true);
+        assert.equal(result.roundTrip, true);
         assert.equal(result.port, port);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('reports INACTIVE for a zombie: connectable but no round-trip (the #288 bug)', async () => {
+      const server = zombieServer();
+      const port = await listen(server);
+      try {
+        const result = await tunnel.detectTunnel(port);
+        assert.equal(result.connectable, true, 'port is bound');
+        assert.equal(result.roundTrip, false, 'but nothing answers');
+        assert.equal(result.active, false, 'so the tunnel is reported down, not up');
       } finally {
         server.close();
       }
@@ -252,24 +282,26 @@ describe('tunnel', () => {
       const result = await tunnel.detectTunnel(19991);
       assert.equal(result.active, false);
       assert.equal(result.connectable, false);
+      assert.equal(result.roundTrip, false);
       assert.equal(result.pid, null);
     });
   });
 
   describe('killTunnelByPort', () => {
-    it('should release port from PortHub even when no SSH process found', () => {
+    it('should release port from PortHub even when no SSH process found', async () => {
       const localPort = 19993;
       porthub.registerPort(localPort, 'stale-project', 'openclaw-tunnel');
 
-      const result = tunnel.killTunnelByPort(localPort);
+      const result = await tunnel.killTunnelByPort(localPort);
       assert.equal(result.ok, true);
       assert.equal(result.pid, null);
+      assert.equal(result.released, true, 'nothing was bound, so the port is free');
 
       const lease = store.portLeases.get(localPort);
       assert.equal(lease, null, 'port lease should be released');
     });
 
-    it('should clean up tracked tunnel entry matching the port', () => {
+    it('should clean up tracked tunnel entry matching the port', async () => {
       tunnel._tunnels.set('tracked-proj', {
         pid: 999999,
         localPort: 19994,
@@ -277,7 +309,7 @@ describe('tunnel', () => {
         remotePort: 18789
       });
 
-      const result = tunnel.killTunnelByPort(19994);
+      const result = await tunnel.killTunnelByPort(19994);
       assert.equal(result.ok, true);
       assert.equal(tunnel._tunnels.has('tracked-proj'), false);
     });
@@ -307,11 +339,63 @@ describe('tunnel', () => {
     });
   });
 
+  describe('httpRoundTrip (#288 end-to-end liveness)', () => {
+    it('returns true for any HTTP status (alive transport)', async () => {
+      for (const status of [200, 404, 502]) {
+        const server = httpServer(status);
+        const port = await listen(server);
+        try {
+          assert.equal(await tunnel.httpRoundTrip(port, 2000), true, `status ${status} → alive`);
+        } finally {
+          server.close();
+        }
+      }
+    });
+
+    it('returns false for a bound-but-silent zombie (times out)', async () => {
+      const server = zombieServer();
+      const port = await listen(server);
+      try {
+        assert.equal(await tunnel.httpRoundTrip(port, 800), false);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('returns false when nothing is listening', async () => {
+      assert.equal(await tunnel.httpRoundTrip(19989, 800), false);
+    });
+  });
+
+  describe('_findSshPidByPortLsof (#288 reliable kill)', () => {
+    it('returns null when nothing holds the port', () => {
+      assert.equal(tunnel._findSshPidByPortLsof(19988), null);
+    });
+
+    it('does NOT return a non-ssh holder (scoped to our ssh -L signature)', async () => {
+      // A plain node listener holds the port, but it is not an `ssh -L` tunnel
+      // — killTunnelByPort must never target it. (Also returns null when lsof
+      // is unavailable, so this is robust across environments.)
+      const server = httpServer();
+      const port = await listen(server);
+      try {
+        assert.equal(tunnel._findSshPidByPortLsof(port), null, 'node listener is scoped out');
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  describe('FORWARD_TARGETS (#291)', () => {
+    it('tries IPv4 first, then bracketed IPv6', () => {
+      assert.deepEqual(tunnel.FORWARD_TARGETS, ['127.0.0.1', '[::1]']);
+    });
+  });
+
   describe('PortHub integration', () => {
     it('ensureTunnel registers port with PortHub when already up', async () => {
-      const server = net.createServer();
-      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const port = server.address().port;
+      const server = httpServer();
+      const port = await listen(server);
 
       try {
         await tunnel.ensureTunnel('test-porthub', {

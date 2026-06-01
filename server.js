@@ -2063,7 +2063,7 @@ route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params
 
   // Try tracked kill first, then fall back to port-based kill
   const tracked = tunnel.killTunnel(`oc-direct-${conn.id}`);
-  const byPort = tunnel.killTunnelByPort(conn.localPort, conn.host);
+  const byPort = await tunnel.killTunnelByPort(conn.localPort, conn.host);
 
   // Also kill any project-scoped tunnels using this connection's port
   const projectTunnels = tunnel.listTunnels().filter(t => t.localPort === conn.localPort);
