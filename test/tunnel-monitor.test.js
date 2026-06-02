@@ -32,16 +32,37 @@ describe('tunnel-monitor (#294)', () => {
   });
 
   describe('_checkOne', () => {
-    it('healthy tunnel → no recreate, backoff cleared', async () => {
+    // Real recreate requires FAILURES_BEFORE_RECREATE consecutive failed probes
+    // (debounce). Pre-seed the miss counter so a single dead probe reaches the
+    // recreate path; the multi-probe build-up has its own dedicated test.
+    const primeRecreate = () => mon._misses.set('c1', mon.FAILURES_BEFORE_RECREATE - 1);
+
+    it('healthy tunnel → no recreate, backoff + misses cleared', async () => {
       let ensured = false;
+      mon._misses.set('c1', 1);
       mon._internal.roundTrip = async () => true;
       mon._internal.ensure = async () => { ensured = true; return { ok: true }; };
       const r = await mon._checkOne(conn(), 1000);
       assert.equal(r.outcome, 'healthy');
       assert.equal(ensured, false, 'a healthy tunnel is never rebuilt');
+      assert.equal(mon._misses.has('c1'), false, 'a healthy probe clears the miss counter');
+    });
+
+    it('debounce: a single failed probe is "probing"; recreate only on the 2nd', async () => {
+      let ensures = 0;
+      mon._internal.roundTrip = async () => false;
+      mon._internal.ensure = async () => { ensures++; return { ok: true }; };
+      const r1 = await mon._checkOne(conn(), 1000);
+      assert.equal(r1.outcome, 'probing');
+      assert.equal(r1.misses, 1);
+      assert.equal(ensures, 0, 'no teardown on a lone transient miss');
+      const r2 = await mon._checkOne(conn(), 1000);
+      assert.equal(r2.outcome, 'recreated');
+      assert.equal(ensures, 1);
     });
 
     it('dead tunnel → recreates with force + the bridge forward', async () => {
+      primeRecreate();
       let calledWith = null;
       mon._internal.roundTrip = async () => false;
       mon._internal.ensure = async (name, cfg) => { calledWith = { name, cfg }; return { ok: true, forwardTarget: '127.0.0.1' }; };
@@ -54,6 +75,7 @@ describe('tunnel-monitor (#294)', () => {
     });
 
     it('dead + recreate fails → backs off, then skips inside the window', async () => {
+      primeRecreate();
       mon._internal.roundTrip = async () => false;
       mon._internal.ensure = async () => ({ ok: false, error: 'ssh failed' });
       const r1 = await mon._checkOne(conn(), 1000);
@@ -75,6 +97,7 @@ describe('tunnel-monitor (#294)', () => {
       let now = 0;
       const delays = [];
       for (let i = 0; i < 12; i++) {
+        mon._misses.set('c1', mon.FAILURES_BEFORE_RECREATE - 1); // confirm dead each cycle
         await mon._checkOne(conn(), now);
         const bo = mon._backoff.get('c1');
         delays.push(bo.nextAttemptAt - now);
@@ -85,6 +108,7 @@ describe('tunnel-monitor (#294)', () => {
     });
 
     it('recovery after failures clears backoff', async () => {
+      primeRecreate();
       mon._internal.roundTrip = async () => false;
       mon._internal.ensure = async () => ({ ok: false });
       await mon._checkOne(conn(), 0);
@@ -110,6 +134,20 @@ describe('tunnel-monitor (#294)', () => {
       assert.deepEqual(probed, [18789], 'only the known oc-direct connection is probed');
       assert.equal(results.length, 1);
       assert.equal(results[0].connId, 'c1');
+    });
+
+    it('a second tick is a no-op while one is in flight (reentrancy guard)', async () => {
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      mon._internal.listTunnels = () => [{ projectName: 'oc-direct-c1', localPort: 18789 }];
+      mon._internal.getConn = () => conn();
+      mon._internal.roundTrip = async () => { await gate; return true; }; // first tick blocks here
+      const first = mon.tick(1000);          // starts, in flight
+      const second = await mon.tick(1000);   // guard → no-op
+      assert.deepEqual(second, [], 'overlapping tick is skipped');
+      release();
+      const firstRes = await first;
+      assert.equal(firstRes.length, 1, 'the first tick still completes normally');
     });
   });
 
