@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **priming-roll wrap step no longer BLOCKS a clean wrap when `.claude/plans/` has no active plan (#302).** When every build plan has been archived to `.claude/plans/archive/` (per CLAUDE.md's plan-archiving rule), the active plans dir is empty — there is no pointer to roll. `_resolvePlanPath` already treated the conceptually-identical "several plans, none in-progress" case as a clean **skip** (`priming-roll.js`), but the zero-plans branch returned a bare error with no `skip` flag, so the handler fell through to **BLOCKED**. Every clean wrap on a fully-shipped project showed a spurious red BLOCKED row. The empty-dir branch now mirrors its sibling and skips with a "nothing to roll" reason. The non-recursive `.md` filter already ignored the `archive/` subdir, so archived plans were never miscounted — the only defect was the missing skip flag. **Tests.** Updated the now-inverted "empty plans dir" case and added a regression test reproducing the exact reported scenario (all plans under `archive/`, empty top level → skips).
+
 ## [3.25.0] - 2026-06-02
 
 ### Added
