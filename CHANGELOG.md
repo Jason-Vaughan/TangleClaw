@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **OpenClaw tunnels self-heal — periodic liveness check + auto-recreate (closes #294).** A background monitor (`lib/tunnel-monitor.js`, started at server boot) end-to-end probes each tunnel TC has established this process lifetime (`oc-direct-<connId>`, every 45s via `httpRoundTrip`) and rebuilds any that died via `ensureTunnel({force:true})` — re-resolving the connection config and re-picking the IPv4/IPv6 forward target (#291). This fixes the "tunnel connects, then doesn't persist → Web UI black-screens" loop: when an `ssh -f -N -L` tunnel dropped (transport flap, or the remote gateway container being restarted) nothing rebuilt it, so the connection stayed dead until a manual re-launch. Per-connection **exponential backoff** (45s → capped 10min) keeps a genuinely-down gateway from hot-looping and clears the moment a probe succeeds. Scope is intentionally narrow: only currently-tracked `oc-direct` tunnels (ones the operator opened) are monitored — never auto-establishing a tunnel nobody asked for. The interval is `unref`'d (never holds the process open) and `stop()`ped on graceful shutdown. **Tests.** New `test/tunnel-monitor.test.js` (9): key parsing, healthy→no-rebuild, dead→recreate-with-force+bridge-forward, recreate-failure→backoff→skip-in-window, backoff escalation + cap, recovery-clears-backoff, `tick` filters to known oc-direct connections, start-idempotent/stop-clears. Full suite 2675/2676 (1 pre-existing skip).
+
 ## [3.24.0] - 2026-06-02
 
 ### Added
