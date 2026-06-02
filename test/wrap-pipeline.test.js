@@ -4469,12 +4469,12 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
     assert.match(result.output.reason, /no project path/i);
   });
 
-  it('skips when version.json is missing', async () => {
+  it('skips when neither version.json nor package.json is present (#298)', async () => {
     const project = makeProject('no-version-json');
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
     const result = await versionBump.run(freshContext(project));
     assert.equal(result.status, 'skipped');
-    assert.match(result.output.reason, /version\.json not found/i);
+    assert.match(result.output.reason, /not version-tracked/i);
   });
 
   it('skips when version.json is malformed JSON', async () => {
@@ -4537,7 +4537,8 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
     assert.equal(result.output.from, '3.16.2');
     assert.equal(result.output.to, '3.17.0', 'Added subsection → minor bump');
     assert.equal(result.output.bumpLevel, 'minor');
-    assert.equal(result.output.detail, '3.16.2 → 3.17.0 (minor)');
+    assert.equal(result.output.versionFile, 'version.json', '#298: source file surfaced');
+    assert.equal(result.output.detail, '3.16.2 → 3.17.0 (minor, version.json)');
 
     // Two staged writes under composite keys
     assert.ok(ctx.staged['version-bump:version-json'], 'version-json staging missing');
