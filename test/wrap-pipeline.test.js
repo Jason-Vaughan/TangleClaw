@@ -1567,11 +1567,31 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.match(result.blockers[0], /No plans directory/);
   });
 
-  it('blocks when .claude/plans is empty', async () => {
+  it('skips (not blocks) when .claude/plans is empty (#302)', async () => {
+    // An empty active plans dir means "no plan to roll" — same as the
+    // all-complete case below. Must skip cleanly, not block the wrap.
     fs.mkdirSync(path.join(projectPath, '.claude', 'plans'), { recursive: true });
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
-    assert.equal(result.ok, false);
-    assert.match(result.blockers[0], /No \.md plans found/);
+    assert.equal(result.ok, true, 'an empty active plans dir must not block the wrap');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /No \.md plans found/i);
+    assert.deepEqual(result.blockers, []);
+  });
+
+  it('skips when all plans are archived under .claude/plans/archive/ (#302 repro)', async () => {
+    // The exact reported scenario: every shipped plan has been moved to
+    // the archive subdir (per CLAUDE.md's archive rule), leaving the
+    // active dir holding only `archive/`. The non-recursive `.md` filter
+    // must ignore the subdir's plans, so the step skips rather than
+    // mistaking 20 archived plans for active ones.
+    const archiveDir = path.join(projectPath, '.claude', 'plans', 'archive');
+    fs.mkdirSync(archiveDir, { recursive: true });
+    fs.writeFileSync(path.join(archiveDir, 'shipped-a.md'), '### Chunk 1: A ✅\n');
+    fs.writeFileSync(path.join(archiveDir, 'shipped-b.md'), '### Chunk 1: B\n'); // undone, but archived
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true, 'archived plans must not count as active');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /nothing to roll/i);
   });
 
   it('blocks when multiple plans are in progress and none can be auto-picked (#226)', async () => {
