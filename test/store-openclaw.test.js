@@ -66,14 +66,25 @@ describe('store.openclawConnections', () => {
         cliCommand: 'my-cli',
         localPort: 8888,
         bridgePort: 4201,
+        instanceDir: '~/openclaw-tilt',
         availableAsEngine: true
       });
       assert.equal(conn.port, 9999);
       assert.equal(conn.gatewayToken, 'tok-123');
       assert.equal(conn.cliCommand, 'my-cli');
       assert.equal(conn.bridgePort, 4201);
+      assert.equal(conn.instanceDir, '~/openclaw-tilt');
       assert.equal(conn.localPort, 8888);
       assert.equal(conn.availableAsEngine, true);
+    });
+
+    it('defaults instanceDir to null and round-trips an update (#296)', () => {
+      const created = createConnection({});
+      assert.equal(created.instanceDir, null, 'unset → null');
+      const updated = store.openclawConnections.update(created.id, { instanceDir: '~/openclaw' });
+      assert.equal(updated.instanceDir, '~/openclaw');
+      const cleared = store.openclawConnections.update(created.id, { instanceDir: null });
+      assert.equal(cleared.instanceDir, null, 'PATCH to null clears');
     });
 
     it('should trim whitespace from name', () => {
@@ -283,14 +294,16 @@ describe('store.openclawConnections', () => {
         store.init();
 
         const db = store.getDb();
-        // Schema version advanced to 15.
+        // Schema version advanced to current (v14 → v15 bridge_port rebuild → v16 instance_dir).
         const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-        assert.equal(ver.version, 15);
-        // Column constraint actually changed.
+        assert.equal(ver.version, 16);
+        // Column constraint actually changed (v15).
         const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
         const bridgeCol = cols.find((c) => c.name === 'bridge_port');
         assert.equal(bridgeCol.notnull, 0, 'post-migration: bridge_port nullable');
         assert.equal(bridgeCol.dflt_value, null, 'post-migration: no SQL DEFAULT');
+        // v16 added instance_dir (#296) on top of the v15 rebuild.
+        assert.ok(cols.find((c) => c.name === 'instance_dir'), 'post-migration: instance_dir column present');
         // Data preservation: both rows survive with their original bridge_port.
         const row3201 = db.prepare('SELECT bridge_port FROM openclaw_connections WHERE id = ?').get('row-3201');
         const row4501 = db.prepare('SELECT bridge_port FROM openclaw_connections WHERE id = ?').get('row-4501');

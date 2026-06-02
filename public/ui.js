@@ -1821,6 +1821,7 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">SSH Key</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.sshKeyPath)}</span>
       <span class="oc-detail-label">CLI Command</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.cliCommand || 'openclaw-cli')}</span>
       <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
+      ${conn.instanceDir ? `<span class="oc-detail-label">Version</span><span class="oc-detail-value" id="ocVer-${esc(conn.id)}" title="OpenClaw instance image tag (${esc(conn.instanceDir)}/.env)">checking…</span>` : ''}
       <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
     </div>`;
     // Tunnel status + kill button
@@ -1841,6 +1842,23 @@ function renderOpenclawConnections() {
   }
 
   panel.innerHTML = html;
+
+  // #296: populate each connection's OpenClaw version asynchronously (the
+  // endpoint reads the instance .env over SSH; server-side cached, so repeated
+  // renders are cheap). Only connections with instanceDir render a Version row.
+  for (const conn of state.openclawConnections) {
+    if (!conn.instanceDir) continue;
+    const el = document.getElementById(`ocVer-${conn.id}`);
+    if (!el) continue;
+    api(`/api/openclaw/connections/${encodeURIComponent(conn.id)}/version`).then((r) => {
+      if (r && r.version) {
+        el.textContent = r.version;
+      } else {
+        el.textContent = 'unknown';
+        if (r && r.error) el.title = r.error;
+      }
+    }).catch(() => { el.textContent = 'unknown'; });
+  }
 }
 
 /**
@@ -1949,6 +1967,7 @@ async function openConnectionModal(connId) {
     // 3201 placeholder default (#160).
     document.getElementById('ocBridgePort').value = data.bridgePort != null && data.bridgePort !== 0 ? data.bridgePort : '';
     document.getElementById('ocBridgeToken').value = data.bridgeToken || '';
+    document.getElementById('ocInstanceDir').value = data.instanceDir || '';
     document.getElementById('ocAvailableAsEngine').checked = !!data.availableAsEngine;
     document.getElementById('ocDeleteBtn').classList.remove('hidden');
   } else {
@@ -1964,6 +1983,7 @@ async function openConnectionModal(connId) {
     // but only takes effect when the user actually fills it in (#160).
     document.getElementById('ocBridgePort').value = '';
     document.getElementById('ocBridgeToken').value = '';
+    document.getElementById('ocInstanceDir').value = '';
     document.getElementById('ocAvailableAsEngine').checked = false;
     document.getElementById('ocDeleteBtn').classList.add('hidden');
   }
@@ -2014,6 +2034,7 @@ async function saveConnection() {
       return Number.isFinite(parsed) ? parsed : null;
     })(),
     bridgeToken: document.getElementById('ocBridgeToken').value.trim() || null,
+    instanceDir: document.getElementById('ocInstanceDir').value.trim() || null,
     availableAsEngine: document.getElementById('ocAvailableAsEngine').checked
   };
 
