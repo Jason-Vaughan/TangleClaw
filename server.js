@@ -1958,6 +1958,7 @@ route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
       }
     }
     store.openclawConnections.delete(params.id);
+    openclawVersion.invalidate(params.id); // #296: drop any cached version for the deleted connection
     jsonResponse(res, 200, { ok: true, id: params.id });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
