@@ -25,6 +25,7 @@ const serverInfo = require('./lib/server-info');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
+const openclawVersion = require('./lib/openclaw-version');
 const httpsSetup = require('./lib/https-setup');
 const ttydWatcher = require('./lib/ttyd-watcher');
 
@@ -1899,6 +1900,19 @@ route('GET', '/api/openclaw/connections/:id', (_req, res, params) => {
   jsonResponse(res, 200, connection);
 });
 
+// GET /api/openclaw/connections/:id/version — OpenClaw instance version (#296).
+// Reads the pinned image tag from the instance's .env over SSH (cached). Needs
+// the connection's `instanceDir` set; returns version:null + a reason otherwise.
+route('GET', '/api/openclaw/connections/:id/version', (req, res, params) => {
+  const conn = store.openclawConnections.get(params.id);
+  if (!conn) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
+  const force = /[?&]force=(1|true)\b/.test(req.url || '');
+  const result = openclawVersion.fetchVersion(conn, { force });
+  jsonResponse(res, 200, { version: result.version, cached: !!result.cached, error: result.error });
+});
+
 // PUT /api/openclaw/connections/:id
 route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
@@ -1916,6 +1930,7 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
   }
   try {
     const connection = store.openclawConnections.update(params.id, body);
+    openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache
     jsonResponse(res, 200, connection);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -1943,6 +1958,7 @@ route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
       }
     }
     store.openclawConnections.delete(params.id);
+    openclawVersion.invalidate(params.id); // #296: drop any cached version for the deleted connection
     jsonResponse(res, 200, { ok: true, id: params.id });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
