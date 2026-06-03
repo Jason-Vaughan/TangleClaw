@@ -457,10 +457,17 @@ def _git_op_in_progress(product: Path) -> str:
             return ""
     markers = [
         ("MERGE_HEAD", "merge"),
-        ("REBASE_HEAD", "rebase"),
         ("CHERRY_PICK_HEAD", "cherry-pick"),
         ("REVERT_HEAD", "revert"),
     ]
+    # REBASE_HEAD is intentionally NOT a marker: unlike MERGE_HEAD /
+    # CHERRY_PICK_HEAD / REVERT_HEAD (which git removes when the op ends or is
+    # aborted), git leaves REBASE_HEAD behind after a rebase completes — it is
+    # only overwritten by the *next* rebase. Its mere presence is therefore not
+    # an in-progress signal; treating it as one produced a phantom "rebase in
+    # progress" that blocked auto-sync and stuck in the session briefing. The
+    # rebase-merge / rebase-apply directory check below is git's own
+    # authoritative test (what `git status` uses), so real rebases stay covered.
     for filename, op in markers:
         if (git_path / filename).exists():
             return op
