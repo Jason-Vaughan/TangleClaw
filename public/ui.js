@@ -720,6 +720,9 @@ function openSettings(name) {
   const initialSilentChecked = !!project.silentPrime;
   // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
+  // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
+  // explicit false disables it).
+  const initialVersionBumpChecked = project.versionBumpEnabled !== false;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -744,7 +747,15 @@ function openSettings(name) {
              autocomplete="off" autocorrect="off" autocapitalize="off">
     </div>
     <div id="settingsSilentPrimeContainer"></div>
-    <div id="settingsFeatureIndexContainer"></div>`;
+    <div id="settingsFeatureIndexContainer"></div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Auto version bump</span>
+        <input type="checkbox" id="settingsVersionBump" ${initialVersionBumpChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
+    </div>`;
 
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
@@ -896,6 +907,11 @@ async function doSaveSettings() {
   const featureIndexEl = document.getElementById('settingsFeatureIndex');
   if (featureIndexEl) {
     body.featureIndexEnabled = featureIndexEl.checked;
+  }
+  // Auto version-bump opt-out (#318) — always present (engine-agnostic)
+  const versionBumpEl = document.getElementById('settingsVersionBump');
+  if (versionBumpEl) {
+    body.versionBumpEnabled = versionBumpEl.checked;
   }
 
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
