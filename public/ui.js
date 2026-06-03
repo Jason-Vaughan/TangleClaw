@@ -1787,12 +1787,14 @@ function renderOpenclawConnections() {
     panel.innerHTML = `<div class="openclaw-empty">
       No OpenClaw connections
       <button class="btn btn-small btn-primary" onclick="openConnectionModal()" style="margin-left:8px">+ Add Connection</button>
+      <button class="btn btn-small" onclick="openOpenclawSetupModal()" style="margin-left:4px" title="What the + Add Connection button does, the fields it asks for, and an AI-agent setup prompt">Read Me</button>
     </div>`;
     return;
   }
 
   let html = `<div class="openclaw-header-actions">
     <button class="btn btn-small btn-primary" onclick="openConnectionModal()">+ Add Connection</button>
+    <button class="btn btn-small" onclick="openOpenclawSetupModal()" title="What the + Add Connection button does, the fields it asks for, and an AI-agent setup prompt">Read Me</button>
   </div>`;
 
   for (const conn of state.openclawConnections) {
@@ -1900,6 +1902,42 @@ async function copyOpenclawSSH(connId) {
   } catch {
     toast.textContent = sshCmd;
     toast.className = 'toast toast-ok visible';
+  }
+  setTimeout(() => toast.classList.remove('visible'), 5000);
+}
+
+/**
+ * Open the OpenClaw "Read Me" setup-guide modal — explains the + Add
+ * Connection flow + the fields it asks for, and holds a copy-paste prompt
+ * for an AI agent setting up an OpenClaw instance. Closed only by explicit
+ * user action (Close / backdrop), never on a timer.
+ */
+function openOpenclawSetupModal() {
+  document.getElementById('openclawSetupModal').classList.add('open');
+}
+
+/**
+ * Close the OpenClaw setup-guide modal.
+ */
+function closeOpenclawSetupModal() {
+  document.getElementById('openclawSetupModal').classList.remove('open');
+}
+
+/**
+ * Copy the AI-agent setup prompt (verbatim from the modal's <pre>) to the
+ * clipboard, with a toast confirmation. Single source of truth: the prompt
+ * text lives in the modal markup, not duplicated here.
+ */
+async function copyOpenclawSetupPrompt() {
+  const prompt = (document.getElementById('ocSetupPrompt')?.textContent || '').trim();
+  const toast = document.getElementById('toast');
+  try {
+    await navigator.clipboard.writeText(prompt);
+    toast.textContent = 'Setup prompt copied to clipboard';
+    toast.className = 'toast toast-ok visible';
+  } catch {
+    toast.textContent = 'Copy failed — select the prompt text manually';
+    toast.className = 'toast toast-warn visible';
   }
   setTimeout(() => toast.classList.remove('visible'), 5000);
 }
@@ -2315,6 +2353,9 @@ $('ocSaveBtn').addEventListener('click', saveConnection);
 $('ocTestBtn').addEventListener('click', testConnection);
 $('ocDeleteBtn').addEventListener('click', openConnectionDeleteConfirm);
 $('openclawModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionModal(); });
+$('ocSetupCloseBtn').addEventListener('click', closeOpenclawSetupModal);
+$('ocSetupCopyBtn').addEventListener('click', copyOpenclawSetupPrompt);
+$('openclawSetupModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeOpenclawSetupModal(); });
 $('ocDeleteCancelBtn').addEventListener('click', closeConnectionDeleteConfirm);
 $('ocDeleteConfirmBtn').addEventListener('click', confirmConnectionDelete);
 $('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionDeleteConfirm(); });
