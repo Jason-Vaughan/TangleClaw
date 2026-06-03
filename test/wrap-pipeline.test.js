@@ -4506,13 +4506,36 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
     assert.match(result.output.reason, /unreadable|invalid/i);
   });
 
-  it('skips when version.json "version" field is non-semver', async () => {
+  it('skips with a neutral reason when version.json "version" is non-semver (#318)', async () => {
     const project = makeProject('non-semver');
-    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: 'v3.16.2' }));
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '2.85.0.1' }));
     fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
     const result = await versionBump.run(freshContext(project));
     assert.equal(result.status, 'skipped');
-    assert.match(result.output.reason, /non-semver|missing/i);
+    // Neutral wording — no alarming "missing or non-semver"; explains it's expected.
+    assert.match(result.output.reason, /isn't MAJOR\.MINOR\.PATCH semver/);
+    assert.match(result.output.reason, /manages its own versioning/);
+    assert.doesNotMatch(result.output.reason, /missing or non-semver/);
+  });
+
+  it('skips with a "no version field" reason when version.json lacks a version (#318)', async () => {
+    const project = makeProject('no-version');
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ name: 'x' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /no "version" field/);
+  });
+
+  it('skips when versionBumpEnabled is false, before reading version.json (#318 opt-out)', async () => {
+    const project = makeProject('optout');
+    // A perfectly bumpable setup — only the opt-out should stop it.
+    fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '1.2.3' }));
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'), '## [Unreleased]\n### Added\n- x\n');
+    store.projectConfig.save(project.path, { ...store.projectConfig.load(project.path), versionBumpEnabled: false });
+    const result = await versionBump.run(freshContext(project));
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /disabled for this project/);
   });
 
   it('skips when CHANGELOG.md is missing', async () => {

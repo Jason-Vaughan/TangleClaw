@@ -78,11 +78,17 @@ describe('version-bump package.json support (#298)', () => {
       assert.match(s.skip, /not version-tracked/);
     });
 
-    it('skips when package.json has no semver version', () => {
+    it('skips with a neutral message when package.json has no/ non-semver version (#318)', () => {
       vb._internal.existsSync = (p) => p.endsWith('package.json');
+      // Missing version → "no version field".
       vb._internal.readFileSync = () => '{"name":"x"}';
-      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
-      assert.match(s.skip, /package\.json "version" field missing or non-semver/);
+      let s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.match(s.skip, /package\.json has no "version" field/);
+      // Non-semver version → neutral "isn't MAJOR.MINOR.PATCH" wording.
+      vb._internal.readFileSync = () => '{"name":"x","version":"2.85.0.1"}';
+      s = vb._resolveVersionSource('/p/version.json', '/p/package.json');
+      assert.match(s.skip, /isn't MAJOR\.MINOR\.PATCH semver/);
+      assert.doesNotMatch(s.skip, /missing or non-semver/);
     });
   });
 

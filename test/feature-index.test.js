@@ -136,6 +136,30 @@ describe('feature-index (#207, chunk 1)', () => {
     });
   });
 
+  describe('updateProject — versionBumpEnabled opt-out (#318)', () => {
+    it('rejects non-boolean values', () => {
+      projects.createProject({ name: 'vb-validation', methodology: 'minimal' });
+      for (const bad of ['true', 1, null, {}, []]) {
+        const update = projects.updateProject('vb-validation', { versionBumpEnabled: bad });
+        assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
+        assert.ok(update.errors[0].includes('versionBumpEnabled'));
+      }
+    });
+
+    it('defaults to true and persists an explicit false', () => {
+      projects.createProject({ name: 'vb-persist', methodology: 'minimal' });
+      // Default: getProject reports true when unset.
+      assert.equal(projects.getProject('vb-persist').versionBumpEnabled, true);
+
+      const update = projects.updateProject('vb-persist', { versionBumpEnabled: false });
+      assert.ok(update.project);
+      assert.equal(update.errors.length, 0);
+      assert.equal(store.projectConfig.load(update.project.path).versionBumpEnabled, false);
+      // And getProject reflects the disabled state.
+      assert.equal(projects.getProject('vb-persist').versionBumpEnabled, false);
+    });
+  });
+
   describe('updateProject — seeding behavior on toggle', () => {
     it('seeds FEATURES.md on false → true transition when file absent', () => {
       const created = projects.createProject({
