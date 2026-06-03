@@ -119,10 +119,20 @@ Same path: `gateway.auth.token`.
 | **Local Port** | Local tunnel port (default `18789`) | Must not conflict with other tunnels |
 | **Bridge Port** | ClawBridge port — leave blank for non-ClawBridge OpenClaw deployments | Only set when deploying ClawBridge alongside OpenClaw (typically `3201`). Leaving blank skips the extra SSH forward and is the right default for a vanilla OpenClaw install (#160). |
 | **Bridge Token** | ClawBridge authentication token | Required only when Bridge Port is set |
+| **Instance Dir** | Absolute host path of the OpenClaw stack directory (the one holding `.env`) | Recommended. Enables the per-connection **version display** — TangleClaw reads the `OPENCLAW_IMAGE` tag from `<instanceDir>/.env` over SSH. Leave blank and the connection shows a "Set Instance Dir to enable" hint instead of a version. |
 | **Available as Engine** | Toggle on if you want to use it as a project engine | Optional |
 
 5. Click **"Test Connection"** to verify SSH and gateway connectivity
 6. Click **"Create"**
+
+> 💡 **Read Me button.** Next to **+ Add Connection** is a **Read Me** button — it explains every field above and provides a copy-paste prompt you can hand to an AI agent that's setting up an OpenClaw instance. The agent sets things up TangleClaw-ready and reports back the values for this form (including the **Instance Dir**), so the version display works from the start.
+
+### About the version display
+
+Once **Instance Dir** is set, the connection's detail panel shows the OpenClaw image version, read from `OPENCLAW_IMAGE` in `<instanceDir>/.env` over SSH (cached ~5 min; refreshed when the panel re-renders and whenever you edit the connection). Two notes:
+
+- The version reflects the **pinned image tag**. A moving tag like `:latest` won't change in `.env` when the underlying image is rebuilt, so it keeps showing `latest`. Prefer a pinned tag (e.g. `:2026.5.28`) if you want the display to track real updates.
+- Local builds with custom tags (e.g. `openclaw:qmd`) are supported — the tag is shown as-is.
 
 ### Via API:
 

@@ -118,7 +118,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label" for="ocInstanceDir">Instance Dir <span style="opacity:0.6;font-weight:normal">(host path of the OpenClaw stack — enables the version display)</span></label>
+        <label class="form-label" for="ocInstanceDir">Instance Dir <span style="opacity:0.6;font-weight:normal">(recommended — absolute host path of the OpenClaw stack; enables the version display. See Read Me.)</span></label>
         <input type="text" class="form-input" id="ocInstanceDir" autocomplete="off" spellcheck="false" placeholder="e.g. ~/openclaw-tilt">
       </div>
       <div class="form-group">
@@ -137,6 +137,56 @@
         <button class="btn" id="ocCancelBtn">Cancel</button>
         <button class="btn btn-danger hidden" id="ocDeleteBtn">Delete</button>
         <button class="btn btn-primary" id="ocSaveBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenClaw Setup "Read Me" Modal (#306-followup) -->
+  <div class="modal-backdrop" id="openclawSetupModal">
+    <div class="modal-content oc-setup-content" role="dialog" aria-label="OpenClaw setup guide" aria-modal="true">
+      <h3 class="modal-title">Adding an OpenClaw Connection</h3>
+
+      <p class="modal-text">The <strong>+ Add Connection</strong> button registers an OpenClaw instance with TangleClaw so you can launch it as an engine, open its Web UI, and see its version. You'll be asked for:</p>
+      <ul class="oc-setup-fields">
+        <li><strong>Name</strong> — a label for the connection (e.g. RentalClaw).</li>
+        <li><strong>Host</strong> — the instance's address reachable from this machine (LAN or Tailscale IP).</li>
+        <li><strong>SSH User</strong> / <strong>SSH Key</strong> — the user and private-key path TangleClaw uses to reach the host.</li>
+        <li><strong>Gateway Port</strong> — the OpenClaw gateway port (default 18789).</li>
+        <li><strong>CLI Command</strong> — the OpenClaw CLI on the host (default <code>openclaw-cli</code>).</li>
+        <li><strong>Local Port</strong> — the local port TangleClaw forwards its SSH tunnel to.</li>
+        <li><strong>Bridge Port</strong> / <strong>Bridge Token</strong> — optional, for ClawBridge integration.</li>
+        <li><strong>Instance Dir</strong> — the absolute host path of the stack directory (the one holding <code>.env</code>). Setting this is what <em>enables the version display</em>.</li>
+        <li><strong>Available as engine</strong> — whether this connection appears in the engine dropdown.</li>
+      </ul>
+
+      <p class="modal-text">Setting up a new instance? Paste the prompt below to an AI agent (with access to the target host). It sets things up TangleClaw-ready and reports back the exact values for this form — including the <strong>Instance Dir</strong>, so the version display works.</p>
+      <pre id="ocSetupPrompt" class="oc-setup-prompt">SETTING UP AN OPENCLAW INSTANCE FOR TANGLECLAW
+
+You are setting up an OpenClaw instance that TangleClaw will manage. Complete the setup, then report the exact values TangleClaw needs to register the connection.
+
+1. Stand up (or locate) the OpenClaw stack on this host. It runs via docker/podman compose; its config lives in a directory containing a `.env` with at least:
+     OPENCLAW_IMAGE=...          (the pinned image, e.g. ghcr.io/openclaw/openclaw:2026.5.28)
+     OPENCLAW_GATEWAY_PORT=...   (the gateway port, e.g. 18789)
+   If it is not set up yet, create it in a stable directory such as ~/workspace/openclaw.
+
+2. Confirm the gateway is reachable on its port.
+
+3. Report these values for TangleClaw's "+ Add Connection" form:
+     - Host          address reachable from TangleClaw (LAN or Tailscale IP)
+     - Gateway Port  the OPENCLAW_GATEWAY_PORT value
+     - SSH User      the user TangleClaw should SSH as
+     - SSH Key       path to the private key on the TangleClaw machine (e.g. ~/.ssh/id_ed25519)
+     - Instance Dir  the ABSOLUTE host path of the stack directory (the one holding .env).
+                     ** This enables TangleClaw's version display — do not omit it. **
+     - Image tag     the tag portion of OPENCLAW_IMAGE (for confirmation)
+     - CLI Command   usually openclaw-cli
+
+Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag (e.g. :2026.5.28) over a moving tag like :latest, so the reported version reflects real updates.</pre>
+
+      <div class="modal-actions">
+        <span style="flex:1"></span>
+        <button class="btn" id="ocSetupCloseBtn">Close</button>
+        <button class="btn btn-primary" id="ocSetupCopyBtn">Copy prompt</button>
       </div>
     </div>
   </div>

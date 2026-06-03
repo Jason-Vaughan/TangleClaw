@@ -691,6 +691,33 @@ body {
   color: var(--text-muted);
   font-style: italic;
 }
+/* OpenClaw "Read Me" setup-guide modal (#306-followup) */
+.oc-setup-content {
+  max-width: 680px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+.oc-setup-fields {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.oc-setup-fields li { margin-bottom: 3px; }
+.oc-setup-prompt {
+  background: var(--elevated-bg);
+  color: var(--text);
+  border-radius: var(--radius-btn);
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 6px 0 4px;
+}
 .oc-tunnel-status {
   display: flex;
   align-items: center;
