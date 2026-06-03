@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **OpenClaw Version row always renders in the connection detail list (#306).** Previously the `Version` row in an expanded OpenClaw connection card (`public/ui.js`) only appeared when the connection had an `instanceDir` configured — so connections without it showed no Version row at all, making the #296 version display look absent. The row is now unconditional: when `instanceDir` is set it shows the async-fetched OpenClaw image tag (unchanged), and when it isn't it shows a muted, actionable **"Set Instance Dir to enable"** hint with a tooltip explaining how to turn it on. The async version fetch still only runs for connections that have an `instanceDir` (the hint branch has no value to populate). New `.oc-detail-muted` style for the hint. **Tests.** New `test/openclaw-version-row.test.js` (5) locks the always-render label, both value branches, the fetch-guard, and the CSS rule.
+
 ### Fixed
 
 - **OpenClaw version display works for locally-built / custom-tagged images (#308).** `parseVersion` (`lib/openclaw-version.js`) required the `OPENCLAW_IMAGE` value to contain the canonical `openclaw/openclaw:` registry path, so an image like `openclaw:qmd` (a local build) failed to parse and the connection showed "unknown". It now extracts the tag generically — the substring after the reference's last `:`, unless that substring contains a `/` (a registry host:port, not a tag) — handling `ghcr.io/openclaw/openclaw:<tag>`, `openclaw:qmd`, `openclaw:latest`, and `registry:5000/openclaw:tag`. **Tests.** +4 regression cases (bare tag, custom registry, host:port guard, untagged ref).
