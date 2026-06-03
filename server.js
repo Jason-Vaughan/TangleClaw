@@ -26,6 +26,7 @@ const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
 const openclawVersion = require('./lib/openclaw-version');
+const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const ttydWatcher = require('./lib/ttyd-watcher');
@@ -1912,6 +1913,18 @@ route('GET', '/api/openclaw/connections/:id/version', (req, res, params) => {
   const force = /[?&]force=(1|true)\b/.test(req.url || '');
   const result = openclawVersion.fetchVersion(conn, { force });
   jsonResponse(res, 200, { version: result.version, cached: !!result.cached, error: result.error });
+});
+
+// POST /api/openclaw/detect-instance-dir — auto-discover candidate instanceDir
+// values over SSH (#306-followup). Stateless: takes the SSH-target fields in
+// the body so it works from the Add form before the connection exists.
+route('POST', '/api/openclaw/detect-instance-dir', (_req, res, _params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  const { host, sshUser, sshKeyPath } = body;
+  const result = openclawDetect.detectInstanceDir({ host, sshUser, sshKeyPath });
+  jsonResponse(res, 200, { dirs: result.dirs, error: result.error });
 });
 
 // PUT /api/openclaw/connections/:id

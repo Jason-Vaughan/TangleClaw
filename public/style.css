@@ -691,6 +691,14 @@ body {
   color: var(--text-muted);
   font-style: italic;
 }
+/* Instance Dir input + Detect button row (#306-followup PR B) */
+.oc-detect-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.oc-detect-row .form-input { flex: 1; }
+.oc-detect-row #ocDetectBtn { white-space: nowrap; flex-shrink: 0; }
 /* OpenClaw "Read Me" setup-guide modal (#306-followup) */
 .oc-setup-content {
   max-width: 680px;
