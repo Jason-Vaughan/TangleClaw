@@ -684,6 +684,13 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* #306: muted hint shown in the Version row when a connection has no
+   instanceDir configured, so the row is always present (discoverable)
+   rather than silently omitted. */
+.oc-detail-value.oc-detail-muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
 .oc-tunnel-status {
   display: flex;
   align-items: center;

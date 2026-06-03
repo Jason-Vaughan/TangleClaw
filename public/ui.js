@@ -1821,7 +1821,9 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">SSH Key</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.sshKeyPath)}</span>
       <span class="oc-detail-label">CLI Command</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.cliCommand || 'openclaw-cli')}</span>
       <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
-      ${conn.instanceDir ? `<span class="oc-detail-label">Version</span><span class="oc-detail-value" id="ocVer-${esc(conn.id)}" title="OpenClaw instance image tag (${esc(conn.instanceDir)}/.env)">checking…</span>` : ''}
+      <span class="oc-detail-label">Version</span>${conn.instanceDir
+        ? `<span class="oc-detail-value" id="ocVer-${esc(conn.id)}" title="OpenClaw instance image tag (${esc(conn.instanceDir)}/.env)">checking…</span>`
+        : `<span class="oc-detail-value oc-detail-muted" title="Set this connection's Instance Dir (Edit → Instance Dir) to read its OpenClaw image tag over SSH">Set Instance Dir to enable</span>`}
       <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
     </div>`;
     // Tunnel status + kill button
@@ -1845,7 +1847,9 @@ function renderOpenclawConnections() {
 
   // #296: populate each connection's OpenClaw version asynchronously (the
   // endpoint reads the instance .env over SSH; server-side cached, so repeated
-  // renders are cheap). Only connections with instanceDir render a Version row.
+  // renders are cheap). Every connection renders a Version row (#306), but only
+  // those with an instanceDir have a fetchable `ocVer-<id>` value to populate —
+  // the rest already show a static "Set Instance Dir to enable" hint.
   for (const conn of state.openclawConnections) {
     if (!conn.instanceDir) continue;
     const el = document.getElementById(`ocVer-${conn.id}`);
