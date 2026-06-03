@@ -1943,6 +1943,50 @@ async function copyOpenclawSetupPrompt() {
 }
 
 /**
+ * Auto-detect the connection's Instance Dir over SSH (#306-followup) using the
+ * Host / SSH User / SSH Key Path already entered in the form. Fills the
+ * Instance Dir input with the first candidate; surfaces a toast for the result.
+ */
+async function detectOcInstanceDir() {
+  const host = document.getElementById('ocHost').value.trim();
+  const sshUser = document.getElementById('ocSshUser').value.trim();
+  const sshKeyPath = document.getElementById('ocSshKeyPath').value.trim();
+  const btn = document.getElementById('ocDetectBtn');
+  const input = document.getElementById('ocInstanceDir');
+  const toast = document.getElementById('toast');
+  const flash = (msg, kind) => {
+    toast.textContent = msg;
+    toast.className = `toast toast-${kind} visible`;
+    setTimeout(() => toast.classList.remove('visible'), 5000);
+  };
+
+  if (!host || !sshUser || !sshKeyPath) {
+    flash('Fill Host, SSH User, and SSH Key Path first, then Detect', 'warn');
+    return;
+  }
+
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = 'Detecting…';
+  try {
+    const r = await apiMutate('/api/openclaw/detect-instance-dir', 'POST', { host, sshUser, sshKeyPath });
+    if (r && Array.isArray(r.dirs) && r.dirs.length) {
+      input.value = r.dirs[0];
+      flash(r.dirs.length > 1
+        ? `Found ${r.dirs.length} candidates — using ${r.dirs[0]}`
+        : `Detected ${r.dirs[0]}`, 'ok');
+    } else {
+      flash((r && r.error) ? r.error : 'No OpenClaw stack found on the host', 'warn');
+    }
+  } catch (err) {
+    flash(`Detect failed: ${err && err.message ? err.message : 'request error'}`, 'warn');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+
+/**
  * Kill an OpenClaw SSH tunnel with confirmation.
  * @param {string} connId - Connection ID
  */
@@ -2351,6 +2395,7 @@ $('auditToggle').addEventListener('click', toggleAudit);
 $('ocCancelBtn').addEventListener('click', closeConnectionModal);
 $('ocSaveBtn').addEventListener('click', saveConnection);
 $('ocTestBtn').addEventListener('click', testConnection);
+$('ocDetectBtn').addEventListener('click', detectOcInstanceDir);
 $('ocDeleteBtn').addEventListener('click', openConnectionDeleteConfirm);
 $('openclawModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionModal(); });
 $('ocSetupCloseBtn').addEventListener('click', closeOpenclawSetupModal);

@@ -119,7 +119,10 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="ocInstanceDir">Instance Dir <span style="opacity:0.6;font-weight:normal">(recommended — absolute host path of the OpenClaw stack; enables the version display. See Read Me.)</span></label>
-        <input type="text" class="form-input" id="ocInstanceDir" autocomplete="off" spellcheck="false" placeholder="e.g. ~/openclaw-tilt">
+        <div class="oc-detect-row">
+          <input type="text" class="form-input" id="ocInstanceDir" autocomplete="off" spellcheck="false" placeholder="e.g. ~/openclaw-tilt">
+          <button type="button" class="btn btn-small" id="ocDetectBtn" title="SSH to the host and auto-discover the OpenClaw stack directory (fill Host, SSH User, and SSH Key Path first)">Detect</button>
+        </div>
       </div>
       <div class="form-group">
         <label class="gs-toggle-label">
