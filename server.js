@@ -1987,6 +1987,17 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   if (!body || !body.host || !body.sshUser || !body.sshKeyPath) {
     return errorResponse(res, 400, 'host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
   }
+  // #312: these fields are interpolated into an `ssh ...` shell command below,
+  // so shape-validate them (reusing the detect endpoint's guards — one source
+  // of truth) before any shell-out. Rejects `;`, `$(...)`, backticks, etc.
+  const unsafe = openclawDetect.unsafeReason({
+    host: body.host,
+    sshUser: body.sshUser,
+    sshKeyPath: body.sshKeyPath
+  });
+  if (unsafe) {
+    return errorResponse(res, 400, unsafe, 'BAD_REQUEST');
+  }
 
   const keyPath = body.sshKeyPath.replace(/^~/, process.env.HOME || '');
   const port = body.port || 18789;

