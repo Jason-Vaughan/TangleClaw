@@ -29,6 +29,25 @@ describe('openclaw-version (#296)', () => {
       assert.equal(ocv.parseVersion(''), null);
       assert.equal(ocv.parseVersion(null), null);
     });
+    it('parses a bare/local image tag without a registry path (#308)', () => {
+      // The real-world 'Volta' case: a locally-built image `openclaw:qmd`,
+      // no `openclaw/openclaw` registry path. Pre-#308 this returned null.
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=openclaw:qmd'), 'qmd');
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=openclaw:latest'), 'latest');
+    });
+    it('parses non-openclaw / custom registry image names (#308)', () => {
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.5.28'), '2026.5.28');
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE="myrepo/custom-claw:v1.2"'), 'v1.2');
+    });
+    it('does not mistake a registry host:port for a tag (#308)', () => {
+      // The last colon precedes a `/`, so it's a host:port, not a tag → null.
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=registry.local:5000/openclaw/openclaw'), null);
+      // ...but a real tag after the port still parses.
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=registry.local:5000/openclaw:edge'), 'edge');
+    });
+    it('returns null for an untagged image reference (#308)', () => {
+      assert.equal(ocv.parseVersion('OPENCLAW_IMAGE=openclaw'), null);
+    });
   });
 
   describe('isSafeInstanceDir', () => {
