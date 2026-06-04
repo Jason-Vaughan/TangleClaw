@@ -375,6 +375,32 @@ describe('projects', () => {
       // Should not throw, ghost project is silently skipped
       assert.ok(result.synced >= 0);
     });
+
+    it('regenerates from DB methodology, ignoring a stale project.json string (#320)', () => {
+      // Reproduce the TiLT v2 bug: DB says `prawduct`, but the git-tracked
+      // project.json still carries a legacy `methodology: "minimal"`. The DB is
+      // the single source of truth — sync must use it, not the stale file.
+      const { project: proj } = projects.createProject({ name: 'stale-methodology', methodology: 'prawduct' });
+      assert.equal(proj.methodology, 'prawduct');
+
+      const projPath = path.join(projectsDir, 'stale-methodology');
+      const configPath = path.join(projPath, '.tangleclaw', 'project.json');
+      const projConfig = store.projectConfig.load(projPath);
+      projConfig.methodology = 'minimal'; // legacy-schema leftover
+      store.projectConfig.save(projPath, projConfig);
+      // Sanity: the stale value is really on disk.
+      assert.match(fs.readFileSync(configPath, 'utf8'), /"methodology":\s*"minimal"/);
+
+      const claudeMd = path.join(projPath, 'CLAUDE.md');
+      if (fs.existsSync(claudeMd)) fs.unlinkSync(claudeMd);
+
+      const result = projects.syncAllProjects();
+      assert.ok(result.synced > 0);
+
+      const content = fs.readFileSync(claudeMd, 'utf8');
+      // Must reflect the DB's Prawduct, not the file's minimal.
+      assert.match(content, /Prawduct/, 'CLAUDE.md should be regenerated from the DB methodology (prawduct)');
+    });
   });
 
   describe('updateProject', () => {
