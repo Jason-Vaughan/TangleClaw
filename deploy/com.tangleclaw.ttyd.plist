@@ -11,6 +11,11 @@
         <string>--url-arg</string>
         <string>--port</string>
         <string>3100</string>
+        <!-- Raise xterm.js scrollback from its 1000-line default (#322/#290):
+             gives long output room within a live session, and is large enough
+             to hold the history ttyd-attach.sh replays on reconnect/restart. -->
+        <string>--client-option</string>
+        <string>scrollback=10000</string>
         <string>__REPO_DIR__/deploy/ttyd-attach.sh</string>
     </array>
     <key>SoftResourceLimits</key>

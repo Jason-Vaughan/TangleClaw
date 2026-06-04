@@ -104,4 +104,39 @@ describe('deploy/ttyd-attach.sh', () => {
       'should sleep after message so the user can read it before ttyd closes'
     );
   });
+
+  // #322 — restore scrollback on reconnect/restart by replaying tmux history
+  // into the fresh xterm.js buffer before attaching.
+  describe('scrollback replay on attach (#322)', () => {
+    const captureLine = () => codeLines().find(l => l.includes('tmux capture-pane'));
+
+    it('should replay history with tmux capture-pane before attaching', () => {
+      const line = captureLine();
+      assert.ok(line, 'must capture-pane to replay scrollback before attach');
+      assert.ok(
+        script.indexOf('tmux capture-pane') < script.indexOf('exec tmux attach-session'),
+        'capture-pane replay must run BEFORE the attach so history lands in the buffer'
+      );
+    });
+
+    it('should preserve colors and exclude the visible screen to avoid duplication', () => {
+      const line = captureLine();
+      assert.match(line, /-e\b/, '-e keeps colors/escape sequences in the replay');
+      assert.match(line, /-S\s+-\d+/, '-S must bound the replay to a finite number of history lines');
+      assert.match(
+        line,
+        /-E\s+-1\b/,
+        '-E -1 stops above the visible screen so attach-redraw does not duplicate those lines'
+      );
+    });
+
+    it('should keep the replay best-effort (never exec, never block the attach)', () => {
+      const line = captureLine();
+      assert.doesNotMatch(line, /^\s*exec\b/, 'capture-pane must not exec — it would replace the shell before attach');
+      assert.ok(
+        /\|\|\s*true|2>\/dev\/null/.test(line),
+        'replay failures (e.g. empty history) must be swallowed so they never block the attach'
+      );
+    });
+  });
 });
