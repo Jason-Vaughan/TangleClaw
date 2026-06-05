@@ -71,4 +71,71 @@ describe('deploy/install.sh', () => {
       'ttyd URL stays on http since ttyd plist does not configure TLS'
     );
   });
+
+  // #324 — macOS TCC preflight: warn (and later diagnose) when the repo lives
+  // under a protected folder and node may lack Full Disk Access, instead of
+  // letting the launchd server hang silently.
+  describe('macOS TCC preflight (#324)', () => {
+    it('should guard the TCC checks to Darwin only', () => {
+      assert.ok(
+        /\[ "\$\(uname\)" = "Darwin" \]/.test(script),
+        'TCC preflight must be macOS-only (guarded on uname = Darwin)'
+      );
+    });
+
+    it('should detect the repo living under a TCC-protected folder', () => {
+      assert.ok(
+        script.includes('$HOME/Documents/') &&
+        script.includes('$HOME/Desktop/') &&
+        script.includes('$HOME/Downloads/'),
+        'must check all three TCC-protected roots (Documents, Desktop, Downloads)'
+      );
+    });
+
+    it('should point the operator at Full Disk Access for the resolved node binary', () => {
+      assert.ok(/Full Disk Access/.test(script), 'must name the Full Disk Access remedy');
+      assert.ok(
+        /realpathSync/.test(script),
+        'must resolve the node symlink (FDA is keyed on the real binary path)'
+      );
+      assert.ok(/RESOLVED_NODE/.test(script), 'must surface the resolved node path');
+    });
+
+    it('should escalate to a TCC-specific diagnosis when the health check fails', () => {
+      // The failure branch must be gated on the protected-folder flag so it only
+      // fires in the situation that actually causes the hang.
+      assert.ok(/TCC_PROTECTED/.test(script), 'must track whether the repo is under a protected folder');
+      assert.ok(
+        /if \[ -n "\$TCC_PROTECTED" \]/.test(script),
+        'health-check-failure remediation must be gated on TCC_PROTECTED'
+      );
+      assert.ok(/uv_cwd/.test(script), 'diagnosis should name the uv_cwd hang signature so it is recognizable');
+    });
+
+    it('should create the log directory before loading services', () => {
+      assert.ok(
+        /mkdir -p "\$HOME\/\.tangleclaw\/logs"/.test(script),
+        'must create ~/.tangleclaw/logs before launchd starts the server (plist StandardErrorPath lives there)'
+      );
+    });
+
+    it('should initialize RESOLVED_NODE/TCC_PROTECTED (set -u safety)', () => {
+      assert.ok(/TCC_PROTECTED=""/.test(script), 'TCC_PROTECTED must be initialized');
+      assert.ok(/RESOLVED_NODE="\$NODE_PATH"/.test(script), 'RESOLVED_NODE must be initialized');
+    });
+  });
+
+  describe('server plist stderr breadcrumb (#324)', () => {
+    const plist = fs.readFileSync(
+      path.join(__dirname, '..', 'deploy', 'com.tangleclaw.server.plist'),
+      'utf8'
+    );
+    it('should capture server stderr to a log file, not /dev/null', () => {
+      const m = plist.match(/<key>StandardErrorPath<\/key>\s*<string>([^<]+)<\/string>/);
+      assert.ok(m, 'StandardErrorPath must be present');
+      assert.notEqual(m[1], '/dev/null', 'server stderr must not be discarded — a silent startup hang left no breadcrumb (#324)');
+      assert.match(m[1], /\.tangleclaw\/logs\//, 'stderr should land in the TangleClaw logs dir');
+      assert.match(m[1], /^__HOME__\//, 'path must use the __HOME__ placeholder so install.sh substitutes it');
+    });
+  });
 });
