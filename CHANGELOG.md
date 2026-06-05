@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [3.26.0] - 2026-06-04
+
 ### Added
 
 - **version-bump: quiet skip + per-project opt-out for projects that manage their own versioning (#318).** When a project's `version.json`/`package.json` `version` isn't 3-part semver (e.g. TiLT v2's deliberate 4-segment `2.85.0.1`, produced by its own tooling), the wrap step used to skip with an alarming `"version" field missing or non-semver (got "…")` that read like breakage on every wrap. It now (1) skips with a **neutral, explanatory** reason — distinguishing a genuinely *missing* version from a *non-semver scheme TC simply doesn't drive* — and (2) honors a new per-project **`versionBumpEnabled`** flag (default **true**; only an explicit `false` disables). A self-versioned project can now turn TC's bump off via a **settings toggle** ("Auto version bump"), and the step skips with "version-bump disabled for this project (manages its own versioning)". Plumbed like `featureIndexEnabled` (store default → projects read/validate/persist → settings UI → step check). **Tests.** version-bump opt-out + neutral-message cases (`test/wrap-pipeline.test.js`, `test/version-bump-package-json.test.js`) and a `versionBumpEnabled` validation/persist/default block (`test/feature-index.test.js`).
