@@ -71,6 +71,37 @@ green "  PATH for launchd: $LAUNCHD_PATH"
 
 echo ""
 
+# ── macOS TCC preflight (#324) ──
+# The TC server's launchd agent hangs SILENTLY on startup when the repo lives
+# under a TCC-protected folder (~/Documents, ~/Desktop, ~/Downloads) AND node
+# lacks Full Disk Access: launchd-spawned node blocks in uv_cwd opening its
+# working directory, with zero output (stderr → /dev/null hid it historically).
+# This bit us once already — a routine re-run took the server down for hours.
+# We can't cheaply prove the grant state before reloading (reading the system
+# TCC.db itself requires Full Disk Access), so this is a non-blocking heads-up;
+# the post-reload health check below escalates to an actionable diagnosis if the
+# server doesn't come up. Non-blocking also keeps non-interactive runs working.
+TCC_PROTECTED=""
+RESOLVED_NODE="$NODE_PATH"
+if [ "$(uname)" = "Darwin" ]; then
+  case "${REPO_DIR}/" in
+    "$HOME/Documents/"*|"$HOME/Desktop/"*|"$HOME/Downloads/"*)
+      TCC_PROTECTED="yes"
+      # Resolve symlinks (Homebrew node is a symlink) — Full Disk Access is keyed
+      # on the real binary path. Use node itself (already validated) for a
+      # portable realpath; BSD readlink lacks -f.
+      RESOLVED_NODE="$("$NODE_PATH" -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$NODE_PATH" 2>/dev/null || echo "$NODE_PATH")"
+      yellow "NOTE: repo is under a macOS TCC-protected folder:"
+      yellow "        $REPO_DIR"
+      yellow "      If the server hangs on startup with no log output, node lacks Full Disk Access."
+      yellow "      Fix: System Settings > Privacy & Security > Full Disk Access > '+' and add:"
+      yellow "        $RESOLVED_NODE"
+      yellow "      (Or move the repo outside ~/Documents, ~/Desktop, ~/Downloads — also fixes the SSH variant.)"
+      echo ""
+      ;;
+  esac
+fi
+
 # ── Generate plists ──
 
 echo "Generating launchd plists..."
@@ -129,6 +160,11 @@ echo ""
 
 echo "Loading services..."
 
+# Ensure the log directory exists before launchd starts the server — the plist's
+# StandardErrorPath (#324) points here, and launchd fails to spawn the job if the
+# parent directory is missing.
+mkdir -p "$HOME/.tangleclaw/logs"
+
 # Unload existing (idempotent — ignore errors if not loaded)
 launchctl unload "${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}" 2>/dev/null || true
 launchctl unload "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}" 2>/dev/null || true
@@ -186,7 +222,16 @@ if [ "$HEALTH_STATUS" = "200" ] || [ "$HEALTH_STATUS" = "503" ]; then
   green "Server is running (health: HTTP $HEALTH_STATUS)"
 else
   yellow "WARNING: Server may not be ready yet (health: HTTP ${HEALTH_STATUS:-timeout})"
-  yellow "Check logs: tail -f ~/.tangleclaw/logs/tangleclaw.log"
+  if [ -n "$TCC_PROTECTED" ]; then
+    red "  Likely cause (#324): macOS TCC is blocking node from the repo under a"
+    red "  protected folder, so the launchd server hangs in uv_cwd with no output."
+    red "  Fix: grant Full Disk Access to:"
+    red "        $RESOLVED_NODE"
+    red "       (System Settings > Privacy & Security > Full Disk Access), then re-run this script."
+    red "  Confirm the hang: sample \$(pgrep -f 'node server.js') 1   → shows uv_cwd > __open."
+  fi
+  yellow "Check logs:    tail -f ~/.tangleclaw/logs/tangleclaw.log"
+  yellow "Server stderr: tail -f ~/.tangleclaw/logs/server.err.log"
 fi
 
 echo ""

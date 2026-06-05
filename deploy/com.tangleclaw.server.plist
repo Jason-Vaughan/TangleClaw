@@ -17,8 +17,11 @@
     <true/>
     <key>StandardOutPath</key>
     <string>/dev/null</string>
+    <!-- #324: capture stderr to a file (not /dev/null) so a future startup
+         crash leaves a breadcrumb instead of failing silently. install.sh
+         creates this directory before loading the job. -->
     <key>StandardErrorPath</key>
-    <string>/dev/null</string>
+    <string>__HOME__/.tangleclaw/logs/server.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
