@@ -32,6 +32,13 @@ function zombieServer() {
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
+/** Bind a server to IPv6 loopback only (#295); resolves port, or null if IPv6 is unavailable. */
+function listenIPv6(server) {
+  return new Promise((resolve) => {
+    server.once('error', () => resolve(null));
+    server.listen(0, '::1', () => resolve(server.address().port));
+  });
+}
 
 describe('tunnel', () => {
   let tmpDir;
@@ -96,6 +103,27 @@ describe('tunnel', () => {
         assert.equal(result.alreadyUp, true);
         assert.equal(result.pid, null);
         assert.equal(result.error, null);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('should detect an already-up port bound IPv6-only ([::1]) and skip spawning (#295)', async (t) => {
+      // Exercises the family-aware bind-check pre-gate (_loopbackConnectable) +
+      // round-trip through the public ensureTunnel API for an IPv6-only bind.
+      const server = httpServer();
+      const port = await listenIPv6(server);
+      if (port === null) { server.close(); t.skip('IPv6 loopback unavailable in this environment'); return; }
+      try {
+        const result = await tunnel.ensureTunnel('ipv6-project', {
+          host: '198.51.100.10',
+          port: 18789,
+          localPort: port,
+          sshUser: 'test',
+          sshKeyPath: '~/.ssh/id_rsa'
+        });
+        assert.equal(result.ok, true);
+        assert.equal(result.alreadyUp, true, 'must find the [::1]-bound tunnel via the family-aware bind check, not spawn a duplicate');
       } finally {
         server.close();
       }
@@ -212,6 +240,65 @@ describe('tunnel', () => {
       } finally {
         server.close();
       }
+    });
+  });
+
+  // #295 — the local ssh-forward end can bind IPv6-only ([::1]) on some
+  // hosts/configs. Both local probes (checkHealth, httpRoundTrip) must try both
+  // loopback families and accept whichever answers, instead of hardcoding
+  // 127.0.0.1 and falsely reporting a healthy tunnel as dead.
+  describe('loopback family fallback (#295)', () => {
+    it('checkHealth finds a tunnel bound IPv6-only ([::1])', async (t) => {
+      const server = net.createServer((socket) => {
+        socket.on('data', () => {
+          const body = JSON.stringify({ ok: true });
+          socket.write(`HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+          socket.end();
+        });
+      });
+      const port = await listenIPv6(server);
+      if (port === null) { server.close(); t.skip('IPv6 loopback unavailable in this environment'); return; }
+      try {
+        const result = await tunnel.checkHealth({ localPort: port });
+        assert.equal(result.healthy, true, 'must fall back to [::1] and find the healthz endpoint');
+        assert.equal(result.error, null);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('httpRoundTrip finds a tunnel bound IPv6-only ([::1])', async (t) => {
+      const server = httpServer(200);
+      const port = await listenIPv6(server);
+      if (port === null) { server.close(); t.skip('IPv6 loopback unavailable in this environment'); return; }
+      try {
+        assert.equal(await tunnel.httpRoundTrip(port), true, 'must fall back to [::1] for the end-to-end probe');
+      } finally {
+        server.close();
+      }
+    });
+
+    it('detectTunnel reports active for an [::1]-only-bound tunnel', async (t) => {
+      // detectTunnel's tcpProbe pre-gate also defaulted to 127.0.0.1; an
+      // IPv6-only bind would short-circuit to active:false before the
+      // round-trip ran (Critic-caught completeness gap on this fix).
+      const server = httpServer(200);
+      const port = await listenIPv6(server);
+      if (port === null) { server.close(); t.skip('IPv6 loopback unavailable in this environment'); return; }
+      try {
+        const result = await tunnel.detectTunnel(port);
+        assert.equal(result.connectable, true, 'bind-check must find the [::1] bind');
+        assert.equal(result.active, true, 'end-to-end round-trip must succeed over [::1]');
+      } finally {
+        server.close();
+      }
+    });
+
+    it('still reports dead when neither loopback family answers', async () => {
+      // Nothing bound on either family at this port → both attempts fail → dead.
+      assert.equal(await tunnel.httpRoundTrip(19997), false);
+      const health = await tunnel.checkHealth({ localPort: 19997 }, 500);
+      assert.equal(health.healthy, false);
     });
   });
 
