@@ -353,6 +353,29 @@
   }
 
   /**
+   * Merge this retry's ai-content skip choice into a persistent accumulator
+   * and reflect the full set back onto `options` (#328). The wrap pipeline
+   * re-runs from step 0 on every retry and the drawer only shows the
+   * currently-blocked step, so an earlier content step's "Skip & note" must
+   * persist across retries or it would re-block. Pure (mutates the two args
+   * it's handed; no globals/DOM) so it's unit-testable apart from session.js.
+   *
+   * @param {Object<string, true>} accumulated - Session-level skip map,
+   *   retained across retries. Mutated in place with any new skip.
+   * @param {object} options - The freshly-collected retry options
+   *   (`collectOptionsFromAccessors` output). Its `skipAiContent` is replaced
+   *   with the full accumulated set when non-empty.
+   * @returns {Object<string, true>} The (mutated) `accumulated` map.
+   */
+  function accumulateAiContentSkips(accumulated, options) {
+    if (options && options.skipAiContent) Object.assign(accumulated, options.skipAiContent);
+    if (options && Object.keys(accumulated).length > 0) {
+      options.skipAiContent = { ...accumulated };
+    }
+    return accumulated;
+  }
+
+  /**
    * Serialize a pipeline result into a plain-text report the operator can
    * copy to the clipboard (paste into an issue, share with a collaborator).
    * Mirrors what the drawer renders — the status banner plus one block per
@@ -407,6 +430,7 @@
     warningWidgetForStep,
     prCheckResolutionWidget,
     collectOptionsFromAccessors,
+    accumulateAiContentSkips,
     buildReportText,
     shouldStartEndedCountdown
   };

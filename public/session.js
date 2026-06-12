@@ -2324,12 +2324,9 @@ async function retryWrap() {
 
   // #328: accumulate ai-content skips across retries. The pipeline re-runs
   // from step 0 each retry, so an earlier content step's skip must persist or
-  // it would re-block. Merge this retry's choice into the session-level map
-  // and thread the full map to the server.
-  if (options.skipAiContent) Object.assign(wrapSkippedAiSteps, options.skipAiContent);
-  if (Object.keys(wrapSkippedAiSteps).length > 0) {
-    options.skipAiContent = { ...wrapSkippedAiSteps };
-  }
+  // it would re-block. The merge lives in a pure drawer helper so it's unit-
+  // testable; `wrapSkippedAiSteps` is the session-level accumulator.
+  H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.
