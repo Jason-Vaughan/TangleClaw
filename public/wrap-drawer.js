@@ -234,6 +234,19 @@
           label: 'Override: skip tests and record the override in the commit body',
           inputType: 'checkbox'
         };
+      case 'ai-content':
+        // #328: content ai-content steps (changelog/learnings/memory) are now
+        // blockers. When one can't complete, the operator can skip it and wrap
+        // without it. Step-scoped (`stepId`) because the skip option is a map
+        // keyed by step id — more than one content step may be skipped across
+        // retries.
+        return {
+          kind: 'ai-content',
+          optionsKey: 'skipAiContent',
+          label: 'Skip this step and note it in the commit body',
+          inputType: 'checkbox',
+          stepId: stepRow.id
+        };
       default:
         return null;
     }
@@ -323,6 +336,17 @@
           options.prHandling = {};
           for (const k of keys) options.prHandling[k] = v[k];
         }
+      }
+    }
+    // #328 ai-content skip override. The accessor returns the blocked step's
+    // id when its "Skip & note" box is ticked (else null). Threaded as a map
+    // keyed by step id so the server's ai-content handler can match
+    // `options.skipAiContent[step.id]`; session.js merges this across retries
+    // so an earlier skip survives a later content step's block.
+    if (accessors.skipAiContent) {
+      const stepId = accessors.skipAiContent();
+      if (typeof stepId === 'string' && stepId.length > 0) {
+        options.skipAiContent = { [stepId]: true };
       }
     }
     return options;

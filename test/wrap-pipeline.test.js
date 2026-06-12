@@ -205,7 +205,11 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // Synthesize a project on a methodology whose ai-content step
       // declares blocker:true. We monkey-patch the live template in place
       // so the runner sees the elevated blocker setting on the wire.
-      const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+      // (#328: content ai-content steps already ship blocker:true; setting it
+      // here is now redundant but harmless, and we restore from the pristine
+      // snapshot so the bundled blocker:true survives for sibling tests.)
+      const pristine = JSON.stringify(store.templates.get('prawduct'));
+      const prawduct = JSON.parse(pristine);
       const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
       aiStep.blocker = true;
       const blockingPath = path.join(tmpDir, 'block-test');
@@ -235,10 +239,26 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         }
       } finally {
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
-        // Restore bundled prawduct template
-        delete aiStep.blocker;
-        store.templates.save(prawduct);
+        // Restore the pristine bundled prawduct template (a `delete` would
+        // strip the now-bundled blocker:true off the first content step).
+        store.templates.save(JSON.parse(pristine));
       }
+    });
+
+    it('bundled prawduct ships blocker:true + allowOverride:true on all 3 content steps (#328)', () => {
+      const prawduct = store.templates.get('prawduct');
+      const contentIds = ['changelog-update', 'learnings-capture', 'memory-update'];
+      for (const id of contentIds) {
+        const step = prawduct.wrap_pipeline.steps.find((s) => s.id === id);
+        assert.ok(step, `bundled prawduct must declare the ${id} step`);
+        assert.equal(step.kind, 'ai-content');
+        assert.equal(step.blocker, true, `${id} must be a blocker so a failure halts before commit`);
+        assert.equal(step.allowOverride, true, `${id} must allow the Skip & note override`);
+      }
+      // commit stays after them so a halt prevents the commit.
+      const ids = prawduct.wrap_pipeline.steps.map((s) => s.id);
+      assert.ok(ids.indexOf('memory-update') < ids.indexOf('commit'),
+        'commit must come after the content steps for the halt to gate it');
     });
 
     it('does NOT halt when blocker:false step returns ok:false', async () => {
@@ -254,6 +274,15 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['commit'] = {
         run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
       };
+      // #328: the bundled prawduct ai-content content steps are now
+      // blocker:true. Force them blocker:false on a local copy so this test
+      // exercises the runner's blocker:false branch (not the new default).
+      const pristine = JSON.stringify(store.templates.get('prawduct'));
+      const prawduct = JSON.parse(pristine);
+      prawduct.wrap_pipeline.steps
+        .filter((s) => s.kind === 'ai-content')
+        .forEach((s) => { s.blocker = false; });
+      store.templates.save(prawduct);
 
       try {
         const result = await wrapPipeline.runWrapPipeline('pipeline-test');
@@ -261,6 +290,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           'pipeline should complete despite a non-blocking failing step');
         assert.equal(result.blockedAt, null);
       } finally {
+        store.templates.save(JSON.parse(pristine));
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
         wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
       }
@@ -307,6 +337,13 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['commit'] = {
         run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
       };
+      // #328: ai-content content steps are blocker:true and would halt on the
+      // real no-tmux handler's ok:false — stub them to isolate the
+      // unknown-kind behavior this test actually asserts.
+      const origAi = wrapPipeline.STEP_DISPATCH['ai-content'];
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
+      };
 
       try {
         const result = await wrapPipeline.runWrapPipeline('pipeline-test');
@@ -319,6 +356,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         prawduct.wrap_pipeline.steps.shift();
         store.templates.save(prawduct);
         wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
+        wrapPipeline.STEP_DISPATCH['ai-content'] = origAi;
       }
     });
   });
@@ -675,7 +713,8 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
       run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['simulated error'] })
     };
-    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+    const pristine = JSON.stringify(store.templates.get('prawduct'));
+    const prawduct = JSON.parse(pristine);
     const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
     aiStep.blocker = 'errors-only';
     store.templates.save(prawduct);
@@ -687,8 +726,9 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
         '"errors-only" must halt the pipeline on !ok (Chunk 4 contract)');
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
-      delete aiStep.blocker;
-      store.templates.save(prawduct);
+      // Restore pristine — a `delete` would strip the bundled blocker:true
+      // off the first content step (#328).
+      store.templates.save(JSON.parse(pristine));
     }
   });
 
@@ -702,9 +742,15 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     wrapPipelineMod.STEP_DISPATCH['commit'] = {
       run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
     };
-    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-    const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
-    aiStep.blocker = 'not-a-recognized-enum';
+    // #328: ALL ai-content content steps are blocker:true by default, and the
+    // stub above returns ok:false for every ai-content step — so a later
+    // still-blocker:true step would halt even if the first is set to a
+    // non-enum value. Set every ai-content step to the unrecognized enum.
+    const pristine = JSON.stringify(store.templates.get('prawduct'));
+    const prawduct = JSON.parse(pristine);
+    prawduct.wrap_pipeline.steps
+      .filter((s) => s.kind === 'ai-content')
+      .forEach((s) => { s.blocker = 'not-a-recognized-enum'; });
     store.templates.save(prawduct);
 
     try {
@@ -715,8 +761,7 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
-      delete aiStep.blocker;
-      store.templates.save(prawduct);
+      store.templates.save(JSON.parse(pristine));
     }
   });
 });
@@ -3056,6 +3101,13 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
       assert.deepStrictEqual(lines, ['- AI content (learnings-capture): captured']);
     });
 
+    it('renders an ai-content user-override skip as an audit line (#328)', () => {
+      const lines = commitStep._buildBodyLines({
+        'memory-update': { aiContentSkipped: true, stepId: 'memory-update' }
+      });
+      assert.deepStrictEqual(lines, ['- AI content (memory-update): skipped via user override']);
+    });
+
     it('renders critic-check skip rationale', () => {
       const lines = commitStep._buildBodyLines({
         'critic-check': {
@@ -3795,7 +3847,8 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
     // Make the FIRST ai-content step block, with the prawduct template's
     // version-bump → ai-content chain. We need to swap the template's
     // first ai-content step to blocker:true so the runner halts.
-    const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+    const pristine = JSON.stringify(store.templates.get('prawduct'));
+    const prawduct = JSON.parse(pristine);
     const firstAiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
     firstAiStep.blocker = true;
     store.templates.save(prawduct);
@@ -3817,8 +3870,8 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = origAiContent;
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
-      delete firstAiStep.blocker;
-      store.templates.save(prawduct);
+      // Restore pristine — `delete` would strip the bundled blocker:true (#328).
+      store.templates.save(JSON.parse(pristine));
     }
   });
 });

@@ -337,6 +337,18 @@ describe('wrap-drawer helpers — decisionWidgetForBlockedStep', () => {
     assert.equal(w, null);
   });
 
+  it('returns a step-scoped checkbox widget for a blocked ai-content step (#328)', () => {
+    const w = H.decisionWidgetForBlockedStep({
+      isBlocker: true,
+      kind: 'ai-content',
+      id: 'memory-update'
+    });
+    assert.equal(w.kind, 'ai-content');
+    assert.equal(w.inputType, 'checkbox');
+    assert.equal(w.optionsKey, 'skipAiContent');
+    assert.equal(w.stepId, 'memory-update', 'widget carries the blocked step id so retry can scope the skip');
+  });
+
   it('returns null when stepRow is missing', () => {
     assert.equal(H.decisionWidgetForBlockedStep(null), null);
     assert.equal(H.decisionWidgetForBlockedStep(undefined), null);
@@ -457,6 +469,22 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
       prHandling: () => null
     });
     assert.equal(opts.criticSkipRationale, 'short turn, deferring to next session');
+  });
+
+  it('builds skipAiContent map from the blocked step id (#328)', () => {
+    const opts = H.collectOptionsFromAccessors({
+      skipTests: () => false,
+      skipAiContent: () => 'memory-update'
+    });
+    assert.deepEqual(plain(opts), { skipAiContent: { 'memory-update': true } });
+  });
+
+  it('omits skipAiContent when the accessor returns null (box unchecked) (#328)', () => {
+    const opts = H.collectOptionsFromAccessors({
+      skipTests: () => false,
+      skipAiContent: () => null
+    });
+    assert.deepEqual(plain(opts), {});
   });
 
   it('omits empty/whitespace-only rationale', () => {
