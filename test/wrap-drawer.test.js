@@ -337,6 +337,18 @@ describe('wrap-drawer helpers — decisionWidgetForBlockedStep', () => {
     assert.equal(w, null);
   });
 
+  it('returns a step-scoped checkbox widget for a blocked ai-content step (#328)', () => {
+    const w = H.decisionWidgetForBlockedStep({
+      isBlocker: true,
+      kind: 'ai-content',
+      id: 'memory-update'
+    });
+    assert.equal(w.kind, 'ai-content');
+    assert.equal(w.inputType, 'checkbox');
+    assert.equal(w.optionsKey, 'skipAiContent');
+    assert.equal(w.stepId, 'memory-update', 'widget carries the blocked step id so retry can scope the skip');
+  });
+
   it('returns null when stepRow is missing', () => {
     assert.equal(H.decisionWidgetForBlockedStep(null), null);
     assert.equal(H.decisionWidgetForBlockedStep(undefined), null);
@@ -457,6 +469,63 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
       prHandling: () => null
     });
     assert.equal(opts.criticSkipRationale, 'short turn, deferring to next session');
+  });
+
+  it('builds skipAiContent map from the blocked step id (#328)', () => {
+    const opts = H.collectOptionsFromAccessors({
+      skipTests: () => false,
+      skipAiContent: () => 'memory-update'
+    });
+    assert.deepEqual(plain(opts), { skipAiContent: { 'memory-update': true } });
+  });
+
+  it('omits skipAiContent when the accessor returns null (box unchecked) (#328)', () => {
+    const opts = H.collectOptionsFromAccessors({
+      skipTests: () => false,
+      skipAiContent: () => null
+    });
+    assert.deepEqual(plain(opts), {});
+  });
+});
+
+describe('wrap-drawer helpers — accumulateAiContentSkips (#328)', () => {
+  const H = loadHelpers();
+
+  it('persists an earlier skip across a later retry that skips a different step', () => {
+    const acc = {};
+    // Retry 1: changelog-update blocked → skipped.
+    const opts1 = { skipAiContent: { 'changelog-update': true } };
+    H.accumulateAiContentSkips(acc, opts1);
+    assert.deepEqual(plain(opts1.skipAiContent), { 'changelog-update': true });
+    // Retry 2: memory-update blocked → skipped; changelog-update must survive.
+    const opts2 = { skipAiContent: { 'memory-update': true } };
+    H.accumulateAiContentSkips(acc, opts2);
+    assert.deepEqual(plain(opts2.skipAiContent), {
+      'changelog-update': true,
+      'memory-update': true
+    });
+  });
+
+  it('reflects the accumulated set even on a retry that adds no new skip', () => {
+    const acc = { 'changelog-update': true };
+    const opts = {}; // user retried (e.g. after a manual MEMORY edit) without ticking a box
+    H.accumulateAiContentSkips(acc, opts);
+    assert.deepEqual(plain(opts.skipAiContent), { 'changelog-update': true });
+  });
+
+  it('leaves options untouched when nothing has ever been skipped', () => {
+    const acc = {};
+    const opts = { skipTests: true };
+    H.accumulateAiContentSkips(acc, opts);
+    assert.deepEqual(plain(opts), { skipTests: true });
+    assert.equal(opts.skipAiContent, undefined);
+  });
+
+  it('returns the (mutated) accumulator', () => {
+    const acc = {};
+    const out = H.accumulateAiContentSkips(acc, { skipAiContent: { 'memory-update': true } });
+    assert.equal(out, acc);
+    assert.deepEqual(plain(acc), { 'memory-update': true });
   });
 
   it('omits empty/whitespace-only rationale', () => {

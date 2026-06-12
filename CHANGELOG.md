@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wrap content steps fail loud instead of silently committing without them (#328).** The three prawduct `ai-content` content steps — `changelog-update`, `learnings-capture`, `memory-update` — were non-blockers, so when one timed out (the 300s idle cap) or failed validation it returned `ok:false` but the pipeline ran on to `commit` anyway: a complete-looking wrap landed with **no MEMORY.md refresh**. That's the bug behind the 2026-06-04 wrap, where `memory-update` showed `[Blocked] "AI did not return within 300s — wrap pipeline blocked"` yet `commit` showed `[Done]` right after (no data was lost only because MEMORY.md had been hand-authored before the wrap). Three changes: (1) the three content steps now declare **`blocker: true` + `allowOverride: true`**, so a failure **halts before `commit`** — no silent partial wrap; (2) the blocked step offers **Retry** (wait for the AI, then re-run) or a step-scoped **"Skip & note"** override (`options.skipAiContent[stepId]`, accumulated across retries, recorded in the commit body as `- AI content (<step>): skipped via user override`); (3) the timeout message no longer hardcodes the false **"wrap pipeline blocked"** claim (the handler can't know the pipeline's fate) — it names the step + "no idle detected" and carries an actionable `output.remediation`. No double-bump risk on Retry: `version-bump` stages in-memory and only `commit` flushes, so a halt evaporates staged writes and the retry re-derives from the working tree. **Tests.** `test/wrap-step-ai-content.test.js` (override skip + staging, accurate timeout message), `test/wrap-pipeline.test.js` (blocker:true ai-content halts before commit; `_buildBodyLines` skip line), `test/wrap-drawer.test.js` (ai-content decision widget + `skipAiContent` option collection). Docs: ADR 0002 step-kind table + amendment.
+
 ## [3.26.0] - 2026-06-04
 
 ### Added

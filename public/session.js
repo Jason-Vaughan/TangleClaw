@@ -1838,6 +1838,9 @@ function closeWrapModal() {
  * (#139 Chunk 10).
  */
 async function confirmWrap() {
+  // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
+  // retries (#328) so they don't leak into this run.
+  wrapSkippedAiSteps = {};
   const pw = document.getElementById('wrapPassword').value;
   const body = {};
   if (pw) body.password = pw;
@@ -1893,6 +1896,17 @@ let currentWrapPassword = '';
  * @type {object|null}
  */
 let currentWrapPipelineResult = null;
+
+/**
+ * Accumulated ai-content "Skip & note" overrides across retries (#328),
+ * keyed by step id. The drawer only shows the currently-blocked step, but
+ * the pipeline re-runs from step 0 on every retry — so an earlier content
+ * step's skip must persist or it would re-block on the next attempt. Each
+ * retry merges its checkbox state into this map and threads the whole map.
+ * Reset when a fresh wrap starts (`confirmWrap`).
+ * @type {Object<string, true>}
+ */
+let wrapSkippedAiSteps = {};
 
 /**
  * Open the wrap drawer with a rendered pipeline result and wire its
@@ -2147,6 +2161,9 @@ function renderDecisionWidget(widget) {
     input.type = 'checkbox';
     input.id = `wrapDecisionInput_${widget.optionsKey}`;
     input.dataset.optionsKey = widget.optionsKey;
+    // #328: step-scoped overrides (ai-content Skip & note) carry the blocked
+    // step id so retryWrap can thread `{[stepId]: true}` to the server.
+    if (widget.stepId) input.dataset.stepId = widget.stepId;
     row.appendChild(input);
     const text = document.createElement('span');
     text.textContent = widget.label;
@@ -2293,10 +2310,23 @@ async function retryWrap() {
         if (sel.value) out[sel.dataset.prNumber] = sel.value;
       }
       return out;
+    },
+    skipAiContent: () => {
+      // Returns the blocked step's id when its "Skip & note" box is ticked,
+      // else null. #328 — collectOptionsFromAccessors wraps it into a map.
+      const el = decisionEl.querySelector('input[data-options-key="skipAiContent"]');
+      if (!el || el.checked !== true) return null;
+      return el.dataset.stepId || null;
     }
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
+
+  // #328: accumulate ai-content skips across retries. The pipeline re-runs
+  // from step 0 each retry, so an earlier content step's skip must persist or
+  // it would re-block. The merge lives in a pure drawer helper so it's unit-
+  // testable; `wrapSkippedAiSteps` is the session-level accumulator.
+  H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.

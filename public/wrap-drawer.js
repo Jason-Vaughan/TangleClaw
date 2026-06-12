@@ -234,6 +234,19 @@
           label: 'Override: skip tests and record the override in the commit body',
           inputType: 'checkbox'
         };
+      case 'ai-content':
+        // #328: content ai-content steps (changelog/learnings/memory) are now
+        // blockers. When one can't complete, the operator can skip it and wrap
+        // without it. Step-scoped (`stepId`) because the skip option is a map
+        // keyed by step id — more than one content step may be skipped across
+        // retries.
+        return {
+          kind: 'ai-content',
+          optionsKey: 'skipAiContent',
+          label: 'Skip this step and note it in the commit body',
+          inputType: 'checkbox',
+          stepId: stepRow.id
+        };
       default:
         return null;
     }
@@ -325,7 +338,41 @@
         }
       }
     }
+    // #328 ai-content skip override. The accessor returns the blocked step's
+    // id when its "Skip & note" box is ticked (else null). Threaded as a map
+    // keyed by step id so the server's ai-content handler can match
+    // `options.skipAiContent[step.id]`; session.js merges this across retries
+    // so an earlier skip survives a later content step's block.
+    if (accessors.skipAiContent) {
+      const stepId = accessors.skipAiContent();
+      if (typeof stepId === 'string' && stepId.length > 0) {
+        options.skipAiContent = { [stepId]: true };
+      }
+    }
     return options;
+  }
+
+  /**
+   * Merge this retry's ai-content skip choice into a persistent accumulator
+   * and reflect the full set back onto `options` (#328). The wrap pipeline
+   * re-runs from step 0 on every retry and the drawer only shows the
+   * currently-blocked step, so an earlier content step's "Skip & note" must
+   * persist across retries or it would re-block. Pure (mutates the two args
+   * it's handed; no globals/DOM) so it's unit-testable apart from session.js.
+   *
+   * @param {Object<string, true>} accumulated - Session-level skip map,
+   *   retained across retries. Mutated in place with any new skip.
+   * @param {object} options - The freshly-collected retry options
+   *   (`collectOptionsFromAccessors` output). Its `skipAiContent` is replaced
+   *   with the full accumulated set when non-empty.
+   * @returns {Object<string, true>} The (mutated) `accumulated` map.
+   */
+  function accumulateAiContentSkips(accumulated, options) {
+    if (options && options.skipAiContent) Object.assign(accumulated, options.skipAiContent);
+    if (options && Object.keys(accumulated).length > 0) {
+      options.skipAiContent = { ...accumulated };
+    }
+    return accumulated;
   }
 
   /**
@@ -383,6 +430,7 @@
     warningWidgetForStep,
     prCheckResolutionWidget,
     collectOptionsFromAccessors,
+    accumulateAiContentSkips,
     buildReportText,
     shouldStartEndedCountdown
   };
