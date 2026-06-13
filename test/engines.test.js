@@ -925,15 +925,22 @@ describe('engines', () => {
     });
 
     /**
-     * Make a fresh project dir, optionally seeding .claude/settings.json.
+     * Make a fresh project dir, optionally seeding .claude/settings.json and
+     * .tangleclaw/project.json.
      * @param {object|null} settings - settings.json contents, or null to omit.
+     * @param {object} [projConfig] - .tangleclaw/project.json contents (e.g. to
+     *   pin engine + silentPrime so baseline-hook behavior is deterministic).
      * @returns {string} the project path
      */
-    function mkProject(settings) {
+    function mkProject(settings, projConfig) {
       const p = fs.mkdtempSync(path.join(govDir, 'proj-'));
       if (settings !== null) {
         fs.mkdirSync(path.join(p, '.claude'), { recursive: true });
         fs.writeFileSync(path.join(p, '.claude', 'settings.json'), JSON.stringify(settings, null, 2) + '\n');
+      }
+      if (projConfig) {
+        fs.mkdirSync(path.join(p, '.tangleclaw'), { recursive: true });
+        fs.writeFileSync(path.join(p, '.tangleclaw', 'project.json'), JSON.stringify(projConfig, null, 2) + '\n');
       }
       return p;
     }
@@ -991,28 +998,70 @@ describe('engines', () => {
       });
     });
 
-    describe('syncEngineHooks defers', () => {
-      it('strips a stale TC-generated hooks block while preserving the plugin install reference', () => {
+    describe('syncEngineHooks defers GOVERNANCE but keeps TC L1 prime (#330)', () => {
+      const staleGovHook = { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }] }] };
+
+      it('silentPrime OFF: drops the governance hook entirely, preserves the install reference', () => {
         const p = mkProject({
           extraKnownMarketplaces: { prawduct: { source: { source: 'github', repo: 'brookstalley/prawduct' }, autoUpdate: false } },
           enabledPlugins: { 'prawduct@prawduct': true },
-          hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }] }] }
-        });
+          hooks: staleGovHook
+        }, { engine: 'claude', methodology: 'prawduct', silentPrime: false });
 
         engines.syncEngineHooks(p, prawduct);
 
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
-        assert.equal(settings.hooks, undefined, 'the legacy TC-generated hooks block must be removed');
+        assert.equal(settings.hooks, undefined, 'no governance hook and no L1 prime → hooks block removed');
         assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'the plugin enablement must be preserved');
         assert.ok(settings.extraKnownMarketplaces && settings.extraKnownMarketplaces.prawduct, 'the marketplace reference must be preserved');
       });
 
-      it('does not create a hooks block for a plugin-governed project (no-op when none exists)', () => {
-        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+      it('silentPrime ON: keeps TC\'s L1 prime hook but drops the governance Stop hook', () => {
+        const p = mkProject({
+          enabledPlugins: { 'prawduct@prawduct': true },
+          hooks: staleGovHook
+        }, { engine: 'claude', methodology: 'prawduct', silentPrime: true });
+
+        engines.syncEngineHooks(p, prawduct);
+
+        const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.ok(settings.hooks, 'the L1 prime hook block must remain');
+        assert.ok(settings.hooks.SessionStart, 'TC L1 silent-prime SessionStart hook must survive on a governed project');
+        assert.equal(settings.hooks.Stop, undefined, 'the governance Stop hook must be dropped (delegated to the plugin)');
+        // No surviving hook may reference the vendored governance script.
+        const allCommands = JSON.stringify(settings.hooks);
+        assert.ok(!allCommands.includes('product-hook'), 'no surviving hook may reference the removed vendored governance script');
+        assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'the plugin enablement must be preserved');
+      });
+
+      it('does not inject methodology/governance hooks for a governed project (no stale block)', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } }, { engine: 'claude', methodology: 'prawduct', silentPrime: false });
         engines.syncEngineHooks(p, prawduct);
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
-        assert.equal(settings.hooks, undefined, 'TC must not inject its own hooks when the plugin governs the repo');
+        assert.equal(settings.hooks, undefined, 'governed + no L1 → no hooks block');
         assert.equal(settings.enabledPlugins['prawduct@prawduct'], true);
+      });
+
+      it('uniquely exercises the guard: a requires-free methodology hook is kept ungoverned, dropped governed (#330 Critic)', () => {
+        // The bundled prawduct hooks are `requires:["tools/product-hook"]`-gated,
+        // and temp project dirs lack that file — so _filterHookEntriesByRequires
+        // strips them regardless of the pluginGoverned flag, masking the guard.
+        // A methodology hook with NO `requires` survives the filter, so the ONLY
+        // thing that can drop it is the pluginGoverned suppression — isolating it.
+        const methTemplate = { id: 'meth-no-requires', hooks: { claude: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo governance-gate' }] }] } } };
+
+        // Control — ungoverned: the requires-free methodology hook is KEPT.
+        const ungoverned = mkProject({}, { engine: 'claude', methodology: 'minimal', silentPrime: false });
+        engines.syncEngineHooks(ungoverned, methTemplate);
+        const uSettings = JSON.parse(fs.readFileSync(path.join(ungoverned, '.claude', 'settings.json'), 'utf8'));
+        assert.ok(uSettings.hooks && uSettings.hooks.Stop, 'ungoverned must keep a requires-free methodology hook');
+        assert.equal(uSettings.hooks.Stop[0].hooks[0].command, 'echo governance-gate');
+
+        // Governed: the same hook is DROPPED by the guard (would survive if reverted).
+        const governed = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } }, { engine: 'claude', methodology: 'minimal', silentPrime: false });
+        engines.syncEngineHooks(governed, methTemplate);
+        const gSettings = JSON.parse(fs.readFileSync(path.join(governed, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(gSettings.hooks, undefined, 'governed must drop the requires-free methodology hook (the guard, not the requires-filter)');
       });
     });
   });
