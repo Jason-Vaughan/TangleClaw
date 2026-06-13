@@ -47,6 +47,7 @@ entries that span multiple co-equal locations.
 - **Skills / wrap-shape registry** — `lib/skills.js:108` (`getWrapSkill`).
 - **Project store / DB** — SQLite-backed project records, project-config persistence. `lib/store.js` (`DEFAULT_PROJECT_CONFIG`, `store.projects.*`).
 - **Engine profiles + config generation** — detect installed engines, generate per-engine config files (`CLAUDE.md`, `.gemini/`, `.aider.conf.yml`, etc.). `lib/engines.js:16` (`detect`), `:214` (`generateConfig`), `:935` (`_buildBaselineHooks`).
+- **Prawduct V2 plugin-governed deferral** (#330) — when a project carries the V2 plugin install reference (`enabledPlugins["prawduct@*"]` in `.claude/settings.json`), TC stops generating its governance config: `writeEngineConfig` skips `CLAUDE.md` regeneration and `syncEngineHooks` strips its own `.hooks` block (preserving the install reference). Auto-detected, fail-closed. `lib/engines.js` (`isPluginGoverned`).
 
 ## Methodologies / Engines
 
