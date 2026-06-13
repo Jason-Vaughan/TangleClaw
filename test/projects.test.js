@@ -402,14 +402,19 @@ describe('projects', () => {
       assert.match(content, /Prawduct/, 'CLAUDE.md should be regenerated from the DB methodology (prawduct)');
     });
 
-    it('defers to the Prawduct V2 plugin at boot: preserves the anchor AND strips stale hooks (#330)', () => {
+    it('defers to the Prawduct V2 plugin at boot: preserves the anchor AND strips the governance hook (#330)', () => {
       // A project later onboarded to the V2 plugin: it carries the install
-      // reference plus a leftover TC `.hooks` block and a plugin-owned thin
-      // CLAUDE.md anchor. Boot-sync must NOT regenerate CLAUDE.md and MUST strip
-      // the stale hooks block (the gap the Critic flagged — boot-sync previously
-      // called writeEngineConfig but not syncEngineHooks).
+      // reference plus a leftover TC governance `.hooks` block and a plugin-owned
+      // thin CLAUDE.md anchor. Boot-sync must NOT regenerate CLAUDE.md and MUST
+      // strip the stale governance hooks (the gap the Critic flagged — boot-sync
+      // previously called writeEngineConfig but not syncEngineHooks). silentPrime
+      // is pinned off so this stays focused on governance-hook removal; the
+      // L1-prime-preserved-on-a-governed-project case is covered in engines.test.js.
       projects.createProject({ name: 'plugin-governed-boot', methodology: 'prawduct' });
       const projPath = path.join(projectsDir, 'plugin-governed-boot');
+      fs.writeFileSync(path.join(projPath, '.tangleclaw', 'project.json'), JSON.stringify({
+        engine: 'claude', methodology: 'prawduct', silentPrime: false
+      }, null, 2) + '\n');
       const claudeDir = path.join(projPath, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
@@ -425,7 +430,7 @@ describe('projects', () => {
 
       assert.equal(fs.readFileSync(claudeMd, 'utf8'), anchor, 'plugin-owned CLAUDE.md must not be regenerated at boot');
       const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'));
-      assert.equal(settings.hooks, undefined, 'stale TC hooks block must be stripped at boot');
+      assert.equal(settings.hooks, undefined, 'stale governance hooks block must be stripped at boot (silentPrime off → no L1 to keep)');
       assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'plugin install reference must be preserved');
     });
   });
