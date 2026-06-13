@@ -1097,9 +1097,18 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 0;
+  padding: 4px 6px;
   font-size: 12px;
   color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+/* #338 — history items are click-to-copy-path; signal interactivity. */
+.upload-history-item:hover,
+.upload-history-item:focus-visible {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text);
+  outline: none;
 }
 .upload-history-item code {
   font-family: 'SF Mono', 'Menlo', monospace;

@@ -32,9 +32,12 @@ describe('uploads', () => {
       assert.equal(content, 'hello world');
     });
 
-    it('should reject invalid file types', () => {
+    it('allows any file type, including previously-disallowed ones (#338)', () => {
       const data = Buffer.from('binary').toString('base64');
-      assert.throws(() => saveUpload(tmpDir, 'evil.exe', data), /not allowed/);
+      // .exe was rejected before #338; it now saves like any other file.
+      const result = saveUpload(tmpDir, 'tool.exe', data);
+      assert.ok(result.path.endsWith('.exe'), '.exe must now be accepted');
+      assert.ok(fs.existsSync(result.path));
     });
 
     it('should create .uploads/ directory if missing', () => {
@@ -77,13 +80,42 @@ describe('uploads', () => {
       assert.ok(!result.name.includes('..'));
     });
 
-    it('should allow all permitted extensions', () => {
+    it('allows any extension — formerly-allowed and formerly-rejected alike (#338)', () => {
       const data = Buffer.from('test').toString('base64');
-      const allowed = ['.png', '.jpg', '.jpeg', '.gif', '.pdf', '.md', '.txt', '.json', '.yaml', '.yml'];
-      for (const ext of allowed) {
+      const exts = ['.png', '.pdf', '.yaml', '.exe', '.zip', '.mp4', '.csv', '.bin'];
+      for (const ext of exts) {
         const result = saveUpload(tmpDir, `file${ext}`, data);
-        assert.ok(result.path.endsWith(ext), `${ext} should be allowed`);
+        assert.ok(result.path.endsWith(ext), `${ext} should be accepted`);
       }
+    });
+
+    it('accepts a file with no extension (#338)', () => {
+      const data = Buffer.from('test').toString('base64');
+      const result = saveUpload(tmpDir, 'Dockerfile', data);
+      assert.match(result.name, /^\d{8}-\d{6}\d?-Dockerfile$/, 'extension-less name preserved, no trailing dot');
+      assert.ok(fs.existsSync(result.path));
+    });
+
+    it('sanitizes a crafted extension to alphanumerics (#338)', () => {
+      const data = Buffer.from('test').toString('base64');
+      // A name whose "extension" carries odd characters must not smuggle them to disk.
+      const result = saveUpload(tmpDir, 'note.t<x>t', data);
+      assert.ok(/\.txt$/.test(result.name), `crafted ext sanitized to .txt (got ${result.name})`);
+      assert.ok(!/[<>]/.test(result.name), 'no angle brackets on disk');
+    });
+
+    it('sanitizes an all-symbol base name to safe characters (#338)', () => {
+      const data = Buffer.from('test').toString('base64');
+      const result = saveUpload(tmpDir, '@@@.png', data);
+      assert.match(result.name, /^\d{8}-\d{6}\d?-_+\.png$/, 'symbols become underscores, ext preserved');
+      assert.ok(!/[^a-zA-Z0-9_.-]/.test(result.name), 'no unsafe characters on disk');
+    });
+
+    it('falls back to "file" when the base name is empty (#338)', () => {
+      const data = Buffer.from('test').toString('base64');
+      // A pure-separator name has an empty base name → the "file" fallback.
+      const result = saveUpload(tmpDir, '/', data);
+      assert.match(result.name, /^\d{8}-\d{6}\d?-file$/, 'empty base name → "file", no extension');
     });
   });
 

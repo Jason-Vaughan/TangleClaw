@@ -102,15 +102,16 @@ describe('API /api/upload + /api/uploads', () => {
     assert.equal(res.status, 400);
   });
 
-  it('POST /api/upload should return 400 for invalid file type', async () => {
-    const data = Buffer.from('evil').toString('base64');
+  it('POST /api/upload accepts any file type (#338)', async () => {
+    const data = Buffer.from('binary').toString('base64');
     const res = await request(server, 'POST', '/api/upload', {
       project: projectName,
-      filename: 'script.exe',
+      filename: 'tool.exe',
       data
     });
-    assert.equal(res.status, 400);
-    assert.ok(res.data.error.includes('not allowed'));
+    assert.equal(res.status, 201, 'a previously-rejected .exe now uploads');
+    assert.ok(res.data.path.endsWith('.exe'));
+    assert.ok(res.data.name && res.data.name.endsWith('.exe'));
   });
 
   it('GET /api/uploads should list uploaded files', async () => {
