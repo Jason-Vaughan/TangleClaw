@@ -401,6 +401,33 @@ describe('projects', () => {
       // Must reflect the DB's Prawduct, not the file's minimal.
       assert.match(content, /Prawduct/, 'CLAUDE.md should be regenerated from the DB methodology (prawduct)');
     });
+
+    it('defers to the Prawduct V2 plugin at boot: preserves the anchor AND strips stale hooks (#330)', () => {
+      // A project later onboarded to the V2 plugin: it carries the install
+      // reference plus a leftover TC `.hooks` block and a plugin-owned thin
+      // CLAUDE.md anchor. Boot-sync must NOT regenerate CLAUDE.md and MUST strip
+      // the stale hooks block (the gap the Critic flagged — boot-sync previously
+      // called writeEngineConfig but not syncEngineHooks).
+      projects.createProject({ name: 'plugin-governed-boot', methodology: 'prawduct' });
+      const projPath = path.join(projectsDir, 'plugin-governed-boot');
+      const claudeDir = path.join(projPath, '.claude');
+      fs.mkdirSync(claudeDir, { recursive: true });
+      fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+        enabledPlugins: { 'prawduct@prawduct': true },
+        hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }] }] }
+      }, null, 2) + '\n');
+      const claudeMd = path.join(projPath, 'CLAUDE.md');
+      const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned by the Prawduct V2 plugin.\n';
+      fs.writeFileSync(claudeMd, anchor);
+
+      const result = projects.syncAllProjects();
+      assert.ok(result.synced > 0);
+
+      assert.equal(fs.readFileSync(claudeMd, 'utf8'), anchor, 'plugin-owned CLAUDE.md must not be regenerated at boot');
+      const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'));
+      assert.equal(settings.hooks, undefined, 'stale TC hooks block must be stripped at boot');
+      assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'plugin install reference must be preserved');
+    });
   });
 
   describe('updateProject', () => {
