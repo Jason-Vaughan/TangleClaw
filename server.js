@@ -1570,9 +1570,8 @@ route('POST', '/api/upload', (_req, res, _params, body) => {
     const result = uploads.saveUpload(project.path, body.filename, body.data);
     jsonResponse(res, 201, result);
   } catch (err) {
-    if (err.message.includes('not allowed')) {
-      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
-    }
+    // #338 — any file type is accepted, so there is no "not allowed" rejection
+    // path any more; a throw here is a genuine save failure.
     log.error('Upload failed', { error: err.message });
     return errorResponse(res, 500, err.message, 'INTERNAL_ERROR');
   }

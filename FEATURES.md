@@ -41,7 +41,7 @@ entries that span multiple co-equal locations.
 - **OpenClaw connections family** — `GET /api/openclaw/connections` `server.js:1745`, `POST` `:1751`, `GET/PUT/DELETE /:id` `:1777`/`:1786`/`:1818`, `POST /api/openclaw/test` `:1839`, tunnel CRUD `:1887`/`:1921`/`:1941`, approve-pending `:1980`.
 - **Eval Audit ingest** — `POST /api/audit/ingest` `server.js:2504`, `POST /api/audit/heartbeat` `:2770`. Backend: `lib/eval-audit.js:55` (`runTier1`), `:238` (`watchSession`).
 - **Activity feed** — `GET /api/activity` `server.js:1394`.
-- **Uploads** — `POST /api/upload` `server.js:1435`, `GET /api/uploads` `:1462`. Backend: `lib/uploads.js`.
+- **Uploads** — per-project file uploader (modal in `public/session.js`/`session.html`). **Any file type** (#338, no extension allowlist); stored under `.uploads/`, referenced by local path; filename sanitized (no traversal). Recent-uploads history items are **click-to-copy-path** (#338). `POST /api/upload`, `GET /api/uploads`. Backend: `lib/uploads.js`.
 - **Tmux mouse mode** — `GET /api/tmux/mouse/:session` `server.js:1480`.
 - **Sidecar processes** — `GET /api/sidecar/:project/processes` `server.js:2724`, `GET /api/sidecar/connection/:connId/processes` `:2747`. Backend: `lib/sidecar.js`.
 - **Skills / wrap-shape registry** — `lib/skills.js:108` (`getWrapSkill`).
