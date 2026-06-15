@@ -283,6 +283,74 @@ describe('sessions', () => {
       assert.equal(minimalPrompt.includes('## Project Version Recording'), false, 'minimal prime should not include version recording');
     });
 
+    describe('Resume directive (CC-1 — READ half of the Continuity Contract)', () => {
+      const continuity = require('../lib/continuity');
+      let resumeProject;
+
+      before(() => {
+        const projDir = path.join(projectsDir, 'resume-test');
+        fs.mkdirSync(projDir, { recursive: true });
+        resumeProject = store.projects.create({
+          name: 'resume-test',
+          path: projDir,
+          engine: 'claude',
+          methodology: 'minimal'
+        });
+      });
+
+      afterEach(() => {
+        // Tear down the index so each case starts from a known state.
+        fs.rmSync(continuity.storeDir(resumeProject.path), { recursive: true, force: true });
+      });
+
+      it('upgrades to an actionable visible-resume directive when an index exists', () => {
+        const engine = store.engines.get('claude');
+        continuity.writeIndex(resumeProject.path, {
+          project: 'resume-test',
+          currentState: 'CC-1 spine landed; tests green.',
+          nextAction: 'stopped at CC-1 · next is CC-2 · open continuity-contract.md',
+          freshness: { sha: 'abc1234', branch: 'feat/cc-1', writtenAt: '2026-06-15' }
+        });
+
+        const prompt = sessions.generatePrimePrompt(resumeProject, engine);
+        assert.match(prompt, /## Resume — emit this as your FIRST visible message/);
+        assert.ok(prompt.includes('hidden context'), 'explains the prime is hidden');
+        assert.ok(prompt.includes('Freshness check FIRST'), 'mandates a freshness check');
+        assert.ok(prompt.includes('We left off at'), 'gives the visible resume wording');
+        assert.ok(prompt.includes("TangleClaw'd into existence"), 're-emits the banner visibly');
+        assert.ok(prompt.includes('Wait for the operator'), 'confirm-before-fire, no auto-execute');
+        // Surfaces the recorded fields + freshness stamp.
+        assert.ok(prompt.includes('next is CC-2'));
+        assert.ok(prompt.includes('CC-1 spine landed'));
+        assert.ok(prompt.includes('abc1234'));
+        // The passive legacy heading is replaced, not duplicated.
+        assert.equal(prompt.includes('## Last Session Summary'), false);
+      });
+
+      it('falls back to the passive Last Session Summary when no index exists', () => {
+        const engine = store.engines.get('claude');
+        const session = store.sessions.start({
+          projectId: resumeProject.id, engineId: 'claude', tmuxSession: 'resume-wrap'
+        });
+        store.sessions.wrap(session.id, 'Legacy passive summary blob');
+
+        const prompt = sessions.generatePrimePrompt(resumeProject, engine);
+        assert.ok(prompt.includes('## Last Session Summary'));
+        assert.ok(prompt.includes('Legacy passive summary blob'));
+        assert.equal(prompt.includes('## Resume — emit this'), false);
+      });
+
+      it('does not offer a resume from a degraded, judgment-empty index', () => {
+        const engine = store.engines.get('claude');
+        // Mechanical-floor wrap: only a freshness stamp, no captured judgment.
+        continuity.writeIndex(resumeProject.path, {
+          freshness: { sha: 'x', branch: 'main', writtenAt: '2026-06-15' }
+        });
+        const prompt = sessions.generatePrimePrompt(resumeProject, engine);
+        assert.equal(prompt.includes('## Resume — emit this'), false);
+      });
+    });
+
     describe('Feature Index injection (#207, chunk 2)', () => {
       // Use a dedicated project to keep config + FEATURES.md state isolated
       // from the other generatePrimePrompt tests above.
@@ -1242,7 +1310,7 @@ describe('sessions', () => {
       await sessions.triggerWrap('prime-test');
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit\n' +
+        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'wrap NL prompt must include the post-Chunk-11c step list; any drift in join structure means triggerWrap behavior changed');
@@ -1351,9 +1419,11 @@ describe('sessions', () => {
         assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
         assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
-        // and `memory-update` — prawduct now ships 9 pipeline steps.
-        assert.equal(result.pipelineResult.results.length, 9,
-          'prawduct pipeline runs all nine steps');
+        // and `memory-update`; CC-1 appended `continuity-write` after
+        // `commit` (writes the hot continuity index) — prawduct now ships
+        // 10 pipeline steps.
+        assert.equal(result.pipelineResult.results.length, 10,
+          'prawduct pipeline runs all ten steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         // Restore default
@@ -1909,7 +1979,7 @@ describe('sessions', () => {
       await sessions.triggerWrap('prime-test');
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit\n' +
+        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-Chunk-11c step list');

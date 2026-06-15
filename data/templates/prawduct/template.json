@@ -81,7 +81,8 @@
           "learnings"
         ]
       },
-      {"id": "commit", "kind": "commit", "blocker": true}
+      {"id": "commit", "kind": "commit", "blocker": true},
+      {"id": "continuity-write", "kind": "continuity-write", "blocker": false}
     ]
   },
   "prime": {

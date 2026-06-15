@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc'];
+      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc', 'continuity-write'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -92,8 +92,9 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.summary, null);
         assert.equal(result.error, null);
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
-        // and `memory-update` — prawduct now ships 9 pipeline steps.
-        assert.equal(result.results.length, 9, 'prawduct has nine pipeline steps');
+        // and `memory-update`; CC-1 appended `continuity-write` after
+        // `commit` — prawduct now ships 10 pipeline steps.
+        assert.equal(result.results.length, 10, 'prawduct has ten pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -109,7 +110,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit']
+        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write']
       );
     });
 
@@ -117,7 +118,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'features-toc', 'ai-content', 'commit']);
+        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'features-toc', 'ai-content', 'commit', 'continuity-write']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
