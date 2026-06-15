@@ -83,12 +83,13 @@ describe('skills', () => {
     // to keep the test robust on fresh clones.
     it('synthesizes legacy shape from wrap_pipeline (post-Chunk-11c step list for prawduct)', () => {
       // #139 Chunk 11c added `open-pr-check` + `critic-check` to prawduct's
-      // wrap_pipeline.steps[]. The shim flattens every step.id into the
-      // legacy steps array, so the surface order here reflects the
-      // template-level addition.
+      // wrap_pipeline.steps[]. CC-1 appended `continuity-write` after
+      // `commit` (writes the hot continuity index the next prime reads).
+      // The shim flattens every step.id into the legacy steps array, so the
+      // surface order here reflects the template-level additions.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit'],
+        steps: ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {
