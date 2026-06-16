@@ -316,4 +316,82 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       assert.ok(!text.includes('wrong'), 'Slice 3 is identity-only; flagging behavior belongs to #340');
     });
   });
+
+  describe('Chunk #340 — scope guard prime (consumes the primitive)', () => {
+    /** Bullet list items (lines like "- `name`") in a rendered block. */
+    function bulletNames(lines) {
+      return lines
+        .filter((l) => /^- `/.test(l))
+        .map((l) => l.replace(/^- `/, '').replace(/`.*$/, ''));
+    }
+
+    it('renders a Scope Guard block naming the owned project', () => {
+      const lines = ownership.scopeGuardSection({ name: 'tc-owned', engineId: 'claude' });
+      const text = lines.join('\n');
+      assert.ok(text.includes('## Scope Guard'));
+      assert.ok(text.includes('tc-owned'), 'names the owned project');
+    });
+
+    it('carries surface-never-refuse wording — flag, wait, operator override', () => {
+      const text = ownership.scopeGuardSection({ name: 'tc-owned' }).join('\n').toLowerCase();
+      assert.ok(text.includes('flag'), 'instructs the agent to flag');
+      assert.ok(text.includes('never refuse'), 'surface, never refuse');
+      assert.ok(text.includes('do it here'), 'operator can always override');
+    });
+
+    it('lists OTHER projects with a live session so the flag can name the likely tab', (t) => {
+      const other1 = store.projects.create({ name: 'sg-portfolio', path: '/tmp/sg-portfolio' });
+      const other2 = store.projects.create({ name: 'sg-monad', path: '/tmp/sg-monad' });
+      t.mock.method(store.sessions, 'listLiveAll', () => [
+        { id: 9001, projectId: other1.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
+        { id: 9002, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' }
+      ]);
+
+      const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
+      assert.ok(names.includes('sg-portfolio'), 'lists a live sibling session');
+      assert.ok(names.includes('sg-monad'), 'lists a wrapping sibling session (agent still running)');
+    });
+
+    it('never lists the owned project among the other live sessions', (t) => {
+      const self = store.projects.create({ name: 'sg-current', path: '/tmp/sg-current' });
+      const sibling = store.projects.create({ name: 'sg-sibling', path: '/tmp/sg-sibling' });
+      // Belt-and-suspenders: a prior same-project session lingering mid-wrap must
+      // still be dropped (the current session's row does not exist at prime-gen).
+      t.mock.method(store.sessions, 'listLiveAll', () => [
+        { id: 9101, projectId: self.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' },
+        { id: 9102, projectId: sibling.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' }
+      ]);
+
+      const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-current', engineId: 'claude' }));
+      assert.ok(!names.includes('sg-current'), 'owned project is never an "other" tab');
+      assert.ok(names.includes('sg-sibling'));
+    });
+
+    it('drops a stale sibling whose tmux pane is gone (confirmed-live only)', (t) => {
+      const sibling = store.projects.create({ name: 'sg-stale', path: '/tmp/sg-stale' });
+      // An `active` DB row whose tmux pane no longer exists must NOT be named as
+      // a phantom tab — only confirmed-live sessions are listed.
+      t.mock.method(store.sessions, 'listLiveAll', () => [
+        { id: 9201, projectId: sibling.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x', tmuxSession: 'tc-sg-stale' }
+      ]);
+      t.mock.method(tmux, 'hasSession', () => false);
+
+      const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
+      assert.ok(!names.includes('sg-stale'), 'stale DB row with no live pane is dropped');
+    });
+
+    it('renders the core directive with no stale list when no other sessions are live', (t) => {
+      t.mock.method(store.sessions, 'listLiveAll', () => []);
+      const lines = ownership.scopeGuardSection({ name: 'sg-alone', engineId: 'claude' });
+      const text = lines.join('\n').toLowerCase();
+      assert.ok(text.includes('## scope guard'));
+      assert.ok(text.includes('never refuse'), 'core directive still present');
+      assert.equal(bulletNames(lines).length, 0, 'no other-session bullets when none are live');
+    });
+
+    it('returns an empty block for a missing or nameless project (mirrors primeSection)', () => {
+      assert.deepEqual(ownership.scopeGuardSection(null), []);
+      assert.deepEqual(ownership.scopeGuardSection({}), []);
+    });
+  });
 });
