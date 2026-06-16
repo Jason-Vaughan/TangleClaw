@@ -50,6 +50,9 @@
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
         Rules
       </button>
+      <button class="dash-action" id="sessionRulesToggle" aria-expanded="false" aria-controls="sessionRulesPanel">
+        Session Rules <span class="dash-badge" id="sessionRulesCount">0</span>
+      </button>
       <button class="dash-action dash-gear" id="gearBtn" aria-label="Settings" title="Settings">&#9881;</button>
     </div>
   </header>
@@ -305,6 +308,22 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <button class="btn btn-small btn-primary" id="rulesSaveBtn">Save</button>
     </div>
     <div id="rulesStatus" class="rules-status hidden" role="status"></div>
+  </div>
+
+  <!-- Session Rules Panel (#347/D1a) -->
+  <div id="sessionRulesPanel" class="session-rules-panel" aria-label="Session rules manager">
+    <p class="session-rules-intro">
+      Durable behavioral directives injected into every project's config at session
+      launch, cross-model — alongside global rules. Changes apply on a project's next
+      session launch or sync.
+    </p>
+    <div id="sessionRulesList" class="session-rules-list" aria-live="polite"></div>
+    <div class="session-rules-add">
+      <textarea class="rules-editor" id="sessionRuleInput" rows="2"
+                placeholder="Add a global session rule…" spellcheck="false"></textarea>
+      <button class="btn btn-small btn-primary" id="sessionRuleAddBtn">Add Rule</button>
+    </div>
+    <div id="sessionRulesStatus" class="rules-status hidden" role="status"></div>
   </div>
 
   <!-- Reset Confirmation Modal -->

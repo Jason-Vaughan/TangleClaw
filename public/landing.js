@@ -21,6 +21,8 @@ const state = {
   portGroupsOpen: {},
   rulesOpen: false,
   globalRulesContent: '',
+  sessionRulesOpen: false,
+  sessionRules: [],
   modelStatus: {},
   groups: [],
   groupsOpen: false,
@@ -418,6 +420,100 @@ async function resetGlobalRules() {
     status.textContent = 'Reset failed';
     status.className = 'rules-status rules-status-err';
   }
+  status.classList.remove('hidden');
+  setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+// ── Session Rules (#347/D1a) ──
+
+/**
+ * Load global session rules from the API and render the list.
+ */
+async function loadSessionRules() {
+  const data = await api('/api/session-rules?scope=global');
+  if (!data) return;
+  state.sessionRules = data.rules || [];
+  const countEl = document.getElementById('sessionRulesCount');
+  if (countEl) countEl.textContent = state.sessionRules.filter((r) => r.enabled).length;
+  renderSessionRules();
+}
+
+/**
+ * Render the session rules list into #sessionRulesList.
+ */
+function renderSessionRules() {
+  const list = document.getElementById('sessionRulesList');
+  if (!list) return;
+  if (state.sessionRules.length === 0) {
+    list.innerHTML = '<p class="session-rules-empty">No session rules yet. Add one below.</p>';
+    return;
+  }
+  list.innerHTML = state.sessionRules.map((rule) => `
+    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
+      <label class="session-rule-toggle">
+        <input type="checkbox" data-action="toggle" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+      </label>
+      <span class="session-rule-content">${esc(rule.content)}</span>
+      <button class="btn btn-small btn-danger session-rule-delete" data-action="delete" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
+    </div>
+  `).join('');
+}
+
+/**
+ * Create a new global session rule from the add-form textarea.
+ */
+async function createSessionRule() {
+  const input = document.getElementById('sessionRuleInput');
+  const content = input.value.trim();
+  if (!content) return;
+  const data = await apiMutate('/api/session-rules', 'POST', { content });
+  if (data) {
+    input.value = '';
+    _setSessionRulesStatus('Added', true);
+    await loadSessionRules();
+  } else {
+    _setSessionRulesStatus('Add failed', false);
+  }
+}
+
+/**
+ * Toggle a session rule's enabled state.
+ * @param {number} id - Rule id
+ * @param {boolean} enabled - New enabled state
+ */
+async function toggleSessionRule(id, enabled) {
+  const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
+  if (data) {
+    await loadSessionRules();
+  } else {
+    _setSessionRulesStatus('Update failed', false);
+  }
+}
+
+/**
+ * Delete a session rule.
+ * @param {number} id - Rule id
+ */
+async function deleteSessionRule(id) {
+  const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
+  if (data) {
+    _setSessionRulesStatus('Deleted', true);
+    await loadSessionRules();
+  } else {
+    _setSessionRulesStatus('Delete failed', false);
+  }
+}
+
+/**
+ * Show a transient status message in the session-rules panel.
+ * @param {string} text - Message
+ * @param {boolean} ok - Success styling when true
+ */
+function _setSessionRulesStatus(text, ok) {
+  const status = document.getElementById('sessionRulesStatus');
+  if (!status) return;
+  status.textContent = text;
+  status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
   status.classList.remove('hidden');
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
 }
@@ -1003,7 +1099,7 @@ async function init() {
   wireOrphanHooksBanner();
   wireStaleServerBanner();
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadSessionRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();

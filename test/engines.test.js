@@ -450,6 +450,86 @@ describe('engines', () => {
     });
   });
 
+  describe('session rules injection (#347/D1a)', () => {
+    let project;
+
+    beforeEach(() => {
+      const projPath = path.join(tempDir, 'sr-proj');
+      fs.mkdirSync(projPath, { recursive: true });
+      project = store.projects.create({ name: 'sr-proj', path: projPath, engine: 'claude', methodology: 'none' });
+    });
+
+    afterEach(() => {
+      // Session rules are global by default — clear them so other generator
+      // tests in this shared-store suite don't see leaked content.
+      for (const rule of store.sessionRules.list()) {
+        store.sessionRules.delete(rule.id);
+      }
+      if (project) store.projects.delete(project.id);
+    });
+
+    it('_getRulesContent surfaces active session rules as sessionRulesLines', () => {
+      store.sessionRules.create({ content: 'Prefer composition over inheritance' });
+      const rules = engines._getRulesContent({ id: project.id });
+      assert.ok(Array.isArray(rules.sessionRulesLines));
+      assert.ok(rules.sessionRulesLines.includes('Prefer composition over inheritance'));
+    });
+
+    it('_getRulesContent returns global + per-project rules for a project', () => {
+      store.sessionRules.create({ content: 'global directive' });
+      store.sessionRules.create({ content: 'project directive', projectId: project.id });
+      const rules = engines._getRulesContent({ id: project.id });
+      assert.ok(rules.sessionRulesLines.includes('global directive'));
+      assert.ok(rules.sessionRulesLines.includes('project directive'));
+    });
+
+    it('excludes disabled rules from sessionRulesLines', () => {
+      const off = store.sessionRules.create({ content: 'disabled directive' });
+      store.sessionRules.update(off.id, { enabled: false });
+      const rules = engines._getRulesContent({ id: project.id });
+      assert.ok(!rules.sessionRulesLines.includes('disabled directive'));
+    });
+
+    it('renders a ## Session Rules section in CLAUDE.md', () => {
+      store.sessionRules.create({ content: 'Always run lint' });
+      const content = engines._generateClaudeMd({ id: project.id }, null);
+      assert.match(content, /## Session Rules/);
+      assert.match(content, /- Always run lint/);
+    });
+
+    it('renders the section in GEMINI.md (cross-model)', () => {
+      store.sessionRules.create({ content: 'Gemini sees this' });
+      const content = engines._generateGeminiMd({ id: project.id }, null);
+      assert.match(content, /## Session Rules/);
+      assert.match(content, /- Gemini sees this/);
+    });
+
+    it('renders the section in .codex.yaml (cross-model)', () => {
+      store.sessionRules.create({ content: 'Codex sees this' });
+      const content = engines._generateCodexYaml({ id: project.id }, null);
+      assert.match(content, /## Session Rules/);
+      assert.match(content, /Codex sees this/);
+    });
+
+    it('renders the section as comments in .aider.conf.yml (cross-model)', () => {
+      store.sessionRules.create({ content: 'Aider sees this' });
+      const content = engines._generateAiderConf({ id: project.id }, null);
+      assert.match(content, /# Session Rules:/);
+      assert.match(content, /#\s+- Aider sees this/);
+    });
+
+    it('renders NOTHING when there are no active session rules', () => {
+      const claude = engines._generateClaudeMd({ id: project.id }, null);
+      const gemini = engines._generateGeminiMd({ id: project.id }, null);
+      const codex = engines._generateCodexYaml({ id: project.id }, null);
+      const aider = engines._generateAiderConf({ id: project.id }, null);
+      assert.doesNotMatch(claude, /## Session Rules/);
+      assert.doesNotMatch(gemini, /## Session Rules/);
+      assert.doesNotMatch(codex, /## Session Rules/);
+      assert.doesNotMatch(aider, /# Session Rules:/);
+    });
+  });
+
   describe('project version recording NOT injected (#101)', () => {
     const projectConfig = {
       rules: {
