@@ -250,4 +250,38 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       assert.equal(own.handle, `cursatory.tail123678.ts.net/magic-dns-addr#${session.id}`);
     });
   });
+
+  describe('Slice 3 — in-session ownership prime', () => {
+    it('renders an identity block naming the owned project, host, and transport', () => {
+      const lines = ownership.primeSection({ name: 'my-proj', engineId: 'claude' });
+      const text = lines.join('\n');
+      assert.ok(text.includes('## Session Ownership'));
+      assert.ok(text.includes('Owned project: `my-proj`'));
+      assert.ok(text.includes('Host: `localhost`'));
+      assert.ok(text.includes('Transport: `tmux`'));
+    });
+
+    it('marks an openclaw project as the openclaw transport', () => {
+      const lines = ownership.primeSection({ name: 'remote-proj', engineId: 'openclaw:abc123' });
+      assert.ok(lines.join('\n').includes('Transport: `openclaw`'));
+    });
+
+    it('reflects the resolved Magic DNS host', () => {
+      ownership._resetHostCacheForTest();
+      ownership._internal.execSync = () => '{"Self":{"DNSName":"cursatory.tail123678.ts.net."}}';
+      const lines = ownership.primeSection({ name: 'p', engineId: 'claude' });
+      assert.ok(lines.join('\n').includes('Host: `cursatory.tail123678.ts.net`'));
+    });
+
+    it('returns an empty block for a missing or nameless project', () => {
+      assert.deepEqual(ownership.primeSection(null), []);
+      assert.deepEqual(ownership.primeSection({}), []);
+    });
+
+    it('identity only — carries no wrong-tab flagging directive (that is #340)', () => {
+      const text = ownership.primeSection({ name: 'p', engineId: 'claude' }).join('\n').toLowerCase();
+      assert.ok(!text.includes('flag'), 'Slice 3 is identity-only; flagging behavior belongs to #340');
+      assert.ok(!text.includes('wrong'), 'Slice 3 is identity-only; flagging behavior belongs to #340');
+    });
+  });
 });

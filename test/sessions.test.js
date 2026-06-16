@@ -67,6 +67,15 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
+    it('injects the session-ownership identity block (#347 Slice 3)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+
+      assert.ok(prompt.includes('## Session Ownership'), 'prime should carry the ownership identity block');
+      assert.ok(prompt.includes('Owned project: `prime-test`'), 'prime should name the owned project');
+    });
+
     it('does not inject methodology heading or description (#102 — already in CLAUDE.md + pill)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
