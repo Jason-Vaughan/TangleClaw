@@ -833,6 +833,73 @@ body {
 .rules-status-ok { color: var(--primary); }
 .rules-status-err { color: var(--danger); }
 
+/* ── Session Rules Panel (#347/D1a) ── */
+.session-rules-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.session-rules-panel.open {
+  max-height: 600px;
+  overflow-y: auto;
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+.session-rules-intro {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 10px;
+}
+.session-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.session-rules-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.session-rule-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+}
+.session-rule-disabled .session-rule-content {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.session-rule-content {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.session-rule-toggle {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+.session-rule-delete {
+  flex: 0 0 auto;
+}
+.session-rules-add {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.session-rules-add .rules-editor {
+  flex: 1;
+  min-height: 48px;
+}
+
 /* ── Toolbar ── */
 .toolbar {
   display: flex;

@@ -495,6 +495,33 @@ function toggleRules() {
 }
 
 /**
+ * Toggle the session rules panel open/closed from the dashboard bar (#347/D1a).
+ */
+function toggleSessionRules() {
+  state.sessionRulesOpen = !state.sessionRulesOpen;
+  const panel = document.getElementById('sessionRulesPanel');
+  const toggle = document.getElementById('sessionRulesToggle');
+  panel.classList.toggle('open', state.sessionRulesOpen);
+  toggle.classList.toggle('active', state.sessionRulesOpen);
+  toggle.setAttribute('aria-expanded', state.sessionRulesOpen);
+}
+
+/**
+ * Handle clicks/changes within the session-rules list (event delegation).
+ * @param {Event} e - The DOM event
+ */
+function handleSessionRulesListEvent(e) {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  const id = Number(target.getAttribute('data-rule-id'));
+  if (target.getAttribute('data-action') === 'toggle') {
+    toggleSessionRule(id, target.checked);
+  } else if (target.getAttribute('data-action') === 'delete') {
+    deleteSessionRule(id);
+  }
+}
+
+/**
  * Open the reset confirmation modal.
  */
 function openRulesResetModal() {
@@ -2432,6 +2459,10 @@ $('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.c
 $('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
+$('sessionRulesToggle').addEventListener('click', toggleSessionRules);
+$('sessionRuleAddBtn').addEventListener('click', createSessionRule);
+$('sessionRulesList').addEventListener('click', handleSessionRulesListEvent);
+$('sessionRulesList').addEventListener('change', handleSessionRulesListEvent);
 $('rulesResetBtn').addEventListener('click', openRulesResetModal);
 $('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
 $('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);

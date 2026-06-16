@@ -841,6 +841,76 @@ route('POST', '/api/rules/global/reset', (_req, res) => {
   jsonResponse(res, 200, { content });
 });
 
+// ── Session Rules API (#347/D1a) ──
+// Durable operator-authored behavioral directives injected cross-model at
+// session launch. Persisting a rule does NOT force a config regen — configs
+// pick it up on next session launch / syncAllProjects, identical to how
+// global-rules edits propagate today. The D1a UI authors GLOBAL rules
+// (projectId omitted); the nullable project_id is schema-ready for D1b.
+
+// GET /api/session-rules — list (optional ?projectId= / ?scope=global)
+route('GET', '/api/session-rules', (req, res) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const query = parseQuery(urlObj.search);
+  const options = {};
+  if (query.scope === 'global') options.scope = 'global';
+  else if (query.projectId !== undefined) options.projectId = Number(query.projectId);
+  const rules = store.sessionRules.list(options);
+  jsonResponse(res, 200, { rules });
+});
+
+// POST /api/session-rules — create { content, projectId?, createdBy? }
+route('POST', '/api/session-rules', (_req, res, _params, body) => {
+  if (!body || typeof body.content !== 'string' || !body.content.trim()) {
+    return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
+  }
+  try {
+    const rule = store.sessionRules.create({
+      content: body.content,
+      projectId: body.projectId ?? null,
+      createdBy: body.createdBy || 'operator'
+    });
+    jsonResponse(res, 201, rule);
+  } catch (err) {
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+}, { maxBodySize: 256 * 1024 });
+
+// PUT /api/session-rules/:id — update { content?, enabled? }
+route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
+  if (!body || typeof body !== 'object') {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  try {
+    const rule = store.sessionRules.update(Number(params.id), body);
+    jsonResponse(res, 200, rule);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    if (err.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    throw err;
+  }
+}, { maxBodySize: 256 * 1024 });
+
+// DELETE /api/session-rules/:id
+route('DELETE', '/api/session-rules/:id', (_req, res, params) => {
+  try {
+    store.sessionRules.delete(Number(params.id));
+    jsonResponse(res, 200, { ok: true, id: Number(params.id) });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    }
+    throw err;
+  }
+});
+
 // GET /api/system
 route('GET', '/api/system', (_req, res) => {
   const stats = system.getStats();
