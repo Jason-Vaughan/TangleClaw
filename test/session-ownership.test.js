@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, mock } = require('node:test');
+const { describe, it, before, after, beforeEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,7 +13,7 @@ const store = require('../lib/store');
 const tmux = require('../lib/tmux');
 const ownership = require('../lib/session-ownership');
 
-describe('session-ownership (#347 Slice 1)', () => {
+describe('session-ownership (#347 Slices 1–2a)', () => {
   let tmpDir;
 
   before(() => {
@@ -25,6 +25,15 @@ describe('session-ownership (#347 Slice 1)', () => {
   after(() => {
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Make local-host resolution deterministic: by default tailscale "isn't
+  // available" and the hostname falls through to 'localhost', so the Slice-1
+  // address assertions below hold. Slice-2a tests override _internal.execSync.
+  beforeEach(() => {
+    ownership._resetHostCacheForTest();
+    ownership._internal.execSync = () => { throw new Error('tailscale not available in test'); };
+    ownership._internal.hostname = () => 'localhost';
   });
 
   /** Create a project + active local session, returning both. */
@@ -178,6 +187,67 @@ describe('session-ownership (#347 Slice 1)', () => {
     it('store.sessions.listLiveAll returns only active/wrapping rows', () => {
       const all = store.sessions.listLiveAll();
       assert.ok(all.every((s) => s.status === 'active' || s.status === 'wrapping'));
+    });
+  });
+
+  describe('Slice 2a — local Magic DNS resolution', () => {
+    const TS_JSON = '{"Self":{"DNSName":"Cursatory.Tail123678.ts.net."}}';
+
+    it('parses .Self.DNSName, strips the trailing dot, and lowercases', () => {
+      ownership._internal.execSync = () => TS_JSON;
+      assert.equal(ownership._detectMagicDnsName(), 'cursatory.tail123678.ts.net');
+    });
+
+    it('returns null when tailscale output is unparseable or Self is absent', () => {
+      ownership._internal.execSync = () => 'not json';
+      assert.equal(ownership._detectMagicDnsName(), null);
+      ownership._internal.execSync = () => '{"BackendState":"Stopped"}';
+      assert.equal(ownership._detectMagicDnsName(), null);
+    });
+
+    it('returns null (never throws) when the tailscale binary is unavailable', () => {
+      ownership._internal.execSync = () => { throw new Error('command not found: tailscale'); };
+      assert.equal(ownership._detectMagicDnsName(), null);
+    });
+
+    it('_localHost prefers the Magic DNS name', () => {
+      ownership._resetHostCacheForTest();
+      ownership._internal.execSync = () => TS_JSON;
+      assert.equal(ownership._localHost(), 'cursatory.tail123678.ts.net');
+    });
+
+    it('_localHost falls back to the OS hostname when tailscale is unavailable', () => {
+      ownership._resetHostCacheForTest();
+      ownership._internal.execSync = () => { throw new Error('no tailscale'); };
+      ownership._internal.hostname = () => 'cursatory-local';
+      assert.equal(ownership._localHost(), 'cursatory-local');
+    });
+
+    it('_localHost falls back to localhost when neither is available', () => {
+      ownership._resetHostCacheForTest();
+      ownership._internal.execSync = () => { throw new Error('no tailscale'); };
+      ownership._internal.hostname = () => '';
+      assert.equal(ownership._localHost(), 'localhost');
+    });
+
+    it('memoizes — tailscale is probed at most once per process', () => {
+      ownership._resetHostCacheForTest();
+      let calls = 0;
+      ownership._internal.execSync = () => { calls += 1; return TS_JSON; };
+      ownership._localHost();
+      ownership._localHost();
+      assert.equal(calls, 1);
+    });
+
+    it('a local session address reflects the resolved Magic DNS name', (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      ownership._resetHostCacheForTest();
+      ownership._internal.execSync = () => TS_JSON;
+      const { session } = makeLocalSession('magic-dns-addr');
+
+      const own = ownership.resolveBySessionId(session.id);
+      assert.equal(own.host, 'cursatory.tail123678.ts.net');
+      assert.equal(own.handle, `cursatory.tail123678.ts.net/magic-dns-addr#${session.id}`);
     });
   });
 });
