@@ -86,6 +86,26 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     it('returns null for an unknown project', () => {
       assert.equal(ownership.resolveByProject('does-not-exist'), null);
     });
+
+    it('resolves a wrapping session (live = active OR wrapping)', (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      const { session } = makeLocalSession('wrapping-resolve');
+      store.sessions.setWrapping(session.id);
+
+      const own = ownership.resolveByProject('wrapping-resolve');
+      assert.ok(own, 'a mid-wrap session should still resolve by project');
+      assert.equal(own.sessionId, session.id);
+      assert.equal(own.status, 'wrapping');
+    });
+  });
+
+  describe('transport classification', () => {
+    it('keys on engine prefix, then webui mode, else tmux', () => {
+      assert.equal(ownership._transportOf({ engineId: 'openclaw:x', sessionMode: 'webui' }), 'openclaw');
+      assert.equal(ownership._transportOf({ engineId: 'claude', sessionMode: 'webui' }), 'webui');
+      assert.equal(ownership._transportOf({ engineId: 'claude', sessionMode: 'tmux' }), 'tmux');
+      assert.equal(ownership._transportOf({}), 'tmux');
+    });
   });
 
   describe('liveness', () => {
@@ -98,13 +118,25 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       assert.equal(own.livenessSource, 'tmux');
     });
 
-    it('confirms live against tmux, not just the DB status', (t) => {
+    it('confirms live against the session\'s own tmux handle, not the DB status', (t) => {
       const calls = [];
       t.mock.method(tmux, 'hasSession', (name) => { calls.push(name); return true; });
       const { session } = makeLocalSession('checks-tmux');
 
       ownership.resolveBySessionId(session.id);
-      assert.ok(calls.includes('checks-tmux'), 'tmux.hasSession should be consulted for local liveness');
+      assert.ok(calls.includes('checks-tmux'), 'tmux.hasSession should be consulted with the session tmuxSession');
+    });
+
+    it('a paneless local session (no tmux handle) falls back to db liveness', (t) => {
+      const failIfCalled = t.mock.method(tmux, 'hasSession', () => true);
+      const project = store.projects.create({ name: 'paneless', path: '/tmp/paneless' });
+      const session = store.sessions.start({ projectId: project.id, engineId: 'claude' }); // no tmuxSession
+
+      const own = ownership.resolveBySessionId(session.id);
+      assert.equal(own.transport, 'tmux');
+      assert.equal(own.livenessSource, 'db');
+      assert.equal(own.live, true); // active in DB
+      assert.equal(failIfCalled.mock.calls.length, 0, 'no tmux handle → must not probe tmux');
     });
   });
 
