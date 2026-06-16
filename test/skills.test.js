@@ -81,15 +81,16 @@ describe('skills', () => {
     // Pins the two public bundled templates (prawduct + minimal). The
     // unreleased `tilt` template is gitignored, so it isn't asserted here
     // to keep the test robust on fresh clones.
-    it('synthesizes legacy shape from wrap_pipeline (post-Chunk-11c step list for prawduct)', () => {
+    it('synthesizes legacy shape from wrap_pipeline (post-C2 step list for prawduct)', () => {
       // #139 Chunk 11c added `open-pr-check` + `critic-check` to prawduct's
       // wrap_pipeline.steps[]. CC-1 appended `continuity-write` after
       // `commit` (writes the hot continuity index the next prime reads).
-      // The shim flattens every step.id into the legacy steps array, so the
-      // surface order here reflects the template-level additions.
+      // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
+      // V2 plugin). The shim flattens every step.id into the legacy steps
+      // array, so the surface order here reflects the template-level edits.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write'],
+        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {

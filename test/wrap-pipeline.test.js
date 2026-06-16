@@ -93,8 +93,9 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.error, null);
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
         // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit` — prawduct now ships 10 pipeline steps.
-        assert.equal(result.results.length, 10, 'prawduct has ten pipeline steps');
+        // `commit`; C2 (#353) stripped the L3 `critic-check` step (governance
+        // moved to the V2 plugin) — prawduct now ships 9 pipeline steps.
+        assert.equal(result.results.length, 9, 'prawduct has nine pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -110,7 +111,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'critic-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write']
+        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write']
       );
     });
 
@@ -118,7 +119,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'critic-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'features-toc', 'ai-content', 'commit', 'continuity-write']);
+        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'priming-roll', 'features-toc', 'ai-content', 'commit', 'continuity-write']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -128,7 +129,11 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // every step. We capture the live reference each stub sees and
       // assert the post-run state.
       const capturedStaged = [];
-      const wrapKinds = ['pr-check', 'lint', 'test', 'critic-check', 'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'commit'];
+      // C2 (#353) dropped `critic-check` from prawduct's pipeline; patch every
+      // kind the pipeline actually uses (incl. `continuity-write`, CC-1) so the
+      // inertness check captures all nine steps rather than letting a real
+      // handler run mid-test.
+      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -3925,19 +3930,20 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
     assert.equal(commitStep.blocker, true);
   });
 
-  // #264 / ADR 0002 amendment: critic-check step's blocker was
-  // intentionally flipped from `false` to `"errors-only"` in the
-  // prawduct bundled template so the runner's halt-on-!ok check fires
-  // when blocking findings are present (since the handler now returns
-  // ok:false in that case). Pin the contract here so a future
-  // template-author can't silently revert it without a CI failure.
-  it('#264 — prawduct critic-check step has blocker:"errors-only"', () => {
+  // C2 (#353) retired the V1 platform governance from the bundled prawduct
+  // template: the L3 `critic-check` wrap step was stripped (governance moved
+  // to the V2 plugin). Pin the ABSENCE here so a future template-author can't
+  // silently re-introduce vendored governance into the cross-model native
+  // base without a CI failure. (The `critic-check` handler itself still
+  // exists as a valid step kind for any methodology that opts into it — see
+  // the "wrap-step critic-check" handler describes above; this only asserts
+  // the bundled prawduct pipeline no longer ships it.)
+  it('#353 — prawduct wrap pipeline no longer ships a critic-check step (C2 strip)', () => {
     const t = store.templates.get('prawduct');
     const criticStep = t.wrap_pipeline.steps.find((s) => s.kind === 'critic-check');
-    assert.ok(criticStep, 'prawduct must declare a critic-check step');
-    assert.equal(criticStep.blocker, 'errors-only',
-      'critic-check must declare blocker:"errors-only" so the runner halts on ok:false ' +
-      '(handler returns ok:false only when blocking findings exist + no override) per ADR 0002 amendment');
+    assert.equal(criticStep, undefined,
+      'C2 stripped L3/L4 governance from the bundled prawduct template; the ' +
+      'critic-check step must NOT be present (governance is delivered by the V2 plugin)');
   });
 });
 

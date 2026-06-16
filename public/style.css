@@ -587,6 +587,17 @@ body {
   margin-left: 3px;
   font-weight: 600;
 }
+/* Governance-drift indicator (#353) — amber "attention," not error-red, since
+   the project still runs at L0–L2; the gap is missing governance, not a fault. */
+.badge-drift {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
 .audit-summary-table {
   width: 100%;
   font-size: 12px;

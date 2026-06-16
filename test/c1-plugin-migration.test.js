@@ -252,5 +252,15 @@ describe('C1 — per-project plugin migration (#262)', () => {
       const enriched = projects.getProject('c1-enrich');
       assert.equal(enriched.migrationStatus, 'migrated');
     });
+
+    it('migration flips governanceState drift → governed-plugin (C2 #353 drift badge self-clears)', () => {
+      const p = mkProjectDir('govflip');
+      store.projects.create({ name: 'c1-govflip', path: p, engine: 'claude', methodology: 'prawduct' });
+      // Before: labeled prawduct + Claude, no plugin, no vendored hook → drift.
+      assert.equal(projects.getProject('c1-govflip').governanceState, 'drift-no-governance');
+      projects.migrateProjectToPlugin('c1-govflip');
+      // After: the migration wrote the plugin ref, so the derived state clears.
+      assert.equal(projects.getProject('c1-govflip').governanceState, 'governed-plugin');
+    });
   });
 });
