@@ -1188,6 +1188,26 @@ route('POST', '/api/projects/:name/unarchive', (_req, res, params) => {
   jsonResponse(res, 200, { ok: true, name: params.name });
 });
 
+// POST /api/projects/:name/migrate-to-plugin — Migrate a project to V2-plugin
+// governance (#262, C1). Cohort-aware (non-Claude → not-applicable) + session-safe
+// (defers on a live session; never auto-closes). Idempotent.
+route('POST', '/api/projects/:name/migrate-to-plugin', (_req, res, params) => {
+  const result = projects.migrateProjectToPlugin(params.name);
+  if (result.error) {
+    const notFound = result.error.includes('not found');
+    return errorResponse(res, notFound ? 404 : 400, result.error, notFound ? 'NOT_FOUND' : 'BAD_REQUEST');
+  }
+  jsonResponse(res, 200, {
+    ok: true,
+    name: params.name,
+    migrationStatus: result.status,
+    migrated: result.migrated,
+    deferred: result.deferred || false,
+    alreadyGoverned: result.alreadyGoverned || false,
+    reason: result.reason
+  });
+});
+
 // PATCH /api/projects/:name
 route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
