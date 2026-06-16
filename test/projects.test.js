@@ -335,6 +335,57 @@ describe('projects', () => {
     });
   });
 
+  describe('enrichProject — governanceState (#353)', () => {
+    let govDir;
+
+    before(() => {
+      govDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-proj-gov-'));
+    });
+
+    after(() => {
+      fs.rmSync(govDir, { recursive: true, force: true });
+    });
+
+    function makeProject(name, { engine = 'claude', methodology = 'prawduct', settings, vendored } = {}) {
+      const projPath = path.join(govDir, name);
+      fs.mkdirSync(projPath, { recursive: true });
+      if (settings) {
+        fs.mkdirSync(path.join(projPath, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(projPath, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
+      }
+      if (vendored) {
+        fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
+        fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
+      }
+      store.projects.create({ name, path: projPath, engine, methodology });
+      return projPath;
+    }
+
+    it('surfaces drift-no-governance for a Cohort-B claude+prawduct project', () => {
+      makeProject('gov-drift');
+      assert.equal(projects.getProject('gov-drift').governanceState, 'drift-no-governance');
+    });
+
+    it('surfaces governed-plugin once the V2 plugin ref is present', () => {
+      makeProject('gov-plugin', { settings: { enabledPlugins: { 'prawduct@prawduct': true } } });
+      assert.equal(projects.getProject('gov-plugin').governanceState, 'governed-plugin');
+    });
+
+    it('surfaces not-applicable for a non-Claude project', () => {
+      makeProject('gov-na', { engine: 'gemini' });
+      assert.equal(projects.getProject('gov-na').governanceState, 'not-applicable');
+    });
+
+    it('every listProjects entry carries a governanceState field', () => {
+      const list = projects.listProjects();
+      assert.ok(list.length > 0);
+      for (const p of list) {
+        assert.ok(p.hasOwnProperty('governanceState'),
+          `project ${p.name} missing governanceState`);
+      }
+    });
+  });
+
   describe('syncAllProjects', () => {
     it('regenerates engine config for registered project', () => {
       // new-project was created earlier in the test suite
@@ -1508,20 +1559,48 @@ describe('projects', () => {
     // entries. Pattern is the symmetric-capability-gates ADR
     // (`docs/adr/0001-symmetric-capability-gates.md`).
     let methDir;
+    // Synthetic methodology that DECLARES governance hooks. Since C2 (#353)
+    // stripped L3/L4 from the bundled `prawduct` template, no shipped
+    // methodology carries hooks anymore — so the flip machinery (materialize /
+    // strip / preserve-non-hook-keys / silentPrime-survival) can only be
+    // exercised against a methodology that genuinely declares them. We clone
+    // the real prawduct template and restore the pre-C2 `requires`-gated
+    // product-hook block under a distinct id; this isolates the variable under
+    // test (the flip logic) from the bundled template's hook content.
+    const HOOKED_METHODOLOGY_ID = 'gov-hooked-test';
 
     before(() => {
       methDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-meth-flip-'));
+      const hooked = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
+      hooked.id = HOOKED_METHODOLOGY_ID;
+      hooked.name = 'Gov Hooked (test)';
+      hooked.hooks = {
+        claude: {
+          SessionStart: [{
+            matcher: 'startup|clear|resume',
+            requires: ['tools/product-hook'],
+            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear', statusMessage: 'Preparing session...' }]
+          }],
+          Stop: [{
+            matcher: '',
+            requires: ['tools/product-hook'],
+            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop', statusMessage: 'Checking governance gates...' }]
+          }]
+        }
+      };
+      store.templates.save(hooked);
     });
 
     after(() => {
       fs.rmSync(methDir, { recursive: true, force: true });
+      try { store.templates.delete(HOOKED_METHODOLOGY_ID); } catch { /* best-effort cleanup */ }
     });
 
     /**
-     * Set up a registered prawduct project with the runtime materialized on
-     * disk so the chunk-1 `requires` filter ACCEPTS the prawduct hooks at
-     * `syncEngineHooks` time, then trigger the sync so hooks land in
-     * `.claude/settings.json`. Bypasses `projects.createProject` (which
+     * Set up a registered project on the synthetic hooked methodology with the
+     * runtime materialized on disk so the chunk-1 `requires` filter ACCEPTS the
+     * governance hooks at `syncEngineHooks` time, then trigger the sync so hooks
+     * land in `.claude/settings.json`. Bypasses `projects.createProject` (which
      * enforces a single configured `projectsDir`) and uses the same
      * `store.projects.create({ path: ... })` pattern as the existing
      * silentPrime engine-flip tests at line 1076.
@@ -1538,17 +1617,17 @@ describe('projects', () => {
       // silentPrime=false keeps the audit focused on methodology hooks only —
       // post-#129 the default would inject the silentPrime baseline SessionStart
       // hook and mask the methodology-strip assertion.
-      store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'prawduct' });
+      store.projects.create({ name, path: projPath, engine: 'claude', methodology: HOOKED_METHODOLOGY_ID });
       const projConfig = store.projectConfig.load(projPath);
-      projConfig.methodology = 'prawduct';
+      projConfig.methodology = HOOKED_METHODOLOGY_ID;
       projConfig.silentPrime = false;
       store.projectConfig.save(projPath, projConfig);
 
-      // Trigger syncEngineHooks to inject prawduct's methodology hooks
-      const template = store.templates.get('prawduct');
+      // Trigger syncEngineHooks to inject the methodology's governance hooks
+      const template = store.templates.get(HOOKED_METHODOLOGY_ID);
       engines.syncEngineHooks(projPath, template);
 
-      // Sanity — chunks 1+2 land the prawduct hooks
+      // Sanity — chunks 1+2 land the governance hooks
       const settingsPath = path.join(projPath, '.claude', 'settings.json');
       assert.ok(fs.existsSync(settingsPath), 'expected .claude/settings.json after sync');
       const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
@@ -1564,7 +1643,7 @@ describe('projects', () => {
       const result = projects.updateProject('flip-to-minimal', { methodology: 'minimal' });
       assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
       assert.ok(result.methodologySwitch, 'expected methodologySwitch to be populated');
-      assert.equal(result.methodologySwitch.from, 'prawduct');
+      assert.equal(result.methodologySwitch.from, HOOKED_METHODOLOGY_ID);
       assert.equal(result.methodologySwitch.to, 'minimal');
 
       const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
@@ -1654,10 +1733,10 @@ describe('projects', () => {
 
       // Sanity: the project's state is unchanged after the rejected PATCH
       const reloaded = store.projects.getByName('flip-to-null-rejected');
-      assert.equal(reloaded.methodology, 'prawduct', 'methodology unchanged after rejection');
+      assert.equal(reloaded.methodology, HOOKED_METHODOLOGY_ID, 'methodology unchanged after rejection');
       const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       assert.ok(JSON.stringify(after.hooks || {}).includes('product-hook'),
-        'prawduct hooks still in place after rejection — no destructive partial mutation');
+        'governance hooks still in place after rejection — no destructive partial mutation');
     });
 
     it('PATCH methodology preserves non-hook keys in .claude/settings.json across the flip', () => {
@@ -1680,11 +1759,11 @@ describe('projects', () => {
       assert(projPath);
     });
 
-    it('PATCH methodology: minimal → prawduct materializes prawduct hooks (reverse-direction coverage)', () => {
+    it('PATCH methodology: minimal → hooked materializes governance hooks (reverse-direction coverage)', () => {
       // ADR 0001 anti-pattern §4: "single-direction regression test ... both
       // directions of every paired transition need coverage." The above
-      // tests cover the strip direction (prawduct → minimal); this test
-      // covers the materialize direction (minimal → prawduct), confirming
+      // tests cover the strip direction (hooked → minimal); this test
+      // covers the materialize direction (minimal → hooked), confirming
       // that switching INTO a methodology with hooks injects them the same
       // way `createProject` would.
       const name = 'flip-minimal-to-prawduct';
@@ -1706,17 +1785,17 @@ describe('projects', () => {
       const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       assert.equal(before.hooks, undefined, 'expected no hooks in minimal pre-state');
 
-      // Flip into prawduct
-      const result = projects.updateProject(name, { methodology: 'prawduct' });
+      // Flip into the hooked methodology
+      const result = projects.updateProject(name, { methodology: HOOKED_METHODOLOGY_ID });
       assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
       assert.ok(result.methodologySwitch, 'expected methodologySwitch on materialize-direction flip');
       assert.equal(result.methodologySwitch.from, 'minimal');
-      assert.equal(result.methodologySwitch.to, 'prawduct');
+      assert.equal(result.methodologySwitch.to, HOOKED_METHODOLOGY_ID);
 
-      // Prawduct hooks should now be present
+      // Governance hooks should now be present
       const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       assert.ok(after.hooks, 'expected hooks block after materialize-direction flip');
-      assert.ok(after.hooks.Stop, 'expected prawduct Stop hook materialized');
+      assert.ok(after.hooks.Stop, 'expected governance Stop hook materialized');
       assert.ok(JSON.stringify(after.hooks).includes('product-hook'),
         'expected product-hook reference after materialize-direction flip');
     });

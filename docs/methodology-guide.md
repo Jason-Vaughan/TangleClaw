@@ -39,7 +39,7 @@ Best for: projects where you want TangleClaw's session management without a pres
 - **Status**: reads `work_in_progress.description` from `.prawduct/project-state.yaml`
 - **Detection**: looks for `.prawduct/` directory
 - **Actions**: "Mark Critic Run" button in session wrapper (records that an Independent Critic review was completed; does not auto-run a Critic — see issue #230 for the contract clarification)
-- **Hooks**: Prawduct's `product-hook` runs on session start (briefing + sync) and session stop (governance gates). Hooks reference the product's own `tools/product-hook` — updated automatically via framework sync on each session start
+- **Hooks**: The bundled template ships the cross-model native base only (L0–L2: rules, session prime, wrap pipeline). L3/L4 governance (Stop-gate, Critic protocol) is delivered by the **Prawduct V2 Claude Code plugin** for opted-in Claude projects, not vendored into the template — so a newly-created project never inherits V1 governance hooks. Per-project migration onto the plugin is the operator action added in C1 (#262); projects labeled prawduct that are on neither the plugin nor a legacy vendored hook surface a visible governance-drift indicator (#353)
 
 Best for: structured development with governance, planning artifacts, and independent review. See the [Prawduct README](https://github.com/brookstalley/prawduct) for installation and full documentation.
 

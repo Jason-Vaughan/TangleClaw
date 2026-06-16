@@ -974,6 +974,63 @@ describe('engines', () => {
       });
     });
 
+    describe('governanceState (#353)', () => {
+      const claudePrawduct = { engineId: 'claude', methodology: 'prawduct' };
+
+      /** Drop a vendored governance hook file into a project (Cohort A shape). */
+      function addVendoredHook(p) {
+        fs.mkdirSync(path.join(p, 'tools'), { recursive: true });
+        fs.writeFileSync(path.join(p, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
+      }
+
+      it('is governed-plugin when the V2 plugin is enabled', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-plugin');
+      });
+
+      it('is governed-vendored when a vendored product-hook is present (no plugin)', () => {
+        const p = mkProject({});
+        addVendoredHook(p);
+        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-vendored');
+      });
+
+      it('is drift-no-governance for Cohort B: prawduct + Claude, no plugin, no vendored hook', () => {
+        const p = mkProject({});
+        assert.equal(engines.governanceState(p, claudePrawduct), 'drift-no-governance');
+      });
+
+      it('prefers plugin over vendored when both are present (no double-governance ambiguity)', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        addVendoredHook(p);
+        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-plugin');
+      });
+
+      it('is not-applicable for a non-Claude engine regardless of files', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        addVendoredHook(p);
+        assert.equal(engines.governanceState(p, { engineId: 'gemini', methodology: 'prawduct' }), 'not-applicable');
+      });
+
+      it('is not-applicable for a non-prawduct methodology', () => {
+        const p = mkProject({});
+        assert.equal(engines.governanceState(p, { engineId: 'claude', methodology: 'minimal' }), 'not-applicable');
+      });
+
+      it('is not-applicable when meta is missing engine/methodology', () => {
+        const p = mkProject({});
+        assert.equal(engines.governanceState(p, {}), 'not-applicable');
+        assert.equal(engines.governanceState(p), 'not-applicable');
+      });
+
+      it('fails closed to drift-no-governance on malformed settings (no throw)', () => {
+        const p = fs.mkdtempSync(path.join(govDir, 'gov-badjson-'));
+        fs.mkdirSync(path.join(p, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(p, '.claude', 'settings.json'), '{ not valid json');
+        // isPluginGoverned fails closed (false) + no vendored hook → drift, not a throw.
+        assert.equal(engines.governanceState(p, claudePrawduct), 'drift-no-governance');
+      });
+    });
+
     describe('writeEngineConfig defers', () => {
       it('skips (no error) and does NOT overwrite an existing CLAUDE.md when plugin-governed', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });

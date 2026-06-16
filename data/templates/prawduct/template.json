@@ -4,7 +4,7 @@
   "description": "Structured governance with discovery, planning, building, and independent Critic review.",
   "type": "methodology",
   "version": "1.0.0",
-  "schemaRevision": 2,
+  "schemaRevision": 3,
   "phases": [
     {
       "id": "discovery",
@@ -50,7 +50,6 @@
     },
     "steps": [
       {"id": "open-pr-check", "kind": "pr-check", "blocker": false},
-      {"id": "critic-check", "kind": "critic-check", "blocker": "errors-only"},
       {"id": "version-bump", "kind": "version-bump", "blocker": false},
       {
         "id": "changelog-update",
@@ -120,38 +119,7 @@
     }
   ],
   "hooks": {
-    "claude": {
-      "SessionStart": [
-        {
-          "matcher": "startup|clear|resume",
-          "requires": [
-            "tools/product-hook"
-          ],
-          "hooks": [
-            {
-              "type": "command",
-              "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" clear",
-              "statusMessage": "Preparing session..."
-            }
-          ]
-        }
-      ],
-      "Stop": [
-        {
-          "matcher": "",
-          "requires": [
-            "tools/product-hook"
-          ],
-          "hooks": [
-            {
-              "type": "command",
-              "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/product-hook\" stop",
-              "statusMessage": "Checking governance gates..."
-            }
-          ]
-        }
-      ]
-    }
+    "claude": {}
   },
   "evalDimensions": {
     "schemaVersion": "prawduct-v1",

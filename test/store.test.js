@@ -341,50 +341,35 @@ describe('store', () => {
         'legacy wrap block must be preserved as-is when bundled drops it');
     });
 
-    it('reconciles stale runtime methodology template hook entries against bundled on init (#158)', () => {
-      // Same integration shape as the #136 case above, but exercising the
-      // hook-entry backfill path added in #158. Seeds a pre-#146 runtime
-      // template — hook entries present but missing the `requires` precondition
-      // — and asserts init() backfills requires from the bundled template.
-      const templatesDir = path.join(tmpDir, 'templates');
-      const prawductDir = path.join(templatesDir, 'prawduct');
-      fs.mkdirSync(prawductDir, { recursive: true });
-      const stale = {
-        id: 'prawduct',
-        name: 'Prawduct',
-        wrap: { command: null, steps: ['version-bump', 'changelog-update', 'memory-update', 'commit'] },
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: 'startup|clear|resume',
-              // NO requires — pre-#146 shape
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
-            }],
-            Stop: [{
-              matcher: '',
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
-            }]
-          }
-        }
-      };
-      const livePath = path.join(prawductDir, 'template.json');
-      fs.writeFileSync(livePath, JSON.stringify(stale, null, 2));
-
+    it('fresh init() copies a bundled prawduct template with NO governance hooks and no critic-check step (C2 strip, #353)', () => {
+      // C2 (#353) retired the V1 platform governance from the bundled prawduct
+      // template: the `product-hook` SessionStart/Stop hooks and the L3
+      // `critic-check` wrap step were stripped (governance moved to the V2
+      // plugin). This asserts a brand-new install (fresh _copyBundledTemplates
+      // on an empty base — beforeEach gives each test a clean base path) gets
+      // the cross-model native base only, so a newly-created project can never
+      // inherit V1 governance.
+      //
+      // The pre-C2 incarnation of this test (#158) exercised init()'s
+      // `requires`-backfill of those governance hooks; with the hooks gone from
+      // the bundled template there is nothing to backfill, so the backfill
+      // machinery (`_mergeBundledHookEntries`) is now covered by the synthetic
+      // unit tests in test/issue-158-syncEngineHooks-integration.test.js
+      // instead of through the real template.
       store.init();
 
-      const updated = JSON.parse(fs.readFileSync(livePath, 'utf8'));
-      assert.ok(Array.isArray(updated.hooks.claude.SessionStart[0].requires),
-        'SessionStart[0].requires backfilled from bundled (#158 incident shape)');
-      assert.ok(updated.hooks.claude.SessionStart[0].requires.includes('tools/product-hook'),
-        'SessionStart[0].requires contains tools/product-hook');
-      assert.ok(Array.isArray(updated.hooks.claude.Stop[0].requires),
-        'Stop[0].requires backfilled from bundled');
-      assert.ok(updated.hooks.claude.Stop[0].requires.includes('tools/product-hook'),
-        'Stop[0].requires contains tools/product-hook');
-      // Inner hooks array preserved (chunk-1 filter strips `requires` from the
-      // emitted .claude/settings.json but the runtime template keeps it).
-      assert.equal(updated.hooks.claude.Stop[0].hooks[0].command,
-        'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop');
+      const t = store.templates.get('prawduct');
+      assert.ok(t, 'prawduct template should be copied on init');
+      // No governance hooks ship in the native base.
+      const claudeHooks = (t.hooks && t.hooks.claude) || {};
+      assert.deepStrictEqual(Object.keys(claudeHooks), [],
+        'bundled prawduct must ship no Claude governance hooks after the C2 strip');
+      assert.ok(!JSON.stringify(t.hooks || {}).includes('product-hook'),
+        'no residual product-hook reference in the bundled prawduct template');
+      // No L3 critic-check wrap step.
+      const criticStep = t.wrap_pipeline.steps.find((s) => s.kind === 'critic-check');
+      assert.equal(criticStep, undefined,
+        'bundled prawduct must not ship a critic-check wrap step after the C2 strip');
     });
   });
 

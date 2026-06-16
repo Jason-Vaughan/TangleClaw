@@ -1307,7 +1307,7 @@ describe('sessions', () => {
     // wired-in `open-pr-check` + `critic-check` steps. The byte-equal
     // contract still applies — any drift in `triggerWrap`'s join structure
     // (separator, capture-field-suffix, command-prefix) will fail this pin.
-    it('sends byte-equal NL wrap prompt for prawduct (legacy path, post-Chunk-11c step list)', async () => {
+    it('sends byte-equal NL wrap prompt for prawduct (legacy path, post-C2 step list)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
@@ -1317,12 +1317,14 @@ describe('sessions', () => {
       });
 
       await sessions.triggerWrap('prime-test');
+      // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
+      // V2 plugin); the byte-equal contract otherwise holds.
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
+        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
-        'wrap NL prompt must include the post-Chunk-11c step list; any drift in join structure means triggerWrap behavior changed');
+        'wrap NL prompt must include the post-C2 step list; any drift in join structure means triggerWrap behavior changed');
     });
 
     it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', async () => {
@@ -1429,10 +1431,10 @@ describe('sessions', () => {
         assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
         // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit` (writes the hot continuity index) — prawduct now ships
-        // 10 pipeline steps.
-        assert.equal(result.pipelineResult.results.length, 10,
-          'prawduct pipeline runs all ten steps');
+        // `commit`; C2 (#353) stripped the L3 `critic-check` step — prawduct
+        // now ships 9 pipeline steps.
+        assert.equal(result.pipelineResult.results.length, 9,
+          'prawduct pipeline runs all nine steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         // Restore default
@@ -2061,12 +2063,14 @@ describe('sessions', () => {
       });
 
       await sessions.triggerWrap('prime-test');
+      // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
+      // V2 plugin); the legacy NL-prompt structure is otherwise unchanged.
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, critic-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
+        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
-        'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-Chunk-11c step list');
+        'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-C2 step list');
     });
 
     // #139 Chunk 11c — verify the minimal-methodology opt-out path is

@@ -147,6 +147,14 @@ function renderCard(project) {
       })()
     : '';
 
+  // Governance-drift badge (#353) — only the alarming state renders, to avoid
+  // badge noise. "drift-no-governance" = labeled prawduct + Claude but neither
+  // on the V2 plugin nor carrying a vendored hook, so the Stop-gate/Critic layer
+  // is silently off. Self-clears once the project migrates.
+  const driftBadge = project.governanceState === 'drift-no-governance'
+    ? `<span class="badge badge-drift" title="Governance drift: this project presents as Prawduct-governed but its Stop-gate/Critic layer is silently OFF (not on the V2 plugin, no vendored hook). Open Info to migrate it.">&#9888; governance drift</span>`
+    : '';
+
   const statusDot = hasSession
     ? `<span class="status-dot active" title="Session active"></span>`
     : `<span class="status-dot" title="No active session"></span>`;
@@ -163,6 +171,7 @@ function renderCard(project) {
       ${phaseBadge}
       ${groupBadges}
       ${auditBadge}
+      ${driftBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
