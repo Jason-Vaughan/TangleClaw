@@ -222,3 +222,55 @@ describe('wrap-step ai-content — #328 blocker override + timeout message', () 
     });
   });
 });
+
+// #334 — WebUI/OpenClaw sessions have no tmux pane (sessionMode:'webui',
+// tmuxSession:null). This step's send→poll→capture mechanism can't run, and
+// the content ai-content steps are blocker:true, so returning `blocked` would
+// halt every webui wrap before commit. The handler must SKIP (ok:true) for a
+// webui-mode session — but still BLOCK for the genuine anomaly (a non-webui
+// session that lost its tmux).
+describe('wrap-step ai-content — #334 webui sessions skip (no tmux pane)', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  // NON-EMPTY prompt on purpose: the empty-prompt skip lives just below the
+  // webui guard, so an empty prompt would mask a reverted webui guard. A
+  // non-empty prompt isolates the variable under test (project learning).
+  const ctx = (session) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session,
+    step: { id: 'memory-update', kind: 'ai-content', prompt: 'write the block' },
+    previousResults: [],
+    staged: {},
+    options: {}
+  });
+
+  it('webui-mode session (no tmux) → ok:true, status "skipped", never touches tmux', async () => {
+    let sent = false;
+    aic._internal.sendKeys = () => { sent = true; };
+
+    const res = await aic.run(ctx({ sessionMode: 'webui', tmuxSession: null }));
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'skipped');
+    assert.equal(res.output && res.output.webui, true);
+    assert.equal(sent, false, 'no prompt sent to a non-existent tmux pane');
+  });
+
+  it('non-webui session that lost its tmux still BLOCKS (the genuine anomaly is preserved)', async () => {
+    const res = await aic.run(ctx({ sessionMode: 'tmux', tmuxSession: null }));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /requires an active tmux session/);
+  });
+
+  it('no session at all → blocked', async () => {
+    const res = await aic.run(ctx(null));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /requires an active session/);
+  });
+});
