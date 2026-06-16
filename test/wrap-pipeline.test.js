@@ -1040,7 +1040,10 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     ));
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /active tmux session/);
+    // #334 split the guard: a *missing* session blocks with the generic
+    // "active session" message; the tmux-specific message is reserved for a
+    // non-webui session that lost its tmux (covered in wrap-step-ai-content.test.js).
+    assert.match(result.blockers[0], /requires an active session/);
   });
 
   it('skips cleanly when step.prompt is empty (#139 Chunk 11c — placeholder semantics)', async () => {

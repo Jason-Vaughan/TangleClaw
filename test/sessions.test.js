@@ -1435,6 +1435,81 @@ describe('sessions', () => {
       }
     });
 
+    it('#334 — webui session (null tmux) routes to the V2 pipeline; ai-content steps SKIP (not halt)', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      const origCfg = store.projectConfig.load(project.path);
+      // WebUI/OpenClaw session: no tmux pane by design (sessions.js records
+      // tmuxSession:null, sessionMode:'webui').
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: null,
+        sessionMode: 'webui'
+      });
+      store.projectConfig.save(project.path, { ...origCfg, wrapV2: true });
+
+      // Stub the OS-hitting handlers, but leave `ai-content` REAL so the
+      // webui-skip path is exercised end-to-end. The content ai-content steps
+      // are blocker:true — if the webui skip regresses, they return `blocked`
+      // (no tmux) and HALT the pipeline, failing this test.
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const stubbedKinds = ['lint', 'test', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc', 'continuity-write'];
+      const dispatchOrig = {};
+      const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+      for (const kind of stubbedKinds) {
+        dispatchOrig[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
+        wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
+      }
+
+      try {
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true, 'webui V2 wrap completes (ai-content skipped, not halted)');
+        assert.notEqual(result.error && result.error.includes('No active session'), true,
+          'webui session must NOT be rejected as "no active session"');
+        assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
+        assert.equal(result.pipelineResult.blockedAt, null, 'webui wrap did not halt at any blocker step');
+        const aiSteps = result.pipelineResult.results.filter((r) => r.kind === 'ai-content');
+        assert.ok(aiSteps.length >= 1, 'pipeline has ai-content steps');
+        for (const s of aiSteps) {
+          assert.equal(s.status, 'skipped', `ai-content step ${s.stepId} must skip on webui, not block`);
+        }
+      } finally {
+        store.projectConfig.save(project.path, origCfg);
+        for (const kind of stubbedKinds) {
+          wrapPipelineMod.STEP_DISPATCH[kind] = dispatchOrig[kind];
+        }
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.wrap(active.id, 'test cleanup');
+      }
+    });
+
+    it('#334 — webui session on the LEGACY wrap path returns a clear error (no tmux send)', async () => {
+      const project = store.projects.getByName('prime-test');
+      const origCfg = store.projectConfig.load(project.path);
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: null,
+        sessionMode: 'webui'
+      });
+      store.projectConfig.save(project.path, { ...origCfg, wrapV2: false });
+
+      try {
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, false);
+        assert.match(result.error, /requires the V2 wrap pipeline/,
+          'clear, actionable error pointing at wrapV2 — not a null-tmux crash');
+        assert.equal(result.error.includes('No active session'), false,
+          'must NOT be the generic no-active-session error — the session exists');
+        assert.equal(sentCommand, null, 'must not send keys to a null tmux pane');
+      } finally {
+        store.projectConfig.save(project.path, origCfg);
+        const active = store.sessions.getActive(project.id);
+        if (active) store.sessions.wrap(active.id, 'test cleanup');
+      }
+    });
+
     it('wrapV2:true forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
