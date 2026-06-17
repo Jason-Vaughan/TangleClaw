@@ -201,4 +201,74 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.equal(res.output.written, true, 'index still written');
     assert.equal(res.output.wrapSummaryWritten, false);
   });
+
+  // ── CC-3: the Map is self-maintained at wrap (stub touched, prune deleted) ──
+
+  // A git stub that resolves `main` as base and returns a --name-status diff.
+  function gitStubWithDiff(nameStatus) {
+    return async (file, args) => {
+      if (args.includes('--short')) return { exitCode: 0, stdout: 'abc1234\n', stderr: '' };
+      if (args.includes('--abbrev-ref')) return { exitCode: 0, stdout: 'feat/cc-3\n', stderr: '' };
+      // base resolution: `git rev-parse --verify --quiet main`
+      if (args.includes('rev-parse') && args.includes('main')) return { exitCode: 0, stdout: 'main\n', stderr: '' };
+      if (args.includes('rev-parse')) return { exitCode: 1, stdout: '', stderr: '' };
+      if (args.includes('--name-status')) return { exitCode: 0, stdout: nameStatus, stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: 'unexpected' };
+    };
+  }
+
+  it('stubs a touched source file into the index Map', async () => {
+    step._internal.exec = gitStubWithDiff('M\tlib/widget.js\nA\tlib/new.js\n');
+    await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }
+    ]));
+    const parsed = continuity.parseIndex(fs.readFileSync(continuity.indexPath(project.path), 'utf8'));
+    assert.match(parsed.map, /- \*\*TBD\*\* — `lib\/widget\.js`/);
+    assert.match(parsed.map, /- \*\*TBD\*\* — `lib\/new\.js`/);
+  });
+
+  it('prunes a deleted file and preserves a prior curated entry across the rewrite', async () => {
+    // First wrap with a curated Map already on disk, plus a file that will be deleted.
+    continuity.writeIndex(project.path, {
+      currentState: 'prior', nextAction: 'prior',
+      map: '- **Widget** — the widget. `lib/widget.js`\n- **TBD** — `lib/doomed.js` <!-- describe -->',
+      freshness: { sha: 'old', branch: 'main', writtenAt: '2026-06-16' }
+    });
+    step._internal.exec = gitStubWithDiff('D\tlib/doomed.js\n');
+    await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's2', nextSteps: 'n2' } } }
+    ]));
+    const parsed = continuity.parseIndex(fs.readFileSync(continuity.indexPath(project.path), 'utf8'));
+    assert.match(parsed.map, /Widget/, 'curated entry survives the index rewrite');
+    assert.doesNotMatch(parsed.map, /doomed\.js/, 'deleted file pruned from the Map');
+    // The rest of the index was regenerated from this wrap's capture.
+    assert.equal(parsed.currentState, 's2');
+  });
+
+  it('leaves the Map empty when no base branch resolves (best-effort, non-blocking)', async () => {
+    // Default beforeEach stub: rev-parse main/master fall through to exitCode 1.
+    const res = await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }
+    ]));
+    assert.equal(res.ok, true);
+    const parsed = continuity.parseIndex(fs.readFileSync(continuity.indexPath(project.path), 'utf8'));
+    assert.equal(parsed.map, '', 'no base → no delta → empty Map, wrap unaffected');
+  });
+
+  it('ignores non-indexable touched paths (allowlist reuse)', async () => {
+    step._internal.exec = gitStubWithDiff('A\tnode_modules/pkg/index.js\nM\tdist/bundle.js\nM\tlib/real.js\n');
+    await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }
+    ]));
+    const parsed = continuity.parseIndex(fs.readFileSync(continuity.indexPath(project.path), 'utf8'));
+    assert.match(parsed.map, /lib\/real\.js/);
+    assert.doesNotMatch(parsed.map, /node_modules|dist/);
+  });
+
+  it('_mapDelta classifies A/M/D/R via --name-status', async () => {
+    step._internal.exec = gitStubWithDiff('A\tlib/added.js\nM\tlib/mod.js\nD\tlib/del.js\nR100\tlib/old.js\tlib/renamed.js\n');
+    const delta = await step._mapDelta(project.path);
+    assert.deepEqual(delta.touched.sort(), ['lib/added.js', 'lib/mod.js', 'lib/renamed.js'].sort());
+    assert.deepEqual(delta.deleted.sort(), ['lib/del.js', 'lib/old.js'].sort());
+  });
 });
