@@ -1713,7 +1713,12 @@ route('POST', '/api/upload', (_req, res, _params, body) => {
   }
 
   try {
-    const result = uploads.saveUpload(project.path, body.filename, body.data);
+    // Route the upload into the active session's slot in the consolidated
+    // store (CC-4); no active session → uploads.saveUpload falls back to the
+    // legacy flat dir. `getActive` returns null when nothing is running.
+    const active = store.sessions.getActive(project.id);
+    const sid = active && active.id != null ? active.id : null;
+    const result = uploads.saveUpload(project.path, body.filename, body.data, sid);
     jsonResponse(res, 201, result);
   } catch (err) {
     // #338 — any file type is accepted, so there is no "not allowed" rejection
