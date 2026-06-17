@@ -25,6 +25,24 @@ function safeSid(sid) {
   return String(sid).replace(/[^A-Za-z0-9_-]/g, '');
 }
 
+/*
+ * HTML-escape `text`, then wrap each case-insensitive occurrence of `query` in
+ * a <mark> so the operator can see *where* a result matched — the core search
+ * affordance. XSS-safe: both text and query are escaped first, so only literal
+ * <mark> tags are ever injected around already-escaped content.
+ */
+function highlight(text, query) {
+  const safe = esc(text == null ? '' : text);
+  const q = (query || '').trim();
+  if (!q) return safe;
+  const pattern = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    return safe.replace(new RegExp(pattern, 'gi'), '<mark class="history-mark">$&</mark>');
+  } catch {
+    return safe;
+  }
+}
+
 /** Open the History drawer for a project and load its full session list. */
 function openHistory(name) {
   historyTarget = name;
@@ -108,15 +126,24 @@ function renderHistoryResults(data) {
     return;
   }
 
+  // The query the matched lines are highlighted against (the executed search).
+  const q = document.getElementById('historySearchInput').value.trim();
+  const totalHits = sessions.reduce((n, s) => n + (s.matchCount || 0), 0);
+  const summary = q
+    ? `<div class="history-summary">${sessions.length} session(s) · ${totalHits} hit(s) for “${esc(q)}”</div>`
+    : `<div class="history-summary">${sessions.length} session(s) — newest first</div>`;
+
   const rows = sessions.map((s) => {
     const secret = s.secretsFlagged
       ? '<span class="badge badge-drift" title="Transcript flagged for possible secrets (pattern types only)">&#9888; secrets</span>' : '';
     const transcript = s.hasTranscript ? '<span class="badge badge-git" title="Transcript captured">cold</span>' : '';
     const count = s.matchCount ? `<span class="form-hint">${s.matchCount} hit(s)</span>` : '';
     const hits = (s.hits || []).slice(0, 3).map((h) =>
-      `<div class="history-hit"><span class="form-hint">${esc(h.section || h.source)}</span> ${esc(h.line)}</div>`
+      `<div class="history-hit"><span class="history-hit-loc">${esc(h.section || h.source)}</span> ${highlight(h.line, q)}</div>`
     ).join('');
-    return `<div class="history-result" onclick="openHistorySession('${safeSid(s.sid)}')"
+    const more = (s.hits || []).length > 3 ? `<div class="form-hint">+${s.hits.length - 3} more match(es) — open to see all</div>` : '';
+    return `<div class="history-result" id="hist-result-${safeSid(s.sid)}"
+        onclick="openHistorySession('${safeSid(s.sid)}')"
         onkeydown="if(event.key==='Enter')openHistorySession('${safeSid(s.sid)}')" tabindex="0" role="button">
       <div class="card-row">
         <strong>session ${esc(s.sid)}</strong>
@@ -124,16 +151,21 @@ function renderHistoryResults(data) {
         ${historyTypeBadge(s.type)} ${transcript} ${secret} ${count}
       </div>
       ${(s.tags || []).length ? `<div class="form-hint">tags: ${esc(s.tags.join(', '))}</div>` : ''}
-      ${hits}
+      ${hits}${more}
     </div>`;
   }).join('');
 
-  resultsEl.innerHTML = `${noteHtml}${rows}`;
+  resultsEl.innerHTML = `${noteHtml}${summary}${rows}`;
 }
 
 /** Drill into one session: render wrap summary + uploads + a cold-search box. */
 async function openHistorySession(sid) {
   if (!historyTarget) return;
+  // Mark which result is being viewed (resolves the "where am I" ambiguity).
+  document.querySelectorAll('.history-result.selected').forEach((el) => el.classList.remove('selected'));
+  const row = document.getElementById(`hist-result-${safeSid(sid)}`);
+  if (row) row.classList.add('selected');
+
   const drill = document.getElementById('historyDrill');
   drill.classList.remove('hidden');
   drill.innerHTML = '<div class="form-hint">Loading session…</div>';
@@ -143,11 +175,14 @@ async function openHistorySession(sid) {
     return;
   }
 
+  // Highlight the warm search term inside the full section bodies too, so the
+  // reason the session surfaced is visible at a glance in the drill.
+  const q = document.getElementById('historySearchInput').value.trim();
   const summary = data.summary;
   const sections = summary && summary.sections ? summary.sections : {};
   const sectionHtml = Object.entries(sections)
     .filter(([, body]) => body)
-    .map(([name, body]) => `<div class="history-section"><strong>${esc(name)}</strong><div>${esc(body)}</div></div>`)
+    .map(([name, body]) => `<div class="history-section"><strong>${esc(name)}</strong><div>${highlight(body, q)}</div></div>`)
     .join('') || '<div class="form-hint">No wrap summary for this session.</div>';
 
   const t = data.transcript;
@@ -174,9 +209,9 @@ async function openHistorySession(sid) {
     : '';
 
   drill.innerHTML = `
-    <div class="card-row">
-      <h4 style="margin:0">Session ${esc(String(sid))}</h4>
-      <button class="btn btn-compact" onclick="closeHistoryDrill()">Close</button>
+    <div class="card-row history-drill-head">
+      <h4 style="margin:0;flex:1">Session ${esc(String(sid))} — detail</h4>
+      <button class="btn btn-compact" onclick="closeHistoryDrill()">&times; Close session</button>
     </div>
     ${sectionHtml}
     ${uploadsHtml}
@@ -184,11 +219,12 @@ async function openHistorySession(sid) {
   drill.scrollIntoView({ block: 'nearest' });
 }
 
-/** Collapse the drill-down panel. */
+/** Collapse the drill-down panel and clear the selected-result highlight. */
 function closeHistoryDrill() {
   const drill = document.getElementById('historyDrill');
   drill.innerHTML = '';
   drill.classList.add('hidden');
+  document.querySelectorAll('.history-result.selected').forEach((el) => el.classList.remove('selected'));
 }
 
 /** Cold-tier deep search inside one session's transcript. */
@@ -207,8 +243,8 @@ async function runTranscriptSearch(sid) {
     out.innerHTML = '<div class="form-hint">No matches in this transcript.</div>';
     return;
   }
-  const trunc = data.truncated ? `<div class="form-hint">Showing first ${data.excerpts.length} matches (more exist).</div>` : '';
-  out.innerHTML = trunc + data.excerpts.map((e) =>
-    `<div class="history-hit"><span class="form-hint">${esc(e.role)}${e.timestamp ? ' · ' + esc(e.timestamp) : ''}</span> ${esc(e.snippet)}</div>`
+  const head = `<div class="history-summary">${data.excerpts.length} match(es)${data.truncated ? ' (showing first batch — more exist)' : ''}</div>`;
+  out.innerHTML = head + data.excerpts.map((e) =>
+    `<div class="history-hit"><span class="history-hit-loc">${esc(e.role)}${e.timestamp ? ' · ' + esc(e.timestamp) : ''}</span> ${highlight(e.snippet, q)}</div>`
   ).join('');
 }
