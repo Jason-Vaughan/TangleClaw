@@ -195,6 +195,15 @@ describe('uploads', () => {
       assert.equal(result.secretsFlagged, false);
     });
 
+    it('does NOT scan a text upload above the 1 MB size cap', () => {
+      // Over-cap text is skipped (the scan is best-effort, memory-bounded) — so
+      // even a real secret pattern in a >1 MB file returns secretsFlagged:false.
+      const body = 'x'.repeat(1024 * 1024 + 16) + ' AKIAIOSFODNN7EXAMPLE';
+      const result = saveUpload(tmpDir, 'big.log', b64(body), 6);
+      assert.ok(result.size > 1024 * 1024, 'fixture must exceed the cap');
+      assert.equal(result.secretsFlagged, false);
+    });
+
     it('keeps newest-first order across legacy + session dirs', () => {
       saveUpload(tmpDir, 'a.txt', b64('a'));
       saveUpload(tmpDir, 'b.txt', b64('b'), 9);
