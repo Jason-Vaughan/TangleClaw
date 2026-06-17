@@ -911,6 +911,62 @@ route('DELETE', '/api/session-rules/:id', (_req, res, params) => {
   }
 });
 
+// ── Session Rules self-improvement (D1b) ──
+// Versioning + rollback, learnings→rule promotion, and the non-authoritative
+// conflict-candidate signal. The Critic-gate for conflicting/autonomous edits is
+// an IN-SESSION agent capability (the server cannot summon a Critic) — see
+// `docs/session-rules-self-improvement.md`.
+
+// POST /api/session-rules/promote — promote a learning into a rule (operator-confirmed)
+route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
+  if (!body || body.learningId === undefined) {
+    return errorResponse(res, 400, 'learningId is required', 'BAD_REQUEST');
+  }
+  try {
+    const rule = store.sessionRules.promoteFromLearning(Number(body.learningId), {
+      content: body.content,
+      projectId: body.projectId ?? null,
+      createdBy: body.createdBy
+    });
+    jsonResponse(res, 201, rule);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    throw err;
+  }
+}, { maxBodySize: 256 * 1024 });
+
+// POST /api/session-rules/conflicts — non-authoritative conflict-candidate signal
+route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {
+  if (!body || typeof body.content !== 'string' || !body.content.trim()) {
+    return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
+  }
+  const candidates = store.sessionRules.findConflictCandidates(body.content, body.projectId ?? null);
+  jsonResponse(res, 200, { candidates });
+}, { maxBodySize: 256 * 1024 });
+
+// GET /api/session-rules/:id/versions — version history (newest first)
+route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
+  const rule = store.sessionRules.get(Number(params.id));
+  if (!rule) return errorResponse(res, 404, `Session rule ${params.id} not found`, 'NOT_FOUND');
+  const versions = store.sessionRules.listVersions(Number(params.id));
+  jsonResponse(res, 200, { versions });
+});
+
+// POST /api/session-rules/:id/restore — roll back to a prior version
+route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
+  if (!body || body.versionNo === undefined) {
+    return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
+  }
+  try {
+    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy });
+    jsonResponse(res, 200, rule);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    throw err;
+  }
+});
+
 // GET /api/system
 route('GET', '/api/system', (_req, res) => {
   const stats = system.getStats();

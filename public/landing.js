@@ -453,10 +453,64 @@ function renderSessionRules() {
       <label class="session-rule-toggle">
         <input type="checkbox" data-action="toggle" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
       </label>
-      <span class="session-rule-content">${esc(rule.content)}</span>
+      <span class="session-rule-content">${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored (D1b)">AI</span> ' : ''}${esc(rule.content)}</span>
+      <button class="btn btn-small session-rule-history" data-action="history" data-rule-id="${rule.id}" aria-label="Version history">History</button>
       <button class="btn btn-small btn-danger session-rule-delete" data-action="delete" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
     </div>
+    <div class="session-rule-versions hidden" id="sessionRuleVersions-${rule.id}" data-rule-id="${rule.id}"></div>
   `).join('');
+}
+
+/**
+ * Toggle + load the version history for a rule (D1b).
+ * @param {number} id - Rule id
+ */
+async function toggleSessionRuleVersions(id) {
+  const container = document.getElementById(`sessionRuleVersions-${id}`);
+  if (!container) return;
+  if (!container.classList.contains('hidden')) {
+    container.classList.add('hidden');
+    return;
+  }
+  const data = await api(`/api/session-rules/${id}/versions`);
+  renderSessionRuleVersions(id, data ? data.versions || [] : []);
+  container.classList.remove('hidden');
+}
+
+/**
+ * Render a rule's version list with restore buttons (D1b).
+ * @param {number} id - Rule id
+ * @param {object[]} versions - Version rows (newest first)
+ */
+function renderSessionRuleVersions(id, versions) {
+  const container = document.getElementById(`sessionRuleVersions-${id}`);
+  if (!container) return;
+  if (versions.length === 0) {
+    container.innerHTML = '<p class="session-rules-empty">No version history.</p>';
+    return;
+  }
+  container.innerHTML = versions.map((v) => `
+    <div class="session-rule-version">
+      <span class="session-rule-version-meta">v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)}</span>
+      <span class="session-rule-version-content">${esc(v.content)}</span>
+      <button class="btn btn-small" data-action="restore" data-rule-id="${id}" data-version-no="${v.versionNo}">Restore</button>
+    </div>
+  `).join('');
+}
+
+/**
+ * Restore a rule to a prior version (D1b).
+ * @param {number} id - Rule id
+ * @param {number} versionNo - Target version
+ */
+async function restoreSessionRule(id, versionNo) {
+  const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', { versionNo });
+  if (data) {
+    _setSessionRulesStatus(`Restored to v${versionNo}`, true);
+    await loadSessionRules();
+  } else {
+    _setSessionRulesStatus('Restore failed', false);
+  }
 }
 
 /**

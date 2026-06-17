@@ -65,7 +65,7 @@ describe('store', () => {
       assert.ok(db, 'Database should be available');
 
       // Verify tables exist
-      const tables = ['schema_version', 'projects', 'sessions', 'learnings', 'session_rules', 'activity_log', 'port_leases', 'project_groups', 'project_group_members', 'shared_documents', 'document_locks'];
+      const tables = ['schema_version', 'projects', 'sessions', 'learnings', 'session_rules', 'session_rule_versions', 'activity_log', 'port_leases', 'project_groups', 'project_group_members', 'shared_documents', 'document_locks'];
       for (const table of tables) {
         const row = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table);
         assert.ok(row, `Table "${table}" should exist`);
@@ -77,7 +77,7 @@ describe('store', () => {
 
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 18);
+      assert.equal(row.version, 19);
     });
 
     it('should copy bundled engine profiles', () => {
