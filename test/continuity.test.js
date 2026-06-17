@@ -409,3 +409,227 @@ describe('continuity Map (CC-3)', () => {
     });
   });
 });
+
+describe('continuity operator search (CC-5)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-continuity-cc5-'));
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Seed a project with two fully-indexed sessions (42 newer, 41 older) plus a
+  // cold-tier transcript for 42. Returns the project path.
+  function seed() {
+    const proj = path.join(tmpDir, 'p-' + Math.random().toString(36).slice(2, 8));
+    continuity.appendChangelogEntry(proj, {
+      date: '2026-06-17', sid: 42, line: 'auth redirect fix', tags: 'auth, redirect', refs: '#344', type: 'fix', files: ['lib/auth.js', 'server.js']
+    });
+    continuity.appendChangelogEntry(proj, {
+      date: '2026-06-10', sid: 41, line: 'added widget', tags: 'widget', type: 'feat', files: ['lib/widget.js']
+    });
+    continuity.writeWrapSummary(proj, 42, {
+      meta: { session: 42, date: '2026-06-17', tags: 'auth, redirect', type: 'fix', files: ['lib/auth.js', 'server.js'] },
+      sections: { 'Where we are': 'fixed the auth redirect bug', 'Next action': 'ship it' }
+    });
+    continuity.writeWrapSummary(proj, 41, {
+      meta: { session: 41, date: '2026-06-10', tags: 'widget', type: 'feat', files: ['lib/widget.js'] },
+      sections: { 'Where we are': 'built a widget' }
+    });
+    const sd = continuity.sessionDir(proj, 42);
+    fs.mkdirSync(sd, { recursive: true });
+    fs.writeFileSync(path.join(sd, 'transcript.jsonl'),
+      JSON.stringify({ type: 'user', timestamp: '2026-06-17T10:00:00Z', message: { role: 'user', content: 'the auth redirect keeps looping' } }) + '\n' +
+      JSON.stringify({ type: 'assistant', timestamp: '2026-06-17T10:01:00Z', message: { role: 'assistant', content: [
+        { type: 'text', text: 'I see the redirect bug in lib/auth.js' },
+        { type: 'thinking', thinking: 'the loop is in the guard clause' },
+        { type: 'tool_use', name: 'Edit', input: { file: 'lib/auth.js' } }
+      ] } }) + '\n' +
+      JSON.stringify({ type: 'user', timestamp: '2026-06-17T10:02:00Z', message: { role: 'user', content: [
+        { type: 'tool_result', content: [{ type: 'text', text: 'patched the redirect guard' }] }
+      ] } }) + '\n' +
+      JSON.stringify({ type: 'system', timestamp: '2026-06-17T10:03:00Z', content: 'system note: redirect resolved' }) + '\n' +
+      JSON.stringify({ type: 'file-history-snapshot', messageId: 'x', snapshot: {} }) + '\n');
+    fs.writeFileSync(path.join(sd, 'transcript.meta.json'),
+      JSON.stringify({ harness: 'claude', secretsFlagged: false, secretTypes: [], bytes: 400, capturedAt: '2026-06-17T10:05:00Z' }));
+    return proj;
+  }
+
+  describe('schema round-trip (files: / type:)', () => {
+    it('renders [type] on the changelog line and a files: list line', () => {
+      const entry = continuity.renderChangelogEntry({
+        date: '2026-06-17', sid: 5, line: 'did a thing', type: 'fix', files: ['lib/a.js', 'lib/b.js']
+      });
+      assert.equal(entry.split('\n')[0], '- 2026-06-17 (session:5) [fix] did a thing');
+      assert.match(entry, /\n {2}files: lib\/a\.js, lib\/b\.js/);
+    });
+
+    it('accepts files as a comma-string or an array, normalizing both', () => {
+      const fromArr = continuity.renderChangelogEntry({ date: 'd', sid: 1, line: 'x', files: ['a.js', 'b.js'] });
+      const fromStr = continuity.renderChangelogEntry({ date: 'd', sid: 1, line: 'x', files: 'a.js, b.js' });
+      assert.match(fromArr, /files: a\.js, b\.js/);
+      assert.equal(fromArr, fromStr);
+    });
+
+    it('round-trips type + files through render/parseWrapSummary', () => {
+      const doc = continuity.renderWrapSummary({
+        meta: { session: 9, type: 'feat', files: ['lib/x.js', 'lib/y.js'] }, sections: {}
+      });
+      const parsed = continuity.parseWrapSummary(doc);
+      assert.equal(parsed.meta.type, 'feat');
+      assert.equal(parsed.meta.files, 'lib/x.js, lib/y.js');
+    });
+  });
+
+  describe('listSessions', () => {
+    it('merges changelog + wrap + transcript meta, newest first', () => {
+      const proj = seed();
+      const sessions = continuity.listSessions(proj);
+      assert.deepEqual(sessions.map((s) => s.sid), ['42', '41'], 'recency-sorted, newest first');
+      const s42 = sessions[0];
+      assert.equal(s42.type, 'fix');
+      assert.deepEqual(s42.tags.sort(), ['auth', 'redirect']);
+      assert.deepEqual(s42.refs, ['#344']);
+      assert.deepEqual(s42.files.sort(), ['lib/auth.js', 'server.js']);
+      assert.equal(s42.hasTranscript, true);
+      assert.equal(s41Has(sessions), false);
+    });
+
+    function s41Has(sessions) { return sessions.find((s) => s.sid === '41').hasTranscript; }
+
+    it('surfaces a transcript-only session that has no wrap or changelog', () => {
+      const proj = path.join(tmpDir, 'tonly-' + Math.random().toString(36).slice(2, 6));
+      const sd = continuity.sessionDir(proj, 77);
+      fs.mkdirSync(sd, { recursive: true });
+      fs.writeFileSync(path.join(sd, 'transcript.jsonl'), '{}\n');
+      fs.writeFileSync(path.join(sd, 'transcript.meta.json'), JSON.stringify({ harness: 'claude', secretsFlagged: true, secretTypes: ['aws-key'], bytes: 9 }));
+      const rec = continuity.listSessions(proj).find((s) => s.sid === '77');
+      assert.ok(rec, 'transcript-only session surfaces');
+      assert.equal(rec.secretsFlagged, true);
+      assert.deepEqual(rec.secretTypes, ['aws-key']);
+    });
+
+    it('returns [] for a project with no store', () => {
+      assert.deepEqual(continuity.listSessions(path.join(tmpDir, 'empty')), []);
+    });
+  });
+
+  describe('searchSessions', () => {
+    it('groups query hits by session and ranks recency-primary', () => {
+      const proj = seed();
+      const { sessions, meta } = continuity.searchSessions(proj, 'auth');
+      assert.deepEqual(sessions.map((s) => s.sid), ['42']);
+      assert.ok(sessions[0].matchCount >= 1);
+      assert.equal(meta.matched, 1);
+    });
+
+    it('applies each of the five filters', () => {
+      const proj = seed();
+      const sids = (q, opts) => continuity.searchSessions(proj, q, opts).sessions.map((s) => s.sid);
+      assert.deepEqual(sids('', { type: 'feat' }), ['41'], 'type');
+      assert.deepEqual(sids('', { file: 'auth' }), ['42'], 'file-touched substring');
+      assert.deepEqual(sids('', { tags: 'auth,redirect' }), ['42'], 'tags AND');
+      assert.deepEqual(sids('', { tags: 'auth,nope' }), [], 'tags AND excludes when not all present');
+      assert.deepEqual(sids('', { refs: '344' }), ['42'], 'refs (# optional)');
+      assert.deepEqual(sids('', { dateFrom: '2026-06-15' }), ['42'], 'date lower bound');
+      assert.deepEqual(sids('', { dateTo: '2026-06-12' }), ['41'], 'date upper bound');
+    });
+
+    it('combines a query with a filter (AND)', () => {
+      const proj = seed();
+      assert.deepEqual(continuity.searchSessions(proj, 'auth', { type: 'fix' }).sessions.map((s) => s.sid), ['42']);
+      assert.deepEqual(continuity.searchSessions(proj, 'auth', { type: 'feat' }).sessions.map((s) => s.sid), [], 'filter excludes the query hit');
+    });
+
+    it('browse mode (empty query, no filters) returns all sessions', () => {
+      const proj = seed();
+      assert.deepEqual(continuity.searchSessions(proj, '').sessions.map((s) => s.sid), ['42', '41']);
+    });
+
+    it('reports unindexed counts for type/file (forward-only gap)', () => {
+      const proj = path.join(tmpDir, 'old-' + Math.random().toString(36).slice(2, 6));
+      // An "old" session with neither type nor files (pre-CC-5 shape).
+      continuity.appendChangelogEntry(proj, { date: '2026-05-01', sid: 1, line: 'legacy' });
+      const { meta } = continuity.searchSessions(proj, '');
+      assert.equal(meta.unindexed.type, 1);
+      assert.equal(meta.unindexed.file, 1);
+    });
+
+    it('respects limit', () => {
+      const proj = seed();
+      const { sessions, meta } = continuity.searchSessions(proj, '', { limit: 1 });
+      assert.equal(sessions.length, 1);
+      assert.equal(meta.matched, 2, 'matched is the full count; returned is capped');
+      assert.equal(meta.returned, 1);
+    });
+  });
+
+  describe('searchTranscript (cold drill-down)', () => {
+    it('finds matches across user, assistant, and tool_result text with role + lineNo', async () => {
+      const proj = seed();
+      const r = await continuity.searchTranscript(proj, 42, 'redirect');
+      assert.equal(r.available, true);
+      const roles = r.excerpts.map((e) => e.role);
+      assert.ok(roles.includes('user'));
+      assert.ok(roles.includes('assistant'));
+      assert.ok(r.excerpts.every((e) => typeof e.lineNo === 'number' && e.snippet));
+    });
+
+    it('searches assistant thinking and tool_use blocks too', async () => {
+      const proj = seed();
+      assert.ok((await continuity.searchTranscript(proj, 42, 'guard clause')).excerpts.length >= 1, 'thinking');
+      assert.ok((await continuity.searchTranscript(proj, 42, 'Edit')).excerpts.length >= 1, 'tool_use name');
+    });
+
+    it('passes the transcript secret flag through from the meta envelope', async () => {
+      const proj = path.join(tmpDir, 'sec-' + Math.random().toString(36).slice(2, 6));
+      const sd = continuity.sessionDir(proj, 8);
+      fs.mkdirSync(sd, { recursive: true });
+      fs.writeFileSync(path.join(sd, 'transcript.jsonl'), JSON.stringify({ type: 'system', content: 'token here' }) + '\n');
+      fs.writeFileSync(path.join(sd, 'transcript.meta.json'), JSON.stringify({ harness: 'claude', secretsFlagged: true, secretTypes: ['github-pat'] }));
+      const r = await continuity.searchTranscript(proj, 8, 'token');
+      assert.equal(r.secretsFlagged, true);
+      assert.deepEqual(r.secretTypes, ['github-pat']);
+    });
+
+    it('is an honest stub for a non-Claude harness (only the Claude payload is stored)', async () => {
+      const proj = path.join(tmpDir, 'gem-' + Math.random().toString(36).slice(2, 6));
+      const sd = continuity.sessionDir(proj, 3);
+      fs.mkdirSync(sd, { recursive: true });
+      fs.writeFileSync(path.join(sd, 'transcript.meta.json'), JSON.stringify({ harness: 'gemini', secretsFlagged: false }));
+      const r = await continuity.searchTranscript(proj, 3, 'anything');
+      assert.equal(r.available, false);
+      assert.match(r.reason, /gemini/);
+    });
+
+    it('reports no transcript captured when the file is absent', async () => {
+      const proj = seed();
+      const r = await continuity.searchTranscript(proj, 41, 'anything');
+      assert.equal(r.available, false);
+      assert.match(r.reason, /no transcript/);
+    });
+
+    it('an empty query is an availability probe (no excerpts, no throw)', async () => {
+      const proj = seed();
+      const r = await continuity.searchTranscript(proj, 42, '');
+      assert.equal(r.available, true);
+      assert.deepEqual(r.excerpts, []);
+    });
+
+    it('caps excerpts and flags truncation', async () => {
+      const proj = path.join(tmpDir, 'cap-' + Math.random().toString(36).slice(2, 6));
+      const sd = continuity.sessionDir(proj, 9);
+      fs.mkdirSync(sd, { recursive: true });
+      const lines = [];
+      for (let i = 0; i < 5; i++) lines.push(JSON.stringify({ type: 'system', content: 'needle line' }));
+      fs.writeFileSync(path.join(sd, 'transcript.jsonl'), lines.join('\n') + '\n');
+      fs.writeFileSync(path.join(sd, 'transcript.meta.json'), JSON.stringify({ harness: 'claude' }));
+      const r = await continuity.searchTranscript(proj, 9, 'needle', { cap: 2 });
+      assert.equal(r.excerpts.length, 2);
+      assert.equal(r.truncated, true);
+    });
+  });
+});

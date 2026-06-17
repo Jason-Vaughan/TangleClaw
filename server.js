@@ -17,6 +17,7 @@ const sessions = require('./lib/sessions');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
+const continuity = require('./lib/continuity');
 const tunnel = require('./lib/tunnel');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
@@ -1654,6 +1655,86 @@ route('GET', '/api/sessions/:project/history', (req, res, params) => {
     sessions: result.sessions,
     total: result.total
   });
+});
+
+// ── CC-5: operator-facing cross-session continuity search ──
+// These read the per-project continuity store (changelog + wrap summaries +
+// cold transcripts), distinct from /api/sessions/:project/history above, which
+// reads the SQLite sessions table. The drawer (History) consumes these.
+
+// Strip the cold-tier meta envelope to the fields the UI needs, dropping the
+// absolute `source` path (a local ~/.claude leak) — secret VALUES are never in
+// the meta to begin with (CC-4b records pattern types only).
+function _publicTranscriptMeta(meta) {
+  if (!meta) return null;
+  return {
+    harness: meta.harness || null,
+    capturedAt: meta.capturedAt || null,
+    bytes: meta.bytes || 0,
+    lineCount: meta.lineCount || 0,
+    secretsFlagged: !!meta.secretsFlagged,
+    secretTypes: Array.isArray(meta.secretTypes) ? meta.secretTypes : [],
+    scanSkipped: !!meta.scanSkipped
+  };
+}
+
+// GET /api/continuity/:project/search — warm global search + 5 filters
+route('GET', '/api/continuity/:project/search', (req, res, params) => {
+  const project = projects.getProject(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
+  const result = continuity.searchSessions(project.path, query.q || '', {
+    dateFrom: query.dateFrom,
+    dateTo: query.dateTo,
+    type: query.type,
+    tags: query.tags,
+    refs: query.refs,
+    file: query.file,
+    section: query.section,
+    limit: query.limit ? parseInt(query.limit, 10) : 0
+  });
+  jsonResponse(res, 200, result);
+});
+
+// GET /api/continuity/:project/sessions — list every session in the store
+route('GET', '/api/continuity/:project/sessions', (req, res, params) => {
+  const project = projects.getProject(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  jsonResponse(res, 200, { sessions: continuity.listSessions(project.path) });
+});
+
+// GET /api/continuity/:project/sessions/:sid — drill-down payload for one session
+route('GET', '/api/continuity/:project/sessions/:sid', (req, res, params) => {
+  const project = projects.getProject(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const sid = params.sid;
+  const session = continuity.listSessions(project.path).find((s) => s.sid === String(sid)) || null;
+  jsonResponse(res, 200, {
+    sid: String(sid),
+    session,
+    summary: continuity.readWrapSummary(project.path, sid),
+    transcript: _publicTranscriptMeta(continuity.readTranscriptMeta(project.path, sid)),
+    uploads: uploads.listUploads(project.path).filter((u) => String(u.sid) === String(sid))
+  });
+});
+
+// GET /api/continuity/:project/sessions/:sid/transcript/search — cold drill-down
+route('GET', '/api/continuity/:project/sessions/:sid/transcript/search', async (req, res, params) => {
+  const project = projects.getProject(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
+  const result = await continuity.searchTranscript(project.path, params.sid, query.q || '', {
+    cap: query.cap ? parseInt(query.cap, 10) : undefined
+  });
+  jsonResponse(res, 200, result);
 });
 
 // GET /api/activity — Activity log query

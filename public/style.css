@@ -1784,6 +1784,34 @@ body {
 }
 .form-input.invalid { border-color: var(--danger); }
 
+/* ── Session History & Search drawer (CC-5) ── */
+.history-filters { margin: 8px 0; }
+.history-filters > summary { cursor: pointer; user-select: none; }
+.history-results { margin-top: 12px; }
+.history-result {
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.history-result:hover, .history-result:focus { border-color: var(--accent, #6cf); outline: none; }
+.history-hit {
+  font-size: 12px;
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border, #333);
+  word-break: break-word;
+}
+.history-section { margin-top: 10px; }
+.history-section > div { font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.history-drill {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #333);
+}
+.history-drill.hidden { display: none; }
+
 /* ── Methodology Picker ── */
 .meth-picker {
   display: flex;
