@@ -11,12 +11,14 @@ setLevel('error');
 
 const step = require('../lib/wrap-steps/continuity-write');
 const continuity = require('../lib/continuity');
+const transcript = require('../lib/transcript');
 
 describe('continuity-write wrap step (CC-1)', () => {
   let tmpDir;
   let project;
   let origExec;
   let origToday;
+  let origClaudeHome;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cwstep-'));
@@ -31,6 +33,11 @@ describe('continuity-write wrap step (CC-1)', () => {
     project = { id: 1, name: 'demo', path: projPath };
     origExec = step._internal.exec;
     origToday = step._internal.today;
+    // Pin the transcript resolver at an absent ~/.claude so the CC-4b cold-tier
+    // snapshot is a deterministic, fast honest-skip in these warm-tier tests
+    // (the transcript module has its own dedicated suite).
+    origClaudeHome = transcript._internal.claudeHome;
+    transcript._internal.claudeHome = () => path.join(tmpDir, 'no-claude-home');
     step._internal.today = () => '2026-06-15';
     // Default git stub: HEAD sha + branch.
     step._internal.exec = async (file, args) => {
@@ -43,6 +50,7 @@ describe('continuity-write wrap step (CC-1)', () => {
   afterEach(() => {
     step._internal.exec = origExec;
     step._internal.today = origToday;
+    transcript._internal.claudeHome = origClaudeHome;
   });
 
   function ctx(previousResults) {
@@ -270,5 +278,32 @@ describe('continuity-write wrap step (CC-1)', () => {
     const delta = await step._mapDelta(project.path);
     assert.deepEqual(delta.touched.sort(), ['lib/added.js', 'lib/mod.js', 'lib/renamed.js'].sort());
     assert.deepEqual(delta.deleted.sort(), ['lib/del.js', 'lib/old.js'].sort());
+  });
+
+  // ── CC-4b cold tier ──
+
+  it('reports an honest transcript skip when none resolves (no ~/.claude match)', async () => {
+    const res = await step.run(ctxWithSession({ id: 12, engineId: 'claude' }, [
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }
+    ]));
+    assert.equal(res.ok, true);
+    assert.equal(res.output.transcript.captured, false);
+  });
+
+  it('a transcript-snapshot failure never halts the wrap or the warm tier', async () => {
+    const origSnapshot = transcript.snapshot;
+    transcript.snapshot = async () => { throw new Error('boom'); };
+    try {
+      const res = await step.run(ctxWithSession({ id: 13, engineId: 'claude' }, [
+        { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'still here', nextSteps: 'n' } } }
+      ]));
+      // Wrap completes, warm tier still written, the failure is captured honestly.
+      assert.equal(res.ok, true);
+      assert.equal(res.output.wrapSummaryWritten, true);
+      assert.equal(res.output.transcript.captured, false);
+      assert.match(res.output.transcript.reason, /boom/);
+    } finally {
+      transcript.snapshot = origSnapshot;
+    }
   });
 });
