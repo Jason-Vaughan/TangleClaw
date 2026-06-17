@@ -2017,15 +2017,47 @@ route('POST', '/api/openclaw/connections', (_req, res, _params, body) => {
   if (!body || !body.name || !body.host || !body.sshUser || !body.sshKeyPath) {
     return errorResponse(res, 400, 'name, host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
   }
-  // Check for port conflicts before creating
+  // Resolve the tunnel local_port. An explicit port is conflict-checked and
+  // used verbatim; when omitted, PortHub auto-allocates the first free port so
+  // a second connection can't silently collide on the legacy 18789 default (#352).
   if (body.localPort) {
     const portCheck = porthub.checkPort(body.localPort);
     if (!portCheck.available) {
       return errorResponse(res, 409, `Port ${body.localPort} is already in use by ${portCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
     }
+  } else {
+    try {
+      body.localPort = porthub.nextFreePort({ range: [18789, 18999] });
+    } catch (err) {
+      return errorResponse(res, 409, err.message, 'PORT_EXHAUSTED');
+    }
+  }
+  // Resolve bridge_port. NULL-by-default is load-bearing: a non-null bridge_port
+  // emits an extra `-L` SSH forward that breaks non-ClawBridge tunnels (#160), so
+  // we only auto-allocate when the caller explicitly opts in with the 'auto'
+  // sentinel. An explicit number is conflict-checked; anything else stays null.
+  if (body.bridgePort === 'auto') {
+    try {
+      body.bridgePort = porthub.nextFreePort({ range: [3201, 3300] });
+    } catch (err) {
+      return errorResponse(res, 409, err.message, 'PORT_EXHAUSTED');
+    }
+  } else if (body.bridgePort !== undefined && body.bridgePort !== null && body.bridgePort !== '') {
+    const bridgeCheck = porthub.checkPort(body.bridgePort);
+    if (!bridgeCheck.available) {
+      return errorResponse(res, 409, `Bridge port ${body.bridgePort} is already in use by ${bridgeCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
+    }
   }
   try {
     const connection = store.openclawConnections.create(body);
+    // Lease-at-create: reserve the resolved port(s) under the connection's tunnel
+    // identity so a subsequent add picks a different port even before the tunnel
+    // comes up (closing the allocate→bind race). Released on DELETE.
+    const leaseName = `oc-direct-${connection.id}`;
+    porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+    if (connection.bridgePort) {
+      porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+    }
     jsonResponse(res, 201, connection);
   } catch (err) {
     if (err.code === 'CONFLICT') {
@@ -2114,6 +2146,9 @@ route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
       tunnel.killTunnel(`oc-direct-${conn.id}`);
       if (conn.localPort) {
         porthub.releasePort(conn.localPort);
+      }
+      if (conn.bridgePort) {
+        porthub.releasePort(conn.bridgePort);
       }
     }
     store.openclawConnections.delete(params.id);

@@ -2121,7 +2121,10 @@ async function openConnectionModal(connId) {
     document.getElementById('ocSshKeyPath').value = '';
     document.getElementById('ocGatewayToken').value = '';
     document.getElementById('ocCliCommand').value = 'openclaw-cli';
-    document.getElementById('ocLocalPort').value = '18789';
+    // Leave blank by default: an omitted localPort makes PortHub auto-allocate
+    // the first free port (#352), so a second connection can't collide on the
+    // legacy 18789 default. The placeholder communicates the auto behavior.
+    document.getElementById('ocLocalPort').value = '';
     // Leave blank by default; the field's placeholder shows 3201 as a hint
     // but only takes effect when the user actually fills it in (#160).
     document.getElementById('ocBridgePort').value = '';
@@ -2166,7 +2169,16 @@ async function saveConnection() {
     sshKeyPath,
     gatewayToken: document.getElementById('ocGatewayToken').value.trim() || null,
     cliCommand: document.getElementById('ocCliCommand').value.trim() || 'openclaw-cli',
-    localPort: parseInt(document.getElementById('ocLocalPort').value, 10) || 18789,
+    localPort: (() => {
+      // Blank field → omit the key entirely so the server auto-allocates a free
+      // port on create (#352); on edit, omitting it leaves the stored port
+      // unchanged. A typed value is sent verbatim. (JSON.stringify drops
+      // undefined-valued keys, so returning undefined omits localPort.)
+      const raw = document.getElementById('ocLocalPort').value.trim();
+      if (raw === '') return undefined;
+      const parsed = parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    })(),
     bridgePort: (() => {
       // Empty field → null (no Bridge port; no extra -L SSH forward). Pre-#160
       // this fell through to `|| 3201` and silently fabricated a phantom bind
