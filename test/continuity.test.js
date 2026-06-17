@@ -34,6 +34,42 @@ describe('continuity store (CC-1)', () => {
         path.join('/proj', '.tangleclaw', 'continuity', 'index.md')
       );
     });
+
+    it('exposes the sessions/ root (CC-4)', () => {
+      assert.equal(
+        continuity.sessionsRoot('/proj'),
+        path.join('/proj', '.tangleclaw', 'continuity', 'sessions')
+      );
+      // sessionDir must nest directly under it.
+      assert.equal(
+        path.dirname(continuity.sessionDir('/proj', 42)),
+        continuity.sessionsRoot('/proj')
+      );
+    });
+
+    it('keys a session dir by sid under sessions/ (CC-4)', () => {
+      assert.equal(
+        continuity.sessionDir('/proj', 42),
+        path.join('/proj', '.tangleclaw', 'continuity', 'sessions', '42')
+      );
+    });
+
+    it('nests session uploads under sessions/<sid>/uploads (CC-4)', () => {
+      assert.equal(
+        continuity.sessionUploadsDir('/proj', 42),
+        path.join('/proj', '.tangleclaw', 'continuity', 'sessions', '42', 'uploads')
+      );
+    });
+
+    it('coerces a numeric sid to a string dir name', () => {
+      // The sessions root is shared by sessionDir/sessionUploadsDir; a numeric
+      // sid and its string form must resolve to the same path so listUploads
+      // (which reads dir names as strings) lines up with saves keyed by number.
+      assert.equal(
+        continuity.sessionDir('/proj', 7),
+        continuity.sessionDir('/proj', '7')
+      );
+    });
   });
 
   describe('renderIndex / parseIndex round-trip', () => {

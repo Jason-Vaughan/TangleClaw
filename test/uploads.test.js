@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { saveUpload, listUploads } = require('../lib/uploads');
+const continuity = require('../lib/continuity');
 
 describe('uploads', () => {
   let tmpDir;
@@ -137,6 +138,79 @@ describe('uploads', () => {
       assert.ok(result[0].name);
       assert.ok(result[0].path);
       assert.ok(result[0].size > 0);
+    });
+  });
+
+  describe('CC-4 — session-linked store + secret flag', () => {
+    const b64 = (s) => Buffer.from(s).toString('base64');
+
+    it('routes an upload with a sid into sessions/<sid>/uploads/', () => {
+      const result = saveUpload(tmpDir, 'shot.png', b64('x'), 7);
+      assert.equal(
+        path.dirname(result.path),
+        continuity.sessionUploadsDir(tmpDir, 7),
+        'file must land in the session uploads dir'
+      );
+      assert.equal(result.session, 7);
+      assert.equal(result.secretsFlagged, false);
+      assert.deepEqual(result.secretTypes, []);
+    });
+
+    it('falls back to the legacy flat dir when no sid is given', () => {
+      const result = saveUpload(tmpDir, 'old.txt', b64('hello'));
+      assert.equal(path.dirname(result.path), path.join(tmpDir, '.uploads'));
+      assert.equal(result.session, null);
+    });
+
+    it('listUploads merges legacy (session:null) and per-session uploads', () => {
+      saveUpload(tmpDir, 'legacy.txt', b64('a'));         // legacy dir
+      saveUpload(tmpDir, 'in-session.txt', b64('b'), 11); // sessions/11/uploads
+      const list = listUploads(tmpDir);
+      const byName = Object.fromEntries(list.map((u) => [u.name.replace(/^\d{8}-\d{6}\d?-/, ''), u]));
+      assert.equal(byName['legacy.txt'].session, null);
+      assert.equal(String(byName['in-session.txt'].session), '11');
+    });
+
+    it('flags a text upload containing a secret (flag only — file unchanged)', () => {
+      const body = 'config\napi_key=AKIAIOSFODNN7EXAMPLE\n';
+      const result = saveUpload(tmpDir, 'creds.env', b64(body), 3);
+      assert.equal(result.secretsFlagged, true);
+      assert.ok(result.secretTypes.length > 0);
+      // The file on disk is untouched — flag-only contract.
+      assert.equal(fs.readFileSync(result.path, 'utf8'), body);
+      // A sidecar manifest records the flag for listUploads.
+      const manifest = path.join(continuity.sessionUploadsDir(tmpDir, 3), '_scan.json');
+      assert.ok(fs.existsSync(manifest), '_scan.json manifest written');
+      // listUploads surfaces the flag and excludes the manifest itself.
+      const list = listUploads(tmpDir);
+      assert.ok(!list.some((u) => u.name === '_scan.json'), 'manifest not listed as an upload');
+      const entry = list.find((u) => u.name === result.name);
+      assert.equal(entry.secretsFlagged, true);
+    });
+
+    it('does NOT scan binary uploads (a PNG with secret-looking bytes)', () => {
+      // A NUL byte marks the buffer binary → skipped by the text heuristic.
+      const binary = Buffer.concat([Buffer.from([0x89, 0x00]), Buffer.from('AKIAIOSFODNN7EXAMPLE')]);
+      const result = saveUpload(tmpDir, 'image.png', binary.toString('base64'), 5);
+      assert.equal(result.secretsFlagged, false);
+    });
+
+    it('does NOT scan a text upload above the 1 MB size cap', () => {
+      // Over-cap text is skipped (the scan is best-effort, memory-bounded) — so
+      // even a real secret pattern in a >1 MB file returns secretsFlagged:false.
+      const body = 'x'.repeat(1024 * 1024 + 16) + ' AKIAIOSFODNN7EXAMPLE';
+      const result = saveUpload(tmpDir, 'big.log', b64(body), 6);
+      assert.ok(result.size > 1024 * 1024, 'fixture must exceed the cap');
+      assert.equal(result.secretsFlagged, false);
+    });
+
+    it('keeps newest-first order across legacy + session dirs', () => {
+      saveUpload(tmpDir, 'a.txt', b64('a'));
+      saveUpload(tmpDir, 'b.txt', b64('b'), 9);
+      const list = listUploads(tmpDir);
+      for (let i = 1; i < list.length; i++) {
+        assert.ok(list[i - 1].createdAt >= list[i].createdAt, 'sorted newest-first');
+      }
     });
   });
 });

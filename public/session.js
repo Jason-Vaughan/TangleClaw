@@ -1651,9 +1651,14 @@ async function openUploadModal() {
   const historyEl = document.getElementById('uploadHistory');
   if (data && data.uploads && data.uploads.length > 0) {
     historyEl.innerHTML = '<div class="upload-history-title">Recent uploads</div>' +
-      data.uploads.slice(0, 5).map(u =>
-        `<div class="upload-history-item" role="button" tabindex="0" data-path="${esc(u.path)}" title="Click to copy path: ${esc(u.path)}"><code>${esc(u.name)}</code><span class="upload-history-size">${formatSize(u.size)}</span></div>`
-      ).join('');
+      data.uploads.slice(0, 5).map(u => {
+        // Flag-only secret indicator (#343, CC-4): the file is never scrubbed —
+        // the badge says "a credential pattern was detected, review it."
+        const secretBadge = u.secretsFlagged
+          ? `<span class="badge badge-secret" title="&#9888; possible secret detected (${esc((u.secretTypes || []).join(', '))}) — flag only, file not modified">&#9888; secret?</span>`
+          : '';
+        return `<div class="upload-history-item" role="button" tabindex="0" data-path="${esc(u.path)}" title="Click to copy path: ${esc(u.path)}"><code>${esc(u.name)}</code>${secretBadge}<span class="upload-history-size">${formatSize(u.size)}</span></div>`;
+      }).join('');
     // Click / Enter / Space on a history item copies its local path — the same
     // "Tell your AI assistant" affordance the post-upload result offers (#338).
     // `.on*` assignment (not addEventListener) is idempotent across re-opens.

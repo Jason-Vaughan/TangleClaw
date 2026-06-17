@@ -598,6 +598,28 @@ describe('projects', () => {
       assert.equal(result.success, false);
       assert.ok(result.errors[0].includes('not found'));
     });
+
+    it('cascade-deletes the consolidated continuity store with files (CC-4)', () => {
+      projects.createProject({ name: 'store-cascade', methodology: 'minimal', gitInit: false });
+      const store_ = path.join(projectsDir, 'store-cascade', '.tangleclaw', 'continuity', 'sessions', '1', 'uploads');
+      fs.mkdirSync(store_, { recursive: true });
+      fs.writeFileSync(path.join(store_, 'shot.png'), 'x');
+
+      projects.deleteProject('store-cascade', { deleteFiles: true });
+      // The store lives under project.path, so removing the project dir wipes it.
+      assert.ok(!fs.existsSync(path.join(projectsDir, 'store-cascade', '.tangleclaw')));
+    });
+
+    it('preserves the continuity store when files are kept (CC-4)', () => {
+      projects.createProject({ name: 'store-keep', methodology: 'minimal', gitInit: false });
+      const store_ = path.join(projectsDir, 'store-keep', '.tangleclaw', 'continuity');
+      fs.mkdirSync(store_, { recursive: true });
+      fs.writeFileSync(path.join(store_, 'index.md'), '# keep');
+
+      projects.deleteProject('store-keep'); // deleteFiles defaults false
+      // Deliberate: keeping the files keeps the gitignored local store too.
+      assert.ok(fs.existsSync(path.join(store_, 'index.md')));
+    });
   });
 
   describe('detectExistingProjects', () => {
