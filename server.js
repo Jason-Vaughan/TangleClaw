@@ -915,7 +915,7 @@ route('DELETE', '/api/session-rules/:id', (_req, res, params) => {
 // Versioning + rollback, learnings→rule promotion, and the non-authoritative
 // conflict-candidate signal. The Critic-gate for conflicting/autonomous edits is
 // an IN-SESSION agent capability (the server cannot summon a Critic) — see
-// `.claude/priming/d1b-rule-review.md`.
+// `docs/session-rules-self-improvement.md`.
 
 // POST /api/session-rules/promote — promote a learning into a rule (operator-confirmed)
 route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
