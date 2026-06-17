@@ -900,6 +900,48 @@ body {
   min-height: 48px;
 }
 
+/* ── Session Rules self-improvement (D1b) ── */
+.session-rule-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(66, 165, 245, 0.18);
+  color: var(--engine-codex);
+  vertical-align: middle;
+}
+.session-rule-history {
+  flex: 0 0 auto;
+}
+.session-rule-versions {
+  margin: 0 0 6px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.session-rule-version {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--elevated-bg);
+  border-radius: var(--radius-btn);
+}
+.session-rule-version-meta {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-family: monospace;
+  white-space: nowrap;
+}
+.session-rule-version-content {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Toolbar ── */
 .toolbar {
   display: flex;

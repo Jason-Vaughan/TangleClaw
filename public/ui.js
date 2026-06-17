@@ -514,10 +514,15 @@ function handleSessionRulesListEvent(e) {
   const target = e.target.closest('[data-action]');
   if (!target) return;
   const id = Number(target.getAttribute('data-rule-id'));
-  if (target.getAttribute('data-action') === 'toggle') {
+  const action = target.getAttribute('data-action');
+  if (action === 'toggle') {
     toggleSessionRule(id, target.checked);
-  } else if (target.getAttribute('data-action') === 'delete') {
+  } else if (action === 'delete') {
     deleteSessionRule(id);
+  } else if (action === 'history') {
+    toggleSessionRuleVersions(id);
+  } else if (action === 'restore') {
+    restoreSessionRule(id, Number(target.getAttribute('data-version-no')));
   }
 }
 

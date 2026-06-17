@@ -95,4 +95,40 @@ describe('Session rules panel (#347/D1a)', () => {
       assert.match(css, /\.session-rule-disabled/);
     });
   });
+
+  describe('self-improvement UI (D1b)', () => {
+    it('renders a History button and a versions container per rule', () => {
+      assert.match(landing, /data-action="history"/);
+      assert.match(landing, /id="sessionRuleVersions-\$\{rule\.id\}"/);
+    });
+
+    it('shows an AI badge for ai-authored rules', () => {
+      assert.match(landing, /rule\.createdBy === 'ai'/);
+      assert.match(landing, /session-rule-badge/);
+    });
+
+    it('loads versions and renders restore buttons', () => {
+      assert.match(landing, /function toggleSessionRuleVersions\(/);
+      assert.match(landing, /\/api\/session-rules\/\$\{id\}\/versions/);
+      assert.match(landing, /function renderSessionRuleVersions\(/);
+      assert.match(landing, /data-action="restore"/);
+    });
+
+    it('restores via POST /restore', () => {
+      assert.match(landing, /function restoreSessionRule\(/);
+      assert.match(landing, /apiMutate\(`\/api\/session-rules\/\$\{id\}\/restore`, 'POST'/);
+    });
+
+    it('ui.js delegates history + restore actions', () => {
+      assert.match(ui, /action === 'history'/);
+      assert.match(ui, /toggleSessionRuleVersions\(id\)/);
+      assert.match(ui, /action === 'restore'/);
+      assert.match(ui, /restoreSessionRule\(id,/);
+    });
+
+    it('style.css carries version + badge rules', () => {
+      assert.match(css, /\.session-rule-versions/);
+      assert.match(css, /\.session-rule-badge/);
+    });
+  });
 });
