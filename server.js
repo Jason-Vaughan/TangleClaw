@@ -1662,18 +1662,26 @@ route('GET', '/api/sessions/:project/history', (req, res, params) => {
 // cold transcripts), distinct from /api/sessions/:project/history above, which
 // reads the SQLite sessions table. The drawer (History) consumes these.
 
-// A continuity session id is the `<sid>` store key — an integer session id or a
-// wrap-summary filename stem. Validate the untrusted `:sid` route param against
-// the safe charset BEFORE it reaches `path.join` in the continuity store helpers:
-// `matchRoute` decodeURIComponent's after the `[^/]+` match, so a percent-encoded
-// `..%2F..` would otherwise traverse out of the project's store root.
+/**
+ * Validate an untrusted continuity `:sid` route param. The `<sid>` store key is
+ * an integer session id or a wrap-summary filename stem; restrict it to the safe
+ * charset BEFORE it reaches `path.join` in the store helpers. `matchRoute`
+ * decodeURIComponent's after the `[^/]+` match, so a percent-encoded `..%2F..`
+ * would otherwise traverse out of the project's store root.
+ * @param {string} sid - Decoded route parameter
+ * @returns {boolean} True when safe to use as a store key
+ */
 function _isValidSid(sid) {
   return typeof sid === 'string' && /^[A-Za-z0-9_-]+$/.test(sid);
 }
 
-// Strip the cold-tier meta envelope to the fields the UI needs, dropping the
-// absolute `source` path (a local ~/.claude leak) — secret VALUES are never in
-// the meta to begin with (CC-4b records pattern types only).
+/**
+ * Strip the cold-tier meta envelope to the fields the UI needs, dropping the
+ * absolute `source` path (a local `~/.claude` leak). Secret VALUES are never in
+ * the meta to begin with (CC-4b records pattern types only).
+ * @param {object|null} meta - Parsed `transcript.meta.json`, or null
+ * @returns {object|null} UI-safe subset, or null when meta is absent
+ */
 function _publicTranscriptMeta(meta) {
   if (!meta) return null;
   return {
