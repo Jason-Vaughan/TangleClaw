@@ -129,4 +129,76 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.equal(out.currentState, '');
     assert.equal(out.nextAction, '');
   });
+
+  // ── CC-2 warm tier: changelog + wrap summary written alongside the index ──
+
+  function ctxWithSession(session, previousResults) {
+    return { project, session, previousResults: previousResults || [], step: {}, staged: {}, options: {} };
+  }
+
+  it('appends a changelog entry + writes the wrap summary when a session is present', async () => {
+    const res = await step.run(ctxWithSession(
+      { id: 42, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
+        summary: 'Built CC-2 warm tier.',
+        nextSteps: '- run critic',
+        learnings: 'branch hygiene matters'
+      } } }]
+    ));
+    assert.equal(res.ok, true);
+    assert.equal(res.output.changelogAppended, true);
+    assert.equal(res.output.wrapSummaryWritten, true);
+
+    const changelog = fs.readFileSync(continuity.changelogPath(project.path), 'utf8');
+    assert.match(changelog, /\(session:42\) Built CC-2 warm tier\./);
+
+    const summary = continuity.readWrapSummary(project.path, 42);
+    assert.equal(summary.meta.session, '42');
+    assert.equal(summary.meta.harness, 'claude');
+    assert.equal(summary.sections['Where we are'], 'Built CC-2 warm tier.');
+    assert.equal(summary.sections['Next action'], '- run critic');
+    assert.equal(summary.sections['Landmines'], 'branch hygiene matters');
+    assert.equal(summary.sections['Delta'], '', 'uncaptured section honest-flagged → empty on read');
+
+    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 42), 'utf8');
+    assert.match(rawSummary, /- sha: abc1234/);
+    assert.match(rawSummary, /## Delta\n_⚠ not captured_/);
+  });
+
+  it('search finds the just-written entry by its session pointer', async () => {
+    await step.run(ctxWithSession(
+      { id: 7, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'Fixed PTY exhaustion', nextSteps: 'n' } } }]
+    ));
+    const hits = continuity.search(project.path, 'PTY exhaustion');
+    assert.ok(hits.length > 0);
+    assert.ok(hits.some((h) => h.sid === '7'));
+  });
+
+  it('skips the warm tier (no sid) but still writes the index when session is absent', async () => {
+    const res = await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }
+    ]));
+    assert.equal(res.output.written, true, 'index still written');
+    assert.equal(res.output.changelogAppended, false);
+    assert.equal(res.output.wrapSummaryWritten, false);
+    assert.ok(!fs.existsSync(continuity.changelogPath(project.path)), 'no changelog without a session');
+  });
+
+  it('warm-tier failure never halts the wrap (non-blocking note)', async () => {
+    // Plant a file where the wraps/ dir would go so writeWrapSummary fails,
+    // AFTER the index write has already succeeded.
+    const projPath = fs.mkdtempSync(path.join(tmpDir, 'warmfail-'));
+    project = { id: 3, name: 'wf', path: projPath };
+    fs.mkdirSync(continuity.storeDir(projPath), { recursive: true });
+    fs.writeFileSync(continuity.wrapsDir(projPath), 'i am a file, not a dir');
+
+    const res = await step.run(ctxWithSession(
+      { id: 9, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }]
+    ));
+    assert.equal(res.ok, true, 'warm-tier failure must not block a wrap');
+    assert.equal(res.output.written, true, 'index still written');
+    assert.equal(res.output.wrapSummaryWritten, false);
+  });
 });
