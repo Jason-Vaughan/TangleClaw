@@ -289,10 +289,14 @@ describe('API /api/openclaw/connections', () => {
       sshUser: 'user',
       sshKeyPath: '/key',
       localPort: 13274,
-      bridgePort: 3201
+      // Distinct bridge port: #352 lease-at-create now reserves an explicit
+      // bridge_port, so this suite's connections can't all reuse 3201 (that
+      // would collide on the local bind). The 3201 literal here was incidental
+      // to the clearing contract under test.
+      bridgePort: 3251
     });
     assert.equal(created.status, 201);
-    assert.equal(created.data.bridgePort, 3201);
+    assert.equal(created.data.bridgePort, 3251);
     const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, {
       bridgePort: null
     });
@@ -310,7 +314,7 @@ describe('API /api/openclaw/connections', () => {
       sshUser: 'user',
       sshKeyPath: '/key',
       localPort: 13275,
-      bridgePort: 3201
+      bridgePort: 3252  // distinct per #352 lease-at-create (see ClearBridge note)
     });
     const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, {
       bridgePort: ''
@@ -385,6 +389,79 @@ describe('API /api/openclaw/connections', () => {
     assert.ok(conflict.data.error.length > 0, 'error message is non-empty');
     assert.equal(conflict.data.code, 'PORT_CONFLICT',
       'response carries a `code` field so the frontend can disambiguate');
+  });
+
+  // ── #352: auto-allocate a non-colliding local_port / bridge_port ──
+
+  it('POST with localPort omitted auto-allocates a free port and leases it (#352)', async () => {
+    const porthub = require('../lib/porthub');
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'AutoPort-A',
+      host: '10.0.0.90',
+      sshUser: 'user',
+      sshKeyPath: '/key'
+      // localPort omitted — PortHub picks the first free port in [18789, 18999)
+    });
+    assert.equal(created.status, 201);
+    assert.ok(created.data.localPort >= 18789 && created.data.localPort < 18999,
+      'auto-allocated localPort falls inside the OpenClaw tunnel range');
+    // Lease-at-create: the chosen port is reserved under the connection identity
+    const lease = store.portLeases.get(created.data.localPort);
+    assert.ok(lease, 'auto-allocated port is leased at create-time');
+    assert.equal(lease.project, `oc-direct-${created.data.id}`);
+  });
+
+  it('consecutive adds with localPort omitted get DISTINCT ports — no collision (#352)', async () => {
+    const first = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'AutoPort-B1', host: '10.0.0.91', sshUser: 'user', sshKeyPath: '/key'
+    });
+    const second = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'AutoPort-B2', host: '10.0.0.92', sshUser: 'user', sshKeyPath: '/key'
+    });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.notEqual(first.data.localPort, second.data.localPort,
+      'second add must not reuse the first add\'s auto-allocated port');
+  });
+
+  it('POST with an explicit localPort uses it verbatim (no auto-allocation) (#352)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'ExplicitPort', host: '10.0.0.93', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19500
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.localPort, 19500, 'explicit localPort is respected exactly');
+  });
+
+  it('POST with bridgePort:"auto" allocates a free bridge port; DELETE releases both (#352)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'AutoBridge', host: '10.0.0.94', sshUser: 'user', sshKeyPath: '/key',
+      bridgePort: 'auto'
+    });
+    assert.equal(created.status, 201);
+    assert.ok(created.data.bridgePort >= 3201 && created.data.bridgePort < 3300,
+      'auto-allocated bridgePort falls inside the bridge range');
+    const localPort = created.data.localPort;
+    const bridgePort = created.data.bridgePort;
+    assert.ok(store.portLeases.get(localPort), 'local port leased at create');
+    assert.ok(store.portLeases.get(bridgePort), 'bridge port leased at create');
+
+    const del = await request(server, 'DELETE', `/api/openclaw/connections/${created.data.id}`);
+    assert.equal(del.status, 200);
+    assert.equal(store.portLeases.get(localPort), null, 'DELETE releases the local port');
+    assert.equal(store.portLeases.get(bridgePort), null, 'DELETE releases the bridge port');
+  });
+
+  it('POST with an explicit in-use bridgePort is rejected (#352, parity with localPort)', async () => {
+    const porthub = require('../lib/porthub');
+    porthub.registerPort(3290, 'someone-else', 'svc');
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'BridgeConflict', host: '10.0.0.95', sshUser: 'user', sshKeyPath: '/key',
+      bridgePort: 3290
+    });
+    assert.equal(created.status, 409);
+    assert.equal(created.data.code, 'PORT_CONFLICT');
+    assert.ok(created.data.error.includes('3290'));
   });
 });
 

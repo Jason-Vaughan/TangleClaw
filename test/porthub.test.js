@@ -208,4 +208,56 @@ describe('porthub (store-backed)', () => {
       assert.equal(orphanLease, null, 'orphan lease should be cleaned up');
     });
   });
+
+  describe('nextFreePort (#352)', () => {
+    it('returns the first port in the range when nothing is taken', () => {
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18789);
+    });
+
+    it('skips a lease-held port and returns the next free one', () => {
+      porthub.registerPort(18789, 'other-project', 'openclaw-tunnel');
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
+    });
+
+    it('skips multiple consecutive lease-held ports', () => {
+      porthub.registerPort(18789, 'a', 'svc');
+      porthub.registerPort(18790, 'b', 'svc');
+      porthub.registerPort(18791, 'c', 'svc');
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18792);
+    });
+
+    it('skips an OS-bound port (system process) even when unleased', () => {
+      const original = portScanner.isPortInUseBySystem;
+      portScanner.isPortInUseBySystem = (port) =>
+        port === 18789
+          ? { inUse: true, process: 'someproc', pid: 1234 }
+          : { inUse: false, process: null, pid: null };
+      try {
+        assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18790);
+      } finally {
+        portScanner.isPortInUseBySystem = original;
+      }
+    });
+
+    it('respects the host scope — a lease on another host does not block', () => {
+      porthub.registerPort(18789, 'remote-project', 'svc', { host: 'remote-box' });
+      // localhost scan still sees 18789 as free
+      assert.equal(porthub.nextFreePort({ range: [18789, 18999] }), 18789);
+    });
+
+    it('throws when the range holds no free port', () => {
+      porthub.registerPort(18789, 'a', 'svc');
+      porthub.registerPort(18790, 'b', 'svc');
+      assert.throws(
+        () => porthub.nextFreePort({ range: [18789, 18791] }),
+        /No free port available/
+      );
+    });
+
+    it('throws on a malformed range', () => {
+      assert.throws(() => porthub.nextFreePort({ range: [18789] }), /integer range/);
+      assert.throws(() => porthub.nextFreePort({ range: 'nope' }), /integer range/);
+      assert.throws(() => porthub.nextFreePort({}), /integer range/);
+    });
+  });
 });

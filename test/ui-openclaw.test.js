@@ -160,7 +160,10 @@ describe('OpenClaw UI contracts — connection list data shape', () => {
     assert.equal(status, 201);
     assert.equal(data.port, 18789);
     assert.equal(data.cliCommand, 'openclaw-cli');
-    assert.equal(data.localPort, 18789);
+    // #352: an omitted localPort is now auto-allocated to the first free port in
+    // the OpenClaw tunnel range, not the fixed 18789 default it used to return.
+    assert.ok(data.localPort >= 18789 && data.localPort < 18999,
+      'omitted localPort is auto-allocated within the tunnel range');
     assert.equal(data.availableAsEngine, false);
   });
 
