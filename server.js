@@ -1662,6 +1662,15 @@ route('GET', '/api/sessions/:project/history', (req, res, params) => {
 // cold transcripts), distinct from /api/sessions/:project/history above, which
 // reads the SQLite sessions table. The drawer (History) consumes these.
 
+// A continuity session id is the `<sid>` store key — an integer session id or a
+// wrap-summary filename stem. Validate the untrusted `:sid` route param against
+// the safe charset BEFORE it reaches `path.join` in the continuity store helpers:
+// `matchRoute` decodeURIComponent's after the `[^/]+` match, so a percent-encoded
+// `..%2F..` would otherwise traverse out of the project's store root.
+function _isValidSid(sid) {
+  return typeof sid === 'string' && /^[A-Za-z0-9_-]+$/.test(sid);
+}
+
 // Strip the cold-tier meta envelope to the fields the UI needs, dropping the
 // absolute `source` path (a local ~/.claude leak) — secret VALUES are never in
 // the meta to begin with (CC-4b records pattern types only).
@@ -1714,13 +1723,17 @@ route('GET', '/api/continuity/:project/sessions/:sid', (req, res, params) => {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
   const sid = params.sid;
+  if (!_isValidSid(sid)) {
+    return errorResponse(res, 400, 'Invalid session id', 'BAD_REQUEST');
+  }
   const session = continuity.listSessions(project.path).find((s) => s.sid === String(sid)) || null;
   jsonResponse(res, 200, {
     sid: String(sid),
     session,
     summary: continuity.readWrapSummary(project.path, sid),
     transcript: _publicTranscriptMeta(continuity.readTranscriptMeta(project.path, sid)),
-    uploads: uploads.listUploads(project.path).filter((u) => String(u.sid) === String(sid))
+    // listUploads tags each entry with `session` (the <sid> dir name), not `sid`.
+    uploads: uploads.listUploads(project.path).filter((u) => String(u.session) === String(sid))
   });
 });
 
@@ -1729,6 +1742,9 @@ route('GET', '/api/continuity/:project/sessions/:sid/transcript/search', async (
   const project = projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  if (!_isValidSid(params.sid)) {
+    return errorResponse(res, 400, 'Invalid session id', 'BAD_REQUEST');
   }
   const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
   const result = await continuity.searchTranscript(project.path, params.sid, query.q || '', {

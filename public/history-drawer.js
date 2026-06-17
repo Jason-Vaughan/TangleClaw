@@ -15,6 +15,16 @@
 
 let historyTarget = null;
 
+/*
+ * Whitelist a session id for inlining into an onclick JS-string. `esc()` is
+ * HTML-escaping — wrong for a JS-string sink — so a sid sourced from a wrap
+ * filename could otherwise break out. Sids are the server's safe charset
+ * (`[A-Za-z0-9_-]`); strip anything else defensively.
+ */
+function safeSid(sid) {
+  return String(sid).replace(/[^A-Za-z0-9_-]/g, '');
+}
+
 /** Open the History drawer for a project and load its full session list. */
 function openHistory(name) {
   historyTarget = name;
@@ -106,8 +116,8 @@ function renderHistoryResults(data) {
     const hits = (s.hits || []).slice(0, 3).map((h) =>
       `<div class="history-hit"><span class="form-hint">${esc(h.section || h.source)}</span> ${esc(h.line)}</div>`
     ).join('');
-    return `<div class="history-result" onclick="openHistorySession('${esc(s.sid)}')"
-        onkeydown="if(event.key==='Enter')openHistorySession('${esc(s.sid)}')" tabindex="0" role="button">
+    return `<div class="history-result" onclick="openHistorySession('${safeSid(s.sid)}')"
+        onkeydown="if(event.key==='Enter')openHistorySession('${safeSid(s.sid)}')" tabindex="0" role="button">
       <div class="card-row">
         <strong>session ${esc(s.sid)}</strong>
         <span class="form-hint">${esc(s.date || 'undated')}</span>
@@ -152,7 +162,7 @@ async function openHistorySession(sid) {
       <div class="card-row" style="margin-top:6px">
         <input type="text" class="form-input" id="historyTranscriptQuery"
                placeholder="Search this session's transcript…" style="flex:1">
-        <button class="btn btn-compact btn-primary" onclick="runTranscriptSearch('${esc(sid)}')">Search</button>
+        <button class="btn btn-compact btn-primary" onclick="runTranscriptSearch('${safeSid(sid)}')">Search</button>
       </div>
       <div id="historyTranscriptResults"></div>`;
   }

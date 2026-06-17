@@ -68,6 +68,10 @@ describe('API /api/continuity (CC-5 operator search)', () => {
       JSON.stringify({ type: 'user', timestamp: '2026-06-17T10:00:00Z', message: { role: 'user', content: 'the auth redirect keeps looping' } }) + '\n');
     fs.writeFileSync(path.join(sd, 'transcript.meta.json'),
       JSON.stringify({ harness: 'claude', secretsFlagged: false, secretTypes: [], bytes: 90, lineCount: 1, capturedAt: '2026-06-17T10:05:00Z', source: '/Users/secret/.claude/x.jsonl' }));
+    // A session-linked upload so the drill-down uploads list is exercised.
+    const ud = continuity.sessionUploadsDir(projDir, 42);
+    fs.mkdirSync(ud, { recursive: true });
+    fs.writeFileSync(path.join(ud, 'shot.png'), 'png-bytes');
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -105,7 +109,16 @@ describe('API /api/continuity (CC-5 operator search)', () => {
     assert.equal(res.data.transcript.harness, 'claude');
     assert.equal(res.data.transcript.secretsFlagged, false);
     assert.equal(res.data.transcript.source, undefined, 'absolute ~/.claude path is not leaked');
-    assert.ok(Array.isArray(res.data.uploads));
+    // The session's uploads surface (filtered on `session`, the listUploads field).
+    assert.ok(res.data.uploads.some((u) => (u.name || '').includes('shot.png')), 'per-session upload listed');
+  });
+
+  it('rejects a path-traversal session id with 400 (no store escape)', async () => {
+    const evil = encodeURIComponent('../../etc'); // %2E%2E%2F… → decoded after the route regex
+    const drill = await request(server, 'GET', `/api/continuity/${projectName}/sessions/${evil}`);
+    assert.equal(drill.status, 400);
+    const cold = await request(server, 'GET', `/api/continuity/${projectName}/sessions/${evil}/transcript/search?q=x`);
+    assert.equal(cold.status, 400);
   });
 
   it('GET /sessions/:sid/transcript/search finds cold-tier excerpts', async () => {
