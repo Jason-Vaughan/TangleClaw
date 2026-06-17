@@ -279,3 +279,97 @@ describe('continuity warm tier (CC-2)', () => {
     });
   });
 });
+
+describe('continuity Map (CC-3)', () => {
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-continuity-cc3-'));
+  });
+
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('index schema — Map section', () => {
+    it('renders a ## Map section with the empty placeholder when no entries', () => {
+      const md = continuity.renderIndex({ currentState: 'x' });
+      assert.match(md, /## Map\n_no entries yet_/);
+      // Map sits between Next action and Freshness
+      assert.ok(md.indexOf('## Next action') < md.indexOf('## Map'));
+      assert.ok(md.indexOf('## Map') < md.indexOf('## Freshness'));
+    });
+
+    it('round-trips a curated Map body verbatim through render/parse', () => {
+      const mapBody = '- **Upload handling** — any-type uploads. `lib/uploads.js`\n- **TBD** — `server.js` <!-- describe -->';
+      const md = continuity.renderIndex({ currentState: 'x', map: mapBody });
+      const parsed = continuity.parseIndex(md);
+      assert.equal(parsed.map, mapBody);
+    });
+
+    it('parses the empty placeholder back to an empty Map', () => {
+      const parsed = continuity.parseIndex(continuity.renderIndex({ currentState: 'x' }));
+      assert.equal(parsed.map, '');
+    });
+  });
+
+  describe('updateMap', () => {
+    it('stubs a touched file not yet in the Map', () => {
+      const next = continuity.updateMap('', { touched: ['lib/foo.js'] });
+      assert.equal(next, '- **TBD** — `lib/foo.js` <!-- describe -->');
+    });
+
+    it('does not re-stub a file already referenced (idempotent)', () => {
+      const existing = '- **Foo** — does foo. `lib/foo.js:42`';
+      const next = continuity.updateMap(existing, { touched: ['lib/foo.js'] });
+      assert.equal(next, existing, 'already-referenced file produces no new stub');
+    });
+
+    it('prunes an entry when every referenced path is deleted', () => {
+      const existing = '- **TBD** — `lib/gone.js` <!-- describe -->\n- **Keep** — `lib/stay.js`';
+      const next = continuity.updateMap(existing, { deleted: ['lib/gone.js'] });
+      assert.doesNotMatch(next, /gone\.js/);
+      assert.match(next, /stay\.js/);
+    });
+
+    it('keeps a multi-file curated entry when only one of its files is deleted', () => {
+      const existing = '- **Wrap** — the wrap. `lib/sessions.js`, `lib/wrap-pipeline.js`';
+      const next = continuity.updateMap(existing, { deleted: ['lib/wrap-pipeline.js'] });
+      assert.match(next, /sessions\.js/, 'entry survives — a referenced file remains');
+    });
+
+    it('never prunes a pure-prose entry (no path tokens)', () => {
+      const existing = '- A note with no file references';
+      const next = continuity.updateMap(existing, { deleted: ['lib/foo.js'] });
+      assert.match(next, /A note with no file references/);
+    });
+
+    it('combines prune + stub in one pass', () => {
+      const existing = '- **Old** — `lib/old.js`\n- **Foo** — `lib/foo.js`';
+      const next = continuity.updateMap(existing, { touched: ['lib/new.js'], deleted: ['lib/old.js'] });
+      assert.doesNotMatch(next, /old\.js/);
+      assert.match(next, /foo\.js/);
+      assert.match(next, /- \*\*TBD\*\* — `lib\/new\.js`/);
+    });
+
+    it('is a no-op on an empty Map with no delta', () => {
+      assert.equal(continuity.updateMap('', {}), '');
+    });
+  });
+
+  describe('readIndexRaw', () => {
+    it('returns the Map even for a degraded index with no judgment content', () => {
+      const proj = path.join(tmpDir, 'raw1');
+      // Only a Map + freshness, no currentState/nextAction — readIndex would null this out.
+      continuity.writeIndex(proj, { map: '- **Foo** — `lib/foo.js`', freshness: { sha: 'x', branch: 'main', writtenAt: '2026-06-17' } });
+      assert.equal(continuity.readIndex(proj), null, 'readIndex nulls a no-judgment index');
+      const raw = continuity.readIndexRaw(proj);
+      assert.ok(raw, 'readIndexRaw still returns it');
+      assert.match(raw.map, /foo\.js/);
+    });
+
+    it('returns null when the index file is absent', () => {
+      assert.equal(continuity.readIndexRaw(path.join(tmpDir, 'never')), null);
+    });
+  });
+});
