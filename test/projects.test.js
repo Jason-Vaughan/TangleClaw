@@ -524,6 +524,34 @@ describe('projects', () => {
       assert.deepEqual(projConfig.quickCommands, cmds);
     });
 
+    // CC-6 (#381): per-project wrap-section selection.
+    it('persists a valid wrapSections selection + enriches it', () => {
+      const result = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Next action', 'Freshness'] });
+      assert.ok(result.project);
+      assert.deepEqual(result.project.wrapSections, ['Where we are', 'Next action', 'Freshness']);
+      const projConfig = store.projectConfig.load(result.project.path);
+      assert.deepEqual(projConfig.wrapSections, ['Where we are', 'Next action', 'Freshness']);
+    });
+
+    it('clears the wrapSections override when set to null (deep default)', () => {
+      projects.updateProject('new-project', { wrapSections: ['Freshness'] });
+      const result = projects.updateProject('new-project', { wrapSections: null });
+      assert.ok(result.project);
+      assert.equal(result.project.wrapSections, null);
+      const projConfig = store.projectConfig.load(result.project.path);
+      assert.equal(projConfig.wrapSections, null);
+    });
+
+    it('rejects wrapSections that is not an array or contains unknown names', () => {
+      const notArray = projects.updateProject('new-project', { wrapSections: 'Freshness' });
+      assert.equal(notArray.project, null);
+      assert.ok(notArray.errors[0].includes('wrapSections'));
+
+      const bogus = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Bogus'] });
+      assert.equal(bogus.project, null);
+      assert.ok(bogus.errors[0].includes('wrapSections'));
+    });
+
     describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
       it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
         // Set up a discrete project so other tests' state doesn't interfere.

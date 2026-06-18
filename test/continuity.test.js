@@ -271,6 +271,45 @@ describe('continuity warm tier (CC-2)', () => {
     });
   });
 
+  describe('wrap-section selection (CC-6, #381)', () => {
+    it('effectiveWrapSections returns all 8 for null/undefined (deep default)', () => {
+      assert.deepEqual(continuity.effectiveWrapSections(null), continuity.WRAP_SECTIONS);
+      assert.deepEqual(continuity.effectiveWrapSections(undefined), continuity.WRAP_SECTIONS);
+    });
+
+    it('effectiveWrapSections renders only chosen sections, in canonical order', () => {
+      const chosen = continuity.effectiveWrapSections(['Freshness', 'Where we are']);
+      assert.deepEqual(chosen, ['Where we are', 'Next action', 'Freshness']);
+    });
+
+    it('effectiveWrapSections always forces Next action even when unchecked', () => {
+      const chosen = continuity.effectiveWrapSections(['Delta']);
+      assert.ok(chosen.includes('Next action'), 'Next action is the keystone — never droppable');
+      assert.deepEqual(chosen, ['Next action', 'Delta']);
+    });
+
+    it('effectiveWrapSections ignores unknown section names', () => {
+      assert.deepEqual(continuity.effectiveWrapSections(['Bogus', 'Decisions']), ['Next action', 'Decisions']);
+    });
+
+    it('renderWrapSummary honors enabledSections — disabled sections are omitted entirely', () => {
+      const doc = continuity.renderWrapSummary({
+        enabledSections: ['Where we are'],
+        meta: { session: 7 },
+        sections: { 'Where we are': 'here', 'Next action': 'go' }
+      });
+      assert.match(doc, /## Where we are/);
+      assert.match(doc, /## Next action/); // forced
+      assert.doesNotMatch(doc, /## Delta/);
+      assert.doesNotMatch(doc, /## Landmines/);
+    });
+
+    it('renderWrapSummary with null enabledSections still renders all 8 (no regression)', () => {
+      const doc = continuity.renderWrapSummary({ meta: { session: 7 }, sections: {} });
+      for (const s of continuity.WRAP_SECTIONS) assert.match(doc, new RegExp(`## ${s}`));
+    });
+  });
+
   describe('search (grep over structured markdown)', () => {
     function seed() {
       const proj = path.join(tmpDir, 'srch-' + Math.random().toString(36).slice(2, 8));

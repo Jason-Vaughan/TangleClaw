@@ -849,18 +849,20 @@ route('POST', '/api/rules/global/reset', (_req, res) => {
 // global-rules edits propagate today. The D1a UI authors GLOBAL rules
 // (projectId omitted); the nullable project_id is schema-ready for D1b.
 
-// GET /api/session-rules — list (optional ?projectId= / ?scope=global)
+// GET /api/session-rules — list (optional ?projectId= / ?scope=global / ?kind=)
 route('GET', '/api/session-rules', (req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const query = parseQuery(urlObj.search);
   const options = {};
   if (query.scope === 'global') options.scope = 'global';
   else if (query.projectId !== undefined) options.projectId = Number(query.projectId);
+  // CC-6 (#381): filter the per-project modal's three boxes by rule kind.
+  if (query.kind !== undefined) options.kind = query.kind;
   const rules = store.sessionRules.list(options);
   jsonResponse(res, 200, { rules });
 });
 
-// POST /api/session-rules — create { content, projectId?, createdBy? }
+// POST /api/session-rules — create { content, projectId?, createdBy?, kind? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
@@ -869,7 +871,9 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
     const rule = store.sessionRules.create({
       content: body.content,
       projectId: body.projectId ?? null,
-      createdBy: body.createdBy || 'operator'
+      createdBy: body.createdBy || 'operator',
+      // CC-6 (#381): 'startup' (default) | 'wrap' | 'mode'. Invalid → store throws BAD_REQUEST.
+      kind: body.kind
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -927,7 +931,9 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
     const rule = store.sessionRules.promoteFromLearning(Number(body.learningId), {
       content: body.content,
       projectId: body.projectId ?? null,
-      createdBy: body.createdBy
+      createdBy: body.createdBy,
+      // CC-6 (#381): the wrap-time self-critique loop promotes a learning into a 'wrap' rule.
+      kind: body.kind
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -942,7 +948,7 @@ route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
   }
-  const candidates = store.sessionRules.findConflictCandidates(body.content, body.projectId ?? null);
+  const candidates = store.sessionRules.findConflictCandidates(body.content, body.projectId ?? null, { kind: body.kind });
   jsonResponse(res, 200, { candidates });
 }, { maxBodySize: 256 * 1024 });
 

@@ -955,6 +955,26 @@ body {
   word-break: break-word;
 }
 
+/* ── Project Rules section in Settings modal (CC-6, #381) ── */
+.project-rules-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #2a2a2a);
+}
+.project-rules-block {
+  margin-top: 12px;
+}
+.project-rules-block .session-rules-list {
+  margin-top: 6px;
+}
+.wrap-section-toggle {
+  margin-top: 4px;
+}
+.wrap-section-toggle em {
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+
 /* ── Toolbar ── */
 .toolbar {
   display: flex;
