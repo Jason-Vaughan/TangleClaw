@@ -122,6 +122,12 @@ describe('Landing Page API Integration', () => {
       assert.ok(res.headers['content-type'].includes('javascript'));
     });
 
+    it('should serve history-drawer.js (CC-5)', async () => {
+      const res = await request('/history-drawer.js');
+      assert.equal(res.status, 200);
+      assert.ok(res.headers['content-type'].includes('javascript'));
+    });
+
     it('should serve manifest.json', async () => {
       const res = await request('/manifest.json');
       assert.equal(res.status, 200);

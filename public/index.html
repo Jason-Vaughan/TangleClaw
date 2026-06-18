@@ -533,9 +533,71 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
   </div>
 
+  <!-- Session History & Search drawer (CC-5) -->
+  <div class="modal-backdrop" id="historyModal">
+    <div class="modal-content" role="dialog" aria-label="Session history and search" aria-modal="true"
+         style="max-width:620px;max-height:88vh;overflow-y:auto">
+      <div class="card-row">
+        <h3 class="modal-title" id="historyTitle" style="flex:1">Session History</h3>
+        <button class="btn btn-compact" onclick="closeHistory()">Close</button>
+      </div>
+      <div class="card-row">
+        <input type="text" class="form-input" id="historySearchInput" style="flex:1"
+               placeholder="Search the whole history (changelog + wrap summaries)…"
+               onkeydown="if(event.key==='Enter')runHistorySearch()"
+               autocomplete="off" autocorrect="off" autocapitalize="off">
+        <button class="btn btn-compact btn-primary" onclick="runHistorySearch()">Search</button>
+      </div>
+      <div class="history-scope">
+        <label><input type="radio" name="historyScope" value="summaries" checked onchange="runHistorySearch()"> Summaries <span class="form-hint">(fast — session notes)</span></label>
+        <label><input type="radio" name="historyScope" value="transcripts" onchange="runHistorySearch()"> Full transcripts <span class="form-hint">(deep — every saved conversation)</span></label>
+      </div>
+      <details class="history-filters">
+        <summary class="form-hint">Filters</summary>
+        <div class="form-group">
+          <label class="form-label" for="historyDateFrom">Date from / to</label>
+          <div class="card-row">
+            <input type="date" class="form-input" id="historyDateFrom" style="flex:1">
+            <input type="date" class="form-input" id="historyDateTo" style="flex:1">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="historyType">Type</label>
+          <select class="form-select" id="historyType">
+            <option value="">any</option>
+            <option value="feat">feat</option>
+            <option value="fix">fix</option>
+            <option value="chore">chore</option>
+            <option value="docs">docs</option>
+            <option value="refactor">refactor</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="historyTags">Tags (comma-separated, all must match)</label>
+          <input type="text" class="form-input" id="historyTags" placeholder="auth, redirect"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="historyRefs">Refs</label>
+          <input type="text" class="form-input" id="historyRefs" placeholder="#344"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="historyFile">File touched (substring)</label>
+          <input type="text" class="form-input" id="historyFile" placeholder="lib/auth.js"
+                 autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+        <button class="btn btn-compact" onclick="runHistorySearch()">Apply filters</button>
+      </details>
+      <div id="historyResults" class="history-results"></div>
+      <div id="historyDrill" class="history-drill hidden"></div>
+    </div>
+  </div>
+
   <script src="/api-helper.js"></script>
   <script src="/landing.js"></script>
   <script src="/ui.js"></script>
+  <script src="/history-drawer.js"></script>
   <script src="/setup.js"></script>
 </body>
 </html>

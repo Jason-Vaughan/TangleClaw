@@ -158,7 +158,8 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.equal(res.output.wrapSummaryWritten, true);
 
     const changelog = fs.readFileSync(continuity.changelogPath(project.path), 'utf8');
-    assert.match(changelog, /\(session:42\) Built CC-2 warm tier\./);
+    // CC-5: the default stub branch (feat/cc-1) now renders a [feat] type token.
+    assert.match(changelog, /\(session:42\) \[feat\] Built CC-2 warm tier\./);
 
     const summary = continuity.readWrapSummary(project.path, 42);
     assert.equal(summary.meta.session, '42');
@@ -288,6 +289,58 @@ describe('continuity-write wrap step (CC-1)', () => {
     ]));
     assert.equal(res.ok, true);
     assert.equal(res.output.transcript.captured, false);
+  });
+
+  // ── CC-5: type (branch prefix) + files (touched) flow into the warm tier ──
+
+  it('_branchType maps the branch prefix to a work type (feature → feat); typeless → empty', () => {
+    assert.equal(step._branchType('feat/cc-5-operator-search'), 'feat');
+    assert.equal(step._branchType('feature/x'), 'feat');
+    assert.equal(step._branchType('fix/bug'), 'fix');
+    assert.equal(step._branchType('chore/deps'), 'chore');
+    assert.equal(step._branchType('docs/readme'), 'docs');
+    assert.equal(step._branchType('refactor/core'), 'refactor');
+    assert.equal(step._branchType('main'), '', 'no prefix → no type');
+    assert.equal(step._branchType('wip/experiment'), '', 'unknown prefix → no type');
+    assert.equal(step._branchType(''), '');
+  });
+
+  it('writes [type] + files: into the changelog and frontmatter from branch + diff', async () => {
+    step._internal.exec = gitStubWithDiff('M\tlib/auth.js\nM\tserver.js\n'); // branch feat/cc-3
+    const res = await step.run(ctxWithSession(
+      { id: 55, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'CC-5 search', nextSteps: 'n' } } }]
+    ));
+    assert.equal(res.ok, true);
+
+    const changelog = fs.readFileSync(continuity.changelogPath(project.path), 'utf8');
+    assert.match(changelog, /\(session:55\) \[feat\] CC-5 search/, 'type rides as [feat] after the pointer');
+    assert.match(changelog, /\n {2}files: lib\/auth\.js, server\.js/);
+
+    const summary = continuity.readWrapSummary(project.path, 55);
+    assert.equal(summary.meta.type, 'feat');
+    assert.equal(summary.meta.files, 'lib/auth.js, server.js');
+
+    // The new fields are queryable end-to-end through listSessions.
+    const rec = continuity.listSessions(project.path).find((s) => s.sid === '55');
+    assert.equal(rec.type, 'feat');
+    assert.deepEqual(rec.files.sort(), ['lib/auth.js', 'server.js']);
+  });
+
+  it('omits type when the branch carries no recognized prefix (un-indexed, honest)', async () => {
+    step._internal.exec = async (file, args) => {
+      if (args.includes('--short')) return { exitCode: 0, stdout: 'abc1234\n', stderr: '' };
+      if (args.includes('--abbrev-ref')) return { exitCode: 0, stdout: 'main\n', stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: '' };
+    };
+    await step.run(ctxWithSession(
+      { id: 56, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'on main', nextSteps: 'n' } } }]
+    ));
+    const changelog = fs.readFileSync(continuity.changelogPath(project.path), 'utf8');
+    assert.match(changelog, /\(session:56\) on main/);
+    assert.doesNotMatch(changelog, /\(session:56\) \[/, 'no [type] token for a typeless branch');
+    assert.equal(continuity.readWrapSummary(project.path, 56).meta.type, undefined);
   });
 
   it('a transcript-snapshot failure never halts the wrap or the warm tier', async () => {

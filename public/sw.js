@@ -10,12 +10,18 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-17';
+const CACHE_NAME = 'tangleclaw-v3-20';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
   '/landing.js',
   '/ui.js',
+  // history-drawer.js is the dashboard-shell sibling of ui.js (CC-5): cache-first
+  // ui.js card buttons call into it (openHistory), so it must be precached in the
+  // same generation to avoid the cache-first version skew #271 describes for
+  // ui.js feature changes. The CACHE_NAME bump above is what surfaces it (and the
+  // new index.html + ui.js) to operators with an active SW.
+  '/history-drawer.js',
   '/manifest.json'
 ];
 
