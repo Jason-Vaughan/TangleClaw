@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach, mock } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -204,6 +204,108 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       ]);
 
       assert.deepEqual(ownership.listLive(), []);
+    });
+  });
+
+  describe('#364 — accurate remote liveness via the bridge (Slice 2b)', () => {
+    const origBridgeStatus = ownership._internal.bridgeStatus;
+    afterEach(() => { ownership._internal.bridgeStatus = origBridgeStatus; });
+
+    /** Create a remote openclaw connection (with a bridge) + a webui session on it. */
+    function makeRemoteSession(name, { bridgePort = 3201, bridgeToken = 'tok', status = 'active' } = {}) {
+      const conn = store.openclawConnections.create({
+        name: `${name}-conn`, host: `${name}.ts.net`, sshUser: 'j', sshKeyPath: '/tmp/k',
+        bridgePort, bridgeToken
+      });
+      const project = store.projects.create({ name, path: `/tmp/${name}` });
+      const session = store.sessions.start({ projectId: project.id, engineId: `openclaw:${conn.id}`, sessionMode: 'webui' });
+      if (status === 'wrapping') store.sessions.setWrapping(session.id);
+      return { conn, project, session };
+    }
+
+    it('probeLiveness consults the bridge for a remote session and reports source:bridge', async () => {
+      const calls = [];
+      ownership._internal.bridgeStatus = async (opts) => { calls.push(opts); return { ok: true, active: true }; };
+      const { conn, project, session } = makeRemoteSession('probe-live');
+
+      const res = await ownership.probeLiveness(session);
+      assert.deepEqual(res, { live: true, source: 'bridge' });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].localPort, conn.bridgePort, 'probes the connection bridge port');
+      assert.equal(calls[0].token, 'tok');
+      assert.equal(calls[0].project, project.name, 'bridge addresses the session by project name');
+    });
+
+    it('probeLiveness reports a bridge-confirmed DEAD session (active:false) — the #364 win', async () => {
+      ownership._internal.bridgeStatus = async () => ({ ok: true, active: false });
+      const { session } = makeRemoteSession('probe-dead');
+      // db says active, but the bridge says no live session → accurate dead.
+      assert.deepEqual(await ownership.probeLiveness(session), { live: false, source: 'bridge' });
+    });
+
+    it('probeLiveness falls back to db (never a fabricated dead) when the bridge is unreachable', async () => {
+      ownership._internal.bridgeStatus = async () => ({ ok: false, active: false, error: 'tunnel down' });
+      const { session } = makeRemoteSession('probe-unreachable');
+      const res = await ownership.probeLiveness(session);
+      assert.equal(res.source, 'db', 'unreachable bridge → honest db fallback, not bridge');
+      assert.equal(res.live, true, 'db-active row kept live — unreachable ≠ dead');
+    });
+
+    it('probeLiveness falls back to db without probing when the connection has no bridge port', async () => {
+      let probed = false;
+      ownership._internal.bridgeStatus = async () => { probed = true; return { ok: true, active: false }; };
+      const { session } = makeRemoteSession('probe-nobridge', { bridgePort: null });
+      const res = await ownership.probeLiveness(session);
+      assert.equal(res.source, 'db');
+      assert.equal(probed, false, 'no bridge port → never calls the bridge');
+    });
+
+    it('probeLiveness delegates to sync _liveness for a local tmux session (no bridge call)', async (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      let probed = false;
+      ownership._internal.bridgeStatus = async () => { probed = true; return { ok: true, active: true }; };
+      const { session } = makeLocalSession('probe-local');
+      const res = await ownership.probeLiveness(session);
+      assert.deepEqual(res, { live: true, source: 'tmux' });
+      assert.equal(probed, false, 'local session must not hit the bridge');
+    });
+
+    it('probeLiveness falls back to db when the bridge probe throws', async () => {
+      ownership._internal.bridgeStatus = async () => { throw new Error('boom'); };
+      const { session } = makeRemoteSession('probe-throw');
+      assert.equal((await ownership.probeLiveness(session)).source, 'db');
+    });
+
+    it('listLiveProbed drops a bridge-dead remote tab but keeps a bridge-live one + local sessions', async (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      const liveLocal = makeLocalSession('lp-local');
+      const liveRemote = makeRemoteSession('lp-remote-live');
+      const deadRemote = makeRemoteSession('lp-remote-dead');
+      // Scope the enumeration to exactly these fixtures (the file's pattern for
+      // listLive tests — the real store accretes rows across tests).
+      t.mock.method(store.sessions, 'listLiveAll', () => [liveLocal.session, liveRemote.session, deadRemote.session]);
+
+      ownership._internal.bridgeStatus = async (opts) => ({
+        ok: true,
+        active: opts.project === liveRemote.project.name // only the live one is active on the bridge
+      });
+
+      const probed = await ownership.listLiveProbed();
+      const names = probed.map((o) => o.project).sort();
+      assert.deepEqual(names, ['lp-local', 'lp-remote-live'], 'bridge-dead remote dropped; live local + live remote kept');
+      const remote = probed.find((o) => o.project === liveRemote.project.name);
+      assert.equal(remote.livenessSource, 'bridge', 'kept remote carries accurate bridge liveness');
+    });
+
+    it('listLiveProbed keeps an unreachable-bridge remote via the db fallback (cannot prove dead)', async (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      const remote = makeRemoteSession('lp-unreachable');
+      t.mock.method(store.sessions, 'listLiveAll', () => [remote.session]);
+      ownership._internal.bridgeStatus = async () => ({ ok: false, error: 'down' });
+      const probed = await ownership.listLiveProbed();
+      const entry = probed.find((o) => o.project === remote.project.name);
+      assert.ok(entry, 'unreachable remote is retained (honest — not provably dead)');
+      assert.equal(entry.livenessSource, 'db');
     });
   });
 
