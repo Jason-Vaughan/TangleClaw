@@ -179,4 +179,133 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.deepEqual(remaining, ['survivor (global)']);
     });
   });
+
+  describe('kind discriminator (CC-6, #381)', () => {
+    it('defaults a rule to kind=startup', () => {
+      const rule = store.sessionRules.create({ content: 'no kind given' });
+      assert.equal(rule.kind, 'startup');
+    });
+
+    it('honors an explicit valid kind', () => {
+      const wrap = store.sessionRules.create({ content: 'wrap rule', kind: 'wrap' });
+      const mode = store.sessionRules.create({ content: 'mode rule', kind: 'mode' });
+      assert.equal(wrap.kind, 'wrap');
+      assert.equal(mode.kind, 'mode');
+    });
+
+    it('rejects an unknown kind', () => {
+      assert.throws(
+        () => store.sessionRules.create({ content: 'bad', kind: 'bogus' }),
+        /kind must be one of/
+      );
+    });
+
+    it('exposes SESSION_RULE_KINDS', () => {
+      assert.deepEqual(store.SESSION_RULE_KINDS, ['startup', 'wrap', 'mode']);
+    });
+
+    it('list filters by kind', () => {
+      const pid = mkProject('proj-k');
+      store.sessionRules.create({ content: 's', projectId: pid, kind: 'startup' });
+      store.sessionRules.create({ content: 'w', projectId: pid, kind: 'wrap' });
+      store.sessionRules.create({ content: 'm', projectId: pid, kind: 'mode' });
+
+      assert.deepEqual(store.sessionRules.list({ projectId: pid, kind: 'wrap' }).map((r) => r.content), ['w']);
+      assert.deepEqual(store.sessionRules.list({ projectId: pid, kind: 'mode' }).map((r) => r.content), ['m']);
+      assert.equal(store.sessionRules.list({ projectId: pid }).length, 3);
+    });
+
+    it('listActiveForProject (launch injection) returns ONLY startup rules', () => {
+      const pid = mkProject('proj-inject');
+      store.sessionRules.create({ content: 'startup rule', projectId: pid, kind: 'startup' });
+      store.sessionRules.create({ content: 'wrap rule', projectId: pid, kind: 'wrap' });
+      store.sessionRules.create({ content: 'mode rule', projectId: pid, kind: 'mode' });
+      store.sessionRules.create({ content: 'global startup', kind: 'startup' });
+      store.sessionRules.create({ content: 'global wrap', kind: 'wrap' });
+
+      const injected = store.sessionRules.listActiveForProject(pid).map((r) => r.content);
+      assert.deepEqual(injected, ['startup rule', 'global startup']);
+    });
+
+    it('kind survives a version restore (immutable)', () => {
+      const wrap = store.sessionRules.create({ content: 'v1', kind: 'wrap' });
+      store.sessionRules.update(wrap.id, { content: 'v2' });
+      const restored = store.sessionRules.restore(wrap.id, 1);
+      assert.equal(restored.kind, 'wrap');
+      assert.equal(restored.content, 'v1');
+    });
+
+    it('promoteFromLearning can target a wrap rule for the self-critique sink', () => {
+      const pid = mkProject('proj-learn');
+      const learning = store.learnings.create({ projectId: pid, content: 'always run lint before wrap', tier: 'provisional' });
+      const rule = store.sessionRules.promoteFromLearning(learning.id, { kind: 'wrap' });
+      assert.equal(rule.kind, 'wrap');
+      assert.equal(rule.createdBy, 'ai');
+      assert.equal(rule.sourceLearningId, learning.id);
+    });
+
+    it('findConflictCandidates scopes to the same kind when opts.kind given', () => {
+      store.sessionRules.create({ content: 'commit before wrapping the session', kind: 'startup' });
+      store.sessionRules.create({ content: 'commit before wrapping the session always', kind: 'wrap' });
+
+      const sameKind = store.sessionRules.findConflictCandidates(
+        'remember to commit before wrapping',
+        null,
+        { kind: 'wrap' }
+      );
+      assert.equal(sameKind.length, 1);
+      assert.equal(sameKind[0].rule.kind, 'wrap');
+    });
+  });
+});
+
+describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
+  it('backfills pre-existing rows to kind=startup and keeps them injecting', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-kind-mig-'));
+    try {
+      // Seed a v19 DB: a session_rules table WITHOUT the kind column + one row,
+      // schema_version pinned at 19. store.init() then fires the v19→v20 ALTER.
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (19);
+        CREATE TABLE session_rules (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id  INTEGER,
+          content     TEXT    NOT NULL,
+          enabled     INTEGER NOT NULL DEFAULT 1,
+          created_by  TEXT    NOT NULL DEFAULT 'operator',
+          owner       TEXT,
+          source_learning_id INTEGER,
+          created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rules (content) VALUES ('pre-CC-6 global rule');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+      assert.equal(ver.version, 20);
+
+      // The pre-existing row backfilled to kind='startup'…
+      const rules = store.sessionRules.list();
+      assert.equal(rules.length, 1);
+      assert.equal(rules[0].kind, 'startup');
+      // …and still injects (no launch-injection regression).
+      const injected = store.sessionRules.listActiveForProject(null).map((r) => r.content);
+      assert.deepEqual(injected, ['pre-CC-6 global rule']);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

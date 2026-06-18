@@ -77,6 +77,36 @@ Trivial, non-conflicting, **operator-authored** edits skip the gate.
 - Edit: `PUT /api/session-rules/:id {content?, enabled?, changedBy:'ai'}`
 - Roll back: `POST /api/session-rules/:id/restore {versionNo}`
 
+## Rule kinds + the wrap-rule self-critique trigger (CC-6, #381)
+
+CC-6 added a **`kind`** discriminator to `session_rules` so the per-project **Project
+Rules modal** can host three rule kinds. The self-improvement engine documented above is
+unchanged — CC-6 only widens what it can sink into.
+
+| kind | When it applies | Launch-injected? |
+|---|---|---|
+| `startup` (default) | session start — custom priming | **yes** (`## Session Rules`) |
+| `wrap` | wrap time — custom wrap behavior + the self-learning sink | no |
+| `mode` | harness/model posture | no (runtime enforcement = A3 / #209) |
+
+- The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
+  predating CC-6 backfill to `startup`, so injection behavior is unchanged.
+- `POST /api/session-rules` and `/promote` accept `kind`; `GET /api/session-rules?kind=`
+  filters; `/conflicts` accepts `{kind}` so a proposed wrap rule is only compared against
+  other wrap rules. An invalid kind is a 400.
+
+### The wrap-time trigger
+At wrap, the AI may notice a recurring wrap-process improvement (e.g. "this project always
+needs a lint pass before the wrap commit"). It proposes a **`kind='wrap'`** rule. Because
+this is an **autonomous (AI-authored) edit**, it goes through the **same Critic gate** as
+any `createdBy:'ai'` edit (procedure above) and is **surfaced user-gated** — never
+auto-applied. Apply path: `POST /api/session-rules {content, projectId, kind:'wrap',
+createdBy:'ai'}` or `/promote {learningId, kind:'wrap'}`. The accepted rule lands in the
+project's **Wrap rules** box in the Project Rules modal and is auto-versioned like any other.
+
+This keeps the contract's "self-improvement suggestions are user-gated, never auto-applied,
+and rare/high-signal" rule intact — CC-6 reuses D1b's engine rather than adding a second one.
+
 ## Known upstream gaps (escalated to the Prawduct developer)
 
 The Critic is git-anchored (no inline/DB artifact-review mode) and writes to a single fixed

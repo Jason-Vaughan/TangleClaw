@@ -797,11 +797,15 @@ function openSettings(name) {
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
-    </div>`;
+    </div>
+    ${renderProjectRulesSection(project)}`;
 
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
+  // CC-6 (#381): populate the three per-project rule lists (async) once the
+  // modal markup is in the DOM. project.id is the DB id the API scopes on.
+  loadProjectRules(project.id);
 
   // Re-render on engine dropdown change (chunk 3 polish — Critic Mn5). Without
   // this, switching the dropdown to an engine that lacks supportsSilentPrime
@@ -875,6 +879,208 @@ function renderFeatureIndexToggle(preserveChecked) {
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   settingsTarget = null;
+  projectRulesTargetId = null;
+}
+
+// ── Project Rules (CC-6, #381) ──
+// A per-project extension of the Settings modal: three rule-kind boxes
+// (startup/wrap/mode) backed by the session_rules store + the 8 wrap-summary
+// section checkboxes. Reuses the D1a/D1b session-rules list pattern, scoped to
+// this project's id + a kind. The DB project id of the open modal.
+let projectRulesTargetId = null;
+
+// The fixed wrap-summary section vocabulary (mirrors lib/continuity.js
+// WRAP_SECTIONS). `Next action` is the mandatory keystone — always rendered, so
+// its checkbox is checked + disabled.
+const WRAP_SECTION_NAMES = [
+  'Where we are', 'Next action', 'Delta', 'Open threads',
+  'Decisions', 'Landmines', 'Pointers', 'Freshness'
+];
+
+const PROJECT_RULE_KINDS = [
+  { kind: 'startup', label: 'Startup rules', hint: 'Injected into the session config at launch (custom priming for this project).' },
+  { kind: 'wrap', label: 'Wrap rules', hint: 'Custom wrap behavior + the sink where approved self-improvement suggestions land.' },
+  { kind: 'mode', label: 'Mode rules', hint: 'Harness/model posture to keep this project in (runtime enforcement is forthcoming).' }
+];
+
+/**
+ * Build the Project Rules section markup for the Settings modal. The three rule
+ * lists are populated asynchronously by loadProjectRules() after the modal opens.
+ * @param {object} project - Enriched project (carries id + wrapSections)
+ * @returns {string} HTML
+ */
+function renderProjectRulesSection(project) {
+  const enabled = Array.isArray(project.wrapSections) ? project.wrapSections : null;
+  const sectionChecks = WRAP_SECTION_NAMES.map((name) => {
+    const isNextAction = name === 'Next action';
+    const checked = isNextAction || enabled === null || enabled.includes(name);
+    return `
+      <label class="gs-toggle-label wrap-section-toggle">
+        <span>${esc(name)}${isNextAction ? ' <em>(required)</em>' : ''}</span>
+        <input type="checkbox" class="wrap-section-check" data-section="${esc(name)}"
+               ${checked ? 'checked' : ''} ${isNextAction ? 'disabled' : ''}>
+        <span class="toggle-switch"></span>
+      </label>`;
+  }).join('');
+
+  const ruleBlocks = PROJECT_RULE_KINDS.map((k) => `
+    <div class="project-rules-block" data-kind="${k.kind}">
+      <div class="form-label">${esc(k.label)}</div>
+      <div class="form-hint">${esc(k.hint)}</div>
+      <div class="session-rules-list" id="projRulesList-${k.kind}" aria-live="polite"></div>
+      <div class="session-rules-add">
+        <textarea class="rules-editor" id="projRuleInput-${k.kind}" rows="2"
+                  placeholder="Add a ${k.kind} rule…" spellcheck="false"></textarea>
+        <button class="btn btn-small btn-primary" data-action="add-rule" data-kind="${k.kind}">Add</button>
+      </div>
+    </div>`).join('');
+
+  return `
+    <div class="project-rules-section">
+      <div class="gs-section-label">Project Rules</div>
+      <div class="form-group">
+        <div class="form-label">Wrap summary sections</div>
+        <div class="form-hint">Which of the 8 wrap-summary sections this project records. <code>Next action</code> is always kept.</div>
+        ${sectionChecks}
+      </div>
+      ${ruleBlocks}
+      <div id="projectRulesStatus" class="rules-status hidden" role="status"></div>
+    </div>`;
+}
+
+/**
+ * Fetch this project's rules for all three kinds and render each list.
+ * @param {number} projectId - DB project id
+ */
+async function loadProjectRules(projectId) {
+  projectRulesTargetId = projectId;
+  for (const { kind } of PROJECT_RULE_KINDS) {
+    const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}`);
+    // The modal may have been closed/reopened on another project while awaiting.
+    if (projectRulesTargetId !== projectId) return;
+    renderProjectRulesList(kind, data ? data.rules || [] : []);
+  }
+}
+
+/**
+ * Render one kind's rule list into its container.
+ * @param {string} kind - 'startup' | 'wrap' | 'mode'
+ * @param {object[]} rules - Rules of this kind for the project
+ */
+function renderProjectRulesList(kind, rules) {
+  const list = document.getElementById(`projRulesList-${kind}`);
+  if (!list) return;
+  if (rules.length === 0) {
+    list.innerHTML = '<p class="session-rules-empty">No rules yet.</p>';
+    return;
+  }
+  list.innerHTML = rules.map((rule) => `
+    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
+      <label class="session-rule-toggle">
+        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+      </label>
+      <span class="session-rule-content">${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : ''}${esc(rule.content)}</span>
+      <button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
+    </div>
+  `).join('');
+}
+
+/**
+ * Add a rule of the given kind for the open project from its textarea.
+ * @param {string} kind - Rule kind
+ */
+async function addProjectRule(kind) {
+  if (projectRulesTargetId == null) return;
+  const input = document.getElementById(`projRuleInput-${kind}`);
+  const content = input ? input.value.trim() : '';
+  if (!content) return;
+  const data = await apiMutate('/api/session-rules', 'POST', {
+    content, projectId: projectRulesTargetId, kind
+  });
+  if (data) {
+    if (input) input.value = '';
+    _setProjectRulesStatus('Added', true);
+    const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+    renderProjectRulesList(kind, list ? list.rules || [] : []);
+  } else {
+    _setProjectRulesStatus('Add failed', false);
+  }
+}
+
+/**
+ * Toggle a project rule's enabled state and re-render its kind list.
+ * @param {number} id - Rule id
+ * @param {boolean} enabled - New state
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function toggleProjectRule(id, enabled, kind) {
+  const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
+  if (!data) { _setProjectRulesStatus('Update failed', false); return; }
+  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+  renderProjectRulesList(kind, list ? list.rules || [] : []);
+}
+
+/**
+ * Delete a project rule and re-render its kind list.
+ * @param {number} id - Rule id
+ * @param {string} kind - Rule kind
+ */
+async function deleteProjectRule(id, kind) {
+  const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
+  if (!data) { _setProjectRulesStatus('Delete failed', false); return; }
+  _setProjectRulesStatus('Deleted', true);
+  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+  renderProjectRulesList(kind, list ? list.rules || [] : []);
+}
+
+/**
+ * Delegated handler for clicks/changes inside the Project Rules section.
+ * Attached once to #settingsBody (stable element; innerHTML is swapped per open).
+ * @param {Event} e
+ */
+function handleProjectRulesEvent(e) {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.getAttribute('data-action');
+  const block = target.closest('.project-rules-block');
+  const kind = block ? block.getAttribute('data-kind') : null;
+  if (action === 'add-rule' && e.type === 'click') {
+    addProjectRule(target.getAttribute('data-kind'));
+  } else if (action === 'toggle-rule' && e.type === 'change') {
+    toggleProjectRule(Number(target.getAttribute('data-rule-id')), target.checked, kind);
+  } else if (action === 'delete-rule' && e.type === 'click') {
+    deleteProjectRule(Number(target.getAttribute('data-rule-id')), kind);
+  }
+}
+
+/**
+ * Read the wrap-section checkboxes into a wrapSections value for the PATCH body.
+ * Returns null when all 8 are checked (the deep default — no override stored),
+ * otherwise the array of checked section names (always includes Next action).
+ * @returns {string[]|null}
+ */
+function collectWrapSectionsSelection() {
+  const boxes = document.querySelectorAll('.wrap-section-check');
+  if (boxes.length === 0) return undefined; // section not rendered → don't touch
+  const checked = [];
+  for (const box of boxes) {
+    if (box.checked) checked.push(box.getAttribute('data-section'));
+  }
+  return checked.length === WRAP_SECTION_NAMES.length ? null : checked;
+}
+
+/**
+ * Transient status message in the Project Rules section.
+ * @param {string} text
+ * @param {boolean} ok
+ */
+function _setProjectRulesStatus(text, ok) {
+  const status = document.getElementById('projectRulesStatus');
+  if (!status) return;
+  status.textContent = text;
+  status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
+  status.classList.remove('hidden');
+  setTimeout(() => { status.classList.add('hidden'); }, 3000);
 }
 
 async function saveSettings() {
@@ -954,6 +1160,12 @@ async function doSaveSettings() {
   const versionBumpEl = document.getElementById('settingsVersionBump');
   if (versionBumpEl) {
     body.versionBumpEnabled = versionBumpEl.checked;
+  }
+  // CC-6 (#381): wrap-summary section selection. undefined → not rendered (skip);
+  // null → all 8 (clear override); array → the chosen subset.
+  const wrapSel = collectWrapSectionsSelection();
+  if (wrapSel !== undefined) {
+    body.wrapSections = wrapSel;
   }
 
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
@@ -2502,6 +2714,11 @@ $('settingsSaveBtn').addEventListener('click', saveSettings);
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
 $('settingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSettings(); });
+// CC-6 (#381): delegated Project Rules add/toggle/delete. Attached once to the
+// stable #settingsBody (its innerHTML is swapped per open, so child listeners
+// would be lost; a parent delegate survives).
+$('settingsBody').addEventListener('click', handleProjectRulesEvent);
+$('settingsBody').addEventListener('change', handleProjectRulesEvent);
 $('attachConfirmCancelBtn').addEventListener('click', closeAttachConfirm);
 $('attachConfirmBtn').addEventListener('click', confirmAttach);
 $('attachConfirmModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeAttachConfirm(); });

@@ -110,4 +110,31 @@ describe('api/session-rules (#347/D1a)', () => {
     const res = await request('DELETE', '/api/session-rules/99999');
     assert.equal(res.status, 404);
   });
+
+  // CC-6 (#381): kind passthrough on create + list filtering.
+  it('creates with a kind and lists filtered by kind', async () => {
+    const wrap = await request('POST', '/api/session-rules', { content: 'wrap the session deeply', kind: 'wrap' });
+    assert.equal(wrap.status, 201);
+    assert.equal(wrap.data.kind, 'wrap');
+
+    const startup = await request('POST', '/api/session-rules', { content: 'prime with project context', kind: 'startup' });
+    assert.equal(startup.status, 201);
+
+    const wraps = await request('GET', '/api/session-rules?scope=global&kind=wrap');
+    assert.equal(wraps.status, 200);
+    assert.ok(wraps.data.rules.some((r) => r.id === wrap.data.id));
+    assert.ok(!wraps.data.rules.some((r) => r.id === startup.data.id));
+  });
+
+  it('defaults kind to startup when omitted', async () => {
+    const res = await request('POST', '/api/session-rules', { content: 'no kind here' });
+    assert.equal(res.status, 201);
+    assert.equal(res.data.kind, 'startup');
+  });
+
+  it('rejects an invalid kind with 400', async () => {
+    const res = await request('POST', '/api/session-rules', { content: 'bad kind', kind: 'nope' });
+    assert.equal(res.status, 400);
+    assert.equal(res.data.code, 'BAD_REQUEST');
+  });
 });

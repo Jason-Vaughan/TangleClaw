@@ -174,6 +174,35 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.match(rawSummary, /## Delta\n_⚠ not captured_/);
   });
 
+  it('honors a project-configured wrapSections selection (CC-6, #381)', async () => {
+    // Persist a per-project wrap-section override: only Where we are + Freshness
+    // (Next action is forced in regardless). The step should read project.json
+    // and write a summary that omits the unselected sections.
+    const tcDir = path.join(project.path, '.tangleclaw');
+    fs.mkdirSync(tcDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tcDir, 'project.json'),
+      JSON.stringify({ wrapSections: ['Where we are', 'Freshness'] }, null, 2)
+    );
+
+    const res = await step.run(ctxWithSession(
+      { id: 77, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
+        summary: 'Selected sections only.',
+        nextSteps: '- ship it',
+        learnings: 'should be omitted'
+      } } }]
+    ));
+    assert.equal(res.output.wrapSummaryWritten, true);
+
+    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 77), 'utf8');
+    assert.match(rawSummary, /## Where we are/);
+    assert.match(rawSummary, /## Next action/); // forced keystone
+    assert.match(rawSummary, /## Freshness/);
+    assert.doesNotMatch(rawSummary, /## Landmines/); // captured but section deselected
+    assert.doesNotMatch(rawSummary, /## Delta/);
+  });
+
   it('search finds the just-written entry by its session pointer', async () => {
     await step.run(ctxWithSession(
       { id: 7, engineId: 'claude' },
