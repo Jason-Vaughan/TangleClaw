@@ -11,6 +11,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const continuity = require('../lib/continuity');
 
 describe('Project Rules modal (CC-6, #381)', () => {
   let ui, css;
@@ -19,6 +20,22 @@ describe('Project Rules modal (CC-6, #381)', () => {
     const pub = path.join(__dirname, '..', 'public');
     ui = fs.readFileSync(path.join(pub, 'ui.js'), 'utf8');
     css = fs.readFileSync(path.join(pub, 'style.css'), 'utf8');
+  });
+
+  describe('section-vocabulary drift guard (Critic NOTE 2)', () => {
+    it('ui.js WRAP_SECTION_NAMES matches lib/continuity.js WRAP_SECTIONS exactly', () => {
+      // The browser has no bundler, so the 8-section vocabulary is duplicated
+      // between the wrap engine (continuity.js) and the modal (ui.js). This test
+      // is the drift guard: parse the client array from source and compare it to
+      // the canonical server list, order included.
+      const m = ui.match(/const WRAP_SECTION_NAMES\s*=\s*\[([\s\S]*?)\];/);
+      assert.ok(m, 'WRAP_SECTION_NAMES array literal should be present in ui.js');
+      const clientNames = m[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+      assert.deepEqual(clientNames, continuity.WRAP_SECTIONS);
+    });
   });
 
   describe('ui.js — rendering', () => {
