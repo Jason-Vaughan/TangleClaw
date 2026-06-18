@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-20';
+const CACHE_NAME = 'tangleclaw-v3-21';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -69,8 +69,22 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// A real Response for a failed network-first fetch. `respondWith` THROWS
+// "Returned response is null" if its promise resolves to `undefined` — which is
+// exactly what `caches.match()` yields for an uncacheable POST (e.g. a session
+// launch). Returning this 503 instead surfaces the real failure to the UI (#380:
+// "Launch failed: FetchEvent.respondWith received an error: Returned response is
+// null" was a slow tailnet launch timing out, masked as a null).
+function _swErrorResponse(err) {
+  return new Response(
+    JSON.stringify({ error: 'network-unreachable', detail: String((err && err.message) || err || 'fetch failed') }),
+    { status: 503, statusText: 'Service Unavailable', headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  const isGet = event.request.method === 'GET';
 
   // Network-first for API calls, HTML pages, and cache-bust-critical
   // scripts (#246). The script-level carve-out is what prevents the
@@ -83,12 +97,22 @@ self.addEventListener('fetch', (event) => {
   ) {
     event.respondWith(
       fetch(event.request).then((response) => {
-        if (response.ok) {
+        // Only GET responses are cacheable — `cache.put` THROWS on POST/PUT/…,
+        // and a cached non-GET could never be matched back anyway.
+        if (response.ok && isGet) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => caches.match(event.request))
+      }).catch((err) => {
+        // Never resolve to `undefined`. A GET can fall back to cache; anything
+        // else (and a GET cache miss) returns a real 503 so the failure is
+        // legible instead of the opaque "Returned response is null" (#380).
+        if (isGet) {
+          return caches.match(event.request).then((cached) => cached || _swErrorResponse(err));
+        }
+        return _swErrorResponse(err);
+      })
     );
     return;
   }
