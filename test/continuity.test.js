@@ -78,7 +78,7 @@ describe('continuity store (CC-1)', () => {
         project: 'demo',
         currentState: 'Mid CC-1; spine + step landed.',
         nextAction: 'stopped at CC-1 · next is CC-2 · open continuity-contract.md',
-        freshness: { sha: 'abc1234', branch: 'feat/cc-1', writtenAt: '2026-06-15' }
+        freshness: { sha: 'abc1234', branch: 'feat/cc-1', writtenAt: '2026-06-15', tier: 'full' }
       };
       const parsed = continuity.parseIndex(continuity.renderIndex(fields));
       assert.equal(parsed.currentState, fields.currentState);
@@ -121,7 +121,7 @@ describe('continuity store (CC-1)', () => {
     it('returns empty fields for non-string input', () => {
       const parsed = continuity.parseIndex(null);
       assert.equal(parsed.nextAction, '');
-      assert.deepEqual(parsed.freshness, { sha: '', branch: '', writtenAt: '' });
+      assert.deepEqual(parsed.freshness, { sha: '', branch: '', writtenAt: '', tier: '' });
     });
   });
 
@@ -268,6 +268,51 @@ describe('continuity warm tier (CC-2)', () => {
       continuity.writeWrapSummary(proj, 99, { meta: { session: 99 }, sections: { 'Next action': 'do X' } });
       const parsed = continuity.readWrapSummary(proj, 99);
       assert.equal(parsed.sections['Next action'], 'do X');
+    });
+  });
+
+  describe('degraded-wrap tier + honest reason (CC-7)', () => {
+    it('renderIndex stamps the tier in freshness; parseIndex round-trips it', () => {
+      const md = continuity.renderIndex({ freshness: { sha: 'x', branch: 'main', writtenAt: '2026-06-18', tier: 'mechanical-only' } });
+      assert.match(md, /- tier: mechanical-only/);
+      assert.equal(continuity.parseIndex(md).freshness.tier, 'mechanical-only');
+    });
+
+    it('renderIndex tier defaults to the unknown sentinel and parses back to empty', () => {
+      const md = continuity.renderIndex({ currentState: 'x' });
+      assert.match(md, /- tier: unknown/);
+      assert.equal(continuity.parseIndex(md).freshness.tier, '');
+    });
+
+    it('renderWrapSummary emits the tier frontmatter key when present', () => {
+      const doc = continuity.renderWrapSummary({ meta: { session: 1, tier: 'no-plugin' }, sections: {} });
+      assert.match(doc, /\ntier: no-plugin\n/);
+    });
+
+    it('renderWrapSummary flags empty sections WITH the reason when uncapturedReason is set', () => {
+      const doc = continuity.renderWrapSummary({
+        uncapturedReason: 'no AI channel',
+        meta: { session: 1, tier: 'mechanical-only' },
+        sections: {}
+      });
+      // The keystone (and every other uncaptured judgment section) carries the cause.
+      assert.match(doc, /## Next action\n_⚠ not captured \(no AI channel\)_/);
+      assert.match(doc, /## Where we are\n_⚠ not captured \(no AI channel\)_/);
+      // GUARD: reverting the reason-flag would render the bare marker — fail if so.
+      assert.doesNotMatch(doc, /## Next action\n_⚠ not captured_\n/);
+    });
+
+    it('renderWrapSummary falls back to the bare marker when no reason is given (full/no-plugin)', () => {
+      const doc = continuity.renderWrapSummary({ meta: { session: 1 }, sections: { 'Where we are': 'here' } });
+      assert.match(doc, /## Delta\n_⚠ not captured_/);
+      assert.doesNotMatch(doc, /not captured \(/);
+    });
+
+    it('a reason-bearing flag still parses back to empty (round-trip preserved)', () => {
+      const doc = continuity.renderWrapSummary({ uncapturedReason: 'no AI channel', meta: { session: 1 }, sections: {} });
+      const parsed = continuity.parseWrapSummary(doc);
+      assert.equal(parsed.sections['Next action'], '', 'flagged-with-reason collapses to empty on parse');
+      assert.equal(parsed.meta.tier, undefined, 'no tier emitted when meta.tier absent');
     });
   });
 

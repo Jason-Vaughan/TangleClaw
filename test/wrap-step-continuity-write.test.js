@@ -138,6 +138,26 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.equal(out.nextAction, '');
   });
 
+  // ── CC-7 degraded-wrap tier derivation (pure helpers) ──
+
+  it('_deriveTier: no capture → mechanical-only regardless of plugin governance', () => {
+    assert.equal(step._deriveTier(false, true), 'mechanical-only');
+    assert.equal(step._deriveTier(false, false), 'mechanical-only');
+  });
+
+  it('_deriveTier: capture + plugin-governed → full; capture + non-governed → no-plugin', () => {
+    assert.equal(step._deriveTier(true, true), 'full');
+    assert.equal(step._deriveTier(true, false), 'no-plugin');
+  });
+
+  it('_deriveUncapturedReason: duck-types the skip cause off prior step output', () => {
+    assert.equal(step._deriveUncapturedReason([{ stepId: 'ai-content', status: 'skipped', output: { webui: true } }]), 'no AI channel');
+    assert.equal(step._deriveUncapturedReason([{ stepId: 'ai-content', status: 'skipped', output: { override: true } }]), 'AI content skipped by operator');
+    assert.equal(step._deriveUncapturedReason([{ stepId: 'commit', status: 'done', output: { commitSha: 'x' } }]), 'no AI capture this wrap');
+    assert.equal(step._deriveUncapturedReason([]), 'no AI capture this wrap');
+    assert.equal(step._deriveUncapturedReason(null), 'no AI capture this wrap');
+  });
+
   // ── CC-2 warm tier: changelog + wrap summary written alongside the index ──
 
   function ctxWithSession(session, previousResults) {
@@ -201,6 +221,57 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.match(rawSummary, /## Freshness/);
     assert.doesNotMatch(rawSummary, /## Landmines/); // captured but section deselected
     assert.doesNotMatch(rawSummary, /## Delta/);
+  });
+
+  // ── CC-7 degraded-wrap tier stamped end-to-end ──
+
+  it('mechanical-only wrap stamps tier + flags judgment sections WITH the reason', async () => {
+    const res = await step.run(ctxWithSession(
+      { id: 50, engineId: 'webui' },
+      // ai-content honest-skipped because the webui session has no AI channel (#334)
+      [{ stepId: 'ai-content', status: 'skipped', output: { webui: true, reason: 'no tmux pane' } }]
+    ));
+    assert.equal(res.output.hadCapture, false);
+    assert.equal(res.output.tier, 'mechanical-only');
+
+    // Index freshness carries the tier (read at the next resume).
+    const rawIndex = fs.readFileSync(continuity.indexPath(project.path), 'utf8');
+    assert.match(rawIndex, /- tier: mechanical-only/);
+
+    // Per-session wrap summary: tier frontmatter + reason-bearing flag.
+    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 50), 'utf8');
+    assert.match(rawSummary, /\ntier: mechanical-only\n/);
+    assert.match(rawSummary, /## Next action\n_⚠ not captured \(no AI channel\)_/);
+    // GUARD: a bare marker here means the reason plumbing regressed.
+    assert.doesNotMatch(rawSummary, /## Next action\n_⚠ not captured_\n/);
+  });
+
+  it('no-plugin wrap (capture, non-governed project) stamps tier: no-plugin with bare markers', async () => {
+    const res = await step.run(ctxWithSession(
+      { id: 51, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }]
+    ));
+    assert.equal(res.output.tier, 'no-plugin');
+    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 51), 'utf8');
+    assert.match(rawSummary, /\ntier: no-plugin\n/);
+    // hadCapture → structurally-uncaptured sections get the BARE marker (not a degradation reason).
+    assert.match(rawSummary, /## Delta\n_⚠ not captured_/);
+    assert.doesNotMatch(rawSummary, /not captured \(/);
+  });
+
+  it('full wrap (capture + plugin-governed) stamps tier: full', async () => {
+    // Mark the project plugin-governed the way engines.isPluginGoverned detects it.
+    const claudeDir = path.join(project.path, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ enabledPlugins: { 'prawduct@1.0.0': true } }));
+
+    const res = await step.run(ctxWithSession(
+      { id: 52, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } }]
+    ));
+    assert.equal(res.output.tier, 'full');
+    const rawIndex = fs.readFileSync(continuity.indexPath(project.path), 'utf8');
+    assert.match(rawIndex, /- tier: full/);
   });
 
   it('search finds the just-written entry by its session pointer', async () => {

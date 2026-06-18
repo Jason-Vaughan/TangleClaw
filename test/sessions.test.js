@@ -336,6 +336,30 @@ describe('sessions', () => {
         assert.equal(prompt.includes('## Last Session Summary'), false);
       });
 
+      it('surfaces a degraded wrap tier in the resume stamp (CC-7)', () => {
+        const engine = store.engines.get('claude');
+        continuity.writeIndex(resumeProject.path, {
+          project: 'resume-test',
+          currentState: 'captured, but no reflection fold.',
+          nextAction: 'next is X',
+          freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-06-15', tier: 'no-plugin' }
+        });
+        const prompt = sessions.generatePrimePrompt(resumeProject, engine);
+        assert.match(prompt, /Wrap tier: no-plugin \(judgment may be thin — verify\)/);
+      });
+
+      it('omits the tier line for a full-tier wrap (no noise)', () => {
+        const engine = store.engines.get('claude');
+        continuity.writeIndex(resumeProject.path, {
+          project: 'resume-test',
+          currentState: 'all captured.',
+          nextAction: 'next is Y',
+          freshness: { sha: 'abc1234', branch: 'main', writtenAt: '2026-06-15', tier: 'full' }
+        });
+        const prompt = sessions.generatePrimePrompt(resumeProject, engine);
+        assert.equal(prompt.includes('Wrap tier:'), false);
+      });
+
       it('falls back to the passive Last Session Summary when no index exists', () => {
         const engine = store.engines.get('claude');
         const session = store.sessions.start({
