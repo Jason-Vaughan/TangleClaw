@@ -548,6 +548,10 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
                autocomplete="off" autocorrect="off" autocapitalize="off">
         <button class="btn btn-compact btn-primary" onclick="runHistorySearch()">Search</button>
       </div>
+      <div class="history-scope">
+        <label><input type="radio" name="historyScope" value="summaries" checked onchange="runHistorySearch()"> Summaries <span class="form-hint">(fast — session notes)</span></label>
+        <label><input type="radio" name="historyScope" value="transcripts" onchange="runHistorySearch()"> Full transcripts <span class="form-hint">(deep — every saved conversation)</span></label>
+      </div>
       <details class="history-filters">
         <summary class="form-hint">Filters</summary>
         <div class="form-group">

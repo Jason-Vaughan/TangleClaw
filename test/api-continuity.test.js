@@ -96,6 +96,14 @@ describe('API /api/continuity (CC-5 operator search)', () => {
     assert.deepEqual(res.data.sessions.map((s) => s.sid), ['41']);
   });
 
+  it('GET /search?scope=transcripts greps the captured transcripts directly', async () => {
+    const res = await request(server, 'GET', `/api/continuity/${projectName}/search?scope=transcripts&q=redirect`);
+    assert.equal(res.status, 200);
+    assert.equal(res.data.meta.scope, 'transcripts');
+    assert.deepEqual(res.data.sessions.map((s) => s.sid), ['42'], 'only the session whose transcript matches');
+    assert.equal(res.data.sessions[0].hits[0].source, 'transcript');
+  });
+
   it('GET /sessions lists the whole store, newest first', async () => {
     const res = await request(server, 'GET', `/api/continuity/${projectName}/sessions`);
     assert.equal(res.status, 200);

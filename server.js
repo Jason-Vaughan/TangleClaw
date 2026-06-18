@@ -1695,14 +1695,17 @@ function _publicTranscriptMeta(meta) {
   };
 }
 
-// GET /api/continuity/:project/search — warm global search + 5 filters
-route('GET', '/api/continuity/:project/search', (req, res, params) => {
+// GET /api/continuity/:project/search — global search across this project's
+// session history. `scope=summaries` (default) searches the warm changelog +
+// wrap summaries; `scope=transcripts` greps every captured transcript directly
+// (the "search my old transcripts" path). Both honor the same five filters.
+route('GET', '/api/continuity/:project/search', async (req, res, params) => {
   const project = projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
   const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
-  const result = continuity.searchSessions(project.path, query.q || '', {
+  const opts = {
     dateFrom: query.dateFrom,
     dateTo: query.dateTo,
     type: query.type,
@@ -1711,7 +1714,10 @@ route('GET', '/api/continuity/:project/search', (req, res, params) => {
     file: query.file,
     section: query.section,
     limit: query.limit ? parseInt(query.limit, 10) : 0
-  });
+  };
+  const result = query.scope === 'transcripts'
+    ? await continuity.searchProjectTranscripts(project.path, query.q || '', opts)
+    : continuity.searchSessions(project.path, query.q || '', opts);
   jsonResponse(res, 200, result);
 });
 

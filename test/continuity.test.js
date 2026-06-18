@@ -632,4 +632,64 @@ describe('continuity operator search (CC-5)', () => {
       assert.equal(r.truncated, true);
     });
   });
+
+  describe('searchProjectTranscripts (project-wide cold search)', () => {
+    // Seed two sessions that BOTH have transcripts so we can prove it searches
+    // across all of them, not just one.
+    function seedMulti() {
+      const proj = path.join(tmpDir, 'multi-' + Math.random().toString(36).slice(2, 6));
+      for (const [sid, date, text] of [[1, '2026-06-10', 'the deploy failed with ECONNREFUSED'], [2, '2026-06-17', 'fixed the ECONNREFUSED by clearing the stale pid']]) {
+        continuity.appendChangelogEntry(proj, { date, sid, line: 'work', type: 'fix' });
+        continuity.writeWrapSummary(proj, sid, { meta: { session: sid, date, type: 'fix' }, sections: { 'Where we are': 'x' } });
+        const sd = continuity.sessionDir(proj, sid);
+        fs.mkdirSync(sd, { recursive: true });
+        fs.writeFileSync(path.join(sd, 'transcript.jsonl'),
+          JSON.stringify({ type: 'assistant', timestamp: `${date}T10:00:00Z`, message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n');
+        fs.writeFileSync(path.join(sd, 'transcript.meta.json'), JSON.stringify({ harness: 'claude' }));
+      }
+      return proj;
+    }
+
+    it('finds a term across EVERY session transcript in the project', async () => {
+      const proj = seedMulti();
+      const r = await continuity.searchProjectTranscripts(proj, 'econnrefused');
+      assert.deepEqual(r.sessions.map((s) => s.sid).sort(), ['1', '2'], 'both transcripts matched');
+      assert.equal(r.meta.matched, 2);
+      assert.equal(r.meta.withTranscript, 2);
+      assert.ok(r.sessions[0].hits[0].source === 'transcript');
+    });
+
+    it('ranks recency-first and shapes excerpts as hits', async () => {
+      const proj = seedMulti();
+      const r = await continuity.searchProjectTranscripts(proj, 'econnrefused');
+      assert.equal(r.sessions[0].sid, '2', 'newest session first');
+      assert.ok(r.sessions[0].hits.length >= 1);
+    });
+
+    it('honors the session filters (e.g. date range narrows which transcripts are searched)', async () => {
+      const proj = seedMulti();
+      const r = await continuity.searchProjectTranscripts(proj, 'econnrefused', { dateFrom: '2026-06-15' });
+      assert.deepEqual(r.sessions.map((s) => s.sid), ['2']);
+    });
+
+    it('skips sessions with no captured transcript', async () => {
+      const proj = seedMulti();
+      // Add a transcript-less session — it must not appear in transcript results.
+      continuity.appendChangelogEntry(proj, { date: '2026-06-18', sid: 3, line: 'no transcript here' });
+      const r = await continuity.searchProjectTranscripts(proj, 'econnrefused');
+      assert.ok(!r.sessions.some((s) => s.sid === '3'));
+    });
+
+    it('empty query returns no excerpts (transcript mode needs a term)', async () => {
+      const proj = seedMulti();
+      const r = await continuity.searchProjectTranscripts(proj, '');
+      assert.deepEqual(r.sessions, []);
+    });
+
+    it('returns empty (not throw) for a project with no store', async () => {
+      const r = await continuity.searchProjectTranscripts(path.join(tmpDir, 'nostore'), 'x');
+      assert.deepEqual(r.sessions, []);
+      assert.equal(r.meta.scanned, 0);
+    });
+  });
 });

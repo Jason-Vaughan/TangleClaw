@@ -53,6 +53,8 @@ function openHistory(name) {
     if (el) el.value = '';
   });
   document.getElementById('historyType').value = '';
+  const summaryScope = document.querySelector('input[name="historyScope"][value="summaries"]');
+  if (summaryScope) summaryScope.checked = true;
   document.getElementById('historyDrill').innerHTML = '';
   document.getElementById('historyDrill').classList.add('hidden');
   document.getElementById('historyModal').classList.add('open');
@@ -85,7 +87,14 @@ function historyQueryString() {
   }
   const type = document.getElementById('historyType').value;
   if (type) params.set('type', type);
+  if (historyScope() === 'transcripts') params.set('scope', 'transcripts');
   return params.toString();
+}
+
+/** The selected search scope: 'summaries' (default) or 'transcripts'. */
+function historyScope() {
+  const el = document.querySelector('input[name="historyScope"]:checked');
+  return el ? el.value : 'summaries';
 }
 
 /** Run the warm global search and render ranked results. */
@@ -121,16 +130,24 @@ function renderHistoryResults(data) {
   const noteHtml = notes.length
     ? `<div class="form-hint" style="margin-bottom:8px">⚠ ${notes.map(esc).join(' ')}</div>` : '';
 
+  const isTranscript = (meta.scope === 'transcripts') || historyScope() === 'transcripts';
+  const q = document.getElementById('historySearchInput').value.trim();
+
   if (!sessions.length) {
-    resultsEl.innerHTML = `${noteHtml}<div class="form-hint">No matching sessions.</div>`;
+    const empty = isTranscript && !q
+      ? 'Type a word to search the full transcripts of every saved session in this project.'
+      : isTranscript
+        ? 'No transcript matches.'
+        : 'No matching sessions.';
+    resultsEl.innerHTML = `${noteHtml}<div class="form-hint">${empty}</div>`;
     return;
   }
 
   // The query the matched lines are highlighted against (the executed search).
-  const q = document.getElementById('historySearchInput').value.trim();
   const totalHits = sessions.reduce((n, s) => n + (s.matchCount || 0), 0);
+  const noun = isTranscript ? 'transcript hit(s)' : 'hit(s)';
   const summary = q
-    ? `<div class="history-summary">${sessions.length} session(s) · ${totalHits} hit(s) for “${esc(q)}”</div>`
+    ? `<div class="history-summary">${sessions.length} session(s) · ${totalHits} ${noun} for “${esc(q)}”</div>`
     : `<div class="history-summary">${sessions.length} session(s) — newest first</div>`;
 
   const rows = sessions.map((s) => {
