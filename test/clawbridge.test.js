@@ -215,3 +215,164 @@ describe('clawbridge.startSession — error paths', () => {
     }
   });
 });
+
+// ── CC-7 Slice B foundation: send / getOutput / getStatus (ClawBridge v1.7.1) ──
+
+describe('clawbridge._queryString', () => {
+  it('URL-encodes, skips null/undefined, but KEEPS a falsy cursor=0', () => {
+    const qs = clawbridge._queryString({ project: 'a b', cursor: 0, waitMs: undefined, maxEvents: null });
+    assert.equal(qs, 'project=a%20b&cursor=0');
+  });
+});
+
+describe('clawbridge.send', () => {
+  it('POSTs /v2/session/send with {project, message} + Bearer, returns accepted/cursor/state', async () => {
+    let req = null; let body = null;
+    const stub = await startStubBridge((r, b) => {
+      req = { method: r.method, path: r.url, headers: r.headers };
+      body = JSON.parse(b);
+      return { status: 200, body: { ok: true, accepted: true, cursor: 12, sessionId: 'sess-1', state: 'running' } };
+    });
+    try {
+      const result = await clawbridge.send({ localPort: stub.port, token: 'tok', project: 'demo', message: 'wrap now' });
+      assert.equal(result.ok, true);
+      assert.equal(result.accepted, true);
+      assert.equal(result.cursor, 12);
+      assert.equal(result.sessionId, 'sess-1');
+      assert.equal(result.state, 'running');
+      assert.equal(req.method, 'POST');
+      assert.equal(req.path, '/v2/session/send');
+      assert.equal(req.headers.authorization, 'Bearer tok');
+      assert.deepEqual(body, { project: 'demo', message: 'wrap now' });
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('maps a 404 (no active session) to ok:false + error', async () => {
+    const stub = await startStubBridge(() => ({ status: 404, body: { error: 'no active session' } }));
+    try {
+      const result = await clawbridge.send({ localPort: stub.port, token: null, project: 'p', message: 'x' });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 404);
+      assert.equal(result.error, 'no active session');
+      assert.equal(result.cursor, null);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('maps a 409 (session not writable) to ok:false', async () => {
+    const stub = await startStubBridge(() => ({ status: 409, body: { error: 'waiting for permission' } }));
+    try {
+      const result = await clawbridge.send({ localPort: stub.port, token: null, project: 'p', message: 'x' });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 409);
+      assert.match(result.error, /permission/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('returns ok:false on a network error', async () => {
+    const result = await clawbridge.send({ localPort: 1, token: null, project: 'p', message: 'x', timeoutMs: 2000 });
+    assert.equal(result.ok, false);
+    assert.ok(result.error);
+  });
+});
+
+describe('clawbridge.getOutput', () => {
+  it('GETs /v2/session/output with cursor (incl. cursor=0) + optional params, returns events', async () => {
+    let req = null;
+    const stub = await startStubBridge((r) => {
+      req = { method: r.method, path: r.url };
+      return { status: 200, body: {
+        ok: true, events: [{ seq: 1, kind: 'text', text: 'hi' }],
+        cursorStart: 0, cursorEnd: 1, hasMore: false, state: 'running'
+      } };
+    });
+    try {
+      const result = await clawbridge.getOutput({ localPort: stub.port, token: null, project: 'demo', cursor: 0, maxEvents: 50 });
+      assert.equal(result.ok, true);
+      assert.equal(result.events.length, 1);
+      assert.equal(result.cursorEnd, 1);
+      assert.equal(result.hasMore, false);
+      assert.equal(result.state, 'running');
+      assert.equal(req.method, 'GET');
+      assert.match(req.path, /^\/v2\/session\/output\?/);
+      assert.match(req.path, /cursor=0/, 'cursor=0 must be sent, not dropped as falsy');
+      assert.match(req.path, /maxEvents=50/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('surfaces a pendingPermission when the session is waiting', async () => {
+    const stub = await startStubBridge(() => ({ status: 200, body: {
+      ok: true, events: [], cursorStart: 5, cursorEnd: 5, hasMore: false,
+      state: 'waiting_for_permission', pendingPermission: { id: 'perm-7', permissionType: 'file_write' }
+    } }));
+    try {
+      const result = await clawbridge.getOutput({ localPort: stub.port, token: null, project: 'p', cursor: 5 });
+      assert.equal(result.state, 'waiting_for_permission');
+      assert.equal(result.pendingPermission.id, 'perm-7');
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('returns an empty events array (never undefined) on error', async () => {
+    const stub = await startStubBridge(() => ({ status: 410, body: { error: 'session ended' } }));
+    try {
+      const result = await clawbridge.getOutput({ localPort: stub.port, token: null, project: 'p', cursor: 0 });
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.events, []);
+      assert.equal(result.error, 'session ended');
+    } finally {
+      await stub.close();
+    }
+  });
+});
+
+describe('clawbridge.getStatus', () => {
+  it('GETs /v2/session/status and returns active/inputReady/state/cursor', async () => {
+    let req = null;
+    const stub = await startStubBridge((r) => {
+      req = { method: r.method, path: r.url };
+      return { status: 200, body: {
+        ok: true, active: true, inputReady: true, sessionId: 'sess-9', state: 'running', cursor: 27
+      } };
+    });
+    try {
+      const result = await clawbridge.getStatus({ localPort: stub.port, token: 'tok', project: 'demo' });
+      assert.equal(result.ok, true);
+      assert.equal(result.active, true);
+      assert.equal(result.inputReady, true);
+      assert.equal(result.state, 'running');
+      assert.equal(result.cursor, 27);
+      assert.equal(req.method, 'GET');
+      assert.match(req.path, /^\/v2\/session\/status\?project=demo$/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('treats the bridge 200 + active:false as an honest "no live session" (the #364 signal)', async () => {
+    const stub = await startStubBridge(() => ({ status: 200, body: { ok: true, project: 'p', active: false } }));
+    try {
+      const result = await clawbridge.getStatus({ localPort: stub.port, token: null, project: 'p' });
+      assert.equal(result.ok, true, 'reachable bridge → ok:true even with no session');
+      assert.equal(result.active, false);
+      assert.equal(result.inputReady, false);
+      assert.equal(result.state, null);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('returns ok:false (not a false "dead") when the bridge is unreachable', async () => {
+    const result = await clawbridge.getStatus({ localPort: 1, token: null, project: 'p', timeoutMs: 2000 });
+    assert.equal(result.ok, false);
+    assert.ok(result.error, 'unreachable must be distinguishable from active:false');
+  });
+});
