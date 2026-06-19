@@ -268,11 +268,37 @@ async function triggerServerRestart() {
     return;
   }
 
-  // Poll /api/server-info until startedAt changes (new process up) or
-  // we hit the timeout budget. 30 polls at 500ms = 15s of patience;
-  // the restart itself typically takes ~3s. Each poll uses a short
-  // fetch timeout to avoid pile-up during the in-between window when
-  // the old process is dead but the new one hasn't bound the port yet.
+  pollServerBackAndReload(oldStartedAt, () => {
+    state.restartInFlight = false;
+    setBtnState('Restart TangleClaw', false);
+  });
+}
+
+/**
+ * Poll `/api/server-info` until the process reports a `startedAt` different from
+ * `oldStartedAt` (the new process is up), then full-reload so the browser picks
+ * up any fresh static assets. Shared by `triggerServerRestart` (#235) and
+ * `applyUpdateAndRestart` (UB, #228/#229).
+ *
+ * **No timer-driven blind reload** (no-UI-timers rule, #98/#268): without a
+ * baseline `startedAt` we can't detect when the new process is actually up, so
+ * we abort honestly (let the operator refresh) rather than reload onto a
+ * possibly-dead server. `restore` clears the in-flight flag and restores the
+ * caller's button on any give-up path.
+ *
+ * 30 polls at 500ms = 15s of patience; the restart itself typically takes ~3s.
+ * Each poll tolerates a failed fetch (the in-between window when the old process
+ * is dead but the new one hasn't bound the port yet).
+ *
+ * @param {string|null} oldStartedAt - Pre-restart `startedAt` baseline
+ * @param {() => void} restore - Clears `restartInFlight` + restores the caller's button
+ */
+function pollServerBackAndReload(oldStartedAt, restore) {
+  if (!oldStartedAt) {
+    restore();
+    window.alert('Could not read server state to confirm the restart. The server may still be coming back — refresh the page in a moment to check.');
+    return;
+  }
   const POLL_INTERVAL_MS = 500;
   const POLL_MAX_ATTEMPTS = 30;
   let attempt = 0;
@@ -282,17 +308,14 @@ async function triggerServerRestart() {
       const info = await api('/api/server-info');
       if (info && info.startedAt && info.startedAt !== oldStartedAt) {
         clearInterval(poll);
-        // Full reload picks up any new static assets (banner code,
-        // settings modal text, etc.) that shipped in the restart.
         window.location.reload();
         return;
       }
     } catch { /* expected during the dead window */ }
     if (attempt >= POLL_MAX_ATTEMPTS) {
       clearInterval(poll);
-      state.restartInFlight = false;
-      setBtnState('Restart TangleClaw', false);
-      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — try refreshing the page in a moment.');
+      restore();
+      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
     }
   }, POLL_INTERVAL_MS);
 }
@@ -418,28 +441,12 @@ async function applyUpdateAndRestart(data) {
     return;
   }
 
-  // 3. Poll until the new process reports a fresh startedAt, then reload.
-  if (!oldStartedAt) { setTimeout(() => window.location.reload(), 3000); return; }
-  const POLL_INTERVAL_MS = 500;
-  const POLL_MAX_ATTEMPTS = 30;
-  let attempt = 0;
-  const poll = setInterval(async () => {
-    attempt++;
-    try {
-      const info = await api('/api/server-info');
-      if (info && info.startedAt && info.startedAt !== oldStartedAt) {
-        clearInterval(poll);
-        window.location.reload();
-        return;
-      }
-    } catch { /* expected during the dead window */ }
-    if (attempt >= POLL_MAX_ATTEMPTS) {
-      clearInterval(poll);
-      state.restartInFlight = false;
-      setBtn('Update & restart', false);
-      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
-    }
-  }, POLL_INTERVAL_MS);
+  // 3. Poll until the new process reports a fresh startedAt, then reload —
+  // via the shared helper (no timer-driven blind reload; #98/#268).
+  pollServerBackAndReload(oldStartedAt, () => {
+    state.restartInFlight = false;
+    setBtn('Update & restart', false);
+  });
 }
 
 async function loadStats() {
