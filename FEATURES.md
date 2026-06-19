@@ -13,6 +13,7 @@ entries that span multiple co-equal locations.
 ## UI / Web
 
 - **Landing + session shells** — `public/index.html` is the single HTML host; it loads `/landing.js` (project list, port stats, system stats) and `/session.js` (per-project app shell) via the same document. `public/index.html`, `public/landing.js`, `public/session.js`.
+- **Service worker + update propagation** (#246/#258/#380) — `public/sw.js` is cache-first for static assets, network-first for API/navigation/cache-bust-critical scripts; `public/sw-register.js` registers it and forces fresh-worker pickup on iOS (poll `reg.update()` on load + tab-visibility, guarded `controllerchange`→reload). `public/sw.js`, `public/sw-register.js` (loaded by `public/index.html`).
 - **Settings modal** — per-project config editor (engine, methodology, silentPrime, featureIndexEnabled, rules). `public/ui.js:697`.
 - **Silent-prime toggle** — engine-gated capability toggle. `public/ui.js:779`.
 - **Feature Index toggle** (#207) — opt-in flag that seeds `FEATURES.md` on first enable. `public/ui.js:808`.
