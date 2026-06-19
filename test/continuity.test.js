@@ -610,6 +610,21 @@ describe('continuity operator search (CC-5)', () => {
       assert.equal(meta.matched, 1);
     });
 
+    it('breaks a recency tie by match count, then sid (guards the shared _byRecencyMatchSid — CON-1R6D)', () => {
+      const proj = path.join(tmpDir, 'tie-' + Math.random().toString(36).slice(2, 6));
+      // Both sessions share a date; the LOWER sid has MORE matches. If match
+      // count were ignored, the sid tier (desc) would put '2' first — asserting
+      // '1' first proves the match-count tier wins the recency tie. This pins
+      // the one comparator sub-behavior the recency-only tests don't cover, now
+      // that all three call sites share one helper.
+      continuity.appendChangelogEntry(proj, { date: '2026-06-20', sid: 1, line: 'zebra alpha' });
+      continuity.writeWrapSummary(proj, 1, { meta: { session: 1 }, sections: { 'Landmines': 'zebra in landmines' } });
+      continuity.appendChangelogEntry(proj, { date: '2026-06-20', sid: 2, line: 'zebra beta' });
+      const { sessions } = continuity.searchSessions(proj, 'zebra');
+      assert.deepEqual(sessions.map((s) => s.sid), ['1', '2'], 'higher matchCount wins the same-date tie');
+      assert.ok(sessions[0].matchCount > sessions[1].matchCount);
+    });
+
     it('applies each of the five filters', () => {
       const proj = seed();
       const sids = (q, opts) => continuity.searchSessions(proj, q, opts).sessions.map((s) => s.sid);
