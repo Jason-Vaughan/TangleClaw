@@ -202,6 +202,51 @@ describe('validateTemplate', () => {
     assert.equal(result.valid, false);
     assert.ok(result.errors.some(e => e.includes('when is required')));
   });
+
+  // ── wrap_contract (CC-8, #386): per-methodology default wrap-section depth ──
+
+  it('accepts a wrap_contract with a valid section subset', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', description: 'Test', type: 'methodology', version: '1.0.0',
+      wrap_contract: { sections: ['Where we are', 'Next action', 'Freshness'] }
+    });
+    assert.equal(result.valid, true, `Errors: ${result.errors.join(', ')}`);
+  });
+
+  it('accepts a template that omits wrap_contract (deep default)', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', description: 'Test', type: 'methodology', version: '1.0.0'
+    });
+    assert.equal(result.valid, true);
+    assert.equal(result.errors.length, 0);
+  });
+
+  it('rejects wrap_contract that is not an object', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', description: 'Test', type: 'methodology', version: '1.0.0',
+      wrap_contract: 'deep'
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('wrap_contract must be an object')));
+  });
+
+  it('rejects wrap_contract.sections that is not an array', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', description: 'Test', type: 'methodology', version: '1.0.0',
+      wrap_contract: { sections: 'Next action' }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('wrap_contract.sections must be an array')));
+  });
+
+  it('rejects wrap_contract.sections with an unknown section name', () => {
+    const result = methodologies.validateTemplate({
+      id: 'test', name: 'Test', description: 'Test', type: 'methodology', version: '1.0.0',
+      wrap_contract: { sections: ['Where we are', 'Bogus Section'] }
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('invalid: Bogus Section')));
+  });
 });
 
 // ── Detection ──
