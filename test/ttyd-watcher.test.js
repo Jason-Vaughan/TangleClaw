@@ -236,6 +236,53 @@ not numeric  ?Z
     });
   });
 
+  // ── #380: orphan (leaked-child) count — the signal the #144 pool gate missed ──
+  describe('_countTtydOrphans', () => {
+    it('counts children stuck exiting (E) OR zombied (Z), ignoring live (S/R) children', () => {
+      // The #380 incident shape: many `?Es` children (exiting-wedged) holding
+      // PTY slots, a couple zombies, and some healthy attached clients.
+      const psOutput = `
+  12345 ?Es
+  12345 ?Es
+  12345 ?Z
+  12345 Z+
+  12345 ?S
+  12345 ?R
+  99999 ?Es
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      // 2×E + 1×?Z + 1×Z+ = 4 for pid 12345; the ?S/?R are healthy, the 99999
+      // row belongs to a different parent.
+      assert.equal(ttydWatcher._countTtydOrphans(12345), 4);
+    });
+
+    it('returns 0 when all matching children are healthy (S/R)', () => {
+      const psOutput = `
+  12345 ?S
+  12345 ?R
+  12345 ?Sl
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      assert.equal(ttydWatcher._countTtydOrphans(12345), 0);
+    });
+
+    it('returns 0 on ps error (fail-safe — never kickstarts on a failed measurement)', () => {
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': new Error('ps: command not found') }));
+      assert.equal(ttydWatcher._countTtydOrphans(12345), 0);
+    });
+
+    it('skips malformed rows without throwing', () => {
+      const psOutput = `
+garbage line
+  12345 ?Es
+not numeric ?Es
+  12345 Z+
+`;
+      ttydWatcher._setRunner(makeRunner({ 'ps:-A': psOutput }));
+      assert.equal(ttydWatcher._countTtydOrphans(12345), 2);
+    });
+  });
+
   describe('_kickstartTtyd', () => {
     it('returns true on success and invokes launchctl kickstart', () => {
       const runner = makeRunner({
@@ -385,6 +432,99 @@ not numeric  ?Z
         (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
       );
       assert.equal(kickstarted, true);
+    });
+
+    it('kickstarts on orphan accumulation even when the PTY pool is well below threshold (#380 regression)', () => {
+      // The exact #380 miss: pool ratio 230/511 = 0.45 (far below 0.85, so the
+      // #144 gate stays silent) while ttyd holds 25 wedged `E`-state children.
+      // The orphan gate must fire the kickstart the pool gate would not.
+      const orphanRows = Array.from({ length: 25 }, () => '  12345 ?Es').join('\n');
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '230\n', // ratio 0.45 — pool gate would NOT trip
+        'ps:-A': orphanRows,
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85, orphanThreshold: 20 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, true, 'orphan gate must kickstart when pool ratio alone would not');
+    });
+
+    it('does NOT kickstart when orphans are below threshold and the pool is healthy', () => {
+      const orphanRows = Array.from({ length: 5 }, () => '  12345 ?Es').join('\n');
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '104\n', // healthy pool
+        'ps:-A': orphanRows, // 5 orphans < 20 threshold
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85, orphanThreshold: 20 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, false);
+    });
+
+    it('orphan gate fires even when the pool MEASUREMENT fails (cap=0) — gates are independent', () => {
+      // A broken sysctl reading must not suppress an orphan-driven kickstart:
+      // the `cap===0 && !orphanGate` short-circuit only bails when BOTH the pool
+      // reading is broken AND orphans are below threshold.
+      const orphanRows = Array.from({ length: 30 }, () => '  12345 ?Es').join('\n');
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': new Error('sysctl: command not found'), // pool measurement broken
+        'sh:-c': '500\n',
+        'ps:-A': orphanRows,
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85, orphanThreshold: 20 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, true, 'a broken pool reading must not suppress the orphan gate');
+    });
+
+    it('honors a custom orphanThreshold', () => {
+      const orphanRows = Array.from({ length: 10 }, () => '  12345 ?Es').join('\n');
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '104\n',
+        'ps:-A': orphanRows, // 10 orphans
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      // threshold 8 → 10 orphans trips it
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85, orphanThreshold: 8 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, true);
+    });
+
+    it('defaults orphanThreshold to DEFAULT_ORPHAN_THRESHOLD when omitted', () => {
+      // No orphanThreshold passed; DEFAULT is 20. 25 orphans must trip it.
+      const orphanRows = Array.from({ length: 25 }, () => '  12345 ?Es').join('\n');
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '104\n', // healthy pool — only the orphan gate can fire
+        'ps:-A': orphanRows,
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      const kickstarted = runner.calls.some(
+        (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+      );
+      assert.equal(kickstarted, true);
+      assert.equal(ttydWatcher.DEFAULT_ORPHAN_THRESHOLD, 20);
     });
   });
 

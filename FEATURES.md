@@ -79,7 +79,7 @@ entries that span multiple co-equal locations.
 
 - **Git helpers** — repo detection, branch/dirty/tag/commit-age info, commits, internal cache. `lib/git.js:33` (`isGitRepo`), `:47` (`getInfo`), `:171` (`commit`).
 - **Tmux helpers** — session create/kill/list, send-keys, capture-pane, mouse mode. `lib/tmux.js:100` (`createSession`), `:177` (`sendKeys`), `:251` (`capturePane`), `:298` (`setMouse`).
-- **TTYD watcher** — keeps the shared ttyd alive; restart hook on PTY exhaustion (#94). `lib/ttyd-watcher.js`.
+- **TTYD watcher** — keeps the shared ttyd alive; recycles it via `launchctl kickstart` on two independent leak gates: PTY-pool ratio ≥ 0.85 (#94/#144) and leaked-child count ≥ 20 (ttyd children wedged in `E`/`Z` state, #380). `lib/ttyd-watcher.js`.
 - **Tunnel** — Cloudflare tunnel lifecycle for remote access. `lib/tunnel.js`.
 - **Sidecar** — supplementary process supervisor. `lib/sidecar.js`.
 - **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`.
