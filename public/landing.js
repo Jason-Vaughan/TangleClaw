@@ -1307,16 +1307,9 @@ function startPolling() {
   loop(loadServerInfo, 60000);
 }
 
-if ('serviceWorker' in navigator) {
-  // #258 — `updateViaCache: 'none'` makes the browser bypass the HTTP
-  // cache when fetching `/sw.js` during update checks, so a bumped
-  // `CACHE_NAME` (the one-time unblock for any future SW-cache-related
-  // bug — see #246) propagates immediately instead of waiting up to 24h
-  // for the browser's default `'imports'` SW cache to expire. Server
-  // already sends `Cache-Control: no-cache` on the SW response, but
-  // this is a belt-and-suspenders fix against aggressive intermediate
-  // proxies and browser-quirk edge cases.
-  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});
-}
+// Service worker registration + update propagation lives in /sw-register.js
+// (loaded before this script in index.html). It was extracted from an inline
+// block here so the iOS update-propagation logic (#380) is unit-testable;
+// it self-registers on load.
 
 init();

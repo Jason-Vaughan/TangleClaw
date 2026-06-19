@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-22';
+const CACHE_NAME = 'tangleclaw-v3-23';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -22,6 +22,10 @@ const STATIC_ASSETS = [
   // ui.js feature changes. The CACHE_NAME bump above is what surfaces it (and the
   // new index.html + ui.js) to operators with an active SW.
   '/history-drawer.js',
+  // sw-register.js owns SW registration + update propagation (#380). Like
+  // landing.js it is dual-listed (precached here for offline coherence of
+  // '/', network-first below because it is cache-bust-critical).
+  '/sw-register.js',
   '/manifest.json'
 ];
 
@@ -50,7 +54,12 @@ const NETWORK_FIRST_PATHS = new Set([
   // the two in lockstep by making both network-first.
   '/wrap-drawer.js',
   '/session.css',
-  '/landing.js'
+  '/landing.js',
+  // sw-register.js is cache-bust-critical (category 1): its entire purpose is
+  // service-worker lifecycle. Serving a stale copy would re-strand operators
+  // on an old worker — exactly the #380 failure it exists to prevent — so it
+  // must always come from the network when reachable.
+  '/sw-register.js'
 ]);
 
 self.addEventListener('install', (event) => {

@@ -398,10 +398,14 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
 });
 
 describe('service worker registration (#258)', () => {
-  let landingJs;
+  let swRegisterJs;
 
   beforeEach(() => {
-    landingJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+    // SW registration moved out of landing.js into public/sw-register.js
+    // (#380, layer 2) so the iOS update-propagation logic is unit-testable;
+    // the #258 contract below now lives there. Behavioural coverage of the
+    // option is in test/sw-register.test.js.
+    swRegisterJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw-register.js'), 'utf8');
   });
 
   it("serviceWorker.register passes updateViaCache: 'none' to bypass the HTTP cache on SW updates", () => {
@@ -413,8 +417,8 @@ describe('service worker registration (#258)', () => {
     // bumped CACHE_NAME (the immediate-unblock tool for future SW
     // cache bugs — see #246) propagates without waiting on cache TTL.
     assert.match(
-      landingJs,
-      /navigator\.serviceWorker\.register\(\s*['"]\/sw\.js['"]\s*,\s*\{[^}]*updateViaCache:\s*['"]none['"]/,
+      swRegisterJs,
+      /register\(\s*['"]\/sw\.js['"]\s*,\s*\{[^}]*updateViaCache:\s*['"]none['"]/,
       "register('/sw.js', { updateViaCache: 'none' }) — option must be on the registration call"
     );
   });
