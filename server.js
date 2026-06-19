@@ -22,6 +22,7 @@ const tunnel = require('./lib/tunnel');
 const portScanner = require('./lib/port-scanner');
 const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
+const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
@@ -1003,6 +1004,21 @@ route('GET', '/api/models/status', (_req, res) => {
 // GET /api/update-status — Cached update check result
 route('GET', '/api/update-status', (_req, res) => {
   jsonResponse(res, 200, updateChecker.getCachedStatus());
+});
+
+// POST /api/update/apply — the self-update ACTION (#228/#229, UB). Fetches +
+// checks out the latest release tag; does NOT restart. The client chains
+// POST /api/server/restart on a 200. A refused safety guard (dirty tree, no
+// update, wrong ref, not a git checkout) returns 409 with a stable `code`; an
+// unexpected git failure mid-flow returns 500 with the pre-update `fromSha` so
+// recovery is a one-line manual `git checkout <fromSha>`.
+route('POST', '/api/update/apply', (_req, res) => {
+  const result = updateApplier.applyUpdate();
+  if (result.ok) {
+    jsonResponse(res, 200, result);
+    return;
+  }
+  jsonResponse(res, result.code === 'git-error' ? 500 : 409, result);
 });
 
 // POST /api/tmux/mouse

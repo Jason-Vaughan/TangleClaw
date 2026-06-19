@@ -319,14 +319,127 @@ async function loadUpdateStatus() {
     ? `<a class="update-pill-link" href="${esc(data.releaseUrl)}" target="_blank" rel="noopener noreferrer" title="View release notes">${versionLabel}</a>`
     : versionLabel;
 
-  pill.innerHTML = `${versionHtml} available <button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
+  pill.innerHTML = `${versionHtml} available `
+    + `<button class="update-pill-apply" id="updateApplyBtn">Update &amp; restart</button> `
+    + `<button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
   pill.classList.remove('hidden');
+
+  // UB (#228/#229): the actionable self-update. The git fetch+checkout is the
+  // server-side action this button adds; the restart half reuses the proven
+  // #235 path. The data closure carries the target version for the confirm.
+  const applyBtn = pill.querySelector('#updateApplyBtn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyUpdateAndRestart(data);
+    });
+  }
 
   pill.querySelector('.update-pill-dismiss').addEventListener('click', (e) => {
     e.stopPropagation();
     pill.classList.add('hidden');
     localStorage.setItem(dismissKey, '1');
   });
+}
+
+/**
+ * UB (#228/#229): apply the latest release, then restart onto it — one operator
+ * gesture. `POST /api/update/apply` (fetch + checkout the tag) → on success
+ * `POST /api/server/restart` (the existing #235 path) → poll `/api/server-info`
+ * until the new process is up → full reload onto the fresh assets. A refused
+ * safety guard (409: dirty tree / no update / wrong ref / no git) surfaces its
+ * reason and restores the button; the working tree is never touched on a refusal.
+ *
+ * Idempotent via `state.restartInFlight` (shared with the #235 stale-server
+ * restart, so the two paths can't fire concurrently).
+ *
+ * @param {object} data - The /api/update-status payload (carries latestVersion)
+ * @returns {Promise<void>}
+ */
+async function applyUpdateAndRestart(data) {
+  if (state.restartInFlight) return;
+
+  const setBtn = (label, disabled) => {
+    const btn = document.getElementById('updateApplyBtn');
+    if (btn) { btn.textContent = label; btn.disabled = disabled; }
+  };
+
+  const proceed = window.confirm(
+    `Update TangleClaw to v${data.latestVersion} and restart?\n\n` +
+    'TC fetches the release, switches the checkout to it, and restarts. Active tmux ' +
+    'sessions survive; the browser reconnects when the server returns (~3 seconds).'
+  );
+  if (!proceed) return;
+
+  state.restartInFlight = true;
+  setBtn('Updating…', true);
+
+  // 1. Apply — fetch + checkout the latest tag (no restart yet).
+  let applyResp;
+  try {
+    applyResp = await apiMutate('/api/update/apply', 'POST', {});
+  } catch (err) {
+    state.restartInFlight = false;
+    setBtn('Update & restart', false);
+    window.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
+    return;
+  }
+  if (!applyResp || !applyResp.ok) {
+    state.restartInFlight = false;
+    setBtn('Update & restart', false);
+    const msg = (applyResp && applyResp.error) || api.lastError || 'unknown error';
+    window.alert(`Update not applied: ${msg}`);
+    return;
+  }
+
+  // 2. Capture the baseline startedAt, then restart onto the new code.
+  setBtn('Restarting…', true);
+  const appliedLabel = applyResp.toRef || `v${data.latestVersion}`;
+  let oldStartedAt = null;
+  try {
+    const pre = await api('/api/server-info');
+    if (pre && pre.startedAt) oldStartedAt = pre.startedAt;
+  } catch { /* fall through to the manual-restart message below */ }
+
+  let restartResp;
+  try {
+    restartResp = await apiMutate('/api/server/restart', 'POST', {});
+  } catch (err) {
+    restartResp = null;
+    api.lastError = err && err.message;
+  }
+  if (!restartResp || !restartResp.ok) {
+    // The code IS updated on disk; only the auto-restart didn't fire (e.g. no
+    // restart mechanism on this host). Degrade honestly to the #199 stale path.
+    state.restartInFlight = false;
+    setBtn('Update & restart', false);
+    const msg = (restartResp && restartResp.error) || api.lastError || 'no restart mechanism';
+    window.alert(`Updated to ${appliedLabel} on disk, but auto-restart didn't run (${msg}). Restart TangleClaw to finish.`);
+    return;
+  }
+
+  // 3. Poll until the new process reports a fresh startedAt, then reload.
+  if (!oldStartedAt) { setTimeout(() => window.location.reload(), 3000); return; }
+  const POLL_INTERVAL_MS = 500;
+  const POLL_MAX_ATTEMPTS = 30;
+  let attempt = 0;
+  const poll = setInterval(async () => {
+    attempt++;
+    try {
+      const info = await api('/api/server-info');
+      if (info && info.startedAt && info.startedAt !== oldStartedAt) {
+        clearInterval(poll);
+        window.location.reload();
+        return;
+      }
+    } catch { /* expected during the dead window */ }
+    if (attempt >= POLL_MAX_ATTEMPTS) {
+      clearInterval(poll);
+      state.restartInFlight = false;
+      setBtn('Update & restart', false);
+      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 async function loadStats() {

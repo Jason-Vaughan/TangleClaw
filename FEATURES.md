@@ -83,6 +83,7 @@ entries that span multiple co-equal locations.
 - **Sidecar** — supplementary process supervisor. `lib/sidecar.js`.
 - **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`.
 - **Update checker** — GitHub release-tag polling. `lib/update-checker.js`.
+- **Self-update action** (#228/#229, UB) — the update pill's **Update & restart** button: `POST /api/update/apply` fetches + checks out the latest release tag with fail-closed guards (dirty-tree / no-update / wrong-ref / no-git → 409; git-error → 500; argv-form git so a tag can't shell-inject), then the client chains the existing #235 restart and polls `/api/server-info`. Does NOT restart itself; logs `fromSha` for one-line manual rollback. `lib/update-applier.js`, route `server.js` (next to `/api/update-status`), UI `public/landing.js#applyUpdateAndRestart` + `loadUpdateStatus`, button `.update-pill-apply` (`public/style.css`).
 - **Uploads** — file-upload handling for the in-browser drop zone. `lib/uploads.js`.
 - **System stats** — CPU / mem / disk for the landing page. `lib/system.js`.
 - **Port scanner** — local-port introspection for the PortHub UI. `lib/port-scanner.js`.
