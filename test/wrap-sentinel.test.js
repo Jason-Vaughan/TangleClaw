@@ -168,6 +168,30 @@ describe('wrap-sentinel — gateway transport', () => {
     assert.equal(ws.isWrapRequested('proj-10'), true);
   });
 
+  it('when the baseline cursor is unknowable, stays un-armed and never scans the backlog', async () => {
+    const s = webuiSession(4);
+    ws._internal.getBridgeContext = () => ({ localPort: 1, token: null, project: 'proj-40' });
+    ws._internal.listLiveAll = () => [s];
+    // First two ticks: getStatus can't report a cursor → must NOT baseline at 0.
+    let statusOk = false;
+    ws._internal.getStatus = async () => (statusOk ? { ok: true, cursor: 20 } : { ok: false, error: 'down' });
+    let outCalls = 0;
+    // A bare token sits in the backlog — a cursor-0 baseline would scan + flag it.
+    ws._internal.getOutput = async () => { outCalls++; return { ok: true, events: [{ kind: 'text', text: TOKEN }], cursorEnd: 99 }; };
+
+    await ws._internal.tick(); // getStatus fails → not armed, no scan
+    await ws._internal.tick(); // still failing → still not armed, still no scan
+    assert.equal(outCalls, 0, 'never scans the backlog without a real baseline cursor');
+    assert.equal(ws.isWrapRequested('proj-40'), false, 'a backlog token must not spuriously flag');
+
+    statusOk = true;
+    await ws._internal.tick(); // now baselines at cursor 20 (still no scan)
+    assert.equal(outCalls, 0);
+    await ws._internal.tick(); // fresh output from cursor 20 → token → flag
+    assert.equal(outCalls, 1);
+    assert.equal(ws.isWrapRequested('proj-40'), true);
+  });
+
   it('a transient bridge error leaves the cursor unchanged and does not flag', async () => {
     const s = webuiSession(2);
     ws._internal.getBridgeContext = () => ({ localPort: 1, token: null, project: 'proj-20' });
