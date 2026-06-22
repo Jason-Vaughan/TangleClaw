@@ -416,11 +416,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
-    'stripAiCoauthors'
+    'stripAiCoauthors', 'ingressMode', 'publicDomain'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
   const validPeekModes = ['drawer', 'modal', 'alert'];
+  const validIngressModes = ['direct', 'caddy'];
 
   let requiresRestart = false;
 
@@ -455,6 +456,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
     }
+    if (key === 'ingressMode' && !validIngressModes.includes(value)) {
+      return errorResponse(res, 400, `ingressMode must be one of: ${validIngressModes.join(', ')}`, 'BAD_REQUEST');
+    }
+    if (key === 'publicDomain' && value !== null && typeof value !== 'string') {
+      return errorResponse(res, 400, 'publicDomain must be a string or null', 'BAD_REQUEST');
+    }
     if (key === 'stripAiCoauthors' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'stripAiCoauthors must be a boolean', 'BAD_REQUEST');
     }
@@ -464,11 +471,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
     // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
     let storedValue = value;
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && (value === '' || value === null)) {
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain') && (value === '' || value === null)) {
       storedValue = null;
     }
 
-    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath') {
+    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode') {
       if (config[key] !== storedValue) requiresRestart = true;
     }
 
