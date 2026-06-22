@@ -274,3 +274,195 @@ describe('wrap-step ai-content — #334 webui sessions skip (no tmux pane)', () 
     assert.match(res.blockers[0], /requires an active session/);
   });
 });
+
+// CC-7 Slice B1 — webui sessions now capture structured ai-content over the
+// ClawBridge gateway: send → poll status until inputReady → read the raw
+// captureFile back over the bridge (consume-once) → parse with `_parseFields`.
+// Steps with no captureFile (or no bridge sidecar) stay an honest skip so
+// Slice A flags the judgment empty with a reason — never a fabricated capture.
+describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...aic._internal };
+    aic._internal.sleep = async () => {};
+    aic._internal.now = () => 0; // never advances → MAX_WAIT_MS is never hit by the clock
+    // A bridge-backed webui session by default; individual tests override.
+    aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
+  });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const webuiSession = { sessionMode: 'webui', tmuxSession: null, engineId: 'openclaw:abc' };
+  const ctx = (step) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session: webuiSession,
+    step: { id: 'summary-derive', kind: 'ai-content', prompt: 'wrap please', ...step },
+    previousResults: [],
+    staged: {},
+    options: {}
+  });
+
+  const structuredStep = {
+    captureFields: ['Summary', 'NextSteps', 'Learnings'],
+    captureFile: '.tangleclaw/.wrap-summary.md'
+  };
+
+  it('happy path: sends prompt, waits for inputReady, reads + parses the captureFile, stages fields', async () => {
+    const calls = { sent: null, fileArgs: null };
+    aic._internal.bridgeSend = async (a) => { calls.sent = a; return { ok: true, accepted: true, state: 'running' }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    aic._internal.bridgeGetFile = async (a) => { calls.fileArgs = a; return { ok: true, content: RAW_BLOCK, consumed: true }; };
+
+    const context = ctx(structuredStep);
+    const res = await aic._runGatewayCapture(context);
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.parsedFields.Summary, 'Tidy wrap cycle; no code changes.');
+    assert.match(res.output.parsedFields.NextSteps, /Issue #85/);
+    // Staged for the commit step, same shape the tmux path produces.
+    assert.deepEqual(context.staged['summary-derive'].parsedFields, res.output.parsedFields);
+    // Sent the interpolated prompt over the bridge addressed by project name.
+    assert.equal(calls.sent.message, 'wrap please');
+    assert.equal(calls.sent.project, 'proj');
+    assert.equal(calls.sent.localPort, 4567);
+    // Read consume-once from the SAME captureFile path the tmux path uses.
+    assert.equal(calls.fileArgs.path, '.tangleclaw/.wrap-summary.md');
+    assert.equal(calls.fileArgs.consume, true);
+  });
+
+  it('no bridge sidecar (getBridgeContext null) → honest skip, never calls send', async () => {
+    let sent = false;
+    aic._internal.getBridgeContext = () => null;
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'skipped');
+    assert.match(res.output.reason, /no ClawBridge sidecar/);
+    assert.equal(sent, false);
+  });
+
+  it('step without a captureFile → honest skip (gateway cannot reconstruct unstructured text)', async () => {
+    let sent = false;
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true }; };
+
+    const res = await aic._runGatewayCapture(ctx({ prompt: 'write memory block' }));
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'skipped');
+    assert.match(res.output.reason, /without a captureFile/);
+    assert.equal(sent, false, 'no gateway round-trip for an uncapturable step');
+  });
+
+  it('captureFile read OK but a required field is missing → blocked', async () => {
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });
+    aic._internal.bridgeGetFile = async () => ({ ok: true, content: '## Summary\nonly this one\n', consumed: true });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.ok(res.blockers.some((b) => /NextSteps/.test(b)));
+  });
+
+  it('captureFile unreadable over the gateway → blocked with a clear remediation', async () => {
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });
+    aic._internal.bridgeGetFile = async () => ({ ok: false, error: 'file not found' });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /captureFile ".tangleclaw\/\.wrap-summary\.md" missing or unreadable over the gateway/);
+  });
+
+  it('waiting_for_permission → blocked (surfaced honestly, never hangs)', async () => {
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: false, state: 'waiting_for_permission' });
+    let readFile = false;
+    aic._internal.bridgeGetFile = async () => { readFile = true; return { ok: true, content: RAW_BLOCK }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /waiting on a permission prompt/);
+    assert.equal(readFile, false, 'never reads the file while blocked on a permission');
+  });
+
+  it('AI never becomes input-ready before MAX_WAIT_MS → blocked timeout', async () => {
+    // Advance the clock past MAX_WAIT_MS on the second read so the loop exits.
+    const ticks = [0, 10 * 60 * 1000];
+    let i = 0;
+    aic._internal.now = () => ticks[Math.min(i++, ticks.length - 1)];
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: false, state: 'running' });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /never became input-ready/);
+  });
+
+  it('send failure → blocked', async () => {
+    aic._internal.bridgeSend = async () => ({ ok: false, error: 'no session (404)' });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /Failed to send prompt to ClawBridge: no session/);
+  });
+
+  it('empty prompt → skipped (parity with the tmux path)', async () => {
+    let sent = false;
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true }; };
+
+    const res = await aic._runGatewayCapture(ctx({ prompt: '   ', ...structuredStep }));
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'skipped');
+    assert.equal(sent, false);
+  });
+});
+
+// CC-7 B1 — `defaultGetBridgeContext` resolves the bridge sidecar from the
+// session's engineId via the store. Exercised through `run()` with a stubbed
+// store require is overkill; instead verify the non-bridge fast-paths return
+// null deterministically (the store-backed happy path is covered by the
+// gateway tests above via the injected `getBridgeContext`).
+describe('wrap-step ai-content — CC-7 B1 getBridgeContext guards', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...aic._internal };
+    aic._internal.sleep = async () => {};
+    aic._internal.now = () => 0;
+  });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const ctx = (session) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session,
+    step: { id: 'summary-derive', kind: 'ai-content', prompt: 'wrap', captureFields: ['Summary'], captureFile: '.cap.md' },
+    previousResults: [],
+    staged: {},
+    options: {}
+  });
+
+  it('a non-openclaw engine resolves no bridge → honest skip', async () => {
+    let sent = false;
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true }; };
+    // Use the REAL getBridgeContext (not the injected mock) — a tmux-engine
+    // session id has no `openclaw:` prefix, so it must short-circuit to null.
+    const res = await aic._runGatewayCapture(ctx({ sessionMode: 'webui', engineId: 'claude' }));
+
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'skipped');
+    assert.match(res.output.reason, /no ClawBridge sidecar/);
+    assert.equal(sent, false);
+  });
+});
