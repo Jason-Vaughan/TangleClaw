@@ -167,6 +167,48 @@ describe('caddy', () => {
     });
   });
 
+  describe('getTtydSocketPath', () => {
+    it('returns <basePath>/run/ttyd.sock', () => {
+      assert.equal(caddy.getTtydSocketPath(), path.join(baseDir, 'run', 'ttyd.sock'));
+    });
+  });
+
+  describe('ttydConnectTarget', () => {
+    it('targets the TCP port in direct mode (default)', () => {
+      const t = caddy.ttydConnectTarget({ ingressMode: 'direct', ttydPort: 3100 });
+      assert.equal(t.socketPath, undefined);
+      assert.equal(t.host, '127.0.0.1');
+      assert.equal(t.port, 3100);
+      assert.equal(t.hostHeader, '127.0.0.1:3100');
+    });
+
+    it('defaults to port 3100 when ttydPort is unset', () => {
+      const t = caddy.ttydConnectTarget({});
+      assert.equal(t.port, 3100);
+      assert.equal(t.hostHeader, '127.0.0.1:3100');
+    });
+
+    it('respects a custom ttydPort in direct mode', () => {
+      const t = caddy.ttydConnectTarget({ ingressMode: 'direct', ttydPort: 3105 });
+      assert.equal(t.port, 3105);
+      assert.equal(t.hostHeader, '127.0.0.1:3105');
+    });
+
+    it('targets the Unix socket in caddy mode', () => {
+      const t = caddy.ttydConnectTarget({ ingressMode: 'caddy', ttydPort: 3100 });
+      assert.equal(t.socketPath, caddy.getTtydSocketPath());
+      assert.equal(t.host, undefined);
+      assert.equal(t.port, undefined);
+      assert.equal(t.hostHeader, 'localhost');
+    });
+
+    it('tolerates a null/undefined config (direct defaults)', () => {
+      const t = caddy.ttydConnectTarget();
+      assert.equal(t.port, 3100);
+      assert.equal(t.socketPath, undefined);
+    });
+  });
+
   describe('validateCaddyfile', () => {
     it('returns ok: false when the Caddyfile does not exist', () => {
       const r = caddy.validateCaddyfile(path.join(tmpDir, 'no-such-Caddyfile'));
