@@ -376,3 +376,91 @@ describe('clawbridge.getStatus', () => {
     assert.ok(result.error, 'unreachable must be distinguishable from active:false');
   });
 });
+
+// ── CC-7 Slice B1: getFile (ClawBridge #18 / v1.9.1 capture-back) ──
+
+describe('clawbridge.getFile', () => {
+  it('GETs /v2/session/file with project + path and returns raw content verbatim', async () => {
+    let req = null;
+    const raw = '## Next action\nship it — `##` and\nnewlines preserved\n';
+    const stub = await startStubBridge((r) => {
+      req = { method: r.method, path: r.url, auth: r.headers.authorization };
+      return { status: 200, body: {
+        ok: true, project: 'demo', path: '.wrap-capture.md', bytes: Buffer.byteLength(raw), content: raw, consumed: false
+      } };
+    });
+    try {
+      const result = await clawbridge.getFile({ localPort: stub.port, token: 'tok', project: 'demo', path: '.wrap-capture.md' });
+      assert.equal(result.ok, true);
+      assert.equal(result.content, raw, 'content must round-trip byte-identical (## + newlines)');
+      assert.equal(result.bytes, Buffer.byteLength(raw));
+      assert.equal(result.consumed, false);
+      assert.equal(result.path, '.wrap-capture.md');
+      assert.equal(req.method, 'GET');
+      assert.equal(req.auth, 'Bearer tok');
+      // No consume param when not requested.
+      assert.match(req.path, /^\/v2\/session\/file\?project=demo&path=\.wrap-capture\.md$/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('sends consume=true (literal string) only when consume is truthy', async () => {
+    let path = null;
+    const stub = await startStubBridge((r) => {
+      path = r.url;
+      return { status: 200, body: { ok: true, content: 'x', bytes: 1, consumed: true } };
+    });
+    try {
+      const result = await clawbridge.getFile({ localPort: stub.port, token: null, project: 'p', path: 'f.md', consume: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.consumed, true);
+      assert.match(path, /[?&]consume=true(&|$)/, 'consume must be the literal string "true"');
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('preserves an empty-string body literally (not coerced to null)', async () => {
+    const stub = await startStubBridge(() => ({ status: 200, body: { ok: true, content: '', bytes: 0, consumed: true } }));
+    try {
+      const result = await clawbridge.getFile({ localPort: stub.port, token: null, project: 'p', path: 'f.md', consume: true });
+      assert.equal(result.ok, true);
+      assert.equal(result.content, '', 'empty file must read back as "" so the parser sees "no fields"');
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('surfaces a 404 (file not found) as ok:false + error', async () => {
+    const stub = await startStubBridge(() => ({ status: 404, body: { error: 'file not found' } }));
+    try {
+      const result = await clawbridge.getFile({ localPort: stub.port, token: null, project: 'p', path: 'missing.md' });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 404);
+      assert.equal(result.content, null);
+      assert.equal(result.consumed, false);
+      assert.match(result.error, /file not found/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('surfaces a 400 (path traversal rejected) as ok:false + error', async () => {
+    const stub = await startStubBridge(() => ({ status: 400, body: { error: 'invalid path' } }));
+    try {
+      const result = await clawbridge.getFile({ localPort: stub.port, token: null, project: 'p', path: '../../etc/passwd' });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 400);
+      assert.match(result.error, /invalid path/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('returns ok:false when the bridge is unreachable', async () => {
+    const result = await clawbridge.getFile({ localPort: 1, token: null, project: 'p', path: 'f.md', timeoutMs: 2000 });
+    assert.equal(result.ok, false);
+    assert.ok(result.error);
+  });
+});
