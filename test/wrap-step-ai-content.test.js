@@ -393,6 +393,35 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     assert.equal(readFile, false, 'never reads the file while blocked on a permission');
   });
 
+  it('remote session reported dead (active:false) → fast-fail blocked, never waits out the timeout', async () => {
+    let statusCalls = 0;
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => { statusCalls++; return { ok: true, active: false, inputReady: false }; };
+    let readFile = false;
+    aic._internal.bridgeGetFile = async () => { readFile = true; return { ok: true, content: RAW_BLOCK }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /no longer active/);
+    assert.equal(statusCalls, 1, 'fast-fails on the first poll, not after MAX_WAIT_MS');
+    assert.equal(readFile, false);
+  });
+
+  it('terminal session state (ended/failed/timed_out) → fast-fail blocked', async () => {
+    for (const state of ['ended', 'failed', 'timed_out']) {
+      aic._internal.bridgeSend = async () => ({ ok: true });
+      aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: false, state });
+
+      const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+      assert.equal(res.ok, false, `${state} → blocked`);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], new RegExp(`session ${state}`));
+    }
+  });
+
   it('AI never becomes input-ready before MAX_WAIT_MS → blocked timeout', async () => {
     // Advance the clock past MAX_WAIT_MS on the second read so the loop exits.
     const ticks = [0, 10 * 60 * 1000];
