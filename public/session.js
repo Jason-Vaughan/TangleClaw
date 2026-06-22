@@ -861,6 +861,19 @@ async function pollStatus() {
 
   sessionState.session = data;
 
+  // CC-7 Slice C — typed-wrap trigger parity. The server's wrap-sentinel monitor
+  // saw the AI emit `TANGLECLAW_WRAP` (the user typed "wrap"), so open the same
+  // wrap drawer the Wrap button opens. Ack the server flag first so a slow open
+  // or a dropped poll can't reopen it, and latch client-side so we open at most
+  // once per page load even if the ack races the next poll. No auto-kill — the
+  // drawer is the operator's review/confirm surface.
+  if (data.wrapRequested && !sessionState.wrapSentinelHandled
+      && !sessionState.wrapDrawerOpen && !sessionState.wrapping && !sessionState.ended) {
+    sessionState.wrapSentinelHandled = true;
+    api(`/api/sessions/${encodeURIComponent(projectName)}/wrap-sentinel/ack`, { method: 'POST' });
+    openWrapModal();
+  }
+
   // Handle wrapping state
   if (data.wrapping && !sessionState.wrapping) {
     showWrappingState();

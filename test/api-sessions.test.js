@@ -112,6 +112,42 @@ describe('api-sessions', () => {
       assert.equal(res.status, 404);
       assert.equal(res.body.code, 'NOT_FOUND');
     });
+
+    it('carries the wrapRequested flag, and the ack endpoint clears it (CC-7 Slice C)', async () => {
+      const ws = require('../lib/wrap-sentinel');
+      const saved = { ...ws._internal };
+      try {
+        // Default: nothing pending.
+        let res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.wrapRequested, false);
+
+        // Acking with nothing pending is an honest no-op (idempotent).
+        res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap-sentinel/ack');
+        assert.equal(res.status, 200);
+        assert.equal(res.body.cleared, false);
+
+        // Seed a pending flag by driving the monitor against a stubbed session.
+        ws._internal.getProjectName = () => 'api-sess-test';
+        ws._internal.listLiveAll = () => [{ id: 777, projectId: 1, sessionMode: 'tmux', tmuxSession: 'x' }];
+        let pane = ['idle'];
+        ws._internal.capturePane = () => ({ lines: pane });
+        await ws._internal.tick();        // baseline (no token)
+        pane = [ws.SENTINEL_TOKEN];
+        await ws._internal.tick();        // fresh emission → flag
+
+        res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.wrapRequested, true, 'status surfaces the pending typed-wrap');
+
+        res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap-sentinel/ack');
+        assert.equal(res.body.cleared, true, 'ack clears the pending flag');
+
+        res = await request(server, 'GET', '/api/sessions/api-sess-test/status');
+        assert.equal(res.body.wrapRequested, false, 'flag is gone after ack');
+      } finally {
+        Object.assign(ws._internal, saved);
+        ws.stop();
+      }
+    });
   });
 
   describe('GET /api/sessions/:project/history', () => {

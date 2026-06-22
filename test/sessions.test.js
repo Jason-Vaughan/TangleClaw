@@ -67,6 +67,22 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
+    it('injects the typed-wrap sentinel instruction WITHOUT tripping its own monitor (CC-7 Slice C)', () => {
+      const wrapSentinel = require('../lib/wrap-sentinel');
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+
+      assert.ok(prompt.includes('## Wrapping this session'), 'prime should tell the AI how to trigger a wrap');
+      assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN), 'prime should name the marker token');
+      // The whole point of the backtick/period phrasing: the instruction itself
+      // must NEVER look like a bare emission, or every session would self-wrap.
+      assert.equal(
+        wrapSentinel._hasSentinel(prompt), false,
+        'the prime instruction must not match the sentinel monitor (no self-trigger)'
+      );
+    });
+
     it('injects the session-ownership identity block (#347 Slice 3)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');

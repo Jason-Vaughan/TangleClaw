@@ -32,6 +32,7 @@ const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const ttydWatcher = require('./lib/ttyd-watcher');
+const wrapSentinel = require('./lib/wrap-sentinel');
 
 const log = createLogger('server');
 
@@ -1556,7 +1557,18 @@ route('GET', '/api/sessions/:project/status', (_req, res, params) => {
   if (!status) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
+  // CC-7 Slice C — surface a pending typed-wrap request so the session view's
+  // status poll can open the wrap drawer (trigger parity with the Wrap button).
+  status.wrapRequested = wrapSentinel.isWrapRequested(params.project);
   jsonResponse(res, 200, status);
+});
+
+// POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
+// request once the session view has opened the wrap drawer, so the poll won't
+// reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.
+route('POST', '/api/sessions/:project/wrap-sentinel/ack', (_req, res, params) => {
+  const cleared = wrapSentinel.ackWrapRequest(params.project);
+  jsonResponse(res, 200, { ok: true, project: params.project, cleared });
 });
 
 // POST /api/sessions/:project/command — Inject command
@@ -3694,6 +3706,10 @@ if (require.main === module) {
     // that die out from under an open Web UI so they self-heal without a
     // manual re-launch.
     tunnelMonitor.start();
+    // Start the typed-wrap sentinel monitor (CC-7 Slice C) — watches live
+    // sessions for the `TANGLECLAW_WRAP` marker and raises a per-project flag
+    // that the session view's status poll turns into an opened wrap drawer.
+    wrapSentinel.start();
   });
 
   // Graceful shutdown
@@ -3708,6 +3724,7 @@ if (require.main === module) {
     sidecar.stopAllPolling();
     ttydWatcher.stop();
     tunnelMonitor.stop();
+    wrapSentinel.stop();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
