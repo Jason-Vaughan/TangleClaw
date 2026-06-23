@@ -31,6 +31,7 @@ const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
+const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const wrapSentinel = require('./lib/wrap-sentinel');
 
@@ -306,10 +307,16 @@ route('GET', '/api/health', (_req, res) => {
       resolve();
     };
 
-    socket.connect(config.ttydPort, '127.0.0.1', () => {
+    const ttydTarget = caddy.ttydConnectTarget(config);
+    const onTtydUp = () => {
       socket.destroy();
       respond('ok');
-    });
+    };
+    if (ttydTarget.socketPath) {
+      socket.connect(ttydTarget.socketPath, onTtydUp);
+    } else {
+      socket.connect(ttydTarget.port, ttydTarget.host, onTtydUp);
+    }
     socket.on('error', () => {
       socket.destroy();
       respond('unavailable');
@@ -416,11 +423,13 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
-    'stripAiCoauthors'
+    'stripAiCoauthors', 'ingressMode', 'publicDomain',
+    'caddyHttpsPort', 'caddyHttpPort'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
   const validPeekModes = ['drawer', 'modal', 'alert'];
+  const validIngressModes = ['direct', 'caddy'];
 
   let requiresRestart = false;
 
@@ -455,6 +464,17 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
     }
+    if (key === 'ingressMode' && !validIngressModes.includes(value)) {
+      return errorResponse(res, 400, `ingressMode must be one of: ${validIngressModes.join(', ')}`, 'BAD_REQUEST');
+    }
+    if (key === 'publicDomain' && value !== null && typeof value !== 'string') {
+      return errorResponse(res, 400, 'publicDomain must be a string or null', 'BAD_REQUEST');
+    }
+    if ((key === 'caddyHttpsPort' || key === 'caddyHttpPort')) {
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65535) {
+        return errorResponse(res, 400, `${key} must be an integer between 1 and 65535`, 'BAD_REQUEST');
+      }
+    }
     if (key === 'stripAiCoauthors' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'stripAiCoauthors must be a boolean', 'BAD_REQUEST');
     }
@@ -464,11 +484,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
     // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
     let storedValue = value;
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && (value === '' || value === null)) {
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain') && (value === '' || value === null)) {
       storedValue = null;
     }
 
-    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath') {
+    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode') {
       if (config[key] !== storedValue) requiresRestart = true;
     }
 
@@ -2666,19 +2686,27 @@ function proxyToOpenclaw(req, res, projectName, subPath) {
  */
 function proxyToTtyd(req, res, pathname) {
   const config = store.config.load();
-  const ttydPort = config.ttydPort || 3100;
+  const target = caddy.ttydConnectTarget(config);
   const targetPath = pathname.replace(/^\/terminal/, '') || '/';
 
-  const proxyReq = http.request({
-    hostname: '127.0.0.1',
-    port: ttydPort,
+  // In caddy mode ttyd is on a Unix socket (`socketPath`); otherwise a TCP port.
+  // http.request accepts either `socketPath` or `hostname`+`port`.
+  const reqOptions = {
     path: targetPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''),
     method: req.method,
     headers: {
       ...req.headers,
-      host: `127.0.0.1:${ttydPort}`
+      host: target.hostHeader
     }
-  }, (proxyRes) => {
+  };
+  if (target.socketPath) {
+    reqOptions.socketPath = target.socketPath;
+  } else {
+    reqOptions.hostname = target.host;
+    reqOptions.port = target.port;
+  }
+
+  const proxyReq = http.request(reqOptions, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
   });
@@ -2810,16 +2838,18 @@ function handleUpgrade(req, socket, head) {
   }
 
   const config = store.config.load();
-  const ttydPort = config.ttydPort || 3100;
+  const target = caddy.ttydConnectTarget(config);
   const targetPath = urlObj.pathname.replace(/^\/terminal/, '') || '/';
   const targetUrl = targetPath + (urlObj.search || '');
 
   const net = require('node:net');
-  const proxySocket = net.connect(ttydPort, '127.0.0.1', () => {
+  // caddy mode → Unix socket; direct mode → TCP host:port. net.connect accepts
+  // a socket path (string) or (port, host).
+  const onProxyConnect = () => {
     // Build the upgrade request to forward to ttyd
     const reqHeaders = [];
     reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
-    reqHeaders.push(`Host: 127.0.0.1:${ttydPort}`);
+    reqHeaders.push(`Host: ${target.hostHeader}`);
     for (const [key, value] of Object.entries(req.headers)) {
       if (key.toLowerCase() === 'host') continue;
       reqHeaders.push(`${key}: ${value}`);
@@ -2834,7 +2864,11 @@ function handleUpgrade(req, socket, head) {
     // Pipe data bidirectionally
     proxySocket.pipe(socket);
     socket.pipe(proxySocket);
-  });
+  };
+
+  const proxySocket = target.socketPath
+    ? net.connect(target.socketPath, onProxyConnect)
+    : net.connect(target.port, target.host, onProxyConnect);
 
   proxySocket.on('error', () => {
     socket.destroy();
@@ -3628,10 +3662,22 @@ if (require.main === module) {
 
   // Bootstrap port management — resolve actual port (env var takes precedence)
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
+  // AUTH-1 (#395): the ttydPort lease is kept even in caddy mode, where ttyd is
+  // socket-bound and nothing listens on :3100. This is deliberate — reserving the
+  // port keeps it free so a rollback to direct mode rebinds cleanly, rather than
+  // racing another project for it. (Critic warning, ADR 0003.)
   porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: port });
   porthub.startExpirationTimer();
+
+  // AUTH-1 (#395): in 'caddy' ingress mode Caddy terminates TLS and is the only
+  // front door, so TC drops to plain HTTP bound to localhost only (Caddy reaches
+  // it over the loopback). 'direct' mode is unchanged — TC terminates its own
+  // HTTPS and binds all interfaces. The live cutover is operator-driven; until
+  // ingressMode is flipped this branch is inert.
+  const caddyMode = config.ingressMode === 'caddy';
+  const effectiveHttps = caddyMode ? false : !!config.httpsEnabled;
   const server = createServer({
-    httpsEnabled: !!config.httpsEnabled,
+    httpsEnabled: effectiveHttps,
     certPath: config.httpsCertPath || null,
     keyPath: config.httpsKeyPath || null
   });
@@ -3683,7 +3729,9 @@ if (require.main === module) {
     }
   }, 5 * 60 * 1000);
 
-  const protocol = config.httpsEnabled ? 'https' : 'http';
+  const protocol = effectiveHttps ? 'https' : 'http';
+  const bindHost = caddyMode ? '127.0.0.1' : null;
+  const bindLabel = caddyMode ? '127.0.0.1' : '*';
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -3694,11 +3742,12 @@ if (require.main === module) {
     throw err;
   });
 
-  server.listen(port, () => {
-    log.info(`TangleClaw v${_getVersion()} listening on ${protocol}://*:${port}`, {
+  const onListening = () => {
+    log.info(`TangleClaw v${_getVersion()} listening on ${protocol}://${bindLabel}:${port}${caddyMode ? ' (behind Caddy)' : ''}`, {
       node: process.version,
       pid: process.pid,
-      https: !!config.httpsEnabled
+      https: effectiveHttps,
+      ingressMode: config.ingressMode || 'direct'
     });
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
     ttydWatcher.start();
@@ -3710,7 +3759,14 @@ if (require.main === module) {
     // sessions for the `TANGLECLAW_WRAP` marker and raises a per-project flag
     // that the session view's status poll turns into an opened wrap drawer.
     wrapSentinel.start();
-  });
+  };
+
+  // Bind localhost-only in caddy mode (Caddy fronts us); all interfaces otherwise.
+  if (bindHost) {
+    server.listen(port, bindHost, onListening);
+  } else {
+    server.listen(port, onListening);
+  }
 
   // Graceful shutdown
   const shutdown = () => {

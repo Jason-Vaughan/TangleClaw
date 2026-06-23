@@ -306,6 +306,71 @@ describe('API endpoints', () => {
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
     });
+
+    // AUTH-1 (#395) — ingress topology flag
+    it('should default ingressMode to direct', async () => {
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.ingressMode, 'direct');
+    });
+
+    it('should accept ingressMode=caddy', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        ingressMode: 'caddy'
+      });
+      assert.equal(status, 200);
+      assert.equal(data.config.ingressMode, 'caddy');
+      // restore default for later tests
+      await request(server, 'PATCH', '/api/config', { ingressMode: 'direct' });
+    });
+
+    it('should reject an unknown ingressMode', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        ingressMode: 'nginx'
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should accept a string publicDomain and normalize empty string to null', async () => {
+      let res = await request(server, 'PATCH', '/api/config', { publicDomain: 'tc.example.com' });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.publicDomain, 'tc.example.com');
+      res = await request(server, 'PATCH', '/api/config', { publicDomain: '' });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.publicDomain, null);
+    });
+
+    it('should reject a non-string, non-null publicDomain', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        publicDomain: 42
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should accept valid caddy ports and default them to 8443/8080', async () => {
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.caddyHttpsPort, 8443);
+      assert.equal(data.caddyHttpPort, 8080);
+      const res = await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 443, caddyHttpPort: 80 });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.caddyHttpsPort, 443);
+      assert.equal(res.data.config.caddyHttpPort, 80);
+      await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 8443, caddyHttpPort: 8080 });
+    });
+
+    it('should reject a non-integer caddy port', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 8443.5 });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a caddy port out of range', async () => {
+      for (const bad of [0, 70000, 'eighty']) {
+        const { status } = await request(server, 'PATCH', '/api/config', { caddyHttpPort: bad });
+        assert.equal(status, 400, `port ${bad} should be rejected`);
+      }
+    });
   });
 
   describe('PATCH /api/config HTTPS cert validation', () => {

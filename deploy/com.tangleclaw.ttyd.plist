@@ -9,8 +9,12 @@
         <string>__TTYD_PATH__</string>
         <string>--writable</string>
         <string>--url-arg</string>
-        <string>--port</string>
-        <string>3100</string>
+        <!-- AUTH-1 (#395): bind args are filled per ingress mode — direct mode
+             (install.sh) → `--port 3100`; caddy mode (ingress-cutover.js) →
+             `--interface <unix-socket>` so ttyd is reachable only via the proxy
+             chain behind Caddy. -->
+        <string>__TTYD_BIND_KEY__</string>
+        <string>__TTYD_BIND_VAL__</string>
         <!-- Raise xterm.js scrollback from its 1000-line default (#322/#290):
              gives long output room within a live session, and is large enough
              to hold the history ttyd-attach.sh replays on reconnect/restart. -->

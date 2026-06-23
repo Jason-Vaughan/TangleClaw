@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- AUTH-1 (#395): Caddy reverse-proxy ingress, user LaunchAgent (no sudo).
+     Generated/loaded by scripts/ingress-cutover.js only when ingressMode='caddy'.
+     Caddy listens on the non-privileged ports set in the Caddyfile (default
+     8443/8080) so it needs no root. To use 443/80 for a real public domain,
+     run Caddy as a root LaunchDaemon instead — see deploy/INGRESS.md. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tangleclaw.caddy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__CADDY_PATH__</string>
+        <string>run</string>
+        <string>--config</string>
+        <string>__CADDYFILE__</string>
+        <string>--adapter</string>
+        <string>caddyfile</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <!-- Capture stderr so a Caddy startup failure leaves a breadcrumb (mirrors
+         the server plist's #324 treatment). The cutover script creates this dir. -->
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.tangleclaw/logs/caddy.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__LAUNCHD_PATH__</string>
+        <!-- Caddy's data dir (local CA, ACME certs/keys) under the TC tree. -->
+        <key>XDG_DATA_HOME</key>
+        <string>__HOME__/.tangleclaw/caddy/data</string>
+        <key>XDG_CONFIG_HOME</key>
+        <string>__HOME__/.tangleclaw/caddy/config</string>
+    </dict>
+</dict>
+</plist>
