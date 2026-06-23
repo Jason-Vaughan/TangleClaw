@@ -144,9 +144,23 @@ describe('caddy', () => {
       assert.doesNotMatch(publicBlock, /\ttls /);
     });
 
-    it('honors a custom localSite label (slice-3 non-privileged port seam)', () => {
-      const out = caddy.buildCaddyfileContent({ ...opts, localSite: 'localhost:8443' });
-      assert.match(out, /^localhost:8443 \{$/m);
+    it('honors a custom localSite hostname', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, localSite: 'tc.local' });
+      assert.match(out, /^tc\.local \{$/m);
+    });
+
+    it('defaults to non-privileged global ports (8443/8080)', () => {
+      const out = caddy.buildCaddyfileContent(opts);
+      assert.match(out, /\thttps_port 8443/);
+      assert.match(out, /\thttp_port 8080/);
+    });
+
+    it('honors custom https/http ports (e.g. 443/80 for a root daemon)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, httpsPort: 443, httpPort: 80 });
+      assert.match(out, /\thttps_port 443/);
+      assert.match(out, /\thttp_port 80/);
+      // the local site stays a bare hostname; the port comes from the global directive
+      assert.match(out, /^localhost \{$/m);
     });
   });
 

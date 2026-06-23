@@ -10,9 +10,23 @@ const PLIST_PATH = path.join(__dirname, '..', 'deploy', 'com.tangleclaw.ttyd.pli
 describe('deploy/com.tangleclaw.ttyd.plist', () => {
   const plist = fs.readFileSync(PLIST_PATH, 'utf8');
 
-  it('should be the ttyd launchd job on port 3100', () => {
+  it('should be the ttyd launchd job', () => {
     assert.match(plist, /<string>com\.tangleclaw\.ttyd<\/string>/, 'Label must identify the ttyd job');
-    assert.match(plist, /<string>3100<\/string>/, 'ttyd must listen on port 3100');
+  });
+
+  // AUTH-1 (#395): the bind args are now a mode-specific placeholder, filled by
+  // install.sh (direct → `--port 3100`) or scripts/ingress-cutover.js (caddy →
+  // `--interface <socket>`). The "default install listens on port 3100" contract
+  // is preserved — it now lives in install.sh's substitution, asserted here.
+  it('should template the ttyd bind args for per-ingress-mode injection', () => {
+    assert.match(plist, /<string>__TTYD_BIND_KEY__<\/string>/, 'bind key must be templated');
+    assert.match(plist, /<string>__TTYD_BIND_VAL__<\/string>/, 'bind value must be templated');
+  });
+
+  it('should make install.sh bind ttyd to port 3100 for the default direct install', () => {
+    const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
+    assert.match(installSh, /s\|__TTYD_BIND_KEY__\|--port\|g/, 'install.sh must fill the bind key with --port');
+    assert.match(installSh, /s\|__TTYD_BIND_VAL__\|3100\|g/, 'install.sh must fill the bind value with 3100');
   });
 
   it('should point at the in-repo ttyd-attach.sh', () => {

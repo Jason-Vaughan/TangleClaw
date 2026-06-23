@@ -118,12 +118,16 @@ sed \
 
 green "  ${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
 
-# ttyd plist
+# ttyd plist — install.sh always installs the DIRECT-mode bind (--port 3100).
+# Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
+# keeps the default install path unchanged (true rollback target). See AUTH-1.
 sed \
   -e "s|__TTYD_PATH__|${TTYD_PATH}|g" \
   -e "s|__REPO_DIR__|${REPO_DIR}|g" \
   -e "s|__HOME__|${HOME}|g" \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
+  -e "s|__TTYD_BIND_KEY__|--port|g" \
+  -e "s|__TTYD_BIND_VAL__|3100|g" \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
@@ -202,6 +206,16 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 green "  Server protocol: $PROTOCOL"
 
+# AUTH-1 (#395): detect the configured ingress mode. install.sh only sets up the
+# DIRECT path; Caddy ingress is activated/rolled back by scripts/ingress-cutover.js.
+INGRESS_MODE="direct"
+if [ -f "$CONFIG_FILE" ]; then
+  INGRESS_MODE="$(node -e '
+    try { const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(c.ingressMode === "caddy" ? "caddy" : "direct"); }
+    catch { process.stdout.write("direct"); }
+  ' "$CONFIG_FILE" 2>/dev/null || echo "direct")"
+fi
+
 echo ""
 
 # ── Health check ──
@@ -244,4 +258,15 @@ echo "  Terminal:       http://localhost:3100"
 echo ""
 echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"
 echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
+echo ""
+
+# AUTH-1 (#395): ingress mode pointer. Direct is the default; Caddy ingress is
+# opt-in and reversible via the cutover script.
+if [ "$INGRESS_MODE" = "caddy" ]; then
+  yellow "  Ingress mode is 'caddy' but install.sh sets up DIRECT only."
+  yellow "  Activate Caddy:   node scripts/ingress-cutover.js --to caddy"
+else
+  echo "  Caddy ingress (optional): node scripts/ingress-cutover.js --to caddy"
+  echo "  (reversible — roll back with: node scripts/ingress-cutover.js --to direct)"
+fi
 echo ""

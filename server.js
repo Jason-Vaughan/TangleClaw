@@ -423,7 +423,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
-    'stripAiCoauthors', 'ingressMode', 'publicDomain'
+    'stripAiCoauthors', 'ingressMode', 'publicDomain',
+    'caddyHttpsPort', 'caddyHttpPort'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -468,6 +469,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
     if (key === 'publicDomain' && value !== null && typeof value !== 'string') {
       return errorResponse(res, 400, 'publicDomain must be a string or null', 'BAD_REQUEST');
+    }
+    if ((key === 'caddyHttpsPort' || key === 'caddyHttpPort')) {
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65535) {
+        return errorResponse(res, 400, `${key} must be an integer between 1 and 65535`, 'BAD_REQUEST');
+      }
     }
     if (key === 'stripAiCoauthors' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'stripAiCoauthors must be a boolean', 'BAD_REQUEST');
