@@ -347,6 +347,30 @@ describe('API endpoints', () => {
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
     });
+
+    it('should accept valid caddy ports and default them to 8443/8080', async () => {
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.caddyHttpsPort, 8443);
+      assert.equal(data.caddyHttpPort, 8080);
+      const res = await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 443, caddyHttpPort: 80 });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.caddyHttpsPort, 443);
+      assert.equal(res.data.config.caddyHttpPort, 80);
+      await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 8443, caddyHttpPort: 8080 });
+    });
+
+    it('should reject a non-integer caddy port', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', { caddyHttpsPort: 8443.5 });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a caddy port out of range', async () => {
+      for (const bad of [0, 70000, 'eighty']) {
+        const { status } = await request(server, 'PATCH', '/api/config', { caddyHttpPort: bad });
+        assert.equal(status, 400, `port ${bad} should be rejected`);
+      }
+    });
   });
 
   describe('PATCH /api/config HTTPS cert validation', () => {

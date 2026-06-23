@@ -52,6 +52,9 @@ transport switch) is unit-tested.
 - `lib/caddy.js` (Caddyfile gen/validate, transport target) and the `ingressMode` branch in
   `server.js` are platform-agnostic and reused for the future Linux/systemd port; only the
   process-manager glue (`scripts/ingress-cutover.js`, the plists) is macOS-specific today.
+- PortHub keeps the ttyd `:3100` lease in caddy mode even though nothing binds it there. This is
+  intentional: holding the port keeps it free so a rollback to `direct` rebinds cleanly instead of
+  racing another project for `:3100`.
 
 ## Alternatives considered
 

@@ -3662,6 +3662,10 @@ if (require.main === module) {
 
   // Bootstrap port management — resolve actual port (env var takes precedence)
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
+  // AUTH-1 (#395): the ttydPort lease is kept even in caddy mode, where ttyd is
+  // socket-bound and nothing listens on :3100. This is deliberate — reserving the
+  // port keeps it free so a rollback to direct mode rebinds cleanly, rather than
+  // racing another project for it. (Critic warning, ADR 0003.)
   porthub.bootstrap({ ttydPort: config.ttydPort || 3100, serverPort: port });
   porthub.startExpirationTimer();
 

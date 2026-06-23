@@ -264,8 +264,14 @@ function main() {
     }
   }
 
-  // 2. Ensure the ttyd socket dir exists (caddy target).
-  if (target === 'caddy') fs.mkdirSync(path.dirname(ctx.socketPath), { recursive: true });
+  // 2. Ensure the ttyd socket dir exists, and clear any leftover socket file so
+  //    the rebinding ttyd doesn't fail on a stale inode (KeepAlive would then
+  //    crash-loop with no obvious breadcrumb). The live ttyd keeps its bound
+  //    inode until the unload below; the new instance binds a fresh one.
+  if (target === 'caddy') {
+    fs.mkdirSync(path.dirname(ctx.socketPath), { recursive: true });
+    try { fs.rmSync(ctx.socketPath, { force: true }); } catch { /* best-effort; bind will surface real failures */ }
+  }
 
   // 3. Write plists.
   for (const f of plan.plists) fs.writeFileSync(f.path, f.content);
