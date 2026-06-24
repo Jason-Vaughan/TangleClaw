@@ -167,6 +167,18 @@ function parseArgs(argv) {
   return { target, dryRun, force };
 }
 
+/**
+ * Whether an existing Caddyfile is hand-edited (exists and is NOT an
+ * integrity-verified generated file). Shared by the dry-run preview and the
+ * executor so the clobber-guard decision (#397 bug 3) can't drift between them.
+ * @param {string} caddyfilePath
+ * @returns {boolean}
+ */
+function caddyfileIsHandEdited(caddyfilePath) {
+  if (!fs.existsSync(caddyfilePath)) return false;
+  return !caddy.isGeneratedCaddyfile(fs.readFileSync(caddyfilePath, 'utf8'));
+}
+
 /** Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT wins, else config. */
 function resolveUpstreamPort(serverPlistPath, config) {
   try {
@@ -273,13 +285,10 @@ function main() {
     if (plan.caddyfile) {
       // Preview the clobber guard (#397 bug 3) so the operator knows a hand-edited
       // Caddyfile would be protected, not silently overwritten.
-      if (fs.existsSync(plan.caddyfile.path)) {
-        const existing = fs.readFileSync(plan.caddyfile.path, 'utf8');
-        if (!caddy.isGeneratedCaddyfile(existing)) {
-          process.stdout.write(force
-            ? `  ⚠ overwrite HAND-EDITED Caddyfile (--force; backup → ${plan.caddyfile.path}.bak): ${plan.caddyfile.path}\n`
-            : `  ✗ would REFUSE: ${plan.caddyfile.path} is hand-edited (back up + re-run with --force to replace)\n`);
-        }
+      if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+        process.stdout.write(force
+          ? `  ⚠ overwrite HAND-EDITED Caddyfile (--force; timestamped backup written first): ${plan.caddyfile.path}\n`
+          : `  ✗ would REFUSE: ${plan.caddyfile.path} is hand-edited (timestamped backup + re-run with --force to replace)\n`);
       }
       process.stdout.write(`  write Caddyfile: ${plan.caddyfile.path}\n`);
     }
@@ -298,19 +307,18 @@ function main() {
     fs.mkdirSync(path.dirname(plan.caddyfile.path), { recursive: true });
     // #397 bug 3: never silently clobber a hand-edited Caddyfile (it may carry
     // the operator's basic_auth password + remote-access block — wiping it locks
-    // them out remotely). Back it up, and refuse unless --force.
-    if (fs.existsSync(plan.caddyfile.path)) {
-      const existing = fs.readFileSync(plan.caddyfile.path, 'utf8');
-      if (!caddy.isGeneratedCaddyfile(existing)) {
-        const backup = `${plan.caddyfile.path}.bak`;
-        fs.copyFileSync(plan.caddyfile.path, backup);
-        if (!force) {
-          process.stderr.write(`ERROR: refusing to overwrite a hand-edited Caddyfile (ingress untouched).\n  Backed up to: ${backup}\n  Re-run with --force to replace it.\n`);
-          store.close();
-          process.exit(1);
-        }
-        process.stdout.write(`WARNING: overwriting hand-edited Caddyfile (--force). Backup: ${backup}\n`);
+    // them out remotely). Back it up (timestamped, so repeated runs never
+    // overwrite an earlier backup), and refuse unless --force.
+    if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backup = `${plan.caddyfile.path}.${stamp}.bak`;
+      fs.copyFileSync(plan.caddyfile.path, backup);
+      if (!force) {
+        process.stderr.write(`ERROR: refusing to overwrite a hand-edited Caddyfile (ingress untouched).\n  Backed up to: ${backup}\n  Re-run with --force to replace it.\n`);
+        store.close();
+        process.exit(1);
       }
+      process.stdout.write(`WARNING: overwriting hand-edited Caddyfile (--force). Backup: ${backup}\n`);
     }
     fs.writeFileSync(plan.caddyfile.path, plan.caddyfile.content, { mode: 0o600 });
     const v = caddy.validateCaddyfile(plan.caddyfile.path);
@@ -389,4 +397,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited };

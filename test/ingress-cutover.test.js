@@ -84,6 +84,30 @@ describe('ingress-cutover', () => {
     });
   });
 
+  describe('caddyfileIsHandEdited (#397 clobber-guard, shared by dry-run + executor)', () => {
+    let tmpDir;
+    before(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-he-')); });
+    after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+    const caddy = require('../lib/caddy');
+
+    it('returns false when the file does not exist (first cutover)', () => {
+      assert.equal(cutover.caddyfileIsHandEdited(path.join(tmpDir, 'absent')), false);
+    });
+    it('returns false for a pristine generated Caddyfile (safe to overwrite)', () => {
+      const p = path.join(tmpDir, 'gen');
+      fs.writeFileSync(p, caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' }));
+      assert.equal(cutover.caddyfileIsHandEdited(p), false);
+    });
+    it('returns true for a hand-edited Caddyfile (header kept, body changed)', () => {
+      const p = path.join(tmpDir, 'edited');
+      const tampered = caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' })
+        .replace(/\}\n$/, '\tbasic_auth { jason $2a$hash }\n}\n');
+      fs.writeFileSync(p, tampered);
+      assert.equal(cutover.caddyfileIsHandEdited(p), true);
+    });
+  });
+
   describe('planCutover → caddy', () => {
     const plan = cutover.planCutover('caddy', makeCtx());
 
