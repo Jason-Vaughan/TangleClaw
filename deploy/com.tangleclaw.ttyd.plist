@@ -6,6 +6,10 @@
     <string>com.tangleclaw.ttyd</string>
     <key>ProgramArguments</key>
     <array>
+        <!-- #397 bug 2: launch via the wrapper, which unlinks a stale Unix
+             socket (caddy mode) before exec'ing ttyd so every KeepAlive/reboot
+             restart self-heals. Direct mode binds TCP and the unlink is a no-op. -->
+        <string>__REPO_DIR__/deploy/ttyd-launch.sh</string>
         <string>__TTYD_PATH__</string>
         <string>--writable</string>
         <string>--url-arg</string>
@@ -44,6 +48,11 @@
     <dict>
         <key>PATH</key>
         <string>__LAUNCHD_PATH__</string>
+        <!-- #397 bug 2: the ttyd Unix socket to unlink before bind (caddy mode).
+             Filled with the socket path by ingress-cutover.js; empty in direct
+             mode (install.sh) where ttyd binds a TCP port instead. -->
+        <key>TTYD_SOCKET</key>
+        <string>__TTYD_SOCKET__</string>
     </dict>
 </dict>
 </plist>

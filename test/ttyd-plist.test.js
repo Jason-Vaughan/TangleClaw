@@ -33,6 +33,32 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
     assert.match(plist, /__REPO_DIR__\/deploy\/ttyd-attach\.sh/, 'must launch the attach script');
   });
 
+  // #397 bug 2: ttyd launches via a wrapper that unlinks a stale Unix socket
+  // before exec'ing ttyd, so KeepAlive/reboot restarts self-heal in caddy mode.
+  it('should launch ttyd through the ttyd-launch.sh wrapper before the ttyd binary', () => {
+    assert.match(plist, /__REPO_DIR__\/deploy\/ttyd-launch\.sh/, 'must launch via the wrapper');
+    const wrapperIdx = plist.indexOf('ttyd-launch.sh');
+    const ttydIdx = plist.indexOf('__TTYD_PATH__');
+    assert.ok(wrapperIdx > -1 && ttydIdx > -1 && wrapperIdx < ttydIdx,
+      'the wrapper must precede the ttyd binary in ProgramArguments');
+  });
+
+  it('should template TTYD_SOCKET for the wrapper to unlink (filled per ingress mode)', () => {
+    assert.match(plist, /<key>TTYD_SOCKET<\/key>/, 'TTYD_SOCKET env key must be present');
+    assert.match(plist, /<string>__TTYD_SOCKET__<\/string>/, 'TTYD_SOCKET value must be templated');
+  });
+
+  it('should make install.sh leave TTYD_SOCKET empty for the default direct install', () => {
+    const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
+    assert.match(installSh, /s\|__TTYD_SOCKET__\|\|g/, 'install.sh must fill TTYD_SOCKET with an empty string');
+  });
+
+  it('should ship an executable ttyd-launch.sh wrapper', () => {
+    const wrapperPath = path.join(__dirname, '..', 'deploy', 'ttyd-launch.sh');
+    assert.ok(fs.existsSync(wrapperPath), 'ttyd-launch.sh must exist');
+    assert.ok(fs.statSync(wrapperPath).mode & 0o100, 'ttyd-launch.sh must be executable');
+  });
+
   // #322/#290 — ttyd's xterm.js scrollback defaults to 1000 lines. We raise it
   // so long output is reachable in a live session AND so the buffer is large
   // enough to hold the history ttyd-attach.sh replays on reconnect/restart.

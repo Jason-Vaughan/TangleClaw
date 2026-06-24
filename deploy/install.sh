@@ -128,6 +128,7 @@ sed \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
   -e "s|__TTYD_BIND_KEY__|--port|g" \
   -e "s|__TTYD_BIND_VAL__|3100|g" \
+  -e "s|__TTYD_SOCKET__||g" \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
