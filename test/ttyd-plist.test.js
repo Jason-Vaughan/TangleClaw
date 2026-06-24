@@ -4,8 +4,19 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 
 const PLIST_PATH = path.join(__dirname, '..', 'deploy', 'com.tangleclaw.ttyd.plist');
+
+/** Extract the ordered ProgramArguments <string> values from the plist. */
+function programArguments(plistStr) {
+  const start = plistStr.indexOf('<key>ProgramArguments</key>');
+  const arrStart = plistStr.indexOf('<array>', start);
+  const arrEnd = plistStr.indexOf('</array>', arrStart);
+  const block = plistStr.slice(arrStart, arrEnd);
+  return [...block.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => m[1]);
+}
 
 describe('deploy/com.tangleclaw.ttyd.plist', () => {
   const plist = fs.readFileSync(PLIST_PATH, 'utf8');
@@ -33,17 +44,62 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
     assert.match(plist, /__REPO_DIR__\/deploy\/ttyd-attach\.sh/, 'must launch the attach script');
   });
 
-  // #397 bug 2: ttyd launches via a wrapper that unlinks a stale Unix socket
-  // before exec'ing ttyd, so KeepAlive/reboot restarts self-heal in caddy mode.
-  it('should launch ttyd through the ttyd-launch.sh wrapper before the ttyd binary', () => {
-    assert.match(plist, /__REPO_DIR__\/deploy\/ttyd-launch\.sh/, 'must launch via the wrapper');
-    const wrapperIdx = plist.indexOf('ttyd-launch.sh');
-    const ttydIdx = plist.indexOf('__TTYD_PATH__');
-    assert.ok(wrapperIdx > -1 && ttydIdx > -1 && wrapperIdx < ttydIdx,
-      'the wrapper must precede the ttyd binary in ProgramArguments');
+  // #397 bug 2 + durability fix: the launchd PROGRAM must be a non-TCC system
+  // binary. A repo-resident wrapper script (the original bug-2 fix) is
+  // un-launchable — exit 126 — when the repo sits under ~/Documents (the
+  // documented default) and the launchd job lacks Full Disk Access. So /bin/bash
+  // runs the self-heal inline from argv and execs the ttyd binary; both are
+  // non-TCC. This test is the regression guard against re-introducing a
+  // repo-resident launchd program.
+  it('should run the launchd program from /bin/bash, never a repo-resident script', () => {
+    const pa = programArguments(plist);
+    assert.equal(pa[0], '/bin/bash', 'the launchd program (ProgramArguments[0]) must be /bin/bash');
+    assert.equal(pa[1], '-c', 'must pass the inline launcher via bash -c');
+    assert.doesNotMatch(pa[0], /\/deploy\//, 'the launchd program must NOT be a script under the repo (TCC exit-126 guard)');
+    assert.ok(!plist.includes('ttyd-launch.sh'), 'the removed wrapper must not be referenced');
   });
 
-  it('should template TTYD_SOCKET for the wrapper to unlink (filled per ingress mode)', () => {
+  it('should exec the ttyd binary after the inline launcher', () => {
+    const pa = programArguments(plist);
+    const cmdIdx = 2; // pa[2] is the bash -c command; pa[3] is $0; pa[4] is the ttyd binary
+    assert.match(pa[cmdIdx], /exec "\$@"/, 'inline command must exec the forwarded args');
+    assert.equal(pa[4], '__TTYD_PATH__', 'the ttyd binary placeholder must be the first exec arg');
+  });
+
+  // Behavioral coverage (folded in from the deleted deploy/ttyd-launch.sh test):
+  // run the actual inline command and observe the unlink + pass-through exec.
+  it('the inline launcher unlinks a stale socket then execs (caddy mode)', () => {
+    const cmd = programArguments(plist)[2];
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ttyd-inline-'));
+    try {
+      const sock = path.join(tmpDir, 'ttyd.sock');
+      fs.writeFileSync(sock, ''); // leftover socket inode
+      const out = execFileSync('bash', ['-c', cmd, 'ttyd-launch', '/bin/echo', 'started'], {
+        encoding: 'utf8', env: { ...process.env, TTYD_SOCKET: sock }
+      }).trim();
+      assert.equal(out, 'started', 'must exec the forwarded command');
+      assert.ok(!fs.existsSync(sock), 'must unlink the stale socket before exec');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('the inline launcher is a no-op on the socket in direct mode (TTYD_SOCKET empty)', () => {
+    const cmd = programArguments(plist)[2];
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ttyd-inline-'));
+    try {
+      const sentinel = path.join(tmpDir, 'keep.me');
+      fs.writeFileSync(sentinel, 'x');
+      execFileSync('bash', ['-c', cmd, 'ttyd-launch', '/bin/echo', 'ok'], {
+        encoding: 'utf8', env: { ...process.env, TTYD_SOCKET: '' }
+      });
+      assert.ok(fs.existsSync(sentinel), 'must not touch anything when no socket is configured');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should template TTYD_SOCKET for the inline launcher to unlink (filled per ingress mode)', () => {
     assert.match(plist, /<key>TTYD_SOCKET<\/key>/, 'TTYD_SOCKET env key must be present');
     assert.match(plist, /<string>__TTYD_SOCKET__<\/string>/, 'TTYD_SOCKET value must be templated');
   });
@@ -51,12 +107,6 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
   it('should make install.sh leave TTYD_SOCKET empty for the default direct install', () => {
     const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
     assert.match(installSh, /s\|__TTYD_SOCKET__\|\|g/, 'install.sh must fill TTYD_SOCKET with an empty string');
-  });
-
-  it('should ship an executable ttyd-launch.sh wrapper', () => {
-    const wrapperPath = path.join(__dirname, '..', 'deploy', 'ttyd-launch.sh');
-    assert.ok(fs.existsSync(wrapperPath), 'ttyd-launch.sh must exist');
-    assert.ok(fs.statSync(wrapperPath).mode & 0o100, 'ttyd-launch.sh must be executable');
   });
 
   // #322/#290 — ttyd's xterm.js scrollback defaults to 1000 lines. We raise it

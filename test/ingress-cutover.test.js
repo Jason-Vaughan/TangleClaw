@@ -123,9 +123,11 @@ describe('ingress-cutover', () => {
       assert.match(ttyd.content, /<string>\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock<\/string>/);
       assert.doesNotMatch(ttyd.content, /__TTYD_BIND_KEY__/);
     });
-    it('launches ttyd via the wrapper and sets TTYD_SOCKET for stale-socket unlink (#397 bug 2)', () => {
+    it('runs ttyd via the inline /bin/bash launcher and sets TTYD_SOCKET for stale-socket unlink (#397 bug 2)', () => {
       const ttyd = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.ttyd.plist'));
-      assert.match(ttyd.content, /\/repo\/deploy\/ttyd-launch\.sh/);
+      // Launchd program is the non-TCC system bash, not a repo-resident script.
+      assert.match(ttyd.content, /<string>\/bin\/bash<\/string>/);
+      assert.doesNotMatch(ttyd.content, /\/repo\/deploy\/ttyd-launch\.sh/);
       // TTYD_SOCKET env filled with the socket path; placeholder fully resolved.
       assert.match(ttyd.content, /<key>TTYD_SOCKET<\/key>\s*<string>\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock<\/string>/);
       assert.doesNotMatch(ttyd.content, /__TTYD_SOCKET__/);

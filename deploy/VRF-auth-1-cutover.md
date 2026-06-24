@@ -1,8 +1,8 @@
 # VRF-auth-1-cutover — clean-room smoke test (elkaholic)
 
 Verifies the **#397 production-durability fixes** to the AUTH-1 Caddy ingress cutover
-(`scripts/ingress-cutover.js`, `lib/caddy.js`, `deploy/ttyd-launch.sh`) on a **fresh,
-throwaway TangleClaw install** — so nothing touches the live cursatory system, its
+(`scripts/ingress-cutover.js`, `lib/caddy.js`, `deploy/com.tangleclaw.ttyd.plist`) on a
+**fresh, throwaway TangleClaw install** — so nothing touches the live cursatory system, its
 projects, tags, DB, or hand-edited Caddyfile.
 
 **Why a separate machine:** TC's home dir (`~/.tangleclaw/`), SQLite DB, Caddyfile, and
@@ -14,8 +14,11 @@ share the live DB. A different Mac is the only no-code-change clean room.
 1. **Cert-staging** — launchd Caddy (no Full Disk Access) can read a cert that originated
    under a TCC-protected dir (`~/Documents`), because `caddy.stageCert()` copies it into
    the non-TCC `~/.tangleclaw/certs/`.
-2. **ttyd stale-socket** — `deploy/ttyd-launch.sh` unlinks a stale Unix socket on every
-   restart, so ttyd re-binds cleanly in caddy mode across repeated restarts.
+2. **ttyd stale-socket** — the ttyd launchd job runs `/bin/bash` (a non-TCC binary) and
+   unlinks a stale Unix socket inline before exec'ing ttyd on every restart, so ttyd
+   re-binds cleanly in caddy mode across repeated restarts. (The launchd program is
+   deliberately **not** a repo-resident script — that would exit 126 under TCC when the
+   repo is under `~/Documents`; durability fix folded into #398.)
 3. **Caddyfile clobber-guard** — cutover backs up and **refuses to overwrite** a
    hand-edited Caddyfile without `--force` (sha256 integrity header in the generated file).
 

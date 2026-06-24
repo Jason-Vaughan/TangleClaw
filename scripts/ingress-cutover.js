@@ -18,8 +18,10 @@
 // restarts the TC server so its listener re-binds for the new mode.
 //
 // #397 production-durability fixes: (1) the cert is STAGED into the non-TCC store
-// dir so the launchd caddy (no Full Disk Access) can read it; (2) ttyd launches
-// via a wrapper that unlinks a stale Unix socket on every restart; (3) a
+// dir so the launchd caddy (no Full Disk Access) can read it; (2) ttyd's launchd
+// job runs /bin/bash (a non-TCC binary) and unlinks a stale Unix socket inline
+// from argv before exec'ing ttyd on every restart — never a repo-resident script,
+// which would exit 126 under TCC when the repo is in ~/Documents; (3) a
 // hand-edited Caddyfile is backed up and NOT overwritten without --force.
 
 const fs = require('node:fs');
@@ -87,7 +89,7 @@ function planCutover(target, ctx) {
       TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
       LAUNCHD_PATH: env.launchdPath,
       TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
-      // #397 bug 2: tell the launch wrapper which socket to unlink before bind.
+      // #397 bug 2: tell the inline launcher which socket to unlink before bind.
       TTYD_SOCKET: ctx.socketPath
     });
     const caddyPlist = fillTemplate(ctx.caddyTemplate, {
