@@ -162,6 +162,54 @@ describe('caddy', () => {
       // the local site stays a bare hostname; the port comes from the global directive
       assert.match(out, /^localhost \{$/m);
     });
+
+    // AUTH-2 — basic_auth gate (bcrypt hash, never plaintext). The hash below is
+    // a real bcrypt-shaped token; the stubbed `caddy validate` doesn't check it,
+    // real `caddy validate` syntax is exercised in verification.
+    const AUTH = { basicAuthUser: 'jason', basicAuthHash: '$2a$14$wThequ7Ahgg6dT3KZ8x9KuOk0o0gO3pQF1m6Xq9r4tFz8sJgVn3bC' };
+
+    it('emits no basic_auth gate by default (ungated ingress unchanged)', () => {
+      const out = caddy.buildCaddyfileContent(opts);
+      assert.doesNotMatch(out, /basic_auth/);
+      assert.doesNotMatch(out, /@protected/);
+    });
+
+    it('injects a basic_auth gate over the local site when user+hash are set', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.match(out, /\t@protected not path \/api\/health/);
+      assert.match(out, /\tbasic_auth @protected \{/);
+      assert.match(out, /\t\tjason \$2a\$14\$wThequ7Ahgg6dT3KZ8x9KuOk0o0gO3pQF1m6Xq9r4tFz8sJgVn3bC/);
+      // basic_auth must precede reverse_proxy so the gate runs before the upstream.
+      assert.ok(out.indexOf('basic_auth') < out.indexOf('reverse_proxy'));
+    });
+
+    it('keeps /api/health out of the gate (health probe needs no credentials)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      // The gate references "@protected = not path /api/health", so health is open.
+      assert.match(out, /@protected not path \/api\/health/);
+    });
+
+    it('gates the public ACME site too when publicDomain + auth are set', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, publicDomain: 'tc.example.com' });
+      assert.equal((out.match(/basic_auth @protected \{/g) || []).length, 2);
+      const publicBlock = out.slice(out.indexOf('tc.example.com {'));
+      assert.match(publicBlock, /basic_auth @protected/);
+    });
+
+    it('throws when only the user is set (fail closed — no half-set gate)', () => {
+      assert.throws(() => caddy.buildCaddyfileContent({ ...opts, basicAuthUser: 'jason' }),
+        /must be set together/);
+    });
+
+    it('throws when only the hash is set (fail closed — no half-set gate)', () => {
+      assert.throws(() => caddy.buildCaddyfileContent({ ...opts, basicAuthHash: AUTH.basicAuthHash }),
+        /must be set together/);
+    });
+
+    it('still integrity-stamps a gated Caddyfile so regeneration owns the auth block (#397 item 3)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.equal(caddy.isGeneratedCaddyfile(out), true);
+    });
   });
 
   describe('writeCaddyfile', () => {
