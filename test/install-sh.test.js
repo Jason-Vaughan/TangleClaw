@@ -72,6 +72,42 @@ describe('deploy/install.sh', () => {
     );
   });
 
+  // Single-command install: every runtime dependency is auto-installed via
+  // Homebrew (and Homebrew itself bootstrapped if absent), so a fresh Mac needs
+  // only `bash deploy/install.sh`. The privileged/interactive steps (brew + the
+  // mkcert CA trust) live here, never in the headless launchd server.
+  describe('dependency auto-install', () => {
+    it('parses as valid bash (syntax gate on the bootstrap additions)', () => {
+      const { execFileSync } = require('node:child_process');
+      execFileSync('bash', ['-n', SCRIPT_PATH]); // throws on a syntax error
+    });
+
+    it('defines the ensure_homebrew and ensure_dep helpers', () => {
+      assert.match(script, /ensure_homebrew\(\)\s*\{/, 'must define ensure_homebrew');
+      assert.match(script, /ensure_dep\(\)\s*\{/, 'must define ensure_dep');
+    });
+
+    it('bootstraps Homebrew non-interactively when it is missing', () => {
+      assert.match(script, /Homebrew\/install\/HEAD\/install\.sh/, 'must use the official Homebrew installer');
+      assert.match(script, /NONINTERACTIVE=1/, 'Homebrew install must be non-interactive');
+      assert.match(script, /brew shellenv/, 'must prime brew onto PATH after install (Apple Silicon + Intel)');
+    });
+
+    it('auto-installs ttyd, tmux, mkcert, and caddy via ensure_dep', () => {
+      for (const dep of ['ttyd ttyd', 'tmux tmux', 'mkcert mkcert', 'caddy caddy']) {
+        assert.ok(script.includes(`ensure_dep ${dep}`), `must ensure_dep ${dep}`);
+      }
+    });
+
+    it('auto-installs node via Homebrew when it is absent', () => {
+      assert.match(script, /"\$BREW" install node/, 'must install node via brew when missing');
+    });
+
+    it('trusts the mkcert local CA during install (privileged step kept out of the server)', () => {
+      assert.match(script, /mkcert -install/, 'must run mkcert -install to trust the local CA interactively');
+    });
+  });
+
   // #324 — macOS TCC preflight: warn (and later diagnose) when the repo lives
   // under a protected folder and node may lack Full Disk Access, instead of
   // letting the launchd server hang silently.

@@ -39,11 +39,11 @@ configured.
 ls -la ~/.tangleclaw 2>/dev/null && echo "⚠ EXISTING STATE — stop, this is not a clean room" || echo "✓ clean"
 launchctl list | grep tangleclaw && echo "⚠ existing TC services — stop" || echo "✓ no TC services"
 
-# 0.2  Prereqs (Homebrew)
-brew install node ttyd tmux mkcert caddy
-node --version    # expect a current LTS
-caddy version
-mkcert -version
+# 0.2  Prereqs — NONE to pre-install by hand.
+# install.sh (Phase 2) now auto-installs every dependency (node, ttyd, tmux, mkcert,
+# caddy) via Homebrew, bootstraps Homebrew itself if it's missing, and runs
+# `mkcert -install` to trust the local CA. You only need a Mac with an internet
+# connection. (If you happen to already have some of these, install.sh skips them.)
 ```
 
 If 0.1 shows existing state and you DON'T care about it (elkaholic has no real TC use),
@@ -71,11 +71,16 @@ broke bug #1.
 
 ---
 
-## Phase 2 — Install (direct mode)
+## Phase 2 — Install (auto-installs deps, direct mode)
 
 ```sh
 bash deploy/install.sh
 ```
+
+This now does the full single-command setup: installs any missing dependency via
+Homebrew (bootstrapping Homebrew itself if absent) and runs `mkcert -install`. **It may
+prompt you for your password** — once for the Homebrew install (if needed) and once for
+the mkcert CA trust. That's expected; approve them.
 
 Expect the tail to print:
 
@@ -85,21 +90,23 @@ Terminal:      http://localhost:3100
 Caddy ingress (optional): node scripts/ingress-cutover.js --to caddy
 ```
 
-Verify direct mode is live:
+Verify dependencies + direct mode are live:
 
 ```sh
-launchctl list | grep tangleclaw          # server + ttyd loaded
+for b in node ttyd tmux mkcert caddy; do command -v $b >/dev/null && echo "✓ $b" || echo "✗ $b MISSING"; done
+launchctl list | grep tangleclaw          # server + ttyd loaded (ttyd exit status 0, NOT 126)
 lsof -nP -iTCP:3100 -sTCP:LISTEN          # ttyd ON :3100 (direct mode)
-curl -k -so /dev/null -w "%{http_code}\n" https://localhost:3102   # 200 (after wizard, see Phase 3)
+# Server is HTTP-only until the wizard's cert step runs — use http here, NOT https:
+curl -so /dev/null -w "%{http_code}\n" http://localhost:3102   # 200
 ```
 
 ---
 
 ## Phase 3 — Start-up wizard (incl. HTTPS cert-gen)  ← wizard test
 
-Open **https://localhost:3102** in a browser on elkaholic. The first-run Setup Wizard
-should appear automatically (it fires only when `~/.tangleclaw/config.json` has no prior
-setup).
+Open **http://localhost:3102** in a browser on elkaholic (**http**, not https — the
+server is HTTP-only until the wizard's cert step runs). The first-run Setup Wizard should
+appear automatically (it fires only when `~/.tangleclaw/config.json` has no prior setup).
 
 Walk every step and record PASS/FAIL:
 
@@ -107,16 +114,22 @@ Walk every step and record PASS/FAIL:
 - [ ] **Default engine** — selectable (claude / others).
 - [ ] **Default methodology** — selectable.
 - [ ] **Chime toggle** — toggles.
-- [ ] **HTTPS step** — detects mkcert (`GET /api/setup/https-check` → available), and
-      **Generate certificate** produces `cert.pem` + `key.pem`:
+- [ ] **HTTPS step** — detects mkcert (`GET /api/setup/https-check` → `available:true`,
+      and now `caInstalled:true` because Phase 2's install.sh already trusted the CA).
+      **Generate certificate** should succeed **without** the old
+      `mkcert -install … a terminal is required` error (that privileged step moved to
+      install.sh), producing `cert.pem` + `key.pem`:
       ```sh
       ls -l ~/.tangleclaw/certs/        # cert.pem (0644) + key.pem (0600)
       ```
 - [ ] Wizard **dismisses**, landing page loads projects, no console errors.
 
-> Note: the wizard writes the cert to `~/.tangleclaw/certs/` (already non-TCC). That is the
-> happy path. The TCC stall (bug #1) only happens when the *configured* `httpsCertPath`
-> points under a protected dir — which Phase 5 arranges explicitly.
+> Notes: (1) the wizard writes the cert to `~/.tangleclaw/certs/` (already non-TCC) — the
+> happy path; the bug-#1 TCC stall only happens when the *configured* `httpsCertPath`
+> points under a protected dir, which Phase 5 arranges explicitly. (2) The CA-trust fix is
+> verified by this step succeeding where the first VRF run failed; if `caInstalled:false`
+> or Generate still errors on the CA, that's a regression in the install.sh CA step — flag
+> it, don't work around it.
 
 ---
 
