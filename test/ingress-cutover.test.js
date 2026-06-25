@@ -41,13 +41,16 @@ function makeCtx(overrides = {}) {
 describe('ingress-cutover', () => {
   describe('parseArgs', () => {
     it('parses --to caddy', () => {
-      assert.deepEqual(cutover.parseArgs(['--to', 'caddy']), { target: 'caddy', dryRun: false });
+      assert.deepEqual(cutover.parseArgs(['--to', 'caddy']), { target: 'caddy', dryRun: false, force: false });
     });
     it('parses --to direct --dry-run', () => {
-      assert.deepEqual(cutover.parseArgs(['--to', 'direct', '--dry-run']), { target: 'direct', dryRun: true });
+      assert.deepEqual(cutover.parseArgs(['--to', 'direct', '--dry-run']), { target: 'direct', dryRun: true, force: false });
     });
     it('treats --rollback as --to direct', () => {
-      assert.deepEqual(cutover.parseArgs(['--rollback']), { target: 'direct', dryRun: false });
+      assert.deepEqual(cutover.parseArgs(['--rollback']), { target: 'direct', dryRun: false, force: false });
+    });
+    it('parses --force (#397 clobber-guard override)', () => {
+      assert.deepEqual(cutover.parseArgs(['--to', 'caddy', '--force']), { target: 'caddy', dryRun: false, force: true });
     });
     it('rejects an unknown target', () => {
       assert.equal(cutover.parseArgs(['--to', 'nginx']).target, null);
@@ -81,6 +84,30 @@ describe('ingress-cutover', () => {
     });
   });
 
+  describe('caddyfileIsHandEdited (#397 clobber-guard, shared by dry-run + executor)', () => {
+    let tmpDir;
+    before(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-he-')); });
+    after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+    const caddy = require('../lib/caddy');
+
+    it('returns false when the file does not exist (first cutover)', () => {
+      assert.equal(cutover.caddyfileIsHandEdited(path.join(tmpDir, 'absent')), false);
+    });
+    it('returns false for a pristine generated Caddyfile (safe to overwrite)', () => {
+      const p = path.join(tmpDir, 'gen');
+      fs.writeFileSync(p, caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' }));
+      assert.equal(cutover.caddyfileIsHandEdited(p), false);
+    });
+    it('returns true for a hand-edited Caddyfile (header kept, body changed)', () => {
+      const p = path.join(tmpDir, 'edited');
+      const tampered = caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' })
+        .replace(/\}\n$/, '\tbasic_auth { jason $2a$hash }\n}\n');
+      fs.writeFileSync(p, tampered);
+      assert.equal(cutover.caddyfileIsHandEdited(p), true);
+    });
+  });
+
   describe('planCutover → caddy', () => {
     const plan = cutover.planCutover('caddy', makeCtx());
 
@@ -95,6 +122,15 @@ describe('ingress-cutover', () => {
       assert.match(ttyd.content, /<string>--interface<\/string>/);
       assert.match(ttyd.content, /<string>\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock<\/string>/);
       assert.doesNotMatch(ttyd.content, /__TTYD_BIND_KEY__/);
+    });
+    it('runs ttyd via the inline /bin/bash launcher and sets TTYD_SOCKET for stale-socket unlink (#397 bug 2)', () => {
+      const ttyd = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.ttyd.plist'));
+      // Launchd program is the non-TCC system bash, not a repo-resident script.
+      assert.match(ttyd.content, /<string>\/bin\/bash<\/string>/);
+      assert.doesNotMatch(ttyd.content, /\/repo\/deploy\/ttyd-launch\.sh/);
+      // TTYD_SOCKET env filled with the socket path; placeholder fully resolved.
+      assert.match(ttyd.content, /<key>TTYD_SOCKET<\/key>\s*<string>\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock<\/string>/);
+      assert.doesNotMatch(ttyd.content, /__TTYD_SOCKET__/);
     });
     it('emits a caddy plist pointing at the binary and Caddyfile', () => {
       const cad = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.caddy.plist'));
@@ -121,6 +157,11 @@ describe('ingress-cutover', () => {
       const ttyd = plan.plists[0];
       assert.match(ttyd.content, /<string>--port<\/string>/);
       assert.match(ttyd.content, /<string>3100<\/string>/);
+    });
+    it('leaves TTYD_SOCKET empty in direct mode (TCP bind — nothing to unlink)', () => {
+      const ttyd = plan.plists[0];
+      assert.match(ttyd.content, /<key>TTYD_SOCKET<\/key>\s*<string><\/string>/);
+      assert.doesNotMatch(ttyd.content, /__TTYD_SOCKET__/);
     });
     it('unloads caddy and patches ingressMode to direct', () => {
       assert.deepEqual(plan.configPatch, { ingressMode: 'direct' });

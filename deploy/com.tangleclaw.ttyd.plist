@@ -6,6 +6,23 @@
     <string>com.tangleclaw.ttyd</string>
     <key>ProgramArguments</key>
     <array>
+        <!-- #397 bug 2 (+ durability): the launchd PROGRAM must be a non-TCC
+             system binary, never a script under the repo. When the repo lives in
+             a TCC-protected tree (~/Documents — the documented default clone
+             location), a launchd-spawned process cannot read-to-exec a script
+             there without Full Disk Access → exit 126 and ttyd never starts (the
+             server agent survives only because its program is the node binary,
+             outside ~/Documents). So we run /bin/bash and carry the self-heal
+             INLINE FROM ARGV (no protected-file read): unlink a stale Unix socket
+             (caddy mode; a no-op when TTYD_SOCKET is empty, i.e. direct mode),
+             then exec the ttyd binary. Both /bin/bash and ttyd are non-TCC.
+             NOTE: ttyd-attach.sh below stays repo-resident — it is a ttyd *arg*
+             (read by ttyd at client-connect), not the launchd program, so it is
+             not part of this exit-126 path. -->
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>if [ -n "${TTYD_SOCKET:-}" ]; then rm -f "$TTYD_SOCKET"; fi; exec "$@"</string>
+        <string>ttyd-launch</string>
         <string>__TTYD_PATH__</string>
         <string>--writable</string>
         <string>--url-arg</string>
@@ -44,6 +61,11 @@
     <dict>
         <key>PATH</key>
         <string>__LAUNCHD_PATH__</string>
+        <!-- #397 bug 2: the ttyd Unix socket the inline launcher unlinks before
+             bind (caddy mode). Filled with the socket path by ingress-cutover.js;
+             empty in direct mode (install.sh) where ttyd binds a TCP port. -->
+        <key>TTYD_SOCKET</key>
+        <string>__TTYD_SOCKET__</string>
     </dict>
 </dict>
 </plist>

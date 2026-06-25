@@ -11,10 +11,18 @@
 //   node scripts/ingress-cutover.js --to direct            roll back to direct HTTPS
 //   node scripts/ingress-cutover.js --rollback             alias for --to direct
 //   node scripts/ingress-cutover.js --to caddy --dry-run   print the plan, touch nothing
+//   node scripts/ingress-cutover.js --to caddy --force      overwrite a hand-edited Caddyfile
 //
 // Fail-closed: in caddy mode the Caddyfile is `caddy validate`d BEFORE any
 // launchd reload, so a bad config can never take the ingress down. The flip
 // restarts the TC server so its listener re-binds for the new mode.
+//
+// #397 production-durability fixes: (1) the cert is STAGED into the non-TCC store
+// dir so the launchd caddy (no Full Disk Access) can read it; (2) ttyd's launchd
+// job runs /bin/bash (a non-TCC binary) and unlinks a stale Unix socket inline
+// from argv before exec'ing ttyd on every restart — never a repo-resident script,
+// which would exit 126 under TCC when the repo is in ~/Documents; (3) a
+// hand-edited Caddyfile is backed up and NOT overwritten without --force.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -80,7 +88,9 @@ function planCutover(target, ctx) {
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
       TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
       LAUNCHD_PATH: env.launchdPath,
-      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath
+      TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
+      // #397 bug 2: tell the inline launcher which socket to unlink before bind.
+      TTYD_SOCKET: ctx.socketPath
     });
     const caddyPlist = fillTemplate(ctx.caddyTemplate, {
       CADDY_PATH: env.caddyPath, CADDYFILE: ctx.caddyfilePath,
@@ -114,7 +124,9 @@ function planCutover(target, ctx) {
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
     LAUNCHD_PATH: env.launchdPath,
-    TTYD_BIND_KEY: '--port', TTYD_BIND_VAL: String(config.ttydPort || 3100)
+    TTYD_BIND_KEY: '--port', TTYD_BIND_VAL: String(config.ttydPort || 3100),
+    // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
+    TTYD_SOCKET: ''
   });
   const protocol = (config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath) ? 'https' : 'http';
   return {
@@ -136,21 +148,37 @@ function planCutover(target, ctx) {
 // ── Executor (side-effecting; not unit-tested — VRF-auth-1-cutover) ──
 
 /**
- * Parse CLI args into { target, dryRun }.
+ * Parse CLI args into { target, dryRun, force }.
+ * `--force` overrides the guard that refuses to overwrite a hand-edited Caddyfile
+ * (#397 bug 3).
  * @param {string[]} argv - process.argv.slice(2)
- * @returns {{ target: 'caddy'|'direct'|null, dryRun: boolean }}
+ * @returns {{ target: 'caddy'|'direct'|null, dryRun: boolean, force: boolean }}
  */
 function parseArgs(argv) {
   let target = null;
   let dryRun = false;
+  let force = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--to') { target = argv[++i]; }
     else if (a === '--rollback') { target = 'direct'; }
     else if (a === '--dry-run') { dryRun = true; }
+    else if (a === '--force') { force = true; }
   }
   if (target !== 'caddy' && target !== 'direct') target = null;
-  return { target, dryRun };
+  return { target, dryRun, force };
+}
+
+/**
+ * Whether an existing Caddyfile is hand-edited (exists and is NOT an
+ * integrity-verified generated file). Shared by the dry-run preview and the
+ * executor so the clobber-guard decision (#397 bug 3) can't drift between them.
+ * @param {string} caddyfilePath
+ * @returns {boolean}
+ */
+function caddyfileIsHandEdited(caddyfilePath) {
+  if (!fs.existsSync(caddyfilePath)) return false;
+  return !caddy.isGeneratedCaddyfile(fs.readFileSync(caddyfilePath, 'utf8'));
 }
 
 /** Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT wins, else config. */
@@ -169,9 +197,9 @@ function which(bin) {
 }
 
 function main() {
-  const { target, dryRun } = parseArgs(process.argv.slice(2));
+  const { target, dryRun, force } = parseArgs(process.argv.slice(2));
   if (!target) {
-    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run]\n       node scripts/ingress-cutover.js --rollback\n');
+    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run] [--force]\n       node scripts/ingress-cutover.js --rollback\n');
     process.exit(2);
   }
 
@@ -235,13 +263,37 @@ function main() {
       ctx.certPath = gen.certPath;
       ctx.keyPath = gen.keyPath;
     }
+
+    // #397 bug 1: the launchd caddy binary has no Full Disk Access, so a cert
+    // under a TCC-protected dir (e.g. ~/Documents) silently fails to load. Stage
+    // it into the non-TCC store dir and point the Caddyfile there. Dry-run only
+    // previews the staged paths (no copy).
+    if (dryRun) {
+      const stagedDir = caddy.getStagedCertsDir();
+      ctx.certPath = path.join(stagedDir, 'cert.pem');
+      ctx.keyPath = path.join(stagedDir, 'key.pem');
+    } else {
+      const staged = caddy.stageCert(ctx.certPath, ctx.keyPath);
+      ctx.certPath = staged.certPath;
+      ctx.keyPath = staged.keyPath;
+    }
   }
 
   const plan = planCutover(target, ctx);
 
   if (dryRun) {
     process.stdout.write(`\n[dry-run] ingress cutover → ${target}\n`);
-    if (plan.caddyfile) process.stdout.write(`  write Caddyfile: ${plan.caddyfile.path}\n`);
+    if (target === 'caddy') process.stdout.write(`  stage cert into: ${caddy.getStagedCertsDir()}\n`);
+    if (plan.caddyfile) {
+      // Preview the clobber guard (#397 bug 3) so the operator knows a hand-edited
+      // Caddyfile would be protected, not silently overwritten.
+      if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+        process.stdout.write(force
+          ? `  ⚠ overwrite HAND-EDITED Caddyfile (--force; timestamped backup written first): ${plan.caddyfile.path}\n`
+          : `  ✗ would REFUSE: ${plan.caddyfile.path} is hand-edited (timestamped backup + re-run with --force to replace)\n`);
+      }
+      process.stdout.write(`  write Caddyfile: ${plan.caddyfile.path}\n`);
+    }
     for (const f of plan.plists) process.stdout.write(`  write plist:     ${f.path}\n`);
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
     for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
@@ -255,6 +307,21 @@ function main() {
   fs.mkdirSync(path.join(home, '.tangleclaw', 'logs'), { recursive: true });
   if (plan.caddyfile) {
     fs.mkdirSync(path.dirname(plan.caddyfile.path), { recursive: true });
+    // #397 bug 3: never silently clobber a hand-edited Caddyfile (it may carry
+    // the operator's basic_auth password + remote-access block — wiping it locks
+    // them out remotely). Back it up (timestamped, so repeated runs never
+    // overwrite an earlier backup), and refuse unless --force.
+    if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backup = `${plan.caddyfile.path}.${stamp}.bak`;
+      fs.copyFileSync(plan.caddyfile.path, backup);
+      if (!force) {
+        process.stderr.write(`ERROR: refusing to overwrite a hand-edited Caddyfile (ingress untouched).\n  Backed up to: ${backup}\n  Re-run with --force to replace it.\n`);
+        store.close();
+        process.exit(1);
+      }
+      process.stdout.write(`WARNING: overwriting hand-edited Caddyfile (--force). Backup: ${backup}\n`);
+    }
     fs.writeFileSync(plan.caddyfile.path, plan.caddyfile.content, { mode: 0o600 });
     const v = caddy.validateCaddyfile(plan.caddyfile.path);
     if (!v.ok) {
@@ -332,4 +399,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited };

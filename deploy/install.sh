@@ -19,14 +19,51 @@ red() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 
+# ── Dependency bootstrap (single-command install) ──
+# Make `install.sh` self-sufficient: every runtime dependency is auto-installed
+# via Homebrew, and Homebrew itself is bootstrapped if absent. The privileged,
+# interactive steps (Homebrew install, mkcert CA trust) belong HERE — install.sh
+# runs in a terminal — so the headless launchd server never has to attempt them.
+
+BREW=""
+# Resolve a usable Homebrew into $BREW, installing it if missing.
+ensure_homebrew() {
+  if [ -n "$BREW" ]; then return 0; fi
+  if command -v brew &>/dev/null; then BREW="$(command -v brew)"; return 0; fi
+  yellow "  Homebrew not found — installing it (needed to auto-install dependencies)."
+  yellow "  The Homebrew installer may prompt you for your password."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    || { red "ERROR: Homebrew install failed. Install it from https://brew.sh and re-run."; exit 1; }
+  # Prime brew into this shell's PATH (Apple Silicon → /opt/homebrew, Intel → /usr/local).
+  if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)";
+  elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
+  command -v brew &>/dev/null \
+    || { red "ERROR: Homebrew installed but not on PATH. Open a new terminal and re-run."; exit 1; }
+  BREW="$(command -v brew)"
+  green "  Homebrew ready ($BREW)"
+}
+
+# Ensure <command> is available, installing its Homebrew <formula> if missing.
+ensure_dep() {
+  local cmd="$1" formula="$2"
+  if command -v "$cmd" &>/dev/null; then green "  $cmd ($(command -v "$cmd"))"; return 0; fi
+  yellow "  $cmd not found — installing via Homebrew ($formula)…"
+  ensure_homebrew
+  "$BREW" install "$formula" || { red "ERROR: 'brew install $formula' failed."; exit 1; }
+  command -v "$cmd" &>/dev/null || { red "ERROR: $formula installed but '$cmd' is not on PATH."; exit 1; }
+  green "  $cmd installed ($(command -v "$cmd"))"
+}
+
 # ── Prerequisites ──
 
 echo "Checking prerequisites..."
 
 # Node.js 22+
 if ! command -v node &>/dev/null; then
-  red "ERROR: Node.js not found. Install Node.js 22+ and try again."
-  exit 1
+  yellow "  Node.js not found — installing via Homebrew (node)…"
+  ensure_homebrew
+  "$BREW" install node || { red "ERROR: 'brew install node' failed."; exit 1; }
+  command -v node &>/dev/null || { red "ERROR: Node.js still not found after install."; exit 1; }
 fi
 
 NODE_PATH="$(which node)"
@@ -40,21 +77,32 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
 fi
 green "  Node.js $NODE_VERSION ($NODE_PATH)"
 
-# ttyd
-if ! command -v ttyd &>/dev/null; then
-  red "ERROR: ttyd not found. Install with: brew install ttyd"
-  exit 1
-fi
-TTYD_PATH="$(which ttyd)"
-green "  ttyd ($TTYD_PATH)"
+# ttyd — terminal-over-websocket front end
+ensure_dep ttyd ttyd
+TTYD_PATH="$(command -v ttyd)"
 
-# tmux
-if ! command -v tmux &>/dev/null; then
-  red "ERROR: tmux not found. Install with: brew install tmux"
-  exit 1
+# tmux — session multiplexer
+ensure_dep tmux tmux
+TMUX_PATH="$(command -v tmux)"
+
+# mkcert — local TLS certs for HTTPS (direct mode + the first-run wizard).
+ensure_dep mkcert mkcert
+# Trust the local CA NOW, while we have an interactive terminal. This is the
+# PRIVILEGED step (it shells out to sudo / `security add-trusted-cert`), so doing
+# it here means the headless launchd server never has to: the wizard then only
+# GENERATES certs against the already-trusted CA. Idempotent — safe to re-run.
+yellow "  Installing the mkcert local CA into your trust store (you may be prompted)…"
+if mkcert -install; then
+  green "  mkcert local CA trusted"
+else
+  yellow "  mkcert -install did not complete — HTTPS certs won't be trusted until you run"
+  yellow "  'mkcert -install' in a terminal. Continuing (the rest of the install is unaffected)."
 fi
-TMUX_PATH="$(which tmux)"
-green "  tmux ($TMUX_PATH)"
+
+# caddy — reverse-proxy ingress for AUTH-1 'caddy' mode. Installed up front so the
+# ingress cutover (scripts/ingress-cutover.js) works out of the box; direct mode
+# (the default) does not use it.
+ensure_dep caddy caddy
 
 # Build PATH for launchd plists — start from the user's current PATH so that
 # engine binaries installed in non-standard locations (e.g. ~/.local/bin,
@@ -128,6 +176,7 @@ sed \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
   -e "s|__TTYD_BIND_KEY__|--port|g" \
   -e "s|__TTYD_BIND_VAL__|3100|g" \
+  -e "s|__TTYD_SOCKET__||g" \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 
 green "  ${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"

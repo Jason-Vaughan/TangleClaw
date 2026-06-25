@@ -235,6 +235,59 @@ describe('https-setup', () => {
         fs.chmodSync(readOnlyDir, 0o700);
       }
     });
+
+    // The privileged CA trust-install belongs to install.sh; the headless server
+    // must not attempt it. generateCerts only runs `mkcert -install` when the CA
+    // is absent, and a failure is NON-FATAL — cert generation proceeds regardless.
+    it('skips mkcert -install when the local CA is already trusted', (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      fs.writeFileSync(path.join(caRoot, 'rootCA.pem'), '');
+      fs.writeFileSync(path.join(caRoot, 'rootCA-key.pem'), '');
+      const marker = path.join(tmpDir, 'install-ran.marker');
+      if (fs.existsSync(marker)) fs.rmSync(marker);
+      const stub = `#!/bin/bash
+case "$1" in
+  -help|--help) echo ok; exit 0;;
+  -version) echo "v1.4.4-stub"; exit 0;;
+  -CAROOT) echo "${caRoot}"; exit 0;;
+  -install) : > "${marker}"; exit 0;;
+  -cert-file) shift; cp_cert="$1"; shift; shift; cp_key="$1"; cp "${fixture ? fixture.certPath : ''}" "$cp_cert"; cp "${fixture ? fixture.keyPath : ''}" "$cp_key"; exit 0;;
+esac
+exit 1
+`;
+      fs.writeFileSync(path.join(stubDir, 'mkcert'), stub, { mode: 0o755 });
+      try {
+        const result = httpsSetup.generateCerts({ certsDir: path.join(tmpDir, 'certs-skip-install') });
+        assert.ok(fs.existsSync(result.certPath), 'cert should still be generated');
+        assert.ok(!fs.existsSync(marker), 'mkcert -install must be skipped when the CA is already present');
+      } finally {
+        writeMkcertStub(stubDir, caRoot, fixture.certPath, fixture.keyPath);
+      }
+    });
+
+    it('does not throw when mkcert -install fails (no TTY for the privileged trust step)', (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+      const emptyCaRoot = path.join(tmpDir, 'caroot-untrusted');
+      fs.mkdirSync(emptyCaRoot, { recursive: true }); // exists but no rootCA.pem → CA not installed
+      const stub = `#!/bin/bash
+case "$1" in
+  -help|--help) echo ok; exit 0;;
+  -version) echo "v1.4.4-stub"; exit 0;;
+  -CAROOT) echo "${emptyCaRoot}"; exit 0;;
+  -install) echo "security add-trusted-cert: a terminal is required" >&2; exit 1;;
+  -cert-file) shift; cp_cert="$1"; shift; shift; cp_key="$1"; cp "${fixture ? fixture.certPath : ''}" "$cp_cert"; cp "${fixture ? fixture.keyPath : ''}" "$cp_key"; exit 0;;
+esac
+exit 1
+`;
+      fs.writeFileSync(path.join(stubDir, 'mkcert'), stub, { mode: 0o755 });
+      try {
+        let result;
+        assert.doesNotThrow(() => { result = httpsSetup.generateCerts({ certsDir: path.join(tmpDir, 'certs-install-fails') }); });
+        assert.ok(fs.existsSync(result.certPath), 'cert must be generated even though -install failed');
+      } finally {
+        writeMkcertStub(stubDir, caRoot, fixture.certPath, fixture.keyPath);
+      }
+    });
   });
 
   describe('validateCertFiles', () => {
