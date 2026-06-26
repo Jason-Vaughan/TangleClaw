@@ -24,8 +24,25 @@ const wizard = {
   httpsGenerated: null,
   httpsCertPath: '',
   httpsKeyPath: '',
-  httpsRemoteTrustConfirmed: false
+  httpsRemoteTrustConfirmed: false,
+  // AUTH-2 — forced admin step, shown only behind the Caddy ingress (basic_auth gate).
+  adminUser: '',
+  adminPassword: '',
+  adminPasswordConfirm: ''
 };
+
+/**
+ * The ordered list of active wizard step keys. The admin-login step is present
+ * only when running behind the Caddy ingress (basic_auth gate) — in direct mode
+ * the wizard is the unchanged 7-step flow.
+ * @returns {string[]}
+ */
+function wizardStepKeys() {
+  const keys = ['welcome', 'projectsDir', 'detect', 'engines', 'preferences', 'https'];
+  if (state.config && state.config.ingressMode === 'caddy') keys.push('admin');
+  keys.push('confirm');
+  return keys;
+}
 
 // ── Wizard Lifecycle ──
 
@@ -49,6 +66,15 @@ function showWizard() {
   wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.engines = state.engines || [];
   wizard.step = 0;
+
+  // AUTH-2 — in caddy mode the admin step is mandatory, so Skip must not offer a
+  // way past the login gate. The server enforces this too (PATCH /api/config and
+  // /api/setup/complete reject completion without an admin); hiding the button
+  // keeps the UI honest about it.
+  const skipBtn = document.getElementById('setupSkipBtn');
+  if (skipBtn) {
+    skipBtn.style.display = (state.config && state.config.ingressMode === 'caddy') ? 'none' : '';
+  }
 
   const overlay = document.getElementById('setupOverlay');
   overlay.classList.add('open');
@@ -96,8 +122,9 @@ function wizardNext() {
   }
 
   wizard.step++;
-  if (wizard.step >= wizard.totalSteps) {
-    wizard.step = wizard.totalSteps - 1;
+  const maxStep = wizardStepKeys().length - 1;
+  if (wizard.step > maxStep) {
+    wizard.step = maxStep;
   }
   renderWizardStep();
 }
@@ -120,20 +147,37 @@ async function wizardSkip() {
 
 function renderWizardStep() {
   const body = document.getElementById('setupBody');
-  const dots = document.querySelectorAll('#setupSteps .step-dot');
-  dots.forEach((d, i) => {
-    d.className = 'step-dot' + (i === wizard.step ? ' active' : i < wizard.step ? ' done' : '');
-  });
+  const keys = wizardStepKeys();
+  wizard.totalSteps = keys.length;
+  _renderStepDots(keys.length);
 
-  switch (wizard.step) {
-    case 0: renderWelcome(body); break;
-    case 1: renderProjectsDir(body); break;
-    case 2: renderDetectProjects(body); break;
-    case 3: renderEngines(body); break;
-    case 4: renderPreferences(body); break;
-    case 5: renderHttpsSetup(body); break;
-    case 6: renderConfirm(body); break;
+  switch (keys[wizard.step]) {
+    case 'welcome': renderWelcome(body); break;
+    case 'projectsDir': renderProjectsDir(body); break;
+    case 'detect': renderDetectProjects(body); break;
+    case 'engines': renderEngines(body); break;
+    case 'preferences': renderPreferences(body); break;
+    case 'https': renderHttpsSetup(body); break;
+    case 'admin': renderAdminSetup(body); break;
+    case 'confirm': renderConfirm(body); break;
   }
+}
+
+/**
+ * Rebuild the step-dot row for the active step count and mark active/done. The
+ * count varies (the admin step adds an 8th dot in caddy mode), so the dots are
+ * generated rather than toggled over a fixed set.
+ * @param {number} count - Number of active steps.
+ */
+function _renderStepDots(count) {
+  const row = document.getElementById('setupSteps');
+  if (!row) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    const cls = 'step-dot' + (i === wizard.step ? ' active' : i < wizard.step ? ' done' : '');
+    html += `<div class="${cls}"></div>`;
+  }
+  row.innerHTML = html;
 }
 
 function renderWelcome(body) {
@@ -600,6 +644,95 @@ function wizardConfirmRemoteTrust() {
   renderHttpsSetup(document.getElementById('setupBody'));
 }
 
+// ── Admin Login Step (AUTH-2, caddy ingress only) ──
+
+/**
+ * Whether the admin step's inputs satisfy the client-side rules: a username, a
+ * password of at least 12 characters that matches its confirmation and does not
+ * contain the username. The server re-validates (incl. the weak-password
+ * denylist) and is authoritative — this only gates the Next button.
+ * @returns {boolean}
+ */
+function _adminCanAdvance() {
+  const u = (wizard.adminUser || '').trim();
+  const p = wizard.adminPassword || '';
+  const c = wizard.adminPasswordConfirm || '';
+  if (!u) return false;
+  if (p.length < 12) return false;
+  if (p !== c) return false;
+  if (p.toLowerCase().includes(u.toLowerCase())) return false;
+  return true;
+}
+
+function renderAdminSetup(body) {
+  body.innerHTML = `
+    <div class="setup-step">
+      <h2 class="setup-heading">Admin Login</h2>
+      <p class="setup-text-muted">TangleClaw is running behind the Caddy ingress, which gates every page with HTTP Basic authentication. Create the admin credential you'll use to sign in — there is no default login.</p>
+      <div class="form-group">
+        <label class="form-label" for="setupAdminUser">Username</label>
+        <input type="text" class="form-input" id="setupAdminUser"
+               value="${esc(wizard.adminUser)}" placeholder="admin"
+               autocomplete="username" autocorrect="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setupAdminPassword">Password</label>
+        <input type="password" class="form-input" id="setupAdminPassword"
+               value="${esc(wizard.adminPassword)}" placeholder="At least 12 characters"
+               autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setupAdminPasswordConfirm">Confirm password</label>
+        <input type="password" class="form-input" id="setupAdminPasswordConfirm"
+               value="${esc(wizard.adminPasswordConfirm)}" placeholder="Re-enter password"
+               autocomplete="new-password">
+      </div>
+      <div class="form-hint">At least 12 characters. Avoid common passwords and don't include your username.</div>
+      <div id="setupAdminError" class="form-error hidden" role="alert"></div>
+      <div class="setup-nav">
+        <button class="btn" onclick="wizardBack()">Back</button>
+        <button class="btn btn-primary" id="setupAdminNextBtn" ${_adminCanAdvance() ? '' : 'disabled'} onclick="wizardAdminNext()">Next</button>
+      </div>
+    </div>`;
+
+  const u = document.getElementById('setupAdminUser');
+  const p = document.getElementById('setupAdminPassword');
+  const c = document.getElementById('setupAdminPasswordConfirm');
+  const sync = () => {
+    wizard.adminUser = (u && u.value) || '';
+    wizard.adminPassword = (p && p.value) || '';
+    wizard.adminPasswordConfirm = (c && c.value) || '';
+    const btn = document.getElementById('setupAdminNextBtn');
+    if (btn) btn.disabled = !_adminCanAdvance();
+  };
+  if (u) u.addEventListener('input', sync);
+  if (p) p.addEventListener('input', sync);
+  if (c) c.addEventListener('input', sync);
+}
+
+function wizardAdminNext() {
+  // Pull the latest values in case input events didn't fire (some mobile browsers).
+  const u = document.getElementById('setupAdminUser');
+  const p = document.getElementById('setupAdminPassword');
+  const c = document.getElementById('setupAdminPasswordConfirm');
+  if (u) wizard.adminUser = u.value;
+  if (p) wizard.adminPassword = p.value;
+  if (c) wizard.adminPasswordConfirm = c.value;
+
+  const err = document.getElementById('setupAdminError');
+  if (!_adminCanAdvance()) {
+    if (err) {
+      err.textContent = (wizard.adminPassword !== wizard.adminPasswordConfirm)
+        ? 'Passwords do not match.'
+        : 'Enter a username and a password of at least 12 characters that does not contain the username.';
+      err.classList.remove('hidden');
+    }
+    return;
+  }
+  if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  wizardNext();
+}
+
 function renderConfirm(body) {
   const selectedCount = wizard.selectedProjects.size;
   const engineName = (state.engines.find(e => e.id === wizard.defaultEngine) || {}).name || wizard.defaultEngine;
@@ -629,6 +762,11 @@ function renderConfirm(body) {
           <span class="setup-summary-label">HTTPS</span>
           <span class="setup-summary-value">${esc(_httpsSummaryLabel())}</span>
         </div>
+        ${(state.config && state.config.ingressMode === 'caddy') ? `
+        <div class="setup-summary-row">
+          <span class="setup-summary-label">Admin Login</span>
+          <span class="setup-summary-value">${wizard.adminUser ? esc(wizard.adminUser) : 'Not set'}</span>
+        </div>` : ''}
         <div class="setup-summary-row">
           <span class="setup-summary-label">Delete Protection</span>
           <span class="setup-summary-value">${wizard.deletePassword ? 'Enabled' : 'None'}</span>
@@ -668,6 +806,13 @@ async function wizardComplete() {
 
   if (wizard.deletePassword) {
     setupBody.deletePassword = wizard.deletePassword;
+  }
+
+  // AUTH-2 — send the forced admin credential only in caddy mode (the only mode
+  // that rendered the admin step). The server validates + hashes it.
+  if (state.config && state.config.ingressMode === 'caddy' && wizard.adminUser) {
+    setupBody.adminUser = wizard.adminUser;
+    setupBody.adminPassword = wizard.adminPassword;
   }
 
   Object.assign(setupBody, _buildHttpsPayload());
