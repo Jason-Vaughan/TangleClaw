@@ -45,6 +45,17 @@ case "$1" in
     echo "Valid configuration"
     exit 0
     ;;
+  hash-password)
+    # Real caddy reads the plaintext from stdin (one line). Echo a bcrypt-shaped
+    # hash so hashPassword's shape check passes; two sentinels exercise the
+    # failure paths without a real Caddy.
+    read -r pw
+    case "$pw" in
+      *FAILHASH*) echo "boom: cannot hash" >&2; exit 1 ;;
+      *BADHASH*)  echo "not-a-bcrypt-hash"; exit 0 ;;
+      *) echo '\$2a\$14\$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU'; exit 0 ;;
+    esac
+    ;;
 esac
 echo "caddy stub: unknown args: $*" >&2
 exit 1
@@ -399,6 +410,68 @@ describe('caddy', () => {
     it('throws when cert or key path is missing', () => {
       assert.throws(() => caddy.stageCert(null, '/k'), /required/);
       assert.throws(() => caddy.stageCert('/c', null), /required/);
+    });
+  });
+
+  // AUTH-2 — first-run admin credential helpers.
+  describe('validateAdminPassword', () => {
+    it('accepts a strong password', () => {
+      const r = caddy.validateAdminPassword('a-strong-passphrase-42', 'admin');
+      assert.equal(r.ok, true);
+      assert.equal(r.error, null);
+    });
+
+    it('rejects an empty / non-string password', () => {
+      assert.equal(caddy.validateAdminPassword('', 'admin').ok, false);
+      assert.equal(caddy.validateAdminPassword(undefined, 'admin').ok, false);
+      assert.equal(caddy.validateAdminPassword(12345, 'admin').ok, false);
+    });
+
+    it('enforces the 12-character minimum at the boundary', () => {
+      assert.equal(caddy.validateAdminPassword('twelvechars!', 'admin').ok, true);   // exactly 12
+      const r = caddy.validateAdminPassword('elevenchar!', 'admin');                 // 11
+      assert.equal(r.ok, false);
+      assert.match(r.error, /at least 12/);
+    });
+
+    it('rejects control characters (they would be truncated by stdin hashing)', () => {
+      assert.equal(caddy.validateAdminPassword('abc\ndef-ghijkl', 'admin').ok, false);
+      assert.equal(caddy.validateAdminPassword('abc\tdef-ghijkl', 'admin').ok, false);
+    });
+
+    it('rejects a known-weak password (denylist, case-insensitive)', () => {
+      const r = caddy.validateAdminPassword('PasswordPassword', 'admin');
+      assert.equal(r.ok, false);
+      assert.match(r.error, /too common/);
+    });
+
+    it('rejects a password that contains the username (case-insensitive)', () => {
+      const r = caddy.validateAdminPassword('JasonsLongPassword', 'jason');
+      assert.equal(r.ok, false);
+      assert.match(r.error, /username/);
+    });
+
+    it('ignores the username rule when no username is given', () => {
+      assert.equal(caddy.validateAdminPassword('a-strong-passphrase-42').ok, true);
+    });
+  });
+
+  describe('hashPassword', () => {
+    it('returns the bcrypt hash from `caddy hash-password`', () => {
+      const hash = caddy.hashPassword('a-strong-passphrase-42');
+      assert.match(hash, /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/);
+    });
+
+    it('throws on an empty plaintext', () => {
+      assert.throws(() => caddy.hashPassword(''), /non-empty/);
+    });
+
+    it('throws when caddy exits non-zero', () => {
+      assert.throws(() => caddy.hashPassword('FAILHASH-please-12'), /hash-password failed/);
+    });
+
+    it('throws when caddy returns a non-bcrypt value', () => {
+      assert.throws(() => caddy.hashPassword('BADHASH-please-123'), /did not return a bcrypt hash/);
     });
   });
 });
