@@ -507,7 +507,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // Must be a bcrypt hash, never a plaintext password — `caddy hash-password`
       // produces `$2a$NN$…` (60 chars). Rejecting non-bcrypt input is the guard
       // against a plaintext password being stored where a hash is expected.
-      if (typeof value !== 'string' || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(value)) {
+      if (typeof value !== 'string' || !caddy.BCRYPT_HASH_RE.test(value)) {
         return errorResponse(res, 400, 'basicAuthHash must be a bcrypt hash (use `caddy hash-password`), not a plaintext password', 'BAD_REQUEST');
       }
     }
@@ -820,6 +820,8 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     try {
       hash = caddy.hashPassword(adminPassword);
     } catch (err) {
+      // Never log the plaintext; the message is the caddy failure, not the secret.
+      log.error('Admin credential hashing failed during setup', { error: err.message });
       return errorResponse(res, 500, `Could not hash admin password: ${err.message}`, 'HASH_FAILED');
     }
     // Persist the credential. The live Caddyfile gate is (re)applied by the ingress
@@ -828,6 +830,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     config.authEnabled = true;
     config.basicAuthUser = adminUser;
     config.basicAuthHash = hash;
+    log.info('Admin credential set during setup (basic_auth gate)', { user: adminUser, ingressMode: config.ingressMode });
   }
 
   const adminConfigured = !!(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
