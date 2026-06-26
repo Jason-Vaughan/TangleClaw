@@ -83,7 +83,12 @@ function planCutover(target, ctx) {
       keyPath: ctx.keyPath,
       httpsPort,
       httpPort: config.caddyHttpPort || 8080,
-      publicDomain: config.publicDomain || null
+      publicDomain: config.publicDomain || null,
+      // AUTH-2 — gate the ingress only when basic_auth is enabled. The config
+      // PATCH guarantees authEnabled ⇒ user+hash present, and the generator's
+      // both-or-neither guard backstops it; passing null/null leaves an open site.
+      basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
+      basicAuthHash: config.authEnabled ? config.basicAuthHash : null
     });
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
       TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,

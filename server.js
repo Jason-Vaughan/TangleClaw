@@ -396,13 +396,27 @@ route('POST', '/api/server/restart', (_req, res) => {
 });
 
 // GET /api/config
+/**
+ * Strip credential material from a config object before it leaves the server.
+ * `deletePassword` (scrypt) and `basicAuthHash` (bcrypt) are stored hashes, but a
+ * credential hash is an offline-cracking target that never needs to reach a
+ * client — the UI only needs to know whether one is set. Returns a shallow copy
+ * with each secret removed and a `*Protected`/`*Configured` boolean in its place.
+ * @param {object} config
+ * @returns {object}
+ */
+function redactConfigSecrets(config) {
+  const redacted = { ...config };
+  redacted.deleteProtected = !!redacted.deletePassword;
+  delete redacted.deletePassword;
+  redacted.basicAuthConfigured = !!redacted.basicAuthHash;
+  delete redacted.basicAuthHash;
+  return redacted;
+}
+
 route('GET', '/api/config', (_req, res) => {
   const config = store.config.load();
-  const redacted = { ...config };
-  const hasPassword = !!redacted.deletePassword;
-  delete redacted.deletePassword;
-  redacted.deleteProtected = hasPassword;
-  jsonResponse(res, 200, redacted);
+  jsonResponse(res, 200, redactConfigSecrets(config));
 });
 
 // PATCH /api/config
@@ -424,7 +438,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
     'stripAiCoauthors', 'ingressMode', 'publicDomain',
-    'caddyHttpsPort', 'caddyHttpPort'
+    'caddyHttpsPort', 'caddyHttpPort',
+    'authEnabled', 'basicAuthUser', 'basicAuthHash'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -481,10 +496,26 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if ((key === 'httpsCertPath' || key === 'httpsKeyPath') && value !== null && typeof value !== 'string') {
       return errorResponse(res, 400, `${key} must be a string or null`, 'BAD_REQUEST');
     }
+    // AUTH-2 — basic_auth gate config.
+    if (key === 'authEnabled' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'authEnabled must be a boolean', 'BAD_REQUEST');
+    }
+    if (key === 'basicAuthUser' && value !== null && value !== '' && typeof value !== 'string') {
+      return errorResponse(res, 400, 'basicAuthUser must be a string or null', 'BAD_REQUEST');
+    }
+    if (key === 'basicAuthHash' && value !== null && value !== '') {
+      // Must be a bcrypt hash, never a plaintext password — `caddy hash-password`
+      // produces `$2a$NN$…` (60 chars). Rejecting non-bcrypt input is the guard
+      // against a plaintext password being stored where a hash is expected.
+      if (typeof value !== 'string' || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(value)) {
+        return errorResponse(res, 400, 'basicAuthHash must be a bcrypt hash (use `caddy hash-password`), not a plaintext password', 'BAD_REQUEST');
+      }
+    }
 
     // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
     let storedValue = value;
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain') && (value === '' || value === null)) {
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain'
+         || key === 'basicAuthUser' || key === 'basicAuthHash') && (value === '' || value === null)) {
       storedValue = null;
     }
 
@@ -510,6 +541,15 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
   } else if (config.httpsEnabled && (config.httpsCertPath || config.httpsKeyPath)) {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
+  }
+
+  // AUTH-2 fail-closed gate: enabling basic_auth requires BOTH a user and a hash.
+  // Mirrors buildCaddyfileContent's both-or-neither guard so the config can never
+  // hold authEnabled=true with a missing credential — which would otherwise make
+  // the next cutover throw (or, if the guard were absent, emit an UNGATED ingress
+  // on a reachable box). Symmetric with the generator's predicate by design.
+  if (config.authEnabled && (!config.basicAuthUser || !config.basicAuthHash)) {
+    return errorResponse(res, 400, 'authEnabled requires both basicAuthUser and basicAuthHash', 'BAD_REQUEST');
   }
 
   store.config.save(config);
@@ -557,11 +597,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
   }
 
-  // Build redacted response
-  const redacted = { ...config };
-  const hasPassword = !!redacted.deletePassword;
-  delete redacted.deletePassword;
-  redacted.deleteProtected = hasPassword;
+  // Build redacted response — strip credential hashes (deletePassword, basicAuthHash).
+  const redacted = redactConfigSecrets(config);
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
 });

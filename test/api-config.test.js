@@ -371,6 +371,71 @@ describe('API endpoints', () => {
         assert.equal(status, 400, `port ${bad} should be rejected`);
       }
     });
+
+    // AUTH-2 (Path A) — basic_auth gate config. A real bcrypt hash fixture
+    // (caddy hash-password output) so the bcrypt-shape guard is exercised honestly.
+    const BCRYPT = '$2a$14$0Eq3PY/I86yjD0yXuZNv3eKbNXqSyeO911yQE8qvUKFVE/f0SjEWW';
+
+    it('should default authEnabled false, basicAuthUser null, and never expose the hash', async () => {
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.authEnabled, false);
+      assert.equal(data.basicAuthUser, null);
+      assert.equal(data.basicAuthConfigured, false);
+      assert.equal('basicAuthHash' in data, false); // redacted — credential hash never leaves the server
+    });
+
+    it('should store basicAuthHash as-is (NOT re-hashed) but redact it from the API response', async () => {
+      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: 'jason', basicAuthHash: BCRYPT });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.basicAuthUser, 'jason');
+      assert.equal(res.data.config.basicAuthConfigured, true);
+      assert.equal('basicAuthHash' in res.data.config, false); // redacted from the response
+      // …but persisted verbatim (the bcrypt hash is already hashed — never scrypt-re-hashed like deletePassword)
+      assert.equal(store.config.load().basicAuthHash, BCRYPT);
+      await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
+    });
+
+    it('should enable basic_auth when user + hash are present', async () => {
+      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: 'jason', basicAuthHash: BCRYPT, authEnabled: true });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.authEnabled, true);
+      // restore: clear the flag first, then the creds (clearing creds while enabled would 400)
+      await request(server, 'PATCH', '/api/config', { authEnabled: false });
+      await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
+    });
+
+    it('should reject authEnabled=true with no credential (fail closed, symmetric with the generator)', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', { authEnabled: true });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      // and the flag must NOT have been persisted
+      const { data: cfg } = await request(server, 'GET', '/api/config');
+      assert.equal(cfg.authEnabled, false);
+    });
+
+    it('should reject authEnabled=true with a user but no hash (half-set)', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { authEnabled: true, basicAuthUser: 'jason' });
+      assert.equal(status, 400);
+    });
+
+    it('should reject a plaintext (non-bcrypt) basicAuthHash', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', { basicAuthHash: 'hunter2' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should reject a non-boolean authEnabled', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { authEnabled: 'yes' });
+      assert.equal(status, 400);
+    });
+
+    it('should normalize empty basicAuth strings to null', async () => {
+      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.config.basicAuthUser, null);
+      assert.equal(res.data.config.basicAuthConfigured, false);
+      assert.equal(store.config.load().basicAuthHash, null);
+    });
   });
 
   describe('PATCH /api/config HTTPS cert validation', () => {
