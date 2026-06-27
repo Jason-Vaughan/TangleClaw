@@ -19,17 +19,27 @@ Do **not** open a public issue for security vulnerabilities.
 
 ## Security Model
 
-TangleClaw is designed to run on a **trusted local network** — it is not an internet-facing service. The security model reflects this:
+TangleClaw is designed to run on a **trusted local network or VPN** — it is not a hardened internet-facing service. The security model reflects this:
 
-### No User Authentication
+### User Authentication (optional gate, AUTH-2)
 
-TangleClaw does not authenticate users. Anyone who can reach the server port can view projects and open terminal sessions. This is by design for local/VPN use. The `deletePassword` config option protects destructive operations (project deletion, session kill/wrap) but does not gate read access.
+By default TangleClaw does **not** authenticate users — anyone who can reach the server port can view projects and open terminal sessions. This default suits local-only use. The `deletePassword` config option protects destructive operations (project deletion, session kill/wrap) but does not gate read access.
 
-**Recommendation:** Run on a private network or behind a VPN (Tailscale, WireGuard). Do not expose to the public internet.
+For remote / VPN-reachable installs, an **optional login gate** is available in caddy ingress mode (see "HTTPS / Ingress" below). When enabled (`authEnabled`), Caddy's built-in `basic_auth` fronts **every** surface at the single ingress — HTTP API, all three WebSocket routes, ttyd, and the proxied gateway — while leaving `/api/health` public for liveness probes. Properties:
 
-### HTTPS Support
+- **No default credentials.** The first-run wizard forces a blocking admin-creation step in caddy mode; setup cannot complete without an admin (`ADMIN_REQUIRED`).
+- **Password rules:** minimum 12 characters, a bundled weak-password denylist, no-username-match, no control characters.
+- **Hash storage:** only the bcrypt hash is stored (in `config.json` as `basicAuthHash`), produced by a `caddy hash-password` shell-out — the plaintext is passed on stdin and never logged, stored, or placed on a command line.
+- **No permanent lockout.** A lost admin password is recoverable from a terminal on the host via `scripts/reset-admin.js` (fail-closed; preserves a hand-edited Caddyfile). Recovery requires physical/SSH access by design — it opens no network reset path.
+- **Single admin, no MFA** in this version. A multi-user / portal / MFA upgrade (caddy-security) is documented but deferred (ADR 0004).
 
-TangleClaw supports TLS via `httpsEnabled`, `httpsCertPath`, and `httpsKeyPath` in config. HTTPS is required for OpenClaw Web UI device pairing from non-localhost browsers (secure context requirement).
+**Limitations:** HTTP Basic Auth has no server-side logout (the browser caches the credential until closed) and is a single shared identity. The gate is only as strong as the transport — always pair it with HTTPS, never plain HTTP.
+
+**Recommendation:** Run on a private network or behind a VPN (Tailscale, WireGuard) **and** enable the auth gate for any non-localhost exposure. Do not expose to the public internet without both.
+
+### HTTPS / Ingress
+
+TangleClaw supports TLS via `httpsEnabled`, `httpsCertPath`, and `httpsKeyPath` in config (direct mode). HTTPS is required for OpenClaw Web UI device pairing from non-localhost browsers (secure context requirement). In **caddy ingress mode** (AUTH-1, ADR 0003), Caddy terminates TLS at a single ingress (mkcert for `localhost`, ACME for a configured `publicDomain`) and is the only path to the server; ttyd moves to a Unix socket unreachable except via the proxy chain. The optional auth gate above lives in this ingress.
 
 ### Password Storage
 
