@@ -140,6 +140,29 @@ function readPipedPassword() {
 }
 
 /**
+ * Write newContent over caddyfilePath behind a fail-closed guard: back the file
+ * up first (timestamped), write, validate, and RESTORE the backup if validation
+ * fails — so a recovery run can never itself leave a broken ingress. Validation
+ * is injected, so the restore branch is unit-testable without a real Caddy.
+ * @param {string} caddyfilePath
+ * @param {string} newContent
+ * @param {(p:string)=>{ok:boolean,error?:string}} validateFn - e.g. caddy.validateCaddyfile.
+ * @param {string} stamp - filesystem-safe timestamp for the .bak name.
+ * @returns {{ ok: boolean, backup: string, error: string|null }}
+ */
+function writeValidatedCaddyfile(caddyfilePath, newContent, validateFn, stamp) {
+  const backup = `${caddyfilePath}.${stamp}.bak`;
+  fs.copyFileSync(caddyfilePath, backup);
+  fs.writeFileSync(caddyfilePath, newContent, { mode: 0o600 });
+  const v = validateFn(caddyfilePath);
+  if (!v.ok) {
+    fs.copyFileSync(backup, caddyfilePath); // restore — never leave a broken ingress
+    return { ok: false, backup, error: v.error || 'validation failed' };
+  }
+  return { ok: true, backup, error: null };
+}
+
+/**
  * Acquire the new password: piped (single read) or interactive (entered twice and
  * confirmed). Throws on mismatch or validation failure so nothing is written.
  * @param {object} opts
@@ -216,21 +239,16 @@ async function main() {
 
   const patched = caddy.replaceBasicAuthCredential(original, { hash, user: targetUser });
 
-  // Back up the live file first (timestamped so repeated runs never clobber an
-  // earlier backup), then write + validate. Restore the backup if validation
-  // fails so a recovery run can never leave a broken ingress.
+  // Back up + write + validate fail-closed (timestamped backup so repeated runs
+  // never clobber an earlier one; the original is restored if validation fails).
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backup = `${caddyfilePath}.${stamp}.bak`;
-  fs.copyFileSync(caddyfilePath, backup);
-  fs.writeFileSync(caddyfilePath, patched.content, { mode: 0o600 });
-
-  const v = caddy.validateCaddyfile(caddyfilePath);
-  if (!v.ok) {
-    fs.copyFileSync(backup, caddyfilePath);
-    process.stderr.write(`ERROR: patched Caddyfile failed validation — restored the original (ingress untouched):\n  ${v.error}\n  Backup kept at: ${backup}\n`);
+  const written = writeValidatedCaddyfile(caddyfilePath, patched.content, caddy.validateCaddyfile, stamp);
+  if (!written.ok) {
+    process.stderr.write(`ERROR: patched Caddyfile failed validation — restored the original (ingress untouched):\n  ${written.error}\n  Backup kept at: ${written.backup}\n`);
     store.close();
     process.exit(1);
   }
+  const backup = written.backup;
 
   // Sync persisted config so a future cutover regenerates the same credential.
   const config = store.config.load();
@@ -263,4 +281,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, resolveTargetUser, reloadCaddyArgs };
+module.exports = { parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile };
