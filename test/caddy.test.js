@@ -474,4 +474,91 @@ describe('caddy', () => {
       assert.throws(() => caddy.hashPassword('BADHASH-please-123'), /did not return a bcrypt hash/);
     });
   });
+
+  describe('listBasicAuthUsers / replaceBasicAuthCredential (break-glass)', () => {
+    const OLD = '$2a$14$' + 'o'.repeat(53);
+    const NEW = '$2b$12$' + 'n'.repeat(53);
+    const certOpts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+
+    /** A realistic hand-edited (NOT generated) Caddyfile mirroring the live cursatory file. */
+    function handEdited(user, hash) {
+      return [
+        '# Manually edited 2026-06-23 — basic_auth + Tailscale remote',
+        '{', '\thttps_port 8443', '\thttp_port 8080', '\tadmin off', '\tauto_https disable_redirects', '}',
+        '',
+        '(tcauth) {', '\tbasic_auth {', `\t\t${user} ${hash}`, '\t}', '}',
+        '',
+        'localhost {', '\ttls /c/cert.pem /c/key.pem', '\timport tcauth', '\treverse_proxy 127.0.0.1:3102', '}',
+        '',
+        ':8080 {', '\timport tcauth', '\treverse_proxy 127.0.0.1:3102', '}', ''
+      ].join('\n');
+    }
+
+    it('listBasicAuthUsers returns [] when there is no gate', () => {
+      assert.deepEqual(caddy.listBasicAuthUsers(caddy.buildCaddyfileContent(certOpts)), []);
+    });
+
+    it('listBasicAuthUsers returns the single user, deduped across site blocks', () => {
+      const gated = caddy.buildCaddyfileContent({ ...certOpts, publicDomain: 'tc.example.com', basicAuthUser: 'jason', basicAuthHash: OLD });
+      assert.deepEqual(caddy.listBasicAuthUsers(gated), ['jason']);
+    });
+
+    it('replaces the hash in a generated single-site file and re-stamps the header', () => {
+      const gated = caddy.buildCaddyfileContent({ ...certOpts, basicAuthUser: 'jason', basicAuthHash: OLD });
+      assert.equal(caddy.isGeneratedCaddyfile(gated), true);
+      const r = caddy.replaceBasicAuthCredential(gated, { hash: NEW });
+      assert.equal(r.user, 'jason');
+      assert.equal(r.replaced, 1);
+      assert.ok(r.content.includes(NEW));
+      assert.ok(!r.content.includes(OLD));
+      // header re-stamped → still an integrity-verified generated file
+      assert.equal(caddy.isGeneratedCaddyfile(r.content), true);
+    });
+
+    it('replaces the hash in BOTH site blocks when a public domain is also gated', () => {
+      const gated = caddy.buildCaddyfileContent({ ...certOpts, publicDomain: 'tc.example.com', basicAuthUser: 'jason', basicAuthHash: OLD });
+      const r = caddy.replaceBasicAuthCredential(gated, { hash: NEW });
+      assert.equal(r.replaced, 2);
+      assert.equal(caddy.isGeneratedCaddyfile(r.content), true);
+      assert.equal((r.content.match(/\$2b\$12\$n{53}/g) || []).length, 2);
+    });
+
+    it('patches a hand-edited (snippet) file in place and leaves its header untouched', () => {
+      const live = handEdited('jason', OLD);
+      assert.equal(caddy.isGeneratedCaddyfile(live), false);
+      const r = caddy.replaceBasicAuthCredential(live, { hash: NEW });
+      assert.equal(r.user, 'jason');
+      assert.equal(r.replaced, 1);
+      assert.ok(r.content.includes(`jason ${NEW}`));
+      assert.ok(!r.content.includes(OLD));
+      // first line (the hand-edit marker) is byte-identical — never converted to "generated"
+      assert.equal(r.content.split('\n')[0], '# Manually edited 2026-06-23 — basic_auth + Tailscale remote');
+      assert.equal(caddy.isGeneratedCaddyfile(r.content), false);
+    });
+
+    it('requires --user to disambiguate when multiple distinct users exist', () => {
+      const two = handEdited('alice', OLD).replace('\t}\n}', `\t\tbob ${OLD}\n\t}\n}`);
+      assert.deepEqual(caddy.listBasicAuthUsers(two), ['alice', 'bob']);
+      assert.throws(() => caddy.replaceBasicAuthCredential(two, { hash: NEW }), /multiple users/);
+      const r = caddy.replaceBasicAuthCredential(two, { hash: NEW, user: 'bob' });
+      assert.equal(r.replaced, 1);
+      assert.ok(r.content.includes(`bob ${NEW}`));
+      assert.ok(r.content.includes(`alice ${OLD}`)); // alice untouched
+    });
+
+    it('throws when the requested user is absent', () => {
+      const live = handEdited('jason', OLD);
+      assert.throws(() => caddy.replaceBasicAuthCredential(live, { hash: NEW, user: 'ghost' }), /no credential for user 'ghost'/);
+    });
+
+    it('throws when the file has no basic_auth credential', () => {
+      const open = caddy.buildCaddyfileContent(certOpts);
+      assert.throws(() => caddy.replaceBasicAuthCredential(open, { hash: NEW }), /no basic_auth credential/);
+    });
+
+    it('throws when the new hash is not a valid bcrypt hash', () => {
+      const live = handEdited('jason', OLD);
+      assert.throws(() => caddy.replaceBasicAuthCredential(live, { hash: 'plaintext' }), /valid bcrypt hash/);
+    });
+  });
 });

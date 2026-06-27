@@ -45,6 +45,27 @@ The local site reuses your existing mkcert certificate, so local HTTPS is
 unchanged (same already-trusted CA). Set `publicDomain` in config to also emit an
 ACME (Let's Encrypt) site block for a real domain.
 
+## Admin credential reset (break-glass, AUTH-2)
+
+When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,
+recover it from a terminal **on the host** — the gate runs in Caddy locally, so
+physical/SSH access to the box is always a sufficient recovery path (no working
+remote login required):
+
+```bash
+node scripts/reset-admin.js --dry-run   # preview (user + steps), touches nothing
+node scripts/reset-admin.js             # prompt for the new password (hidden, x2)
+#   --user <name>        disambiguate when >1 admin user is in the Caddyfile
+#   --password-stdin     read the new password from a pipe (scripting)
+```
+
+It patches the credential **in place** (it does not regenerate a hand-edited
+Caddyfile), re-validates fail-closed (restoring a timestamped `.bak` if the patch
+is invalid), reloads Caddy, and syncs the stored `basicAuthUser`/`basicAuthHash`
+so a later cutover stays consistent. New passwords must be ≥12 chars, not a common
+weak password, and must not contain the username. The machine-local
+`~/.tangleclaw/EMERGENCY-RECOVERY.md` carries the full runbook + a manual fallback.
+
 ## Public domain on 443/80 (root LaunchDaemon)
 
 Real Let's Encrypt issuance needs a public domain with ports 80/443 reachable
