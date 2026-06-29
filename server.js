@@ -35,6 +35,7 @@ const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const authIdentity = require('./lib/auth-identity');
+const serviceToken = require('./lib/service-token');
 
 const log = createLogger('server');
 
@@ -404,10 +405,12 @@ route('POST', '/api/server/restart', (_req, res) => {
 // GET /api/config
 /**
  * Strip credential material from a config object before it leaves the server.
- * `deletePassword` (scrypt) and `basicAuthHash` (bcrypt) are stored hashes, but a
- * credential hash is an offline-cracking target that never needs to reach a
- * client — the UI only needs to know whether one is set. Returns a shallow copy
- * with each secret removed and a `*Protected`/`*Configured` boolean in its place.
+ * `deletePassword` (scrypt) and `basicAuthHash` (bcrypt) are stored hashes, and
+ * `serviceToken` (AUTH-4) is a raw bearer secret — none of them need to reach a
+ * client (the hashes are offline-cracking targets; the token is a live
+ * credential), the UI only needs to know whether each is set. Returns a shallow
+ * copy with each secret removed and a `*Protected`/`*Configured` boolean in its
+ * place.
  * @param {object} config
  * @returns {object}
  */
@@ -417,6 +420,10 @@ function redactConfigSecrets(config) {
   delete redacted.deletePassword;
   redacted.basicAuthConfigured = !!redacted.basicAuthHash;
   delete redacted.basicAuthHash;
+  // AUTH-4 — the raw fleet token never leaves via the config API; surface only
+  // whether one is set. It is revealed through the dedicated reveal endpoint.
+  redacted.serviceTokenConfigured = !!redacted.serviceToken;
+  delete redacted.serviceToken;
   return redacted;
 }
 
@@ -445,7 +452,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
     'stripAiCoauthors', 'ingressMode', 'publicDomain',
     'caddyHttpsPort', 'caddyHttpPort',
-    'authEnabled', 'basicAuthUser', 'basicAuthHash'
+    'authEnabled', 'basicAuthUser', 'basicAuthHash',
+    'serviceTokenEnabled'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -509,6 +517,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'basicAuthUser' && value !== null && value !== '' && typeof value !== 'string') {
       return errorResponse(res, 400, 'basicAuthUser must be a string or null', 'BAD_REQUEST');
     }
+    // AUTH-4 — M2M service-token gate master switch. The raw `serviceToken` is
+    // NOT patchable here (managed via the rotate endpoint + auto-generation);
+    // only the enable flag is operator-settable.
+    if (key === 'serviceTokenEnabled' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'serviceTokenEnabled must be a boolean', 'BAD_REQUEST');
+    }
     if (key === 'basicAuthHash' && value !== null && value !== '') {
       // Must be a bcrypt hash, never a plaintext password — `caddy hash-password`
       // produces `$2a$NN$…` (60 chars). Rejecting non-bcrypt input is the guard
@@ -556,6 +570,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // on a reachable box). Symmetric with the generator's predicate by design.
   if (config.authEnabled && (!config.basicAuthUser || !config.basicAuthHash)) {
     return errorResponse(res, 400, 'authEnabled requires both basicAuthUser and basicAuthHash', 'BAD_REQUEST');
+  }
+
+  // AUTH-4 — enabling the M2M gate auto-generates a fleet token on first enable,
+  // so the config can never hold serviceTokenEnabled=true with a null token (the
+  // fail-closed state the gate would otherwise 500 on). Symmetric with the
+  // both-or-neither guard above. The token is retained (inert) on disable so
+  // re-enabling is stable. Logged without the secret.
+  if (config.serviceTokenEnabled && !config.serviceToken) {
+    config.serviceToken = serviceToken.generateToken();
+    log.info('AUTH-4 service token auto-generated on enable');
   }
 
   // AUTH-2 — the wizard's "Skip" closes setup via PATCH { setupComplete: true }.
@@ -3035,6 +3059,20 @@ async function handleRequest(req, res) {
     if (!matched) {
       log.debug('Route not found', { method, path: pathname });
       return errorResponse(res, 404, `${method} ${pathname} not found`, 'NOT_FOUND');
+    }
+
+    // AUTH-4 — M2M service-token gate on the PortHub + shared-docs surfaces. A
+    // no-op when serviceTokenEnabled is false (default), so the surfaces stay
+    // byte-for-byte open until the operator opts in.
+    if (serviceToken.requiresServiceToken(pathname)) {
+      const gate = serviceToken.validateRequest(req.headers, store.config.load());
+      if (!gate.ok) {
+        // Log the denial (never the token) — the gate returns before the normal
+        // access-log line below, so without this a rejected M2M caller leaves no
+        // trace for the operator to debug.
+        log.warn('Service-token gate denied request', { method, path: pathname, code: gate.code });
+        return errorResponse(res, gate.status, gate.message, gate.code);
+      }
     }
 
     try {
