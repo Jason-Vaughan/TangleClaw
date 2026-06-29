@@ -315,3 +315,85 @@ describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
     assert.equal(orchestration.detectHardcodedKeys(footgun).length, 1);
   });
 });
+
+describe('orchestration.assertOpenAICompatEndpoint (TB-4 #359)', () => {
+  it('accepts a well-formed http base URL with the /v1 convention', () => {
+    assert.deepEqual(
+      orchestration.assertOpenAICompatEndpoint('http://monad-1.tail123678.ts.net:4000/v1'),
+      { ok: true }
+    );
+  });
+
+  it('accepts https and a base mounted at a non-/v1 path (the suffix is convention, not required)', () => {
+    assert.deepEqual(orchestration.assertOpenAICompatEndpoint('https://api.example.com'), { ok: true });
+    assert.deepEqual(orchestration.assertOpenAICompatEndpoint('http://localhost:4000/openai/v1'), { ok: true });
+  });
+
+  it('refuses an empty / whitespace / null / non-string baseUrl', () => {
+    assert.equal(orchestration.assertOpenAICompatEndpoint('').ok, false);
+    assert.equal(orchestration.assertOpenAICompatEndpoint('   ').ok, false);
+    assert.equal(orchestration.assertOpenAICompatEndpoint(null).ok, false);
+    assert.equal(orchestration.assertOpenAICompatEndpoint(42).ok, false);
+  });
+
+  it('refuses a bare word that does not parse as a URL', () => {
+    assert.match(orchestration.assertOpenAICompatEndpoint('not-a-real-url').reason, /not a valid URL/);
+  });
+
+  it('refuses a non-http(s) scheme (ftp, ws)', () => {
+    assert.match(orchestration.assertOpenAICompatEndpoint('ftp://host/x').reason, /scheme/);
+    assert.match(orchestration.assertOpenAICompatEndpoint('ws://host:4000').reason, /scheme/);
+  });
+});
+
+describe('orchestration.resolveLaunchProfile — OpenAI-compat refusal (TB-4 #359)', () => {
+  it('refuses a bound profile whose baseUrl is not OpenAI-compat (distinct from the null-baseUrl case)', () => {
+    const profiles = { profiles: { bad: { baseUrl: 'ftp://nope/x', model: 'openai/x', keyRef: 'env:TB1_TEST_KEY' } } };
+    const r = orchestration.resolveLaunchProfile({ orchestrationProfile: 'bad' }, {}, profiles, okKeyDeps);
+    assert.equal(r.refused, true);
+    assert.match(r.reason, /not OpenAI-compat/);
+  });
+
+  it('still resolves a valid OpenAI-compat endpoint unchanged', () => {
+    const r = orchestration.resolveLaunchProfile({ orchestrationProfile: 'direct' }, {}, PROFILES, okKeyDeps);
+    assert.equal(r.baseUrl, 'http://monad-1.tail123678.ts.net:4000/v1');
+    assert.equal(r.refused, undefined);
+  });
+});
+
+describe('orchestration — OpenAI-compat guarantee: endpoint swap needs no harness change (TB-4 #359)', () => {
+  const engine = { id: 'aider', launch: { shellCommand: 'aider', args: ['--foo'], env: { EXISTING: '1' } } };
+
+  function overlayFor(baseUrl) {
+    const profiles = { profiles: { p: { baseUrl, model: 'openai/qwen', keyRef: 'env:TB1_TEST_KEY' } } };
+    const resolved = orchestration.resolveLaunchProfile({ orchestrationProfile: 'p' }, {}, profiles, okKeyDeps);
+    assert.ok(!resolved.refused, `expected ${baseUrl} to resolve`);
+    return orchestration.applyLaunchOverlay(engine, resolved);
+  }
+
+  it('swapping base_url between two OpenAI-compat endpoints changes ONLY OPENAI_API_BASE', () => {
+    const a = overlayFor('http://monad-1.tail123678.ts.net:4000/v1');
+    const b = overlayFor('https://other-host.ts.net/v1');
+
+    // The --model injection is identical — no endpoint-specific arg leaks.
+    assert.deepEqual(a.launch.args, b.launch.args);
+    // Same env key SET across endpoints; only OPENAI_API_BASE's value differs.
+    assert.deepEqual(Object.keys(a.launch.env).sort(), Object.keys(b.launch.env).sort());
+    assert.notEqual(a.launch.env.OPENAI_API_BASE, b.launch.env.OPENAI_API_BASE);
+    assert.equal(a.launch.env.OPENAI_API_KEY, b.launch.env.OPENAI_API_KEY);
+    const { OPENAI_API_BASE: _a, ...restA } = a.launch.env;
+    const { OPENAI_API_BASE: _b, ...restB } = b.launch.env;
+    assert.deepEqual(restA, restB); // everything except the base URL is identical
+  });
+
+  it('injects only the three generic OpenAI knobs — nothing engine/profile-specific leaks', () => {
+    const out = overlayFor('http://monad-1.tail123678.ts.net:4000/v1');
+    // Beyond the engine's own env, the only added keys are the two OpenAI vars.
+    assert.deepEqual(
+      Object.keys(out.launch.env).filter((k) => k !== 'EXISTING').sort(),
+      ['OPENAI_API_BASE', 'OPENAI_API_KEY']
+    );
+    // The only arg added is `--model <model>` — no profile name, no endpoint flag.
+    assert.deepEqual(out.launch.args, ['--foo', '--model', 'openai/qwen']);
+  });
+});
