@@ -240,3 +240,78 @@ describe('orchestration overlay → _buildLaunchCommand integration', () => {
     assert.equal(cmd, 'aider');
   });
 });
+
+describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
+  // A realistic-shaped LiteLLM master key literal (sk- + long random tail).
+  const MASTER_LITERAL = 'sk-1234567890abcdefABCDEF_secret';
+
+  it('flags a hardcoded LiteLLM-shaped key literal in launch.env', () => {
+    const engine = { id: 'aider', launch: { env: { OPENAI_API_KEY: MASTER_LITERAL } } };
+    const findings = orchestration.detectHardcodedKeys(engine);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].envVar, 'OPENAI_API_KEY');
+    assert.match(findings[0].reason, /keyRef/);
+  });
+
+  it('redacts the secret — the raw value never appears in a finding', () => {
+    const engine = { id: 'aider', launch: { env: { OPENAI_API_KEY: MASTER_LITERAL } } };
+    const [finding] = orchestration.detectHardcodedKeys(engine);
+    assert.ok(!finding.redacted.includes(MASTER_LITERAL));
+    assert.ok(!finding.redacted.includes('secret'));
+    assert.match(finding.redacted, /redacted, \d+ chars/);
+    // No field on the finding leaks the full secret.
+    assert.ok(!JSON.stringify(finding).includes(MASTER_LITERAL));
+  });
+
+  it('flags LITELLM_MASTER_KEY by name even if its value is differently shaped', () => {
+    const engine = { id: 'x', launch: { env: { LITELLM_MASTER_KEY: 'whatever-value' } } };
+    const findings = orchestration.detectHardcodedKeys(engine);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].envVar, 'LITELLM_MASTER_KEY');
+  });
+
+  it('returns [] for an empty launch.env (the sanctioned clean config)', () => {
+    const engine = { id: 'aider', launch: { env: {} } };
+    assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
+  });
+
+  it('does not flag non-key env values', () => {
+    const engine = { id: 'x', launch: { env: { FOO: 'bar', OPENAI_API_BASE: 'http://monad-1.tail123678.ts.net:4000/v1' } } };
+    assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
+  });
+
+  it('does not flag a keyRef-style value (refs are not secrets)', () => {
+    // A keyRef lives in a profile, not engine env, but assert it would not
+    // false-trigger even if one appeared here — it does not match the key shape.
+    const engine = { id: 'x', launch: { env: { SOME_REF: 'file:~/.config/monad/tangleclaw-aider.key' } } };
+    assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
+  });
+
+  it('handles a profile with no launch or no env (no throw, [])', () => {
+    assert.deepEqual(orchestration.detectHardcodedKeys({ id: 'x' }), []);
+    assert.deepEqual(orchestration.detectHardcodedKeys({ id: 'x', launch: {} }), []);
+    assert.deepEqual(orchestration.detectHardcodedKeys(null), []);
+  });
+
+  it('the sanctioned path is silent while the footgun path warns', () => {
+    // Base config is clean (env: {}); the scoped key arrives via the overlay,
+    // which detectHardcodedKeys never sees (it scans the pre-overlay base).
+    const base = { id: 'aider', launch: { shellCommand: 'aider', args: [], env: {} } };
+    assert.deepEqual(orchestration.detectHardcodedKeys(base), []);
+
+    const overlaid = orchestration.applyLaunchOverlay(base, {
+      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      model: 'openai/qwen2.5-coder-32b-fp16',
+      apiKey: MASTER_LITERAL, // resolved scoped key — legitimately injected
+      profileName: 'direct'
+    });
+    // The resolved scoped key IS present in the overlaid launch env (acceptance #1)…
+    assert.equal(overlaid.launch.env.OPENAI_API_KEY, MASTER_LITERAL);
+    // …yet the base config the guard scans stays clean (acceptance #3).
+    assert.deepEqual(orchestration.detectHardcodedKeys(base), []);
+
+    // A footgun config (literal hardcoded in the base) IS flagged (acceptance #2).
+    const footgun = { id: 'aider', launch: { env: { OPENAI_API_KEY: MASTER_LITERAL } } };
+    assert.equal(orchestration.detectHardcodedKeys(footgun).length, 1);
+  });
+});
