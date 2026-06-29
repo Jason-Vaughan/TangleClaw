@@ -130,3 +130,63 @@ describe('AUTH-4 — service-token gate over HTTP', () => {
     assert.equal(data.code, 'BAD_REQUEST');
   });
 });
+
+describe('AUTH-4b — service-token management endpoints', () => {
+  let tmpDir;
+  let server;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-svc-token-mgmt-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reveal: 404 while the gate is off', async () => {
+    const { status, data } = await request(server, 'GET', '/api/service-token');
+    assert.equal(status, 404);
+    assert.equal(data.code, 'NO_SERVICE_TOKEN');
+  });
+
+  it('rotate: 409 while the gate is off (nothing to rotate)', async () => {
+    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {});
+    assert.equal(status, 409);
+    assert.equal(data.code, 'SERVICE_TOKEN_DISABLED');
+  });
+
+  it('reveal: returns the raw token once the gate is enabled', async () => {
+    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: true });
+    const { status, data } = await request(server, 'GET', '/api/service-token');
+    assert.equal(status, 200);
+    assert.match(data.token, /^tcsk_/);
+    assert.equal(data.token, store.config.load().serviceToken, 'reveal must match the persisted token');
+  });
+
+  it('rotate: issues a NEW token, persists it, and invalidates the old one', async () => {
+    const before = store.config.load().serviceToken;
+    const { status, data } = await request(server, 'POST', '/api/service-token/rotate', {});
+    assert.equal(status, 200);
+    assert.match(data.token, /^tcsk_/);
+    assert.notEqual(data.token, before, 'rotate must produce a different token');
+    assert.equal(data.token, store.config.load().serviceToken, 'rotated token must be persisted');
+
+    // The old token now fails the gate; the new one passes.
+    const oldTok = await request(server, 'GET', '/api/ports', null, bearer(before));
+    assert.equal(oldTok.status, 401);
+    const newTok = await request(server, 'GET', '/api/ports', null, bearer(data.token));
+    assert.equal(newTok.status, 200);
+  });
+
+  it('reveal: 404 again after disabling (no raw token leaks while off)', async () => {
+    await request(server, 'PATCH', '/api/config', { serviceTokenEnabled: false });
+    const { status } = await request(server, 'GET', '/api/service-token');
+    assert.equal(status, 404);
+  });
+});

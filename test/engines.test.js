@@ -450,6 +450,77 @@ describe('engines', () => {
     });
   });
 
+  describe('AUTH-4b — service-token injection', () => {
+    // Shape-only token, assembled at runtime so it doesn't trip GH push protection.
+    const TOKEN = 'tcsk_' + 'A'.repeat(43);
+    const proj = { rules: { core: { porthubRegistration: true } } };
+
+    function enableGate() {
+      const c = store.config.load();
+      c.serviceTokenEnabled = true;
+      c.serviceToken = TOKEN;
+      store.config.save(c);
+    }
+
+    afterEach(() => {
+      // Restore default gate state so it doesn't leak into other tests.
+      const c = store.config.load();
+      c.serviceTokenEnabled = false;
+      c.serviceToken = null;
+      store.config.save(c);
+    });
+
+    it('_getRulesContent surfaces the raw token only when the gate is enabled', () => {
+      assert.equal(engines._getRulesContent(proj).serviceToken, null);
+      assert.equal(engines._getRulesContent(proj).serviceTokenEnabled, false);
+      enableGate();
+      const rules = engines._getRulesContent(proj);
+      assert.equal(rules.serviceTokenEnabled, true);
+      assert.equal(rules.serviceToken, TOKEN);
+    });
+
+    it('_serviceTokenAuthLines: [] when off/null, an Authorization block when on', () => {
+      assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: false, serviceToken: null }), []);
+      assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: null }), []);
+      const md = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN });
+      assert.ok(md.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
+      const comment = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'comment');
+      assert.ok(comment.length > 0 && comment.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
+      assert.ok(comment.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
+    });
+
+    it('injects the bearer header into all four engine configs when enabled', () => {
+      enableGate();
+      const generated = {
+        claude: engines._generateClaudeMd(proj, null),
+        gemini: engines._generateGeminiMd(proj, null),
+        codex: engines._generateCodexYaml(proj, null),
+        aider: engines._generateAiderConf(proj, null)
+      };
+      for (const [name, content] of Object.entries(generated)) {
+        assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
+      }
+    });
+
+    it('injects nothing when the gate is off (no raw token, no injected auth block)', () => {
+      // The static PortHub/shared-docs guides mention `Authorization: Bearer
+      // $TANGLECLAW_SERVICE_TOKEN` as documentation; the DYNAMIC injection is
+      // distinguished by the bold marker + the real token value, both absent here.
+      const claudeOff = engines._generateClaudeMd(proj, null);
+      assert.ok(!claudeOff.includes('**TangleClaw API authentication**'), 'no injected auth block when gate off');
+      assert.ok(!claudeOff.includes(TOKEN), 'no raw token value when gate off');
+    });
+
+    it('static guides document the service-token Authentication requirement', () => {
+      const porthubGuide = fs.readFileSync(path.join(__dirname, '..', 'data', 'porthub-guide.md'), 'utf8');
+      const sharedGuide = fs.readFileSync(path.join(__dirname, '..', 'data', 'shared-docs-guide.md'), 'utf8');
+      assert.match(porthubGuide, /### Authentication/);
+      assert.ok(porthubGuide.includes('Authorization: Bearer'));
+      assert.match(sharedGuide, /### Authentication/);
+      assert.ok(sharedGuide.includes('Authorization: Bearer'));
+    });
+  });
+
   describe('session rules injection (#347/D1a)', () => {
     let project;
 

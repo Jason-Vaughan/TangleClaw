@@ -1830,6 +1830,15 @@ body {
 }
 .form-input.invalid { border-color: var(--danger); }
 
+/* AUTH-4b — revealed/rotated service token: monospace, wrapping, selectable. */
+.gs-token-display {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text);
+  word-break: break-all;
+  user-select: all;
+  margin-top: 6px;
+}
+
 /* ── Session History & Search drawer (CC-5) ── */
 .history-scope {
   display: flex;
