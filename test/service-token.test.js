@@ -7,7 +7,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { generateToken, requiresServiceToken, validateRequest, TOKEN_PREFIX } =
+const { generateToken, ensureTokenWhenEnabled, requiresServiceToken, validateRequest, TOKEN_PREFIX } =
   require('../lib/service-token');
 
 describe('service-token.generateToken', () => {
@@ -22,6 +22,39 @@ describe('service-token.generateToken', () => {
   it('carries 32 bytes of entropy (base64url body)', () => {
     const body = generateToken().slice(TOKEN_PREFIX.length);
     assert.equal(Buffer.from(body, 'base64url').length, 32);
+  });
+});
+
+describe('service-token.ensureTokenWhenEnabled', () => {
+  it('generates a token when enabled and none is set', () => {
+    const config = { serviceTokenEnabled: true, serviceToken: null };
+    assert.equal(ensureTokenWhenEnabled(config), true);
+    assert.match(config.serviceToken, /^tcsk_/);
+  });
+
+  it('leaves an existing token untouched when enabled', () => {
+    const existing = generateToken();
+    const config = { serviceTokenEnabled: true, serviceToken: existing };
+    assert.equal(ensureTokenWhenEnabled(config), false);
+    assert.equal(config.serviceToken, existing);
+  });
+
+  it('does nothing when the gate is disabled (token stays null)', () => {
+    const config = { serviceTokenEnabled: false, serviceToken: null };
+    assert.equal(ensureTokenWhenEnabled(config), false);
+    assert.equal(config.serviceToken, null);
+  });
+
+  it('is null-safe', () => {
+    assert.equal(ensureTokenWhenEnabled(null), false);
+    assert.equal(ensureTokenWhenEnabled(undefined), false);
+  });
+
+  it('upholds the gate invariant: after running, enabled never coexists with a null token', () => {
+    const config = { serviceTokenEnabled: true, serviceToken: null };
+    ensureTokenWhenEnabled(config);
+    // validateRequest would 500 on enabled-but-null; the helper closes that gap.
+    assert.ok(config.serviceToken);
   });
 });
 

@@ -574,11 +574,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
   // AUTH-4 — enabling the M2M gate auto-generates a fleet token on first enable,
   // so the config can never hold serviceTokenEnabled=true with a null token (the
-  // fail-closed state the gate would otherwise 500 on). Symmetric with the
-  // both-or-neither guard above. The token is retained (inert) on disable so
-  // re-enabling is stable. Logged without the secret.
-  if (config.serviceTokenEnabled && !config.serviceToken) {
-    config.serviceToken = serviceToken.generateToken();
+  // fail-closed state the gate would otherwise 500 on). The invariant lives in
+  // one place (service-token.ensureTokenWhenEnabled) shared with the rotate
+  // endpoint — see [[feedback_symmetric_capability_gates]]. The token is retained
+  // (inert) on disable so re-enabling is stable. Logged without the secret.
+  if (serviceToken.ensureTokenWhenEnabled(config)) {
     log.info('AUTH-4 service token auto-generated on enable');
   }
 
@@ -643,6 +643,37 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   const redacted = redactConfigSecrets(config);
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
+});
+
+// AUTH-4b — service-token management. These are OPERATOR endpoints (gated by
+// basic_auth in caddy mode / localhost-only in direct mode, like the rest of
+// /api), deliberately OUTSIDE the M2M-gated path set — a service caller holding
+// the token must not be able to reveal or rotate its own gate credential.
+
+// GET /api/service-token — reveal the raw fleet token for the Settings
+// "reveal" display. 404 when the gate is off or no token is set (nothing to
+// reveal); the redacted config API never carries the raw value.
+route('GET', '/api/service-token', (_req, res) => {
+  const config = store.config.load();
+  if (!config.serviceTokenEnabled || !config.serviceToken) {
+    return errorResponse(res, 404, 'No service token is configured', 'NO_SERVICE_TOKEN');
+  }
+  jsonResponse(res, 200, { token: config.serviceToken });
+});
+
+// POST /api/service-token/rotate — generate + persist a NEW fleet token and
+// return it. Only meaningful while the gate is active, so guard on enabled
+// (mirrors reveal). Re-injected into every project at the next session launch;
+// live sessions holding the old token break until relaunch — documented.
+route('POST', '/api/service-token/rotate', (_req, res) => {
+  const config = store.config.load();
+  if (!config.serviceTokenEnabled) {
+    return errorResponse(res, 409, 'Enable the service token gate before rotating', 'SERVICE_TOKEN_DISABLED');
+  }
+  config.serviceToken = serviceToken.generateToken();
+  store.config.save(config);
+  log.info('AUTH-4 service token rotated');
+  jsonResponse(res, 200, { token: config.serviceToken });
 });
 
 // GET /api/setup/https-check — Detect mkcert availability for the wizard

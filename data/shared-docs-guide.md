@@ -6,9 +6,17 @@ TangleClaw supports shared documents — files that multiple projects can refere
 
 A **group** links related projects (e.g., "backend services"). Each group can have **shared documents** — markdown files that are injected into engine configs at session launch. Groups may also have a **shared directory** (`sharedDir`) — a folder whose `.md` files are auto-discovered and registered on session launch.
 
+### Authentication
+
+When the operator has enabled the **M2M service-token gate** (AUTH-4), every call to `/api/shared-docs*` (and a group's `/sync`) requires an `Authorization: Bearer <token>` header — without it the API returns `401`. TangleClaw injects the required header (with the live token) **below this guide** at session launch; copy it onto each request. When the gate is off (the default), no token is required. Rotating the token invalidates the old one — relaunch the session to pick up the new value.
+
+```
+curl -H "Authorization: Bearer $TANGLECLAW_SERVICE_TOKEN" .../api/shared-docs?groupId=<group-id>
+```
+
 ### API Operations
 
-All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide.
+All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. When the service-token gate is on, add `-H "Authorization: Bearer <token>"` to every call below.
 
 **List shared documents** available to your project:
 ```

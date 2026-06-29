@@ -1190,6 +1190,19 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
+  // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
+  // token is auto-generated server-side on enable + Save, not on the live
+  // checkbox). serviceTokenConfigured/serviceTokenEnabled come redacted from
+  // /api/config — never the raw token.
+  const tokenGateActive = !!c.serviceTokenEnabled && !!c.serviceTokenConfigured;
+  const tokenManageMarkup = tokenGateActive ? `
+    <div class="form-group">
+      <button type="button" class="btn btn-compact" id="gsRevealTokenBtn">Reveal token</button>
+      <button type="button" class="btn btn-compact" id="gsRotateTokenBtn">Rotate</button>
+      <div class="form-hint gs-token-display" id="gsTokenDisplay" style="display:none"></div>
+      <div class="form-hint">Rotating issues a new token; sessions holding the old one lose API access until they relaunch.</div>
+    </div>` : '';
+
   body.innerHTML = `
     <div class="gs-section-label">Appearance</div>
     <div class="form-group">
@@ -1263,6 +1276,22 @@ function openGlobalSettings() {
       </div>
     </div>
 
+    <div class="gs-section-label">Service Token (M2M API)</div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Require token on PortHub + shared-docs API</span>
+        <input type="checkbox" id="gsServiceTokenEnabled" ${c.serviceTokenEnabled ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">
+        When on, local calls to <code>/api/ports*</code> and <code>/api/shared-docs*</code> require an
+        <code>Authorization: Bearer</code> token. TangleClaw auto-generates the token and injects it into
+        every project's config guide at session launch, so sessions authenticate automatically. Default
+        off (open, as today). Save to apply, then reopen to reveal the token.
+      </div>
+    </div>
+    ${tokenManageMarkup}
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -1292,6 +1321,34 @@ function openGlobalSettings() {
     });
   }
 
+  // AUTH-4b — reveal/rotate wiring. Buttons only exist when the gate is active
+  // (tokenManageMarkup). Both render the raw token into #gsTokenDisplay via
+  // textContent (XSS-safe, selectable for copy); rotate confirms first.
+  const revealTokenBtn = document.getElementById('gsRevealTokenBtn');
+  if (revealTokenBtn) {
+    revealTokenBtn.addEventListener('click', async () => {
+      const display = document.getElementById('gsTokenDisplay');
+      const data = await api('/api/service-token');
+      display.textContent = (data && data.token) ? data.token : (api.lastError || 'Could not reveal token');
+      display.style.display = '';
+    });
+  }
+  const rotateTokenBtn = document.getElementById('gsRotateTokenBtn');
+  if (rotateTokenBtn) {
+    rotateTokenBtn.addEventListener('click', async () => {
+      if (!confirm('Rotate the service token? Sessions holding the current token will lose API access until they relaunch.')) return;
+      const display = document.getElementById('gsTokenDisplay');
+      const data = await apiMutate('/api/service-token/rotate', 'POST', {});
+      if (data && data.token) {
+        state.config.serviceTokenConfigured = true;
+        display.textContent = data.token;
+      } else {
+        display.textContent = api.lastError || 'Rotate failed';
+      }
+      display.style.display = '';
+    });
+  }
+
   document.getElementById('globalSettingsModal').classList.add('open');
 }
 
@@ -1318,7 +1375,8 @@ async function saveGlobalSettings() {
     projectsDir: document.getElementById('gsProjectsDir').value.trim(),
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
     portScannerIntervalMs: intervalMs,
-    stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked
+    stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
+    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
   };
 
   const data = await apiMutate('/api/config', 'PATCH', patch);

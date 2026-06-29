@@ -14,9 +14,17 @@ TangleClaw is the central port registry for all projects on this machine. Every 
 - **4000-4999**: Auxiliary services (test runners, watchers)
 - **5000+**: Ad hoc / temporary
 
+### Authentication
+
+When the operator has enabled the **M2M service-token gate** (AUTH-4), every call to `/api/ports*` requires an `Authorization: Bearer <token>` header — without it the API returns `401`. TangleClaw injects the required header (with the live token) **below this guide** at session launch, so a session always has the value it needs; copy that header onto each request. When the gate is off (the default), no token is required and the examples below work as written. Rotating the token invalidates the old one — relaunch the session to pick up the new value.
+
+```
+curl -H "Authorization: Bearer $TANGLECLAW_SERVICE_TOKEN" .../api/ports
+```
+
 ### API Operations
 
-All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. HTTPS (`https://localhost:3102`) is the default; installs that skipped HTTPS or have no certificates configured fall back to `http://localhost:3102`. When hitting HTTPS with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it.
+All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. HTTPS (`https://localhost:3102`) is the default; installs that skipped HTTPS or have no certificates configured fall back to `http://localhost:3102`. When hitting HTTPS with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it. When the service-token gate is on, add `-H "Authorization: Bearer <token>"` to every call below.
 
 **Check what's taken** before picking a port:
 ```
