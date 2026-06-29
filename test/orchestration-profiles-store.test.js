@@ -120,4 +120,19 @@ describe('orchestration_profile column (schema v21→v22)', () => {
   it('DEFAULT_PROJECT_CONFIG carries a null orchestrationKeyRef override slot', () => {
     assert.equal(store.DEFAULT_PROJECT_CONFIG.orchestrationKeyRef, null);
   });
+
+  it('v21→v22 migration is idempotent — a second init keeps the column + binding (no error)', () => {
+    store.init();
+    const p = store.projects.create({ name: 'tb1-idem', path: path.join(tmpDir, 'tb1-idem') });
+    store.projects.update(p.id, { orchestration_profile: 'direct' });
+    store.close();
+
+    // Re-open the same DB: the schema is already v22, so migrations are a
+    // no-op; the column + value must survive and nothing throws.
+    store._setBasePath(tmpDir);
+    store.init();
+    const db = store.getDb();
+    assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 22);
+    assert.equal(store.projects.getByName('tb1-idem').orchestrationProfile, 'direct');
+  });
 });
