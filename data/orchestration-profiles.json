@@ -1,0 +1,23 @@
+{
+  "_comment": "TB-1 (#357) orchestration profiles. Seeded once into ~/.tangleclaw/orchestration-profiles.json on first boot, then OPERATOR-OWNED (TC never overwrites your edits). Each profile maps to (baseUrl, model, keyRef). A project binds to a profile name via its `orchestrationProfile` field; at launch TC injects OPENAI_API_BASE/OPENAI_API_KEY (env) + --model (arg) for that launch only. Endpoints MUST use Tailscale MagicDNS names, never raw IPs. keyRef is a reference (file:<path> or env:<NAME>) resolved at launch — the secret is never stored here. A null baseUrl marks a not-yet-landed endpoint: the profile is selectable but refuses to inject (honest degradation, no silent fallback).",
+  "profiles": {
+    "direct": {
+      "baseUrl": "http://monad-1.tail123678.ts.net:4000/v1",
+      "model": "openai/qwen2.5-coder-32b-fp16",
+      "keyRef": "file:~/.config/monad/tangleclaw-aider.key",
+      "status": "real"
+    },
+    "smart-fallback": {
+      "baseUrl": "http://monad-1.tail123678.ts.net:4000/v1",
+      "model": "openai/smart-code",
+      "keyRef": "file:~/.config/monad/tangleclaw-aider.key",
+      "status": "provisional"
+    },
+    "semantic-route": {
+      "baseUrl": null,
+      "model": "openai/auto",
+      "keyRef": "file:~/.config/monad/tangleclaw-aider.key",
+      "status": "provisional"
+    }
+  }
+}
