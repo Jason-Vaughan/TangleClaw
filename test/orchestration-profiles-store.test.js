@@ -69,7 +69,6 @@ describe('orchestrationProfiles.load() (TB-1/#357)', () => {
 
   it('returns an empty profiles map when the file is missing', () => {
     // Don't init (no seed); point the loader at a base path with no file.
-    store.orchestrationProfiles._clearCache();
     const cfg = store.orchestrationProfiles.load();
     assert.deepEqual(cfg, { profiles: {} });
   });
@@ -78,20 +77,18 @@ describe('orchestrationProfiles.load() (TB-1/#357)', () => {
     store.init();
     const runtimeFile = path.join(tmpDir, 'orchestration-profiles.json');
     fs.writeFileSync(runtimeFile, '{ not valid json');
-    store.orchestrationProfiles._clearCache();
     const cfg = store.orchestrationProfiles.load();
     assert.deepEqual(cfg, { profiles: {} });
   });
 
-  it('caches the parse and re-reads after _clearCache', () => {
+  it('reads per call so an operator edit is visible without a restart', () => {
     store.init();
     const runtimeFile = path.join(tmpDir, 'orchestration-profiles.json');
-    const first = store.orchestrationProfiles.load();
-    // Mutate the file; cached load should NOT see it yet.
+    assert.equal(store.orchestrationProfiles.load().profiles.only, undefined);
+    // Operator edits the file; the very next load must reflect it (no cache,
+    // mirrors engines.get() — picked up at the next session launch).
     fs.writeFileSync(runtimeFile, JSON.stringify({ profiles: { only: { baseUrl: 'x', model: 'y', keyRef: 'env:Z' } } }));
-    assert.equal(store.orchestrationProfiles.load(), first, 'cache hit returns same object');
-    store.orchestrationProfiles._clearCache();
-    assert.ok(store.orchestrationProfiles.load().profiles.only, 'cleared cache re-reads');
+    assert.ok(store.orchestrationProfiles.load().profiles.only, 'edit visible on next load');
   });
 });
 
