@@ -3067,6 +3067,10 @@ async function handleRequest(req, res) {
     if (serviceToken.requiresServiceToken(pathname)) {
       const gate = serviceToken.validateRequest(req.headers, store.config.load());
       if (!gate.ok) {
+        // Log the denial (never the token) — the gate returns before the normal
+        // access-log line below, so without this a rejected M2M caller leaves no
+        // trace for the operator to debug.
+        log.warn('Service-token gate denied request', { method, path: pathname, code: gate.code });
         return errorResponse(res, gate.status, gate.message, gate.code);
       }
     }
