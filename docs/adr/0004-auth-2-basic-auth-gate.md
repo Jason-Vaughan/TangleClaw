@@ -5,6 +5,16 @@
 **Research:** `.claude/plans/auth-research-2026-06-16.md` (deep-research, adversarially verified); live AUTH-1 cutover finding (`VRF-auth-1-cutover`, 2026-06-24) that the operator runs on a hand-edited Caddyfile.
 **Builds on:** ADR 0003 (single Caddy ingress). AUTH-2 puts the auth gate *in* that ingress. **Consumed by:** AUTH-3 (TC reads the proxy identity → owner/#347).
 
+**Follow-on — AUTH-3 (identity attribution, 2026-06-28, this gate's consumer).** With Path A the
+authenticated username is Caddy's `{http.auth.user.id}` placeholder; the gated `reverse_proxy` block
+forwards it as `header_up X-Auth-User {http.auth.user.id}` (set semantics — overwrites any client
+value). TC trusts that header **only** in caddy + `authEnabled` mode (`lib/auth-identity.js`
+`resolveRequestUser`), surfaces it as `GET /api/server-info` `currentUser` ("Logged in as ⟨user⟩"),
+and stamps each launched session's nullable `sessions.owner` (schema v21). This realizes the original
+AUTH-track "identity flow" decision (planned as an Authelia `Remote-User` header) on the shipped
+`basic_auth` gate. It is **attribution, not enforcement** — single operator, no per-user restriction
+yet (AUTH-4+). Spec: `.prawduct/artifacts/auth-3-proxy-identity.md`.
+
 ---
 
 ## Context

@@ -221,6 +221,27 @@ describe('caddy', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
       assert.equal(caddy.isGeneratedCaddyfile(out), true);
     });
+
+    // AUTH-3 — forward the authenticated identity to TC via header_up.
+    it('forwards the authenticated user via header_up on a gated site (AUTH-3)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.match(out, /\treverse_proxy 127\.0\.0\.1:3101 \{/);
+      assert.match(out, /\t\theader_up X-Auth-User \{http\.auth\.user\.id\}/);
+      // header_up lives inside reverse_proxy, which runs after the basic_auth gate.
+      assert.ok(out.indexOf('basic_auth') < out.indexOf('header_up'));
+    });
+
+    it('emits NO header_up on an ungated site (no identity to forward, output unchanged)', () => {
+      const out = caddy.buildCaddyfileContent(opts);
+      assert.doesNotMatch(out, /header_up/);
+      // ungated reverse_proxy stays the single-line AUTH-1 form (no block braces).
+      assert.match(out, /\treverse_proxy 127\.0\.0\.1:3101\n/);
+    });
+
+    it('forwards identity on BOTH the local and public sites when gated + publicDomain', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, publicDomain: 'tc.example.com' });
+      assert.equal((out.match(/header_up X-Auth-User \{http\.auth\.user\.id\}/g) || []).length, 2);
+    });
   });
 
   describe('writeCaddyfile', () => {

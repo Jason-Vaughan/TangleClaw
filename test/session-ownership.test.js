@@ -66,6 +66,17 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     it('returns null for an unknown session id', () => {
       assert.equal(ownership.resolveBySessionId(99999999), null);
     });
+
+    it('surfaces the proxy-authenticated owner when set, null otherwise (AUTH-3)', (t) => {
+      t.mock.method(tmux, 'hasSession', () => true);
+      const project = store.projects.create({ name: 'owner-surface', path: '/tmp/owner-surface' });
+      const owned = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'owner-surface', owner: 'jason' });
+      assert.equal(ownership.resolveBySessionId(owned.id).owner, 'jason');
+
+      const project2 = store.projects.create({ name: 'owner-null', path: '/tmp/owner-null' });
+      const unowned = store.sessions.start({ projectId: project2.id, engineId: 'claude', tmuxSession: 'owner-null' });
+      assert.equal(ownership.resolveBySessionId(unowned.id).owner, null);
+    });
   });
 
   describe('resolveByProject', () => {

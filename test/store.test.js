@@ -77,7 +77,7 @@ describe('store', () => {
 
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 20);
+      assert.equal(row.version, 21);
     });
 
     it('should copy bundled engine profiles', () => {
@@ -2080,5 +2080,78 @@ describe('store', () => {
       const after = fs.readFileSync(live);
       assert.ok(before.equals(after), 'no-op should not rewrite the file');
     });
+  });
+});
+
+// AUTH-3 (#1): prove the v20→v21 sessions.owner migration on a REAL old-schema DB,
+// not just a fresh CREATE TABLE. Sibling top-level describe so the main suite's
+// beforeEach (which runs store.init at current schema) doesn't pre-create the column.
+describe('sessions v20→v21 owner migration (AUTH-3, #1)', () => {
+  it('adds the owner column to a pre-existing sessions table; old rows read null, new rows persist', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sessions-owner-mig-'));
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      // Seed a v20 DB: schema_version pinned at 20, a projects row, and a sessions
+      // table WITHOUT the owner column + one pre-AUTH-3 row. store.init() then fires
+      // the v20→v21 ALTER.
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (20);
+        CREATE TABLE projects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          path TEXT NOT NULL,
+          engine_id TEXT,
+          methodology TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          archived INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO projects (id, name, path) VALUES (1, 'pre-auth3', '/tmp/pre-auth3');
+        CREATE TABLE sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          engine_id TEXT NOT NULL,
+          tmux_session TEXT,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          ended_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          wrap_summary TEXT,
+          prime_prompt TEXT,
+          methodology_phase TEXT,
+          duration_seconds INTEGER,
+          session_mode TEXT NOT NULL DEFAULT 'tmux',
+          launch_mode TEXT,
+          wrap_started_at TEXT
+        );
+        INSERT INTO sessions (project_id, engine_id, tmux_session) VALUES (1, 'claude', 'pre-auth3-sess');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 21);
+
+      // The pre-AUTH-3 row gained the column with a NULL value (unauthenticated == null).
+      const old = store.sessions.get(1);
+      assert.equal(old.owner, null);
+
+      // A new session can be stamped with an owner and round-trips it.
+      const fresh = store.sessions.start({ projectId: 1, engineId: 'claude', tmuxSession: 'post-auth3', owner: 'jason' });
+      assert.equal(store.sessions.get(fresh.id).owner, 'jason');
+      // Default stays null when no owner is supplied (direct mode).
+      const unowned = store.sessions.start({ projectId: 1, engineId: 'claude', tmuxSession: 'post-auth3-b' });
+      assert.equal(store.sessions.get(unowned.id).owner, null);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

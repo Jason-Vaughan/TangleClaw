@@ -294,9 +294,9 @@ describe('store.openclawConnections', () => {
         store.init();
 
         const db = store.getDb();
-        // Schema version advanced to current (v14 → v15 bridge_port rebuild → v16 instance_dir → v17 migration_status → v18 session_rules → v19 session_rule_versions → v20 session_rules.kind).
+        // Schema version advanced to current (v14 → v15 bridge_port rebuild → v16 instance_dir → v17 migration_status → v18 session_rules → v19 session_rule_versions → v20 session_rules.kind → v21 sessions.owner).
         const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-        assert.equal(ver.version, 20);
+        assert.equal(ver.version, 21);
         // Column constraint actually changed (v15).
         const cols = db.prepare("PRAGMA table_info(openclaw_connections)").all();
         const bridgeCol = cols.find((c) => c.name === 'bridge_port');

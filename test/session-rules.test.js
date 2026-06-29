@@ -293,8 +293,10 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       store.init();
 
       const db = store.getDb();
+      // init migrates a v19 DB all the way to the current schema (now v21 — the
+      // kind backfill below is the v19→v20 step in that chain).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 20);
+      assert.equal(ver.version, 21);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();

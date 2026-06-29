@@ -32,6 +32,7 @@ For remote / VPN-reachable installs, an **optional login gate** is available in 
 - **Hash storage:** only the bcrypt hash is stored (in `config.json` as `basicAuthHash`), produced by a `caddy hash-password` shell-out — the plaintext is passed on stdin and never logged, stored, or placed on a command line.
 - **No permanent lockout.** A lost admin password is recoverable from a terminal on the host via `scripts/reset-admin.js` (fail-closed; preserves a hand-edited Caddyfile). Recovery requires physical/SSH access by design — it opens no network reset path.
 - **Single admin, no MFA** in this version. A multi-user / portal / MFA upgrade (caddy-security) is documented but deferred (ADR 0004).
+- **Identity attribution (AUTH-3).** When the gate is live, Caddy forwards the authenticated username to TC (`header_up X-Auth-User {http.auth.user.id}`); TC shows "Logged in as ⟨user⟩" and records it as each launched session's `owner`. TC trusts `X-Auth-User` **only** in caddy-ingress + `authEnabled` mode — in direct mode the header is ignored, so it cannot be forged against TC's localhost listener. This is attribution, not enforcement: actions are not yet restricted per user (single operator).
 
 **Limitations:** HTTP Basic Auth has no server-side logout (the browser caches the credential until closed) and is a single shared identity. The gate is only as strong as the transport — always pair it with HTTPS, never plain HTTP.
 
