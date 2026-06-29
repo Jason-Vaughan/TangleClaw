@@ -38,6 +38,23 @@ For remote / VPN-reachable installs, an **optional login gate** is available in 
 
 **Recommendation:** Run on a private network or behind a VPN (Tailscale, WireGuard) **and** enable the auth gate for any non-localhost exposure. Do not expose to the public internet without both.
 
+### Service Tokens — M2M API gate (optional, AUTH-4)
+
+The AUTH-2 gate protects **remote** callers at the Caddy ingress, but TangleClaw's own fleet (every project's session, registering ports and syncing shared docs) calls back into the API on the **direct localhost listener** (`localhost:3102`), which Caddy does not front. By default those two surfaces are unauthenticated:
+
+- **PortHub** — `/api/ports*` (lease, release, heartbeat, sync, list)
+- **Shared-docs** — `/api/shared-docs*` and a group's `/api/groups/:id/sync`
+
+An **optional bearer-token gate** (`serviceTokenEnabled`, default `false`) closes that path. Properties:
+
+- **Single fleet token.** One `tcsk_`-prefixed token (`tcsk_` + 32 bytes base64url, generated with `node:crypto`) authorizes both surfaces for every project. Per-project / per-surface scopes are deferred (AUTH-5+); per-session *attribution* is already provided by AUTH-3's `sessions.owner`.
+- **Auto-generated on enable; reveal/rotate in Settings.** Enabling the gate auto-generates the token; the Settings "Service Token (M2M API)" panel reveals it (`GET /api/service-token`) and rotates it (`POST /api/service-token/rotate`). No first-run wizard step. The management endpoints sit **outside** the gated set, so a service caller can't reveal or rotate its own credential.
+- **Raw at rest, redacted from the config API.** The token is stored raw in `config.json` (`serviceToken`) — it must be, because TC auto-injects it into each project's generated config guide, and a hash can't be injected. It is consistent with the existing `audit_secret` / gateway / bridge raw-at-rest secrets and is redacted from `GET`/`PATCH /api/config` (a `serviceTokenConfigured` boolean is surfaced instead).
+- **Constant-time comparison** (`crypto.timingSafeEqual`); **fail-closed** when enabled with no token (`500 SERVICE_TOKEN_MISCONFIGURED`, only reachable by hand-editing `config.json`); a missing/wrong `Authorization: Bearer` header returns `401`.
+- **Default-off and reversible.** When off the gate is a no-op and the surfaces behave byte-for-byte as before; disabling restores open behavior exactly. Decoupled from `ingressMode`/`authEnabled` — it protects the localhost path in both direct and caddy mode.
+
+**Limit (no over-claiming):** a fully-compromised local user who can read `~/.tangleclaw/config.json` or a project's generated config can read the token. This gate is attribution and lateral-movement friction on a single-tenant box — **not** a defense against a root-equivalent local attacker. Rotating a token invalidates the old one; live sessions holding it lose API access until they relaunch and re-acquire the injected value. See ADR 0005.
+
 ### HTTPS / Ingress
 
 TangleClaw supports TLS via `httpsEnabled`, `httpsCertPath`, and `httpsKeyPath` in config (direct mode). HTTPS is required for OpenClaw Web UI device pairing from non-localhost browsers (secure context requirement). In **caddy ingress mode** (AUTH-1, ADR 0003), Caddy terminates TLS at a single ingress (mkcert for `localhost`, ACME for a configured `publicDomain`) and is the only path to the server; ttyd moves to a Unix socket unreachable except via the proxy chain. The optional auth gate above lives in this ingress.
