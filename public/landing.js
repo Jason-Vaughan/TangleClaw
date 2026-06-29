@@ -112,8 +112,30 @@ async function loadServerInfo() {
   state.restartMechanism = (typeof data.restartMechanism === 'string' && data.restartMechanism.length > 0)
     ? data.restartMechanism
     : null;
+  // AUTH-3: show "Logged in as <user>" when behind the Caddy login gate.
+  // `currentUser` is null unless the gate is live (the server-side trust gate
+  // never honors a direct-mode header), so this is hidden in direct mode.
+  renderAuthUser(data.currentUser);
   if (!data.isStale) return;
   renderStaleServerBanner(data);
+}
+
+/**
+ * Show or hide the "Logged in as <user>" chip in the dashboard bar (AUTH-3).
+ * Hidden whenever there is no authenticated user (direct mode / gate off).
+ * The username is escaped before it reaches innerHTML.
+ * @param {string|null|undefined} user
+ */
+function renderAuthUser(user) {
+  const el = document.getElementById('authUser');
+  if (!el) return;
+  if (typeof user === 'string' && user.length > 0) {
+    el.innerHTML = `&#128100; ${esc(user)}`;  // 👤 logged-in user
+    el.classList.remove('hidden');
+  } else {
+    el.textContent = '';
+    el.classList.add('hidden');
+  }
 }
 
 /**

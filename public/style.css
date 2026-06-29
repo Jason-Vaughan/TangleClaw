@@ -110,6 +110,17 @@ body {
   color: var(--text-muted);
   font-family: monospace;
 }
+/* AUTH-3: "logged in as <user>" chip, shown only behind the Caddy login gate. */
+.dash-auth-user {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+  padding: 1px 6px;
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.dash-auth-user.hidden { display: none; }
 .update-pill {
   display: inline-flex;
   align-items: center;

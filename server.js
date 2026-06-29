@@ -34,6 +34,7 @@ const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const wrapSentinel = require('./lib/wrap-sentinel');
+const authIdentity = require('./lib/auth-identity');
 
 const log = createLogger('server');
 
@@ -337,7 +338,12 @@ route('GET', '/api/version', (_req, res) => {
 // (or fetches on page load) to surface a banner when the running process
 // is older than the on-disk code. See `lib/server-info.js` docstring.
 route('GET', '/api/server-info', (_req, res) => {
-  jsonResponse(res, 200, serverInfo.getServerInfo());
+  const info = serverInfo.getServerInfo();
+  // AUTH-3: surface the proxy-authenticated user so the dashboard can show
+  // "Logged in as <user>". Null unless the Caddy basic_auth gate is live (the
+  // trust gate is in lib/auth-identity — a direct-mode header is never honored).
+  info.currentUser = authIdentity.resolveRequestUser(_req.headers, store.config.load());
+  jsonResponse(res, 200, info);
 });
 
 // POST /api/server/restart — kick the TC server via the platform's
@@ -1565,11 +1571,16 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
 
+  // AUTH-3: stamp the session with the proxy-authenticated user (null in direct
+  // mode / when the gate is off — resolveRequestUser enforces the trust gate).
+  const owner = authIdentity.resolveRequestUser(_req.headers, store.config.load());
+
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
-    launchMode: body ? body.launchMode : undefined
+    launchMode: body ? body.launchMode : undefined,
+    owner
   });
 
   // Web UI mode — delegate to async launch path
@@ -1580,7 +1591,8 @@ route('POST', '/api/sessions/:project', (_req, res, params, body) => {
       // launchWebuiSession so it can pre-create a ClawBridge session
       // with the matching permissionMode (resolved against the engine
       // profile's bridgePermissionMode mapping).
-      launchMode: body ? body.launchMode : null
+      launchMode: body ? body.launchMode : null,
+      owner  // AUTH-3: stamp the webui session with the authenticated user too
     };
     sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project, launchOpts)
       .then((webuiResult) => {
