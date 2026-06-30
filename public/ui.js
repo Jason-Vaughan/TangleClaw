@@ -790,16 +790,18 @@ function openSettings(name) {
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
              autocomplete="off" autocorrect="off" autocapitalize="off">
     </div>
-    <div id="settingsSilentPrimeContainer"></div>
-    <div id="settingsFeatureIndexContainer"></div>
-    <div id="settingsProjectMapContainer"></div>
-    <div class="form-group">
-      <label class="gs-toggle-label">
-        <span>Auto version bump</span>
-        <input type="checkbox" id="settingsVersionBump" ${initialVersionBumpChecked ? 'checked' : ''}>
-        <span class="toggle-switch"></span>
-      </label>
-      <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
+    <div class="settings-toggles-grid">
+      <div id="settingsSilentPrimeContainer"></div>
+      <div id="settingsFeatureIndexContainer"></div>
+      <div id="settingsProjectMapContainer"></div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Auto version bump</span>
+          <input type="checkbox" id="settingsVersionBump" ${initialVersionBumpChecked ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
+      </div>
     </div>
     ${renderProjectRulesSection(project)}`;
 
@@ -967,9 +969,9 @@ function renderProjectRulesSection(project) {
       <div class="form-group">
         <div class="form-label">Wrap summary sections</div>
         <div class="form-hint">Which of the 8 wrap-summary sections this project records. <code>Next action</code> is always kept.</div>
-        ${sectionChecks}
+        <div class="wrap-section-grid">${sectionChecks}</div>
       </div>
-      ${ruleBlocks}
+      <div class="project-rules-grid">${ruleBlocks}</div>
       <div id="projectRulesStatus" class="rules-status hidden" role="status"></div>
     </div>`;
 }
