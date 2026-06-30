@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-29';
+const CACHE_NAME = 'tangleclaw-v3-30';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -46,6 +46,12 @@ const STATIC_ASSETS = [
 // a network fetch on every page load.
 const NETWORK_FIRST_PATHS = new Set([
   '/openclaw-cache.js',
+  // api-helper.js is the shared frontend base (api()/apiMutate()/copy helper)
+  // loaded before every page script on both the dashboard and session pages.
+  // A stale copy hides shared-helper changes from operators the same way #271
+  // describes for session.js (#427: the clipboard fix lived here) — keep it
+  // network-first so a plain reload always gets the current helper.
+  '/api-helper.js',
   '/session.js',
   // wrap-drawer.js is the pure-helper sibling of session.js: session.js
   // (network-first) calls its helpers directly, so a stale wrap-drawer.js

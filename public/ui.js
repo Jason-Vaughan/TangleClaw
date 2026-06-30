@@ -2256,14 +2256,10 @@ async function copyOpenclawSSH(connId) {
   const sshCmd = `ssh -i ${conn.sshKeyPath} ${conn.sshUser}@${conn.host}`;
   const toast = document.getElementById('toast');
 
-  try {
-    await navigator.clipboard.writeText(sshCmd);
-    toast.textContent = `Copied: ${sshCmd}`;
-    toast.className = 'toast toast-ok visible';
-  } catch {
-    toast.textContent = sshCmd;
-    toast.className = 'toast toast-ok visible';
-  }
+  const ok = await tcCopyToClipboard(sshCmd);
+  // On failure show the command itself so it can be hand-selected.
+  toast.textContent = ok ? `Copied: ${sshCmd}` : sshCmd;
+  toast.className = 'toast toast-ok visible';
   setTimeout(() => toast.classList.remove('visible'), 5000);
 }
 
@@ -2292,14 +2288,9 @@ function closeOpenclawSetupModal() {
 async function copyOpenclawSetupPrompt() {
   const prompt = (document.getElementById('ocSetupPrompt')?.textContent || '').trim();
   const toast = document.getElementById('toast');
-  try {
-    await navigator.clipboard.writeText(prompt);
-    toast.textContent = 'Setup prompt copied to clipboard';
-    toast.className = 'toast toast-ok visible';
-  } catch {
-    toast.textContent = 'Copy failed — select the prompt text manually';
-    toast.className = 'toast toast-warn visible';
-  }
+  const ok = await tcCopyToClipboard(prompt);
+  toast.textContent = ok ? 'Setup prompt copied to clipboard' : 'Copy failed — select the prompt text manually';
+  toast.className = ok ? 'toast toast-ok visible' : 'toast toast-warn visible';
   setTimeout(() => toast.classList.remove('visible'), 5000);
 }
 
