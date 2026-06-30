@@ -212,6 +212,28 @@ describe('store.sharedDocs', () => {
       assert.ok(result.skipped.includes('EXISTING.md'));
     });
 
+    it('picks up a NEWLY-ADDED .md on a re-scan, skipping the already-registered one (#356 regression)', () => {
+      // #356 reported a newly-added shared doc (TANGLEBRAIN.md) not registering on
+      // launch while the previously-registered one (LITELLM.md) did. This pins the
+      // incremental re-scan: register A, add B to the same dir, re-sync → B added, A skipped.
+      const dirPath = path.join(tmpDir, 'shared-dir-incremental');
+      fs.mkdirSync(dirPath, { recursive: true });
+      fs.writeFileSync(path.join(dirPath, 'LITELLM.md'), '# LiteLLM');
+
+      const first = store.sharedDocs.syncFromDirectory(group.id, dirPath);
+      assert.deepEqual(first.added, ['LITELLM.md']);
+
+      // A new doc lands in the same shared directory after the first sync.
+      fs.writeFileSync(path.join(dirPath, 'TANGLEBRAIN.md'), '# TangleBrain');
+
+      const second = store.sharedDocs.syncFromDirectory(group.id, dirPath);
+      assert.deepEqual(second.added, ['TANGLEBRAIN.md'], 'the newly-added doc must register on re-scan');
+      assert.ok(second.skipped.includes('LITELLM.md'), 'the already-registered doc must be skipped, not re-added');
+
+      const names = store.sharedDocs.getByGroup(group.id).map((d) => d.name).sort();
+      assert.ok(names.includes('LITELLM') && names.includes('TANGLEBRAIN'), 'both docs registered exactly once');
+    });
+
     it('should handle missing directory gracefully', () => {
       const result = store.sharedDocs.syncFromDirectory(group.id, '/nonexistent/path');
       assert.equal(result.added.length, 0);

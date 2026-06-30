@@ -174,4 +174,75 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.equal(projects.getProject('pm-surface').projectMapEnabled, true);
     });
   });
+
+  // ── Slice 2 (#356): shared-dir / doc-group membership ──
+
+  describe('_buildSharedDirsSection', () => {
+    it('renders a "not a member" note for no groups', () => {
+      assert.match(projects._buildSharedDirsSection([]), /not a member of any shared-doc group/);
+      assert.match(projects._buildSharedDirsSection(undefined), /not a member/);
+    });
+
+    it('renders each group with its absolute sharedDir and nested registered docs', () => {
+      const md = projects._buildSharedDirsSection([
+        { name: 'AI Inference', sharedDir: '/abs/Monad-1', docs: [{ name: 'LITELLM' }, { name: 'TANGLEBRAIN' }] }
+      ]);
+      assert.ok(md.includes('- **AI Inference** → `/abs/Monad-1`'));
+      assert.ok(md.includes('  - `LITELLM`'));
+      assert.ok(md.includes('  - `TANGLEBRAIN`'));
+    });
+
+    it('notes a group with no sharedDir and a group with no docs', () => {
+      const md = projects._buildSharedDirsSection([
+        { name: 'NoDir', sharedDir: null, docs: [] }
+      ]);
+      assert.ok(md.includes('- **NoDir** → _(no shared directory)_'));
+      assert.ok(md.includes('  - _(no docs registered)_'));
+    });
+  });
+
+  describe('_collectProjectGroups', () => {
+    it('maps store group membership into the section shape', () => {
+      const fakeStore = {
+        projectGroups: { getByProject: () => [{ id: 'g1', name: 'G1', sharedDir: '/x' }] },
+        sharedDocs: { getByGroup: () => [{ name: 'DocA' }, { name: 'DocB' }] }
+      };
+      assert.deepEqual(projects._collectProjectGroups(42, { store: fakeStore }), [
+        { name: 'G1', sharedDir: '/x', docs: [{ name: 'DocA' }, { name: 'DocB' }] }
+      ]);
+    });
+
+    it('returns [] (non-throwing) when the store throws', () => {
+      const throwingStore = { projectGroups: { getByProject() { throw new Error('boom'); } } };
+      assert.deepEqual(projects._collectProjectGroups(1, { store: throwingStore }), []);
+    });
+  });
+
+  describe('_buildProjectMapContent with membership', () => {
+    it('embeds the shared-dirs membership into the section', () => {
+      const p = path.join(tmpDir, 'content-with-groups');
+      fs.mkdirSync(path.join(p, 'lib'), { recursive: true });
+      const content = projects._buildProjectMapContent(p, [
+        { name: 'GroupX', sharedDir: '/shared/x', docs: [{ name: 'DOC' }] }
+      ]);
+      assert.ok(content.includes('## Shared directories / doc groups'));
+      assert.ok(content.includes('- **GroupX** → `/shared/x`'));
+      assert.ok(content.includes('  - `DOC`'));
+    });
+  });
+
+  describe('updateProject — seeds PROJECT-MAP.md with real group membership', () => {
+    it('writes the project\'s shared-doc group membership on toggle-on', () => {
+      const group = store.projectGroups.create({ name: 'PM Membership Group', sharedDir: '/abs/pm-shared' });
+      const project = projects.createProject({ name: 'pm-with-membership', methodology: 'minimal' }).project;
+      store.projectGroups.addMember(group.id, project.id);
+      store.sharedDocs.create({ groupId: group.id, name: 'NETWORK', filePath: '/abs/pm-shared/NETWORK.md' });
+
+      projects.updateProject('pm-with-membership', { projectMapEnabled: true });
+
+      const content = fs.readFileSync(path.join(project.path, projects.PROJECT_MAP_FILENAME), 'utf8');
+      assert.ok(content.includes('- **PM Membership Group** → `/abs/pm-shared`'), 'group + sharedDir present');
+      assert.ok(content.includes('  - `NETWORK`'), 'registered doc present');
+    });
+  });
 });
