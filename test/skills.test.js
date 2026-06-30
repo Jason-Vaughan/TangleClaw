@@ -86,11 +86,12 @@ describe('skills', () => {
       // wrap_pipeline.steps[]. CC-1 appended `continuity-write` after
       // `commit` (writes the hot continuity index the next prime reads).
       // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
-      // V2 plugin). The shim flattens every step.id into the legacy steps
-      // array, so the surface order here reflects the template-level edits.
+      // V2 plugin). PIDX slice 3 (#360) added `project-map` after `features-toc`.
+      // The shim flattens every step.id into the legacy steps array, so the
+      // surface order here reflects the template-level edits.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'memory-update', 'commit', 'continuity-write'],
+        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'project-map', 'memory-update', 'commit', 'continuity-write'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {
