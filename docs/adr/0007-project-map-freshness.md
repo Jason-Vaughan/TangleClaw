@@ -36,3 +36,11 @@ The step stages `{primingPath, newContent, changed:true, mapRefresh:true, addedD
 - A wrap with no structural/membership change is silent and write-free (idempotence), so `PROJECT-MAP.md` only churns git history when it genuinely changed.
 - The "only dir bullets survive inside `## Structure`" rule is a real constraint operators must learn (notes go in their own section). It's documented in the seed header comment and the spec; the alternative (preserving arbitrary in-section prose) would make the merge unpredictable.
 - Deferred (unchanged from slices 1–2): unifying FEATURES.md + PROJECT-MAP.md, and two-levels-deep auto-skeleton descriptions.
+
+## Amendment (2026-06-30, #423): self-heal when the index is missing
+
+Originally the wrap step **skipped** a missing `PROJECT-MAP.md` (mirroring `features-toc`'s "deletion = opt-out" read). That's incoherent for this feature: **the toggle is the off-switch, not file deletion.** A toggle that's on but a file that's missing is an anomaly — a fresh clone where the file wasn't committed, a delete-to-regenerate, or a toggle enabled through a path that didn't seed — and "skip forever" means the index the operator asked for never materializes (acute when enabling Project Map across many/large projects).
+
+So the step now **self-heals**: toggle on + file missing → **create** it from the current skeleton + membership (`_buildProjectMapContent`), staged through the same commit flush, commit body `- Project Map: created (N dir(s))`. To opt out, toggle off; to regenerate, delete and let the next wrap recreate.
+
+**Compute invariant (load-bearing).** Both the create and the refresh paths enumerate **top-level directories only** — a single `fs.readdirSync` of the repo root, no recursion, no file reads. Cost scales with the *number of top-level folders* (dozens), never the size of the tree, so it stays millisecond-scale even on a 300k-line repo (e.g. TiltV2). **Any future change that descends 2+ levels (the deferred deeper-skeleton idea) would break this invariant and must be opt-in / bounded.**
