@@ -74,6 +74,44 @@
     };
   }
 
+  /**
+   * Copy `text` to the clipboard, working in BOTH secure (HTTPS / localhost)
+   * and insecure (plain-HTTP) contexts. The async Clipboard API
+   * (`navigator.clipboard`) is only defined in a secure context, so over plain
+   * HTTP on a non-localhost origin (e.g. `http://host:8080` over Tailscale) it
+   * is `undefined` and every copy button silently failed (#427). Falls back to
+   * a hidden-`<textarea>` + `document.execCommand('copy')`, which works on HTTP.
+   *
+   * @param {string} text - The text to copy.
+   * @returns {Promise<boolean>} `true` on success, `false` if both paths fail.
+   */
+  async function tcCopyToClipboard(text) {
+    if (global.navigator && global.navigator.clipboard && global.isSecureContext) {
+      try {
+        await global.navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        // Secure-context API present but rejected (permissions, focus, …) —
+        // fall through to the legacy path rather than failing outright.
+      }
+    }
+    try {
+      const ta = global.document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      global.document.body.appendChild(ta);
+      ta.select();
+      const ok = global.document.execCommand('copy');
+      global.document.body.removeChild(ta);
+      return ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
+  global.tcCopyToClipboard = tcCopyToClipboard;
 })(typeof window !== 'undefined' ? window : globalThis);

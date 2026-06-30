@@ -1705,12 +1705,11 @@ async function copyUploadPath(pathStr) {
     toast.className = `toast ${cls} visible`;
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
   };
-  try {
-    await navigator.clipboard.writeText(pathStr);
-    flash('Upload path copied to clipboard', 'toast-ok');
-  } catch (_) {
-    flash('Could not copy — select the path manually', 'toast-warn');
-  }
+  const ok = await tcCopyToClipboard(pathStr);
+  flash(
+    ok ? 'Upload path copied to clipboard' : 'Could not copy — select the path manually',
+    ok ? 'toast-ok' : 'toast-warn'
+  );
 }
 
 function closeUploadModal() {
@@ -2009,12 +2008,11 @@ async function copyWrapReport() {
     toast.className = `toast ${cls} visible`;
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
   };
-  try {
-    await navigator.clipboard.writeText(text);
-    flash('Wrap report copied to clipboard', 'toast-ok');
-  } catch (_) {
-    flash('Could not copy — select the report text manually', 'toast-warn');
-  }
+  const ok = await tcCopyToClipboard(text);
+  flash(
+    ok ? 'Wrap report copied to clipboard' : 'Could not copy — select the report text manually',
+    ok ? 'toast-ok' : 'toast-warn'
+  );
 }
 
 /**
