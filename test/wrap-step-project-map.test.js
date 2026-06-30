@@ -85,13 +85,6 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
       assert.match(r.output.reason, /projectMapEnabled/i);
     });
 
-    it('skips when PROJECT-MAP.md is missing', async () => {
-      enableToggle();
-      const r = await projectMap.run({ project, staged: {} });
-      assert.equal(r.status, 'skipped');
-      assert.match(r.output.reason, /not found/i);
-    });
-
     it('skips with no drift when the map is already current', async () => {
       enableToggle();
       fs.writeFileSync(path.join(projectPath, MAP), projects._buildProjectMapContent(projectPath));
@@ -142,6 +135,29 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
       assert.ok(out.includes('- `lib/` — the core library'), 'curated description survives');
       assert.ok(out.includes('- `data/` — <!-- describe -->'), 'new dir added');
     });
+
+    it('self-heals — creates the index when the toggle is on but the file is missing (#423)', async () => {
+      enableToggle();
+      fs.mkdirSync(path.join(projectPath, 'data'), { recursive: true }); // lib/ already exists
+      assert.equal(fs.existsSync(path.join(projectPath, MAP)), false, 'precondition: no map file');
+
+      const staged = {};
+      const r = await projectMap.run({ project, staged });
+
+      assert.equal(r.status, 'done');
+      assert.equal(r.output.created, true);
+      assert.deepEqual([...r.output.addedDirs].sort(), ['data', 'lib']);
+
+      const entry = staged['project-map:refresh'];
+      assert.ok(entry, 'staged key set');
+      assert.equal(entry.created, true);
+      assert.equal(entry.mapRefresh, true);
+      assert.ok(entry.newContent.includes('## Structure'), 'created content has a Structure section');
+      assert.ok(entry.newContent.includes('- `lib/` — <!-- describe -->'));
+      assert.ok(entry.newContent.includes('- `data/` — <!-- describe -->'));
+      // The step only stages — the commit flush writes the file.
+      assert.equal(fs.existsSync(path.join(projectPath, MAP)), false, 'file not written until commit flush');
+    });
   });
 
   describe('commit body line (lib/wrap-steps/commit.js)', () => {
@@ -163,6 +179,16 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
         }
       });
       assert.ok(lines.some((l) => l === '- Project Map: membership/descriptions refreshed'), lines.join('|'));
+    });
+
+    it('emits a "created" line for a self-heal create (#423)', () => {
+      const lines = commitStep._buildBodyLines({
+        'project-map:refresh': {
+          primingPath: '/x/PROJECT-MAP.md', newContent: 'x', changed: true,
+          mapRefresh: true, created: true, addedDirs: ['lib', 'data'], removedDirs: []
+        }
+      });
+      assert.ok(lines.some((l) => l === '- Project Map: created (2 dir(s))'), lines.join('|'));
     });
   });
 });
