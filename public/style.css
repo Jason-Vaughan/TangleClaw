@@ -996,6 +996,70 @@ body {
 .wrap-section-toggle {
   margin-top: 4px;
 }
+
+/* ── Settings modal: wider, multi-column layout so it fits without zooming out ──
+   The settings modal carries far more controls than the other (confirmation)
+   modals, so it gets its own width + a set of responsive grids. Each grid uses
+   auto-fit/minmax so it collapses to a single column on narrow viewports.
+   NOTE: the selector is `.modal-content.settings-modal` (two classes) on
+   purpose — the base `.modal-content { max-width: 380px }` rule lives LATER in
+   this file, so an equal-specificity `.settings-modal` would lose on source
+   order. The two-class selector outranks it regardless of order. */
+.modal-content.settings-modal {
+  max-width: 680px;
+  /* Flex column so the body scrolls while the title + Save/Cancel stay put —
+     the Save button is always reachable without page-zoom. Overrides the base
+     `overflow-y:auto` (the inner #settingsBody owns the scroll here). */
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-content.settings-modal > .modal-title,
+.modal-content.settings-modal > .modal-actions {
+  flex-shrink: 0;
+}
+.modal-content.settings-modal > #settingsBody {
+  flex: 1 1 auto;
+  min-height: 0;        /* lets the flex child shrink below content height so it can scroll */
+  overflow-y: auto;
+  /* room so the scrollbar doesn't sit on top of the controls */
+  padding-right: 4px;
+  margin-right: -4px;
+}
+/* Capability toggles (Silent prime / Feature Index / Project Map / Auto version
+   bump) — two-up on a wide modal, each cell a toggle + its hint. An empty
+   container (e.g. silent-prime hidden for a non-capable engine) collapses to a
+   0-height cell. */
+.settings-toggles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 0 22px;
+  align-items: start;
+}
+.settings-toggles-grid .form-group {
+  margin-bottom: 12px;
+}
+/* The 8 wrap-summary pills — three-up on a wide modal (was 8 stacked rows). */
+.wrap-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 0 18px;
+  margin-top: 4px;
+}
+.wrap-section-grid .wrap-section-toggle {
+  margin-top: 0;
+}
+/* The three rule editors (Startup / Wrap / Mode) — side by side when they fit. */
+.project-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 4px 18px;
+}
+.project-rules-grid .project-rules-block {
+  margin-top: 12px;
+  min-width: 0;
+}
 .wrap-section-toggle em {
   color: var(--text-muted, #888);
   font-style: italic;
@@ -1671,6 +1735,10 @@ body {
   border-radius: var(--radius-modal);
   width: 90%;
   max-width: 380px;
+  /* Never exceed the viewport — a tall modal scrolls internally instead of
+     growing off-screen (which forced page-zoom to reach the Save button). */
+  max-height: 90vh;
+  overflow-y: auto;
   padding: 20px;
   transform: scale(0.95);
   transition: transform 0.2s;

@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-26';
+const CACHE_NAME = 'tangleclaw-v3-29';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -54,6 +54,15 @@ const NETWORK_FIRST_PATHS = new Set([
   // the two in lockstep by making both network-first.
   '/wrap-drawer.js',
   '/session.css',
+  // The dashboard shell's core UI assets (category 2). ui.js builds every
+  // dashboard view + the settings modal, and style.css skins them — exactly the
+  // "stale-serve hides feature changes" pattern #271 cites for session.js. They
+  // were cache-first, so every UI tweak stayed invisible behind an active worker
+  // until a CACHE_NAME bump (a Settings-modal layout change burned a whole
+  // debugging round on this). Network-first keeps them lockstep-fresh with the
+  // network-first index.html; both stay precached above for offline coherence.
+  '/ui.js',
+  '/style.css',
   '/landing.js',
   // sw-register.js is cache-bust-critical (category 1): its entire purpose is
   // service-worker lifecycle. Serving a stale copy would re-strand operators
