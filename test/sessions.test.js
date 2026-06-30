@@ -582,6 +582,101 @@ describe('sessions', () => {
         try { fs.rmSync(path.join(fiProjectPath, '.tangleclaw'), { recursive: true, force: true }); } catch {}
       });
     });
+
+    describe('Project Map pointer injection (PIDX #360, #356)', () => {
+      // Dedicated project so config + PROJECT-MAP.md state stays isolated.
+      let pmProject;
+      let pmProjectPath;
+      let mapPath;
+
+      before(() => {
+        pmProjectPath = path.join(projectsDir, 'pm-prime-test');
+        fs.mkdirSync(pmProjectPath, { recursive: true });
+        store.projects.create({
+          name: 'pm-prime-test',
+          path: pmProjectPath,
+          engine: 'claude',
+          methodology: 'minimal'
+        });
+        pmProject = store.projects.getByName('pm-prime-test');
+        mapPath = path.join(pmProjectPath, 'PROJECT-MAP.md');
+      });
+
+      beforeEach(() => {
+        store.projectConfig.save(pmProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: false,
+          projectMapEnabled: false
+        });
+        try { fs.rmSync(mapPath, { force: true }); } catch {}
+      });
+
+      it('emits a REFERENCE pointer (not the map body) when all three gates are true', () => {
+        store.projectConfig.save(pmProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          projectMapEnabled: true
+        });
+        // A map whose body contains a distinctive token we can prove is NOT inlined.
+        fs.writeFileSync(mapPath, '# Project Map\n\n## Structure\n\n- `lib/` — DISTINCTIVE_BODY_TOKEN\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(pmProject, engine);
+
+        assert.ok(prompt.includes('## Project Map'), 'prime should contain the Project Map heading');
+        assert.ok(prompt.includes('PROJECT-MAP.md'), 'prime should point at the file');
+        assert.ok(prompt.includes('Consult it FIRST'), 'prime should carry the go-here-first instruction');
+        // Reference, not injection: the map BODY must not be inlined.
+        assert.equal(prompt.includes('DISTINCTIVE_BODY_TOKEN'), false,
+          'the map body must NOT be inlined into the prime (#360 reference-not-injection)');
+      });
+
+      it('is skipped when projectMapEnabled is false (even with silentPrime + capability)', () => {
+        store.projectConfig.save(pmProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          projectMapEnabled: false
+        });
+        fs.writeFileSync(mapPath, '# Project Map\n\n- entry\n');
+
+        const prompt = sessions.generatePrimePrompt(pmProject, store.engines.get('claude'));
+        assert.equal(prompt.includes('## Project Map'), false);
+      });
+
+      it('is skipped when silentPrime is false (symmetric gate)', () => {
+        store.projectConfig.save(pmProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: false,
+          projectMapEnabled: true
+        });
+        fs.writeFileSync(mapPath, '# Project Map\n\n- entry\n');
+
+        const prompt = sessions.generatePrimePrompt(pmProject, store.engines.get('claude'));
+        assert.equal(prompt.includes('## Project Map'), false);
+      });
+
+      it('is skipped gracefully when PROJECT-MAP.md is missing (no throw, no section)', () => {
+        store.projectConfig.save(pmProjectPath, {
+          engine: 'claude',
+          methodology: 'minimal',
+          silentPrime: true,
+          projectMapEnabled: true
+        });
+        // PROJECT-MAP.md intentionally absent (beforeEach removed it).
+        const prompt = sessions.generatePrimePrompt(pmProject, store.engines.get('claude'));
+        assert.equal(prompt.includes('## Project Map'), false,
+          'missing PROJECT-MAP.md must skip silently — not throw and not insert an empty section');
+      });
+
+      after(() => {
+        try { fs.rmSync(mapPath, { force: true }); } catch {}
+        try { fs.rmSync(path.join(pmProjectPath, '.tangleclaw'), { recursive: true, force: true }); } catch {}
+      });
+    });
   });
 
   describe('_buildLaunchCommand', () => {

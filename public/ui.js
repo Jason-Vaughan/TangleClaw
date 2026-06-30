@@ -762,6 +762,8 @@ function openSettings(name) {
   const initialSilentChecked = !!project.silentPrime;
   // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
+  // Project Map toggle (PIDX #360, #356) — engine-agnostic, so always rendered.
+  const initialProjectMapChecked = !!project.projectMapEnabled;
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
   // explicit false disables it).
   const initialVersionBumpChecked = project.versionBumpEnabled !== false;
@@ -790,6 +792,7 @@ function openSettings(name) {
     </div>
     <div id="settingsSilentPrimeContainer"></div>
     <div id="settingsFeatureIndexContainer"></div>
+    <div id="settingsProjectMapContainer"></div>
     <div class="form-group">
       <label class="gs-toggle-label">
         <span>Auto version bump</span>
@@ -803,6 +806,7 @@ function openSettings(name) {
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
+  renderProjectMapToggle(initialProjectMapChecked);
   // CC-6 (#381): populate the three per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id);
@@ -873,6 +877,28 @@ function renderFeatureIndexToggle(preserveChecked) {
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">Maintain a FEATURES.md at the project root mapping feature names to file paths. Enabling creates a template stub at &lt;project-root&gt;/FEATURES.md (existing files are preserved). Edit the file directly to add entries.</div>
+    </div>`;
+}
+
+/**
+ * Render the Project Map toggle (PIDX #360, #356) into its stable container.
+ * Engine-agnostic and always rendered; the SessionStart prime POINTS the agent
+ * at PROJECT-MAP.md (reference, not inline) gated by silentPrime + the engine's
+ * supportsSilentPrime capability at the injection site.
+ *
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ */
+function renderProjectMapToggle(preserveChecked) {
+  const container = document.getElementById('settingsProjectMapContainer');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Project Map</span>
+        <input type="checkbox" id="settingsProjectMap" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Maintain a PROJECT-MAP.md at the project root — a "where things live" structural map the agent consults first. Enabling creates it with an auto-generated top-level-directory skeleton (existing files are preserved); fill in the descriptions. Distinct from the Feature Index (which maps features to paths).</div>
     </div>`;
 }
 
@@ -1155,6 +1181,11 @@ async function doSaveSettings() {
   const featureIndexEl = document.getElementById('settingsFeatureIndex');
   if (featureIndexEl) {
     body.featureIndexEnabled = featureIndexEl.checked;
+  }
+  // Project Map (PIDX #360, #356) — always present (engine-agnostic)
+  const projectMapEl = document.getElementById('settingsProjectMap');
+  if (projectMapEl) {
+    body.projectMapEnabled = projectMapEl.checked;
   }
   // Auto version-bump opt-out (#318) — always present (engine-agnostic)
   const versionBumpEl = document.getElementById('settingsVersionBump');
