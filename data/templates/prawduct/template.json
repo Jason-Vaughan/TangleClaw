@@ -67,6 +67,7 @@
       },
       {"id": "next-session-prime", "kind": "priming-roll"},
       {"id": "features-toc", "kind": "features-toc"},
+      {"id": "project-map", "kind": "project-map"},
       {
         "id": "memory-update",
         "kind": "ai-content",

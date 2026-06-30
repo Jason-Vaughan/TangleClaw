@@ -245,4 +245,102 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.ok(content.includes('  - `NETWORK`'), 'registered doc present');
     });
   });
+
+  // ── Slice 3 (#360, #356): freshness refresh helpers ──
+
+  describe('_parseStructureDirs', () => {
+    it('extracts the dir names listed in the Structure section', () => {
+      const p = path.join(tmpDir, 'parse-structure');
+      fs.mkdirSync(path.join(p, 'lib'), { recursive: true });
+      fs.mkdirSync(path.join(p, 'data'), { recursive: true });
+      const content = projects._buildProjectMapContent(p);
+      assert.deepEqual(projects._parseStructureDirs(content), ['data', 'lib']);
+    });
+
+    it('preserves dirs even when a description was curated onto the bullet', () => {
+      const content = '# Project Map\n\n## Structure\n\n- `lib/` — core library\n- `test/` — <!-- describe -->\n\n## Shared directories / doc groups\n\n<!-- x -->\n';
+      assert.deepEqual(projects._parseStructureDirs(content), ['lib', 'test']);
+    });
+
+    it('returns [] when the Structure section is absent', () => {
+      assert.deepEqual(projects._parseStructureDirs('# Project Map\n\nno structure here\n'), []);
+    });
+  });
+
+  describe('_mergeStructureBody', () => {
+    const seeded = '# Project Map\n\n## Structure\n\n- `lib/` — core library\n- `old/` — going away\n\n## Shared directories / doc groups\n\n<!-- x -->\n';
+
+    it('preserves the curated description on a surviving dir', () => {
+      const body = projects._mergeStructureBody(seeded, ['lib']);
+      assert.equal(body, '- `lib/` — core library');
+    });
+
+    it('adds a describe-stub for a new dir and drops a removed dir, in currentDirs order', () => {
+      const body = projects._mergeStructureBody(seeded, ['lib', 'new']);
+      assert.equal(body, '- `lib/` — core library\n- `new/` — <!-- describe -->');
+      assert.ok(!body.includes('old/'), 'removed dir is dropped');
+    });
+
+    it('emits the no-dirs placeholder when currentDirs is empty', () => {
+      assert.equal(projects._mergeStructureBody(seeded, []), '<!-- no top-level directories detected -->');
+    });
+  });
+
+  describe('_replaceSectionBody', () => {
+    const doc = '# H\n\n## Structure\n\n- `a/` — x\n\n## Shared directories / doc groups\n\n<!-- y -->\n';
+
+    it('replaces only the targeted section body, leaving sibling sections intact', () => {
+      const out = projects._replaceSectionBody(doc, '## Structure', '- `b/` — z');
+      assert.ok(out.includes('## Structure\n\n- `b/` — z\n'));
+      assert.ok(!out.includes('- `a/` — x'), 'old body gone');
+      assert.ok(out.includes('## Shared directories / doc groups\n\n<!-- y -->'), 'sibling section untouched');
+    });
+
+    it('returns content unchanged when the heading is absent', () => {
+      assert.equal(projects._replaceSectionBody(doc, '## Nonexistent', 'whatever'), doc);
+    });
+
+    it('replaces a trailing (EOF) section body and keeps a single final newline', () => {
+      const out = projects._replaceSectionBody(doc, '## Shared directories / doc groups', '<!-- new -->');
+      assert.ok(out.endsWith('## Shared directories / doc groups\n\n<!-- new -->\n'));
+    });
+  });
+
+  describe('_refreshProjectMapContent', () => {
+    it('is byte-for-byte idempotent on freshly-seeded content (no drift)', () => {
+      const p = path.join(tmpDir, 'refresh-idempotent');
+      fs.mkdirSync(path.join(p, 'lib'), { recursive: true });
+      fs.mkdirSync(path.join(p, 'data'), { recursive: true });
+      const groups = [{ name: 'G', sharedDir: '/s', docs: [{ name: 'D' }] }];
+      const seed = projects._buildProjectMapContent(p, groups);
+      const refreshed = projects._refreshProjectMapContent(seed, projects._listTopLevelDirs(p), groups);
+      assert.equal(refreshed, seed, 'refresh of fresh content must equal the seed exactly');
+    });
+
+    it('adds new dirs, drops removed dirs, and preserves curated descriptions', () => {
+      const seed = '# Project Map\n\n## Structure\n\n- `lib/` — the library\n- `gone/` — <!-- describe -->\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n';
+      const out = projects._refreshProjectMapContent(seed, ['lib', 'new'], []);
+      assert.ok(out.includes('- `lib/` — the library'), 'curated description preserved');
+      assert.ok(out.includes('- `new/` — <!-- describe -->'), 'new dir stubbed');
+      assert.ok(!out.includes('gone/'), 'removed dir dropped');
+    });
+
+    it('refreshes the shared-dir snapshot from current membership', () => {
+      const seed = '# Project Map\n\n## Structure\n\n- `lib/` — <!-- describe -->\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n';
+      const out = projects._refreshProjectMapContent(seed, ['lib'], [
+        { name: 'Backend', sharedDir: '/abs/be', docs: [{ name: 'NET' }] }
+      ]);
+      assert.ok(out.includes('- **Backend** → `/abs/be`'), 'new membership rendered');
+      assert.ok(out.includes('  - `NET`'), 'registered doc rendered');
+      assert.ok(!out.includes('not a member'), 'placeholder replaced');
+    });
+
+    it('preserves the header comment and any operator-added section verbatim', () => {
+      const seed = '# Project Map\n\n<!-- my notes -->\n\n## Structure\n\n- `lib/` — <!-- describe -->\n\n## Shared directories / doc groups\n\n<!-- x -->\n\n## Operator Notes\n\nkeep this\n';
+      const out = projects._refreshProjectMapContent(seed, ['lib', 'data'], []);
+      assert.ok(out.includes('<!-- my notes -->'), 'header comment preserved');
+      assert.ok(out.includes('## Operator Notes\n\nkeep this'), 'operator section preserved');
+      assert.ok(out.includes('- `data/` — <!-- describe -->'), 'new dir added to Structure');
+    });
+  });
 });
