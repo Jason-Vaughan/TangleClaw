@@ -290,19 +290,65 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.match(result.output.reason, /featureIndexEnabled/i);
     });
 
-    it('returns ok:true,skipped when FEATURES.md is missing', async () => {
+    it('self-heals (creates the seed) when FEATURES.md is missing but the toggle is on (#425)', async () => {
+      // Parity with project-map's #423: the toggle is the off-switch, not file
+      // deletion. A missing file under an enabled toggle is created, not skipped.
       store.projectConfig.save(projectPath, {
         engine: 'claude',
         methodology: 'minimal',
         featureIndexEnabled: true
       });
-      const result = await featuresToc.run({
-        project: createdProject,
-        staged: {}
+      // No base branch resolves → the create path stages the bare seed.
+      const orig = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = () => { throw new Error('ref not found'); };
+      const staged = {};
+      try {
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.equal(result.ok, true);
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.created, true);
+        assert.equal(result.output.addedCount, 0);
+        const entry = staged['features-toc:append'];
+        assert.ok(entry, 'a staged write must be produced so the commit flush creates the file');
+        assert.equal(entry.created, true);
+        assert.equal(entry.featuresToc, true);
+        assert.equal(entry.changed, true);
+        assert.match(entry.newContent, /^# Feature Index/, 'staged content is the seed template');
+        assert.equal(entry.todoDate, null);
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+
+    it('self-heals AND appends drift when FEATURES.md is missing and the session touched new files (#425)', async () => {
+      store.projectConfig.save(projectPath, {
+        engine: 'claude',
+        methodology: 'minimal',
+        featureIndexEnabled: true
       });
-      assert.equal(result.ok, true);
-      assert.equal(result.status, 'skipped');
-      assert.match(result.output.reason, /FEATURES\.md not found/);
+      const orig = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.startsWith('git rev-parse')) return Buffer.from('');
+        if (cmd.startsWith('git diff')) return Buffer.from('lib/new-thing.js\n');
+        throw new Error(`unexpected command: ${cmd}`);
+      };
+      const staged = {};
+      try {
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.equal(result.ok, true);
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.created, true);
+        assert.equal(result.output.addedCount, 1);
+        const entry = staged['features-toc:append'];
+        assert.ok(entry);
+        assert.equal(entry.created, true);
+        assert.equal(entry.featuresToc, true);
+        assert.match(entry.newContent, /^# Feature Index/, 'built on the seed');
+        assert.match(entry.newContent, /lib\/new-thing\.js/, 'drift appended onto the seed');
+        assert.deepEqual(entry.addedFiles, ['lib/new-thing.js']);
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
     });
 
     it('returns ok:true,skipped when base branch (main/master) cannot resolve', async () => {
@@ -626,6 +672,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
           primingPath: '/p/FEATURES.md',
           newContent: '...',
           changed: true,
+          featuresToc: true,
           addedCount: 2,
           addedFiles: ['lib/foo.js', 'lib/bar.js'],
           todoDate: '2026-05-22'
@@ -645,6 +692,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
           primingPath: '/p/FEATURES.md',
           newContent: '...',
           changed: true,
+          featuresToc: true,
           addedCount: 5,
           addedFiles: ['a.js', 'b.js', 'c.js', 'd.js', 'e.js'],
           todoDate: '2026-05-22'
@@ -662,6 +710,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
           primingPath: '/p/FEATURES.md',
           newContent: '...',
           changed: true,
+          featuresToc: true,
           addedCount: 0,
           addedFiles: [],
           todoDate: '2026-05-22'
@@ -671,6 +720,42 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       const matched = lines.find((l) => l.startsWith('- Feature Index:'));
       assert.equal(matched, undefined,
         'no body line when there were zero adds — the handler would have skipped, but the duck-type must be defensive');
+    });
+
+    it('emits "- Feature Index: created" when self-heal created the file with no drift (#425)', () => {
+      const staged = {
+        'features-toc:append': {
+          primingPath: '/p/FEATURES.md',
+          newContent: '# Feature Index\n',
+          changed: true,
+          featuresToc: true,
+          created: true,
+          addedCount: 0,
+          addedFiles: [],
+          todoDate: null
+        }
+      };
+      const lines = commitStep._buildBodyLines(staged);
+      assert.ok(lines.includes('- Feature Index: created'),
+        'self-heal create with no drift gets a bare "created" line');
+    });
+
+    it('emits "- Feature Index: created (N stub(s) appended)" when self-heal created the file with drift (#425)', () => {
+      const staged = {
+        'features-toc:append': {
+          primingPath: '/p/FEATURES.md',
+          newContent: '# Feature Index\n...',
+          changed: true,
+          featuresToc: true,
+          created: true,
+          addedCount: 3,
+          addedFiles: ['lib/a.js', 'lib/b.js', 'lib/c.js'],
+          todoDate: '2026-06-30'
+        }
+      };
+      const lines = commitStep._buildBodyLines(staged);
+      assert.ok(lines.includes('- Feature Index: created (3 stub(s) appended)'),
+        'self-heal create with drift reports the appended count');
     });
   });
 });
