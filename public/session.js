@@ -734,10 +734,28 @@ function applyTerminalTheme(theme) {
  * `document.execCommand('copy')` — spaces intact, and it works over plain
  * HTTP (no secure-context requirement).
  *
+ * ttyd's own copy-on-select calls `execCommand('copy')` from xterm's async
+ * selection-change emit — real Chrome can refuse that (the transient user
+ * activation is already spent), leaving selection working but auto-copy
+ * silently dead (Cmd+C still works: xterm's copy handler feeds the real
+ * buffer text). So this also re-runs the copy inside an actual `mouseup`
+ * gesture, where activation is guaranteed. No-op when there is no xterm
+ * selection (a plain drag consumed by the TUI), so Claude Code's own
+ * drag-to-select behavior is untouched.
+ *
  * @param {object} term - the xterm.js Terminal instance inside the iframe
+ * @param {Document} doc - the terminal iframe's document (same-origin)
  */
-function enableLocalSelectionOverride(term) {
+function enableLocalSelectionOverride(term, doc) {
   if (term && term.options) term.options.macOptionClickForcesSelection = true;
+  if (doc && !doc.tcCopyOnMouseUp) {
+    doc.tcCopyOnMouseUp = true;
+    doc.addEventListener('mouseup', () => {
+      try {
+        if (term.getSelection()) doc.execCommand('copy');
+      } catch (_) { /* clipboard refused — Cmd+C still available */ }
+    });
+  }
 }
 
 /**
@@ -1062,7 +1080,7 @@ function setupTerminal(iframeUrl) {
         const term = win && (win.term || win.terminal);
         if (term && term.options) {
           term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
-          enableLocalSelectionOverride(term);
+          enableLocalSelectionOverride(term, frame.contentDocument);
           return;
         }
       } catch (_) { /* not ready */ }

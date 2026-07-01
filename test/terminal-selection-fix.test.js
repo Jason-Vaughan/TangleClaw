@@ -45,8 +45,8 @@ describe('terminal Option+drag local-selection override (#431)', () => {
     fnBody = js.slice(start, after === -1 ? js.length : after);
   });
 
-  it('defines enableLocalSelectionOverride(term)', () => {
-    assert.match(js, /function enableLocalSelectionOverride\(term\)/);
+  it('defines enableLocalSelectionOverride(term, doc)', () => {
+    assert.match(js, /function enableLocalSelectionOverride\(term, doc\)/);
   });
 
   it('flips macOptionClickForcesSelection so ⌥+drag can bypass app mouse capture', () => {
@@ -54,14 +54,27 @@ describe('terminal Option+drag local-selection override (#431)', () => {
       'must set macOptionClickForcesSelection = true on the term options');
   });
 
+  it('re-runs the copy inside a real mouseup gesture (Chrome refuses execCommand from async selection-change)', () => {
+    assert.match(fnBody, /addEventListener\(['"]mouseup['"]/,
+      'must hook mouseup for guaranteed transient user activation');
+    assert.match(fnBody, /term\.getSelection\(\)/,
+      'must no-op when there is no xterm selection (plain TUI-consumed drags)');
+    assert.match(fnBody, /execCommand\(['"]copy['"]\)/,
+      'must run execCommand copy inside the gesture');
+    assert.match(fnBody, /tcCopyOnMouseUp/,
+      'must guard against double-registering the listener');
+  });
+
   it('is null-safe — a missing/not-ready term instance is a no-op, not a throw', () => {
     assert.match(fnBody, /term\s*&&\s*term\.options/,
       'must guard on term && term.options before writing');
+    assert.match(fnBody, /try\s*\{/,
+      'the gesture copy must swallow clipboard refusal (Cmd+C remains)');
   });
 
   it('is wired into the terminal iframe load flow (setupTerminal retry loop)', () => {
     const setup = js.slice(js.indexOf('function setupTerminal'), js.indexOf('function setupTerminal') + 900);
-    assert.match(setup, /enableLocalSelectionOverride\(term\)/,
+    assert.match(setup, /enableLocalSelectionOverride\(term, frame\.contentDocument\)/,
       'setupTerminal must call enableLocalSelectionOverride once the term instance exists');
   });
 
