@@ -716,6 +716,45 @@ function applyTerminalTheme(theme) {
 }
 
 /**
+ * Neutralize xterm's accessibility-tree overlay as a mouse-selection target
+ * inside the ttyd terminal iframe.
+ *
+ * When the browser's accessibility mode is active — an assistive-tech app such
+ * as a dictation tool (e.g. Wispr Flow) flips it on system-wide, and it stays
+ * on for the browser process's lifetime — xterm builds a
+ * `.xterm-accessibility-tree` overlay: real per-row text laid over the canvas,
+ * and the ONLY `user-select: text` element in the terminal (its own surface is
+ * `user-select: none`). The browser then natively selects THAT overlay (a plain
+ * blue highlight instead of xterm's themed selection), and because the overlay
+ * glyphs are `color: transparent` and it's an `aria-live` region xterm
+ * re-renders on a debounce, copying it drops the inter-word spaces — so
+ * copy-on-select pastes back as a run-together string.
+ *
+ * Injecting `user-select: none` onto the overlay makes a mouse drag fall
+ * through to xterm's own canvas selection engine (themed highlight, full text
+ * including spaces). Screen readers are unaffected: they read the accessibility
+ * tree through the platform accessibility API, not visual text selection.
+ *
+ * The fix is a persistent `<style>` rule (not an inline style on the element)
+ * so it covers overlays xterm creates or recreates whenever `screenReaderMode`
+ * toggles at runtime. Idempotent (guards on the marker id) and same-origin-only
+ * (a cross-origin webui iframe throws on `contentDocument` and is skipped).
+ *
+ * @param {HTMLIFrameElement} frame - the terminal iframe element
+ */
+function injectTerminalSelectionFix(frame) {
+  try {
+    const doc = frame && frame.contentDocument;
+    if (!doc || doc.getElementById('tc-terminal-selection-fix')) return;
+    const style = doc.createElement('style');
+    style.id = 'tc-terminal-selection-fix';
+    style.textContent =
+      '.xterm-accessibility,.xterm-accessibility-tree{user-select:none !important;-webkit-user-select:none !important;}';
+    (doc.head || doc.documentElement).appendChild(style);
+  } catch (_) { /* cross-origin (webui) or not loaded yet — ignore */ }
+}
+
+/**
  * Load engine list for settings dropdown.
  */
 async function loadEngines() {
@@ -1028,6 +1067,10 @@ function handleSessionEnded(statusData) {
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
   frame.addEventListener('load', () => {
+    // Neutralize the accessibility-tree selection overlay up front — it's a
+    // persistent <style> rule, so it applies even to overlays xterm creates
+    // later when screenReaderMode toggles (see injectTerminalSelectionFix).
+    injectTerminalSelectionFix(frame);
     const theme = (sessionState.config && sessionState.config.theme) || 'dark';
     // ttyd/xterm may initialize asynchronously after iframe load — retry briefly
     let attempts = 0;
