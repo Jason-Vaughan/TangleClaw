@@ -716,42 +716,28 @@ function applyTerminalTheme(theme) {
 }
 
 /**
- * Neutralize xterm's accessibility-tree overlay as a mouse-selection target
- * inside the ttyd terminal iframe.
+ * Restore a "copy to MY device" selection gesture in the ttyd terminal iframe.
  *
- * When the browser's accessibility mode is active — an assistive-tech app such
- * as a dictation tool (e.g. Wispr Flow) flips it on system-wide, and it stays
- * on for the browser process's lifetime — xterm builds a
- * `.xterm-accessibility-tree` overlay: real per-row text laid over the canvas,
- * and the ONLY `user-select: text` element in the terminal (its own surface is
- * `user-select: none`). The browser then natively selects THAT overlay (a plain
- * blue highlight instead of xterm's themed selection), and because the overlay
- * glyphs are `color: transparent` and it's an `aria-live` region xterm
- * re-renders on a debounce, copying it drops the inter-word spaces — so
- * copy-on-select pastes back as a run-together string.
+ * Modern TUIs (Claude Code) enable xterm mouse tracking, so a plain drag never
+ * reaches xterm's own selection engine — the app consumes it, renders its own
+ * highlight, and copies the text on the HOST machine (pbcopy on the TC server
+ * + a tmux buffer). Nothing ever lands on the clipboard of the device the
+ * browser runs on, and ttyd's bundled xterm has no OSC 52 handler that could
+ * carry it across (#431). Remote operators therefore had NO working copy path.
  *
- * Injecting `user-select: none` onto the overlay makes a mouse drag fall
- * through to xterm's own canvas selection engine (themed highlight, full text
- * including spaces). Screen readers are unaffected: they read the accessibility
- * tree through the platform accessibility API, not visual text selection.
+ * xterm's escape hatch is a modifier that forces a local selection despite app
+ * mouse capture. On non-mac platforms that is Shift+drag and always works; on
+ * macOS it is Option(⌥)+drag gated behind `macOptionClickForcesSelection`,
+ * which defaults to FALSE — so on a Mac no gesture works at all out of the
+ * box. Flipping the option makes ⌥+drag produce a native xterm selection,
+ * which ttyd's copy-on-select then writes to the BROWSER's clipboard via
+ * `document.execCommand('copy')` — spaces intact, and it works over plain
+ * HTTP (no secure-context requirement).
  *
- * The fix is a persistent `<style>` rule (not an inline style on the element)
- * so it covers overlays xterm creates or recreates whenever `screenReaderMode`
- * toggles at runtime. Idempotent (guards on the marker id) and same-origin-only
- * (a cross-origin webui iframe throws on `contentDocument` and is skipped).
- *
- * @param {HTMLIFrameElement} frame - the terminal iframe element
+ * @param {object} term - the xterm.js Terminal instance inside the iframe
  */
-function injectTerminalSelectionFix(frame) {
-  try {
-    const doc = frame && frame.contentDocument;
-    if (!doc || doc.getElementById('tc-terminal-selection-fix')) return;
-    const style = doc.createElement('style');
-    style.id = 'tc-terminal-selection-fix';
-    style.textContent =
-      '.xterm-accessibility,.xterm-accessibility-tree{user-select:none !important;-webkit-user-select:none !important;}';
-    (doc.head || doc.documentElement).appendChild(style);
-  } catch (_) { /* cross-origin (webui) or not loaded yet — ignore */ }
+function enableLocalSelectionOverride(term) {
+  if (term && term.options) term.options.macOptionClickForcesSelection = true;
 }
 
 /**
@@ -1067,10 +1053,6 @@ function handleSessionEnded(statusData) {
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
   frame.addEventListener('load', () => {
-    // Neutralize the accessibility-tree selection overlay up front — it's a
-    // persistent <style> rule, so it applies even to overlays xterm creates
-    // later when screenReaderMode toggles (see injectTerminalSelectionFix).
-    injectTerminalSelectionFix(frame);
     const theme = (sessionState.config && sessionState.config.theme) || 'dark';
     // ttyd/xterm may initialize asynchronously after iframe load — retry briefly
     let attempts = 0;
@@ -1080,6 +1062,7 @@ function setupTerminal(iframeUrl) {
         const term = win && (win.term || win.terminal);
         if (term && term.options) {
           term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
+          enableLocalSelectionOverride(term);
           return;
         }
       } catch (_) { /* not ready */ }
