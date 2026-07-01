@@ -716,6 +716,49 @@ function applyTerminalTheme(theme) {
 }
 
 /**
+ * Restore a "copy to MY device" selection gesture in the ttyd terminal iframe.
+ *
+ * Modern TUIs (Claude Code) enable xterm mouse tracking, so a plain drag never
+ * reaches xterm's own selection engine — the app consumes it, renders its own
+ * highlight, and copies the text on the HOST machine (pbcopy on the TC server
+ * + a tmux buffer). Nothing ever lands on the clipboard of the device the
+ * browser runs on, and ttyd's bundled xterm has no OSC 52 handler that could
+ * carry it across (#431). Remote operators therefore had NO working copy path.
+ *
+ * xterm's escape hatch is a modifier that forces a local selection despite app
+ * mouse capture. On non-mac platforms that is Shift+drag and always works; on
+ * macOS it is Option(⌥)+drag gated behind `macOptionClickForcesSelection`,
+ * which defaults to FALSE — so on a Mac no gesture works at all out of the
+ * box. Flipping the option makes ⌥+drag produce a native xterm selection,
+ * which ttyd's copy-on-select then writes to the BROWSER's clipboard via
+ * `document.execCommand('copy')` — spaces intact, and it works over plain
+ * HTTP (no secure-context requirement).
+ *
+ * ttyd's own copy-on-select calls `execCommand('copy')` from xterm's async
+ * selection-change emit — real Chrome can refuse that (the transient user
+ * activation is already spent), leaving selection working but auto-copy
+ * silently dead (Cmd+C still works: xterm's copy handler feeds the real
+ * buffer text). So this also re-runs the copy inside an actual `mouseup`
+ * gesture, where activation is guaranteed. No-op when there is no xterm
+ * selection (a plain drag consumed by the TUI), so Claude Code's own
+ * drag-to-select behavior is untouched.
+ *
+ * @param {object} term - the xterm.js Terminal instance inside the iframe
+ * @param {Document} doc - the terminal iframe's document (same-origin)
+ */
+function enableLocalSelectionOverride(term, doc) {
+  if (term && term.options) term.options.macOptionClickForcesSelection = true;
+  if (doc && !doc.tcCopyOnMouseUp) {
+    doc.tcCopyOnMouseUp = true;
+    doc.addEventListener('mouseup', () => {
+      try {
+        if (term.getSelection()) doc.execCommand('copy');
+      } catch (_) { /* clipboard refused — Cmd+C still available */ }
+    });
+  }
+}
+
+/**
  * Load engine list for settings dropdown.
  */
 async function loadEngines() {
@@ -1037,6 +1080,7 @@ function setupTerminal(iframeUrl) {
         const term = win && (win.term || win.terminal);
         if (term && term.options) {
           term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
+          enableLocalSelectionOverride(term, frame.contentDocument);
           return;
         }
       } catch (_) { /* not ready */ }
