@@ -93,3 +93,9 @@ entries that span multiple co-equal locations.
 - **PID file** — single-instance guard. `lib/pidfile.js`.
 - **Installer** — bootstrap script for fresh hosts. `deploy/install.sh`.
 - **Detached ttyd attach** — helper for reconnecting to the shared ttyd. `deploy/ttyd-attach.sh`.
+
+## TODO (auto-stubbed 2026-06-30)
+
+- **TBD** — touched in this session: `test/openclaw-setup-readme.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/terminal-selection-fix.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/upload-modal-frontend.test.js`. <!-- describe -->
