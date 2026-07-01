@@ -81,6 +81,9 @@
    * HTTP on a non-localhost origin (e.g. `http://host:8080` over Tailscale) it
    * is `undefined` and every copy button silently failed (#427). Falls back to
    * a hidden-`<textarea>` + `document.execCommand('copy')`, which works on HTTP.
+   * The fallback selects via a `Range` + `setSelectionRange` on a non-readonly
+   * element rather than `readonly` + `.select()`, because the latter copies
+   * nothing on iOS Safari (#435).
    *
    * @param {string} text - The text to copy.
    * @returns {Promise<boolean>} `true` on success, `false` if both paths fail.
@@ -96,15 +99,31 @@
       }
     }
     try {
-      const ta = global.document.createElement('textarea');
+      const doc = global.document;
+      const ta = doc.createElement('textarea');
       ta.value = text;
-      ta.setAttribute('readonly', '');
+      // iOS Safari: a `readonly` textarea + `.select()` yields no copyable
+      // selection, so execCommand('copy') no-ops (#435). Make the element
+      // editable and select it via a Range + setSelectionRange, which copies
+      // on iOS AND desktop.
+      ta.contentEditable = 'true';
+      ta.readOnly = false;
       ta.style.position = 'fixed';
       ta.style.top = '-9999px';
-      global.document.body.appendChild(ta);
-      ta.select();
-      const ok = global.document.execCommand('copy');
-      global.document.body.removeChild(ta);
+      ta.style.opacity = '0';
+      doc.body.appendChild(ta);
+      const range = doc.createRange();
+      range.selectNodeContents(ta);
+      const sel = typeof global.getSelection === 'function' ? global.getSelection() : null;
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      if (typeof ta.setSelectionRange === 'function') {
+        ta.setSelectionRange(0, text.length);
+      }
+      const ok = doc.execCommand('copy');
+      doc.body.removeChild(ta);
       return ok;
     } catch (_) {
       return false;
