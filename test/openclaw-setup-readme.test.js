@@ -40,10 +40,13 @@ describe('OpenClaw "Read Me" setup-guide modal (#306-followup)', () => {
       assert.match(ui, /function closeOpenclawSetupModal\(\)\s*\{[^}]*getElementById\('openclawSetupModal'\)\.classList\.remove\('open'\)/);
     });
 
-    it('copy reads the prompt from the modal <pre> (single source of truth) and uses the clipboard API', () => {
+    it('copy reads the prompt from the modal <pre> (single source of truth) and uses the clipboard helper', () => {
       assert.match(ui, /function copyOpenclawSetupPrompt\(\)/);
       assert.match(ui, /getElementById\('ocSetupPrompt'\)/);
-      assert.match(ui, /navigator\.clipboard\.writeText\(prompt\)/);
+      // #430 routed every copy site through the shared secure-context-aware
+      // `tcCopyToClipboard` helper (HTTPS Clipboard API + plain-HTTP fallback)
+      // instead of calling `navigator.clipboard.writeText` directly.
+      assert.match(ui, /tcCopyToClipboard\(prompt\)/);
     });
 
     it('wires Close, Copy, and backdrop-dismiss listeners', () => {

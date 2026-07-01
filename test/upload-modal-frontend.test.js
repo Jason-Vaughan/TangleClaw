@@ -57,7 +57,10 @@ describe('Upload modal — any file type + copyable history links (#338)', () =>
 
     it('copyUploadPath writes the path to the clipboard with toast feedback', () => {
       assert.match(js, /async function copyUploadPath\(/);
-      assert.match(js, /navigator\.clipboard\.writeText\(pathStr\)/);
+      // #430 routed every copy site through the shared secure-context-aware
+      // `tcCopyToClipboard` helper (HTTPS Clipboard API + plain-HTTP fallback)
+      // instead of calling `navigator.clipboard.writeText` directly.
+      assert.match(js, /tcCopyToClipboard\(pathStr\)/);
       assert.match(js, /Upload path copied to clipboard/);
     });
   });
