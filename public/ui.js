@@ -2845,11 +2845,10 @@ async function ensureMasterAttached() {
  * term.scrollLines() in line-sized increments. Same shim session.js's
  * setupTerminalTouchScroll applies to its terminal (thin duplicate); wired
  * from the readiness retry below, so the viewport is guaranteed to exist.
- * @param {HTMLIFrameElement} frame - the master terminal iframe
  * @param {object} term - the xterm.js Terminal instance inside the iframe
  * @param {Document} doc - the iframe's document (same-origin)
  */
-function wireMasterTouchScroll(frame, term, doc) {
+function wireMasterTouchScroll(term, doc) {
   if (!('ontouchstart' in window)) return; // desktop doesn't need this
   if (doc.tcMasterTouchScroll) return;
   const viewport = doc.querySelector('.xterm-viewport');
@@ -2917,7 +2916,7 @@ function attachMasterFrame() {
               } catch (_) { /* clipboard refused — Cmd+C still available */ }
             });
           }
-          if (doc) wireMasterTouchScroll(frame, term, doc);
+          if (doc) wireMasterTouchScroll(term, doc);
           return;
         }
       } catch (_) { /* iframe not ready yet — retry below */ }

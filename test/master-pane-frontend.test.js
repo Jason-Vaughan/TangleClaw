@@ -111,7 +111,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(masterSection, /function wireMasterTouchScroll\(/);
       assert.match(masterSection, /'ontouchstart' in window/);
       assert.match(masterSection, /term\.scrollLines\(linesToScroll\)/);
-      assert.match(masterSection, /wireMasterTouchScroll\(frame, term, doc\)/);
+      assert.match(masterSection, /wireMasterTouchScroll\(term, doc\)/);
       assert.match(masterSection, /\{ passive: true \}/);
     });
   });
