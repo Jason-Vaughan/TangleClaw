@@ -36,6 +36,10 @@
       <span class="dash-stat"><span class="dash-stat-label">UP</span><span class="dash-stat-up" id="statUptime">--</span></span>
     </div>
     <div class="dash-actions">
+      <button class="dash-action" id="masterToggle" aria-expanded="false" aria-controls="masterPanel"
+              title="Project Master — the global read-only assistant above all projects">
+        &#129504; Master <span class="master-dot" id="masterDot" aria-hidden="true"></span>
+      </button>
       <button class="dash-action" id="portsToggle" aria-expanded="false" aria-controls="portsGrid">
         Ports <span class="dash-badge" id="portsCount">0</span>
       </button>
@@ -59,6 +63,21 @@
   </header>
 
   <div class="main-scroll">
+  <!-- Project Master Panel (expandable) — chunk G slice 2 (#331). The chat
+       surface IS the terminal: an attach-only ttyd iframe onto the reserved
+       tmux session. The iframe src is set by ui.js ONLY after
+       POST /api/master/ensure succeeds (ttyd cannot create sessions). -->
+  <div id="masterPanel" class="master-panel" aria-label="Project Master">
+    <div class="master-status-row">
+      <span class="master-dot" id="masterPanelDot" aria-hidden="true"></span>
+      <span class="master-status-text" id="masterStatusText">Checking&hellip;</span>
+      <button class="btn btn-small hidden" id="masterRetryBtn">Retry</button>
+    </div>
+    <div class="master-frame-wrap">
+      <iframe id="masterFrame" class="master-frame" title="Project Master terminal"></iframe>
+    </div>
+  </div>
+
   <!-- Ports Grid (expandable panel) -->
   <div id="portsGrid" class="ports-grid" aria-label="Port leases"></div>
 

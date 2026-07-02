@@ -575,6 +575,50 @@ body {
   padding-bottom: 12px;
   overflow-y: auto;
 }
+/* ── Project Master Panel (chunk G #331) ── */
+.master-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+.master-panel.open {
+  max-height: 80vh;
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+.master-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.master-frame {
+  display: block;
+  width: 100%;
+  height: 60vh;
+  min-height: 280px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  background: #000;
+}
+.master-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #333;
+  flex-shrink: 0;
+}
+.master-dot.live { background: var(--primary); }
+.master-dot.pending {
+  background: var(--amber);
+  animation: breathe-card 2s ease-in-out infinite;
+}
+.master-dot.down { background: var(--danger); }
+
 .audit-panel {
   max-height: 0;
   overflow: hidden;
