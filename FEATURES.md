@@ -96,6 +96,6 @@ entries that span multiple co-equal locations.
 
 ## TODO (auto-stubbed 2026-06-30)
 
-- **TBD** — touched in this session: `test/openclaw-setup-readme.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/terminal-selection-fix.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/upload-modal-frontend.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/openclaw-setup-readme.test.js`. Source-assertion tests for the OpenClaw connection Read-Me / AI-setup-prompt UI, including the `tcCopyToClipboard` copy path.
+- **TBD** — touched in this session: `test/terminal-selection-fix.test.js`. Regression tests for the #431 ⌥+drag local-selection override (`macOptionClickForcesSelection` flip + mouseup-gesture copy) in `public/session.js`.
+- **TBD** — touched in this session: `test/upload-modal-frontend.test.js`. Source-assertion tests for the upload modal's post-upload "Tell your AI assistant: <path>" copy affordance.
