@@ -2840,10 +2840,59 @@ async function ensureMasterAttached() {
 }
 
 /**
+ * Touch-scroll shim for the master terminal iframe — xterm.js virtual scroll
+ * doesn't handle mobile touch well, so drags on the viewport translate to
+ * term.scrollLines() in line-sized increments. Same shim session.js's
+ * setupTerminalTouchScroll applies to its terminal (thin duplicate); wired
+ * from the readiness retry below, so the viewport is guaranteed to exist.
+ * @param {HTMLIFrameElement} frame - the master terminal iframe
+ * @param {object} term - the xterm.js Terminal instance inside the iframe
+ * @param {Document} doc - the iframe's document (same-origin)
+ */
+function wireMasterTouchScroll(frame, term, doc) {
+  if (!('ontouchstart' in window)) return; // desktop doesn't need this
+  if (doc.tcMasterTouchScroll) return;
+  const viewport = doc.querySelector('.xterm-viewport');
+  if (!viewport) return;
+  doc.tcMasterTouchScroll = true;
+
+  let lastTouchY = 0;
+  let scrollAccum = 0;
+  const LINE_HEIGHT = 18; // approximate xterm line height in px
+
+  viewport.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    lastTouchY = e.touches[0].clientY;
+    scrollAccum = 0;
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1) return;
+    const currentY = e.touches[0].clientY;
+    const deltaY = lastTouchY - currentY; // positive = scroll down
+    lastTouchY = currentY;
+    scrollAccum += deltaY;
+
+    // Scroll in line-sized increments
+    const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
+    if (linesToScroll !== 0) {
+      scrollAccum -= linesToScroll * LINE_HEIGHT;
+      if (typeof term.scrollLines === 'function') {
+        term.scrollLines(linesToScroll);
+      } else {
+        // Fallback: scroll the viewport element directly
+        viewport.scrollTop += linesToScroll * LINE_HEIGHT;
+      }
+    }
+  }, { passive: true });
+}
+
+/**
  * Point the master iframe at the ttyd attach URL (once per page load) and,
  * when the frame loads, push the current theme + the ⌥+drag local-selection
- * override (#431) into its xterm instance — the same enhancement session.js
- * applies to its terminal, so copy-to-my-device works in the master pane too.
+ * override (#431) + the mobile touch-scroll shim into its xterm instance —
+ * the same enhancements session.js applies to its terminal, so
+ * copy-to-my-device and touch scrolling work in the master pane too.
  */
 function attachMasterFrame() {
   const frame = document.getElementById('masterFrame');
@@ -2868,6 +2917,7 @@ function attachMasterFrame() {
               } catch (_) { /* clipboard refused — Cmd+C still available */ }
             });
           }
+          if (doc) wireMasterTouchScroll(frame, term, doc);
           return;
         }
       } catch (_) { /* iframe not ready yet — retry below */ }

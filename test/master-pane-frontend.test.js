@@ -106,6 +106,14 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(masterSection, /MASTER_XTERM_THEMES\[theme\]/);
       assert.match(masterSection, /'high-contrast':/);
     });
+
+    it('wires the mobile touch-scroll shim (iPhone Safari is the primary platform)', () => {
+      assert.match(masterSection, /function wireMasterTouchScroll\(/);
+      assert.match(masterSection, /'ontouchstart' in window/);
+      assert.match(masterSection, /term\.scrollLines\(linesToScroll\)/);
+      assert.match(masterSection, /wireMasterTouchScroll\(frame, term, doc\)/);
+      assert.match(masterSection, /\{ passive: true \}/);
+    });
   });
 
   describe('status dot', () => {
