@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Project Master — slice 2: the landing-page Master pane (chunk G / #331).** The master session (slice 1) gets its first surface: a **🧠 Master** button in the landing header opens a collapsible panel embedding the verified ttyd terminal stack as an iframe onto the reserved tmux session `tangleclaw-master` — the Claude Code TUI IS the chat UI, no new chat transport. **Ensure-then-attach:** opening the panel POSTs `/api/master/ensure` (idempotent; also refreshes the master's `CLAUDE.md` identity) and sets the iframe src **only after ensure succeeds** — ttyd attaches to existing sessions only. Failure paths surface the real server error (`api.lastError`) with a Retry button. A **status dot** (header button + panel row) shows live/pending/down; a one-shot `GET /api/master/status` probe at page load colors it before the panel is ever opened — **no polling** (no-UI-timers rule #98/#268). The pane applies the same terminal enhancements as the session page (thin duplicate per the spec): operator theme pushed into the iframe's xterm instance, the #431 ⌥+drag local-selection override so copy reaches the browser clipboard, and the mobile touch-scroll shim (`term.scrollLines` in line increments — Critic-caught parity gap; iPhone Safari is the primary platform). `public/sw.js` `CACHE_NAME` bumped v3-31→v3-32 (no new script file — the logic lives in the precached `ui.js`). Tests: new `test/master-pane-frontend.test.js` (15 structural assertions: src-less iframe, ensure-before-attach ordering, re-entrancy guard, #431 override, touch-scroll shim, no-`setInterval` guard, SW bump). VRF enqueued (`VRF-g2-master-pane`).
+
 ## [3.30.0] - 2026-07-01
 
 ### Added

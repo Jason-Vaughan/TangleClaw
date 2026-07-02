@@ -2750,9 +2750,199 @@ function renderAuditPanel() {
   panel.innerHTML = html;
 }
 
+// ── Project Master (chunk G, #331) ──
+// The global read-only assistant above all projects. The panel embeds the
+// verified ttyd terminal stack as an iframe onto the reserved tmux session
+// (lib/master.js) — the Claude Code TUI is the chat UI; there is no custom
+// chat transport. Lifecycle is launch-on-first-open: opening the panel POSTs
+// /api/master/ensure (idempotent — it also regenerates the master's CLAUDE.md
+// identity so guide/token changes propagate) and only attaches the iframe
+// once ensure succeeds, because ttyd attaches to EXISTING sessions only.
+
+/**
+ * xterm.js theme palettes for the master terminal iframe. Thin duplicate of
+ * session.js XTERM_THEMES (the spec's "duplicated thin" option — slice 3's
+ * in-session drawer reuses session.js's own copy natively).
+ * @type {Object<string, Object>}
+ */
+const MASTER_XTERM_THEMES = {
+  dark: {
+    background: '#000000',
+    foreground: '#E8E8E8',
+    cursor: '#E8E8E8',
+    cursorAccent: '#000000',
+    selectionBackground: 'rgba(139,195,74,0.3)'
+  },
+  light: {
+    background: '#F5F5F5',
+    foreground: '#1A1A1A',
+    cursor: '#1A1A1A',
+    cursorAccent: '#F5F5F5',
+    selectionBackground: 'rgba(139,195,74,0.3)'
+  },
+  'high-contrast': {
+    background: '#000000',
+    foreground: '#FFFFFF',
+    cursor: '#FFFFFF',
+    cursorAccent: '#000000',
+    selectionBackground: 'rgba(164,214,94,0.4)'
+  }
+};
+
+/**
+ * Paint the master status dots (header button + panel row) and status text.
+ * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
+ * @param {string} [text] - Status line shown in the panel row
+ * @param {boolean} [showRetry] - Reveal the panel's Retry button
+ */
+function setMasterStatus(status, text, showRetry) {
+  for (const id of ['masterDot', 'masterPanelDot']) {
+    const dot = document.getElementById(id);
+    dot.classList.remove('live', 'pending', 'down');
+    if (status) dot.classList.add(status);
+  }
+  if (text !== undefined) document.getElementById('masterStatusText').textContent = text;
+  document.getElementById('masterRetryBtn').classList.toggle('hidden', !showRetry);
+}
+
+/**
+ * Toggle the Project Master panel open/closed. Opening triggers the
+ * ensure-then-attach flow (launch on first open, then persist).
+ */
+function toggleMaster() {
+  state.masterOpen = !state.masterOpen;
+  const panel = document.getElementById('masterPanel');
+  const toggle = document.getElementById('masterToggle');
+  panel.classList.toggle('open', state.masterOpen);
+  toggle.classList.toggle('active', state.masterOpen);
+  toggle.setAttribute('aria-expanded', state.masterOpen);
+  if (state.masterOpen) ensureMasterAttached();
+}
+
+/**
+ * Ensure the master session exists, then attach the terminal iframe.
+ * Re-entrant-guarded; safe to re-run on every panel open — ensure is an
+ * idempotent server-side no-op when the session is already live (it still
+ * refreshes the master's CLAUDE.md identity), and the iframe attaches once.
+ */
+async function ensureMasterAttached() {
+  if (state.masterEnsuring) return;
+  state.masterEnsuring = true;
+  setMasterStatus('pending', 'Starting master session…');
+  const result = await api('/api/master/ensure', { method: 'POST' });
+  state.masterEnsuring = false;
+  if (!result) {
+    setMasterStatus('down', api.lastError || 'Failed to start the master session', true);
+    return;
+  }
+  setMasterStatus('live', result.created ? 'Master session started' : 'Master session live');
+  attachMasterFrame();
+}
+
+/**
+ * Touch-scroll shim for the master terminal iframe — xterm.js virtual scroll
+ * doesn't handle mobile touch well, so drags on the viewport translate to
+ * term.scrollLines() in line-sized increments. Same shim session.js's
+ * setupTerminalTouchScroll applies to its terminal (thin duplicate); wired
+ * from the readiness retry below, so the viewport is guaranteed to exist.
+ * @param {object} term - the xterm.js Terminal instance inside the iframe
+ * @param {Document} doc - the iframe's document (same-origin)
+ */
+function wireMasterTouchScroll(term, doc) {
+  if (!('ontouchstart' in window)) return; // desktop doesn't need this
+  if (doc.tcMasterTouchScroll) return;
+  const viewport = doc.querySelector('.xterm-viewport');
+  if (!viewport) return;
+  doc.tcMasterTouchScroll = true;
+
+  let lastTouchY = 0;
+  let scrollAccum = 0;
+  const LINE_HEIGHT = 18; // approximate xterm line height in px
+
+  viewport.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    lastTouchY = e.touches[0].clientY;
+    scrollAccum = 0;
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1) return;
+    const currentY = e.touches[0].clientY;
+    const deltaY = lastTouchY - currentY; // positive = scroll down
+    lastTouchY = currentY;
+    scrollAccum += deltaY;
+
+    // Scroll in line-sized increments
+    const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
+    if (linesToScroll !== 0) {
+      scrollAccum -= linesToScroll * LINE_HEIGHT;
+      if (typeof term.scrollLines === 'function') {
+        term.scrollLines(linesToScroll);
+      } else {
+        // Fallback: scroll the viewport element directly
+        viewport.scrollTop += linesToScroll * LINE_HEIGHT;
+      }
+    }
+  }, { passive: true });
+}
+
+/**
+ * Point the master iframe at the ttyd attach URL (once per page load) and,
+ * when the frame loads, push the current theme + the ⌥+drag local-selection
+ * override (#431) + the mobile touch-scroll shim into its xterm instance —
+ * the same enhancements session.js applies to its terminal, so
+ * copy-to-my-device and touch scrolling work in the master pane too.
+ */
+function attachMasterFrame() {
+  const frame = document.getElementById('masterFrame');
+  if (frame.dataset.attached === 'true') return;
+  frame.dataset.attached = 'true';
+  frame.addEventListener('load', () => {
+    let attempts = 0;
+    const tryApply = () => {
+      try {
+        const win = frame.contentWindow;
+        const term = win && (win.term || win.terminal);
+        if (term && term.options) {
+          const theme = (state.config && state.config.theme) || 'dark';
+          term.options.theme = MASTER_XTERM_THEMES[theme] || MASTER_XTERM_THEMES.dark;
+          term.options.macOptionClickForcesSelection = true;
+          const doc = frame.contentDocument;
+          if (doc && !doc.tcCopyOnMouseUp) {
+            doc.tcCopyOnMouseUp = true;
+            doc.addEventListener('mouseup', () => {
+              try {
+                if (term.getSelection()) doc.execCommand('copy');
+              } catch (_) { /* clipboard refused — Cmd+C still available */ }
+            });
+          }
+          if (doc) wireMasterTouchScroll(term, doc);
+          return;
+        }
+      } catch (_) { /* iframe not ready yet — retry below */ }
+      if (++attempts < 20) setTimeout(tryApply, 250);
+    };
+    tryApply();
+  }, { once: true });
+  frame.src = '/terminal/?arg=tangleclaw-master';
+}
+
+/**
+ * One-shot status probe at page load so the header dot reflects whether the
+ * master session is already live before the panel is ever opened. No polling
+ * (no-UI-timers rule) — the dot refreshes again on open/ensure.
+ */
+async function refreshMasterDot() {
+  const status = await api('/api/master/status');
+  if (status && status.exists) setMasterStatus('live');
+}
+
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
+$('masterToggle').addEventListener('click', toggleMaster);
+$('masterRetryBtn').addEventListener('click', ensureMasterAttached);
+refreshMasterDot();
 $('portsToggle').addEventListener('click', togglePorts);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);
 $('auditToggle').addEventListener('click', toggleAudit);
