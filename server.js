@@ -14,6 +14,7 @@ const tmux = require('./lib/tmux');
 const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const master = require('./lib/master');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
 const uploads = require('./lib/uploads');
@@ -345,6 +346,28 @@ route('GET', '/api/server-info', (_req, res) => {
   // trust gate is in lib/auth-identity — a direct-mode header is never honored).
   info.currentUser = authIdentity.resolveRequestUser(_req.headers, store.config.load());
   jsonResponse(res, 200, info);
+});
+
+// ── Project Master (chunk G, #331) ──
+// Operator routes for the global read-only assistant — a reserved tmux
+// session, NOT a sessions-table row (see lib/master.js). Deliberately outside
+// the M2M-gated path set: these are operator surfaces, not fleet surfaces.
+
+// GET /api/master/status — is the master session alive? Truth from tmux.
+route('GET', '/api/master/status', (_req, res) => {
+  jsonResponse(res, 200, master.getMasterStatus());
+});
+
+// POST /api/master/ensure — idempotent create-or-noop. Regenerates the
+// master's CLAUDE.md identity every call (so guide/token changes propagate),
+// launches the session only when absent. The UI calls this before attaching
+// the terminal iframe (ttyd only attaches to EXISTING tmux sessions).
+route('POST', '/api/master/ensure', (_req, res) => {
+  const result = master.ensureMasterSession();
+  if (result.error) {
+    return errorResponse(res, 500, result.error, 'MASTER_ENSURE_FAILED');
+  }
+  jsonResponse(res, 200, result);
 });
 
 // POST /api/server/restart — kick the TC server via the platform's
