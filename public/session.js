@@ -1081,6 +1081,9 @@ function setupTerminal(iframeUrl) {
         if (term && term.options) {
           term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
           enableLocalSelectionOverride(term, frame.contentDocument);
+          // Wired here (not at iframe load) so the xterm DOM is guaranteed
+          // to exist — the old load-time shim raced xterm init (#443).
+          window.tcWireTerminalTouchScroll(window, term, frame.contentDocument);
           return;
         }
       } catch (_) { /* not ready */ }
@@ -2462,63 +2465,11 @@ async function retryWrap() {
   }
 }
 
-// ── Terminal Touch Scroll Shim ──
-// xterm.js virtual scroll doesn't handle mobile touch well.
-// We intercept touch events on the iframe and manually scroll the xterm instance.
-
-/**
- * Set up touch-based scrolling for the terminal iframe.
- * Waits for the iframe to load, then attaches touch listeners to xterm's viewport.
- */
-function setupTerminalTouchScroll() {
-  if (!('ontouchstart' in window)) return; // desktop doesn't need this
-
-  const frame = document.getElementById('terminalFrame');
-  frame.addEventListener('load', () => {
-    try {
-      const iframeDoc = frame.contentDocument || frame.contentWindow.document;
-      const viewport = iframeDoc.querySelector('.xterm-viewport');
-      if (!viewport) return;
-
-      let touchStartY = 0;
-      let lastTouchY = 0;
-      let scrollAccum = 0;
-      const LINE_HEIGHT = 18; // approximate xterm line height in px
-
-      viewport.addEventListener('touchstart', (e) => {
-        if (e.touches.length !== 1) return;
-        touchStartY = e.touches[0].clientY;
-        lastTouchY = touchStartY;
-        scrollAccum = 0;
-      }, { passive: true });
-
-      viewport.addEventListener('touchmove', (e) => {
-        if (e.touches.length !== 1) return;
-        const currentY = e.touches[0].clientY;
-        const deltaY = lastTouchY - currentY; // positive = scroll down
-        lastTouchY = currentY;
-        scrollAccum += deltaY;
-
-        // Scroll in line-sized increments
-        const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
-        if (linesToScroll !== 0) {
-          scrollAccum -= linesToScroll * LINE_HEIGHT;
-          // Access xterm's Terminal instance via ttyd's global
-          const iframeWin = frame.contentWindow;
-          const term = iframeWin && (iframeWin.term || iframeWin.terminal);
-          if (term && typeof term.scrollLines === 'function') {
-            term.scrollLines(linesToScroll);
-          } else {
-            // Fallback: scroll the viewport element directly
-            viewport.scrollTop += linesToScroll * LINE_HEIGHT;
-          }
-        }
-      }, { passive: true });
-    } catch (err) {
-      console.warn('Touch scroll shim failed:', err.message);
-    }
-  });
-}
+// ── Terminal Touch Scroll ──
+// The shim lives in the shared api-helper.js (tcWireTerminalTouchScroll) and
+// is wired from setupTerminal's readiness retry — the old load-time,
+// .xterm-viewport-targeted, passive-listener version here was dead on iOS
+// (touches land on .xterm-screen; native pan stole the gesture — #443).
 
 // ── Wrapping State ──
 
@@ -2836,7 +2787,6 @@ async function initSession() {
     applyWebuiMode();
   } else {
     setupTerminal();
-    setupTerminalTouchScroll();
   }
 
   // Load shared docs for settings

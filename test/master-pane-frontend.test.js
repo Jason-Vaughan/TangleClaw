@@ -107,12 +107,11 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(masterSection, /'high-contrast':/);
     });
 
-    it('wires the mobile touch-scroll shim (iPhone Safari is the primary platform)', () => {
-      assert.match(masterSection, /function wireMasterTouchScroll\(/);
-      assert.match(masterSection, /'ontouchstart' in window/);
-      assert.match(masterSection, /term\.scrollLines\(linesToScroll\)/);
-      assert.match(masterSection, /wireMasterTouchScroll\(term, doc\)/);
-      assert.match(masterSection, /\{ passive: true \}/);
+    it('wires the SHARED mobile touch-scroll shim (#443; iPhone Safari is the primary platform)', () => {
+      // The per-page duplicate is gone — the pane delegates to api-helper.js.
+      assert.match(masterSection, /window\.tcWireTerminalTouchScroll\(window, term, doc\)/);
+      assert.ok(!/function wireMasterTouchScroll\(/.test(masterSection),
+        'the dead per-pane shim (#443) must not return');
     });
   });
 
@@ -138,7 +137,11 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     });
 
     it('CACHE_NAME is bumped so active service workers surface the new shell', () => {
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-32';/);
+      // Past the pre-pane generation (v3-31); the exact current pin lives in
+      // test/terminal-touch-scroll.test.js, which owns the latest bump (#443).
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
+      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-31';/.test(sw),
+        'cache generation must be past v3-31 (the pre-Master-pane shell)');
     });
   });
 });
