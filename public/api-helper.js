@@ -130,7 +130,100 @@
     }
   }
 
+  /**
+   * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
+   *
+   * The previous per-page shims listened on `.xterm-viewport` — but xterm's
+   * screen layer (`.xterm-screen`, later in DOM order, positioned) paints
+   * ABOVE the viewport, so touches never reached those listeners. And the
+   * listeners were passive, so even when they fired iOS's native pan kept
+   * gesture ownership and scrolled the OUTER page instead (the landing
+   * page's `.main-scroll` under the Master pane; rubber-band on the session
+   * page). Net effect: terminal touch-scroll was dead on iOS on both
+   * surfaces.
+   *
+   * Fix: listen on the element touches actually hit (`.xterm-screen`,
+   * falling back to the `.xterm` container, then `body`), make touchmove
+   * NON-passive and `preventDefault()` it so the page pan never claims the
+   * gesture, and inject `touch-action: none` on the terminal layers as
+   * belt-and-braces. Scrolling translates the drag into synthetic WHEEL
+   * events dispatched at the terminal — the exact pipeline desktop scrolling
+   * uses, so it inherits xterm's own mode handling: with tmux `mouse on`
+   * (always, per deploy/tmux.conf) xterm reports the wheel to tmux, which
+   * scrolls its server-side history via copy-mode; with mouse tracking off
+   * xterm scrolls its local scrollback. The first on-device iteration used
+   * `term.scrollLines()` (xterm's local buffer only) and moved nothing —
+   * the wheel path is the one proven daily on desktop. Two-finger gestures
+   * are left to the browser (the single-touch guard runs before
+   * preventDefault, so pinch-zoom is unaffected).
+   *
+   * Idempotent per iframe document (each reload is a fresh document).
+   *
+   * @param {Window} win - The PARENT window (feature-detects touch support).
+   * @param {object} term - The xterm.js Terminal instance inside the iframe.
+   * @param {Document} doc - The terminal iframe's document (same-origin).
+   * @returns {boolean} true when wired (or already wired), false when
+   *   skipped (no touch support, missing args, or no terminal DOM yet).
+   */
+  function tcWireTerminalTouchScroll(win, term, doc) {
+    if (!win || !('ontouchstart' in win)) return false; // desktop doesn't need this
+    if (!term || !doc) return false;
+    if (doc.tcTouchScrollWired) return true;
+
+    const target = doc.querySelector('.xterm-screen')
+      || doc.querySelector('.xterm')
+      || doc.body;
+    if (!target) return false;
+    doc.tcTouchScrollWired = true;
+
+    // Stop iOS granting the gesture to native pan/zoom on any terminal layer.
+    const style = doc.createElement('style');
+    style.textContent = '.xterm, .xterm-screen, .xterm-viewport { touch-action: none; }';
+    doc.head.appendChild(style);
+
+    let lastTouchY = 0;
+    let scrollAccum = 0;
+    const LINE_HEIGHT = 18; // approximate xterm line height in px
+
+    target.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      lastTouchY = e.touches[0].clientY;
+      scrollAccum = 0;
+    }, { passive: true });
+
+    // NON-passive: preventDefault() keeps the browser's native pan from
+    // scrolling the outer page while the finger is on the terminal (#443).
+    target.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const deltaY = lastTouchY - touch.clientY; // positive = scroll down
+      lastTouchY = touch.clientY;
+      scrollAccum += deltaY;
+
+      // Emit synthetic wheel events in line-sized batches. Constructed in
+      // the IFRAME's realm and dispatched at the touch target so they bubble
+      // into xterm's own 'wheel' listener exactly like a desktop wheel.
+      const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
+      if (linesToScroll !== 0) {
+        scrollAccum -= linesToScroll * LINE_HEIGHT;
+        const iframeWin = doc.defaultView || win;
+        const wheel = new iframeWin.WheelEvent('wheel', {
+          deltaY: linesToScroll * LINE_HEIGHT,
+          deltaMode: 0, // pixels, like a trackpad
+          bubbles: true,
+          cancelable: true,
+          clientX: touch.clientX,
+          clientY: touch.clientY
+        });
+        (e.target || target).dispatchEvent(wheel);
+      }
+    }, { passive: false });
+    return true;
+  }
+
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
   global.tcCopyToClipboard = tcCopyToClipboard;
+  global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
 })(typeof window !== 'undefined' ? window : globalThis);
