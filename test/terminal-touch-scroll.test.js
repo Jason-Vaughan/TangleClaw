@@ -15,7 +15,8 @@
  * The fix is one shared helper (`tcWireTerminalTouchScroll` in the
  * both-pages base `public/api-helper.js`, home of the #430 copy helper):
  * listen on `.xterm-screen`, non-passive touchmove + preventDefault,
- * `touch-action: none` injection, `term.scrollLines` line increments.
+ * `touch-action: none` injection, drag → synthetic WheelEvents in line
+ * batches (the desktop wheel pipeline through tmux copy-mode).
  * Source-level structural assertions — same pattern as
  * test/master-pane-frontend.test.js.
  */
@@ -54,8 +55,8 @@ describe('Terminal touch-scroll shim (#443)', () => {
 
     it('targets the element touches actually hit — .xterm-screen, NOT the viewport (#443 root cause 1)', () => {
       assert.match(shim, /querySelector\('\.xterm-screen'\)/);
-      // The viewport appears only as the scrollTop FALLBACK, never as the
-      // listener target — pin the target chain explicitly.
+      // Pin the target chain explicitly — the viewport must never be a
+      // listener target (touches don't land there; that was root cause 1).
       assert.match(shim, /const target = doc\.querySelector\('\.xterm-screen'\)\s*\|\|\s*doc\.querySelector\('\.xterm'\)\s*\|\|\s*doc\.body;/);
       assert.match(shim, /target\.addEventListener\('touchstart'/);
       assert.match(shim, /target\.addEventListener\('touchmove'/);
