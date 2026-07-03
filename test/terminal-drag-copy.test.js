@@ -140,6 +140,13 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
       assert.ok(!/setTimeout\([^)]*hidePill/.test(shim), 'no timer-driven pill dismissal (#98/#268)');
     });
 
+    it('the pill anchor resets per gesture and exists even for a no-drag long-press', () => {
+      // Critic NOTE: stale lastPoint positioned the pill at the PREVIOUS
+      // gesture's endpoint; a no-drag long-press had no anchor at all.
+      assert.match(shim, /lastPoint = null;/);
+      assert.match(shim, /lastPoint = pressPoint; \/\/ pill anchor even if the finger never moves/);
+    });
+
     it('selection works in both drag directions (anchor swap before length math)', () => {
       assert.match(shim, /if \(b\.row < a\.row \|\| \(b\.row === a\.row && b\.col < a\.col\)\)/);
       assert.match(shim, /\(b\.row - a\.row\) \* term\.cols \+ \(b\.col - a\.col\) \+ 1/);

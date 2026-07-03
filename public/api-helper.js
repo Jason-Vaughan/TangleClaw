@@ -508,6 +508,9 @@
       }
       const t = e.touches[0];
       pressPoint = { clientX: t.clientX, clientY: t.clientY };
+      // Fresh gesture — drop the previous gesture's pill anchor so a
+      // no-drag long-press can't surface a stale-positioned pill.
+      lastPoint = null;
       pressTimer = setTimeout(() => {
         pressTimer = null;
         if (!pressPoint) return;
@@ -516,6 +519,7 @@
         // Enter select mode: anchor + a one-cell selection as the visual cue.
         doc.tcTouchSelectActive = true;
         selectAnchor = cell;
+        lastPoint = pressPoint; // pill anchor even if the finger never moves
         applySelection(cell, cell);
       }, LONG_PRESS_MS);
     }, { passive: true });
