@@ -2,6 +2,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -165,6 +166,17 @@ describe('update-checker', () => {
       const status = updateChecker.getCachedStatus();
       assert.notEqual(status.checkedAt, null);
       assert.equal(typeof status.updateAvailable, 'boolean');
+    });
+
+    it('carries the install repoRoot in the default (uncached) status (#183)', () => {
+      const status = updateChecker.getCachedStatus();
+      assert.equal(status.repoRoot, path.resolve(__dirname, '..'));
+    });
+
+    it('carries the install repoRoot after checkForUpdate, success or failure (#183)', () => {
+      updateChecker.checkForUpdate();
+      const status = updateChecker.getCachedStatus();
+      assert.equal(status.repoRoot, path.resolve(__dirname, '..'));
     });
   });
 

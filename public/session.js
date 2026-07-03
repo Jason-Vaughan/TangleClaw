@@ -608,14 +608,17 @@ async function loadUpdateStatus() {
 
 /**
  * Build the update instruction prompt for the AI agent.
+ * The install path comes from the server (`repoRoot` on /api/update-status,
+ * #183) — never hardcoded, so a renamed/relocated checkout stays correct.
  * @param {object} data - Update status data
  * @returns {string}
  */
 function buildUpdatePrompt(data) {
+  const repoRoot = data.repoRoot || 'the TangleClaw install directory (ask the operator for the path)';
   return [
     `TangleClaw update available: v${data.currentVersion} → v${data.latestVersion}.`,
     'Please update TangleClaw by running these steps:',
-    '1. cd ~/Documents/Projects/TangleClaw-v3',
+    `1. cd ${repoRoot}`,
     '2. git fetch --tags origin',
     '3. git pull origin main',
     '4. Review CHANGELOG.md for breaking changes',

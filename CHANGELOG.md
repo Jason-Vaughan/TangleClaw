@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Self-update prompt no longer hardcodes the install path (#183, chunk R pre-step).** `buildUpdatePrompt` in `public/session.js` embedded a literal `cd ~/Documents/Projects/TangleClaw-v3` — wrong the moment the checkout is renamed or relocated (the #183 rename would have shipped stale self-update instructions). The `/api/update-status` payload now carries `repoRoot` (resolved from `__dirname` in `lib/update-checker.js`, which also consolidates its two ad-hoc `path.join(__dirname, '..')` git-cwd computations onto the same constant), and the client derives the `cd` step from it — degrading to "ask the operator for the path" if the field is ever absent rather than inventing a location. This was the ONLY hardcoded install path in product code (pre-flight inventory, `.claude/plans/r-rename-preflight-inventory.md`); a new regression guard fails the suite if any `public/*.js` grows one again. `CACHE_NAME` v3-35→v3-36 (`session.js` is precached; exact-pin ownership moves to the new test). Tests: `test/update-prompt-path.test.js` (structural + the no-hardcoded-path sweep) + `repoRoot`-presence behavioral assertions in `test/update-checker.test.js`.
+
 ## [3.32.0] - 2026-07-03
 
 ### Added
