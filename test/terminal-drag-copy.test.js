@@ -109,7 +109,7 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
       assert.match(shim, /const LONG_PRESS_MS = 450;/);
       assert.match(shim, /const SLOP_PX = 12;/);
       assert.match(shim, /doc\.tcTouchSelectActive = true;/);
-      assert.match(shim, /term\.select\(a\.col, a\.row, length\);/);
+      assert.match(shim, /term\.select\(span\.col, span\.row, span\.length\);/);
       assert.match(shim, /term\.buffer\.active\.viewportY/);
       const touch = shim.slice(shim.indexOf('── Touch:'));
       assert.ok(!/forcedMouseEvent\(/.test(touch),
@@ -148,8 +148,19 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
     });
 
     it('selection works in both drag directions (anchor swap before length math)', () => {
-      assert.match(shim, /if \(b\.row < a\.row \|\| \(b\.row === a\.row && b\.col < a\.col\)\)/);
-      assert.match(shim, /\(b\.row - a\.row\) \* term\.cols \+ \(b\.col - a\.col\) \+ 1/);
+      // The math moved to the pure tcSelectionSpan (UI-9J3F) — pin the swap
+      // + length formula at its new home and the shim's delegation to it.
+      // Behavioral coverage lives in test/terminal-math.test.js.
+      assert.match(helper, /if \(b\.row < a\.row \|\| \(b\.row === a\.row && b\.col < a\.col\)\)/);
+      assert.match(helper, /\(b\.row - a\.row\) \* cols \+ \(b\.col - a\.col\) \+ 1/);
+      assert.match(shim, /tcSelectionSpan\(from, to, term\.cols\)/);
+      assert.match(shim, /term\.select\(span\.col, span\.row, span\.length\)/);
+    });
+
+    it('finger→cell mapping delegates to the pure tcCellFromPoint (clamp + viewportY)', () => {
+      assert.match(shim, /tcCellFromPoint\(t, rect, term\.cols, term\.rows, viewportY\)/);
+      assert.match(helper, /global\.tcCellFromPoint = tcCellFromPoint;/);
+      assert.match(helper, /global\.tcSelectionSpan = tcSelectionSpan;/);
     });
 
     it('select-mode touchmove is non-passive and suppresses the pan', () => {

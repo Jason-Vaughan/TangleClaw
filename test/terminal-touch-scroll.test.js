@@ -102,6 +102,12 @@ describe('Terminal touch-scroll shim (#443)', () => {
       assert.match(shim, /doc\.tcTouchScrollWired/);
       assert.match(shim, /'ontouchstart' in win/);
     });
+
+    it('line quantization delegates to the pure tcQuantizeScrollDelta (UI-9J3F)', () => {
+      // Behavioral coverage of the math lives in test/terminal-math.test.js.
+      assert.match(shim, /tcQuantizeScrollDelta\(scrollAccum, deltaY, LINE_HEIGHT\)/);
+      assert.match(helper, /global\.tcQuantizeScrollDelta = tcQuantizeScrollDelta;/);
+    });
   });
 
   describe('call sites (all surfaces delegate — no per-page duplicates)', () => {
