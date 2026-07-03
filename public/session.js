@@ -1084,6 +1084,8 @@ function setupTerminal(iframeUrl) {
           // Wired here (not at iframe load) so the xterm DOM is guaranteed
           // to exist — the old load-time shim raced xterm init (#443).
           window.tcWireTerminalTouchScroll(window, term, frame.contentDocument);
+          // Plain-drag → client clipboard + long-press select on touch (#445).
+          window.tcWireTerminalDragCopy(window, term, frame.contentDocument);
           return;
         }
       } catch (_) { /* not ready */ }

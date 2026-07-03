@@ -2870,7 +2870,11 @@ function attachMasterFrame() {
               } catch (_) { /* clipboard refused — Cmd+C still available */ }
             });
           }
-          if (doc) window.tcWireTerminalTouchScroll(window, term, doc);
+          if (doc) {
+            window.tcWireTerminalTouchScroll(window, term, doc);
+            // Plain-drag → client clipboard + long-press select on touch (#445).
+            window.tcWireTerminalDragCopy(window, term, doc);
+          }
           return;
         }
       } catch (_) { /* iframe not ready yet — retry below */ }

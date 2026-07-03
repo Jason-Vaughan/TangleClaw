@@ -122,7 +122,11 @@ describe('Terminal touch-scroll shim (#443)', () => {
 
   describe('propagation', () => {
     it('CACHE_NAME is bumped so active service workers pick up the fixed shell', () => {
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-33';/);
+      // Past the pre-fix generation (v3-32); the exact current pin lives in
+      // test/terminal-drag-copy.test.js, which owns the latest bump (#445).
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
+      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[12]';/.test(sw),
+        'cache generation must be past v3-32 (the pre-#443 shell)');
     });
 
     it('api-helper.js stays network-first (a stale copy would resurrect the dead shim)', () => {
