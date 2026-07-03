@@ -2760,36 +2760,6 @@ function renderAuditPanel() {
 // once ensure succeeds, because ttyd attaches to EXISTING sessions only.
 
 /**
- * xterm.js theme palettes for the master terminal iframe. Thin duplicate of
- * session.js XTERM_THEMES (the spec's "duplicated thin" option — slice 3's
- * in-session drawer reuses session.js's own copy natively).
- * @type {Object<string, Object>}
- */
-const MASTER_XTERM_THEMES = {
-  dark: {
-    background: '#000000',
-    foreground: '#E8E8E8',
-    cursor: '#E8E8E8',
-    cursorAccent: '#000000',
-    selectionBackground: 'rgba(139,195,74,0.3)'
-  },
-  light: {
-    background: '#F5F5F5',
-    foreground: '#1A1A1A',
-    cursor: '#1A1A1A',
-    cursorAccent: '#F5F5F5',
-    selectionBackground: 'rgba(139,195,74,0.3)'
-  },
-  'high-contrast': {
-    background: '#000000',
-    foreground: '#FFFFFF',
-    cursor: '#FFFFFF',
-    cursorAccent: '#000000',
-    selectionBackground: 'rgba(164,214,94,0.4)'
-  }
-};
-
-/**
  * Paint the master status dots (header button + panel row) and status text.
  * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
  * @param {string} [text] - Status line shown in the panel row
@@ -2840,48 +2810,18 @@ async function ensureMasterAttached() {
 }
 
 /**
- * Point the master iframe at the ttyd attach URL (once per page load) and,
- * when the frame loads, push the current theme + the ⌥+drag local-selection
- * override (#431) + the shared mobile touch-scroll shim (#443, from
- * api-helper.js) into its xterm instance — the same enhancements session.js
- * applies to its terminal, so copy-to-my-device and touch scrolling work in
- * the master pane too.
+ * Point the master iframe at the ttyd attach URL (once per page load). The
+ * shared readiness-retry pipeline (api-helper.js tcWireTerminalFrame) pushes
+ * the operator theme + the ⌥+drag local-selection override (#431) + the
+ * mobile touch-scroll shim (#443) + plain-drag/long-press copy (#445) into
+ * its xterm instance — the same enhancements every terminal surface gets.
  */
 function attachMasterFrame() {
   const frame = document.getElementById('masterFrame');
   if (frame.dataset.attached === 'true') return;
   frame.dataset.attached = 'true';
-  frame.addEventListener('load', () => {
-    let attempts = 0;
-    const tryApply = () => {
-      try {
-        const win = frame.contentWindow;
-        const term = win && (win.term || win.terminal);
-        if (term && term.options) {
-          const theme = (state.config && state.config.theme) || 'dark';
-          term.options.theme = MASTER_XTERM_THEMES[theme] || MASTER_XTERM_THEMES.dark;
-          term.options.macOptionClickForcesSelection = true;
-          const doc = frame.contentDocument;
-          if (doc && !doc.tcCopyOnMouseUp) {
-            doc.tcCopyOnMouseUp = true;
-            doc.addEventListener('mouseup', () => {
-              try {
-                if (term.getSelection()) doc.execCommand('copy');
-              } catch (_) { /* clipboard refused — Cmd+C still available */ }
-            });
-          }
-          if (doc) {
-            window.tcWireTerminalTouchScroll(window, term, doc);
-            // Plain-drag → client clipboard + long-press select on touch (#445).
-            window.tcWireTerminalDragCopy(window, term, doc);
-          }
-          return;
-        }
-      } catch (_) { /* iframe not ready yet — retry below */ }
-      if (++attempts < 20) setTimeout(tryApply, 250);
-    };
-    tryApply();
-  }, { once: true });
+  window.tcWireTerminalFrame(window, frame,
+    () => (state.config && state.config.theme) || 'dark');
   frame.src = '/terminal/?arg=tangleclaw-master';
 }
 

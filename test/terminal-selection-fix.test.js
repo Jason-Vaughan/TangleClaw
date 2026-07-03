@@ -13,17 +13,22 @@
  * `macOptionClickForcesSelection`, which defaults to false (Shift+drag, the
  * non-mac equivalent, is ignored on Mac by design in xterm).
  *
- * Fix: `public/session.js` flips `macOptionClickForcesSelection` on the xterm
- * instance inside the terminal iframe, so ⌥+drag produces a native xterm
- * selection, which ttyd's copy-on-select writes to the BROWSER's clipboard
- * (verified live: full text with spaces, over plain HTTP, while the app holds
- * mouse capture).
+ * Fix: flip `macOptionClickForcesSelection` on the xterm instance inside the
+ * terminal iframe, so ⌥+drag produces a native xterm selection, which ttyd's
+ * copy-on-select writes to the BROWSER's clipboard (verified live: full text
+ * with spaces, over plain HTTP, while the app holds mouse capture).
  *
- * session.js drives a real iframe/DOM at runtime with no headless harness in
+ * Home: the override started life in public/session.js; UI-4C7R moved it to
+ * the shared public/api-helper.js (tcEnableLocalSelectionOverride), where the
+ * tcWireTerminalFrame readiness pipeline applies it to EVERY terminal surface
+ * (session terminal, landing Master pane, in-session Master drawer). These
+ * assertions are re-pinned at that new home — same contract, one copy.
+ *
+ * The pages drive real iframes/DOM at runtime with no headless harness in
  * this repo, so these are source-level structural assertions — the same
  * contract-lock-in pattern used by test/upload-modal-frontend.test.js and
  * test/openclaw-setup-readme.test.js. They fail loudly if the option flip or
- * its wiring into the iframe load flow is removed or weakened.
+ * its wiring into the frame pipeline is removed or weakened.
  */
 
 const { describe, it, before } = require('node:test');
@@ -32,21 +37,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 describe('terminal Option+drag local-selection override (#431)', () => {
-  let js;
+  let helper;
+  let sessionJs;
   let fnBody;
 
   before(() => {
-    js = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
-    // Isolate the enableLocalSelectionOverride function body for tight assertions.
-    const start = js.indexOf('function enableLocalSelectionOverride');
-    assert.notEqual(start, -1, 'enableLocalSelectionOverride must be defined');
-    // Body ends at the next top-level function declaration.
-    const after = js.indexOf('\nfunction ', start + 1);
-    fnBody = js.slice(start, after === -1 ? js.length : after);
+    const pub = path.join(__dirname, '..', 'public');
+    helper = fs.readFileSync(path.join(pub, 'api-helper.js'), 'utf8');
+    sessionJs = fs.readFileSync(path.join(pub, 'session.js'), 'utf8');
+    // Isolate the tcEnableLocalSelectionOverride function body for tight assertions.
+    const start = helper.indexOf('function tcEnableLocalSelectionOverride');
+    assert.notEqual(start, -1, 'tcEnableLocalSelectionOverride must be defined in api-helper.js');
+    // Body ends at the next function declaration.
+    const after = helper.indexOf('function ', start + 1);
+    fnBody = helper.slice(start, after === -1 ? helper.length : after);
   });
 
-  it('defines enableLocalSelectionOverride(term, doc)', () => {
-    assert.match(js, /function enableLocalSelectionOverride\(term, doc\)/);
+  it('defines tcEnableLocalSelectionOverride(term, doc) in the shared helper and exports it', () => {
+    assert.match(helper, /function tcEnableLocalSelectionOverride\(term, doc\)/);
+    assert.match(helper, /global\.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;/);
   });
 
   it('flips macOptionClickForcesSelection so ⌥+drag can bypass app mouse capture', () => {
@@ -72,17 +81,26 @@ describe('terminal Option+drag local-selection override (#431)', () => {
       'the gesture copy must swallow clipboard refusal (Cmd+C remains)');
   });
 
-  it('is wired into the terminal iframe load flow (setupTerminal retry loop)', () => {
-    const setup = js.slice(js.indexOf('function setupTerminal'), js.indexOf('function setupTerminal') + 900);
-    assert.match(setup, /enableLocalSelectionOverride\(term, frame\.contentDocument\)/,
-      'setupTerminal must call enableLocalSelectionOverride once the term instance exists');
+  it('is wired into every terminal frame by the shared readiness pipeline', () => {
+    const pipeline = helper.slice(helper.indexOf('function tcWireTerminalFrame'));
+    assert.match(pipeline, /tcEnableLocalSelectionOverride\(term, doc\);/,
+      'tcWireTerminalFrame must apply the override once the term instance exists');
+  });
+
+  it('the per-page copy stays removed (UI-4C7R — one home, no drift)', () => {
+    assert.ok(!/function enableLocalSelectionOverride\(/.test(sessionJs),
+      'session.js must not re-grow its own copy of the override');
+    assert.match(sessionJs, /window\.tcWireTerminalFrame\(window, frame,/,
+      'session.js must delegate frame wiring to the shared pipeline');
   });
 
   it('does not reintroduce the disproven accessibility-overlay injection', () => {
     // The prior fix injected user-select:none onto .xterm-accessibility-tree —
     // an element that only exists when screenReaderMode is on (it never is in
     // TC's setup), so the injection was inert. Keep it out.
-    assert.doesNotMatch(js, /injectTerminalSelectionFix/,
+    assert.doesNotMatch(sessionJs, /injectTerminalSelectionFix/,
       'the inert accessibility-overlay injection must stay removed');
+    assert.doesNotMatch(helper, /injectTerminalSelectionFix/,
+      'the inert accessibility-overlay injection must not migrate to the helper');
   });
 });

@@ -96,22 +96,20 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
   });
 
   describe('terminal parity with the session page', () => {
-    it('applies the #431 ⌥+drag local-selection override so copy reaches the browser', () => {
-      assert.match(masterSection, /macOptionClickForcesSelection = true/);
-      assert.match(masterSection, /doc\.execCommand\('copy'\)/);
-      assert.match(masterSection, /tcCopyOnMouseUp/);
-    });
-
-    it('pushes the operator theme into the iframe xterm instance', () => {
-      assert.match(masterSection, /MASTER_XTERM_THEMES\[theme\]/);
-      assert.match(masterSection, /'high-contrast':/);
-    });
-
-    it('wires the SHARED mobile touch-scroll shim (#443; iPhone Safari is the primary platform)', () => {
-      // The per-page duplicate is gone — the pane delegates to api-helper.js.
-      assert.match(masterSection, /window\.tcWireTerminalTouchScroll\(window, term, doc\)/);
+    it('delegates frame wiring to the shared pipeline (theme + #431 + #443 + #445)', () => {
+      // Since UI-4C7R the pane carries no wiring of its own: api-helper.js's
+      // tcWireTerminalFrame owns the readiness retry and applies the theme,
+      // the ⌥+drag local-selection override, the touch-scroll shim, and
+      // drag-copy — identically on every terminal surface.
+      assert.match(masterSection, /window\.tcWireTerminalFrame\(window, frame,/);
+      assert.ok(!/MASTER_XTERM_THEMES/.test(js),
+        'the per-pane palette copy (UI-4C7R) must not return');
       assert.ok(!/function wireMasterTouchScroll\(/.test(masterSection),
         'the dead per-pane shim (#443) must not return');
+    });
+
+    it('passes the operator theme lazily so config loaded after attach still wins', () => {
+      assert.match(masterSection, /\(\) => \(state\.config && state\.config\.theme\) \|\| 'dark'/);
     });
   });
 

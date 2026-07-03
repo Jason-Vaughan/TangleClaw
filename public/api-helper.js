@@ -142,6 +142,96 @@
   }
 
   /**
+   * xterm.js theme palettes keyed by TangleClaw theme name — the single
+   * source of truth for terminal colors (UI-4C7R). Every terminal iframe
+   * (session terminal, landing Master pane, in-session Master drawer) pulls
+   * from this map; per-page palette copies drifted before and are banned.
+   * @type {Object<string, Object>}
+   */
+  const TC_XTERM_THEMES = {
+    dark: {
+      background: '#000000',
+      foreground: '#E8E8E8',
+      cursor: '#E8E8E8',
+      cursorAccent: '#000000',
+      selectionBackground: 'rgba(139,195,74,0.3)'
+    },
+    light: {
+      background: '#F5F5F5',
+      foreground: '#1A1A1A',
+      cursor: '#1A1A1A',
+      cursorAccent: '#F5F5F5',
+      selectionBackground: 'rgba(139,195,74,0.3)'
+    },
+    'high-contrast': {
+      background: '#000000',
+      foreground: '#FFFFFF',
+      cursor: '#FFFFFF',
+      cursorAccent: '#000000',
+      selectionBackground: 'rgba(164,214,94,0.4)'
+    }
+  };
+
+  /**
+   * Push a TangleClaw color theme into an xterm.js instance. Unknown theme
+   * names fall back to dark. Null-safe: a missing/not-ready term is a no-op.
+   * @param {object} term - The xterm.js Terminal instance inside the iframe
+   * @param {string} theme - Theme key ('dark', 'light', 'high-contrast')
+   * @returns {boolean} true when the theme was applied
+   */
+  function tcApplyTerminalTheme(term, theme) {
+    if (!term || !term.options) return false;
+    term.options.theme = TC_XTERM_THEMES[theme] || TC_XTERM_THEMES.dark;
+    return true;
+  }
+
+  /**
+   * Restore a "copy to MY device" selection gesture in a ttyd terminal
+   * iframe (#431).
+   *
+   * Modern TUIs (Claude Code) enable xterm mouse tracking, so a plain drag
+   * never reaches xterm's own selection engine — the app consumes it,
+   * renders its own highlight, and copies the text on the HOST machine
+   * (pbcopy on the TC server + a tmux buffer). Nothing ever lands on the
+   * clipboard of the device the browser runs on, and ttyd's bundled xterm
+   * has no OSC 52 handler that could carry it across. Remote operators
+   * therefore had NO working copy path.
+   *
+   * xterm's escape hatch is a modifier that forces a local selection despite
+   * app mouse capture. On non-mac platforms that is Shift+drag and always
+   * works; on macOS it is Option(⌥)+drag gated behind
+   * `macOptionClickForcesSelection`, which defaults to FALSE — so on a Mac
+   * no gesture works at all out of the box. Flipping the option makes
+   * ⌥+drag produce a native xterm selection, which ttyd's copy-on-select
+   * then writes to the BROWSER's clipboard via `document.execCommand('copy')`
+   * — spaces intact, and it works over plain HTTP (no secure-context
+   * requirement).
+   *
+   * ttyd's own copy-on-select calls `execCommand('copy')` from xterm's async
+   * selection-change emit — real Chrome can refuse that (the transient user
+   * activation is already spent), leaving selection working but auto-copy
+   * silently dead (Cmd+C still works: xterm's copy handler feeds the real
+   * buffer text). So this also re-runs the copy inside an actual `mouseup`
+   * gesture, where activation is guaranteed. No-op when there is no xterm
+   * selection (a plain drag consumed by the TUI), so Claude Code's own
+   * drag-to-select behavior is untouched.
+   *
+   * @param {object} term - the xterm.js Terminal instance inside the iframe
+   * @param {Document} doc - the terminal iframe's document (same-origin)
+   */
+  function tcEnableLocalSelectionOverride(term, doc) {
+    if (term && term.options) term.options.macOptionClickForcesSelection = true;
+    if (doc && !doc.tcCopyOnMouseUp) {
+      doc.tcCopyOnMouseUp = true;
+      doc.addEventListener('mouseup', () => {
+        try {
+          if (term.getSelection()) doc.execCommand('copy');
+        } catch (_) { /* clipboard refused — Cmd+C still available */ }
+      });
+    }
+  }
+
+  /**
    * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
    *
    * The previous per-page shims listened on `.xterm-viewport` — but xterm's
@@ -575,9 +665,61 @@
     return true;
   }
 
+  /**
+   * Wire a ttyd terminal iframe with the full TangleClaw terminal stack:
+   * theme, the #431 ⌥+drag local-selection override, the #443 touch-scroll
+   * shim, and the #445 plain-drag/long-press copy path. One readiness retry
+   * loop shared by every terminal surface (session terminal, landing Master
+   * pane, in-session Master drawer) — the per-page copies of this loop are
+   * what let #443's dead shim ship twice.
+   *
+   * Registers a one-shot `load` listener that polls for the xterm instance
+   * (ttyd initializes it asynchronously after iframe load — the old
+   * load-time wiring raced xterm init, #443) and wires everything once
+   * `term.options` exists. Call BEFORE setting `frame.src`. Cross-origin
+   * frames (OpenClaw webui sessions) throw on `contentWindow` access — the
+   * loop swallows that and gives up after its retry budget.
+   *
+   * @param {Window} win - The PARENT window (touch/platform detection + timers).
+   * @param {HTMLIFrameElement} frame - The terminal iframe (same-origin ttyd).
+   * @param {() => string} getTheme - Returns the operator theme key at wire
+   *   time ('dark', 'light', 'high-contrast'); read lazily so config loaded
+   *   after the call still wins.
+   * @returns {boolean} true when the load listener was registered.
+   */
+  function tcWireTerminalFrame(win, frame, getTheme) {
+    if (!win || !frame) return false;
+    frame.addEventListener('load', () => {
+      let attempts = 0;
+      const tryApply = () => {
+        try {
+          const iframeWin = frame.contentWindow;
+          const term = iframeWin && (iframeWin.term || iframeWin.terminal);
+          if (term && term.options) {
+            tcApplyTerminalTheme(term, getTheme ? getTheme() : 'dark');
+            const doc = frame.contentDocument;
+            tcEnableLocalSelectionOverride(term, doc);
+            if (doc) {
+              tcWireTerminalTouchScroll(win, term, doc);
+              tcWireTerminalDragCopy(win, term, doc);
+            }
+            return;
+          }
+        } catch (_) { /* not ready or cross-origin (webui) — retry below */ }
+        if (++attempts < 20) win.setTimeout(tryApply, 250);
+      };
+      tryApply();
+    }, { once: true });
+    return true;
+  }
+
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
   global.tcCopyToClipboard = tcCopyToClipboard;
+  global.TC_XTERM_THEMES = TC_XTERM_THEMES;
+  global.tcApplyTerminalTheme = tcApplyTerminalTheme;
+  global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
+  global.tcWireTerminalFrame = tcWireTerminalFrame;
 })(typeof window !== 'undefined' ? window : globalThis);
