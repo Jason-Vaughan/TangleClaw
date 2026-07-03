@@ -249,27 +249,33 @@
    *
    * - DESKTOP: a capture-phase rewriter intercepts plain button-0 drags
    *   while the terminal app owns the mouse (`term.modes.mouseTrackingMode`
-   *   !== 'none'), and re-dispatches them with the platform's
-   *   force-selection modifier — xterm's `shouldForceSelection` is
-   *   `altKey && macOptionClickForcesSelection` on Mac and `shiftKey`
-   *   everywhere else. xterm then runs its own local-selection machinery,
-   *   so highlight, ✂ copy-on-select, and the #431 mouseup re-copy all
-   *   come free. Real modifier gestures pass through untouched; so does
+   *   !== 'none'), and re-dispatches them with BOTH force-selection
+   *   modifiers set — xterm's own platform check picks the one it honors
+   *   (`shouldForceSelection` is `altKey && macOptionClickForcesSelection`
+   *   on Mac and `shiftKey` everywhere else; it classifies iOS as
+   *   NOT-Mac). xterm then runs its own local-selection machinery, so
+   *   highlight, ✂ copy-on-select, and the #431 mouseup re-copy all come
+   *   free. Real modifier gestures pass through untouched; so does
    *   right-click (context-menu copy) and everything when the app is NOT
    *   tracking the mouse (plain drag already selects locally there).
    *   Trade-off (documented in #445): while tracking, plain clicks/drags no
    *   longer reach the TUI — selection wins. `altClickMovesCursor` is
-   *   forced off so rewritten clicks can't become arrow-key spam.
+   *   forced off so rewritten clicks can't become arrow-key spam, and a
+   *   post-touch ghost-mouse window swallows iOS's synthesized mice.
    *
    * - TOUCH: long-press (450ms, <12px slop) enters select mode — the
-   *   finger drag is translated into the SAME synthetic modified mouse
-   *   events, driving a real xterm selection; releasing dispatches the
-   *   synthetic mouseup inside the touchend activation window, so the
-   *   client-clipboard write is permitted. The touch-scroll shim (#443)
+   *   finger position maps to buffer cells and drives xterm's public
+   *   `select(col, row, length)` API directly (NO synthetic mouse events:
+   *   iOS's touch→mouse translation proved unreliable on-device).
+   *   Releasing surfaces a native-iOS-style Copy pill; the pill's TAP —
+   *   a real click in THIS document — performs the clipboard write, since
+   *   Safari refused every touchend-time write and scopes gesture
+   *   permission to the touched frame. The touch-scroll shim (#443)
    *   yields while select mode is active (`doc.tcTouchSelectActive`).
    *
-   * Synthetic events are tagged (`tcSynthetic`) and skipped by the
-   * rewriter, so they can't loop. Idempotent per iframe document.
+   * Synthetic mouse events (desktop rewriter only) are tagged
+   * (`tcSynthetic`) and skipped by the rewriter, so they can't loop.
+   * Idempotent per iframe document.
    *
    * @param {Window} win - The PARENT window (platform + touch detection).
    * @param {object} term - The xterm.js Terminal instance inside the iframe.
@@ -294,11 +300,11 @@
     doc.head.appendChild(style);
 
     /**
-     * Clone a mouse event (or fabricate one from a touch point) with the
-     * platform's force-selection modifier applied.
+     * Clone a mouse event with both force-selection modifiers applied
+     * (desktop rewriter only — the touch path never synthesizes mice).
      * @param {string} type - Mouse event type to create.
-     * @param {MouseEvent|Touch} src - Source event or touch point.
-     * @param {number} [detail] - Click count (mouse clones carry theirs).
+     * @param {MouseEvent} src - Source event.
+     * @param {number} [detail] - Click count (clones carry theirs).
      * @returns {MouseEvent}
      */
     function forcedMouseEvent(type, src, detail) {
