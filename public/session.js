@@ -17,6 +17,8 @@ const sessionState = {
   session: null,
   connected: true,
   peekOpen: false,
+  masterOpen: false,
+  masterEnsuring: false,
   commandBarOpen: false,
   chimeEnabled: false,
   pollInterval: 5000,
@@ -657,34 +659,6 @@ async function loadConfig() {
 }
 
 /**
- * xterm.js theme palettes keyed by TangleClaw theme name.
- * @type {Object<string, Object>}
- */
-const XTERM_THEMES = {
-  dark: {
-    background: '#000000',
-    foreground: '#E8E8E8',
-    cursor: '#E8E8E8',
-    cursorAccent: '#000000',
-    selectionBackground: 'rgba(139,195,74,0.3)'
-  },
-  light: {
-    background: '#F5F5F5',
-    foreground: '#1A1A1A',
-    cursor: '#1A1A1A',
-    cursorAccent: '#F5F5F5',
-    selectionBackground: 'rgba(139,195,74,0.3)'
-  },
-  'high-contrast': {
-    background: '#000000',
-    foreground: '#FFFFFF',
-    cursor: '#FFFFFF',
-    cursorAccent: '#000000',
-    selectionBackground: 'rgba(164,214,94,0.4)'
-  }
-};
-
-/**
  * Apply the current theme to the document and the terminal iframe.
  */
 function applyTheme() {
@@ -698,63 +672,21 @@ function applyTheme() {
 }
 
 /**
- * Push a colour theme into the xterm.js instance inside the ttyd iframe.
- * Safe to call at any time — silently no-ops if the iframe or terminal
- * instance is not ready.
+ * Push a colour theme into the xterm.js instances inside the ttyd iframes —
+ * the session terminal and, once attached, the Master drawer. The palette
+ * itself lives in the shared api-helper.js (TC_XTERM_THEMES, UI-4C7R).
+ * Safe to call at any time — silently no-ops for frames that are not ready.
  * @param {string} theme - Theme key ('dark', 'light', 'high-contrast')
  */
 function applyTerminalTheme(theme) {
-  const frame = document.getElementById('terminalFrame');
-  if (!frame) return;
-  try {
-    const win = frame.contentWindow;
-    const term = win && (win.term || win.terminal);
-    if (term && term.options) {
-      term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
-    }
-  } catch (_) { /* cross-origin or not loaded yet — ignore */ }
-}
-
-/**
- * Restore a "copy to MY device" selection gesture in the ttyd terminal iframe.
- *
- * Modern TUIs (Claude Code) enable xterm mouse tracking, so a plain drag never
- * reaches xterm's own selection engine — the app consumes it, renders its own
- * highlight, and copies the text on the HOST machine (pbcopy on the TC server
- * + a tmux buffer). Nothing ever lands on the clipboard of the device the
- * browser runs on, and ttyd's bundled xterm has no OSC 52 handler that could
- * carry it across (#431). Remote operators therefore had NO working copy path.
- *
- * xterm's escape hatch is a modifier that forces a local selection despite app
- * mouse capture. On non-mac platforms that is Shift+drag and always works; on
- * macOS it is Option(⌥)+drag gated behind `macOptionClickForcesSelection`,
- * which defaults to FALSE — so on a Mac no gesture works at all out of the
- * box. Flipping the option makes ⌥+drag produce a native xterm selection,
- * which ttyd's copy-on-select then writes to the BROWSER's clipboard via
- * `document.execCommand('copy')` — spaces intact, and it works over plain
- * HTTP (no secure-context requirement).
- *
- * ttyd's own copy-on-select calls `execCommand('copy')` from xterm's async
- * selection-change emit — real Chrome can refuse that (the transient user
- * activation is already spent), leaving selection working but auto-copy
- * silently dead (Cmd+C still works: xterm's copy handler feeds the real
- * buffer text). So this also re-runs the copy inside an actual `mouseup`
- * gesture, where activation is guaranteed. No-op when there is no xterm
- * selection (a plain drag consumed by the TUI), so Claude Code's own
- * drag-to-select behavior is untouched.
- *
- * @param {object} term - the xterm.js Terminal instance inside the iframe
- * @param {Document} doc - the terminal iframe's document (same-origin)
- */
-function enableLocalSelectionOverride(term, doc) {
-  if (term && term.options) term.options.macOptionClickForcesSelection = true;
-  if (doc && !doc.tcCopyOnMouseUp) {
-    doc.tcCopyOnMouseUp = true;
-    doc.addEventListener('mouseup', () => {
-      try {
-        if (term.getSelection()) doc.execCommand('copy');
-      } catch (_) { /* clipboard refused — Cmd+C still available */ }
-    });
+  for (const id of ['terminalFrame', 'masterDrawerFrame']) {
+    const frame = document.getElementById(id);
+    if (!frame) continue;
+    try {
+      const win = frame.contentWindow;
+      const term = win && (win.term || win.terminal);
+      window.tcApplyTerminalTheme(term, theme);
+    } catch (_) { /* cross-origin or not loaded yet — ignore */ }
   }
 }
 
@@ -1061,6 +993,85 @@ function handleSessionEnded(statusData) {
   }, 1000);
 }
 
+// ── Project Master Drawer (chunk G slice 3, #331) ──
+// The global read-only assistant, reachable without leaving the session.
+// Same ensure-then-attach contract as the landing pane (ui.js): opening the
+// drawer POSTs /api/master/ensure (idempotent) and only attaches the ttyd
+// iframe once ensure succeeds, because ttyd attaches to EXISTING sessions
+// only. No polling (no-UI-timers rule) — status repaints on open/ensure.
+
+/**
+ * Paint the Master drawer status dot and text.
+ * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown/neutral)
+ * @param {string} [text] - Status line shown in the drawer's status row
+ * @param {boolean} [showRetry] - Reveal the drawer's Retry button
+ */
+function setMasterDrawerStatus(status, text, showRetry) {
+  const dot = document.getElementById('masterDrawerDot');
+  dot.classList.remove('live', 'pending', 'down');
+  if (status) dot.classList.add(status);
+  if (text !== undefined) document.getElementById('masterDrawerStatusText').textContent = text;
+  document.getElementById('masterDrawerRetryBtn').classList.toggle('hidden', !showRetry);
+}
+
+/**
+ * Open the Master drawer and run the ensure-then-attach flow.
+ */
+function openMasterDrawer() {
+  sessionState.masterOpen = true;
+  document.getElementById('masterBackdrop').classList.add('open');
+  document.getElementById('masterDrawer').classList.add('open');
+  document.getElementById('masterBtn').setAttribute('aria-expanded', 'true');
+  ensureMasterDrawerAttached();
+}
+
+/**
+ * Close the Master drawer. The master session persists (launch on first
+ * open, then persist) — closing only hides the surface.
+ */
+function closeMasterDrawer() {
+  sessionState.masterOpen = false;
+  document.getElementById('masterBackdrop').classList.remove('open');
+  document.getElementById('masterDrawer').classList.remove('open');
+  document.getElementById('masterBtn').setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Ensure the master session exists, then attach the terminal iframe.
+ * Re-entrant-guarded; safe to re-run on every drawer open — ensure is an
+ * idempotent server-side no-op when the session is already live (it still
+ * refreshes the master's CLAUDE.md identity), and the iframe attaches once.
+ */
+async function ensureMasterDrawerAttached() {
+  if (sessionState.masterEnsuring) return;
+  sessionState.masterEnsuring = true;
+  setMasterDrawerStatus('pending', 'Starting master session…');
+  const result = await api('/api/master/ensure', { method: 'POST' });
+  sessionState.masterEnsuring = false;
+  if (!result) {
+    setMasterDrawerStatus('down', api.lastError || 'Failed to start the master session', true);
+    return;
+  }
+  setMasterDrawerStatus('live', result.created ? 'Master session started' : 'Master session live');
+  attachMasterDrawerFrame();
+}
+
+/**
+ * Point the drawer iframe at the ttyd attach URL (once per page load). The
+ * shared readiness-retry pipeline (api-helper.js tcWireTerminalFrame) pushes
+ * the operator theme + the ⌥+drag local-selection override (#431) + the
+ * mobile touch-scroll shim (#443) + plain-drag/long-press copy (#445) into
+ * its xterm instance — the same enhancements every terminal surface gets.
+ */
+function attachMasterDrawerFrame() {
+  const frame = document.getElementById('masterDrawerFrame');
+  if (frame.dataset.attached === 'true') return;
+  frame.dataset.attached = 'true';
+  window.tcWireTerminalFrame(window, frame,
+    () => (sessionState.config && sessionState.config.theme) || 'dark');
+  frame.src = '/terminal/?arg=tangleclaw-master';
+}
+
 // ── Terminal Setup ──
 
 /**
@@ -1070,29 +1081,10 @@ function handleSessionEnded(statusData) {
  */
 function setupTerminal(iframeUrl) {
   const frame = document.getElementById('terminalFrame');
-  frame.addEventListener('load', () => {
-    const theme = (sessionState.config && sessionState.config.theme) || 'dark';
-    // ttyd/xterm may initialize asynchronously after iframe load — retry briefly
-    let attempts = 0;
-    const tryApply = () => {
-      try {
-        const win = frame.contentWindow;
-        const term = win && (win.term || win.terminal);
-        if (term && term.options) {
-          term.options.theme = XTERM_THEMES[theme] || XTERM_THEMES.dark;
-          enableLocalSelectionOverride(term, frame.contentDocument);
-          // Wired here (not at iframe load) so the xterm DOM is guaranteed
-          // to exist — the old load-time shim raced xterm init (#443).
-          window.tcWireTerminalTouchScroll(window, term, frame.contentDocument);
-          // Plain-drag → client clipboard + long-press select on touch (#445).
-          window.tcWireTerminalDragCopy(window, term, frame.contentDocument);
-          return;
-        }
-      } catch (_) { /* not ready */ }
-      if (++attempts < 20) setTimeout(tryApply, 250);
-    };
-    tryApply();
-  }, { once: true });
+  // Shared readiness-retry pipeline (api-helper.js): theme + the #431 ⌥+drag
+  // local-selection override + the #443 touch-scroll shim + #445 drag-copy.
+  window.tcWireTerminalFrame(window, frame,
+    () => (sessionState.config && sessionState.config.theme) || 'dark');
   requestAnimationFrame(() => {
     if (iframeUrl) {
       frame.src = iframeUrl;
@@ -2610,6 +2602,10 @@ function bindEvents() {
   $('uploadBtn').addEventListener('click', openUploadModal);
   $('cmdBtn').addEventListener('click', toggleCommandBar);
   $('peekBtn').addEventListener('click', openPeek);
+  $('masterBtn').addEventListener('click', openMasterDrawer);
+  $('masterCloseBtn').addEventListener('click', closeMasterDrawer);
+  $('masterBackdrop').addEventListener('click', closeMasterDrawer);
+  $('masterDrawerRetryBtn').addEventListener('click', ensureMasterDrawerAttached);
   $('settingsBtn').addEventListener('click', openSettings);
   $('wrapBtn').addEventListener('click', openWrapModal);
   $('killBtn').addEventListener('click', openKillModal);

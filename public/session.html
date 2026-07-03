@@ -41,6 +41,9 @@
       <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
               aria-expanded="false" aria-controls="commandBar">Cmd</button>
       <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
+      <button class="banner-btn" id="masterBtn" aria-label="Open Project Master" aria-expanded="false"
+              aria-controls="masterDrawer"
+              title="Project Master — the global read-only assistant above all projects">&#129504;</button>
       <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;</button>
       <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
       <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
@@ -112,6 +115,28 @@
       </div>
     </div>
     <pre class="peek-content" id="peekContent"></pre>
+  </aside>
+
+  <!-- Project Master Drawer — chunk G slice 3 (#331). Reach the global
+       read-only assistant without leaving the session. The chat surface IS
+       the terminal: an attach-only ttyd iframe onto the reserved tmux
+       session `tangleclaw-master`. The iframe src is set by session.js ONLY
+       after POST /api/master/ensure succeeds (ttyd cannot create sessions). -->
+  <div class="drawer-backdrop" id="masterBackdrop"></div>
+  <aside class="master-drawer" id="masterDrawer" role="dialog" aria-label="Project Master" aria-modal="true">
+    <div class="drawer-handle" aria-hidden="true"></div>
+    <div class="master-drawer-header">
+      <span class="master-drawer-title">&#129504; Project Master</span>
+      <button class="banner-btn" id="masterCloseBtn" aria-label="Close Project Master">&times;</button>
+    </div>
+    <div class="master-status-row">
+      <span class="master-dot" id="masterDrawerDot" aria-hidden="true"></span>
+      <span class="master-status-text" id="masterDrawerStatusText">Checking&hellip;</span>
+      <button class="btn btn-small hidden" id="masterDrawerRetryBtn">Retry</button>
+    </div>
+    <div class="master-drawer-frame-wrap">
+      <iframe id="masterDrawerFrame" class="master-drawer-frame" title="Project Master terminal"></iframe>
+    </div>
   </aside>
 
   <!-- Settings Modal -->

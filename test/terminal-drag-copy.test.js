@@ -40,8 +40,8 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
 
     const start = helper.indexOf('function tcWireTerminalDragCopy');
     assert.ok(start > -1, 'api-helper.js defines tcWireTerminalDragCopy');
-    const end = helper.indexOf('global.tcCreateApi =');
-    assert.ok(end > start, 'shim body precedes the global exports');
+    const end = helper.indexOf('function tcWireTerminalFrame');
+    assert.ok(end > start, 'shim body precedes the shared frame pipeline (UI-4C7R)');
     shim = helper.slice(start, end);
 
     const sStart = helper.indexOf('function tcWireTerminalTouchScroll');
@@ -172,24 +172,35 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
     });
   });
 
-  describe('call sites (both surfaces)', () => {
-    it('session.js wires drag-copy from the terminal readiness retry', () => {
-      assert.match(sessionJs, /window\.tcWireTerminalDragCopy\(window, term, frame\.contentDocument\);/);
+  describe('call sites (all surfaces)', () => {
+    it('the shared frame pipeline wires drag-copy from the terminal readiness retry', () => {
+      // Since UI-4C7R the per-page retry loops are gone: tcWireTerminalFrame
+      // owns the readiness retry and wires drag-copy once term.options exists.
+      const pipeline = helper.slice(helper.indexOf('function tcWireTerminalFrame'));
+      assert.match(pipeline, /tcWireTerminalDragCopy\(win, term, doc\);/);
     });
 
-    it('ui.js Master pane wires drag-copy alongside the touch-scroll shim', () => {
-      assert.match(uiJs, /window\.tcWireTerminalDragCopy\(window, term, doc\);/);
+    it('both pages delegate their terminal frames to the shared pipeline', () => {
+      assert.match(sessionJs, /window\.tcWireTerminalFrame\(window, frame,/);
+      assert.match(uiJs, /window\.tcWireTerminalFrame\(window, frame,/);
     });
 
-    it('both pages still arm the Mac force-selection option the synthetic altKey relies on', () => {
-      assert.match(sessionJs, /macOptionClickForcesSelection = true/);
-      assert.match(uiJs, /macOptionClickForcesSelection = true/);
+    it('the pipeline still arms the Mac force-selection option the synthetic altKey relies on', () => {
+      // The option flip lives in tcEnableLocalSelectionOverride (#431), which
+      // the pipeline runs on every frame before wiring drag-copy.
+      const pipeline = helper.slice(helper.indexOf('function tcWireTerminalFrame'));
+      assert.match(pipeline, /tcEnableLocalSelectionOverride\(term, doc\);/);
+      assert.match(helper, /macOptionClickForcesSelection = true/);
     });
   });
 
   describe('propagation', () => {
     it('CACHE_NAME is bumped so active service workers pick up the new shell', () => {
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-34';/);
+      // Past the pre-#445 generation; the exact current pin lives in
+      // test/master-drawer-frontend.test.js, which owns the latest bump (#331 slice 3).
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
+      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[123]';/.test(sw),
+        'cache generation must be past v3-33 (the pre-#445 shell)');
     });
   });
 });

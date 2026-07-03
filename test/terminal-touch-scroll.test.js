@@ -104,19 +104,30 @@ describe('Terminal touch-scroll shim (#443)', () => {
     });
   });
 
-  describe('call sites (both surfaces delegate — no per-page duplicates)', () => {
-    it('session.js wires from the terminal readiness retry, not iframe load', () => {
-      assert.match(sessionJs, /window\.tcWireTerminalTouchScroll\(window, term, frame\.contentDocument\)/);
+  describe('call sites (all surfaces delegate — no per-page duplicates)', () => {
+    it('the shared frame pipeline wires the shim from the terminal readiness retry', () => {
+      // Since UI-4C7R the per-page retry loops are gone: tcWireTerminalFrame
+      // owns the readiness retry and calls the shim once term.options exists.
+      const pipeline = helper.slice(helper.indexOf('function tcWireTerminalFrame'));
+      assert.match(pipeline, /tcWireTerminalTouchScroll\(win, term, doc\);/);
+    });
+
+    it('session.js delegates its terminal frames to the shared pipeline', () => {
+      assert.match(sessionJs, /window\.tcWireTerminalFrame\(window, frame,/);
       assert.ok(!/function setupTerminalTouchScroll\(/.test(sessionJs),
         'the dead load-time viewport shim (#443) must not return');
       assert.ok(!/setupTerminalTouchScroll\(\);/.test(sessionJs),
         'no orphaned call to the removed shim');
+      assert.ok(!/tcWireTerminalTouchScroll\(/.test(sessionJs),
+        'no direct per-page shim call — the shared pipeline owns wiring');
     });
 
-    it('ui.js Master pane delegates to the same shared helper', () => {
-      assert.match(uiJs, /window\.tcWireTerminalTouchScroll\(window, term, doc\)/);
+    it('ui.js Master pane delegates to the same shared pipeline', () => {
+      assert.match(uiJs, /window\.tcWireTerminalFrame\(window, frame,/);
       assert.ok(!/function wireMasterTouchScroll\(/.test(uiJs),
         'the per-pane duplicate must not return');
+      assert.ok(!/tcWireTerminalTouchScroll\(/.test(uiJs),
+        'no direct per-page shim call — the shared pipeline owns wiring');
     });
   });
 
