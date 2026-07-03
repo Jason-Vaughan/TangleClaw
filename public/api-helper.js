@@ -232,6 +232,70 @@
   }
 
   /**
+   * Quantize an accumulated touch-drag distance into whole scroll lines
+   * (#443 math, pure — UI-9J3F). Carries the sub-line remainder between
+   * calls so slow drags still scroll: callers feed `remainder` back in as
+   * the next call's `accum`. `Math.trunc` keeps the sign symmetric (drag up
+   * = negative lines = scroll up) and never rounds a partial line into a
+   * phantom scroll.
+   * @param {number} accum - Carried sub-line remainder from the last call (px)
+   * @param {number} deltaY - This move's drag distance (px; positive = scroll down)
+   * @param {number} lineHeight - Pixels per terminal line
+   * @returns {{lines: number, remainder: number}} whole lines to scroll now
+   *   (0 while the running total is still sub-line) + the leftover px to carry
+   */
+  function tcQuantizeScrollDelta(accum, deltaY, lineHeight) {
+    const total = accum + deltaY;
+    // `|| 0` normalizes Math.trunc's -0 (sub-line upward totals) so callers
+    // comparing with Object.is semantics never see a negative zero.
+    const lines = Math.trunc(total / lineHeight) || 0;
+    return { lines, remainder: total - lines * lineHeight };
+  }
+
+  /**
+   * Map a client point to xterm BUFFER coordinates (#445 math, pure —
+   * UI-9J3F). Clamps to the grid so touches at the edges select the nearest
+   * cell instead of walking off the buffer, and adds the viewport's scroll
+   * offset so the row is a BUFFER row (what `term.select()` wants), not a
+   * screen row.
+   * @param {{clientX: number, clientY: number}} point - The touch point
+   * @param {{left: number, top: number, width: number, height: number}} rect -
+   *   The `.xterm-screen` bounding rect
+   * @param {number} cols - Terminal column count
+   * @param {number} rows - Terminal (viewport) row count
+   * @param {number} viewportY - Buffer row of the first visible line
+   * @returns {{col: number, row: number}} buffer coordinates
+   */
+  function tcCellFromPoint(point, rect, cols, rows, viewportY) {
+    const col = Math.max(0, Math.min(cols - 1,
+      Math.floor((point.clientX - rect.left) / (rect.width / cols))));
+    const row = Math.max(0, Math.min(rows - 1,
+      Math.floor((point.clientY - rect.top) / (rect.height / rows))));
+    return { col, row: viewportY + row };
+  }
+
+  /**
+   * Normalize two buffer cells into the (start, length) span xterm's
+   * `select(col, row, length)` API wants (#445 math, pure — UI-9J3F). Swaps
+   * the anchor when the drag runs backward (either direction selects); the
+   * length counts cells left-to-right across intervening full rows,
+   * inclusive of both endpoints.
+   * @param {{col: number, row: number}} from - The selection anchor
+   * @param {{col: number, row: number}} to - The cell under the finger
+   * @param {number} cols - Terminal column count
+   * @returns {{col: number, row: number, length: number}} `select()` args
+   */
+  function tcSelectionSpan(from, to, cols) {
+    let a = from;
+    let b = to;
+    if (b.row < a.row || (b.row === a.row && b.col < a.col)) {
+      a = to;
+      b = from;
+    }
+    return { col: a.col, row: a.row, length: (b.row - a.row) * cols + (b.col - a.col) + 1 };
+  }
+
+  /**
    * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
    *
    * The previous per-page shims listened on `.xterm-viewport` — but xterm's
@@ -301,14 +365,15 @@
       const touch = e.touches[0];
       const deltaY = lastTouchY - touch.clientY; // positive = scroll down
       lastTouchY = touch.clientY;
-      scrollAccum += deltaY;
 
       // Emit synthetic wheel events in line-sized batches. Constructed in
       // the IFRAME's realm and dispatched at the touch target so they bubble
       // into xterm's own 'wheel' listener exactly like a desktop wheel.
-      const linesToScroll = Math.trunc(scrollAccum / LINE_HEIGHT);
+      // Quantization math is the pure tcQuantizeScrollDelta (UI-9J3F).
+      const quantized = tcQuantizeScrollDelta(scrollAccum, deltaY, LINE_HEIGHT);
+      scrollAccum = quantized.remainder;
+      const linesToScroll = quantized.lines;
       if (linesToScroll !== 0) {
-        scrollAccum -= linesToScroll * LINE_HEIGHT;
         const iframeWin = doc.defaultView || win;
         const wheel = new iframeWin.WheelEvent('wheel', {
           deltaY: linesToScroll * LINE_HEIGHT,
@@ -559,12 +624,9 @@
       if (!screen || !term.cols || !term.rows) return null;
       const rect = screen.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
-      const col = Math.max(0, Math.min(term.cols - 1,
-        Math.floor((t.clientX - rect.left) / (rect.width / term.cols))));
-      const row = Math.max(0, Math.min(term.rows - 1,
-        Math.floor((t.clientY - rect.top) / (rect.height / term.rows))));
       const viewportY = (term.buffer && term.buffer.active) ? term.buffer.active.viewportY : 0;
-      return { col, row: viewportY + row };
+      // Clamp + viewport mapping is the pure tcCellFromPoint (UI-9J3F).
+      return tcCellFromPoint(t, rect, term.cols, term.rows, viewportY);
     }
 
     /**
@@ -573,15 +635,10 @@
      * @param {{col: number, row: number}} to
      */
     function applySelection(from, to) {
-      let a = from;
-      let b = to;
-      if (b.row < a.row || (b.row === a.row && b.col < a.col)) {
-        a = to;
-        b = from;
-      }
-      const length = (b.row - a.row) * term.cols + (b.col - a.col) + 1;
+      // Anchor swap + length math is the pure tcSelectionSpan (UI-9J3F).
+      const span = tcSelectionSpan(from, to, term.cols);
       try {
-        term.select(a.col, a.row, length);
+        term.select(span.col, span.row, span.length);
       } catch (_) { /* geometry raced a resize — next move re-selects */ }
     }
 
@@ -718,6 +775,9 @@
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.TC_XTERM_THEMES = TC_XTERM_THEMES;
   global.tcApplyTerminalTheme = tcApplyTerminalTheme;
+  global.tcQuantizeScrollDelta = tcQuantizeScrollDelta;
+  global.tcCellFromPoint = tcCellFromPoint;
+  global.tcSelectionSpan = tcSelectionSpan;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
