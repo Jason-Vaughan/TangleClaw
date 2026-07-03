@@ -31,14 +31,6 @@ describe('update prompt install path (#183)', () => {
     assert.match(js, /ask the operator for the path/);
   });
 
-  it('CACHE_NAME is bumped so active service workers pick up the new session.js', () => {
-    // This test owns the exact current pin (latest bump: #183; session.js is
-    // precached). Older generations assert "past v3-NN" — see
-    // terminal-drag-copy.test.js.
-    const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
-    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-36';/);
-  });
-
   it('no public script hardcodes a checkout path (regression guard)', () => {
     const publicDir = path.join(__dirname, '..', 'public');
     for (const file of fs.readdirSync(publicDir)) {

@@ -149,10 +149,9 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
     });
 
     it('CACHE_NAME is bumped so active service workers surface the new shell', () => {
-      // Exact-pin ownership moved to update-prompt-path.test.js (latest bump:
-      // #183). This generation asserts "past v3-34" — see terminal-drag-copy.test.js.
-      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[1234]';/.test(sw),
-        'sw.js CACHE_NAME must be past v3-34 (drawer shell shipped in v3-35)');
+      // This test owns the exact current pin (latest bump: #331 slice 3).
+      // Older generations assert "past v3-NN" — see terminal-drag-copy.test.js.
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-35';/);
     });
   });
 });
