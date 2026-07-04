@@ -3206,6 +3206,24 @@ async function handleRequest(req, res) {
     }
   }
 
+  // Fail-closed auth-bypass parity guard (#473). Caddy's basic_auth gate decides
+  // "bypass" against the DECODED, path-cleaned target, while TC's router above
+  // parses the RAW target with `new URL` — so normalization variants
+  // (`/openclaw-direct//x`, `//openclaw-direct/x`, `/openclaw-direct%2Fx`) can be
+  // waved through unauthenticated by Caddy yet miss the OpenClaw proxy route here.
+  // A real bypass path is already handled above (health via /api, the OpenClaw
+  // proxy, the manifest file via serveStatic). Anything reaching this point whose
+  // Caddy-canonical path is still a bypass path did NOT resolve to its handler, so
+  // serving the SPA shell would leak it unauthenticated (the #472 residual-risk #2
+  // leak class). Refuse instead — never serve fallback content to a bypass-shaped
+  // request. Non-bypass GETs fall through to the SPA/wrapper routes unchanged.
+  if (caddy.isCaddyAuthBypassPath(req.url)) {
+    log.warn('Auth-bypass path fell through without a handler — refusing (parity guard)', {
+      method, path: pathname, canonical: caddy.caddyCanonicalPath(req.url)
+    });
+    return errorResponse(res, 404, 'Not found', 'NOT_FOUND');
+  }
+
   // Session wrapper page — /session/:name serves session.html
   if (method === 'GET' && pathname.startsWith('/session/') && pathname.split('/').length === 3) {
     const sessionName = pathname.split('/')[2];

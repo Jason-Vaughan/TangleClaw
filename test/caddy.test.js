@@ -637,4 +637,56 @@ describe('caddy', () => {
       assert.throws(() => caddy.replaceBasicAuthCredential(live, { hash: 'plaintext' }), /valid bcrypt hash/);
     });
   });
+
+  describe('caddyCanonicalPath / isCaddyAuthBypassPath (normalization parity, #473)', () => {
+    // GROUND TRUTH: each row's `bypass` was measured against a live `caddy run`
+    // (2.11.4) fronting a backend with the real _bypassPathRegexp() gate — 200
+    // (backend reached unauthenticated) => bypass:true, 401 => bypass:false. The
+    // predicate MUST agree with Caddy for every row or the two layers disagree on
+    // whether a variant needs auth (the #472 residual-risk #2 leak class).
+    const PROBE = [
+      // [rawUrl, canonical, caddyBypasses]
+      ['/api/health', '/api/health', true],
+      ['/openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', true],
+      ['/manifest.json', '/manifest.json', true],
+      // duplicate slashes collapse (Caddy merges; new URL does not) — leak variants
+      ['/openclaw-direct//abc/chat', '/openclaw-direct/abc/chat', true],
+      ['//openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', true],
+      // percent-encoded slash decodes before matching (new URL leaves %2F encoded)
+      ['/openclaw-direct%2Fabc/chat', '/openclaw-direct/abc/chat', true],
+      ['/openclaw-direct/abc%2Fchat', '/openclaw-direct/abc/chat', true],
+      // dot-segments resolve; traversal out of the bypass prefix is NOT bypassed
+      ['/openclaw-direct/./abc', '/openclaw-direct/abc', true],
+      ['/./manifest.json', '/manifest.json', true],
+      ['/openclaw-direct/../api/system', '/api/system', false],
+      ['/openclaw-direct/..%2fapi/system', '/api/system', false],
+      ['/openclaw-direct/.%2e/api/system', '/api/system', false],
+      ['/openclaw-direct/../', '/', false],
+      // trailing slash is PRESERVED (path.Clean would strip it, breaking parity)…
+      ['/manifest.json/', '/manifest.json/', false],
+      ['/api/health/', '/api/health/', false],
+      // …but a trailing `/.` resolves away, leaving no slash → still a bypass
+      ['/api/health/.', '/api/health', true],
+      // case-sensitive (the #472 fix); query/fragment stripped
+      ['/OPENCLAW-DIRECT/abc', '/OPENCLAW-DIRECT/abc', false],
+      ['/openclaw-direct/abc?x=1&y=2', '/openclaw-direct/abc', true],
+      ['/openclaw-direct/abc#frag', '/openclaw-direct/abc', true],
+      ['/openclaw-direct', '/openclaw-direct', false]
+    ];
+
+    for (const [raw, canonical, bypass] of PROBE) {
+      it(`canonicalizes ${JSON.stringify(raw)} → ${JSON.stringify(canonical)} (bypass=${bypass})`, () => {
+        assert.equal(caddy.caddyCanonicalPath(raw), canonical);
+        assert.equal(caddy.isCaddyAuthBypassPath(raw), bypass);
+      });
+    }
+
+    it('does not throw on malformed percent-encoding (leaves it undecoded)', () => {
+      // A lone `%` cannot be decoded; Caddy forwards it rather than 400ing, so the
+      // helper must not throw. `/openclaw-direct/%` stays a bypass-prefixed path.
+      assert.doesNotThrow(() => caddy.caddyCanonicalPath('/openclaw-direct/%'));
+      assert.equal(caddy.isCaddyAuthBypassPath('/openclaw-direct/%zz'), true);
+      assert.equal(caddy.isCaddyAuthBypassPath('/%zz'), false);
+    });
+  });
 });
