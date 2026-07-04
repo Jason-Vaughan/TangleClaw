@@ -106,7 +106,10 @@ function planCutover(target, ctx) {
       basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
       // #397 — preserve the remote plain-HTTP catch-all shape (adopted from the
       // live file or set explicitly). Generator enforces gate-required.
-      remoteHttpCatchAll: config.caddyRemoteHttp === true
+      remoteHttpCatchAll: config.caddyRemoteHttp === true,
+      // #434 — preserve the tailnet HTTPS site + http→https redirect (adopted
+      // from the live file or set explicitly). Generator enforces gate-required.
+      tailnetHost: config.caddyTailnetHost || null
     });
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
       TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
@@ -194,24 +197,38 @@ function parseArgs(argv) {
 
 /**
  * Dry-run twin of caddy.adoptCredentialIntoConfig: apply the live Caddyfile's
- * credential (and remote-HTTP shape) to the IN-MEMORY config only — nothing is
- * saved — so the previewed plan reflects the post-adoption state instead of
- * crashing on the refuse-to-ungate guard (Critic-caught: dry-run and real-run
- * diverged on exactly the #397 recovery scenario).
+ * credential and ingress shapes (remote-HTTP catch-all, tailnet HTTPS site) to
+ * the IN-MEMORY config only — nothing is saved — so the previewed plan reflects
+ * the post-adoption state instead of crashing on the refuse-to-ungate guard
+ * (Critic-caught: dry-run and real-run diverged on exactly the #397 recovery
+ * scenario). Mirrors the real function's #434 decoupling: shapes preview even
+ * when the credential is already in config, and never overwrite a set field.
  * @param {object} config - Loaded config, mutated in place (in-memory only).
  * @param {string|null} existingCaddyfileText - Live Caddyfile text, if any.
- * @returns {boolean} Whether an adoption was previewed.
+ * @returns {boolean} Whether any adoption was previewed.
  */
 function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
-  if (config.basicAuthUser || config.basicAuthHash) return false;
   if (typeof existingCaddyfileText !== 'string') return false;
-  const cred = caddy.extractBasicAuthCredential(existingCaddyfileText);
-  if (!cred) return false;
-  config.authEnabled = true;
-  config.basicAuthUser = cred.user;
-  config.basicAuthHash = cred.hash;
-  if (caddy.hasRemoteHttpCatchAll(existingCaddyfileText)) config.caddyRemoteHttp = true;
-  return true;
+  let previewed = false;
+  if (!config.basicAuthUser && !config.basicAuthHash) {
+    const cred = caddy.extractBasicAuthCredential(existingCaddyfileText);
+    if (cred) {
+      config.authEnabled = true;
+      config.basicAuthUser = cred.user;
+      config.basicAuthHash = cred.hash;
+      previewed = true;
+    }
+  }
+  if (config.caddyRemoteHttp !== true && caddy.hasRemoteHttpCatchAll(existingCaddyfileText)) {
+    config.caddyRemoteHttp = true;
+    previewed = true;
+  }
+  const tailnetHost = caddy.extractTailnetHost(existingCaddyfileText);
+  if (tailnetHost && !config.caddyTailnetHost && tailnetHost !== config.publicDomain) {
+    config.caddyTailnetHost = tailnetHost;
+    previewed = true;
+  }
+  return previewed;
 }
 
 /**
@@ -288,18 +305,23 @@ function main() {
   };
 
   if (target === 'caddy') {
-    // #397 credential durability — before planning, adopt the live Caddyfile's
-    // basic_auth credential (and remote-HTTP shape) into config if config has
-    // none, so the regenerated file re-emits the SAME hash byte-for-byte
-    // instead of losing it. Dry-run reports without mutating config.
+    // #397/#434 durability — before planning, adopt the live Caddyfile's
+    // basic_auth credential and ingress shapes (remote-HTTP catch-all, tailnet
+    // HTTPS site) into config where config lacks them, so the regenerated file
+    // re-emits the SAME hash + sites instead of losing them. Dry-run reports
+    // without mutating config.
     if (dryRun) {
       if (applyDryRunAdoptionPreview(config, ctx.existingCaddyfileText)) {
-        process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential into config (#397 durability) — plan below previews the post-adoption state\n');
+        process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential / ingress shapes into config (#397/#434 durability) — plan below previews the post-adoption state\n');
       }
     } else {
       const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
-      if (adoption.adopted) {
-        process.stdout.write(`Adopted live basic_auth credential into config (user: ${adoption.user}${adoption.remoteHttp ? ', remote HTTP catch-all preserved' : ''}).\n`);
+      if (adoption.changed) {
+        const parts = [];
+        if (adoption.adopted) parts.push(`basic_auth credential (user: ${adoption.user})`);
+        if (adoption.remoteHttp) parts.push('remote HTTP catch-all preserved');
+        if (adoption.tailnetHost) parts.push(`tailnet HTTPS site preserved (${adoption.tailnetHost})`);
+        process.stdout.write(`Adopted live Caddyfile state into config: ${parts.join(', ')}.\n`);
         Object.assign(config, store.config.load()); // refresh the in-memory copy the plan reads
       }
     }
