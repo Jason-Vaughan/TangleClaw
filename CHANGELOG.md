@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-07-04
+
 ### Security
 
 - **`buildCaddyfileContent` gates with a case-sensitive `path_regexp` matcher instead of the case-insensitive `path` matcher (#434, folds in #472 Critic residual-risk #2).** Caddy's `path` matcher is case-insensitive, so a request to `/OPENCLAW-DIRECT/x` (or `/API/HEALTH`) slipped past the `not path` bypass gate; TC's case-sensitive router then missed the proxy route and served the unauthenticated SPA shell. The bypass is now an anchored RE2 regex (`^(/api/health|/openclaw-direct/.*|/manifest\.json)$`, case-sensitive, `.` escaped literal) applied to every gated site block, so only exact-cased bypass paths are exempt. Verified with a live `caddy run` probe: uppercase variants → 401, correctly-cased paths bypass, path traversal (`/openclaw-direct/../api/system`) still 401 (Caddy canonicalizes before matching), authed requests reach the upstream. Tests in `test/caddy.test.js`.
