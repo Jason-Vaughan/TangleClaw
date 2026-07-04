@@ -196,8 +196,26 @@ describe('caddy', () => {
 
     it('keeps /api/health out of the gate (health probe needs no credentials)', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      // The gate references "@protected = not path /api/health", so health is open.
-      assert.match(out, /@protected not path \/api\/health/);
+      // The gate references "@protected = not path <bypass list>", so health is open.
+      assert.match(out, /@protected not path \/api\/health /);
+    });
+
+    it('keeps /openclaw-direct/* out of the gate (OpenClaw sends its own Authorization header; a basic_auth 401 there poisons the browser credential cache → prompt loop)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.match(out, /@protected not path \/api\/health \/openclaw-direct\/\* \/manifest\.json/);
+    });
+
+    it('keeps /manifest.json out of the gate (browsers fetch PWA manifests credential-less — a gated manifest pops an auth prompt per page load)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.match(out, / \/manifest\.json$/m);
+    });
+
+    it('applies the same bypass list to every gated site block (local + public + remote catch-all)', () => {
+      const out = caddy.buildCaddyfileContent({
+        ...opts, ...AUTH, publicDomain: 'tc.example.com', remoteHttpCatchAll: true
+      });
+      const matcherLines = out.match(/@protected not path \/api\/health \/openclaw-direct\/\* \/manifest\.json/g) || [];
+      assert.equal(matcherLines.length, 3);
     });
 
     it('gates the public ACME site too when publicDomain + auth are set', () => {
