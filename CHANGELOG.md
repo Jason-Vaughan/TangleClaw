@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-07-03
+
 ### Changed
 
 - **BREAKING: repo renamed `TangleClaw-v3` → `TangleClaw` (chunk R / #183 — the last 4.0 box).** The vestigial `-v3` suffix is dropped as the 4.0 identity reset. Executed per the pre-flight inventory (`.claude/plans/r-rename-preflight-inventory.md`): disk root moved to `~/Documents/Projects/TangleClaw` (the GitHub repo/remote already carried the new name), the Claude auto-memory dir re-keyed to the new path key (the old key retained as the plan-mandated backup), and the TC DB `projects` row migrated. Product code needed **zero changes** — paths are relative/`__dirname`-based throughout; the one hardcoded absolute was fixed in the #451 pre-step, and its regression guard keeps `public/*.js` clean. A compat symlink `TangleClaw-v3 → TangleClaw` bridges the ~13 managed projects whose `.claude/settings.json` SessionStart hooks still carry the old absolute path — `syncEngineHooks` rewrites each at that project's next session launch (lib/sessions.js), after which the symlink can be dropped. Non-repo stores updated in place: `~/.tangleclaw/EMERGENCY-RECOVERY.md` (backup kept), `.claude/priming/build-session.md` (history note added), `.prawduct/project-state.yaml` + continuity-index titles. Verified from the new root: session launch + memory recall + server cwd, launchd plists/engine configs/`config.json` clean, suite **3696/0 (1 skipped)**. Breaking for anything outside TC's regeneration reach that holds the old absolute path or clone URL.
