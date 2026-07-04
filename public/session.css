@@ -23,6 +23,7 @@
   --engine-codex: #42A5F5;
   --engine-aider: #AB47BC;
   --engine-genesis: #FF7043;
+  --engine-antigravity: #26C6DA;
   --radius-btn: 6px;
   --radius-card: 10px;
   --radius-modal: 12px;
@@ -210,6 +211,10 @@ body {
 .banner-engine[data-engine="genesis"] {
   background: rgba(255, 112, 67, 0.15);
   color: var(--engine-genesis);
+}
+.banner-engine[data-engine="antigravity"] {
+  background: rgba(38, 198, 218, 0.15);
+  color: var(--engine-antigravity);
 }
 
 /* ── Engine Status Dot ── */

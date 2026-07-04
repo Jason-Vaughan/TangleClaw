@@ -1,0 +1,40 @@
+{
+  "id": "antigravity",
+  "name": "Antigravity",
+  "command": "agy",
+  "interactionModel": "session",
+  "configFormat": {
+    "filename": ".antigravity.md",
+    "syntax": "markdown",
+    "generator": "antigravity-md"
+  },
+  "coAuthorFormat": null,
+  "commands": [],
+  "detection": {
+    "strategy": "which",
+    "target": "agy"
+  },
+  "launch": {
+    "shellCommand": "agy",
+    "args": [],
+    "env": {}
+  },
+  "launchModes": {
+    "default": { "label": "Interactive", "args": [], "description": "Prompts for approval on every action" },
+    "sandbox": { "label": "Sandbox", "args": ["--sandbox"], "description": "Runs in a sandbox with terminal restrictions enabled" },
+    "bypassPermissions": { "label": "Bypass", "args": ["--dangerously-skip-permissions"], "description": "Auto-approves all tool permission requests (containers/VMs only)", "warning": "Only use in isolated environments" }
+  },
+  "defaultLaunchMode": "default",
+  "persistent": null,
+  "capabilities": {
+    "supportsSlashCommands": false,
+    "supportsPrimePrompt": true,
+    "supportsConfigFile": true,
+    "supportsCoAuthor": false
+  },
+  "statusPage": {
+    "adapter": "google-incidents",
+    "url": "https://status.cloud.google.com/incidents.json",
+    "productName": "Gemini"
+  }
+}

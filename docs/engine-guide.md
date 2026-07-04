@@ -42,11 +42,25 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 
 ### Gemini CLI
 
+> **⚠ Sunset:** Google [retired Gemini CLI for individual accounts on June 18, 2026](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) in favor of Antigravity CLI (below). The profile remains for enterprise Gemini Code Assist licenses; removal is tracked in #457.
+
 - **Command**: `gemini`
 - **Interaction model**: Session-based (spawns in tmux)
 - **Config file**: `.gemini/GEMINI.md` (Markdown, in `.gemini/` subdirectory)
 - **Slash commands**: None
 - **Capabilities**: Prime prompt, config file, co-author
+
+### Antigravity
+
+[Antigravity CLI](https://antigravity.google/) (`agy`) is Google's successor to Gemini CLI.
+
+- **Command**: `agy`
+- **Interaction model**: Session-based (spawns in tmux)
+- **Config file**: `.antigravity.md` (Markdown, project root — Antigravity's recommended context file; it also reads `GEMINI.md`/`AGENTS.md` for compatibility, but `.antigravity.md` takes precedence)
+- **Slash commands**: None
+- **Launch modes**: Interactive (default), Sandbox (`--sandbox`), Bypass (`--dangerously-skip-permissions`, containers/VMs only). Antigravity has no Auto-Edit/Plan-Only approval modes (verified against agy v1.0.10)
+- **Capabilities**: Prime prompt, config file
+- **Status monitoring**: reuses the `google-incidents` adapter with `productName: "Gemini"` — agy fronts Gemini models, and model-serving incidents on the Google status page carry that name
 
 ### OpenClaw
 
@@ -176,6 +190,7 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 | Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
 | Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
 | Gemini CLI | `.gemini/GEMINI.md` | Markdown sections (same format as CLAUDE.md), written to `.gemini/` subdirectory |
+| Antigravity | `.antigravity.md` | Markdown sections (same generator as Gemini CLI with an `.antigravity.md` header), written to the project root |
 
 This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules, PortHub references, and methodology info.
 

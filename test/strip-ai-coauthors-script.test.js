@@ -72,6 +72,11 @@ describe('strip-ai-coauthors.sh (#247) — AI vendor patterns are removed', () =
     assert.equal(out, subject);
   });
 
+  it('strips Antigravity trailer (#456)', () => {
+    const out = runHook(subject + 'Co-Authored-By: Antigravity <noreply@google.com>\n');
+    assert.equal(out, subject);
+  });
+
   it('strips Copilot trailer', () => {
     const out = runHook(subject + 'Co-Authored-By: GitHub Copilot <copilot@github.com>\n');
     assert.equal(out, subject);
