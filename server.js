@@ -2824,8 +2824,45 @@ function _openclawProxyHeaders(headers, localPort, gatewayToken) {
   const localOrigin = `http://127.0.0.1:${localPort}`;
   if (out.origin) out.origin = localOrigin;
   if (out.referer) out.referer = localOrigin + '/';
+  // The OpenClaw gateway authenticates via the injected gateway token, never the
+  // browser's Authorization header — in caddy-gated ingress mode that header is the
+  // operator's Basic credential, meaningless to the gateway and not to be leaked to
+  // the downstream host. Always strip the incoming header, then set Bearer only when
+  // a token is configured (#470).
+  delete out.authorization;
   if (gatewayToken) out.authorization = `Bearer ${gatewayToken}`;
   return out;
+}
+
+/**
+ * Build the raw HTTP/1.1 request line + header block for a proxied OpenClaw
+ * WebSocket handshake. The WS upgrade path writes headers to a socket by hand
+ * rather than through `http.request`, so this is the WS-side mirror of
+ * {@link _openclawProxyHeaders} and MUST apply the same Authorization rule (#470):
+ * the incoming `Authorization` header (the operator's caddy Basic credential in
+ * gated mode) is always dropped, and a `Bearer <gatewayToken>` is injected when a
+ * token is configured. `Host` is pinned to the upstream and `Origin`/`Referer` are
+ * rewritten to the local origin. Terminates with the blank line ending the block.
+ * @param {object} headers - Incoming request headers (`req.headers`, lowercased keys).
+ * @param {string} targetUrl - Rewritten request target for the upstream.
+ * @param {number} localPort - Upstream tunnel port on 127.0.0.1.
+ * @param {string|null} [gatewayToken] - Gateway bearer token, or null/undefined.
+ * @returns {string[]} Lines to `.join('\r\n')` before writing to the proxy socket.
+ */
+function _openclawWsRequestLines(headers, targetUrl, localPort, gatewayToken) {
+  const localOrigin = `http://127.0.0.1:${localPort}`;
+  const lines = [`GET ${targetUrl} HTTP/1.1`, `Host: 127.0.0.1:${localPort}`];
+  for (const [key, value] of Object.entries(headers)) {
+    const k = key.toLowerCase();
+    if (k === 'host') continue;
+    if (k === 'authorization') continue; // stripped; gateway token injected below (#470)
+    if (k === 'origin') { lines.push(`origin: ${localOrigin}`); continue; }
+    if (k === 'referer') { lines.push(`referer: ${localOrigin}/`); continue; }
+    lines.push(`${key}: ${value}`);
+  }
+  if (gatewayToken) lines.push(`authorization: Bearer ${gatewayToken}`);
+  lines.push('', '');
+  return lines;
 }
 
 /**
@@ -2930,23 +2967,9 @@ function handleUpgrade(req, socket, head) {
 
       const net = require('node:net');
       const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
-        const localOrigin = `http://127.0.0.1:${resolved.localPort}`;
-        const reqHeaders = [];
-        reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
-        reqHeaders.push(`Host: 127.0.0.1:${resolved.localPort}`);
-        let hasAuth = false;
-        for (const [key, value] of Object.entries(req.headers)) {
-          const k = key.toLowerCase();
-          if (k === 'host') continue;
-          if (k === 'origin') { reqHeaders.push(`origin: ${localOrigin}`); continue; }
-          if (k === 'referer') { reqHeaders.push(`referer: ${localOrigin}/`); continue; }
-          if (k === 'authorization') { hasAuth = true; }
-          reqHeaders.push(`${key}: ${value}`);
-        }
-        if (!hasAuth && resolved.conn.gatewayToken) {
-          reqHeaders.push(`authorization: Bearer ${resolved.conn.gatewayToken}`);
-        }
-        reqHeaders.push('', '');
+        const reqHeaders = _openclawWsRequestLines(
+          req.headers, targetUrl, resolved.localPort, resolved.conn.gatewayToken
+        );
 
         proxySocket.write(reqHeaders.join('\r\n'));
         if (head.length > 0) {
@@ -2982,23 +3005,9 @@ function handleUpgrade(req, socket, head) {
 
       const net = require('node:net');
       const proxySocket = net.connect(resolved.localPort, '127.0.0.1', () => {
-        const localOrigin = `http://127.0.0.1:${resolved.localPort}`;
-        const reqHeaders = [];
-        reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
-        reqHeaders.push(`Host: 127.0.0.1:${resolved.localPort}`);
-        let hasAuth = false;
-        for (const [key, value] of Object.entries(req.headers)) {
-          const k = key.toLowerCase();
-          if (k === 'host') continue;
-          if (k === 'origin') { reqHeaders.push(`origin: ${localOrigin}`); continue; }
-          if (k === 'referer') { reqHeaders.push(`referer: ${localOrigin}/`); continue; }
-          if (k === 'authorization') { hasAuth = true; }
-          reqHeaders.push(`${key}: ${value}`);
-        }
-        if (!hasAuth && resolved.conn.gatewayToken) {
-          reqHeaders.push(`authorization: Bearer ${resolved.conn.gatewayToken}`);
-        }
-        reqHeaders.push('', '');
+        const reqHeaders = _openclawWsRequestLines(
+          req.headers, targetUrl, resolved.localPort, resolved.conn.gatewayToken
+        );
 
         proxySocket.write(reqHeaders.join('\r\n'));
         if (head.length > 0) {
@@ -4026,4 +4035,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE, _setRestartScheduler };
+module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
