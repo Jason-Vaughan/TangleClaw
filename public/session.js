@@ -482,7 +482,7 @@ function renderActionFindings(actionLabel, actionOutput) {
  * mistaking it for a successful real Critic run.
  *
  * @param {string} actionLabel
- * @param {string} reason - e.g. "degradedEngine:gemini", "idleTimeout"
+ * @param {string} reason - e.g. "degradedEngine:antigravity", "idleTimeout"
  */
 function renderActionFallback(actionLabel, reason) {
   const existing = document.getElementById('actionFindingsPanel');

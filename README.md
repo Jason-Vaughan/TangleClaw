@@ -40,7 +40,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 - **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
 - **Session continuity** *(new in 4.0)* — every session ends with a structured wrap: a per-session summary, an updated project changelog, and a resume prime so the next session starts with "we left off at X — continue?" instead of a cold open. Full transcripts are snapshotted at wrap and everything is searchable from a per-project **Session History & Search** drawer — filter by date, tags, type, or files touched, then drill from summary into the raw transcript
-- **Six built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/) (Google's Gemini CLI successor), [Gemini CLI](https://github.com/google-gemini/gemini-cli) (sunset by Google June 2026; retirement tracked in #457), [Aider](https://aider.chat), and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw). Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
+- **Five built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/) (Google's Gemini CLI successor), [Aider](https://aider.chat), and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw). Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
 - **Launch mode selector** — pick a permission mode when you start a session: Interactive, Accept Edits, Plan Only, Auto, or Bypass. The mode propagates to the engine natively, including remote OpenClaw sessions via ClawBridge
 - **Secure remote access** *(new in 4.0)* — an optional, reversible [Caddy ingress](deploy/INGRESS.md) puts TLS and a password gate in front of everything (dashboard, terminals, APIs), with a break-glass admin reset and machine-to-machine **service tokens** so other projects' scripts can still call the PortHub and shared-docs APIs
 - **Project Master** *(new in 4.0)* — a persistent, fleet-aware assistant session (🧠 in the header) that sees cross-project status: what's running, what's idle, what shipped. Available as a landing-page pane and an in-session drawer
@@ -75,10 +75,10 @@ What started as session persistence grew into a full orchestration platform — 
 - **Session memory** — file-based, per-project memory at `.tangleclaw/memories/` with a `MEMORY.md` index, injected into every engine config so all engines follow the same convention
 
 ### Engines
-- **Engine-native config generation** — CLAUDE.md, `.codex.yaml`, GEMINI.md, `.aider.conf.yml` generated automatically from your rules, regenerated on every server boot so changes land without a relaunch
+- **Engine-native config generation** — CLAUDE.md, `.codex.yaml`, `.antigravity.md`, `.aider.conf.yml` generated automatically from your rules, regenerated on every server boot so changes land without a relaunch
 - **Custom engines** — adding a new engine is a single JSON profile, no code changes
 - **Orchestration launch-binder** — per-project binding to an orchestration profile (`~/.tangleclaw/orchestration-profiles.json`): the engine launches with the profile's base URL, model, and key injected via environment (never argv). Unbound projects launch exactly as before
-- **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Gemini (Google) in the session banner
+- **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Antigravity (Google) in the session banner
 
 ### Methodologies & Governance
 - **[Prawduct](https://github.com/brookstalley/prawduct) V2 plugin delegation** — projects governed by the Prawduct Claude Code plugin get governance from the plugin; TangleClaw detects the install and defers (no config clobbering), keeping its own lightweight baseline for everything else. Governance drift is shown, never silent

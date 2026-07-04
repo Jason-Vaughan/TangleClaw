@@ -2353,13 +2353,27 @@ describe('sessions', () => {
     });
 
     it('returns error for unavailable engine', () => {
-      // Create a project with an unavailable engine
+      // An engine whose profile EXISTS but whose binary is not on this
+      // machine. genesis (the old fixture) was retired in #458, and every
+      // remaining bundled engine may legitimately be installed on a dev
+      // box — so pin the case with a custom profile whose `which` target
+      // cannot exist.
+      store.engines.save({
+        id: 'tc-test-unavailable',
+        name: 'Unavailable Test Engine',
+        command: 'tc-definitely-missing-binary',
+        interactionModel: 'session',
+        configFormat: { filename: null, syntax: null, generator: null },
+        detection: { strategy: 'which', target: 'tc-definitely-missing-binary' },
+        launch: { shellCommand: 'tc-definitely-missing-binary', args: [], env: {} },
+        capabilities: {}
+      });
       const projDir = path.join(projectsDir, 'bad-engine');
       fs.mkdirSync(projDir, { recursive: true });
       store.projects.create({
         name: 'bad-engine',
         path: projDir,
-        engine: 'genesis',
+        engine: 'tc-test-unavailable',
         methodology: 'minimal'
       });
 

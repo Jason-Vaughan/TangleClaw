@@ -1539,10 +1539,11 @@ describe('projects', () => {
       fs.writeFileSync(settingsFile, JSON.stringify(seeded, null, 2) + '\n');
 
       // Flip engine away from claude WITHOUT touching silentPrime — exactly the
-      // scenario from #140's repro.
-      const result = projects.updateProject('sp-engine-flip-orphan', { engine: 'gemini' });
+      // scenario from #140's repro. (antigravity here; the original gemini
+      // fixture engine was retired in #457.)
+      const result = projects.updateProject('sp-engine-flip-orphan', { engine: 'antigravity' });
       assert.deepEqual(result.errors, []);
-      assert.equal(store.projects.getByName('sp-engine-flip-orphan').engineId, 'gemini');
+      assert.equal(store.projects.getByName('sp-engine-flip-orphan').engineId, 'antigravity');
 
       const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.equal(
