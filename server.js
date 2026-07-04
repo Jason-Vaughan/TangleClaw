@@ -3861,6 +3861,16 @@ if (require.main === module) {
     setLevel(config.logLevel);
   }
 
+  // #397 credential durability (2026-07-03 lockout): in caddy mode, if the live
+  // Caddyfile carries a basic_auth credential that the canonical config doesn't,
+  // adopt it into config at boot — READ-ONLY on the Caddyfile. Makes the working
+  // credential durable so every future regeneration (cutover, reset-admin)
+  // re-emits the same hash instead of losing it with the file. Never overwrites
+  // an existing config credential; non-throwing.
+  if (config.ingressMode === 'caddy') {
+    caddy.adoptCredentialIntoConfig();
+  }
+
   // Bootstrap port management — resolve actual port (env var takes precedence)
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
   // AUTH-1 (#395): the ttydPort lease is kept even in caddy mode, where ttyd is

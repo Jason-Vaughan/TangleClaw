@@ -67,6 +67,8 @@ function fillTemplate(tpl, subs) {
  * @param {string} ctx.socketPath - ttyd Unix socket path (caddy target).
  * @param {string} ctx.ttydTemplate - ttyd plist template contents.
  * @param {string} ctx.caddyTemplate - caddy plist template contents.
+ * @param {string|null} [ctx.existingCaddyfileText] - Current Caddyfile text (null
+ *   when absent) — feeds the #397 refuse-to-ungate guard.
  * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string }}
  */
 function planCutover(target, ctx) {
@@ -77,6 +79,19 @@ function planCutover(target, ctx) {
 
   if (target === 'caddy') {
     const httpsPort = config.caddyHttpsPort || 8443;
+    // #397 credential durability — NEVER regenerate a gated ingress into an
+    // ungated one. If the existing Caddyfile carries a credential but the
+    // config would emit no gate, abort: the operator must adopt/set the
+    // credential first (boot-time adoption or scripts/reset-admin.js). This is
+    // the fail-closed twin of the 2026-07-03 lockout: losing the credential
+    // locked the operator OUT; dropping the gate would let everyone else IN.
+    const effectiveAuth = Boolean(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
+    if (!effectiveAuth && typeof ctx.existingCaddyfileText === 'string'
+        && caddy.listBasicAuthUsers(ctx.existingCaddyfileText).length > 0) {
+      throw new Error('cutover would replace a basic_auth-GATED Caddyfile with an UNGATED one '
+        + '(config has no credential). Set one first: node scripts/reset-admin.js '
+        + '(or restart the server in caddy mode to auto-adopt the live credential into config).');
+    }
     const caddyfile = caddy.buildCaddyfileContent({
       serverPort: upstreamPort,
       certPath: ctx.certPath,
@@ -88,7 +103,10 @@ function planCutover(target, ctx) {
       // PATCH guarantees authEnabled ⇒ user+hash present, and the generator's
       // both-or-neither guard backstops it; passing null/null leaves an open site.
       basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
-      basicAuthHash: config.authEnabled ? config.basicAuthHash : null
+      basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
+      // #397 — preserve the remote plain-HTTP catch-all shape (adopted from the
+      // live file or set explicitly). Generator enforces gate-required.
+      remoteHttpCatchAll: config.caddyRemoteHttp === true
     });
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
       TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
@@ -239,10 +257,31 @@ function main() {
     ttydTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${TTYD_LABEL}.plist`), 'utf8'),
     caddyTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${CADDY_LABEL}.plist`), 'utf8'),
     certPath: null,
-    keyPath: null
+    keyPath: null,
+    // #397 — the existing Caddyfile's text (null if absent) feeds the
+    // refuse-to-ungate guard in planCutover.
+    existingCaddyfileText: fs.existsSync(caddy.getCaddyfilePath())
+      ? fs.readFileSync(caddy.getCaddyfilePath(), 'utf8')
+      : null
   };
 
   if (target === 'caddy') {
+    // #397 credential durability — before planning, adopt the live Caddyfile's
+    // basic_auth credential (and remote-HTTP shape) into config if config has
+    // none, so the regenerated file re-emits the SAME hash byte-for-byte
+    // instead of losing it. Dry-run reports without mutating config.
+    if (dryRun) {
+      if (!config.basicAuthUser && !config.basicAuthHash && ctx.existingCaddyfileText
+          && caddy.extractBasicAuthCredential(ctx.existingCaddyfileText)) {
+        process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential into config (#397 durability)\n');
+      }
+    } else {
+      const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
+      if (adoption.adopted) {
+        process.stdout.write(`Adopted live basic_auth credential into config (user: ${adoption.user}${adoption.remoteHttp ? ', remote HTTP catch-all preserved' : ''}).\n`);
+        Object.assign(config, store.config.load()); // refresh the in-memory copy the plan reads
+      }
+    }
     if (!env.caddyPath) {
       if (!dryRun) {
         process.stderr.write('ERROR: caddy not found on PATH. Install with: brew install caddy\n');
