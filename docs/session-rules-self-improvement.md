@@ -21,6 +21,22 @@ here).
 - `session_rule_versions` — a full snapshot after **every** mutation (`create` / `update` /
   `delete` / `restore`). `version_no` is monotonic per rule; `rule_id` is a logical
   reference (no FK cascade) so **history survives a rule's deletion** for audit.
+- `learnings` — `id`, `project_id`, `content`, `tier` (`provisional` | `active`),
+  `source_session`, `confirmed_count`, timestamps. Rows are the raw material the promote
+  loop turns into rules.
+
+## Learnings ingestion (the DB writer, #466)
+
+The `learnings` table is populated by the **`learnings-db-write`** wrap step
+(`lib/wrap-steps/learnings-db-write.js`), which runs right after the AI-driven
+`learnings-capture` step. `learnings-capture` has the AI append a
+`## YYYY-MM-DD — <title>` entry to `.tangleclaw/memories/learnings.md` (the human-readable
+log, the source of truth); `learnings-db-write` then parses that file's **today-dated**
+entries, dedups by exact `content` against the project's existing rows (idempotent on wrap
+retry), and inserts each via `store.learnings.create(... tier:'provisional' ...)`. The DB
+rows are what `generatePrimePrompt` injects as "Active learnings" and what
+`POST /api/session-rules/promote {learningId}` promotes into a rule. Before #466 nothing
+wrote to the table, so both the prime injection and the promote loop were permanently empty.
 
 ## API
 

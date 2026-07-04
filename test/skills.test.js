@@ -92,7 +92,7 @@ describe('skills', () => {
       // surface order here reflects the template-level edits.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write'],
+        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {

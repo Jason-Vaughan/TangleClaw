@@ -1456,7 +1456,7 @@ describe('sessions', () => {
       // V2 plugin); the byte-equal contract otherwise holds.
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
+        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, learnings-db-write, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'wrap NL prompt must include the post-C2 step list; any drift in join structure means triggerWrap behavior changed');
@@ -1551,7 +1551,7 @@ describe('sessions', () => {
       // priming-roll/critic-check/pr-check) so the routing assertion
       // doesn't accidentally trip on a missing tmux session.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
-      const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc', 'project-map', 'index-describe'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc', 'project-map', 'index-describe'];
       const dispatchOrig = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -1568,9 +1568,10 @@ describe('sessions', () => {
         // and `memory-update`; CC-1 appended `continuity-write` after
         // `commit`; C2 (#353) stripped the L3 `critic-check` step; PIDX slice 3
         // (#360) added `project-map` after `features-toc`; PIDX #426 added
-        // `index-describe` after `project-map` — prawduct now ships 11 steps.
-        assert.equal(result.pipelineResult.results.length, 11,
-          'prawduct pipeline runs all eleven steps');
+        // `index-describe` after `project-map`; #466 added `learnings-db-write`
+        // after `learnings-capture` — prawduct now ships 12 steps.
+        assert.equal(result.pipelineResult.results.length, 12,
+          'prawduct pipeline runs all twelve steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         // Restore default
@@ -2203,7 +2204,7 @@ describe('sessions', () => {
       // V2 plugin); the legacy NL-prompt structure is otherwise unchanged.
       const expected =
         'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
+        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, learnings-db-write, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
         'Output these fields as ## markdown headings: summary, nextSteps, learnings';
       assert.equal(sentCommand, expected,
         'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-C2 step list');
