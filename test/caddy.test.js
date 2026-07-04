@@ -178,6 +178,10 @@ describe('caddy', () => {
     // a real bcrypt-shaped token; the stubbed `caddy validate` doesn't check it,
     // real `caddy validate` syntax is exercised in verification.
     const AUTH = { basicAuthUser: 'jason', basicAuthHash: '$2a$14$wThequ7Ahgg6dT3KZ8x9KuOk0o0gO3pQF1m6Xq9r4tFz8sJgVn3bC' };
+    // Case-sensitive RE2 bypass matcher emitted by _bypassPathRegexp() (#472
+    // residual-risk #2 fix): exact-cased /api/health, /openclaw-direct/* prefix,
+    // /manifest.json — anchored, `.` in manifest escaped.
+    const BYPASS_MATCHER = '@protected not path_regexp ^(/api/health|/openclaw-direct/.*|/manifest\\.json)$';
 
     it('emits no basic_auth gate by default (ungated ingress unchanged)', () => {
       const out = caddy.buildCaddyfileContent(opts);
@@ -187,34 +191,32 @@ describe('caddy', () => {
 
     it('injects a basic_auth gate over the local site when user+hash are set', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      assert.match(out, /\t@protected not path \/api\/health/);
+      assert.ok(out.includes(`\t${BYPASS_MATCHER}`));
       assert.match(out, /\tbasic_auth @protected \{/);
       assert.match(out, /\t\tjason \$2a\$14\$wThequ7Ahgg6dT3KZ8x9KuOk0o0gO3pQF1m6Xq9r4tFz8sJgVn3bC/);
       // basic_auth must precede reverse_proxy so the gate runs before the upstream.
       assert.ok(out.indexOf('basic_auth') < out.indexOf('reverse_proxy'));
     });
 
-    it('keeps /api/health out of the gate (health probe needs no credentials)', () => {
+    it('gates with a case-SENSITIVE path_regexp matcher, not case-insensitive path (#472 residual-risk #2)', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      // The gate references "@protected = not path <bypass list>", so health is open.
-      assert.match(out, /@protected not path \/api\/health /);
+      // `path` is case-insensitive in Caddy, so /OPENCLAW-DIRECT/x would slip the
+      // gate and leak the unauthenticated SPA shell. path_regexp (RE2) is
+      // case-sensitive. Behavioral proof (case-variant → 401) is in the live probe.
+      assert.ok(out.includes('@protected not path_regexp '));
+      assert.doesNotMatch(out, /@protected not path \//);
     });
 
-    it('keeps /openclaw-direct/* out of the gate (OpenClaw sends its own Authorization header; a basic_auth 401 there poisons the browser credential cache → prompt loop)', () => {
+    it('bypasses exactly /api/health, /openclaw-direct/*, /manifest.json (probe, OpenClaw own-auth, credential-less manifest)', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      assert.match(out, /@protected not path \/api\/health \/openclaw-direct\/\* \/manifest\.json/);
+      assert.ok(out.includes(`\t${BYPASS_MATCHER}`));
     });
 
-    it('keeps /manifest.json out of the gate (browsers fetch PWA manifests credential-less — a gated manifest pops an auth prompt per page load)', () => {
-      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      assert.match(out, / \/manifest\.json$/m);
-    });
-
-    it('applies the same bypass list to every gated site block (local + public + remote catch-all)', () => {
+    it('applies the same bypass matcher to every gated site block (local + public + remote catch-all)', () => {
       const out = caddy.buildCaddyfileContent({
         ...opts, ...AUTH, publicDomain: 'tc.example.com', remoteHttpCatchAll: true
       });
-      const matcherLines = out.match(/@protected not path \/api\/health \/openclaw-direct\/\* \/manifest\.json/g) || [];
+      const matcherLines = out.split('\n').filter((l) => l.trim() === BYPASS_MATCHER);
       assert.equal(matcherLines.length, 3);
     });
 
@@ -259,6 +261,41 @@ describe('caddy', () => {
     it('forwards identity on BOTH the local and public sites when gated + publicDomain', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, publicDomain: 'tc.example.com' });
       assert.equal((out.match(/header_up X-Auth-User \{http\.auth\.user\.id\}/g) || []).length, 2);
+    });
+
+    // #434 — tailnet HTTPS site + http→https redirect (codifies the 2026-07-04 hand-edit).
+    const TAILNET = 'cursatory.tail123678.ts.net';
+
+    it('emits a gated tailnet HTTPS site reusing the mkcert cert when tailnetHost + auth are set', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET });
+      assert.match(out, /^cursatory\.tail123678\.ts\.net \{$/m);
+      const siteBlock = out.slice(out.indexOf(`${TAILNET} {`));
+      assert.match(siteBlock, /\ttls \/c\/cert\.pem \/c\/key\.pem/);
+      assert.ok(siteBlock.includes(BYPASS_MATCHER));
+      assert.match(siteBlock, /header_up X-Auth-User \{http\.auth\.user\.id\}/);
+    });
+
+    it('emits an http→https redirect block for the tailnet host, pointing at the https port', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, httpsPort: 9443 });
+      assert.match(out, /^http:\/\/cursatory\.tail123678\.ts\.net \{$/m);
+      assert.match(out, /\tredir https:\/\/cursatory\.tail123678\.ts\.net:9443\{uri\}/);
+    });
+
+    it('adds auto_https disable_redirects when tailnetHost is set (so the explicit redirect governs)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET });
+      assert.match(out, /\tauto_https disable_redirects/);
+    });
+
+    it('throws when tailnetHost is set without basic_auth (fail closed — no ungated remote HTTPS site)', () => {
+      assert.throws(() => caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET }),
+        /tailnetHost requires basicAuthUser and basicAuthHash/);
+    });
+
+    it('emits no tailnet site, redirect, or auto_https when tailnetHost is unset (output unchanged)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      assert.doesNotMatch(out, /ts\.net/);
+      assert.doesNotMatch(out, /\tredir /);
+      assert.doesNotMatch(out, /auto_https disable_redirects/);
     });
   });
 

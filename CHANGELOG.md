@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **`buildCaddyfileContent` gates with a case-sensitive `path_regexp` matcher instead of the case-insensitive `path` matcher (#434, folds in #472 Critic residual-risk #2).** Caddy's `path` matcher is case-insensitive, so a request to `/OPENCLAW-DIRECT/x` (or `/API/HEALTH`) slipped past the `not path` bypass gate; TC's case-sensitive router then missed the proxy route and served the unauthenticated SPA shell. The bypass is now an anchored RE2 regex (`^(/api/health|/openclaw-direct/.*|/manifest\.json)$`, case-sensitive, `.` escaped literal) applied to every gated site block, so only exact-cased bypass paths are exempt. Verified with a live `caddy run` probe: uppercase variants → 401, correctly-cased paths bypass, path traversal (`/openclaw-direct/../api/system`) still 401 (Caddy canonicalizes before matching), authed requests reach the upstream. Tests in `test/caddy.test.js`.
+
+### Internal
+
+- **`buildCaddyfileContent` can now emit the tailnet HTTPS site + http→https redirect (#434, generator half).** New `tailnetHost` option: when set (with basic_auth — fail-closed guard, an ungated remote HTTPS site throws), the generator emits a gated HTTPS site for the tailnet FQDN (reusing the local mkcert cert, whose SAN must include the FQDN) plus an `http://<host>` → `https://<host>:<port>{uri}` redirect, and adds `auto_https disable_redirects` so the explicit redirect governs. This codifies the 2026-07-04 hand-edit that unblocked remote OpenClaw access (OpenClaw 2026.6.11+ Control UI requires a secure context). Not yet wired into config adoption or the cutover — that is #434 Chunk 2 — so no operator-visible behavior change yet; the generator is capability-only. Tests in `test/caddy.test.js`.
+
 ## [4.2.0] - 2026-07-04
 
 ### Added
