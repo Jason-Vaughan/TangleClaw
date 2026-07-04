@@ -1297,6 +1297,7 @@ describe('engines', () => {
       assert.ok(ids.includes('codex'), 'Missing codex');
       assert.ok(ids.includes('aider'), 'Missing aider');
       assert.ok(ids.includes('gemini'), 'Missing gemini');
+      assert.ok(ids.includes('antigravity'), 'Missing antigravity');
     });
 
     it('should report no errors for any engine', () => {
@@ -1321,6 +1322,7 @@ describe('engines', () => {
       assert.ok(ids.includes('gemini'), 'Missing gemini');
       assert.ok(ids.includes('aider'), 'Missing aider');
       assert.ok(ids.includes('genesis'), 'Missing genesis');
+      assert.ok(ids.includes('antigravity'), 'Missing antigravity');
     });
 
     it('known providers should have adapter and url', () => {

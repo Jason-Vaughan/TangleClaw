@@ -65,9 +65,9 @@ fi
 #   Co-Authored-By: Sage Haiku <sage@haiku.dev>          (surname contains AI token)
 #   Co-Authored-By: Anna Sonnet <anna@example.com>       (surname contains AI token)
 
-vendor='(claude|opus|sonnet|haiku|gpt-[0-9]+|chatgpt|gemini|copilot|aider|cursor)'
+vendor='(claude|opus|sonnet|haiku|gpt-[0-9]+|chatgpt|gemini|antigravity|copilot|aider|cursor)'
 vendor_domain='(anthropic\.com|openai\.com|googleapis\.com|deepmind\.com|google\.com|github\.com|cursor\.sh|aider\.chat)'
-bot_local='(noreply|no-reply|bot|ai|claude|opus|sonnet|haiku|gpt|chatgpt|gemini|copilot|cursor|aider)[a-z0-9._+-]*'
+bot_local='(noreply|no-reply|bot|ai|claude|opus|sonnet|haiku|gpt|chatgpt|gemini|antigravity|copilot|cursor|aider)[a-z0-9._+-]*'
 
 # Pattern A — vendor word in display region, ending on a separator
 # (whitespace, `<`, or end-of-line). The leading `[[:space:]]*` tolerates

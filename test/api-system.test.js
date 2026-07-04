@@ -115,6 +115,7 @@ describe('API — system, engines, tmux', () => {
       assert.ok(ids.includes('codex'));
       assert.ok(ids.includes('aider'));
       assert.ok(ids.includes('genesis'));
+      assert.ok(ids.includes('antigravity'));
     });
   });
 
