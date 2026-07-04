@@ -249,6 +249,31 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
     });
   });
 
+  describe('applyDryRunAdoptionPreview — dry-run parity with real adoption (Critic-caught)', () => {
+    it('previews adoption in-memory so planCutover shows the post-adoption plan instead of crashing', () => {
+      const ctx = makeCtx({ existingCaddyfileText: liveShapedCaddyfile() });
+      const previewed = cutover.applyDryRunAdoptionPreview(ctx.config, ctx.existingCaddyfileText);
+      assert.equal(previewed, true);
+      // The exact #397 recovery scenario: gated live file + empty config.
+      // Post-preview, planning must succeed and re-emit the exact hash.
+      const plan = cutover.planCutover('caddy', ctx);
+      assert.ok(plan.caddyfile.content.includes(`jason ${HASH_A}`));
+      assert.ok(caddy.hasRemoteHttpCatchAll(plan.caddyfile.content));
+    });
+
+    it('previews nothing when config already has a credential or the file has none', () => {
+      assert.equal(
+        cutover.applyDryRunAdoptionPreview({ basicAuthUser: 'jason', basicAuthHash: HASH_B }, liveShapedCaddyfile()),
+        false
+      );
+      assert.equal(cutover.applyDryRunAdoptionPreview({}, null), false);
+      assert.equal(
+        cutover.applyDryRunAdoptionPreview({}, caddy.buildCaddyfileContent(buildOpts())),
+        false
+      );
+    });
+  });
+
   describe('planCutover — refuse-to-ungate guard', () => {
     it('THROWS when the existing Caddyfile is gated but config has no credential', () => {
       assert.throws(

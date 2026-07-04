@@ -193,6 +193,28 @@ function parseArgs(argv) {
 }
 
 /**
+ * Dry-run twin of caddy.adoptCredentialIntoConfig: apply the live Caddyfile's
+ * credential (and remote-HTTP shape) to the IN-MEMORY config only — nothing is
+ * saved — so the previewed plan reflects the post-adoption state instead of
+ * crashing on the refuse-to-ungate guard (Critic-caught: dry-run and real-run
+ * diverged on exactly the #397 recovery scenario).
+ * @param {object} config - Loaded config, mutated in place (in-memory only).
+ * @param {string|null} existingCaddyfileText - Live Caddyfile text, if any.
+ * @returns {boolean} Whether an adoption was previewed.
+ */
+function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
+  if (config.basicAuthUser || config.basicAuthHash) return false;
+  if (typeof existingCaddyfileText !== 'string') return false;
+  const cred = caddy.extractBasicAuthCredential(existingCaddyfileText);
+  if (!cred) return false;
+  config.authEnabled = true;
+  config.basicAuthUser = cred.user;
+  config.basicAuthHash = cred.hash;
+  if (caddy.hasRemoteHttpCatchAll(existingCaddyfileText)) config.caddyRemoteHttp = true;
+  return true;
+}
+
+/**
  * Whether an existing Caddyfile is hand-edited (exists and is NOT an
  * integrity-verified generated file). Shared by the dry-run preview and the
  * executor so the clobber-guard decision (#397 bug 3) can't drift between them.
@@ -271,9 +293,8 @@ function main() {
     // none, so the regenerated file re-emits the SAME hash byte-for-byte
     // instead of losing it. Dry-run reports without mutating config.
     if (dryRun) {
-      if (!config.basicAuthUser && !config.basicAuthHash && ctx.existingCaddyfileText
-          && caddy.extractBasicAuthCredential(ctx.existingCaddyfileText)) {
-        process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential into config (#397 durability)\n');
+      if (applyDryRunAdoptionPreview(config, ctx.existingCaddyfileText)) {
+        process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential into config (#397 durability) — plan below previews the post-adoption state\n');
       }
     } else {
       const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
@@ -443,4 +464,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited, applyDryRunAdoptionPreview };
