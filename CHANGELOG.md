@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **README rewritten for the 4.0 release.** The storefront was frozen at the v3.15 era (title still said "TangleClaw v3"; no mention of continuity, auth, Project Master, orchestration profiles, session rules, or Project Map). Rewrite covers the full 4.x surface: new "What TangleClaw Does" feature list with 4.0 callouts, a "How Do I…?" task-to-doc quick-reference table (links into `docs/user-guide.md` anchors, `deploy/INGRESS.md`, and the rest of `docs/`), a rewritten Security section reflecting the Caddy ingress option (the "no authentication exists" claim is no longer the whole story), the ingress in the architecture diagram, refreshed counts (3,600+ tests, 116 routes; were 1,314/62), the one-click Update & restart path, a rename note for pre-4.0 clones, the stale "#139 Chunk 11c lands" wrap-V2 section dropped (long since default; ADR 0002 remains the contract home), and a roadmap refresh (shipped items removed; Switchboard/Master-actions/cross-model governance added). Doc-only; no behavior change.
+
 ## [4.0.0] - 2026-07-03
 
 ### Changed
