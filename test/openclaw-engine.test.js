@@ -71,11 +71,15 @@ describe('OpenClaw engine integration', () => {
     });
   });
 
-  describe('listWithAvailability — OpenClaw virtual engines', () => {
+  describe('listWithAvailability — OpenClaw excluded from the picker (#459)', () => {
     let connId;
 
     before(() => {
-      // Create an OpenClaw connection with availableAsEngine=true
+      // Even a connection whose legacy availableAsEngine flag is true must
+      // NOT surface as a picker entry anymore — assigning an OpenClaw
+      // connection never gave a local project an LLM (the agent works in
+      // the REMOTE workspace). The top-bar OpenClaw panel is the access
+      // surface; the flag is vestigial and no longer consumed here.
       const conn = store.openclawConnections.create({
         name: 'TestClaw',
         host: '198.51.100.10',
@@ -89,46 +93,29 @@ describe('OpenClaw engine integration', () => {
       connId = conn.id;
     });
 
-    it('should include OpenClaw connections as virtual engines', () => {
+    it('does not list per-connection virtual engines, even with availableAsEngine=true', () => {
       const list = engines.listWithAvailability();
       const ocEngine = list.find(e => e.id === `openclaw:${connId}`);
-      assert.ok(ocEngine, 'Should include openclaw virtual engine');
-      assert.equal(ocEngine.name, 'TestClaw (OpenClaw)');
-      assert.equal(ocEngine.category, 'OpenClaw');
-      assert.equal(ocEngine.connectionId, connId);
-      assert.equal(ocEngine.available, true);
+      assert.equal(ocEngine, undefined, 'openclaw:<connId> entries must not appear in the engine list');
+      assert.ok(!list.some(e => e.category === 'OpenClaw'), 'no OpenClaw-category entries at all');
     });
 
-    it('should include capabilities from base openclaw profile', () => {
+    it('does not list the base openclaw profile (pickerHidden)', () => {
       const list = engines.listWithAvailability();
-      const ocEngine = list.find(e => e.id === `openclaw:${connId}`);
-      assert.equal(ocEngine.capabilities.supportsPrimePrompt, false);
-      assert.equal(ocEngine.capabilities.supportsRemote, true);
+      assert.equal(list.find(e => e.id === 'openclaw'), undefined,
+        'base openclaw profile is pickerHidden — it always rendered as "(not installed)" noise');
     });
 
-    it('should not include connections with availableAsEngine=false', () => {
-      const conn2 = store.openclawConnections.create({
-        name: 'HiddenClaw',
-        host: '192.168.20.11',
-        sshUser: 'admin',
-        sshKeyPath: '~/.ssh/test_key2',
-        availableAsEngine: false
-      });
-
+    it('still lists standard engines', () => {
       const list = engines.listWithAvailability();
-      const hidden = list.find(e => e.id === `openclaw:${conn2.id}`);
-      assert.equal(hidden, undefined, 'Should not include non-engine connections');
-
-      // Cleanup
-      store.openclawConnections.delete(conn2.id);
+      assert.ok(list.find(e => e.id === 'claude'), 'Claude should still be in the list');
+      assert.ok(list.find(e => e.id === 'antigravity'), 'Antigravity should still be in the list');
     });
 
-    it('should still list standard engines alongside OpenClaw', () => {
-      const list = engines.listWithAvailability();
-      const claude = list.find(e => e.id === 'claude');
-      assert.ok(claude, 'Claude should still be in the list');
-      const ocEngine = list.find(e => e.id === `openclaw:${connId}`);
-      assert.ok(ocEngine, 'OpenClaw should also be in the list');
+    it('getWithAvailability still resolves the base openclaw profile (launch paths)', () => {
+      const base = engines.getWithAvailability('openclaw');
+      assert.ok(base, 'base profile must stay resolvable — hiding is picker-only');
+      assert.equal(base.id, 'openclaw');
     });
   });
 
@@ -289,5 +276,30 @@ describe('OpenClaw engine integration', () => {
       assert.ok(ocResult, 'OpenClaw should be in status parity');
       assert.equal(ocResult.valid, true);
     });
+  });
+
+  describe('buildEngineOptions frontend contract (#459, structural)', () => {
+    // Source-level assertions over the two frontend copies, matching the
+    // project's structural-test convention for picker/modal functions.
+    const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const sessionSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+
+    for (const [label, src] of [['ui.js', uiSrc], ['session.js', sessionSrc]]) {
+      it(`${label}: no OpenClaw optgroup remains in buildEngineOptions`, () => {
+        const fn = src.slice(src.indexOf('function buildEngineOptions'));
+        const body = fn.slice(0, fn.indexOf('\n}'));
+        assert.ok(!body.includes("optgroup"), `${label} must not group OpenClaw entries anymore`);
+        assert.ok(!body.includes("category === 'OpenClaw'"), `${label} must not filter by OpenClaw category`);
+      });
+
+      it(`${label}: stale-binding fallback renders the current selection as (unavailable)`, () => {
+        const fn = src.slice(src.indexOf('function buildEngineOptions'));
+        const body = fn.slice(0, fn.indexOf('\n}'));
+        assert.ok(body.includes("!engineList.some(e => e.id === selectedId)"),
+          `${label} must guard on selectedId missing from the served list`);
+        assert.ok(body.includes('(unavailable)'),
+          `${label} must render the missing selection with an (unavailable) marker instead of dropping it`);
+      });
+    }
   });
 });

@@ -120,7 +120,6 @@ Same path: `gateway.auth.token`.
 | **Bridge Port** | ClawBridge port — leave blank for non-ClawBridge OpenClaw deployments | Only set when deploying ClawBridge alongside OpenClaw (typically `3201`). Leaving blank skips the extra SSH forward and is the right default for a vanilla OpenClaw install (#160). |
 | **Bridge Token** | ClawBridge authentication token | Required only when Bridge Port is set |
 | **Instance Dir** | Absolute host path of the OpenClaw stack directory (the one holding `.env`) | Recommended. Enables the per-connection **version display** — TangleClaw reads the `OPENCLAW_IMAGE` tag from `<instanceDir>/.env` over SSH. Leave blank and the connection shows a "Set Instance Dir to enable" hint instead of a version. |
-| **Available as Engine** | Toggle on if you want to use it as a project engine | Optional |
 
 5. Click **"Test Connection"** to verify SSH and gateway connectivity
 6. Click **"Create"**
@@ -173,16 +172,9 @@ The OpenClaw Control UI requires device pairing on first use from a new browser.
 
 **No manual CLI intervention needed.** The auto-approve runs entirely server-side on the TangleClaw host using the SSH key and gateway token.
 
-## Step 5: Use as a Project Engine (optional)
+## Step 5: Access the Instance
 
-If you toggled "Available as Engine" when creating the connection:
-
-1. Create or edit a project in TangleClaw
-2. In the engine dropdown, select your connection under the **"OpenClaw"** group
-3. Choose a mode:
-   - **SSH** — tmux-based terminal session on the remote machine
-   - **Web UI** — iframe-based OpenClaw Control UI (same as the standalone viewer)
-4. Launch a session
+Registered connections are reached through the **OpenClaw panel in the top bar** (not the project engine dropdown — that option was removed in #459, since an OpenClaw connection is a portal to the *remote* workspace, not an LLM for a local project). From the panel you can open the Control UI, manage tunnels, and view sidecar processes.
 
 ## Sidecar: Background Process Visibility
 

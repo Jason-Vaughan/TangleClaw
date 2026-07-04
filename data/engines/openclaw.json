@@ -1,6 +1,7 @@
 {
   "id": "openclaw",
   "name": "OpenClaw",
+  "pickerHidden": true,
   "command": "ssh",
   "interactionModel": "session",
   "configFormat": { "filename": null, "syntax": null, "generator": null },
