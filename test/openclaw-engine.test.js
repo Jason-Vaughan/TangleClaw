@@ -277,4 +277,29 @@ describe('OpenClaw engine integration', () => {
       assert.equal(ocResult.valid, true);
     });
   });
+
+  describe('buildEngineOptions frontend contract (#459, structural)', () => {
+    // Source-level assertions over the two frontend copies, matching the
+    // project's structural-test convention for picker/modal functions.
+    const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const sessionSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+
+    for (const [label, src] of [['ui.js', uiSrc], ['session.js', sessionSrc]]) {
+      it(`${label}: no OpenClaw optgroup remains in buildEngineOptions`, () => {
+        const fn = src.slice(src.indexOf('function buildEngineOptions'));
+        const body = fn.slice(0, fn.indexOf('\n}'));
+        assert.ok(!body.includes("optgroup"), `${label} must not group OpenClaw entries anymore`);
+        assert.ok(!body.includes("category === 'OpenClaw'"), `${label} must not filter by OpenClaw category`);
+      });
+
+      it(`${label}: stale-binding fallback renders the current selection as (unavailable)`, () => {
+        const fn = src.slice(src.indexOf('function buildEngineOptions'));
+        const body = fn.slice(0, fn.indexOf('\n}'));
+        assert.ok(body.includes("!engineList.some(e => e.id === selectedId)"),
+          `${label} must guard on selectedId missing from the served list`);
+        assert.ok(body.includes('(unavailable)'),
+          `${label} must render the missing selection with an (unavailable) marker instead of dropping it`);
+      });
+    }
+  });
 });
