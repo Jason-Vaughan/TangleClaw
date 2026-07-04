@@ -45,6 +45,25 @@ The local site reuses your existing mkcert certificate, so local HTTPS is
 unchanged (same already-trusted CA). Set `publicDomain` in config to also emit an
 ACME (Let's Encrypt) site block for a real domain.
 
+## Credential durability (#397, added after the 2026-07-03 lockout)
+
+The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
+`basicAuthHash` in `~/.tangleclaw/config.json`), never only in the Caddyfile:
+
+- **Boot-time adoption** — in caddy mode, if the live Caddyfile carries a
+  credential the config doesn't, the server adopts it into config at startup
+  (read-only on the Caddyfile). A hand-maintained gate becomes durable
+  automatically on the next boot.
+- **Byte-for-byte re-emission** — every regeneration path (cutover,
+  `reset-admin`) emits the stored hash exactly; regression-tested.
+- **Refuse-to-ungate** — the cutover aborts rather than replace a gated
+  Caddyfile with an ungated one when config carries no credential.
+- **Remote plain-HTTP catch-all** — set `caddyRemoteHttp: true` (adopted
+  automatically if the live file has an `http:// { ... }` site) to emit a
+  Basic-Auth-gated plain-HTTP catch-all for WireGuard/Tailscale remote access,
+  plus `auto_https disable_redirects`. The generator refuses to emit the
+  catch-all without a credential — an ungated one would be an open door.
+
 ## Admin credential reset (break-glass, AUTH-2)
 
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,
