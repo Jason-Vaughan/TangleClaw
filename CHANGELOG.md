@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Wrap commits no longer dangle: the commit step auto-opens a PR and arms auto-merge after auto-branching (#467).** Since #264, a wrap that fires on `main`/`master` auto-branches to `wrap/<ts>-<slug>` and commits there — but nothing landed that branch, so the wrap's version bump, CHANGELOG promotion, and self-healed index files (#423/#425) evaporated for the next session (the #447/#450/#453/#464 manual-rescue class; TangleBrain re-self-healed FEATURES.md/PROJECT-MAP.md on every single wrap). The commit step now closes the loop after an auto-branched commit: pushes the wrap branch, opens a PR back to the original branch via `gh` (What/Why body embedding the wrap commit's body lines; best-effort `chore` label), arms `gh pr merge --auto --squash --delete-branch` (branch protection still gates — this removes the wait, never the checks), and returns the checkout to the original branch on full success. Every sub-step is non-fatal: the commit already landed, so failures degrade to `output.autoPr.{skippedReason|error, remediation}` and HEAD stays on the wrap branch as the visible rescue cue. Gates: per-project `wrapAutoPrEnabled` opt-out (new project-config flag, default true), no-`origin`-remote skip, `gh`-unavailable → push-only. The wrap drawer's commit row renders the outcome (e.g. `<sha> · wrap PR auto-merge armed`). Companion fix (Critic-caught): `continuity-write` now anchors its freshness stamp and Map delta to the commit step's recorded `{commitSha, branch}` from `previousResults` instead of HEAD (`_resolveCommitAnchor`) — without it, the close-loop's checkout-back would have made the post-wrap `main...HEAD` delta empty and recorded the wrong sha/branch in the continuity resume index. Tests: `test/wrap-step-commit-autopr.test.js` (full success, opt-out, no-remote, push/create/merge-arm failures, gh-missing, label best-effort, throw degradation, feature-branch/allowDirectToMain null) + drawer detail cases + continuity anchor cases. Docs: ADR 0002 amendment, user-guide "Wrapping a Session".
+
 ## [4.1.0] - 2026-07-03
 
 ### Fixed

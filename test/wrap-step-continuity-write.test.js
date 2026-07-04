@@ -456,6 +456,60 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.deepEqual(delta.deleted.sort(), ['lib/del.js', 'lib/old.js'].sort());
   });
 
+  // ── #467: anchor git facts + Map delta to the wrap commit, not HEAD ──
+  // The commit step's auto-PR close-loop may return the checkout to the
+  // original branch before continuity-write runs; without the anchor the
+  // delta would be computed as `main...HEAD` with HEAD == main (empty).
+
+  it('_resolveCommitAnchor finds the commit step output; null when no commit landed', () => {
+    assert.deepEqual(
+      step._resolveCommitAnchor([
+        { stepId: 'version-bump', output: { oldVersion: '1.0.0' } },
+        { stepId: 'commit', output: { commitSha: 'deadbeef1234', branch: 'wrap/20260704-x' } }
+      ]),
+      { sha: 'deadbeef1234', branch: 'wrap/20260704-x' });
+    assert.equal(step._resolveCommitAnchor([
+      { stepId: 'commit', status: 'skipped', output: { commitSha: null } }
+    ]), null, 'a skipped commit (clean session) yields no anchor');
+    assert.equal(step._resolveCommitAnchor([]), null);
+    assert.equal(step._resolveCommitAnchor(null), null);
+  });
+
+  it('#467 — facts + delta anchor to the wrap commit when HEAD has moved back to main', async () => {
+    const seen = [];
+    step._internal.exec = async (file, args) => {
+      seen.push(args.join(' '));
+      // rev-parse --short <anchor-sha> → wrap commit's short sha
+      if (args.includes('--short')) {
+        assert.ok(args.includes('deadbeef1234'), 'freshness sha must resolve the ANCHOR, not HEAD');
+        return { exitCode: 0, stdout: 'deadbee\n', stderr: '' };
+      }
+      if (args.includes('rev-parse') && args.includes('main')) return { exitCode: 0, stdout: 'main\n', stderr: '' };
+      if (args.includes('rev-parse')) return { exitCode: 1, stdout: '', stderr: '' };
+      if (args.includes('--name-status')) {
+        const range = args[args.length - 1];
+        assert.equal(range, 'main...deadbeef1234',
+          'delta must diff base...<wrap-commit sha>, never base...HEAD');
+        return { exitCode: 0, stdout: 'M\tlib/anchored.js\n', stderr: '' };
+      }
+      return { exitCode: 1, stdout: '', stderr: 'unexpected' };
+    };
+
+    const res = await step.run(ctx([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } },
+      { stepId: 'commit', status: 'done', output: { commitSha: 'deadbeef1234', branch: 'wrap/20260704060708-demo' } }
+    ]));
+    assert.equal(res.ok, true);
+
+    const parsed = continuity.parseIndex(fs.readFileSync(continuity.indexPath(project.path), 'utf8'));
+    assert.match(parsed.map, /lib\/anchored\.js/, 'Map delta must come from the anchored diff');
+    const raw = fs.readFileSync(continuity.indexPath(project.path), 'utf8');
+    assert.match(raw, /deadbee/, 'freshness stamp must carry the wrap commit sha');
+    assert.match(raw, /wrap\/20260704060708-demo/, 'freshness stamp must carry the wrap branch, not HEAD\'s branch');
+    assert.equal(seen.some((s) => s.includes('--abbrev-ref')), false,
+      'anchored branch means no HEAD branch lookup');
+  });
+
   // ── CC-4b cold tier ──
 
   it('reports an honest transcript skip when none resolves (no ~/.claude match)', async () => {

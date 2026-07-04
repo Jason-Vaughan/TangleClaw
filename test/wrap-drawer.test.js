@@ -67,6 +67,28 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.equal(row.warning, false);
   });
 
+  it('#467 — commit detail appends the auto-PR outcome when autoPr is present', () => {
+    const mk = (autoPr) => H.buildStepRow({
+      stepId: 'commit', kind: 'commit', status: 'done',
+      output: { commitSha: 'abc123def4567', autoPr }, blockers: []
+    }, { blockedAt: null }).detail;
+
+    assert.equal(
+      mk({ autoMergeArmed: true, prUrl: 'https://x/pull/1', error: null, skippedReason: null }),
+      'abc123def456 · wrap PR auto-merge armed');
+    assert.equal(
+      mk({ autoMergeArmed: false, prUrl: 'https://x/pull/1', error: 'merge arm failed', skippedReason: null }),
+      'abc123def456 · wrap PR opened (auto-merge NOT armed)');
+    assert.equal(
+      mk({ autoMergeArmed: false, prUrl: null, error: 'git push failed', skippedReason: null }),
+      'abc123def456 · wrap PR failed — branch dangling');
+    assert.equal(
+      mk({ autoMergeArmed: false, prUrl: null, error: null, skippedReason: 'no origin remote — nowhere to land the wrap branch' }),
+      'abc123def456 · wrap PR skipped: no origin remote — nowhere to land the wrap branch');
+    assert.equal(mk(null), 'abc123def456',
+      'autoPr:null (no auto-branch) keeps the bare SHA detail');
+  });
+
   it('flags the blocking step when stepId matches blockedAt', () => {
     const row = H.buildStepRow({
       stepId: 'test',
