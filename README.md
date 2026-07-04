@@ -110,7 +110,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation: ingests exchange data, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
 ### Technical
-- **116 registered routes** — full REST API for everything TangleClaw does
+- **115+ registered routes** — full REST API for everything TangleClaw does
 - **3,600+ tests** — comprehensive suite using `node:test`, zero test dependencies
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
 - **ADRs** — durable design decisions live in [docs/adr/](docs/adr/)
