@@ -344,7 +344,8 @@ describe('Session Wrapper UI', () => {
     it('should include engine-specific badge colors', () => {
       assert.ok(css.includes('[data-engine="codex"]'));
       assert.ok(css.includes('[data-engine="aider"]'));
-      assert.ok(css.includes('[data-engine="genesis"]'));
+      assert.ok(css.includes('[data-engine="antigravity"]'));
+      assert.ok(!css.includes('[data-engine="genesis"]'), 'genesis retired (#458)');
     });
 
     it('should include mobile banner breakpoint', () => {

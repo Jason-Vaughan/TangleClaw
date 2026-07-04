@@ -40,15 +40,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 - **Slash commands**: `/add` (add file to context), `/drop` (remove file), `/undo` (undo last change)
 - **Capabilities**: Slash commands, prime prompt, config file, co-author
 
-### Gemini CLI
-
-> **⚠ Sunset:** Google [retired Gemini CLI for individual accounts on June 18, 2026](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) in favor of Antigravity CLI (below). The profile remains for enterprise Gemini Code Assist licenses; removal is tracked in #457.
-
-- **Command**: `gemini`
-- **Interaction model**: Session-based (spawns in tmux)
-- **Config file**: `.gemini/GEMINI.md` (Markdown, in `.gemini/` subdirectory)
-- **Slash commands**: None
-- **Capabilities**: Prime prompt, config file, co-author
+> **Retired engines:** *Gemini CLI* was removed in #457 — Google [sunset it for individual accounts on June 18, 2026](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/); Antigravity (below) is the successor. The *genesis* placeholder profile was removed in #458. Retired ids are tombstoned: any stale copy in `~/.tangleclaw/engines/` is deleted on boot.
 
 ### Antigravity
 
@@ -131,7 +123,7 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 }
 ```
 
-The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, and `gemini-md`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
+The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
 ### Engine Profile Fields
 
@@ -155,7 +147,7 @@ The `configFormat` above is set to `null` because config file generation require
 |-------|-------------|
 | `filename` | Config file name written to project root (e.g., `CLAUDE.md`) |
 | `syntax` | File syntax: `"markdown"`, `"yaml"`, or `null` |
-| `generator` | Config generator to use: `"claude-md"`, `"codex-yaml"`, `"aider-conf"`, `"gemini-md"`, or `null` |
+| `generator` | Config generator to use: `"claude-md"`, `"codex-yaml"`, `"aider-conf"`, `"gemini-md"`, `"antigravity-md"`, or `null` |
 
 ### Detection Strategies
 
@@ -189,8 +181,7 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 | Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide, methodology info |
 | Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
 | Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
-| Gemini CLI | `.gemini/GEMINI.md` | Markdown sections (same format as CLAUDE.md), written to `.gemini/` subdirectory |
-| Antigravity | `.antigravity.md` | Markdown sections (same generator as Gemini CLI with an `.antigravity.md` header), written to the project root |
+| Antigravity | `.antigravity.md` | Markdown sections (same format as CLAUDE.md), written to the project root |
 
 This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules, PortHub references, and methodology info.
 
@@ -243,9 +234,8 @@ Status is polled every 2 minutes from official status pages. Hover over the engi
 |--------|------------|---------|
 | Claude Code | status.claude.com | Atlassian Statuspage |
 | Codex | status.openai.com | Atlassian Statuspage |
-| Gemini CLI | status.cloud.google.com | Google Incidents |
+| Antigravity | status.cloud.google.com | Google Incidents |
 | Aider | None (upstream-dependent) | — |
-| Genesis | None (placeholder) | — |
 
 ### Engine profile `statusPage` field
 

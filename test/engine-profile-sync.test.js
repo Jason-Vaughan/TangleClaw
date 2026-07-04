@@ -144,6 +144,39 @@ describe('engine profile sync — drift propagation (#251)', () => {
       'bundled profiles seeded alongside operator-added');
   });
 
+  it('tombstones retired engine profiles left behind by earlier installs (#457/#458)', () => {
+    // Union semantics preserve operator-added files (test above), which
+    // means deleting a BUNDLED profile would silently promote the stale
+    // synced copy to an immortal "operator profile". Retired ids are
+    // removed explicitly on every boot.
+    const enginesDir = path.join(tmpDir, 'engines');
+    fs.mkdirSync(enginesDir, { recursive: true });
+
+    // Simulate a pre-retirement install that had synced gemini + genesis.
+    fs.writeFileSync(path.join(enginesDir, 'gemini.json'), JSON.stringify({ id: 'gemini', name: 'Gemini CLI' }));
+    fs.writeFileSync(path.join(enginesDir, 'genesis.json'), JSON.stringify({ id: 'genesis', name: 'Genesis' }));
+
+    store.init();
+
+    assert.ok(!fs.existsSync(path.join(enginesDir, 'gemini.json')),
+      'stale gemini.json must be tombstoned on boot (#457)');
+    assert.ok(!fs.existsSync(path.join(enginesDir, 'genesis.json')),
+      'stale genesis.json must be tombstoned on boot (#458)');
+    // Non-retired profiles are untouched by the tombstone pass.
+    assert.ok(fs.existsSync(path.join(enginesDir, 'antigravity.json')),
+      'live bundled profiles still seed alongside the tombstone pass');
+    // And the store no longer serves the retired engines.
+    assert.equal(store.engines.get('gemini'), null, 'gemini must not resolve from the store');
+    assert.equal(store.engines.get('genesis'), null, 'genesis must not resolve from the store');
+  });
+
+  it('retired bundled profiles are actually gone from data/engines/ (#457/#458)', () => {
+    assert.ok(!fs.existsSync(path.join(BUNDLED_ENGINES_DIR, 'gemini.json')),
+      'data/engines/gemini.json must stay deleted');
+    assert.ok(!fs.existsSync(path.join(BUNDLED_ENGINES_DIR, 'genesis.json')),
+      'data/engines/genesis.json must stay deleted');
+  });
+
   it('is idempotent — second init does not rewrite a profile that already matches bundled', () => {
     // After first init, on-disk content matches bundled. Structural
     // equivalence check via `_canonicalize` must short-circuit on second

@@ -195,17 +195,8 @@ describe('engines', () => {
     // CLI's documented flag — a future flag rename in any of these CLIs will fail
     // here loudly rather than silently routing users into the wrong mode.
     describe('launchModes parity across engines (#209)', () => {
-      it('gemini exposes yolo via --yolo', () => {
-        const gemini = engines.listWithAvailability().find(e => e.id === 'gemini');
-        assert.ok(gemini.launchModes, 'gemini should have launchModes');
-        assert.equal(gemini.defaultLaunchMode, 'default');
-        assert.deepEqual(gemini.launchModes.yolo.args, ['--yolo']);
-        assert.ok(gemini.launchModes.yolo.warning, 'YOLO mode must carry a warning');
-        // Approval-mode parity with Claude (default / auto-equivalent / plan / yolo)
-        assert.deepEqual(gemini.launchModes.autoEdit.args, ['--approval-mode', 'auto_edit']);
-        assert.deepEqual(gemini.launchModes.plan.args, ['--approval-mode', 'plan']);
-        assert.deepEqual(gemini.launchModes.default.args, []);
-      });
+      // gemini's yolo-parity test retired with the engine (#457) — Antigravity's
+      // launch-mode flag pins live in test/antigravity-engine.test.js.
 
       it('aider exposes yolo via --yes-always', () => {
         const aider = engines.listWithAvailability().find(e => e.id === 'aider');
@@ -827,13 +818,13 @@ describe('engines', () => {
       assert.ok(!content.includes('Port Management'));
     });
 
-    it('should generate via public API with gemini engine id', () => {
-      const content = engines.generateConfig('gemini', {
+    it('should generate via public API with antigravity engine id (shared generator)', () => {
+      const content = engines.generateConfig('antigravity', {
         rules: { core: {}, extensions: {} }
       });
-      assert.ok(content !== null, 'generateConfig("gemini") must not return null');
+      assert.ok(content !== null, 'generateConfig("antigravity") must not return null');
       assert.ok(typeof content === 'string');
-      assert.ok(content.includes('GEMINI.md'));
+      assert.ok(content.includes('.antigravity.md'));
     });
 
     it('should include global rules', () => {
@@ -841,13 +832,9 @@ describe('engines', () => {
       assert.ok(content.includes('Global Rules'), 'GEMINI.md should include global rules');
     });
 
-    it('should have config filename with subdirectory path', () => {
-      const profile = store.engines.get('gemini');
-      assert.ok(profile, 'Gemini profile should exist');
-      assert.ok(profile.configFormat.filename.includes('/'),
-        'Gemini config filename should include a subdirectory path');
-      assert.equal(profile.configFormat.filename, '.gemini/GEMINI.md');
-    });
+    // The `.gemini/GEMINI.md` subdirectory-filename test retired with the
+    // gemini profile (#457). No bundled engine writes into a subdirectory now;
+    // writeEngineConfig's mkdir path still supports it for custom profiles.
   });
 
   describe('_generateClaudeMd', () => {
@@ -1296,8 +1283,8 @@ describe('engines', () => {
       assert.ok(ids.includes('claude'), 'Missing claude');
       assert.ok(ids.includes('codex'), 'Missing codex');
       assert.ok(ids.includes('aider'), 'Missing aider');
-      assert.ok(ids.includes('gemini'), 'Missing gemini');
       assert.ok(ids.includes('antigravity'), 'Missing antigravity');
+      assert.ok(!ids.includes('gemini'), 'gemini retired (#457) — must not resurface');
     });
 
     it('should report no errors for any engine', () => {
@@ -1319,15 +1306,15 @@ describe('engines', () => {
       const ids = result.engines.map(e => e.id);
       assert.ok(ids.includes('claude'), 'Missing claude');
       assert.ok(ids.includes('codex'), 'Missing codex');
-      assert.ok(ids.includes('gemini'), 'Missing gemini');
       assert.ok(ids.includes('aider'), 'Missing aider');
-      assert.ok(ids.includes('genesis'), 'Missing genesis');
       assert.ok(ids.includes('antigravity'), 'Missing antigravity');
+      assert.ok(!ids.includes('gemini'), 'gemini retired (#457) — must not resurface');
+      assert.ok(!ids.includes('genesis'), 'genesis retired (#458) — must not resurface');
     });
 
     it('known providers should have adapter and url', () => {
       const result = engines.validateStatusParity();
-      const knownProviders = ['claude', 'codex', 'gemini'];
+      const knownProviders = ['claude', 'codex', 'antigravity'];
       for (const id of knownProviders) {
         const engine = result.engines.find(e => e.id === id);
         assert.ok(engine, `${id} not found in parity results`);
@@ -1337,7 +1324,7 @@ describe('engines', () => {
 
     it('engines without status pages should have null statusPage', () => {
       const result = engines.validateStatusParity();
-      const noStatus = ['aider', 'genesis'];
+      const noStatus = ['aider'];
       for (const id of noStatus) {
         const engine = result.engines.find(e => e.id === id);
         assert.ok(engine, `${id} not found`);
@@ -1362,9 +1349,9 @@ describe('engines', () => {
       };
       const template = { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' };
 
-      const content = engines.generateConfig('gemini', projectConfig, template);
-      assert.ok(content !== null, 'Gemini config should not be null');
-      assert.ok(content.includes('GEMINI.md'), 'Should have GEMINI.md header');
+      const content = engines.generateConfig('antigravity', projectConfig, template);
+      assert.ok(content !== null, 'Antigravity config should not be null');
+      assert.ok(content.includes('.antigravity.md'), 'Should have .antigravity.md header');
       assert.ok(content.includes('Core Rules'), 'Should have core rules section');
       assert.ok(content.includes('Extension Rules'), 'Should have extension rules section');
       assert.ok(content.includes('docs'), 'Should include docsParity extension');
@@ -1391,10 +1378,10 @@ describe('engines', () => {
         assert.ok(content.includes('Custom rule beta'),
           'Regenerated config should include all updated global rules');
 
-        // Also verify Gemini picks them up
-        const geminiContent = engines.generateConfig('gemini', { rules: { core: {} } });
-        assert.ok(geminiContent.includes('Custom integration test rule alpha'),
-          'Gemini config should also reflect updated global rules');
+        // Also verify Antigravity picks them up
+        const agyContent = engines.generateConfig('antigravity', { rules: { core: {} } });
+        assert.ok(agyContent.includes('Custom integration test rule alpha'),
+          'Antigravity config should also reflect updated global rules');
       } finally {
         // Restore original global rules
         store.globalRules.save(original);

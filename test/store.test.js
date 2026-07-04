@@ -87,7 +87,9 @@ describe('store', () => {
       assert.ok(engines.includes('claude.json'), 'Should have claude profile');
       assert.ok(engines.includes('codex.json'), 'Should have codex profile');
       assert.ok(engines.includes('aider.json'), 'Should have aider profile');
-      assert.ok(engines.includes('genesis.json'), 'Should have genesis profile');
+      assert.ok(engines.includes('antigravity.json'), 'Should have antigravity profile');
+      assert.ok(!engines.includes('gemini.json'), 'gemini retired (#457)');
+      assert.ok(!engines.includes('genesis.json'), 'genesis retired (#458)');
     });
 
     it('should copy bundled methodology templates', () => {
