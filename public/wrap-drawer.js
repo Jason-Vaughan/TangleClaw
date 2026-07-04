@@ -157,9 +157,18 @@
         if (output.allDone) return 'All chunks done';
         if (output.current) return `→ chunk ${output.current}`;
         return null;
-      case 'commit':
-        if (output.commitSha) return output.commitSha.slice(0, 12);
-        return null;
+      case 'commit': {
+        if (!output.commitSha) return null;
+        const sha = output.commitSha.slice(0, 12);
+        // #467 — auto-PR close-loop outcome for auto-branched commits.
+        const ap = output.autoPr;
+        if (!ap) return sha;
+        if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed`;
+        if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)`;
+        if (ap.error) return `${sha} · wrap PR failed — branch dangling`;
+        if (ap.skippedReason) return `${sha} · wrap PR skipped: ${ap.skippedReason}`;
+        return sha;
+      }
       case 'ai-content': {
         // `parsedFields` is an object whose keys are captureFields the
         // step extracted. Surface field count when present so the user
