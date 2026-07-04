@@ -82,26 +82,23 @@ function esc(str) {
 }
 
 /**
- * Build <option> (and <optgroup>) HTML for an engine dropdown.
- * Groups OpenClaw virtual engines under an "OpenClaw" optgroup.
+ * Build <option> HTML for an engine dropdown.
+ * OpenClaw entries no longer appear here (#459) — connection-backed harnesses
+ * are reached via the top-bar OpenClaw panel, not assigned as a project's LLM.
+ * A project bound to an engine the server no longer lists (hidden or retired)
+ * still renders its current selection so the settings modal never shows a
+ * silently-wrong choice.
  * @param {object[]} engineList - Engines from sessionState.engines
  * @param {string} selectedId - Currently selected engine ID
  * @returns {string} HTML string
  */
 function buildEngineOptions(engineList, selectedId) {
-  const standard = engineList.filter(e => !e.category);
-  const openclaw = engineList.filter(e => e.category === 'OpenClaw');
-
-  let html = standard.map(e =>
+  let html = engineList.map(e =>
     `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
   ).join('');
 
-  if (openclaw.length > 0) {
-    html += `<optgroup label="OpenClaw">`;
-    html += openclaw.map(e =>
-      `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}</option>`
-    ).join('');
-    html += `</optgroup>`;
+  if (selectedId && !engineList.some(e => e.id === selectedId)) {
+    html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
   }
 
   return html;

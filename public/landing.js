@@ -988,6 +988,10 @@ async function launchProject(name) {
   // every mode marked `disabled: true` until Phase 2 wires the propagation
   // to ClawBridge through the SSH tunnel) don't count toward the picker
   // gate; an engine whose modes are ALL disabled launches with no mode.
+  // #459: openclaw engines are pickerHidden and absent from state.engines,
+  // so a legacy openclaw-bound project skips the mode picker here and
+  // launches with default mode — acceptable degradation for a deprecated
+  // binding pattern (zero such projects existed at cutover).
   const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
   const engine = (state.engines || []).find(e => e.id === engineId);
   if (engine && engine.launchModes) {

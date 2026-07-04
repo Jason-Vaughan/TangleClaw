@@ -254,7 +254,13 @@ describe('engines', () => {
         // History: Phase 1 (PR #249) shipped the engine-profile scaffold
         // with disabled: true; the assertion below was `=== true` then.
         // Phase 2 flips the flags and adds the HTTP helper.
-        const openclaw = engines.listWithAvailability().find(e => e.id === 'openclaw');
+        // #459: openclaw is pickerHidden, so it no longer appears in
+        // listWithAvailability — resolve it directly. The launch-mode ↔
+        // ClawBridge contract below is unchanged: launchWebuiSession reads
+        // engineProfile.launchModes server-side to propagate the picked
+        // permissionMode to the bridge. Only the PROJECT engine picker
+        // dropped openclaw.
+        const openclaw = engines.getWithAvailability('openclaw');
         assert.ok(openclaw, 'openclaw engine should exist');
         assert.ok(openclaw.launchModes, 'openclaw must declare launchModes');
         const BRIDGE_ACCEPTS = new Set(['default', 'acceptEdits', 'bypassPermissions', 'auto', 'plan', 'dontAsk']);

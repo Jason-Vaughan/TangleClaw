@@ -5,26 +5,23 @@
 // ── Engine Dropdown Helper ──
 
 /**
- * Build <option> (and <optgroup>) HTML for an engine dropdown.
- * Groups OpenClaw virtual engines under an "OpenClaw" optgroup.
+ * Build <option> HTML for an engine dropdown.
+ * OpenClaw entries no longer appear here (#459) — connection-backed harnesses
+ * are reached via the top-bar OpenClaw panel, not assigned as a project's LLM.
+ * A project bound to an engine the server no longer lists (hidden or retired)
+ * still renders its current selection so the settings modal never shows a
+ * silently-wrong choice.
  * @param {object[]} engineList - Engines from state.engines
  * @param {string} selectedId - Currently selected engine ID
- * @returns {string} HTML string of <option>/<optgroup> elements
+ * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
-  const standard = engineList.filter(e => !e.category);
-  const openclaw = engineList.filter(e => e.category === 'OpenClaw');
-
-  let html = standard.map(e =>
+  let html = engineList.map(e =>
     `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
   ).join('');
 
-  if (openclaw.length > 0) {
-    html += `<optgroup label="OpenClaw">`;
-    html += openclaw.map(e =>
-      `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}</option>`
-    ).join('');
-    html += `</optgroup>`;
+  if (selectedId && !engineList.some(e => e.id === selectedId)) {
+    html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
   }
 
   return html;
@@ -2162,9 +2159,9 @@ function renderOpenclawConnections() {
     const isOpen = state.openclawItemsOpen[conn.id] === true;
     const arrowClass = isOpen ? 'arrow open' : 'arrow';
     const contentClass = isOpen ? 'oc-item-content open' : 'oc-item-content';
-    const engineBadge = conn.availableAsEngine
-      ? '<span class="badge badge-engine" style="font-size:9px;padding:1px 5px">engine</span>'
-      : '';
+    // #459: the "engine" badge is gone — connections are no longer offered
+    // as project engines; the top-bar OpenClaw panel is the access surface.
+    const engineBadge = '';
 
     html += `<div class="oc-item">`;
     html += `<div class="oc-item-toggle" role="button" tabindex="0"
@@ -2187,7 +2184,6 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">Version</span>${conn.instanceDir
         ? `<span class="oc-detail-value" id="ocVer-${esc(conn.id)}" title="OpenClaw instance image tag (${esc(conn.instanceDir)}/.env)">checking…</span>`
         : `<span class="oc-detail-value oc-detail-muted" title="Set this connection's Instance Dir (Edit → Instance Dir) to read its OpenClaw image tag over SSH">Set Instance Dir to enable</span>`}
-      <span class="oc-detail-label">Engine</span><span class="oc-detail-value">${conn.availableAsEngine ? 'Yes' : 'No'}</span>
     </div>`;
     // Tunnel status + kill button
     const ts = state.openclawTunnelStatus[conn.id];
@@ -2406,7 +2402,6 @@ async function openConnectionModal(connId) {
     document.getElementById('ocBridgePort').value = data.bridgePort != null && data.bridgePort !== 0 ? data.bridgePort : '';
     document.getElementById('ocBridgeToken').value = data.bridgeToken || '';
     document.getElementById('ocInstanceDir').value = data.instanceDir || '';
-    document.getElementById('ocAvailableAsEngine').checked = !!data.availableAsEngine;
     document.getElementById('ocDeleteBtn').classList.remove('hidden');
   } else {
     document.getElementById('ocName').value = '';
@@ -2425,7 +2420,6 @@ async function openConnectionModal(connId) {
     document.getElementById('ocBridgePort').value = '';
     document.getElementById('ocBridgeToken').value = '';
     document.getElementById('ocInstanceDir').value = '';
-    document.getElementById('ocAvailableAsEngine').checked = false;
     document.getElementById('ocDeleteBtn').classList.add('hidden');
   }
 
@@ -2484,8 +2478,9 @@ async function saveConnection() {
       return Number.isFinite(parsed) ? parsed : null;
     })(),
     bridgeToken: document.getElementById('ocBridgeToken').value.trim() || null,
-    instanceDir: document.getElementById('ocInstanceDir').value.trim() || null,
-    availableAsEngine: document.getElementById('ocAvailableAsEngine').checked
+    instanceDir: document.getElementById('ocInstanceDir').value.trim() || null
+    // availableAsEngine intentionally omitted (#459): connections are no
+    // longer offered as project engines. The DB column persists untouched.
   };
 
   let result;
