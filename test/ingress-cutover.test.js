@@ -158,7 +158,8 @@ describe('ingress-cutover', () => {
 
     it('gates the Caddyfile when authEnabled with a user + hash', () => {
       const plan = cutover.planCutover('caddy', makeCtx({ config: { authEnabled: true, basicAuthUser: 'jason', basicAuthHash: BCRYPT } }));
-      assert.match(plan.caddyfile.content, /@protected not path \/api\/health/);
+      // Case-sensitive path_regexp gate (#472/#434) — see caddy.test.js for the full matcher contract.
+      assert.match(plan.caddyfile.content, /@protected not path_regexp \^\(\/api\/health\|/);
       assert.match(plan.caddyfile.content, /basic_auth @protected \{/);
       assert.match(plan.caddyfile.content, /jason \$2a\$14\$/);
     });
