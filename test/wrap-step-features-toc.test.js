@@ -351,7 +351,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       }
     });
 
-    it('returns ok:true,skipped when base branch (main/master) cannot resolve', async () => {
+    it('returns ok:true,skipped when neither a session SHA nor a base branch resolves', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
         methodology: 'minimal',
@@ -359,7 +359,8 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       });
       fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n\n## UI\n');
 
-      // Stub execSync to fail every base-branch resolution attempt.
+      // Stub execSync to fail every ref-resolution attempt (no lastWrapSha set,
+      // and both base-branch candidates fail) → no session range resolves.
       const orig = featuresToc._internal.execSync;
       featuresToc._internal.execSync = () => { throw new Error('ref not found'); };
       try {
@@ -369,7 +370,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
         });
         assert.equal(result.ok, true);
         assert.equal(result.status, 'skipped');
-        assert.match(result.output.reason, /no base branch/);
+        assert.match(result.output.reason, /no session range resolves/);
       } finally {
         featuresToc._internal.execSync = orig;
       }
@@ -593,6 +594,146 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
         assert.match(r2.output.reason, /no drift/);
         assert.equal(staged2['features-toc:append'], undefined,
           'idempotent re-run must not stage a duplicate append');
+      } finally {
+        featuresToc._internal.execSync = origExec;
+        featuresToc._internal.todayIso = origToday;
+      }
+    });
+  });
+
+  describe('_resolveSessionRange (#465 — session diff, not branch diff)', () => {
+    const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
+
+    it('prefers <lastWrapSha>..HEAD when the recorded SHA resolves to a commit', () => {
+      const orig = featuresToc._internal.execSync;
+      const calls = [];
+      featuresToc._internal.execSync = (cmd) => { calls.push(cmd); return Buffer.from(''); };
+      try {
+        const r = featuresToc._resolveSessionRange('/repo', SHA);
+        assert.deepEqual(r, { range: `${SHA}..HEAD`, kind: 'session', baseBranch: null });
+        // It verified the SHA peels to a commit; no base-branch resolution needed.
+        assert.ok(calls.some((c) => c.includes(`${SHA}^{commit}`)));
+        assert.ok(!calls.some((c) => c.includes('rev-parse --verify --quiet main')));
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+
+    it('falls back to <base>...HEAD on the first wrap (no lastWrapSha)', () => {
+      const orig = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.includes('rev-parse --verify --quiet main')) return Buffer.from('');
+        throw new Error('nope');
+      };
+      try {
+        const r = featuresToc._resolveSessionRange('/repo', null);
+        assert.deepEqual(r, { range: 'main...HEAD', kind: 'branch', baseBranch: 'main' });
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+
+    it('falls back to <base>...HEAD when the recorded SHA no longer resolves (rebase / fresh clone)', () => {
+      const orig = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.includes(`${SHA}^{commit}`)) throw new Error('bad object');
+        if (cmd.includes('rev-parse --verify --quiet main')) return Buffer.from('');
+        throw new Error('nope');
+      };
+      try {
+        const r = featuresToc._resolveSessionRange('/repo', SHA);
+        assert.equal(r.kind, 'branch');
+        assert.equal(r.range, 'main...HEAD');
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+
+    it('never shells out a malformed lastWrapSha; treats it as unresolvable', () => {
+      const orig = featuresToc._internal.execSync;
+      const calls = [];
+      featuresToc._internal.execSync = (cmd) => {
+        calls.push(cmd);
+        if (cmd.includes('rev-parse --verify --quiet main')) return Buffer.from('');
+        throw new Error('nope');
+      };
+      try {
+        const r = featuresToc._resolveSessionRange('/repo', 'not-a-sha; rm -rf /');
+        assert.equal(r.kind, 'branch', 'malformed SHA must not be used as a range');
+        assert.ok(!calls.some((c) => c.includes('rm -rf')), 'the bad value must never reach a shell command');
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+
+    it('returns null when neither a session SHA nor a base branch resolves', () => {
+      const orig = featuresToc._internal.execSync;
+      featuresToc._internal.execSync = () => { throw new Error('nothing resolves'); };
+      try {
+        assert.equal(featuresToc._resolveSessionRange('/repo', SHA), null);
+      } finally {
+        featuresToc._internal.execSync = orig;
+      }
+    });
+  });
+
+  describe('handler — #465 regression (wrap on main after merges captures the session)', () => {
+    let tmpDir;
+    let projectPath;
+    let createdProject;
+    const SHA = 'feedbeefcafe0011223344556677889900aabbcc';
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-features-toc-465-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const cfg = store.config.load();
+      cfg.projectsDir = projectsDir;
+      store.config.save(cfg);
+      projectPath = path.join(projectsDir, 'features-toc-465');
+      fs.mkdirSync(projectPath, { recursive: true });
+      createdProject = store.projects.create({
+        name: 'features-toc-465', path: projectPath, engine: 'claude', methodology: 'minimal'
+      });
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('diffs <lastWrapSha>..HEAD so files merged this session are stubbed even though main...HEAD is empty', async () => {
+      store.projectConfig.save(projectPath, {
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: SHA
+      });
+      fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n\n## UI\n');
+
+      const origExec = featuresToc._internal.execSync;
+      const origToday = featuresToc._internal.todayIso;
+      let sawSessionDiff = false;
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.includes(`${SHA}^{commit}`)) return Buffer.from(''); // SHA resolves
+        // The OLD (branch) range is empty — this is the wrap-on-main bug condition.
+        if (cmd.includes('git diff --name-only main...HEAD')) return Buffer.from('');
+        // The NEW (session) range captures everything merged since the last wrap.
+        if (cmd.includes(`git diff --name-only ${SHA}..HEAD`)) {
+          sawSessionDiff = true;
+          return 'lib/merged-a.js\nlib/merged-b.js\n';
+        }
+        if (cmd.startsWith('git rev-parse')) return Buffer.from('');
+        throw new Error(`unexpected command: ${cmd}`);
+      };
+      featuresToc._internal.todayIso = () => '2026-07-04';
+      try {
+        const staged = {};
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.ok(sawSessionDiff, 'the handler must diff the <lastWrapSha>..HEAD session range');
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.addedCount, 2);
+        assert.deepEqual(result.output.addedFiles, ['lib/merged-a.js', 'lib/merged-b.js']);
+        assert.match(staged['features-toc:append'].newContent, /lib\/merged-a\.js/);
       } finally {
         featuresToc._internal.execSync = origExec;
         featuresToc._internal.todayIso = origToday;
