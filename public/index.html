@@ -133,7 +133,10 @@
       <div class="form-row">
         <div class="form-group form-group-half">
           <label class="form-label" for="ocBridgePort">Bridge Port</label>
-          <input type="number" class="form-input" id="ocBridgePort" autocomplete="off" value="3201">
+          <div class="oc-detect-row">
+            <input type="text" class="form-input" id="ocBridgePort" autocomplete="off" spellcheck="false" inputmode="numeric" placeholder="blank = none">
+            <button type="button" class="btn btn-small" id="ocBridgeAutoBtn" title="Auto-allocate: on save the server picks a free bridge port from the ClawBridge range (3201-3299). On a connection that already has a bridge port, auto keeps it.">Auto</button>
+          </div>
         </div>
         <div class="form-group form-group-half">
           <label class="form-label" for="ocBridgeToken">Bridge Token</label>
@@ -172,7 +175,7 @@
         <li><strong>Gateway Port</strong> — the OpenClaw gateway port (default 18789).</li>
         <li><strong>CLI Command</strong> — the OpenClaw CLI on the host (default <code>openclaw-cli</code>).</li>
         <li><strong>Local Port</strong> — the local port TangleClaw forwards its SSH tunnel to.</li>
-        <li><strong>Bridge Port</strong> / <strong>Bridge Token</strong> — optional, for ClawBridge integration.</li>
+        <li><strong>Bridge Port</strong> / <strong>Bridge Token</strong> — optional, for ClawBridge integration. Type <code>auto</code> (or press the Auto button) to let TangleClaw pick a free bridge port.</li>
         <li><strong>Instance Dir</strong> — the absolute host path of the stack directory (the one holding <code>.env</code>). Setting this is what <em>enables the version display</em>.</li>
         <li><strong>Available as engine</strong> — whether this connection appears in the engine dropdown.</li>
       </ul>

@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-35';
+const CACHE_NAME = 'tangleclaw-v3-36';
 const STATIC_ASSETS = [
   '/',
   '/style.css',

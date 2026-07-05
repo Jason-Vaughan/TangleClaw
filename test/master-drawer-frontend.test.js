@@ -149,9 +149,11 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
     });
 
     it('CACHE_NAME is bumped so active service workers surface the new shell', () => {
-      // This test owns the exact current pin (latest bump: #331 slice 3).
-      // Older generations assert "past v3-NN" — see terminal-drag-copy.test.js.
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-35';/);
+      // Past the pre-#331-slice-3 generation; the exact current pin lives in
+      // test/bridge-port-input.test.js, which owns the latest bump (#489).
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
+      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[1234]';/.test(sw),
+        'cache generation must be past v3-34 (the pre-#331-slice-3 shell)');
     });
   });
 });

@@ -2415,8 +2415,9 @@ async function openConnectionModal(connId) {
     // the first free port (#352), so a second connection can't collide on the
     // legacy 18789 default. The placeholder communicates the auto behavior.
     document.getElementById('ocLocalPort').value = '';
-    // Leave blank by default; the field's placeholder shows 3201 as a hint
-    // but only takes effect when the user actually fills it in (#160).
+    // Leave blank by default: blank = no bridge port (#160). The operator
+    // can type a port or the literal "auto" / press the Auto button for
+    // server-side allocation (#489).
     document.getElementById('ocBridgePort').value = '';
     document.getElementById('ocBridgeToken').value = '';
     document.getElementById('ocInstanceDir').value = '';
@@ -2436,6 +2437,17 @@ function closeConnectionModal() {
 }
 
 /**
+ * Fill the Bridge Port field with the literal "auto" (#489, OUI-2F8K) so
+ * the next save asks the server to allocate a free bridge port from the
+ * ClawBridge range (#352 create; idempotent on update, #483).
+ */
+function fillBridgePortAuto() {
+  const input = document.getElementById('ocBridgePort');
+  input.value = 'auto';
+  input.focus();
+}
+
+/**
  * Save (create or update) an OpenClaw connection.
  */
 async function saveConnection() {
@@ -2446,6 +2458,18 @@ async function saveConnection() {
 
   if (!name || !host || !sshUser || !sshKeyPath) {
     document.getElementById('ocError').textContent = 'Name, host, SSH user, and SSH key path are required';
+    document.getElementById('ocError').classList.remove('hidden');
+    return;
+  }
+
+  // Bridge Port accepts blank (no bridge port, #160), a number, or the
+  // literal "auto" (server-side free-port allocation — #352 create, #483
+  // idempotent update; #489). Reject anything else BEFORE building the
+  // body: coercing a typo to null would silently clear the stored bridge
+  // port on edit and release its lease.
+  const bridgeParse = tcParseBridgePort(document.getElementById('ocBridgePort').value);
+  if (!bridgeParse.ok) {
+    document.getElementById('ocError').textContent = bridgeParse.error;
     document.getElementById('ocError').classList.remove('hidden');
     return;
   }
@@ -2468,15 +2492,7 @@ async function saveConnection() {
       const parsed = parseInt(raw, 10);
       return Number.isFinite(parsed) ? parsed : undefined;
     })(),
-    bridgePort: (() => {
-      // Empty field → null (no Bridge port; no extra -L SSH forward). Pre-#160
-      // this fell through to `|| 3201` and silently fabricated a phantom bind
-      // for every non-ClawBridge connection.
-      const raw = document.getElementById('ocBridgePort').value.trim();
-      if (raw === '') return null;
-      const parsed = parseInt(raw, 10);
-      return Number.isFinite(parsed) ? parsed : null;
-    })(),
+    bridgePort: bridgeParse.value,
     bridgeToken: document.getElementById('ocBridgeToken').value.trim() || null,
     instanceDir: document.getElementById('ocInstanceDir').value.trim() || null
     // availableAsEngine intentionally omitted (#459): connections are no
@@ -2843,6 +2859,7 @@ $('ocCancelBtn').addEventListener('click', closeConnectionModal);
 $('ocSaveBtn').addEventListener('click', saveConnection);
 $('ocTestBtn').addEventListener('click', testConnection);
 $('ocDetectBtn').addEventListener('click', detectOcInstanceDir);
+$('ocBridgeAutoBtn').addEventListener('click', fillBridgePortAuto);
 $('ocDeleteBtn').addEventListener('click', openConnectionDeleteConfirm);
 $('openclawModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConnectionModal(); });
 $('ocSetupCloseBtn').addEventListener('click', closeOpenclawSetupModal);

@@ -296,6 +296,33 @@
   }
 
   /**
+   * Parse the connection form's Bridge Port field into the API's
+   * `bridgePort` request value (#489, OUI-2F8K). Three valid shapes: blank
+   * means no bridge port (null — the #160 contract: never fabricate a
+   * phantom bind), the literal `auto` opts into server-side free-port
+   * allocation (#352 on create; idempotent on update, #483), and a whole
+   * port number is sent verbatim. Anything else is rejected rather than
+   * coerced — the field is a text input so `auto` can be typed, and
+   * silently mapping a typo to null would CLEAR an existing bridge port on
+   * edit (releasing its lease, #483).
+   * @param {string} raw - The field value, untrimmed
+   * @returns {{ok: true, value: (null|string|number)}|{ok: false, error: string}}
+   *   On success `value` is null, the lowercase literal 'auto', or the port
+   *   number; on failure `error` is the message to show on the form.
+   */
+  function tcParseBridgePort(raw) {
+    const s = String(raw == null ? '' : raw).trim();
+    if (s === '') return { ok: true, value: null };
+    if (s.toLowerCase() === 'auto') return { ok: true, value: 'auto' };
+    if (/^\d+$/.test(s)) {
+      const port = parseInt(s, 10);
+      if (port >= 1 && port <= 65535) return { ok: true, value: port };
+      return { ok: false, error: `Bridge Port must be between 1 and 65535 (got ${port})` };
+    }
+    return { ok: false, error: 'Bridge Port must be a port number, "auto", or blank' };
+  }
+
+  /**
    * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
    *
    * The previous per-page shims listened on `.xterm-viewport` — but xterm's
@@ -778,6 +805,7 @@
   global.tcQuantizeScrollDelta = tcQuantizeScrollDelta;
   global.tcCellFromPoint = tcCellFromPoint;
   global.tcSelectionSpan = tcSelectionSpan;
+  global.tcParseBridgePort = tcParseBridgePort;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;

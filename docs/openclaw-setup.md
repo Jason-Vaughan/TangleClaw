@@ -117,7 +117,7 @@ Same path: `gateway.auth.token`.
 | **Gateway Port** | OpenClaw gateway port (default `18789`) | Remote port |
 | **Gateway Token** | The token from Step 2 | Required for remote access |
 | **Local Port** | Local tunnel port (default `18789`) | Must not conflict with other tunnels |
-| **Bridge Port** | ClawBridge port — leave blank for non-ClawBridge OpenClaw deployments | Only set when deploying ClawBridge alongside OpenClaw (typically `3201`). Leaving blank skips the extra SSH forward and is the right default for a vanilla OpenClaw install (#160). |
+| **Bridge Port** | ClawBridge port — leave blank for non-ClawBridge OpenClaw deployments | Only set when deploying ClawBridge alongside OpenClaw. Type `auto` (or press the **Auto** button) to have TangleClaw pick a free port from the ClawBridge range `3201-3299` on save (#489; on an existing connection `auto` keeps the current bridge port, #483). Leaving blank skips the extra SSH forward and is the right default for a vanilla OpenClaw install (#160). |
 | **Bridge Token** | ClawBridge authentication token | Required only when Bridge Port is set |
 | **Instance Dir** | Absolute host path of the OpenClaw stack directory (the one holding `.env`) | Recommended. Enables the per-connection **version display** — TangleClaw reads the `OPENCLAW_IMAGE` tag from `<instanceDir>/.env` over SSH. Leave blank and the connection shows a "Set Instance Dir to enable" hint instead of a version. |
 
