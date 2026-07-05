@@ -4,7 +4,7 @@
 
 ## 2026-07-04: Feat — Bridge Port `auto` UI affordance on the connection form (#489, OUI-2F8K)
 
-<!-- prawduct: type=feat | chunks=489 | scope=openclaw-ui-bridge-auto | status=in-review -->
+<!-- prawduct: type=feat | chunks=489 | scope=openclaw-ui-bridge-auto | status=merged -->
 
 **Why:** backlog OUI-2F8K (Critic-filed on the #352 pass): the API accepts `bridgePort:"auto"` (#352 create, #483 idempotent PUT) but the form field was `type="number"` blank=null-only — no UI path to auto-allocation. **What:** field → text input (`inputmode="numeric"`) accepting blank / port number / `auto` (case-insensitive, normalized to the server's exact `=== 'auto'` literal), plus an **Auto** fill-in button (Detect-row layout, rule generalized `#ocDetectBtn`→`.btn`). Parsing extracted to pure `tcParseBridgePort` in `api-helper.js` (UI-9J3F pattern): typos/out-of-range **reject with a form error pre-request** instead of coercing to null — silent null on edit would clear the stored port + release its lease (#483). Inert `value="3201"` removed (#160 comment/HTML contradiction); `docs/openclaw-setup.md` documents `auto`. `CACHE_NAME` v3-35→v3-36; the drawer test's exact pin converts to the floor pattern (convention: newest bump owns the exact pin). **Tests:** new `test/bridge-port-input.test.js` (+21: behavioral parser + structural form/wiring/propagation).
 
