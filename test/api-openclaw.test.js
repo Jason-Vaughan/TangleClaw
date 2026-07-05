@@ -463,6 +463,139 @@ describe('API /api/openclaw/connections', () => {
     assert.equal(created.data.code, 'PORT_CONFLICT');
     assert.ok(created.data.error.includes('3290'));
   });
+
+  // ── #483: PUT reconciles the oc-direct-<id> leases when a port changes ──
+
+  it('PUT changing localPort releases the old lease and leases the new port (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutLocalSwap', host: '10.0.0.100', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19501
+    });
+    assert.equal(created.status, 201);
+    const id = created.data.id;
+    assert.ok(store.portLeases.get(19501), 'old port leased at create');
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${id}`, { localPort: 19502 });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.localPort, 19502);
+    assert.equal(store.portLeases.get(19501), null, 'old localPort lease is released on update');
+    const lease = store.portLeases.get(19502);
+    assert.ok(lease, 'new localPort is leased on update');
+    assert.equal(lease.project, `oc-direct-${id}`);
+    assert.equal(lease.service, 'openclaw-tunnel');
+  });
+
+  it('PUT rejects a localPort leased by another project (#483)', async () => {
+    const porthub = require('../lib/porthub');
+    porthub.registerPort(19504, 'someone-else', 'svc');
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutLocalConflict', host: '10.0.0.101', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19505
+    });
+    assert.equal(created.status, 201);
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, { localPort: 19504 });
+    assert.equal(updated.status, 409);
+    assert.equal(updated.data.code, 'PORT_CONFLICT');
+    assert.ok(store.portLeases.get(19505), 'own lease is untouched after a rejected update');
+  });
+
+  it('PUT changing bridgePort releases the old bridge lease and leases the new one (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutBridgeSwap', host: '10.0.0.102', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19506, bridgePort: 3270
+    });
+    assert.equal(created.status, 201);
+    const id = created.data.id;
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${id}`, { bridgePort: 3271 });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.bridgePort, 3271);
+    assert.equal(store.portLeases.get(3270), null, 'old bridgePort lease is released on update');
+    const bridgeLease = store.portLeases.get(3271);
+    assert.ok(bridgeLease, 'new bridgePort is leased on update');
+    assert.equal(bridgeLease.project, `oc-direct-${id}`);
+    assert.equal(bridgeLease.service, 'openclaw-bridge');
+    // The unchanged localPort lease must survive the reconciliation (guards the
+    // killTunnel-releases-localPort interaction).
+    const localLease = store.portLeases.get(19506);
+    assert.ok(localLease, 'unchanged localPort lease survives a bridge-only update');
+    assert.equal(localLease.project, `oc-direct-${id}`);
+  });
+
+  it('PUT clearing bridgePort releases the old bridge lease (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutBridgeClear', host: '10.0.0.103', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19507, bridgePort: 3272
+    });
+    assert.equal(created.status, 201);
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, { bridgePort: null });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.bridgePort, null);
+    assert.equal(store.portLeases.get(3272), null, 'cleared bridgePort lease is released');
+  });
+
+  it('PUT rejects a bridgePort leased by another project (#483)', async () => {
+    const porthub = require('../lib/porthub');
+    porthub.registerPort(3273, 'someone-else', 'svc');
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutBridgeConflict', host: '10.0.0.104', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19508
+    });
+    assert.equal(created.status, 201);
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, { bridgePort: 3273 });
+    assert.equal(updated.status, 409);
+    assert.equal(updated.data.code, 'PORT_CONFLICT');
+    assert.ok(updated.data.error.includes('3273'));
+  });
+
+  it('PUT bridgePort:"auto" on a bridge-less connection allocates and leases (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutBridgeAuto', host: '10.0.0.105', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19509
+      // bridgePort omitted — persists null
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.bridgePort, null);
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, { bridgePort: 'auto' });
+    assert.equal(updated.status, 200);
+    assert.ok(Number.isInteger(updated.data.bridgePort),
+      'the literal string "auto" must never reach the DB');
+    assert.ok(updated.data.bridgePort >= 3201 && updated.data.bridgePort < 3300,
+      'auto-allocated bridgePort falls inside the bridge range');
+    assert.ok(store.portLeases.get(updated.data.bridgePort), 'auto-allocated bridgePort is leased');
+  });
+
+  it('PUT bridgePort:"auto" keeps an existing bridge port — no churn (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutBridgeAutoKeep', host: '10.0.0.106', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19510, bridgePort: 3274
+    });
+    assert.equal(created.status, 201);
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${created.data.id}`, { bridgePort: 'auto' });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.bridgePort, 3274, 're-saving with "auto" keeps the assigned port');
+    assert.ok(store.portLeases.get(3274), 'existing bridge lease is untouched');
+  });
+
+  it('PUT with no port change leaves the leases untouched (#483)', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'PutNoPortChange', host: '10.0.0.107', sshUser: 'user', sshKeyPath: '/key',
+      localPort: 19511
+    });
+    assert.equal(created.status, 201);
+    const id = created.data.id;
+
+    const updated = await request(server, 'PUT', `/api/openclaw/connections/${id}`, { name: 'PutNoPortChange2' });
+    assert.equal(updated.status, 200);
+    const lease = store.portLeases.get(19511);
+    assert.ok(lease, 'localPort lease survives a non-port update');
+    assert.equal(lease.project, `oc-direct-${id}`);
+  });
 });
 
 describe('API /api/openclaw/test', () => {
