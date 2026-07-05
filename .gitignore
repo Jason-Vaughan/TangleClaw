@@ -4,8 +4,11 @@
 # Claude Code (personal settings)
 .claude/
 
-# Prawduct dogfooding state (TC builds itself with Prawduct)
-.prawduct/
+# Prawduct dogfooding state (TC builds itself with Prawduct).
+# Contents are ignored fail-closed; only the change-log is tracked — it feeds
+# the check-change-log-entry PR gate and the release flow (#485).
+.prawduct/*
+!.prawduct/change-log.md
 
 # TangleClaw project config (dogfooding artifact)
 .tangleclaw/

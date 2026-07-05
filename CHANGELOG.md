@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **`.prawduct/change-log.md` is now git-tracked, so the `check-change-log-entry` PR gate can actually pass (#485).** `.gitignore` excluded `.prawduct/` wholesale, which made Prawduct's REL-6C3W probe structurally always fail with `no-entry` — the change-log was written correctly on every branch but could never appear in the `merge-base...HEAD` diff (first observed on PR #484). The blanket ignore is replaced with `.prawduct/*` + a `!.prawduct/change-log.md` negation, so all other governance state (critic findings, session files, ledger, artifacts) stays fail-closed local while the change-log — an audit trail with the same publishability as this file — is committed. En route, two defects fixed in the change-log itself: the title still said "TangleClaw-v3" (stale pre-#183 repo name), and the 2026-07-04 #434-chunk-2 entry was missing its `## ` heading (the exact marker the gate greps for).
+
 ## [4.4.1] - 2026-07-04
 
 ### Fixed
