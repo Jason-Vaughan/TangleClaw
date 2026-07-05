@@ -2466,18 +2466,64 @@ route('PUT', '/api/openclaw/connections/:id', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
+  const existing = store.openclawConnections.get(params.id);
+  if (!existing) {
+    return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
+  }
   // Check for port conflicts if localPort is being changed
-  if (body.localPort !== undefined) {
-    const existing = store.openclawConnections.get(params.id);
-    if (existing && body.localPort !== existing.localPort) {
-      const portCheck = porthub.checkPort(body.localPort);
-      if (!portCheck.available) {
-        return errorResponse(res, 409, `Port ${body.localPort} is already in use by ${portCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
+  if (body.localPort !== undefined && body.localPort !== existing.localPort) {
+    const portCheck = porthub.checkPort(body.localPort);
+    if (!portCheck.available) {
+      return errorResponse(res, 409, `Port ${body.localPort} is already in use by ${portCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
+    }
+  }
+  // Resolve bridgePort the same way POST does (#483). 'auto' is idempotent on
+  // update: a connection that already has a bridge port keeps it (re-saving an
+  // edit form must not churn ports); only a bridge-less connection allocates.
+  if (body.bridgePort === 'auto') {
+    if (existing.bridgePort) {
+      body.bridgePort = existing.bridgePort;
+    } else {
+      try {
+        body.bridgePort = porthub.nextFreePort({ range: [3201, 3300] });
+      } catch (err) {
+        return errorResponse(res, 409, err.message, 'PORT_EXHAUSTED');
       }
+    }
+  } else if (body.bridgePort !== undefined && body.bridgePort !== null && body.bridgePort !== ''
+      && body.bridgePort !== existing.bridgePort) {
+    const bridgeCheck = porthub.checkPort(body.bridgePort);
+    if (!bridgeCheck.available) {
+      return errorResponse(res, 409, `Bridge port ${body.bridgePort} is already in use by ${bridgeCheck.leasedBy || 'system process'}`, 'PORT_CONFLICT');
     }
   }
   try {
     const connection = store.openclawConnections.update(params.id, body);
+    // Lease reconciliation (#483): the create path leases local/bridge ports
+    // under oc-direct-<id> and DELETE releases them, but a port change via PUT
+    // used to leave the old lease held forever and the new port unleased —
+    // reopening the #352 allocate→bind race for edited connections. Mirror the
+    // create/delete lifecycle: kill the now-misconfigured standalone tunnel
+    // (killTunnel also releases its tracked localPort), release the stale
+    // leases, then re-lease the connection's current ports.
+    const localChanged = connection.localPort !== existing.localPort;
+    const bridgeChanged = connection.bridgePort !== existing.bridgePort;
+    if (localChanged || bridgeChanged) {
+      const leaseName = `oc-direct-${connection.id}`;
+      tunnel.killTunnel(leaseName);
+      if (localChanged && existing.localPort) {
+        porthub.releasePort(existing.localPort);
+      }
+      if (bridgeChanged && existing.bridgePort) {
+        porthub.releasePort(existing.bridgePort);
+      }
+      if (connection.localPort) {
+        porthub.registerPort(connection.localPort, leaseName, 'openclaw-tunnel', { permanent: true });
+      }
+      if (connection.bridgePort) {
+        porthub.registerPort(connection.bridgePort, leaseName, 'openclaw-bridge', { permanent: true });
+      }
+    }
     openclawVersion.invalidate(params.id); // #296: instanceDir may have changed → drop stale cache
     jsonResponse(res, 200, connection);
   } catch (err) {
