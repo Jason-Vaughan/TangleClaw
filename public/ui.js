@@ -2415,8 +2415,9 @@ async function openConnectionModal(connId) {
     // the first free port (#352), so a second connection can't collide on the
     // legacy 18789 default. The placeholder communicates the auto behavior.
     document.getElementById('ocLocalPort').value = '';
-    // Leave blank by default; the field's placeholder shows 3201 as a hint
-    // but only takes effect when the user actually fills it in (#160).
+    // Leave blank by default: blank = no bridge port (#160). The operator
+    // can type a port or the literal "auto" / press the Auto button for
+    // server-side allocation (#489).
     document.getElementById('ocBridgePort').value = '';
     document.getElementById('ocBridgeToken').value = '';
     document.getElementById('ocInstanceDir').value = '';
