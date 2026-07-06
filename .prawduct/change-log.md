@@ -4,7 +4,7 @@
 
 ## 2026-07-06: Feat — Bridge Port row on the OpenClaw connection card (#491, OUI-4T9M)
 
-<!-- prawduct: type=feat | chunks=491 | scope=openclaw-ui-bridge-card-row -->
+<!-- prawduct: type=feat | chunks=491 | scope=openclaw-ui-bridge-card-row | status=merged -->
 
 **Why:** backlog OUI-4T9M (operator-surfaced during the VRF-489-bridge-auto smoke test): the card's detail grid omits the bridge port entirely, so a #490 auto-allocated port was Edit-modal-only — the operator couldn't confirm allocation from the card. **What:** conditional **Bridge Port** row in `renderOpenclawConnections` (between Local Port and Version, tooltip → Edit affordance), gated on `conn.bridgePort` so bridge-less connections (#160 null default) render no row. `CACHE_NAME` v3-36→v3-37 (ui.js precached); exact-pin ownership → new test, `bridge-port-input.test.js` converts to floor per convention. **Tests:** new `test/openclaw-bridge-port-row.test.js` (+4 structural: gating, placement, tooltip, bump).
 
