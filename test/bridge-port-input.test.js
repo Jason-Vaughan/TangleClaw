@@ -163,9 +163,11 @@ describe('Bridge Port form surface (#489 structural)', () => {
 
   describe('propagation', () => {
     it('CACHE_NAME is bumped so active service workers pick up the new form', () => {
-      // This test owns the exact current pin (latest bump: #489). Older
-      // generations assert "past v3-NN" — see terminal-drag-copy.test.js.
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-36';/);
+      // Past the pre-#489 generation; the exact current pin lives in
+      // test/openclaw-bridge-port-row.test.js, which owns the latest bump (#491).
+      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
+      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[12345]';/.test(sw),
+        'cache generation must be past v3-35 (the pre-#489 shell)');
     });
   });
 });

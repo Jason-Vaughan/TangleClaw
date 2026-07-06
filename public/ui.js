@@ -2181,6 +2181,9 @@ function renderOpenclawConnections() {
       <span class="oc-detail-label">SSH Key</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.sshKeyPath)}</span>
       <span class="oc-detail-label">CLI Command</span><span class="oc-detail-value" style="font-family:monospace;font-size:0.85em">${esc(conn.cliCommand || 'openclaw-cli')}</span>
       <span class="oc-detail-label">Local Port</span><span class="oc-detail-value">${conn.localPort}</span>
+      ${conn.bridgePort
+        ? `<span class="oc-detail-label">Bridge Port</span><span class="oc-detail-value" title="ClawBridge port (auto-allocatable — see Edit → Bridge Port)">${conn.bridgePort}</span>`
+        : ''}
       <span class="oc-detail-label">Version</span>${conn.instanceDir
         ? `<span class="oc-detail-value" id="ocVer-${esc(conn.id)}" title="OpenClaw instance image tag (${esc(conn.instanceDir)}/.env)">checking…</span>`
         : `<span class="oc-detail-value oc-detail-muted" title="Set this connection's Instance Dir (Edit → Instance Dir) to read its OpenClaw image tag over SSH">Set Instance Dir to enable</span>`}
