@@ -4,7 +4,7 @@
 
 ## 2026-07-06: Refactor — shared adoption-computation core for caddy real + dry-run paths (#494, CAD-7X4V)
 
-<!-- prawduct: type=refactor | chunks=494 | scope=caddy-adoption-helper -->
+<!-- prawduct: type=refactor | chunks=494 | scope=caddy-adoption-helper | status=merged -->
 
 **Why:** backlog CAD-7X4V (PR-reviewer-filed on #476): `applyDryRunAdoptionPreview` (`scripts/ingress-cutover.js`) hand-mirrored the 3 adoption concerns of `adoptCredentialIntoConfig` (`lib/caddy.js`) — the dry-run/real divergence this invites was itself the Critic-caught bug on #476, and each future adoption shape adds another mirror obligation. **What:** pure `caddy.computeCaddyfileAdoption(config, content)` extracted as the single core (in-memory mutation, full `{adopted, changed, user, remoteHttp, tailnetHost, reason}` return incl. the pre-#434 `remoteHttp`-reflects-the-file contract); `adoptCredentialIntoConfig` keeps mode gate + file read + persist/log; `applyDryRunAdoptionPreview` keeps its exported signature (null-text guard + boolean return) but delegates. Behavior-preserving: zero existing assertions touched. **Tests:** `test/auth-credential-durability.test.js` +5 — direct helper coverage (result shape, never-overwrite + no-op reasons, idempotence, publicDomain exclusion) + an anti-drift structural pin (cutover script must reference `computeCaddyfileAdoption` and must NOT reference the three concern extractors — the #476 bug class cannot silently return).
 
