@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **The caddy adoption computation now has a single implementation shared by the real and dry-run paths (#494, backlog CAD-7X4V).** `applyDryRunAdoptionPreview` (`scripts/ingress-cutover.js`) was a hand-maintained 3-concern mirror of `adoptCredentialIntoConfig` (`lib/caddy.js`) — credential, remote-HTTP catch-all, and tailnet-host adoption duplicated across two files, with the original dry-run/real divergence itself a Critic-caught bug on the #476 review. The computation is extracted to a pure `caddy.computeCaddyfileAdoption(config, content)` (mutates the in-memory config, returns the `{adopted, changed, user, remoteHttp, tailnetHost, reason}` shape); `adoptCredentialIntoConfig` keeps the ingress-mode gate, Caddyfile read, and persist+log around it, and the dry-run preview delegates behind its unchanged exported signature. Pure refactor — no behavior change; all pre-existing adoption/preview contracts pass unmodified. Tests: `test/auth-credential-durability.test.js` +5 (direct helper coverage: full result shape, never-overwrite + no-op reasons, idempotence, publicDomain exclusion; plus an anti-drift structural pin that the cutover script no longer references the three concern extractors).
+
 ## [4.5.0] - 2026-07-06
 
 ### Added

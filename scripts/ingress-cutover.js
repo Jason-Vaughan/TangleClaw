@@ -201,34 +201,16 @@ function parseArgs(argv) {
  * the IN-MEMORY config only — nothing is saved — so the previewed plan reflects
  * the post-adoption state instead of crashing on the refuse-to-ungate guard
  * (Critic-caught: dry-run and real-run diverged on exactly the #397 recovery
- * scenario). Mirrors the real function's #434 decoupling: shapes preview even
- * when the credential is already in config, and never overwrite a set field.
+ * scenario). Delegates to `caddy.computeCaddyfileAdoption` — the same pure core
+ * the real path runs (CAD-7X4V) — so dry-run and real adoption cannot drift;
+ * this wrapper only owns the no-Caddyfile guard and the boolean return.
  * @param {object} config - Loaded config, mutated in place (in-memory only).
  * @param {string|null} existingCaddyfileText - Live Caddyfile text, if any.
  * @returns {boolean} Whether any adoption was previewed.
  */
 function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
   if (typeof existingCaddyfileText !== 'string') return false;
-  let previewed = false;
-  if (!config.basicAuthUser && !config.basicAuthHash) {
-    const cred = caddy.extractBasicAuthCredential(existingCaddyfileText);
-    if (cred) {
-      config.authEnabled = true;
-      config.basicAuthUser = cred.user;
-      config.basicAuthHash = cred.hash;
-      previewed = true;
-    }
-  }
-  if (config.caddyRemoteHttp !== true && caddy.hasRemoteHttpCatchAll(existingCaddyfileText)) {
-    config.caddyRemoteHttp = true;
-    previewed = true;
-  }
-  const tailnetHost = caddy.extractTailnetHost(existingCaddyfileText);
-  if (tailnetHost && !config.caddyTailnetHost && tailnetHost !== config.publicDomain) {
-    config.caddyTailnetHost = tailnetHost;
-    previewed = true;
-  }
-  return previewed;
+  return caddy.computeCaddyfileAdoption(config, existingCaddyfileText).changed;
 }
 
 /**

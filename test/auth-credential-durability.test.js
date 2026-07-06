@@ -347,6 +347,67 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
     });
   });
 
+  describe('computeCaddyfileAdoption — shared pure core of real + dry-run adoption (CAD-7X4V)', () => {
+    it('adopts credential + shapes into an empty in-memory config and reports the full result shape', () => {
+      const config = {};
+      const result = caddy.computeCaddyfileAdoption(config, liveShapedCaddyfile());
+      assert.equal(result.adopted, true);
+      assert.equal(result.changed, true);
+      assert.equal(result.user, 'jason');
+      assert.equal(result.remoteHttp, true);
+      assert.equal(config.authEnabled, true);
+      assert.equal(config.basicAuthUser, 'jason');
+      assert.equal(config.basicAuthHash, HASH_A);
+      assert.equal(config.caddyRemoteHttp, true);
+    });
+
+    it('never overwrites config values and reports the credential no-op reason', () => {
+      const config = { basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true };
+      const result = caddy.computeCaddyfileAdoption(config, liveShapedCaddyfile());
+      assert.equal(result.adopted, false);
+      assert.equal(result.changed, false);
+      assert.equal(result.reason, 'config-already-has-credential');
+      assert.equal(result.remoteHttp, true, 'pre-#434 contract: remoteHttp reflects the file');
+      assert.equal(config.basicAuthUser, 'ops');
+      assert.equal(config.basicAuthHash, HASH_B);
+    });
+
+    it('is idempotent on the same config — the second pass adopts nothing', () => {
+      const config = {};
+      assert.equal(caddy.computeCaddyfileAdoption(config, liveTailnetCaddyfile()).changed, true);
+      const second = caddy.computeCaddyfileAdoption(config, liveTailnetCaddyfile());
+      assert.equal(second.changed, false);
+      assert.equal(second.reason, 'config-already-has-credential');
+      assert.equal(config.caddyTailnetHost, TAILNET_HOST);
+    });
+
+    it('skips a tailnet host equal to publicDomain (that site is the ACME block\'s job)', () => {
+      const config = {
+        publicDomain: TAILNET_HOST,
+        basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true
+      };
+      const result = caddy.computeCaddyfileAdoption(config, liveTailnetCaddyfile());
+      assert.equal(result.changed, false);
+      assert.equal(config.caddyTailnetHost, undefined);
+    });
+
+    it('is the ONLY adoption implementation — the cutover script delegates instead of mirroring it', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
+      assert.ok(
+        src.includes('computeCaddyfileAdoption'),
+        'applyDryRunAdoptionPreview must delegate to the shared helper'
+      );
+      // The pre-CAD-7X4V hand-maintained mirror called these three directly; any
+      // reappearance means the dry-run/real paths can drift again (#476 bug class).
+      for (const fn of ['extractBasicAuthCredential', 'hasRemoteHttpCatchAll', 'extractTailnetHost']) {
+        assert.ok(
+          !src.includes(fn),
+          `ingress-cutover.js must not re-implement adoption via caddy.${fn}`
+        );
+      }
+    });
+  });
+
   describe('extractTailnetHost (#434 Chunk 2)', () => {
     it('extracts the host from the live 2026-07-04 hand-edited shape', () => {
       assert.equal(caddy.extractTailnetHost(liveTailnetCaddyfile()), TAILNET_HOST);
