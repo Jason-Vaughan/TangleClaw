@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-07-06
+
 ### Added
 
 - **The OpenClaw connection card now shows a Bridge Port row when one is set (#491, backlog OUI-4T9M).** The expanded card listed Host / Port / SSH User / SSH Key / CLI Command / Local Port / Version but not the bridge port, so a configured — or #490 auto-allocated — bridge port was only visible inside the Edit modal; during the VRF-489-bridge-auto smoke test the operator couldn't tell from the card whether auto-allocation had worked. The detail grid gains a conditional **Bridge Port** row (between Local Port and Version, with a tooltip pointing at the Edit-modal affordance) rendered only when `bridgePort` is set, so non-ClawBridge connections (null, the #160 default) stay clean. `CACHE_NAME` v3-36→v3-37 (ui.js is precached); exact-pin ownership moves to the new test per the established convention. Tests: new `test/openclaw-bridge-port-row.test.js` (+4 structural — conditional gating, grid placement, tooltip, cache bump).

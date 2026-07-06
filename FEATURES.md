@@ -105,3 +105,10 @@ entries that span multiple co-equal locations.
 ## TODO (auto-stubbed 2026-07-04)
 
 - **TBD** — touched in this session: `test/api-openclaw.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-06)
+
+- **TBD** — touched in this session: `docs/openclaw-setup.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/bridge-port-input.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/master-drawer-frontend.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/openclaw-bridge-port-row.test.js`. <!-- describe -->
