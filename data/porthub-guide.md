@@ -24,7 +24,7 @@ curl -H "Authorization: Bearer $TANGLECLAW_SERVICE_TOKEN" .../api/ports
 
 ### API Operations
 
-All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. HTTPS (`https://localhost:3102`) is the default; installs that skipped HTTPS or have no certificates configured fall back to `http://localhost:3102`. When hitting HTTPS with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it. When the service-token gate is on, add `-H "Authorization: Bearer <token>"` to every call below.
+All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide, and its scheme reflects what the server actually serves: plain `http://` when caddy terminates TLS (`ingressMode: caddy`) or when no certificates are configured, `https://` otherwise. Use the injected URL as-is — do not "upgrade" it to https. When the URL is `https://` with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it. When the service-token gate is on, add `-H "Authorization: Bearer <token>"` to every call below.
 
 **Check what's taken** before picking a port:
 ```

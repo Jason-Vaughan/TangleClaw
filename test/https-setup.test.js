@@ -122,6 +122,37 @@ describe('https-setup', () => {
     });
   });
 
+  describe('effectiveServerProtocol (ENG-5R2W)', () => {
+    it('returns http in caddy ingress mode regardless of HTTPS config — caddy owns TLS', () => {
+      assert.equal(httpsSetup.effectiveServerProtocol({
+        ingressMode: 'caddy', httpsEnabled: true,
+        httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem'
+      }), 'http');
+    });
+
+    it('returns https only when httpsEnabled AND both cert paths are set (the willServeHttps conjunction)', () => {
+      assert.equal(httpsSetup.effectiveServerProtocol({
+        ingressMode: 'direct', httpsEnabled: true,
+        httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem'
+      }), 'https');
+      // httpsEnabled defaults to true — a no-cert install serves HTTP via the
+      // createServer fallback, so the predicted scheme must be http too.
+      assert.equal(httpsSetup.effectiveServerProtocol({ httpsEnabled: true }), 'http');
+      assert.equal(httpsSetup.effectiveServerProtocol({
+        httpsEnabled: true, httpsCertPath: '/c.pem'
+      }), 'http');
+      assert.equal(httpsSetup.effectiveServerProtocol({
+        httpsEnabled: false, httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem'
+      }), 'http');
+    });
+
+    it('returns http on missing config — never throws on a degenerate input', () => {
+      assert.equal(httpsSetup.effectiveServerProtocol(null), 'http');
+      assert.equal(httpsSetup.effectiveServerProtocol(undefined), 'http');
+      assert.equal(httpsSetup.effectiveServerProtocol({}), 'http');
+    });
+  });
+
   describe('detectMkcert', () => {
     it('reports available: true when mkcert stub is on PATH', (t) => {
       if (!hasOpenssl) return t.skip('openssl not available');

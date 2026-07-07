@@ -54,11 +54,28 @@ describe('buildMasterClaudeMd', () => {
     assert.match(md, /Never edit files outside this directory/);
   });
 
-  it('renders the API base URL from config port and protocol', () => {
-    const md = master.buildMasterClaudeMd({ serverPort: 3200, httpsEnabled: true });
+  it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {
+    // https only with the full willServeHttps conjunction (flag + both cert paths).
+    const md = master.buildMasterClaudeMd({
+      serverPort: 3200, httpsEnabled: true,
+      httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem'
+    });
     assert.match(md, /https:\/\/localhost:3200/);
     const md2 = master.buildMasterClaudeMd({ serverPort: 3102 });
     assert.match(md2, /http:\/\/localhost:3102/);
+    // httpsEnabled defaults to true — without cert paths the server serves
+    // HTTP (createServer fallback), so the base URL must say http.
+    const md3 = master.buildMasterClaudeMd({ serverPort: 3102, httpsEnabled: true });
+    assert.match(md3, /http:\/\/localhost:3102/);
+  });
+
+  it('renders an http base URL in caddy ingress mode even with full HTTPS config (ENG-5R2W)', () => {
+    const md = master.buildMasterClaudeMd({
+      serverPort: 3102, ingressMode: 'caddy', httpsEnabled: true,
+      httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem'
+    });
+    assert.match(md, /http:\/\/localhost:3102/);
+    assert.doesNotMatch(md, /https:\/\/localhost/);
   });
 
   it('includes the bearer Authentication block only when the gate is on AND a token exists', () => {
