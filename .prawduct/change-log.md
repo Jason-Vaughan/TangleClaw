@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-07: Chore — reconcile Chunk R box: repo rename shipped via #183 (retroactive)
+
+<!-- prawduct: type=chore | chunks=R | scope=tc-4.0 | status=shipped -->
+
+**Why:** Chunk R (repo rename TangleClaw-v3 → TangleClaw, #183) is the tc-4.0 plan's last unchecked box, but the issue CLOSED and the rename shipped around 2026-07-03 (this repo IS TangleClaw; the #485 entry already referenced the "stale pre-#183 repo name") — before `.prawduct/change-log.md` was git-tracked and before the work carried view tags, so the derived Status view could never flip it. Every session briefing since has offered closed work as "Resume: Chunk R" — the exact stale-plan failure mode the 2026-05-23 lesson warns about. **What:** this retroactive tagged entry lets `regen-views` flip the box; no code change. The known remnant (the `TangleClaw-v3 → TangleClaw` compat symlink plus old processes still referencing the `-v3` path) stays a deliberately-deferred cleanup thread in auto-memory — removing it while live processes hold the old path would break them, and it is not part of #183's shipped scope.
+
 ## 2026-07-06: Fix — injected API base URL scheme matches what the server serves (#496, ENG-5R2W)
 
 <!-- prawduct: type=fix | chunks=496 | scope=eng-5r2w-base-url-scheme | status=merged -->
