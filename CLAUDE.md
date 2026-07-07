@@ -223,7 +223,7 @@ TangleClaw is the central port registry for all projects on this machine. Every 
 
 ### API Operations
 
-All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide. HTTPS (`https://localhost:3102`) is the default; installs that skipped HTTPS or have no certificates configured fall back to `http://localhost:3102`. When hitting HTTPS with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it.
+All calls are JSON. Use `curl` or equivalent. The TangleClaw API base URL is injected below this guide, and its scheme reflects what the server actually serves: plain `http://` when caddy terminates TLS (`ingressMode: caddy`, the live cursatory setup) or when no certificates are configured, `https://` otherwise. Use the injected URL as-is — do not "upgrade" it to https. When the URL is `https://` with a locally generated certificate (mkcert), pass `-k` to `curl` or install the mkcert root CA so the client trusts it.
 
 **Check what's taken** before picking a port:
 ```
@@ -267,7 +267,7 @@ POST /api/ports/heartbeat
 ### Conflict Resolution
 If `GET /api/ports` shows a port is taken, pick a different one in the same range. Do not overwrite another project's lease.
 
-**TangleClaw API base URL**: `https://localhost:3102`
+**TangleClaw API base URL**: `http://localhost:3102`
 
 ## Shared Documents
 
