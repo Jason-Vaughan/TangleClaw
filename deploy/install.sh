@@ -183,10 +183,11 @@ green "  ${TTYD_ATTACH}"
 # ttyd plist — install.sh always installs the DIRECT-mode bind (--port 3100).
 # Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
 # keeps the default install path unchanged (true rollback target). See AUTH-1.
+# (The ttyd plist no longer carries __REPO_DIR__ — the attach script moved out of
+# the repo to the non-TCC path above; __REPO_DIR__ lives only in the server plist.)
 sed \
   -e "s|__TTYD_PATH__|${TTYD_PATH}|g" \
   -e "s|__TTYD_ATTACH__|${TTYD_ATTACH}|g" \
-  -e "s|__REPO_DIR__|${REPO_DIR}|g" \
   -e "s|__HOME__|${HOME}|g" \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
   -e "s|__TTYD_BIND_KEY__|--port|g" \

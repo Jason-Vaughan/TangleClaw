@@ -81,6 +81,17 @@ describe('lib/ttyd-attach', () => {
       assert.equal(fs.existsSync(destPath), false);
     });
 
+    it('returns an error reason instead of throwing when the dest dir cannot be created (boot must not crash)', () => {
+      // Place a FILE where the ~/.tangleclaw/deploy directory needs to be, so
+      // mkdirSync throws ENOTDIR — the boot/cutover callers must survive it.
+      fs.mkdirSync(path.join(home, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(home, '.tangleclaw', 'deploy'), 'not a directory');
+      let r;
+      assert.doesNotThrow(() => { r = ttydAttach.syncAttachScript({ repoDir, home }); });
+      assert.equal(r.synced, false);
+      assert.match(r.reason, /^error:/);
+    });
+
     it('the real repo deploy/ttyd-attach.sh is the sync source (keeps copy == repo)', () => {
       // Guards against the install path and the sync source drifting apart:
       // syncing from the actual repo yields byte-identical content.
