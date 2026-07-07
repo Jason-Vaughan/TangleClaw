@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session-start banner (`*TangleClaw'd into existence.*`) now surfaces on every session, regardless of wrap tier or engine/model.** The banner lives in the hidden SessionStart prime (`lib/sessions.js` `generatePrimePrompt`); confirmed against Claude Code's hooks docs, a SessionStart hook can only inject *hidden model context* — it cannot render into the startup header or emit guaranteed-visible terminal output — so the sole visible path is the model re-printing the banner on its first turn. The "re-emit this visibly" instruction previously lived **only inside the Resume branch** (which fires only when a continuity index exists), so any session after a `mechanical-only` wrap took the legacy-summary `else` path and silently dropped the banner 100% of the time; even in the Resume branch it was coupled to a wait-for-confirmation directive, so a task-opening prompt often skipped it. Hoisted an **unconditional, engine-agnostic** banner-emit instruction into the header block every prime carries, explicitly split from any wait-for-confirmation directive (visible-output requirement only — does not authorize starting work). Regression tests in `test/sessions.test.js` assert the instruction is present in the clean/no-index path, the legacy-summary path, and the Resume path.
+
 ## [4.5.1] - 2026-07-06
 
 ### Fixed

@@ -284,6 +284,29 @@ describe('sessions', () => {
       assert.match(prompt, /\*TangleClaw'd into existence\.\*/, 'branding flourish present');
     });
 
+    it('carries the unconditional banner-emit instruction in the header block (fires for every session/model, no continuity index needed)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+      // The instruction must appear even on a clean project with no continuity
+      // index (i.e. outside the Resume branch) — this is the whole point of the
+      // hoist: the legacy-summary / no-index path used to drop the banner.
+      assert.match(prompt, /begin your FIRST visible reply/i, 'unconditional emit instruction present');
+      assert.ok(prompt.includes('whatever the model'), 'declared engine/model-agnostic');
+      assert.ok(
+        prompt.includes('does NOT authorize starting work'),
+        'visible-output requirement is split from any wait-for-confirmation directive'
+      );
+      // The instruction must precede the branding line it refers to being echoed,
+      // and sit in the header block before session-ownership content.
+      const emitIdx = prompt.indexOf('begin your FIRST visible reply');
+      const ownershipIdx = prompt.indexOf('Session Ownership');
+      assert.ok(emitIdx > -1, 'emit instruction found');
+      if (ownershipIdx > -1) {
+        assert.ok(emitIdx < ownershipIdx, 'emit instruction sits in the header block, before ownership');
+      }
+    });
+
     it('does not inject Project Version Recording protocol (#101 — TC owns the writer)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
@@ -343,6 +366,9 @@ describe('sessions', () => {
         assert.ok(prompt.includes('Freshness check FIRST'), 'mandates a freshness check');
         assert.ok(prompt.includes('We left off at'), 'gives the visible resume wording');
         assert.ok(prompt.includes("TangleClaw'd into existence"), 're-emits the banner visibly');
+        // The unconditional header-block instruction is present here too — proving
+        // the banner-emit directive is truly branch-independent (Resume path).
+        assert.match(prompt, /begin your FIRST visible reply/i, 'unconditional banner-emit instruction present in the Resume path');
         assert.ok(prompt.includes('Wait for the operator'), 'confirm-before-fire, no auto-execute');
         // Surfaces the recorded fields + freshness stamp.
         assert.ok(prompt.includes('next is CC-2'));
@@ -387,6 +413,12 @@ describe('sessions', () => {
         assert.ok(prompt.includes('## Last Session Summary'));
         assert.ok(prompt.includes('Legacy passive summary blob'));
         assert.equal(prompt.includes('## Resume — emit this'), false);
+        // Regression: the legacy (no-index) path took the `else` branch, which
+        // previously carried NO banner-emit instruction — so the banner was
+        // dropped 100% of the time after a mechanical-only wrap. The hoisted
+        // header instruction must still be present here.
+        assert.match(prompt, /begin your FIRST visible reply/i, 'unconditional banner-emit instruction survives the legacy path');
+        assert.match(prompt, /\*TangleClaw'd into existence\.\*/, 'branding flourish present on the legacy path');
       });
 
       it('does not offer a resume from a degraded, judgment-empty index', () => {
