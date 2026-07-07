@@ -518,6 +518,53 @@ describe('engines', () => {
     });
   });
 
+  describe('ENG-5R2W — injected API base URL matches the served protocol', () => {
+    const proj = { rules: { core: { porthubRegistration: true } } };
+    let origConfig;
+
+    beforeEach(() => {
+      origConfig = store.config.load();
+    });
+
+    afterEach(() => {
+      store.config.save(origConfig);
+    });
+
+    function patchConfig(patch) {
+      store.config.save(Object.assign(store.config.load(), patch));
+    }
+
+    it('injects http:// in caddy ingress mode even with full HTTPS config', () => {
+      patchConfig({
+        ingressMode: 'caddy', httpsEnabled: true,
+        httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
+      });
+      assert.equal(engines._getRulesContent(proj).serverProtocol, 'http');
+      const content = engines._generateClaudeMd(proj, null);
+      // Assert on the injected line itself — the static guide prose may mention
+      // https://localhost:3102 as documentation, only the injected URL is live.
+      assert.ok(
+        content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
+        'injected base URL must be http in caddy mode'
+      );
+      assert.ok(
+        !content.includes('**TangleClaw API base URL**: `https://'),
+        'must not inject an https base URL nothing serves'
+      );
+    });
+
+    it('injects https:// in direct mode only with the full willServeHttps conjunction', () => {
+      patchConfig({
+        ingressMode: 'direct', httpsEnabled: true,
+        httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
+      });
+      assert.ok(engines._generateClaudeMd(proj, null).includes('https://localhost:3102'));
+      // httpsEnabled defaults to true — a no-cert install serves HTTP.
+      patchConfig({ httpsCertPath: null, httpsKeyPath: null });
+      assert.ok(engines._generateClaudeMd(proj, null).includes('http://localhost:3102'));
+    });
+  });
+
   describe('session rules injection (#347/D1a)', () => {
     let project;
 
