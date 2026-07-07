@@ -40,8 +40,26 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
     assert.match(installSh, /s\|__TTYD_BIND_VAL__\|3100\|g/, 'install.sh must fill the bind value with 3100');
   });
 
-  it('should point at the in-repo ttyd-attach.sh', () => {
-    assert.match(plist, /__REPO_DIR__\/deploy\/ttyd-attach\.sh/, 'must launch the attach script');
+  // #500 — the attach script is a templated arg (__TTYD_ATTACH__) filled with a
+  // NON-TCC path by install.sh / ingress-cutover.js. It must NOT be pinned to the
+  // repo (~/Documents) path: ttyd is denied Full Disk Access and freezes in
+  // open() reading a repo-resident script, black-screening every session after a
+  // ttyd restart. This is the regression guard for that.
+  it('should template the attach-script path for non-TCC injection, never repo-resident', () => {
+    assert.match(plist, /<string>__TTYD_ATTACH__<\/string>/, 'attach-script arg must be templated');
+    assert.doesNotMatch(plist, /__REPO_DIR__\/deploy\/ttyd-attach/, 'attach script must not be pinned to the repo path (TCC hazard)');
+  });
+
+  it('should make install.sh fill the attach path under ~/.tangleclaw (non-TCC) and copy the script there', () => {
+    const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
+    // The install target is defined under ~/.tangleclaw/deploy (non-TCC)…
+    assert.match(installSh, /TTYD_ATTACH_DIR="\$HOME\/\.tangleclaw\/deploy"/, 'attach dir must be under ~/.tangleclaw (non-TCC)');
+    assert.match(installSh, /TTYD_ATTACH="\$\{TTYD_ATTACH_DIR\}\/ttyd-attach\.sh"/, 'attach file path must resolve under that dir');
+    // …the plist is filled with it, not the repo path…
+    assert.match(installSh, /s\|__TTYD_ATTACH__\|\$\{TTYD_ATTACH\}\|g/, 'install.sh must fill __TTYD_ATTACH__ with the non-TCC path');
+    // …and the script is actually installed there, executable.
+    assert.match(installSh, /cp "\$\{SCRIPT_DIR\}\/ttyd-attach\.sh" "\$TTYD_ATTACH"/, 'install.sh must copy the script into the non-TCC path');
+    assert.match(installSh, /chmod 0755 "\$TTYD_ATTACH"/, 'the installed attach script must be executable');
   });
 
   // #397 bug 2 + durability fix: the launchd PROGRAM must be a non-TCC system

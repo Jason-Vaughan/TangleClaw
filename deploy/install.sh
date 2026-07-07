@@ -166,12 +166,28 @@ sed \
 
 green "  ${LAUNCH_AGENTS_DIR}/${SERVER_PLIST}"
 
+# ttyd attach script — install OUTSIDE the repo (#500). ttyd opens this file per
+# client-connect and ttyd is denied Full Disk Access, so a repo-resident copy
+# under ~/Documents freezes ttyd in open() (all sessions black-screen after a
+# ttyd restart). ~/.tangleclaw is not TCC-protected. The server also re-syncs
+# this at boot (lib/ttyd-attach.js) so an update that bumps the repo script
+# refreshes the copy; installing it here means the FIRST ttyd start is already
+# safe. Keep this path in lockstep with attachScriptPath() in lib/ttyd-attach.js.
+readonly TTYD_ATTACH_DIR="$HOME/.tangleclaw/deploy"
+readonly TTYD_ATTACH="${TTYD_ATTACH_DIR}/ttyd-attach.sh"
+mkdir -p "$TTYD_ATTACH_DIR"
+cp "${SCRIPT_DIR}/ttyd-attach.sh" "$TTYD_ATTACH"
+chmod 0755 "$TTYD_ATTACH"
+green "  ${TTYD_ATTACH}"
+
 # ttyd plist — install.sh always installs the DIRECT-mode bind (--port 3100).
 # Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
 # keeps the default install path unchanged (true rollback target). See AUTH-1.
+# (The ttyd plist no longer carries __REPO_DIR__ — the attach script moved out of
+# the repo to the non-TCC path above; __REPO_DIR__ lives only in the server plist.)
 sed \
   -e "s|__TTYD_PATH__|${TTYD_PATH}|g" \
-  -e "s|__REPO_DIR__|${REPO_DIR}|g" \
+  -e "s|__TTYD_ATTACH__|${TTYD_ATTACH}|g" \
   -e "s|__HOME__|${HOME}|g" \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
   -e "s|__TTYD_BIND_KEY__|--port|g" \
