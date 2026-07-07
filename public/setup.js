@@ -647,21 +647,37 @@ function wizardConfirmRemoteTrust() {
 // ── Admin Login Step (AUTH-2, caddy ingress only) ──
 
 /**
- * Whether the admin step's inputs satisfy the client-side rules: a username, a
- * password of at least 12 characters that matches its confirmation and does not
- * contain the username. The server re-validates (incl. the weak-password
- * denylist) and is authoritative — this only gates the Next button.
+ * First unmet admin-credential rule as an operator-facing message, or null
+ * when every client-side rule passes — the single rule source behind the
+ * Next-button gate (`_adminCanAdvance`), the live hint under the fields, and
+ * the `wizardAdminNext` error path (AUTH-7P3M: one rule set, three surfaces,
+ * so the gate and its explanations can't drift). Messages name the FIRST
+ * failing rule in gate order, so the operator always sees the next thing to
+ * fix. The server re-validates (incl. the weak-password denylist) and is
+ * authoritative — this only drives the client-side gate and its feedback.
+ * @param {string} user - Username field value (trimmed here).
+ * @param {string} password - Password field value.
+ * @param {string} confirm - Confirmation field value.
+ * @returns {string|null} First unmet rule's message, or null when valid.
+ */
+function _adminRuleHint(user, password, confirm) {
+  const u = (user || '').trim();
+  const p = password || '';
+  const c = confirm || '';
+  if (!u) return 'Enter a username.';
+  if (p.length < 12) return 'Password must be at least 12 characters.';
+  if (p !== c) return 'Passwords do not match.';
+  if (p.toLowerCase().includes(u.toLowerCase())) return 'Password must not contain the username.';
+  return null;
+}
+
+/**
+ * Whether the admin step's inputs satisfy the client-side rules — true exactly
+ * when `_adminRuleHint` has no rule left to report. Gates the Next button.
  * @returns {boolean}
  */
 function _adminCanAdvance() {
-  const u = (wizard.adminUser || '').trim();
-  const p = wizard.adminPassword || '';
-  const c = wizard.adminPasswordConfirm || '';
-  if (!u) return false;
-  if (p.length < 12) return false;
-  if (p !== c) return false;
-  if (p.toLowerCase().includes(u.toLowerCase())) return false;
-  return true;
+  return _adminRuleHint(wizard.adminUser, wizard.adminPassword, wizard.adminPasswordConfirm) === null;
 }
 
 function renderAdminSetup(body) {
@@ -688,6 +704,7 @@ function renderAdminSetup(body) {
                autocomplete="new-password">
       </div>
       <div class="form-hint">At least 12 characters. Avoid common passwords and don't include your username.</div>
+      <div id="setupAdminLiveHint" class="form-error hidden" role="status"></div>
       <div id="setupAdminError" class="form-error hidden" role="alert"></div>
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
@@ -704,10 +721,36 @@ function renderAdminSetup(body) {
     wizard.adminPasswordConfirm = (c && c.value) || '';
     const btn = document.getElementById('setupAdminNextBtn');
     if (btn) btn.disabled = !_adminCanAdvance();
+    _updateAdminLiveHint();
   };
   if (u) u.addEventListener('input', sync);
   if (p) p.addEventListener('input', sync);
   if (c) c.addEventListener('input', sync);
+  // Back-navigation re-render: fields repopulate from wizard state without an
+  // input event, so reflect the current rule state once up front.
+  _updateAdminLiveHint();
+}
+
+/**
+ * Show the first unmet admin-credential rule under the fields, or hide the
+ * hint when the rules pass — suppressed while all three fields are still
+ * empty so a pristine step doesn't scold before the operator types
+ * (AUTH-7P3M). Uses the same rule source as the Next-button gate.
+ */
+function _updateAdminLiveHint() {
+  const hint = document.getElementById('setupAdminLiveHint');
+  if (!hint) return;
+  const pristine = !wizard.adminUser && !wizard.adminPassword && !wizard.adminPasswordConfirm;
+  const msg = pristine
+    ? null
+    : _adminRuleHint(wizard.adminUser, wizard.adminPassword, wizard.adminPasswordConfirm);
+  if (msg) {
+    hint.textContent = msg;
+    hint.classList.remove('hidden');
+  } else {
+    hint.textContent = '';
+    hint.classList.add('hidden');
+  }
 }
 
 function wizardAdminNext() {
@@ -722,9 +765,9 @@ function wizardAdminNext() {
   const err = document.getElementById('setupAdminError');
   if (!_adminCanAdvance()) {
     if (err) {
-      err.textContent = (wizard.adminPassword !== wizard.adminPasswordConfirm)
-        ? 'Passwords do not match.'
-        : 'Enter a username and a password of at least 12 characters that does not contain the username.';
+      // Same rule source as the gate and the live hint — non-null exactly
+      // when the gate refuses (AUTH-7P3M).
+      err.textContent = _adminRuleHint(wizard.adminUser, wizard.adminPassword, wizard.adminPasswordConfirm);
       err.classList.remove('hidden');
     }
     return;

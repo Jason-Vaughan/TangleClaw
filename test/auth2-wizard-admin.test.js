@@ -139,6 +139,82 @@ describe('AUTH-2 wizard admin step (frontend)', () => {
     });
   });
 
+  describe('_adminRuleHint — first unmet rule, in gate order (AUTH-7P3M)', () => {
+    it('names each rule with the exact operator-facing message', () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
+      assert.equal(ctx._adminRuleHint('', '', ''), 'Enter a username.');
+      assert.equal(ctx._adminRuleHint('admin', 'short', 'short'), 'Password must be at least 12 characters.');
+      assert.equal(ctx._adminRuleHint('admin', 'a-strong-passphrase-42', 'different!'), 'Passwords do not match.');
+      assert.equal(ctx._adminRuleHint('jason', 'jasons-long-password', 'jasons-long-password'), 'Password must not contain the username.');
+      assert.equal(ctx._adminRuleHint('admin', 'a-strong-passphrase-42', 'a-strong-passphrase-42'), null);
+    });
+
+    it('reports the FIRST unmet rule when several fail (the elkaholic 11-char repro)', () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
+      // Missing username outranks the short password.
+      assert.equal(ctx._adminRuleHint('', 'short', 'other'), 'Enter a username.');
+      // The 2026-06-26 repro: 11 chars, confirm untouched — length fires first,
+      // so the operator sees the actual blocker instead of a generic mismatch.
+      assert.equal(ctx._adminRuleHint('admin', 'elevenchars', ''), 'Password must be at least 12 characters.');
+    });
+
+    it('is the single source: _adminCanAdvance is true exactly when the hint is null', () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
+      for (const [u, p, c] of [
+        ['admin', 'a-strong-passphrase-42', 'a-strong-passphrase-42'],
+        ['', 'a-strong-passphrase-42', 'a-strong-passphrase-42'],
+        ['admin', 'short', 'short'],
+        ['admin', 'a-strong-passphrase-42', 'nope'],
+        ['jason', 'jasons-long-password', 'jasons-long-password']
+      ]) {
+        ctx.wizard.adminUser = u;
+        ctx.wizard.adminPassword = p;
+        ctx.wizard.adminPasswordConfirm = c;
+        assert.equal(ctx._adminCanAdvance(), ctx._adminRuleHint(u, p, c) === null,
+          `gate/hint disagree for ${JSON.stringify([u, p, c])}`);
+      }
+    });
+  });
+
+  describe('live hint rendering (AUTH-7P3M)', () => {
+    it('stays hidden on a pristine step, shows the first unmet rule once the operator types', () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
+      ctx.renderAdminSetup(ctx.document.getElementById('setupBody'));
+      const hint = ctx.document.getElementById('setupAdminLiveHint');
+      assert.equal(hint.classList.contains('hidden'), true, 'pristine step must not scold');
+
+      ctx.wizard.adminUser = 'admin';
+      ctx.wizard.adminPassword = 'elevenchars';
+      ctx._updateAdminLiveHint();
+      assert.equal(hint.classList.contains('hidden'), false);
+      assert.equal(hint.textContent, 'Password must be at least 12 characters.');
+
+      ctx.wizard.adminPassword = 'a-strong-passphrase-42';
+      ctx.wizard.adminPasswordConfirm = 'a-strong-passphrase-42';
+      ctx._updateAdminLiveHint();
+      assert.equal(hint.classList.contains('hidden'), true, 'hint clears when all rules pass');
+      assert.equal(hint.textContent, '');
+    });
+
+    it('wires the hint into the input sync path and the initial render (structural)', () => {
+      const src = fs.readFileSync(SETUP_JS_PATH, 'utf8');
+      const syncBlock = src.slice(src.indexOf('const sync = ()'), src.indexOf('function _updateAdminLiveHint'));
+      assert.ok(syncBlock.includes('_updateAdminLiveHint()'), 'sync() must refresh the live hint on every input');
+      assert.match(src, /setupAdminLiveHint/, 'render must include the live-hint element');
+    });
+
+    it('wizardAdminNext error path uses the same first-unmet-rule message', () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
+      ctx.document.getElementById('setupAdminUser').value = 'admin';
+      ctx.document.getElementById('setupAdminPassword').value = 'elevenchars';
+      ctx.document.getElementById('setupAdminPasswordConfirm').value = 'elevenchars';
+      ctx.wizardAdminNext();
+      const err = ctx.document.getElementById('setupAdminError');
+      assert.equal(err.textContent, 'Password must be at least 12 characters.');
+      assert.equal(err.classList.contains('hidden'), false);
+    });
+  });
+
   describe('completion payload', () => {
     it('includes adminUser + adminPassword in caddy mode', async () => {
       const ctx = loadSetup({ config: { ingressMode: 'caddy' }, apiMutate: async () => ({ ok: true }) });
