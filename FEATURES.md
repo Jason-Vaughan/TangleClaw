@@ -112,3 +112,19 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `test/bridge-port-input.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/master-drawer-frontend.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/openclaw-bridge-port-row.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-06)
+
+- **TBD** — touched in this session: `data/porthub-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/caddy.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/ttyd-attach.js`. <!-- describe -->
+- **TBD** — touched in this session: `public/setup.js`. <!-- describe -->
+- **TBD** — touched in this session: `scripts/ingress-cutover.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth-credential-durability.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth2-wizard-admin.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engines.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/https-setup.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ingress-cutover.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/master.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ttyd-attach-sync.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ttyd-plist.test.js`. <!-- describe -->
