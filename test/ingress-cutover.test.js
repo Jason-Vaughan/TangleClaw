@@ -132,6 +132,12 @@ describe('ingress-cutover', () => {
       assert.match(ttyd.content, /<key>TTYD_SOCKET<\/key>\s*<string>\/Users\/test\/\.tangleclaw\/run\/ttyd\.sock<\/string>/);
       assert.doesNotMatch(ttyd.content, /__TTYD_SOCKET__/);
     });
+    it('points the attach script at the non-TCC ~/.tangleclaw path, never the repo (#500)', () => {
+      const ttyd = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.ttyd.plist'));
+      assert.match(ttyd.content, /<string>\/Users\/test\/\.tangleclaw\/deploy\/ttyd-attach\.sh<\/string>/);
+      assert.doesNotMatch(ttyd.content, /\/repo\/deploy\/ttyd-attach\.sh/, 'repo-resident attach path is the TCC hazard');
+      assert.doesNotMatch(ttyd.content, /__TTYD_ATTACH__/);
+    });
     it('emits a caddy plist pointing at the binary and Caddyfile', () => {
       const cad = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.caddy.plist'));
       assert.match(cad.content, /<string>\/opt\/homebrew\/bin\/caddy<\/string>/);
@@ -187,6 +193,11 @@ describe('ingress-cutover', () => {
       const ttyd = plan.plists[0];
       assert.match(ttyd.content, /<key>TTYD_SOCKET<\/key>\s*<string><\/string>/);
       assert.doesNotMatch(ttyd.content, /__TTYD_SOCKET__/);
+    });
+    it('points the attach script at the non-TCC ~/.tangleclaw path in direct mode too (#500)', () => {
+      const ttyd = plan.plists[0];
+      assert.match(ttyd.content, /<string>\/Users\/test\/\.tangleclaw\/deploy\/ttyd-attach\.sh<\/string>/);
+      assert.doesNotMatch(ttyd.content, /\/repo\/deploy\/ttyd-attach\.sh/);
     });
     it('unloads caddy and patches ingressMode to direct', () => {
       assert.deepEqual(plan.configPatch, { ingressMode: 'direct' });

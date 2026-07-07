@@ -4,6 +4,7 @@ const http = require('node:http');
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
 const system = require('./lib/system');
@@ -34,6 +35,7 @@ const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
+const ttydAttach = require('./lib/ttyd-attach');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const authIdentity = require('./lib/auth-identity');
 const serviceToken = require('./lib/service-token');
@@ -3943,6 +3945,14 @@ if (require.main === module) {
   if (config.ingressMode === 'caddy') {
     caddy.adoptCredentialIntoConfig();
   }
+
+  // #500 — keep the ttyd attach script current in its non-TCC install path
+  // (~/.tangleclaw/deploy/). ttyd opens this file per client-connect and is
+  // denied Full Disk Access, so a repo-resident copy under ~/Documents freezes
+  // ttyd in open() (all sessions black-screen after a ttyd restart). Running at
+  // every boot means an update that bumps the repo script refreshes the copy on
+  // the ensuing restart. Idempotent + non-throwing.
+  ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
 
   // Bootstrap port management — resolve actual port (env var takes precedence)
   const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;

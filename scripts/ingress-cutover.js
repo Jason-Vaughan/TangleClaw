@@ -31,6 +31,7 @@ const { execFileSync } = require('node:child_process');
 
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
+const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -112,7 +113,10 @@ function planCutover(target, ctx) {
       tailnetHost: config.caddyTailnetHost || null
     });
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-      TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
+      TTYD_PATH: env.ttydPath, HOME: env.home,
+      // #500: the attach script lives outside the repo (non-TCC); main() syncs
+      // the copy before applying the plan.
+      TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
       LAUNCHD_PATH: env.launchdPath,
       TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
       // #397 bug 2: tell the inline launcher which socket to unlink before bind.
@@ -148,7 +152,9 @@ function planCutover(target, ctx) {
   // rewriting (back to TCP); Caddy is unloaded; the server restarts onto its
   // own HTTPS on all interfaces.
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
-    TTYD_PATH: env.ttydPath, REPO_DIR: env.repoDir, HOME: env.home,
+    TTYD_PATH: env.ttydPath, HOME: env.home,
+    // #500: attach script installed outside the repo (non-TCC).
+    TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
     LAUNCHD_PATH: env.launchdPath,
     TTYD_BIND_KEY: '--port', TTYD_BIND_VAL: String(config.ttydPort || 3100),
     // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
@@ -399,6 +405,12 @@ function main() {
       process.exit(1);
     }
   }
+
+  // 1b. Sync the ttyd attach script into the non-TCC path the plist points at
+  //     (#500) before reloading ttyd — otherwise a first-ever cutover would
+  //     rebind ttyd onto a path that doesn't exist yet. Idempotent; boot does
+  //     this too, but the cutover reloads ttyd immediately so it can't wait.
+  ttydAttach.syncAttachScript({ repoDir: REPO_DIR, home: env.home });
 
   // 2. Ensure the ttyd socket dir exists, and clear any leftover socket file so
   //    the rebinding ttyd doesn't fail on a stale inode (KeepAlive would then

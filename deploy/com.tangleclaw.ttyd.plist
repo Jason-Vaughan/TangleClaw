@@ -16,9 +16,14 @@
              INLINE FROM ARGV (no protected-file read): unlink a stale Unix socket
              (caddy mode; a no-op when TTYD_SOCKET is empty, i.e. direct mode),
              then exec the ttyd binary. Both /bin/bash and ttyd are non-TCC.
-             NOTE: ttyd-attach.sh below stays repo-resident — it is a ttyd *arg*
-             (read by ttyd at client-connect), not the launchd program, so it is
-             not part of this exit-126 path. -->
+             NOTE (#500): ttyd-attach.sh (__TTYD_ATTACH__ below) is installed
+             OUTSIDE the repo, at ~/.tangleclaw/deploy/. It is a ttyd *arg* that
+             ttyd opens per client-connect — and ttyd is DENIED Full Disk Access,
+             so a repo-resident copy under ~/Documents freezes ttyd in open()
+             (all sessions black-screen after a ttyd restart, 2026-07-06). Same
+             TCC family as the launchd-program path above, a *different* syscall
+             site. install.sh / ingress-cutover.js sync the script to the non-TCC
+             path (lib/ttyd-attach.js) and fill __TTYD_ATTACH__ with it. -->
         <string>/bin/bash</string>
         <string>-c</string>
         <string>if [ -n "${TTYD_SOCKET:-}" ]; then rm -f "$TTYD_SOCKET"; fi; exec "$@"</string>
@@ -37,7 +42,7 @@
              to hold the history ttyd-attach.sh replays on reconnect/restart. -->
         <string>--client-option</string>
         <string>scrollback=10000</string>
-        <string>__REPO_DIR__/deploy/ttyd-attach.sh</string>
+        <string>__TTYD_ATTACH__</string>
     </array>
     <key>SoftResourceLimits</key>
     <dict>
