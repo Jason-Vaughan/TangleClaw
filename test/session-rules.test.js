@@ -257,6 +257,44 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.equal(sameKind[0].rule.kind, 'wrap');
     });
   });
+
+  describe('op CHECK constraint (SR-3MW8)', () => {
+    it('every writer op (create → update → restore → delete) satisfies the constraint', () => {
+      // The whole safety guarantee: the four real writers must only ever emit
+      // enum-valid ops. Drive all four through the API and confirm none throws
+      // and the recorded history carries exactly the enum values.
+      const rule = store.sessionRules.create({ content: 'v1' });          // op=create
+      store.sessionRules.update(rule.id, { content: 'v2' });              // op=update
+      store.sessionRules.restore(rule.id, 1);                            // op=restore
+      store.sessionRules.delete(rule.id);                                // op=delete
+
+      const ops = store.sessionRules.listVersions(rule.id).map((v) => v.op).sort();
+      assert.deepEqual(ops, ['create', 'delete', 'restore', 'update']);
+    });
+
+    it('rejects a direct insert with an out-of-enum op (fresh-DB _createTables path)', () => {
+      // Fresh DB gets the CHECK straight from the _createTables DDL. Prove it by
+      // attempting a raw insert of a bogus op — the storage layer must reject it
+      // even though no application code path would ever produce it.
+      const rule = store.sessionRules.create({ content: 'guarded' });
+      const db = store.getDb();
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_versions
+             (rule_id, version_no, op, content, enabled, created_by)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(rule.id, 99, 'bogus', 'x', 1, 'operator'),
+        /CHECK constraint failed/i,
+        'out-of-enum op must be rejected by the CHECK constraint'
+      );
+      // A valid op via the same raw path still works.
+      assert.doesNotThrow(() => db.prepare(
+        `INSERT INTO session_rule_versions
+           (rule_id, version_no, op, content, enabled, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(rule.id, 98, 'update', 'x', 1, 'operator'));
+    });
+  });
 });
 
 describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
@@ -293,10 +331,10 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       store.init();
 
       const db = store.getDb();
-      // init migrates a v19 DB all the way to the current schema (now v22 — the
+      // init migrates a v19 DB all the way to the current schema (now v23 — the
       // kind backfill below is the v19→v20 step in that chain).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 22);
+      assert.equal(ver.version, 23);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();
@@ -305,6 +343,138 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       // …and still injects (no launch-injection regression).
       const injected = store.sessionRules.listActiveForProject(null).map((r) => r.content);
       assert.deepEqual(injected, ['pre-CC-6 global rule']);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
+  it('rebuilds session_rule_versions with the op CHECK, preserving existing rows', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-op-check-mig-'));
+    try {
+      // Seed a v22 DB: a session_rule_versions table WITHOUT the CHECK, holding
+      // rows that carry the (already-valid) enum ops, schema_version pinned at 22.
+      // store.init() then fires the v22→v23 table-rebuild.
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (22);
+        CREATE TABLE session_rule_versions (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id       INTEGER NOT NULL,
+          version_no    INTEGER NOT NULL,
+          op            TEXT    NOT NULL,
+          content       TEXT    NOT NULL,
+          enabled       INTEGER NOT NULL,
+          created_by    TEXT    NOT NULL,
+          owner         TEXT,
+          changed_by    TEXT    NOT NULL DEFAULT 'operator',
+          change_reason TEXT,
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rule_versions
+          (id, rule_id, version_no, op, content, enabled, created_by, changed_by, change_reason)
+        VALUES
+          (1, 42, 1, 'create', 'rule v1', 1, 'operator', 'operator', null),
+          (2, 42, 2, 'update', 'rule v2', 1, 'operator', 'ai', 'tightened wording');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      // Schema advanced to current (the v22→v23 rebuild is the last step).
+      const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+      assert.equal(ver.version, 23);
+
+      // The CHECK constraint is now present in the rebuilt table's DDL.
+      const ddl = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_rule_versions'"
+      ).get();
+      assert.match(ddl.sql, /CHECK\s*\(\s*op\s+IN/i, 'post-migration: op CHECK constraint present');
+
+      // Data preservation: both pre-existing rows survive verbatim (id, op, etc.).
+      const rows = db.prepare(
+        'SELECT id, rule_id, version_no, op, content, changed_by, change_reason FROM session_rule_versions ORDER BY id'
+      ).all();
+      assert.equal(rows.length, 2);
+      // node:sqlite returns null-prototype rows; spread into plain objects so
+      // strict deepEqual compares values, not the prototype.
+      assert.deepEqual({ ...rows[0] }, { id: 1, rule_id: 42, version_no: 1, op: 'create', content: 'rule v1', changed_by: 'operator', change_reason: null });
+      assert.deepEqual({ ...rows[1] }, { id: 2, rule_id: 42, version_no: 2, op: 'update', content: 'rule v2', changed_by: 'ai', change_reason: 'tightened wording' });
+
+      // Post-migration: the rebuilt table enforces the enum on new inserts.
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_versions
+             (rule_id, version_no, op, content, enabled, created_by)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(42, 3, 'bogus', 'x', 1, 'operator'),
+        /CHECK constraint failed/i,
+        'post-migration: out-of-enum op rejected'
+      );
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('aborts with an attributed error when a pre-existing row has an out-of-enum op', () => {
+    // The corruption this constraint guards against, encountered retroactively:
+    // a v22 DB already holding a bad op can't be copied into the CHECK-bearing
+    // table. The migration must fail loudly AND name the real cause (the rejected
+    // copy), not the misleading "did not produce a CHECK constraint" symptom, and
+    // must NOT advance schema_version.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-op-bad-mig-'));
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (22);
+        CREATE TABLE session_rule_versions (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id       INTEGER NOT NULL,
+          version_no    INTEGER NOT NULL,
+          op            TEXT    NOT NULL,
+          content       TEXT    NOT NULL,
+          enabled       INTEGER NOT NULL,
+          created_by    TEXT    NOT NULL,
+          owner         TEXT,
+          changed_by    TEXT    NOT NULL DEFAULT 'operator',
+          change_reason TEXT,
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rule_versions (rule_id, version_no, op, content, enabled, created_by)
+        VALUES (7, 1, 'corrupt-op', 'legacy junk', 1, 'operator');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      // init() runs the migration; the postcondition must throw with the cause named.
+      assert.throws(
+        () => store.init(),
+        /table rebuild failed — likely a pre-existing out-of-enum op value/i,
+        'migration attributes the failure to the offending row, not the symptom'
+      );
+
+      // schema_version did NOT advance past 22 (loud failure, no silent v23 stamp).
+      const check = new DatabaseSync(dbPath);
+      const ver = check.prepare('SELECT MAX(version) AS v FROM schema_version').get();
+      check.close();
+      assert.equal(ver.v, 22, 'schema_version stays at 22 until the corruption is resolved');
     } finally {
       try { store.close(); } catch { /* already closed */ }
       fs.rmSync(tmpDir, { recursive: true, force: true });
