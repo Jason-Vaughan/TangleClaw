@@ -124,12 +124,12 @@ describe('orchestration_profile column (schema v21→v22)', () => {
     store.projects.update(p.id, { orchestration_profile: 'direct' });
     store.close();
 
-    // Re-open the same DB: the schema is already v22, so migrations are a
-    // no-op; the column + value must survive and nothing throws.
+    // Re-open the same DB: the schema is already at current version, so
+    // migrations are a no-op; the column + value must survive and nothing throws.
     store._setBasePath(tmpDir);
     store.init();
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 22);
+    assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 23);
     assert.equal(store.projects.getByName('tb1-idem').orchestrationProfile, 'direct');
   });
 });
