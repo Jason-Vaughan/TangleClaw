@@ -372,6 +372,88 @@ describe('sessionRules store API (#347/D1a)', () => {
       );
     });
   });
+
+  describe('version-history pruning (SR-5T1J)', () => {
+    // The suite tunes retention to a small N for cheap, precise assertions;
+    // restore the shipped default after each so it can't leak between tests.
+    afterEach(() => {
+      store._setSessionRuleVersionRetention(store.SESSION_RULE_VERSION_RETENTION);
+    });
+
+    /** Drive a rule through `total` mutations (1 create + updates) and return it. */
+    function churn(total) {
+      const rule = store.sessionRules.create({ content: 'v1' });
+      for (let i = 2; i <= total; i++) {
+        store.sessionRules.update(rule.id, { content: `v${i}` });
+      }
+      return rule;
+    }
+
+    it('defaults to keeping the newest 200 versions per rule', () => {
+      assert.equal(store.SESSION_RULE_VERSION_RETENTION, 200);
+      const rule = churn(205);
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.equal(versions.length, 200);
+      // listVersions is newest-first: newest is v205, oldest kept is v6.
+      assert.equal(versions[0].content, 'v205');
+      assert.equal(versions[versions.length - 1].content, 'v6');
+    });
+
+    it('keeps exactly the newest N and drops older ones (N=3)', () => {
+      store._setSessionRuleVersionRetention(3);
+      const rule = churn(5); // versions v1..v5
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.equal(versions.length, 3);
+      assert.deepEqual(versions.map((v) => v.content), ['v5', 'v4', 'v3']);
+      // The pruned version_nos (1,2) are gone; the kept ones stay by exact number.
+      assert.deepEqual(versions.map((v) => v.versionNo), [5, 4, 3]);
+    });
+
+    it('leaves version_no monotonic (MAX+1) after pruning — no reuse of gaps', () => {
+      store._setSessionRuleVersionRetention(2);
+      const rule = churn(4); // keeps v3,v4; v1,v2 pruned
+      store.sessionRules.update(rule.id, { content: 'v5' });
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.deepEqual(versions.map((v) => v.versionNo), [5, 4]); // not 3, not a reused 1
+    });
+
+    it('restore works for a kept version and 404s for a pruned one', () => {
+      store._setSessionRuleVersionRetention(2);
+      const rule = churn(4); // keeps v3,v4; v1,v2 pruned
+      const restored = store.sessionRules.restore(rule.id, 3);
+      assert.equal(restored.content, 'v3');
+      assert.throws(
+        () => store.sessionRules.restore(rule.id, 1),
+        (err) => err.code === 'NOT_FOUND'
+      );
+    });
+
+    it('preserves a deleted rule\'s tombstone as its latest version', () => {
+      store._setSessionRuleVersionRetention(2);
+      const rule = churn(4);
+      store.sessionRules.delete(rule.id); // tombstone op=delete
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.equal(versions.length, 2);
+      assert.equal(versions[0].op, 'delete'); // newest, always kept
+    });
+
+    it('prunes per rule — one rule\'s churn never touches another\'s history', () => {
+      store._setSessionRuleVersionRetention(2);
+      const a = churn(4);
+      const b = store.sessionRules.create({ content: 'b1' });
+      assert.equal(store.sessionRules.listVersions(a.id).length, 2);
+      assert.equal(store.sessionRules.listVersions(b.id).length, 1);
+    });
+
+    it('keeps all history when retention is 0 (opt-out) or negative', () => {
+      store._setSessionRuleVersionRetention(0);
+      const rule = churn(6);
+      assert.equal(store.sessionRules.listVersions(rule.id).length, 6);
+      store._setSessionRuleVersionRetention(-1);
+      const rule2 = churn(4);
+      assert.equal(store.sessionRules.listVersions(rule2.id).length, 4);
+    });
+  });
 });
 
 describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
