@@ -175,7 +175,45 @@ honesty — but it becomes explicit and queryable rather than implicit.
 
 ### Out of scope
 Server-side enforcement/verification of the gate (impossible — see Constraint); version-history
-pruning (SR-5T1J); any change to the gate procedure itself.
+pruning (SR-5T1J — now shipped, see below); any change to the gate procedure itself.
+
+## Version-history pruning / retention (SR-5T1J)
+
+**Status: built (2026-07-08). Keep-last-N-per-rule, pruned on write.**
+
+### Problem
+`session_rule_versions` appends a full snapshot on **every** mutation and never removes one, so
+the table grows without bound. Harmless for a single operator today, but the self-improvement
+loop's autonomous edits (`createdBy:'ai'`, incl. the CC-6 wrap-rule self-critique sink) are
+exactly the high-edit-volume trigger the D1b Critic named — under frequent AI-proposed edits a
+single rule can accrue arbitrarily many versions.
+
+### Design (decided — operator-ratified 2026-07-08)
+- **Policy: keep the newest `N` versions per `rule_id`, pruned on write.** After each snapshot
+  insert, `_snapshotSessionRule` trims that rule's history to the newest `N`. Self-maintaining
+  (no cron / wrap step), amortized O(1) on an indexed `rule_id`, and it bounds **row count**
+  directly — the failure mode named — regardless of edit velocity (an age window would let a
+  fast-churning rule stay unbounded inside the window).
+- **`N` = `SESSION_RULE_VERSION_RETENTION` = 200**, a module constant (no config-UI surface —
+  proportional to a watch-item). A value **≤ 0 disables pruning** (keep all — full audit). The
+  `_setSessionRuleVersionRetention(n)` seam mirrors `_setBasePath`/`_setBundledGlobalRulesPath`
+  for tests/embedders.
+- **What is always preserved.** Pruning removes only versions **older than** the `N`-th newest
+  (by `version_no`). So every restore target inside the window, the rule's **current** state
+  (its latest version), and a deleted rule's **tombstone** (`op='delete'`, which is that rule's
+  latest version) survive. `version_no` stays monotonic (`MAX(version_no)+1`); pruning leaves
+  harmless gaps because `restore` looks a version up by **exact** `version_no`, never by
+  position.
+
+### Accepted trade-off
+Restoring to a version older than the retention window is no longer possible — that snapshot is
+gone (a `Version <n> not found` `NOT_FOUND`, the same error as any absent version). With `N=200`
+the restore window is deep; an operator who needs unbounded audit sets `N=0`. Git history, the
+`CHANGELOG`, and the `activity` log remain the durable record beyond the window.
+
+### Out of scope
+Age-based or configurable-via-UI retention; pruning across rules (the bound is intentionally
+per-rule); recovering pruned versions.
 
 ## Known upstream gaps (escalated to the Prawduct developer)
 
