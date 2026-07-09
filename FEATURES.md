@@ -140,3 +140,15 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `test/store-portleases.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/store-session-mode.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/store.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-08)
+
+- **TBD** — touched in this session: `docs/auth-status-surfacing.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/auth-identity.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/path-tokens.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-auth-identity.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-session-rules-selfimprove.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth-identity.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth-status-warning.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/path-tokens.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-rules-panel.test.js`. <!-- describe -->
