@@ -248,6 +248,36 @@ describe('wrap-drawer helpers — buildStepRow', () => {
   });
 });
 
+describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
+  const H = loadHelpers();
+  // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
+  const CANONICAL_KINDS = [
+    'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll',
+    'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc',
+    'project-map', 'index-describe', 'continuity-write'
+  ];
+
+  it('has a non-empty help description for every canonical wrap-step kind (drift guard)', () => {
+    for (const k of CANONICAL_KINDS) {
+      const d = H.KIND_DESCRIPTIONS[k];
+      assert.ok(typeof d === 'string' && d.trim().length > 0,
+        `KIND_DESCRIPTIONS is missing a description for kind "${k}"`);
+    }
+  });
+
+  it('buildStepRow surfaces the kind description as kindTooltip', () => {
+    const row = H.buildStepRow(
+      { stepId: 'next-session-prime', kind: 'priming-roll', status: 'skipped' }, {});
+    assert.equal(row.kindTooltip, H.KIND_DESCRIPTIONS['priming-roll']);
+    assert.ok(row.kindTooltip.length > 0);
+  });
+
+  it('buildStepRow returns an empty kindTooltip for an unknown kind (no crash)', () => {
+    const row = H.buildStepRow({ stepId: 'x', kind: 'totally-unknown', status: 'done' }, {});
+    assert.equal(row.kindTooltip, '');
+  });
+});
+
 describe('wrap-drawer helpers — summarizePipelineStatus', () => {
   const H = loadHelpers();
 

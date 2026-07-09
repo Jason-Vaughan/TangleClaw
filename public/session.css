@@ -1824,6 +1824,24 @@ body {
   opacity: 0.6;
   cursor: default;
 }
+/* Per-step help glyph (hover for "what this step does") */
+.wrap-step-help {
+  cursor: help;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  opacity: 0.65;
+  vertical-align: baseline;
+}
+.wrap-step-help:hover {
+  opacity: 1;
+}
+/* Plan-picker "why" explainer line */
+.wrap-decision-help {
+  margin: 4px 0 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
 .wrap-drawer-actions {
   display: flex;
   gap: 8px;
