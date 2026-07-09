@@ -572,6 +572,36 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes('async function confirmWrap()'));
     });
 
+    it('wrap trigger is single-flight — guards re-entrancy and blocks mid-wrap close', () => {
+      // Regression: confirmWrap awaited POST /wrap without disabling the
+      // confirm button, so a double-click fired concurrent wraps (double
+      // commit), and Cancel/backdrop could dismiss the modal mid-wrap. Pin
+      // the guard structurally (session.js DOM code isn't unit-instantiable
+      // here — same convention as handleWrapCompleted's no-timer assertions).
+      assert.ok(js.includes('let wrapInFlight = false'),
+        'must track an in-flight flag');
+      const start = js.indexOf('async function confirmWrap()');
+      assert.ok(start !== -1, 'confirmWrap must exist');
+      const bodyStart = js.indexOf('{', start);
+      let depth = 0, end = -1;
+      for (let i = bodyStart; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      assert.ok(end > bodyStart, 'confirmWrap body must close');
+      const body = js.slice(bodyStart, end + 1);
+      assert.ok(body.includes('if (wrapInFlight) return'),
+        'confirmWrap must bail when a wrap is already in flight');
+      assert.ok(body.includes('wrapInFlight = true'), 'must set the flag before the POST');
+      assert.ok(/confirmBtn\.disabled = true/.test(body) && /cancelBtn\.disabled = true/.test(body),
+        'must disable both Confirm and Cancel while wrapping');
+      assert.ok(/Wrapping/.test(body), 'must show a Wrapping… label');
+      assert.ok(body.includes('} finally {') && /wrapInFlight = false/.test(body),
+        'must reset the in-flight flag in finally (so a failed/hung wrap re-enables)');
+      assert.ok(js.includes('if (wrapInFlight && force !== true) return'),
+        'closeWrapModal must block user closes while a wrap is in flight (strict force check)');
+    });
+
     it('should include terminal setup', () => {
       assert.ok(js.includes('function setupTerminal('));
       assert.ok(js.includes('/terminal/'));

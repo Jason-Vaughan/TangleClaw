@@ -2240,19 +2240,35 @@ function renderStepRow(row) {
   const labelLine = document.createElement('span');
   labelLine.className = 'wrap-step-label';
   labelLine.textContent = `${row.kindLabel} — ${row.id}`;
-  // Discoverable per-step help: a hoverable ⓘ carrying the kind's
-  // "what this step does" description (native title tooltip, same
-  // mechanism as the status badge's statusTooltip).
+  main.appendChild(labelLine);
+  // Per-step help: a tap/click-toggle ⓘ that reveals an inline description.
+  // MUST work on touch — iPhone Safari is the primary platform, where native
+  // `title=`/`:hover` never fire — so the affordance toggles inline text on
+  // click; `title` is kept only as a desktop hover bonus.
   if (row.kindTooltip) {
-    const help = document.createElement('span');
+    const help = document.createElement('button');
+    help.type = 'button';
     help.className = 'wrap-step-help';
     help.textContent = 'ⓘ';
     help.title = row.kindTooltip;
-    help.setAttribute('aria-label', row.kindTooltip);
+    help.setAttribute('aria-label', `What “${row.kindLabel}” does`);
+    help.setAttribute('aria-expanded', 'false');
+
+    const helpText = document.createElement('p');
+    helpText.className = 'wrap-step-help-text';
+    helpText.textContent = row.kindTooltip;
+    helpText.hidden = true;
+
+    help.addEventListener('click', () => {
+      const show = helpText.hidden;
+      helpText.hidden = !show;
+      help.setAttribute('aria-expanded', String(show));
+    });
+
     labelLine.appendChild(document.createTextNode(' '));
     labelLine.appendChild(help);
+    main.appendChild(helpText);
   }
-  main.appendChild(labelLine);
 
   if (row.detail) {
     const detailLine = document.createElement('span');
