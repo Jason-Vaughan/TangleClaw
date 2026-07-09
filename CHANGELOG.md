@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard warning when auth is configured but not actually enforcing (AUTH-2K9D).** An operator could persist `authEnabled=true` and believe TangleClaw was access-controlled while the runtime enforced nothing — two silent config-vs-live mismatches: `authEnabled` in `direct` mode is *inert* (only the Caddy cutover reads it; direct mode has no in-process gate — AUTH-2), and `authEnabled` in `caddy` mode with identity not arriving (e.g. a hand-edited live Caddyfile missing `header_up X-Auth-User` — AUTH-3) was indistinguishable from a healthy gate. `GET /api/server-info` now returns an `authStatus` enum (`off` / `live` / `configured-inert` / `configured-no-identity`) derived server-side from `{authEnabled, ingressMode}` plus the existing trust-gated identity resolution (new pure `authIdentity.resolveAuthStatus`, single source of truth). The dashboard renders an amber warning chip next to the login chip on the two mismatch states, naming the concrete remediation (run the cutover / fix `header_up`). **Surfacing only — it never enforces auth** (direct mode is deliberately trusted-LAN; the gate is Caddy's job) and doesn't touch the `resolveRequestUser` spoof-defense. The chip is state-driven and self-clearing (no dismiss control, no timer, per the no-UI-timers rule), amber + text for a11y. Unit tests (`test/auth-identity.test.js`), API wiring (`test/api-auth-identity.test.js`), and frontend structural tests (`test/auth-status-warning.test.js`); requirement in `docs/auth-status-surfacing.md`.
+
 ## [4.6.0] - 2026-07-08
 
 ### Added
