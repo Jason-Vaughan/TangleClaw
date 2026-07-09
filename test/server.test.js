@@ -3,11 +3,27 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  matchRoute, route, parseQuery, handleUpgrade, handleRequest,
+  matchRoute, route, parseQuery, reqUrl, handleUpgrade, handleRequest,
   _openclawProxyHeaders, _openclawWsRequestLines
 } = require('../server');
 
 describe('server', () => {
+  describe('reqUrl', () => {
+    it('parses the request URL with the Host header', () => {
+      const u = reqUrl({ url: '/api/ports?host=cursatory', headers: { host: 'box:3102' } });
+      assert.equal(u.href, 'http://box:3102/api/ports?host=cursatory');
+      assert.equal(u.searchParams.get('host'), 'cursatory');
+    });
+
+    it('falls back to localhost when the Host header is absent (regression: server.js:1260 drift)', () => {
+      // A request with no Host header must not throw — the drifted /api/ports
+      // handler used `http://${req.headers.host}` with no fallback and threw here.
+      const u = reqUrl({ url: '/api/ports?host=x', headers: {} });
+      assert.equal(u.host, 'localhost');
+      assert.equal(u.searchParams.get('host'), 'x');
+    });
+  });
+
   describe('matchRoute', () => {
     it('should match exact paths', () => {
       const result = matchRoute('GET', '/api/health');
