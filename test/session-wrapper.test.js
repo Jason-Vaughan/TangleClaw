@@ -602,6 +602,28 @@ describe('Session Wrapper UI', () => {
         'closeWrapModal must block user closes while a wrap is in flight (strict force check)');
     });
 
+    it('per-step help is a tappable button (mobile), not a hover-only span', () => {
+      // Hover-only help is dead on iPhone Safari (the primary platform), so
+      // renderStepRow must build a <button> that toggles inline help text.
+      // Pin it structurally so a revert to a hover-only <span> fails here
+      // instead of silently only on touch.
+      const start = js.indexOf('function renderStepRow(');
+      assert.ok(start !== -1, 'renderStepRow must exist');
+      const bodyStart = js.indexOf('{', start);
+      let depth = 0, end = -1;
+      for (let i = bodyStart; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      const body = js.slice(bodyStart, end + 1);
+      assert.ok(/createElement\('button'\)/.test(body) && body.includes("'wrap-step-help'"),
+        'the per-step help affordance must be a <button>, not a hover-only span');
+      assert.ok(body.includes('wrap-step-help-text') && /addEventListener\('click'/.test(body),
+        'tapping the help button must toggle inline help text');
+      assert.ok(body.includes("setAttribute('aria-expanded'"),
+        'the help toggle must expose aria-expanded');
+    });
+
     it('should include terminal setup', () => {
       assert.ok(js.includes('function setupTerminal('));
       assert.ok(js.includes('/terminal/'));
