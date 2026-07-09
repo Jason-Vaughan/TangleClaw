@@ -120,6 +120,23 @@ body {
   white-space: nowrap;
 }
 .dash-auth-user.hidden { display: none; }
+/* Auth config-vs-live mismatch warning (AUTH-2K9D). Amber, matching the drift/
+   secret warning palette for one visual language; text carries the meaning. */
+.dash-auth-warning {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--warning, #ffb300);
+  background: rgba(255, 179, 0, 0.14);
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 179, 0, 0.4);
+  border-radius: 10px;
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+.dash-auth-warning.hidden { display: none; }
 .update-pill {
   display: inline-flex;
   align-items: center;

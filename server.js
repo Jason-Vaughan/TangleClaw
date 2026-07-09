@@ -343,10 +343,16 @@ route('GET', '/api/version', (_req, res) => {
 // is older than the on-disk code. See `lib/server-info.js` docstring.
 route('GET', '/api/server-info', (_req, res) => {
   const info = serverInfo.getServerInfo();
+  const cfg = store.config.load();
   // AUTH-3: surface the proxy-authenticated user so the dashboard can show
   // "Logged in as <user>". Null unless the Caddy basic_auth gate is live (the
   // trust gate is in lib/auth-identity — a direct-mode header is never honored).
-  info.currentUser = authIdentity.resolveRequestUser(_req.headers, store.config.load());
+  info.currentUser = authIdentity.resolveRequestUser(_req.headers, cfg);
+  // AUTH-2K9D: surface whether the configured auth gate is actually enforcing, so
+  // the dashboard can warn on a config-vs-live mismatch ('configured-inert' in
+  // direct mode, 'configured-no-identity' when caddy is up but no identity
+  // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
+  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg);
   jsonResponse(res, 200, info);
 });
 

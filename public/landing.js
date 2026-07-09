@@ -116,8 +116,48 @@ async function loadServerInfo() {
   // `currentUser` is null unless the gate is live (the server-side trust gate
   // never honors a direct-mode header), so this is hidden in direct mode.
   renderAuthUser(data.currentUser);
+  // AUTH-2K9D: warn when auth is configured but not actually enforcing.
+  renderAuthStatus(data.authStatus);
   if (!data.isStale) return;
   renderStaleServerBanner(data);
+}
+
+/**
+ * Human-readable warning for an auth config-vs-live mismatch (AUTH-2K9D), or null
+ * for the healthy/expected states (`off`, `live`, or an older server that omits
+ * `authStatus`). Text carries the meaning so the chip is not color-only (a11y).
+ * @param {string|null|undefined} authStatus
+ * @returns {string|null}
+ */
+function _authStatusWarning(authStatus) {
+  if (authStatus === 'configured-inert') {
+    return '⚠ Auth enabled but direct mode is not enforcing it — run the Caddy cutover to activate the login gate.';
+  }
+  if (authStatus === 'configured-no-identity') {
+    return '⚠ Auth gate is up but no identity is arriving — the live Caddyfile may be missing "header_up X-Auth-User".';
+  }
+  return null;
+}
+
+/**
+ * Show or hide the auth config-vs-live mismatch warning chip (AUTH-2K9D). Purely
+ * state-driven: it mirrors the latest `/api/server-info` poll and self-clears when
+ * the mismatch resolves (cutover runs / header fixed). No dismiss control and no
+ * timer — removing the cause removes the chip on the next poll.
+ * @param {string|null|undefined} authStatus
+ */
+function renderAuthStatus(authStatus) {
+  const el = document.getElementById('authStatusWarning');
+  if (!el) return;
+  const msg = _authStatusWarning(authStatus);
+  if (msg) {
+    el.textContent = msg;
+    el.title = msg;
+    el.classList.remove('hidden');
+  } else {
+    el.textContent = '';
+    el.classList.add('hidden');
+  }
 }
 
 /**

@@ -90,4 +90,30 @@ describe('AUTH-3 — /api/server-info currentUser (proxy identity over HTTP)', (
     assert.equal(res.status, 200);
     assert.equal(res.body.currentUser, null);
   });
+
+  // AUTH-2K9D — /api/server-info also reports authStatus (config-vs-live mismatch).
+  it("reports authStatus 'live' when caddy gate is up and identity arrives", async () => {
+    setConfig({ ingressMode: 'caddy', authEnabled: true });
+    const res = await get(server, '/api/server-info', { 'X-Auth-User': 'jason' });
+    assert.equal(res.body.authStatus, 'live');
+  });
+
+  it("reports authStatus 'configured-inert' when authEnabled but direct mode (AUTH-2)", async () => {
+    setConfig({ ingressMode: 'direct', authEnabled: true });
+    const res = await get(server, '/api/server-info');
+    assert.equal(res.body.authStatus, 'configured-inert');
+    assert.equal(res.body.currentUser, null);
+  });
+
+  it("reports authStatus 'configured-no-identity' when caddy gate up but no identity (AUTH-3)", async () => {
+    setConfig({ ingressMode: 'caddy', authEnabled: true });
+    const res = await get(server, '/api/server-info');
+    assert.equal(res.body.authStatus, 'configured-no-identity');
+  });
+
+  it("reports authStatus 'off' when auth is disabled", async () => {
+    setConfig({ ingressMode: 'direct', authEnabled: false });
+    const res = await get(server, '/api/server-info');
+    assert.equal(res.body.authStatus, 'off');
+  });
 });
