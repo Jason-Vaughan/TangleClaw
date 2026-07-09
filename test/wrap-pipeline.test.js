@@ -1762,14 +1762,65 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(result.output.pointer.current.id, '7');
   });
 
-  it('blocks when the plan has no ### Chunk headings at all', async () => {
+  it('skips (not blocks) when the single plan has no ### Chunk headings (#515)', async () => {
+    // Behavior change (#515): a resolved plan with zero `### Chunk N:`
+    // headings is a spec/design doc (or a not-yet-chunked plan) — there is
+    // nothing to roll, so the step SKIPS with a reason rather than blocking
+    // the whole wrap. Re-specified from the old block assertion because the
+    // *contract* changed, not to make code pass: blocking here was
+    // asymmetric with the multi-plan path (a chunk-less plan among several
+    // is already skipped via `_isPlanInProgress`). Repro of the live
+    // 2026-07-09 wrap failure on `continuity-contract.md`.
     writePlan('plan.md', '# Just a header, no chunks here.\n');
-    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
-    assert.equal(result.ok, false);
-    assert.match(result.blockers[0], /No "### Chunk N: Title" headings/);
-    // #223 — blocked output carries operator remediation for the drawer.
-    assert.equal(typeof result.output.remediation, 'string');
-    assert.match(result.output.remediation, /Chunk/);
+    const ctx = buildContext({ id: 'next-session-prime' });
+    const result = await primingRoll.run(ctx);
+    assert.equal(result.ok, true, 'a chunk-less single plan must not block the wrap');
+    assert.equal(result.status, 'skipped');
+    assert.deepEqual(result.blockers, []);
+    // The skip stays honest — the drawer surfaces why + the recovery hint.
+    assert.match(result.output.reason, /no `### Chunk N:` headings/i);
+    assert.match(result.output.reason, /nothing to roll/i);
+    assert.match(result.output.reason, /add chunk headings/i);
+    // No pointer is staged — the "field" is null, nothing for commit to flush.
+    assert.equal(ctx.staged['next-session-prime'], undefined,
+      'a skip must not stage a priming-roll write');
+  });
+
+  it('skip-on-no-chunks is symmetric between the single-plan and multi-plan paths (#515)', async () => {
+    // The core of #515: the SAME chunk-less plan must resolve to `skipped`
+    // whether it is the only `.md` in the dir or sits among others. Guards
+    // against the single-plan branch regressing back to a block while the
+    // multi-plan branch skips.
+    const chunkless = '# Design notes\n\nProse, no chunks.\n';
+
+    // (a) alone in the dir → single-plan resolve path
+    writePlan('solo-spec.md', chunkless);
+    const solo = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(solo.status, 'skipped', 'lone chunk-less plan skips');
+
+    // (b) among a completed (chunked, all-done) plan → multi-plan resolve path,
+    //     which drops the chunk-less candidate as not-in-progress and finds no
+    //     in-progress plan → also skips. Same end state, different branch.
+    writePlan('shipped.md', '### Chunk 1: A ✅\n');
+    const multi = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(multi.status, 'skipped', 'chunk-less plan among others also skips');
+    assert.equal(solo.ok, multi.ok, 'both paths agree on ok=true');
+  });
+
+  it('skips (not blocks) when an explicit step.planPath has no ### Chunk headings (#515)', async () => {
+    // An explicitly-configured pointer at a chunk-less file is a deliberate
+    // visible skip-with-reason, not a hard wrap failure — the operator still
+    // sees it in the drawer, but a doc with nothing to roll never halts.
+    fs.mkdirSync(path.join(projectPath, 'custom'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, 'custom', 'spec.md'), '# Spec, no chunks.\n');
+    const result = await primingRoll.run(buildContext({
+      id: 'next-session-prime',
+      planPath: 'custom/spec.md'
+    }));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /custom\/spec\.md/);
+    assert.match(result.output.reason, /nothing to roll/i);
   });
 
   it('rolls a fresh priming file (creates managed block) when none exists', async () => {
