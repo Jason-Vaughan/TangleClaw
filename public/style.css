@@ -1024,6 +1024,29 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Critic-gate provenance badge (SR-7K2P): records the attested gate status per
+   version — green = attested pass, muted = legitimately skipped, amber = unknown. */
+.session-rule-critic-gate {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  align-self: center;
+}
+.session-rule-critic-gate.gate-passed {
+  background: rgba(102, 187, 106, 0.18);
+  color: var(--success, #66bb6a);
+}
+.session-rule-critic-gate.gate-not-required {
+  background: var(--elevated-bg);
+  color: var(--text-muted);
+}
+.session-rule-critic-gate.gate-unknown {
+  background: rgba(255, 179, 0, 0.16);
+  color: var(--warning, #ffb300);
+}
 
 /* ── Project Rules section in Settings modal (CC-6, #381) ── */
 .project-rules-section {

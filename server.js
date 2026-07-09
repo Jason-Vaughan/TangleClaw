@@ -1078,7 +1078,9 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
       projectId: body.projectId ?? null,
       createdBy: body.createdBy || 'operator',
       // CC-6 (#381): 'startup' (default) | 'wrap' | 'mode'. Invalid → store throws BAD_REQUEST.
-      kind: body.kind
+      kind: body.kind,
+      // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
+      criticGate: body.criticGate
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -1138,7 +1140,9 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
       projectId: body.projectId ?? null,
       createdBy: body.createdBy,
       // CC-6 (#381): the wrap-time self-critique loop promotes a learning into a 'wrap' rule.
-      kind: body.kind
+      kind: body.kind,
+      // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
+      criticGate: body.criticGate
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -1171,10 +1175,12 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
   try {
-    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy });
+    // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
+    const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     throw err;
   }
 });
