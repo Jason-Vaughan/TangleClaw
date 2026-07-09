@@ -388,6 +388,19 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(typeof result.output.remediation, 'string');
     assert.match(result.output.remediation, /planPath/);
     assert.match(result.output.remediation, /activePlan/);
+    // #428: the candidate filenames are also exposed as structured data for
+    // the drawer's inline plan-picker — not just embedded in the blocker string.
+    assert.deepStrictEqual(result.output.candidates.slice().sort(), ['one.md', 'two.md']);
+  });
+
+  it('does NOT emit output.candidates for a single-plan/skip block (#428)', async () => {
+    // The candidates array is specific to the multi-in-progress case. A
+    // chunk-less single plan skips (no block, no candidates); the
+    // no-plans-dir case blocks WITHOUT candidates.
+    const skip = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(skip.status, 'blocked'); // no .claude/plans dir → blocked
+    assert.equal(skip.output.candidates, undefined,
+      'a non-multi-plan block must not carry a candidates array');
   });
 
   it('auto-picks the single in-progress plan when others are complete (#226)', async () => {

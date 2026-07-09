@@ -2133,6 +2133,19 @@ function renderWrapDrawer(pipelineResult) {
         warningOnly = true;
       }
     }
+    if (row.kind === 'priming-roll') {
+      // #428: a blocked priming-roll carrying candidate plans (multi
+      // in-progress, can't auto-pick) gets an inline plan-picker. Its
+      // "Set active plan" button persists `activePlan` on its own — so,
+      // unlike pr-check, this does NOT set `warningOnly`: no whole-pipeline
+      // Retry (which would double-commit a non-fatal block), just the
+      // picker + Done. The pick sticks for the next wrap.
+      const planWidget = H.planPickerWidget(row, raw.output);
+      if (planWidget) {
+        decisionEl.appendChild(renderPlanPickerWidget(planWidget));
+        widgetRendered = true;
+      }
+    }
   }
   decisionEl.classList.toggle('hidden', !widgetRendered);
 
@@ -2357,6 +2370,95 @@ function renderPrResolutionWidget(widget) {
   note.textContent = 'Retry re-runs the whole pipeline — if a commit already landed, a second commit will be created. Click Done to accept the current state as-is.';
   wrap.appendChild(note);
   return wrap;
+}
+
+/**
+ * Build the inline plan-picker for a blocked priming-roll step (#428).
+ * A dropdown of the candidate plan filenames + a "Set active plan" button
+ * that persists the operator's pick to `activePlan` (via PATCH). Unlike the
+ * pr-check widget this performs a config write — no whole-pipeline retry —
+ * so the pick "sticks" for the next wrap without a double-commit.
+ *
+ * @param {object} widget - From `planPickerWidget` ({kind, candidates}).
+ * @returns {HTMLDivElement}
+ */
+function renderPlanPickerWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--planpick';
+  wrap.dataset.kind = 'priming-roll';
+
+  const label = document.createElement('label');
+  label.className = 'wrap-decision-label';
+  label.textContent = `Multiple in-progress plans — pick the active one to roll (${widget.candidates.length}):`;
+  wrap.appendChild(label);
+
+  const sel = document.createElement('select');
+  sel.className = 'wrap-decision-planselect';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '— pick a plan —';
+  sel.appendChild(placeholder);
+  for (const file of widget.candidates) {
+    const o = document.createElement('option');
+    o.value = file;
+    o.textContent = file;
+    sel.appendChild(o);
+  }
+  wrap.appendChild(sel);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'wrap-decision-setplan';
+  btn.textContent = 'Set active plan';
+  wrap.appendChild(btn);
+
+  const note = document.createElement('p');
+  note.className = 'wrap-decision-note';
+  note.textContent = 'Persists this project’s active plan; the next wrap rolls its pointer. No re-run — click Done to close.';
+  wrap.appendChild(note);
+
+  btn.addEventListener('click', () => setActivePlan(sel, btn, note));
+  return wrap;
+}
+
+/**
+ * Persist the operator's plan pick to `activePlan` via PATCH (#428).
+ * Reflects success/failure inline; no drawer re-open, no wrap re-trigger.
+ *
+ * @param {HTMLSelectElement} sel - The plan dropdown.
+ * @param {HTMLButtonElement} btn - The "Set active plan" button.
+ * @param {HTMLElement} noteEl - The inline note element to update.
+ */
+async function setActivePlan(sel, btn, noteEl) {
+  const filename = sel.value;
+  if (!filename) {
+    noteEl.textContent = 'Pick a plan first.';
+    return;
+  }
+  btn.disabled = true;
+  sel.disabled = true;
+  const data = await apiMutate(
+    `/api/projects/${encodeURIComponent(projectName)}`,
+    'PATCH',
+    { activePlan: filename }
+  );
+  if (!data) {
+    // Validation failure / auth / server error → apiMutate returned null,
+    // api.lastError carries the reason (the 400 the PATCH route returns).
+    btn.disabled = false;
+    sel.disabled = false;
+    noteEl.textContent = (typeof api !== 'undefined' && api.lastError)
+      || 'Could not set the active plan. Try again.';
+    return;
+  }
+  if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+    btn.disabled = false;
+    sel.disabled = false;
+    noteEl.textContent = data.warnings.join('; ');
+    return;
+  }
+  noteEl.textContent = `Active plan set to ${filename} ✓ — the next wrap will roll its pointer. Click Done to close.`;
+  btn.textContent = 'Saved';
 }
 
 /**

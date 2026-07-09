@@ -1798,6 +1798,32 @@ body {
   color: var(--text-secondary);
   font-style: italic;
 }
+/* #428 inline plan-picker (blocked priming-roll, multi in-progress plans) */
+.wrap-decision-planselect {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+.wrap-decision-setplan {
+  margin-left: 8px;
+  padding: 5px 12px;
+  font-size: 0.85rem;
+  background: var(--card-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.wrap-decision-setplan:hover:not(:disabled) {
+  background: var(--elevated-bg);
+}
+.wrap-decision-setplan:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .wrap-drawer-actions {
   display: flex;
   gap: 8px;
