@@ -316,6 +316,29 @@
   }
 
   /**
+   * Descriptor for the inline plan-picker (#428): when priming-roll blocks
+   * on multiple in-progress plans it can't auto-pick, surface the candidate
+   * filenames so the drawer can render a dropdown. Unlike pr-check, this is a
+   * BLOCKED step and the pick is a config write (persist `activePlan`), not a
+   * retry option — so it carries no `optionsKey`. Returns `null` unless the
+   * step is a blocked priming-roll carrying a non-empty `candidates` array.
+   *
+   * @param {object} stepRow - View-model from `buildStepRow`.
+   * @param {object} rawOutput - Raw `step.output` from the runner.
+   * @returns {{kind: 'priming-roll', candidates: string[]}|null}
+   */
+  function planPickerWidget(stepRow, rawOutput) {
+    if (!stepRow || stepRow.kind !== 'priming-roll') return null;
+    if (stepRow.status !== 'blocked') return null;
+    if (!rawOutput || typeof rawOutput !== 'object') return null;
+    const candidates = Array.isArray(rawOutput.candidates)
+      ? rawOutput.candidates.filter((c) => typeof c === 'string' && c.trim())
+      : [];
+    if (candidates.length === 0) return null;
+    return { kind: 'priming-roll', candidates };
+  }
+
+  /**
    * Read the drawer's decision-widget DOM and assemble an `options`
    * object suitable for the retry POST body. Pure aside from the DOM
    * reads, which take a document-like accessor so tests can stub.
@@ -438,6 +461,7 @@
     decisionWidgetForBlockedStep,
     warningWidgetForStep,
     prCheckResolutionWidget,
+    planPickerWidget,
     collectOptionsFromAccessors,
     accumulateAiContentSkips,
     buildReportText,

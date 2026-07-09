@@ -463,6 +463,53 @@ describe('wrap-drawer helpers — prCheckResolutionWidget', () => {
   });
 });
 
+describe('wrap-drawer helpers — planPickerWidget (#428)', () => {
+  const H = loadHelpers();
+
+  it('returns candidates for a blocked priming-roll with candidates', () => {
+    const w = H.planPickerWidget(
+      { kind: 'priming-roll', status: 'blocked' },
+      { candidates: ['one.md', 'two.md'], remediation: '...' }
+    );
+    assert.equal(w.kind, 'priming-roll');
+    assert.deepEqual(w.candidates, ['one.md', 'two.md']);
+  });
+
+  it('filters out blank/non-string candidate entries', () => {
+    const w = H.planPickerWidget(
+      { kind: 'priming-roll', status: 'blocked' },
+      { candidates: ['ok.md', '', '   ', 5, null, 'two.md'] }
+    );
+    assert.deepEqual(w.candidates, ['ok.md', 'two.md']);
+  });
+
+  it('returns null when the priming-roll step is not blocked', () => {
+    const w = H.planPickerWidget(
+      { kind: 'priming-roll', status: 'done' },
+      { candidates: ['one.md'] }
+    );
+    assert.equal(w, null);
+  });
+
+  it('returns null when there are no candidates', () => {
+    assert.equal(H.planPickerWidget({ kind: 'priming-roll', status: 'blocked' }, { remediation: 'x' }), null);
+    assert.equal(H.planPickerWidget({ kind: 'priming-roll', status: 'blocked' }, { candidates: [] }), null);
+  });
+
+  it('returns null for a non-priming-roll kind', () => {
+    const w = H.planPickerWidget(
+      { kind: 'pr-check', status: 'blocked' },
+      { candidates: ['one.md'] }
+    );
+    assert.equal(w, null);
+  });
+
+  it('returns null on missing/invalid rawOutput', () => {
+    assert.equal(H.planPickerWidget({ kind: 'priming-roll', status: 'blocked' }, null), null);
+    assert.equal(H.planPickerWidget(null, { candidates: ['x.md'] }), null);
+  });
+});
+
 describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
   const H = loadHelpers();
 

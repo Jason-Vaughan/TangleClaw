@@ -552,6 +552,63 @@ describe('projects', () => {
       assert.ok(bogus.errors[0].includes('wrapSections'));
     });
 
+    // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
+    describe('activePlan (#428)', () => {
+      let planDir;
+      before(() => {
+        planDir = path.join(projectsDir, 'new-project', '.claude', 'plans');
+        fs.mkdirSync(planDir, { recursive: true });
+        fs.writeFileSync(path.join(planDir, 'chosen.md'), '### Chunk 1: A\n');
+      });
+
+      it('persists a valid activePlan filename to project.json', () => {
+        const result = projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        assert.ok(result.project);
+        const cfg = store.projectConfig.load(result.project.path);
+        assert.equal(cfg.activePlan, 'chosen.md');
+      });
+
+      it('round-trips: priming-roll._readActivePlan reads back the persisted pick', () => {
+        const primingRoll = require('../lib/wrap-steps/priming-roll');
+        projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const projPath = path.join(projectsDir, 'new-project');
+        assert.equal(primingRoll._readActivePlan(projPath), 'chosen.md');
+      });
+
+      it('clears activePlan when set to null', () => {
+        projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const result = projects.updateProject('new-project', { activePlan: null });
+        assert.ok(result.project);
+        const cfg = store.projectConfig.load(result.project.path);
+        assert.equal(cfg.activePlan, undefined, 'null must delete the key, not store null');
+      });
+
+      it('rejects a filename that does not exist under .claude/plans/', () => {
+        const result = projects.updateProject('new-project', { activePlan: 'ghost.md' });
+        assert.equal(result.project, null);
+        assert.match(result.errors[0], /activePlan .* not found/);
+      });
+
+      it('rejects a non-.md filename even if the file exists', () => {
+        fs.writeFileSync(path.join(planDir, 'notes.txt'), 'x');
+        const result = projects.updateProject('new-project', { activePlan: 'notes.txt' });
+        assert.equal(result.project, null);
+        assert.match(result.errors[0], /not found/);
+      });
+
+      it('rejects a path-bearing activePlan (traversal-safe)', () => {
+        const result = projects.updateProject('new-project', { activePlan: '../../etc/passwd' });
+        assert.equal(result.project, null);
+        assert.match(result.errors[0], /bare plan filename/);
+      });
+
+      it('rejects a non-string activePlan', () => {
+        const result = projects.updateProject('new-project', { activePlan: 42 });
+        assert.equal(result.project, null);
+        assert.match(result.errors[0], /activePlan must be a string/);
+      });
+    });
+
     describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
       it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
         // Set up a discrete project so other tests' state doesn't interfere.
