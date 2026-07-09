@@ -152,3 +152,11 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `test/auth-status-warning.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/path-tokens.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/session-rules-panel.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-09)
+
+- **TBD** — touched in this session: `data/global-rules.md`. <!-- describe -->
+- **TBD** — touched in this session: `data/session-memory-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `data/shared-docs-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-globalrules.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/server.test.js`. <!-- describe -->

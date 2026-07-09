@@ -18,7 +18,6 @@ to file paths — this maps the layout itself.
 - `public/` — Browser UI served from disk — dashboard (`index.html`/`ui.js`), session page (`session.js`), styles, service worker (`sw.js`).
 - `scripts/` — Operator CLI scripts — `ingress-cutover.js` (reversible caddy/direct switch), `reset-admin.js` (break-glass), capture spike.
 - `test/` — The node test-runner suite (`node --test test/*.test.js`, ~3.6k tests) — the project's test contract.
-- `tests/` — Legacy pytest scaffolding (`conftest.py` parallelization config only — the real suite lives in `test/`).
 
 ## Shared directories / doc groups
 
