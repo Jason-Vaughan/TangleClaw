@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-09: Chore — prune the injected config surface (global-rules + guides + TC's CLAUDE.md)
+
+<!-- prawduct: type=chore | chunks=prune-injected-config | scope=config-injection-prune -->
+
+**Why:** `/prawduct:janitor` finding + operator ask ("prune CLAUDE.md to something sensible"). The governance/API text TC injects into every project's config had accreted verbosity; TC's own CLAUDE.md was 423 lines. **What (operator-ratified: conservative concision, keep every rule; + drop plugin-duplicated methodology from TC's file):** concised the 4 git-tracked injection sources — `data/global-rules.md` 190→118 and `data/{porthub,shared-docs,session-memory}-guide.md` 154→100 (total 344→218) — **keeping every rule, rationale, and API endpoint**; also fixed em-dash mojibake (`_` → `—`) in global-rules. Verified nothing dropped: diff of `## `/`### ` headings + `**Rule:**` lines shows only prose-fold reformatting, the version-bump table is byte-identical, and all guide endpoints preserved. This trims the config injected into every non-plugin-governed project by ~126 lines. **TC's own CLAUDE.md is plugin-governed (`isPluginGoverned:true`) so TC never regenerates it** — hand-trimmed 423→248: Global Rules + guides mirrored to the concised sources, and ~73 lines of vendored Prawduct methodology (Methodology/Session-Playbook/Governance) that the plugin injects at session start collapsed to a one-line pointer. **Test-contract respected:** kept the `### Authentication` heading + `### Port Ranges Convention` heading in the guides (an engines.test.js guard that the service-token auth stays documented — the concision had folded auth into prose; restored the heading rather than change the test). Updated one obsolete `#212` precondition (`bundled global-rules.md > 10 KB` — now just under the old cap; the round-trip contract + the 256 KB upper-bound test are untouched). **Tests:** full suite 3939/0/1 (recorded post-commit); no rule/API/behavior lost.
+
 ## 2026-07-09: Chore — janitor quick-wins (dead code, reqUrl dedup + Host-header fix, Node guard, dead-scaffold delete)
 
 <!-- prawduct: type=chore | chunks=janitor-quick-wins | scope=maintenance-sweep -->

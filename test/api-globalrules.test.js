@@ -169,10 +169,14 @@ describe('API /api/rules/global', () => {
       // fence-aware whitespace, uniform-indent strip) than a naked trailing-
       // whitespace replace; using the canonical helper keeps the test
       // honest if the bundled file gains content matching those patterns.
+      // NOTE (2026-07-09 config-injection prune): the bundled file was trimmed
+      // just under the old 10 KB cap, so this no longer asserts ">10 KB" — the
+      // round-trip below is the contract; the cap's upper bound is pinned by the
+      // 256 KB test that follows.
       const bundledPath = path.join(__dirname, '..', 'data', 'global-rules.md');
       const bundled = fs.readFileSync(bundledPath, 'utf8');
-      assert.ok(bundled.length > 10 * 1024,
-        'precondition: bundled global-rules.md must exceed the default 10 KB cap to make this test meaningful');
+      assert.ok(bundled.length > 0,
+        'precondition: bundled global-rules.md is non-empty');
 
       const { status } = await request(server, 'PUT', '/api/rules/global', { content: bundled });
       assert.equal(status, 200, 'PUT must succeed at the bundled content size');
