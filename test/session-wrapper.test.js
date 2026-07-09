@@ -572,6 +572,58 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes('async function confirmWrap()'));
     });
 
+    it('wrap trigger is single-flight — guards re-entrancy and blocks mid-wrap close', () => {
+      // Regression: confirmWrap awaited POST /wrap without disabling the
+      // confirm button, so a double-click fired concurrent wraps (double
+      // commit), and Cancel/backdrop could dismiss the modal mid-wrap. Pin
+      // the guard structurally (session.js DOM code isn't unit-instantiable
+      // here — same convention as handleWrapCompleted's no-timer assertions).
+      assert.ok(js.includes('let wrapInFlight = false'),
+        'must track an in-flight flag');
+      const start = js.indexOf('async function confirmWrap()');
+      assert.ok(start !== -1, 'confirmWrap must exist');
+      const bodyStart = js.indexOf('{', start);
+      let depth = 0, end = -1;
+      for (let i = bodyStart; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      assert.ok(end > bodyStart, 'confirmWrap body must close');
+      const body = js.slice(bodyStart, end + 1);
+      assert.ok(body.includes('if (wrapInFlight) return'),
+        'confirmWrap must bail when a wrap is already in flight');
+      assert.ok(body.includes('wrapInFlight = true'), 'must set the flag before the POST');
+      assert.ok(/confirmBtn\.disabled = true/.test(body) && /cancelBtn\.disabled = true/.test(body),
+        'must disable both Confirm and Cancel while wrapping');
+      assert.ok(/Wrapping/.test(body), 'must show a Wrapping… label');
+      assert.ok(body.includes('} finally {') && /wrapInFlight = false/.test(body),
+        'must reset the in-flight flag in finally (so a failed/hung wrap re-enables)');
+      assert.ok(js.includes('if (wrapInFlight && force !== true) return'),
+        'closeWrapModal must block user closes while a wrap is in flight (strict force check)');
+    });
+
+    it('per-step help is a tappable button (mobile), not a hover-only span', () => {
+      // Hover-only help is dead on iPhone Safari (the primary platform), so
+      // renderStepRow must build a <button> that toggles inline help text.
+      // Pin it structurally so a revert to a hover-only <span> fails here
+      // instead of silently only on touch.
+      const start = js.indexOf('function renderStepRow(');
+      assert.ok(start !== -1, 'renderStepRow must exist');
+      const bodyStart = js.indexOf('{', start);
+      let depth = 0, end = -1;
+      for (let i = bodyStart; i < js.length; i++) {
+        if (js[i] === '{') depth++;
+        else if (js[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      const body = js.slice(bodyStart, end + 1);
+      assert.ok(/createElement\('button'\)/.test(body) && body.includes("'wrap-step-help'"),
+        'the per-step help affordance must be a <button>, not a hover-only span');
+      assert.ok(body.includes('wrap-step-help-text') && /addEventListener\('click'/.test(body),
+        'tapping the help button must toggle inline help text');
+      assert.ok(body.includes("setAttribute('aria-expanded'"),
+        'the help toggle must expose aria-expanded');
+    });
+
     it('should include terminal setup', () => {
       assert.ok(js.includes('function setupTerminal('));
       assert.ok(js.includes('/terminal/'));

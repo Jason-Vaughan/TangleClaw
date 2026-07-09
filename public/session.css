@@ -1824,6 +1824,39 @@ body {
   opacity: 0.6;
   cursor: default;
 }
+/* Per-step help glyph — tap/click to reveal inline "what this step does"
+   text (works on touch; native title= is a desktop hover bonus). */
+.wrap-step-help {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  opacity: 0.65;
+  vertical-align: baseline;
+  background: none;
+  border: none;
+  padding: 0 3px;
+  line-height: 1;
+}
+.wrap-step-help:hover {
+  opacity: 1;
+}
+.wrap-step-help[aria-expanded="true"] {
+  opacity: 1;
+  color: var(--text-primary);
+}
+.wrap-step-help-text {
+  margin: 4px 0 2px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+/* Plan-picker "why" explainer line */
+.wrap-decision-help {
+  margin: 4px 0 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
 .wrap-drawer-actions {
   display: flex;
   gap: 8px;

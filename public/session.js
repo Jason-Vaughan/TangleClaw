@@ -1916,9 +1916,22 @@ function openWrapModal() {
 }
 
 /**
- * Close the wrap modal.
+ * True while a wrap POST is in flight. Guards against re-triggering the wrap
+ * (double-click → concurrent wraps / double commit) and against dismissing
+ * the modal mid-wrap. Reset in confirmWrap's `finally`.
+ * @type {boolean}
  */
-function closeWrapModal() {
+let wrapInFlight = false;
+
+/**
+ * Close the wrap modal. User-initiated closes (Cancel button and backdrop
+ * click — neither passes an explicit `true`; the Cancel handler even passes
+ * the click event, hence the strict `!== true`) are blocked while a wrap is
+ * in flight. `confirmWrap` passes `force:true` to close on completion.
+ * @param {boolean} [force]
+ */
+function closeWrapModal(force) {
+  if (wrapInFlight && force !== true) return;
   document.getElementById('wrapModal').classList.remove('open');
 }
 
@@ -1932,6 +1945,10 @@ function closeWrapModal() {
  * (#139 Chunk 10).
  */
 async function confirmWrap() {
+  // Re-entrancy guard: ignore a second confirm while the first wrap POST is
+  // still in flight, so a double-click can't fire two concurrent wraps.
+  if (wrapInFlight) return;
+
   // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
   // retries (#328) so they don't leak into this run.
   wrapSkippedAiSteps = {};
@@ -1939,37 +1956,60 @@ async function confirmWrap() {
   const body = {};
   if (pw) body.password = pw;
 
-  const data = await apiMutate(
-    `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
-    'POST',
-    body
-  );
+  // Lock the modal into a "Wrapping…" state: disable both buttons + flip the
+  // confirm label, and set the in-flight flag (which also blocks every close
+  // path via closeWrapModal). Restored in `finally` so a failed/hung wrap
+  // never leaves the modal permanently stuck. No timers — the state tracks
+  // the request lifecycle (feedback: no timer-driven UI lifecycle).
+  const confirmBtn = document.getElementById('wrapConfirmBtn');
+  const cancelBtn = document.getElementById('wrapCancelBtn');
+  const priorLabel = confirmBtn.textContent;
+  wrapInFlight = true;
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  confirmBtn.textContent = 'Wrapping…';
+  document.getElementById('wrapError').classList.add('hidden');
 
-  if (!data) {
-    document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
-    document.getElementById('wrapError').classList.remove('hidden');
-    return;
+  try {
+    const data = await apiMutate(
+      `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
+      'POST',
+      body
+    );
+
+    if (!data) {
+      // Failure — surface inline and let `finally` re-enable so the operator
+      // can fix (e.g. wrong password) and retry without reopening.
+      document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
+      document.getElementById('wrapError').classList.remove('hidden');
+      return;
+    }
+
+    closeWrapModal(true); // force-close past the in-flight guard on success
+
+    if (data.pipelineResult) {
+      // V2 path — pipeline ran server-side; render the drawer with the
+      // per-step result. The drawer drives any retry-with-options round
+      // trips itself; the legacy wrapping bar + polling don't apply.
+      // Hand the password down so retries can re-authenticate without
+      // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
+      // every call, V1 and V2 alike).
+      openWrapDrawer(data.pipelineResult, pw);
+      return;
+    }
+
+    // V1 legacy path — pipeline still in flight inside the AI session.
+    sessionState.wrapping = true;
+    showWrappingState();
+    // Increase poll frequency during wrapping
+    sessionState.pollInterval = 2000;
+    startPolling();
+  } finally {
+    wrapInFlight = false;
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+    confirmBtn.textContent = priorLabel;
   }
-
-  closeWrapModal();
-
-  if (data.pipelineResult) {
-    // V2 path — pipeline ran server-side; render the drawer with the
-    // per-step result. The drawer drives any retry-with-options round
-    // trips itself; the legacy wrapping bar + polling don't apply.
-    // Hand the password down so retries can re-authenticate without
-    // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
-    // every call, V1 and V2 alike).
-    openWrapDrawer(data.pipelineResult, pw);
-    return;
-  }
-
-  // V1 legacy path — pipeline still in flight inside the AI session.
-  sessionState.wrapping = true;
-  showWrappingState();
-  // Increase poll frequency during wrapping
-  sessionState.pollInterval = 2000;
-  startPolling();
 }
 
 // ── Wrap Pipeline Drawer (#139 Chunk 10) ──
@@ -2201,6 +2241,34 @@ function renderStepRow(row) {
   labelLine.className = 'wrap-step-label';
   labelLine.textContent = `${row.kindLabel} — ${row.id}`;
   main.appendChild(labelLine);
+  // Per-step help: a tap/click-toggle ⓘ that reveals an inline description.
+  // MUST work on touch — iPhone Safari is the primary platform, where native
+  // `title=`/`:hover` never fire — so the affordance toggles inline text on
+  // click; `title` is kept only as a desktop hover bonus.
+  if (row.kindTooltip) {
+    const help = document.createElement('button');
+    help.type = 'button';
+    help.className = 'wrap-step-help';
+    help.textContent = 'ⓘ';
+    help.title = row.kindTooltip;
+    help.setAttribute('aria-label', `What “${row.kindLabel}” does`);
+    help.setAttribute('aria-expanded', 'false');
+
+    const helpText = document.createElement('p');
+    helpText.className = 'wrap-step-help-text';
+    helpText.textContent = row.kindTooltip;
+    helpText.hidden = true;
+
+    help.addEventListener('click', () => {
+      const show = helpText.hidden;
+      helpText.hidden = !show;
+      help.setAttribute('aria-expanded', String(show));
+    });
+
+    labelLine.appendChild(document.createTextNode(' '));
+    labelLine.appendChild(help);
+    main.appendChild(helpText);
+  }
 
   if (row.detail) {
     const detailLine = document.createElement('span');
@@ -2389,11 +2457,19 @@ function renderPlanPickerWidget(widget) {
 
   const label = document.createElement('label');
   label.className = 'wrap-decision-label';
-  label.textContent = `Multiple in-progress plans — pick the active one to roll (${widget.candidates.length}):`;
+  label.textContent = `Multiple in-progress plans (${widget.candidates.length}) — pick which one this session was working from:`;
   wrap.appendChild(label);
+
+  // WHY this appeared — a plain-language explainer so the operator isn't
+  // guessing at an unfamiliar affordance.
+  const why = document.createElement('p');
+  why.className = 'wrap-decision-help';
+  why.textContent = 'Why: TangleClaw found more than one in-progress build plan in .claude/plans/ and can’t tell which to roll forward, so it didn’t auto-pick (this step is non-fatal — the wrap still finished).';
+  wrap.appendChild(why);
 
   const sel = document.createElement('select');
   sel.className = 'wrap-decision-planselect';
+  sel.title = 'Pick the build plan this session was working from — it will be saved as this project’s active plan.';
   const placeholder = document.createElement('option');
   placeholder.value = '';
   placeholder.textContent = '— pick a plan —';
@@ -2410,11 +2486,13 @@ function renderPlanPickerWidget(widget) {
   btn.type = 'button';
   btn.className = 'wrap-decision-setplan';
   btn.textContent = 'Set active plan';
+  btn.title = 'Save the selected plan as this project’s active plan (writes activePlan to .tangleclaw/project.json).';
   wrap.appendChild(btn);
 
+  // WHAT/HOW happens next.
   const note = document.createElement('p');
   note.className = 'wrap-decision-note';
-  note.textContent = 'Persists this project’s active plan; the next wrap rolls its pointer. No re-run — click Done to close.';
+  note.textContent = 'What happens: your pick is saved to this project (activePlan), so this and future wraps roll that plan’s chunk pointer automatically. No re-run needed — click Done to close.';
   wrap.appendChild(note);
 
   btn.addEventListener('click', () => setActivePlan(sel, btn, note));

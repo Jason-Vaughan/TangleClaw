@@ -25,6 +25,30 @@
   };
 
   /**
+   * Per-kind "what this step does / why it's here" help text, surfaced as a
+   * hover on each step's name in the drawer. Keyed by step KIND (the stable
+   * vocabulary), so the three `ai-content` rows share one description.
+   * Covers every kind in the wrap pipeline; a drift-guard test keeps it
+   * complete as new kinds land.
+   * @type {Object<string, string>}
+   */
+  const KIND_DESCRIPTIONS = {
+    'pr-check': 'Checks for open GitHub PRs on this branch so you can resolve them before wrapping. Never blocks the wrap.',
+    'lint': 'Runs the project’s linter over the working tree.',
+    'test': 'Runs the full test suite. A failure here can block the wrap.',
+    'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Skips when there is nothing to promote or the version is not semver.',
+    'ai-content': 'The AI captures a piece of wrap content — a changelog line, session learnings, or session memory — into the wrap. Skips when there is nothing to capture.',
+    'learnings-db-write': 'Persists the session’s captured learnings to the project’s learnings store.',
+    'priming-roll': 'Rolls the build-plan chunk pointer forward so the next session resumes at the current chunk. Skips when there is no chunked plan to roll; if several in-progress plans exist it asks you to pick one.',
+    'features-toc': 'Refreshes FEATURES.md — stubs entries for files touched this session and prunes entries for deleted files.',
+    'project-map': 'Refreshes the continuity Map (the feature/component index) from the files touched this session.',
+    'index-describe': 'Fills in one-line descriptions for empty index stubs so the index stays readable.',
+    'commit': 'Commits the wrap’s changes — and, depending on your setup, opens a wrap PR.',
+    'continuity-write': 'Writes the continuity index + a per-session wrap summary with a “Next action.” This is what the next session reads to offer “we left off at X — continue?”.',
+    'critic-check': 'Verifies an independent Critic review was recorded for this session’s code changes.'
+  };
+
+  /**
    * Status pill labels + tone. Tone maps to CSS class suffix
    * (`.wrap-step-status--<tone>`).
    * @type {Object<string, {label: string, tone: string}>}
@@ -103,6 +127,7 @@
       id: stepResult.stepId,
       kind: stepResult.kind,
       kindLabel: KIND_LABELS[stepResult.kind] || stepResult.kind,
+      kindTooltip: KIND_DESCRIPTIONS[stepResult.kind] || '',
       status,
       statusLabel: meta.label,
       statusTone: meta.tone,
@@ -454,6 +479,7 @@
 
   const helpers = {
     KIND_LABELS,
+    KIND_DESCRIPTIONS,
     STATUS_META,
     buildStepRow,
     deriveDetail,
