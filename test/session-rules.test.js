@@ -295,6 +295,83 @@ describe('sessionRules store API (#347/D1a)', () => {
       ).run(rule.id, 98, 'update', 'x', 1, 'operator'));
     });
   });
+
+  describe('critic_gate provenance (SR-7K2P)', () => {
+    it('derives not-required for an operator edit and unknown for an AI edit', () => {
+      const opRule = store.sessionRules.create({ content: 'op rule' });
+      assert.equal(store.sessionRules.listVersions(opRule.id)[0].criticGate, 'not-required');
+
+      const aiRule = store.sessionRules.create({ content: 'ai rule', createdBy: 'ai' });
+      assert.equal(store.sessionRules.listVersions(aiRule.id)[0].criticGate, 'unknown');
+    });
+
+    it('records an explicit attestation on create, update, and restore', () => {
+      const rule = store.sessionRules.create({ content: 'v1', createdBy: 'ai', criticGate: 'passed' });
+      assert.equal(store.sessionRules.listVersions(rule.id)[0].criticGate, 'passed');
+
+      store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai', criticGate: 'passed' });
+      assert.equal(store.sessionRules.listVersions(rule.id)[0].criticGate, 'passed');
+
+      store.sessionRules.restore(rule.id, 1, { changedBy: 'ai', criticGate: 'passed' });
+      assert.equal(store.sessionRules.listVersions(rule.id)[0].criticGate, 'passed');
+    });
+
+    it('derives per-change: an AI update on an operator rule records unknown', () => {
+      // The mapping keys off THIS change's author (changed_by), not the rule's
+      // original author — an operator-created rule updated by the AI with no
+      // attestation must record 'unknown', not inherit 'not-required'.
+      const rule = store.sessionRules.create({ content: 'v1' }); // operator → not-required
+      store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai' });
+      const versions = store.sessionRules.listVersions(rule.id);
+      assert.equal(versions[0].criticGate, 'unknown');   // the AI update
+      assert.equal(versions[1].criticGate, 'not-required'); // the operator create
+    });
+
+    it('a promoted learning is AI-authored, so its v1 defaults to unknown', () => {
+      const pid = mkProject('promote-gate-proj');
+      const learning = store.learnings.create({ projectId: pid, content: 'a recurring insight' });
+      const rule = store.sessionRules.promoteFromLearning(learning.id);
+      assert.equal(store.sessionRules.listVersions(rule.id)[0].criticGate, 'unknown');
+
+      const attested = store.sessionRules.promoteFromLearning(learning.id, { criticGate: 'passed' });
+      assert.equal(store.sessionRules.listVersions(attested.id)[0].criticGate, 'passed');
+    });
+
+    it('rejects an out-of-enum criticGate with BAD_REQUEST and writes nothing', () => {
+      assert.throws(
+        () => store.sessionRules.create({ content: 'bad', criticGate: 'maybe' }),
+        (err) => err.code === 'BAD_REQUEST'
+      );
+      // The rule was never created — validation runs before any mutation.
+      assert.equal(store.sessionRules.list().length, 0);
+
+      const rule = store.sessionRules.create({ content: 'ok' });
+      assert.throws(
+        () => store.sessionRules.update(rule.id, { content: 'v2', criticGate: 'nope' }),
+        (err) => err.code === 'BAD_REQUEST'
+      );
+      assert.throws(
+        () => store.sessionRules.restore(rule.id, 1, { criticGate: 'nope' }),
+        (err) => err.code === 'BAD_REQUEST'
+      );
+      // The failed update/restore left no extra version — only the create snapshot.
+      assert.equal(store.sessionRules.listVersions(rule.id).length, 1);
+    });
+
+    it('rejects a direct insert with an out-of-enum critic_gate (fresh-DB CHECK)', () => {
+      const rule = store.sessionRules.create({ content: 'guarded' });
+      const db = store.getDb();
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_versions
+             (rule_id, version_no, op, content, enabled, created_by, critic_gate)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(rule.id, 97, 'update', 'x', 1, 'operator', 'bogus'),
+        /CHECK constraint failed/i,
+        'out-of-enum critic_gate must be rejected by the CHECK constraint'
+      );
+    });
+  });
 });
 
 describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
@@ -331,10 +408,10 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       store.init();
 
       const db = store.getDb();
-      // init migrates a v19 DB all the way to the current schema (now v23 — the
+      // init migrates a v19 DB all the way to the current schema (now v24 — the
       // kind backfill below is the v19→v20 step in that chain).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 23);
+      assert.equal(ver.version, 24);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();
@@ -391,9 +468,9 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       store.init();
 
       const db = store.getDb();
-      // Schema advanced to current (the v22→v23 rebuild is the last step).
+      // Schema advanced to current (v22→v23 op CHECK, then v23→v24 critic_gate).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 23);
+      assert.equal(ver.version, 24);
 
       // The CHECK constraint is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -475,6 +552,86 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       const ver = check.prepare('SELECT MAX(version) AS v FROM schema_version').get();
       check.close();
       assert.equal(ver.v, 22, 'schema_version stays at 22 until the corruption is resolved');
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sessionRules v23→v24 critic_gate migration (SR-7K2P)', () => {
+  it('rebuilds session_rule_versions with the critic_gate CHECK, defaulting existing rows to unknown', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-critic-gate-mig-'));
+    try {
+      // Seed a v23 DB: session_rule_versions WITH the op CHECK (from v23) but
+      // WITHOUT the critic_gate column, holding pre-existing rows. store.init()
+      // then fires the v23→v24 table-rebuild.
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (23);
+        CREATE TABLE session_rule_versions (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id       INTEGER NOT NULL,
+          version_no    INTEGER NOT NULL,
+          op            TEXT    NOT NULL CHECK (op IN ('create','update','delete','restore')),
+          content       TEXT    NOT NULL,
+          enabled       INTEGER NOT NULL,
+          created_by    TEXT    NOT NULL,
+          owner         TEXT,
+          changed_by    TEXT    NOT NULL DEFAULT 'operator',
+          change_reason TEXT,
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rule_versions
+          (id, rule_id, version_no, op, content, enabled, created_by, changed_by, change_reason)
+        VALUES
+          (1, 42, 1, 'create', 'rule v1', 1, 'operator', 'operator', null),
+          (2, 42, 2, 'update', 'rule v2', 1, 'operator', 'ai', 'tightened wording');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      // Schema advanced to current (the v23→v24 rebuild is the last step).
+      const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+      assert.equal(ver.version, 24);
+
+      // The critic_gate CHECK is now present in the rebuilt table's DDL.
+      const ddl = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_rule_versions'"
+      ).get();
+      assert.match(ddl.sql, /CHECK\s*\(\s*critic_gate\s+IN/i, 'post-migration: critic_gate CHECK present');
+      assert.match(ddl.sql, /CHECK\s*\(\s*op\s+IN/i, 'post-migration: op CHECK preserved');
+
+      // Data preservation: both pre-existing rows survive verbatim, and the new
+      // column backfills to 'unknown' (honest — no attestation existed for them).
+      const rows = db.prepare(
+        'SELECT id, rule_id, version_no, op, content, changed_by, change_reason, critic_gate FROM session_rule_versions ORDER BY id'
+      ).all();
+      assert.equal(rows.length, 2);
+      // node:sqlite returns null-prototype rows; spread into plain objects so
+      // strict deepEqual compares values, not the prototype.
+      assert.deepEqual({ ...rows[0] }, { id: 1, rule_id: 42, version_no: 1, op: 'create', content: 'rule v1', changed_by: 'operator', change_reason: null, critic_gate: 'unknown' });
+      assert.deepEqual({ ...rows[1] }, { id: 2, rule_id: 42, version_no: 2, op: 'update', content: 'rule v2', changed_by: 'ai', change_reason: 'tightened wording', critic_gate: 'unknown' });
+
+      // Post-migration: the rebuilt table enforces the enum on new inserts.
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_versions
+             (rule_id, version_no, op, content, enabled, created_by, critic_gate)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(42, 3, 'update', 'x', 1, 'operator', 'bogus'),
+        /CHECK constraint failed/i,
+        'post-migration: out-of-enum critic_gate rejected'
+      );
     } finally {
       try { store.close(); } catch { /* already closed */ }
       fs.rmSync(tmpDir, { recursive: true, force: true });

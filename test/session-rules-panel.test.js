@@ -130,5 +130,18 @@ describe('Session rules panel (#347/D1a)', () => {
       assert.match(css, /\.session-rule-versions/);
       assert.match(css, /\.session-rule-badge/);
     });
+
+    it('renders a Critic-gate provenance badge per version (SR-7K2P)', () => {
+      assert.match(landing, /function _criticGateBadge\(/);
+      assert.match(landing, /session-rule-critic-gate/);
+      assert.match(landing, /v\.criticGate/);
+      assert.match(landing, /Critic-reviewed/);
+    });
+
+    it('style.css carries Critic-gate badge rules (SR-7K2P)', () => {
+      assert.match(css, /\.session-rule-critic-gate/);
+      assert.match(css, /\.gate-passed/);
+      assert.match(css, /\.gate-unknown/);
+    });
   });
 });

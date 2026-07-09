@@ -620,7 +620,26 @@ async function toggleSessionRuleVersions(id) {
 }
 
 /**
- * Render a rule's version list with restore buttons (D1b).
+ * Presentation for a version's Critic-gate attestation (SR-7K2P). Records, never
+ * enforces — the server can't summon a Critic, so this is the AI's apply-time
+ * attestation surfaced for the operator to audit.
+ * @param {string} criticGate - 'passed' | 'not-required' | 'unknown'
+ * @returns {{label: string, cls: string, title: string}}
+ */
+function _criticGateBadge(criticGate) {
+  switch (criticGate) {
+    case 'passed':
+      return { label: '✓ Critic-reviewed', cls: 'gate-passed', title: 'AI edit attested as passing the Critic gate' };
+    case 'not-required':
+      return { label: '— not required', cls: 'gate-not-required', title: 'Operator/trivial edit that legitimately skips the Critic gate' };
+    default:
+      return { label: '? unknown', cls: 'gate-unknown', title: 'Legacy edit, or an AI edit applied with no Critic attestation' };
+  }
+}
+
+/**
+ * Render a rule's version list with restore buttons (D1b) and Critic-gate
+ * provenance badges (SR-7K2P).
  * @param {number} id - Rule id
  * @param {object[]} versions - Version rows (newest first)
  */
@@ -631,13 +650,17 @@ function renderSessionRuleVersions(id, versions) {
     container.innerHTML = '<p class="session-rules-empty">No version history.</p>';
     return;
   }
-  container.innerHTML = versions.map((v) => `
+  container.innerHTML = versions.map((v) => {
+    const gate = _criticGateBadge(v.criticGate);
+    return `
     <div class="session-rule-version">
       <span class="session-rule-version-meta">v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)}</span>
+      <span class="session-rule-critic-gate ${gate.cls}" title="${esc(gate.title)}">${esc(gate.label)}</span>
       <span class="session-rule-version-content">${esc(v.content)}</span>
       <button class="btn btn-small" data-action="restore" data-rule-id="${id}" data-version-no="${v.versionNo}">Restore</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 /**

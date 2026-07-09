@@ -123,9 +123,9 @@ project's **Wrap rules** box in the Project Rules modal and is auto-versioned li
 This keeps the contract's "self-improvement suggestions are user-gated, never auto-applied,
 and rare/high-signal" rule intact — CC-6 reuses D1b's engine rather than adding a second one.
 
-## Critic-gate provenance on the version snapshot (SR-7K2P, requirement)
+## Critic-gate provenance on the version snapshot (SR-7K2P)
 
-**Status: requirement (discovery captured 2026-07-08). Not yet built.**
+**Status: built (2026-07-08). Schema v24; `critic_gate` on `session_rule_versions`.**
 
 ### Problem
 Today "was this AI/autonomous edit actually gated?" is only *inferable* — cross-reference

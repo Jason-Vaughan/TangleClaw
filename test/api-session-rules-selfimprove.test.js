@@ -112,4 +112,30 @@ describe('api/session-rules self-improvement (D1b)', () => {
     const created = (await request('POST', '/api/session-rules', { content: 'z' })).data;
     assert.equal((await request('POST', `/api/session-rules/${created.id}/restore`, {})).status, 400);
   });
+
+  it('records the critic_gate attestation through the apply paths and surfaces it on versions (SR-7K2P)', async () => {
+    // Operator create with no attestation → derived 'not-required'.
+    const created = (await request('POST', '/api/session-rules', { content: 'gate one' })).data;
+    let versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    assert.equal(versions[0].criticGate, 'not-required');
+
+    // Explicit attestation on an AI update flows through.
+    await request('PUT', `/api/session-rules/${created.id}`, { content: 'gate two', createdBy: 'ai', changedBy: 'ai', criticGate: 'passed' });
+    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    assert.equal(versions[0].criticGate, 'passed');
+
+    // Attestation flows through restore too.
+    const restored = await request('POST', `/api/session-rules/${created.id}/restore`, { versionNo: 1, changedBy: 'ai', criticGate: 'passed' });
+    assert.equal(restored.status, 200);
+    versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
+    assert.equal(versions[0].criticGate, 'passed');
+  });
+
+  it('400s an out-of-enum criticGate on create, update, promote, and restore (SR-7K2P)', async () => {
+    assert.equal((await request('POST', '/api/session-rules', { content: 'x', criticGate: 'maybe' })).status, 400);
+    assert.equal((await request('POST', '/api/session-rules/promote', { learningId, criticGate: 'maybe' })).status, 400);
+    const created = (await request('POST', '/api/session-rules', { content: 'valid' })).data;
+    assert.equal((await request('PUT', `/api/session-rules/${created.id}`, { content: 'y', criticGate: 'nope' })).status, 400);
+    assert.equal((await request('POST', `/api/session-rules/${created.id}/restore`, { versionNo: 1, criticGate: 'nope' })).status, 400);
+  });
 });

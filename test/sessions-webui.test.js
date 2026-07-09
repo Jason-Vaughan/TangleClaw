@@ -75,10 +75,10 @@ describe('Web UI session lifecycle', () => {
   // ── Schema v7: default_mode column ──
 
   describe('schema v7: default_mode on openclaw_connections', () => {
-    it('should have schema version 23', () => {
+    it('should have schema version 24', () => {
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 23);
+      assert.equal(row.version, 24);
     });
 
     it('should have default_mode column in openclaw_connections', () => {
