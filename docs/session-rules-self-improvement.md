@@ -123,6 +123,60 @@ project's **Wrap rules** box in the Project Rules modal and is auto-versioned li
 This keeps the contract's "self-improvement suggestions are user-gated, never auto-applied,
 and rare/high-signal" rule intact — CC-6 reuses D1b's engine rather than adding a second one.
 
+## Critic-gate provenance on the version snapshot (SR-7K2P, requirement)
+
+**Status: requirement (discovery captured 2026-07-08). Not yet built.**
+
+### Problem
+Today "was this AI/autonomous edit actually gated?" is only *inferable* — cross-reference
+`changed_by='ai'` on the version snapshot against the activity log and trust the procedure
+was followed. There is no explicit, durable proof on the edit itself. This makes the
+self-improvement loop's central safeguard (the Critic gate) unauditable without detective work.
+
+### Constraint (why this is *attestation*, not *verification*)
+The Critic gate is an **in-session AI capability** — "TC's server cannot summon one" (see
+"The Critic gate" above). The server never witnesses the Critic run; the AI runs
+`/prawduct:critic`, reads `.critic-findings.json`, and only then calls the apply-path API.
+So the provenance is necessarily an **attestation the AI supplies at apply-time**. The
+requirement is to **record** that attestation, **not enforce/verify** it (enforcement is
+architecturally impossible here). An operator who audits still relies on the attestation's
+honesty — but it becomes explicit and queryable rather than implicit.
+
+### Design (decided)
+- **Data model.** Add one column to `session_rule_versions` (the per-mutation snapshot — the
+  natural home for per-change provenance; the current rule's gate status = its latest
+  version's value, so nothing is duplicated onto `session_rules`):
+
+  `critic_gate TEXT NOT NULL DEFAULT 'unknown' CHECK (critic_gate IN ('passed','not-required','unknown'))`
+
+  The three states are deliberately distinct (a bare boolean can't separate them):
+  | value | meaning |
+  |---|---|
+  | `passed` | AI/autonomous edit that the AI attests passed the Critic gate |
+  | `not-required` | operator-authored (or trivial, non-conflicting) edit that legitimately skips the gate |
+  | `unknown` | backfilled legacy row, or an AI edit applied with no attestation (honest "we don't know") |
+
+  Schema bump **v23→v24**, table-rebuild migration mirroring SR-3MW8's `op` CHECK (SQLite
+  can't `ALTER TABLE ADD CHECK`), preserving every row and defaulting existing rows to
+  `unknown`, with a `sqlite_master` postcondition.
+
+- **Writer default mapping** (`_snapshotSessionRule`): derive from author unless the caller
+  supplies an explicit value — operator-authored → `not-required`; AI-authored → caller's
+  attested value, else `unknown`. (A landed AI edit *should* be `passed` since BLOCKING ⇒
+  don't land, but the writer never assumes — absence is honestly `unknown`.)
+
+- **API.** The four apply paths accept an optional `criticGate` (enum-validated, 400 on a
+  bad value): `POST /api/session-rules`, `PUT /api/session-rules/:id`,
+  `POST /api/session-rules/promote`, `POST /api/session-rules/:id/restore`.
+  `GET /api/session-rules/:id/versions` returns `critic_gate` per version.
+
+- **UI.** The version-history surface shows a per-version badge (`✓ Critic-reviewed` /
+  `— not required` / `? unknown`).
+
+### Out of scope
+Server-side enforcement/verification of the gate (impossible — see Constraint); version-history
+pruning (SR-5T1J); any change to the gate procedure itself.
+
 ## Known upstream gaps (escalated to the Prawduct developer)
 
 The Critic is git-anchored (no inline/DB artifact-review mode) and writes to a single fixed
