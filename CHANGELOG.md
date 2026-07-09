@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `priming-roll` wrap step (`next-session-prime`) now skips — instead of blocking the wrap — when the resolved plan has no `### Chunk N:` headings (#515).** `lib/wrap-steps/priming-roll.js` treated a chunk-less plan asymmetrically: the single-plan resolve path (`.claude/plans/` holds exactly one `.md`) returned it and let `run()` hard-**block** on zero chunks, while the multi-plan path already **skipped** such a plan via `_isPlanInProgress`. So the same spec/design doc (or a not-yet-chunked plan) failed the wrap when it stood alone but was silently dropped when it had company — the `feedback_symmetric_capability_gates` class of gate asymmetry. Observed live 2026-07-09: TC's own wrap went BLOCKED on `.claude/plans/continuity-contract.md` (a Phase-0 spec doc, zero chunks) once the real build plan was archived. The `run()` zero-chunk gate now returns `status:'skipped'` with a reason (`… no ### Chunk N: headings — nothing to roll (add chunk headings if this is meant to be an active build plan)`) and stages no priming write — honest and visible in the drawer, never halting. Applies to explicitly-configured `step.planPath`s too (a pointer at a chunk-less file is a visible skip, not a wrap failure). Re-specified the prior block-asserting test to the new contract and added regression tests pinning single-plan/multi-plan symmetry and the explicit-planPath case (`test/wrap-pipeline.test.js`).
+
 ## [4.8.0] - 2026-07-09
 
 ### Added
