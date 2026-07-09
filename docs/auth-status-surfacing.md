@@ -25,7 +25,7 @@ Derived from config `{authEnabled, ingressMode}` and the request-resolved `curre
 |---|---|---|---|
 | `off` | `authEnabled` falsy | Auth not configured (expected) | none |
 | `live` | `authEnabled` && `ingressMode='caddy'` && `currentUser` present | Gate enforcing, identity flowing | existing 👤 chip |
-| `configured-inert` | `authEnabled` && `ingressMode='direct'` | AUTH-2: config claims auth, direct mode enforces nothing | ⚠ warning |
+| `configured-inert` | `authEnabled` && `ingressMode !== 'caddy'` (i.e. direct or any non-caddy mode) | AUTH-2: config claims auth, no gate enforces it | ⚠ warning |
 | `configured-no-identity` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null | AUTH-3: gate up but no identity arriving (missing `header_up`, or request didn't traverse Caddy) | ⚠ warning |
 
 The `configured-no-identity` state is not a false positive: in `caddy` mode TC binds `127.0.0.1`, so a browser reaching `/api/server-info` should traverse Caddy and carry `x-auth-user`. A `null` there means the identity forwarding is broken — exactly the state to flag. The brief window after flipping to `caddy` mode but before the cutover regenerates the Caddyfile also lands here, which is correct ("configured but not live").
