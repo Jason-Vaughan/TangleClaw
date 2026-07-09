@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Dedup the path-token matcher shared by the continuity Map and the features-toc wrap step (CON-8H3Z).** `lib/continuity.js` and `lib/wrap-steps/features-toc.js` each carried a character-identical `/([A-Za-z0-9_./-]+\.(?:js|jsx|ts|tsx|json|md|html|css|yaml|yml|sh))(?:\b|:)/gi`, and their extension allowlists had to stay in sync by hand — a type recognized by one but not the other would silently drift the Map's file coverage from FEATURES.md's. Extracted the pattern to `lib/path-tokens.js` (`makePathTokenRegex()` factory + a named `PATH_TOKEN_EXTENSIONS` allowlist); both consumers now build their own module-scope instance from the shared source, so `.lastIndex` stays isolated per consumer (no shared-mutable-regex cross-talk) while the allowlist lives in one place. Behavior-preserving — no existing assertion changed; a byte-identical regression pin against the historical literal plus fresh-instance / allowlist / capture-group coverage in new `test/path-tokens.test.js`.
+
 ## [4.7.0] - 2026-07-08
 
 ### Added

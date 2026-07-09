@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-08: Refactor — dedup path-token matcher shared by continuity Map + features-toc (CON-8H3Z)
+
+<!-- prawduct: type=refactor | chunks=CON-8H3Z | scope=shared-path-token-matcher -->
+
+**Why:** backlog CON-8H3Z (CC-3 Critic NOTE): `lib/continuity.js` (`MAP_PATH_TOKEN_RE`) and `lib/wrap-steps/features-toc.js` (`PATH_TOKEN_RE`) carried a character-identical path-token regex whose extension allowlists had to stay in sync by hand — a type recognized by one but not the other would silently drift the continuity Map's file coverage from FEATURES.md's. **What:** extracted the pattern to `lib/path-tokens.js` — `makePathTokenRegex()` factory + a named `PATH_TOKEN_EXTENSIONS` allowlist. Both consumers now build their own module-scope instance from the shared source, so each keeps isolated `.lastIndex` iteration state (no shared-mutable-regex cross-talk — the reason a factory beats a single shared instance) while the allowlist lives in one place. **Behavior-preserving:** no existing assertion changed; the two thin extraction wrappers (continuity returns an array, features-toc a Set with a type guard) are untouched — only the pattern was centralized. **Tests:** new `test/path-tokens.test.js` — a byte-identical regression pin against the pre-dedup literal, fresh-instance/isolated-lastIndex, capture-group (`:42` line-ref excluded), loose-anchor extraction, and allowlist-membership (incl. `.py` correctly rejected). Suite 1919/0/1 @ 7b47831.
+
 ## 2026-07-08: Feat — dashboard warning for auth config-vs-live mismatch (AUTH-2K9D)
 
 <!-- prawduct: type=feat | chunks=AUTH-2K9D | scope=auth-status-surfacing | status=merged -->
