@@ -426,4 +426,58 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('aborts with an attributed error when a pre-existing row has an out-of-enum op', () => {
+    // The corruption this constraint guards against, encountered retroactively:
+    // a v22 DB already holding a bad op can't be copied into the CHECK-bearing
+    // table. The migration must fail loudly AND name the real cause (the rejected
+    // copy), not the misleading "did not produce a CHECK constraint" symptom, and
+    // must NOT advance schema_version.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-op-bad-mig-'));
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (22);
+        CREATE TABLE session_rule_versions (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id       INTEGER NOT NULL,
+          version_no    INTEGER NOT NULL,
+          op            TEXT    NOT NULL,
+          content       TEXT    NOT NULL,
+          enabled       INTEGER NOT NULL,
+          created_by    TEXT    NOT NULL,
+          owner         TEXT,
+          changed_by    TEXT    NOT NULL DEFAULT 'operator',
+          change_reason TEXT,
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rule_versions (rule_id, version_no, op, content, enabled, created_by)
+        VALUES (7, 1, 'corrupt-op', 'legacy junk', 1, 'operator');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      // init() runs the migration; the postcondition must throw with the cause named.
+      assert.throws(
+        () => store.init(),
+        /table rebuild failed — likely a pre-existing out-of-enum op value/i,
+        'migration attributes the failure to the offending row, not the symptom'
+      );
+
+      // schema_version did NOT advance past 22 (loud failure, no silent v23 stamp).
+      const check = new DatabaseSync(dbPath);
+      const ver = check.prepare('SELECT MAX(version) AS v FROM schema_version').get();
+      check.close();
+      assert.equal(ver.v, 22, 'schema_version stays at 22 until the corruption is resolved');
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
