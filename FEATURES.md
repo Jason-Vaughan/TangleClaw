@@ -160,3 +160,12 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `data/shared-docs-guide.md`. <!-- describe -->
 - **TBD** — touched in this session: `test/api-globalrules.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/server.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-09)
+
+- **TBD** — touched in this session: `public/session.css`. <!-- describe -->
+- **TBD** — touched in this session: `test/projects.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-wrapper.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-drawer.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-pipeline.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-priming-roll.test.js`. <!-- describe -->

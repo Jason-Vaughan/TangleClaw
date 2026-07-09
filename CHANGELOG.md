@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-07-09
+
 ### Added
 
 - **Inline plan-picker in the wrap drawer when priming-roll blocks on multiple in-progress plans (#428).** When `next-session-prime` can't auto-pick among several in-progress plans in `.claude/plans/` (#226), the drawer previously showed only a "How to fix this" blob telling the operator to hand-edit `.tangleclaw/project.json` in a terminal. Now it renders a **dropdown of the candidate plan filenames** + a **Set active plan** button — mirroring the affordance `pr-check` already proves. **Backend:** the multi-plan block now exposes the candidates as structured data (`output.candidates`, `lib/wrap-steps/priming-roll.js`) rather than only inside the blocker string; a new `activePlan` field on `updateProject` (`lib/projects.js`, PATCH `/api/projects/:name`) validates the pick (bare `.md` filename that exists under `.claude/plans/`; path separators rejected) and persists it via `store.projectConfig.load/save` — read back by `priming-roll._readActivePlan` next wrap. **Frontend:** `planPickerWidget` (`public/wrap-drawer.js`) + `renderPlanPickerWidget`/`setActivePlan` (`public/session.js`, `public/session.css`). **Persist-only by design** (operator decision): the pick is a durable config write and, because the block is non-fatal (the wrap already committed), it is *not* wired to a whole-pipeline Retry — so it "sticks" for the next wrap without a double-commit; the operator sets the plan and clicks Done. Tests: candidate exposure (`test/wrap-step-priming-roll.test.js`), `activePlan` validate/persist/round-trip (`test/projects.test.js`), widget descriptor (`test/wrap-drawer.test.js`).
