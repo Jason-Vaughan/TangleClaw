@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-09: Chore — janitor quick-wins (dead code, reqUrl dedup + Host-header fix, Node guard, dead-scaffold delete)
+
+<!-- prawduct: type=chore | chunks=janitor-quick-wins | scope=maintenance-sweep -->
+
+**Why:** `/prawduct:janitor` survey (operator-approved scope: quick wins + CLAUDE.md prune). **What:** (1) **Fix** — `GET /api/ports` built its URL with `` `http://${req.headers.host}` `` — the lone call site of 16 that dropped the `|| 'localhost'` fallback the others carry, so a `Host`-less request threw `TypeError: Invalid URL` and crashed the handler. Consolidated all 16 `new URL(req.url, …)` sites into one `reqUrl(req)` helper (`server.js`, exported) that always applies the fallback, so it can't drift again; regression test in `test/server.test.js` (no-Host + Host-present). (2) Removed dead public export `git.isDirty` (`lib/git.js`; uncalled repo-wide — internal `_isDirty` retained). (3) Corrected stale `lib/wrap-pipeline.js` doc-comment (`wrapV2` has defaulted `true` since #196, not `false`). (4) Added a Node-22 startup guard in `server.js` (clear abort before the `node:sqlite` load). (5) Deleted tracked dead `tests/conftest.py` (Python/pytest scaffold in a zero-Python project — the entire `test/` vs `tests/` split). Also removed a local gitignored `docs/methodology-extractions/ondeck-v2.md` (not a repo change; noted for honesty). **Deferred to backlog** (out of janitor scope): FEATURES.md symbol-based pointers + stub cleanup (HIGH), `updateProject` refactor, session-status state model, legacy V1 wrap-path strip, CI, linter, test-depth, node:sqlite warning suppression, AUTH-2K9D loopback false-positive. **Tests:** full suite 1921/0/1; +2 `reqUrl` regression tests.
+
 ## 2026-07-08: Feat — prune session-rule version history to newest 200 per rule (SR-5T1J)
 
 <!-- prawduct: type=feat | chunks=SR-5T1J | scope=session-rule-version-pruning -->

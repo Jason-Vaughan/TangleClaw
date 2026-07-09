@@ -5,6 +5,16 @@ const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+
+// node:sqlite (used by lib/store.js, required just below) needs Node 22+. Fail
+// fast with a clear message instead of a cryptic "Cannot find module
+// 'node:sqlite'" on an older runtime.
+const _nodeMajor = Number(process.versions.node.split('.')[0]);
+if (Number.isFinite(_nodeMajor) && _nodeMajor < 22) {
+  console.error(`TangleClaw requires Node.js 22+ (node:sqlite); detected ${process.versions.node}.`);
+  process.exit(1);
+}
+
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
 const system = require('./lib/system');
@@ -238,6 +248,17 @@ function serveStatic(res, pathname) {
 }
 
 // ── Parse Query String ──
+
+/**
+ * Build the request URL, tolerating an absent Host header (falls back to
+ * localhost). Consolidates the repeated `new URL(req.url, ...)` idiom so the
+ * localhost fallback can't drift per call site.
+ * @param {http.IncomingMessage} req - Incoming request
+ * @returns {URL}
+ */
+function reqUrl(req) {
+  return new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+}
 
 /**
  * Parse URL query parameters.
@@ -1062,7 +1083,7 @@ route('POST', '/api/rules/global/reset', (_req, res) => {
 
 // GET /api/session-rules — list (optional ?projectId= / ?scope=global / ?kind=)
 route('GET', '/api/session-rules', (req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
   if (query.scope === 'global') options.scope = 'global';
@@ -1257,7 +1278,7 @@ route('POST', '/api/tmux/mouse', (_req, res, _params, body) => {
 
 // GET /api/ports — List all port leases (optional ?host= filter)
 route('GET', '/api/ports', (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = reqUrl(req);
   const hostFilter = url.searchParams.get('host') || undefined;
   const leases = porthub.getLeases(hostFilter ? { host: hostFilter } : undefined);
   const grouped = {};
@@ -1331,7 +1352,7 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
 
 // GET /api/projects
 route('GET', '/api/projects', (req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
   if (query.archived === 'true') options.archived = true;
@@ -1874,7 +1895,7 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
 
 // GET /api/sessions/:project/peek — Peek at terminal output
 route('GET', '/api/sessions/:project/peek', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const full = query.full === 'true';
   const lines = query.lines ? parseInt(query.lines, 10) : 5;
@@ -1894,7 +1915,7 @@ route('GET', '/api/sessions/:project/peek', (req, res, params) => {
 
 // GET /api/sessions/:project/history — Session history
 route('GET', '/api/sessions/:project/history', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
 
   const result = sessions.getSessionHistory(params.project, {
@@ -1959,7 +1980,7 @@ route('GET', '/api/continuity/:project/search', async (req, res, params) => {
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
-  const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
+  const query = parseQuery(reqUrl(req).search);
   const opts = {
     dateFrom: query.dateFrom,
     dateTo: query.dateTo,
@@ -2015,7 +2036,7 @@ route('GET', '/api/continuity/:project/sessions/:sid/transcript/search', async (
   if (!_isValidSid(params.sid)) {
     return errorResponse(res, 400, 'Invalid session id', 'BAD_REQUEST');
   }
-  const query = parseQuery(new URL(req.url, `http://${req.headers.host || 'localhost'}`).search);
+  const query = parseQuery(reqUrl(req).search);
   const result = await continuity.searchTranscript(project.path, params.sid, query.q || '', {
     cap: query.cap ? parseInt(query.cap, 10) : undefined
   });
@@ -2024,7 +2045,7 @@ route('GET', '/api/continuity/:project/sessions/:sid/transcript/search', async (
 
 // GET /api/activity — Activity log query
 route('GET', '/api/activity', (req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
 
   const options = {};
@@ -2096,7 +2117,7 @@ route('POST', '/api/upload', (_req, res, _params, body) => {
 
 // GET /api/uploads — List uploads for a project
 route('GET', '/api/uploads', (req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
 
   if (!query.project) {
@@ -2261,7 +2282,7 @@ route('DELETE', '/api/groups/:id/members/:projectId', (_req, res, params) => {
 
 // GET /api/shared-docs
 route('GET', '/api/shared-docs', (req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
   if (query.groupId) options.groupId = query.groupId;
@@ -3010,7 +3031,7 @@ function proxyToTtyd(req, res, pathname) {
  * @param {Buffer} head
  */
 function handleUpgrade(req, socket, head) {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
 
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {
@@ -3172,7 +3193,7 @@ function _getVersion() {
  */
 async function handleRequest(req, res) {
   const startTime = Date.now();
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const pathname = urlObj.pathname;
   const method = req.method.toUpperCase();
 
@@ -3623,7 +3644,7 @@ route('GET', '/api/audit/telemetry', (_req, res) => {
 
 // GET /api/audit/:project/scores — Query scores for a project
 route('GET', '/api/audit/:project/scores', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   try {
     const scores = store.evalScores.listByProject(params.project, {
@@ -3640,7 +3661,7 @@ route('GET', '/api/audit/:project/scores', (req, res, params) => {
 
 // GET /api/audit/:project/anomalies — Anomaly log for a project
 route('GET', '/api/audit/:project/anomalies', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   try {
     const anomalies = store.evalScores.listByProject(params.project, {
@@ -3718,7 +3739,7 @@ route('GET', '/api/audit/:project/baseline', (_req, res, params) => {
 
 // GET /api/audit/:project/trends — Aggregated score trends over time
 route('GET', '/api/audit/:project/trends', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   try {
     const window = query.window || '14d';
@@ -3732,7 +3753,7 @@ route('GET', '/api/audit/:project/trends', (req, res, params) => {
 
 // GET /api/audit/:project/wrap-quality — Wrap quality scores for recent sessions
 route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   try {
     const limit = query.limit ? parseInt(query.limit, 10) : 10;
@@ -3784,7 +3805,7 @@ route('POST', '/api/audit/:project/baseline/recompute', (req, res, params, body)
 
 // GET /api/audit/:project/incidents — List incidents
 route('GET', '/api/audit/:project/incidents', (req, res, params) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   try {
     const options = {};
@@ -4103,4 +4124,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
