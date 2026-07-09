@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-07-09
+
 ### Added
 
 - **Session-rule version history is now pruned to the newest 200 versions per rule (SR-5T1J).** `session_rule_versions` appended a full snapshot on every mutation and never removed one, so under the self-improvement loop's autonomous edit volume (the high-edit-velocity trigger the D1b Critic named) a single rule's history could grow without bound. Each snapshot write now trims that rule's history to the newest `SESSION_RULE_VERSION_RETENTION` (200) versions — self-maintaining (no cron/wrap step), amortized on the existing `rule_id` index, and it bounds row count directly regardless of edit velocity (an age window would leave a fast-churning rule unbounded inside the window). Only versions **older than** the 200th-newest (by `version_no`) are dropped, so every restore target within the window, the rule's current state, and a deleted rule's tombstone (`op='delete'`, its latest version) are always preserved; `version_no` stays monotonic (`MAX+1`) and `restore` still resolves by exact `version_no`, so the harmless gaps pruning leaves are invisible to callers. Accepted trade-off: restoring to a version older than the window returns the same `NOT_FOUND` as any absent version (git, CHANGELOG, and the activity log remain the durable record beyond it); an operator wanting unbounded audit sets retention to `0` (the `_setSessionRuleVersionRetention` seam, mirroring `_setBasePath`). Requirement in `docs/session-rules-self-improvement.md`; +7 store tests in `test/session-rules.test.js` (default-200, exact-newest-N, monotonicity-after-prune, kept-vs-pruned restore, tombstone preservation, per-rule isolation, N≤0 opt-out).
