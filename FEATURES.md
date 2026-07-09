@@ -128,3 +128,15 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `test/master.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/ttyd-attach-sync.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/ttyd-plist.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-08)
+
+- **TBD** — touched in this session: `docs/session-rules-self-improvement.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/orchestration-profiles-store.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-rules.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/sessions-webui.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/sessions.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-openclaw.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-portleases.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-session-mode.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store.test.js`. <!-- describe -->
