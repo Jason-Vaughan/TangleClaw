@@ -49,6 +49,7 @@ const ttydAttach = require('./lib/ttyd-attach');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const authIdentity = require('./lib/auth-identity');
 const serviceToken = require('./lib/service-token');
+const medusa = require('./lib/medusa');
 
 const log = createLogger('server');
 
@@ -1803,6 +1804,22 @@ route('GET', '/api/sessions/:project/status', (_req, res, params) => {
   // status poll can open the wrap drawer (trigger parity with the Wrap button).
   status.wrapRequested = wrapSentinel.isWrapRequested(params.project);
   jsonResponse(res, 200, status);
+});
+
+// GET /api/sessions/:project/medusa/status — Medusa listener status (MED-2K9P
+// Chunk 01). Thin pass-through to lib/medusa. Resolves the session id from the
+// project's active session (matching how the sessions route family resolves it
+// via store.sessions.getActive); a `?sessionId=` query param is honored as a
+// fallback when no session is active. No active session → an `off` status.
+route('GET', '/api/sessions/:project/medusa/status', (req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  const query = parseQuery(reqUrl(req).search);
+  const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
+  jsonResponse(res, 200, medusa.getStatus(sessionId));
 });
 
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
