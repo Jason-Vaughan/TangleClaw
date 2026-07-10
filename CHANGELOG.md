@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **README refreshed for the 4.12 surface.** The storefront had drifted since its last update (Jul 3, #461): the **Session Switchboard** was listed as a future roadmap item even though its receive side and session-banner control shipped in v4.10–4.11 (MED-2K9P Chunks 01–02). Reframed the Switchboard as **functionally in beta** — added it to "What TangleClaw Does" and the "All features" Sessions section (listener state, unread badge, per-project auto-enable toggle), and narrowed the roadmap entry to the remaining outbound-send piece. Also corrected the engine list from "Five built-in engines … and OpenClaw" to "four local engines, plus remote OpenClaw," reflecting #459's removal of OpenClaw from the project engine picker (it portals to a remote agent, not a local LLM). Doc-only; no behavior change. Screenshots (pre-rebrand, pre-Medusa) tracked separately for the reshoot.
+
 ## [4.12.0] - 2026-07-10
 
 ### Changed
