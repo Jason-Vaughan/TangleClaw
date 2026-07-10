@@ -188,3 +188,7 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `public/session.html`. <!-- describe -->
 - **TBD** — touched in this session: `test/medusa-control.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/settings-modal-silentprime.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-10)
+
+- **TBD** — touched in this session: `public/openclaw-view.html`. <!-- describe -->
