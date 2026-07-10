@@ -192,3 +192,8 @@ entries that span multiple co-equal locations.
 ## TODO (auto-stubbed 2026-07-10)
 
 - **TBD** — touched in this session: `public/openclaw-view.html`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-10)
+
+- **TBD** — touched in this session: `docs/methodology-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/prawduct-playbook-gating.test.js`. <!-- describe -->
