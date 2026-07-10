@@ -47,7 +47,7 @@ Best for: structured development with governance, planning artifacts, and indepe
 
 ## Creating a Custom Methodology Template
 
-Create a JSON file in `~/.tangleclaw/templates/<your-template-id>/template.json`:
+Create a JSON file in `~/.tangleclaw/templates/<your-template-id>/template.json`. Optionally add a `playbook.md` beside it — a markdown "session playbook" injected verbatim into every generated engine config for projects on this methodology (scope it with `playbookEngines` / `playbookRuleSections` below if it shouldn't apply everywhere):
 
 ```json
 {

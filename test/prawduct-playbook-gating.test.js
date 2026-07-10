@@ -111,6 +111,17 @@ describe('prawduct V1 playbook gating (#536)', () => {
       assert.ok(out && out.includes(PLAYBOOK_MARKER));
     });
 
+    it('returns null when stripping empties the playbook', () => {
+      // A section mapping that covers the whole playbook (the top-level
+      // heading) leaves nothing behind — omit the block instead of injecting
+      // an empty methodology stub.
+      const t = {
+        ...store.templates.get('prawduct'),
+        playbookRuleSections: { independentCritic: '## Session Playbook: Prawduct' }
+      };
+      assert.equal(engines._renderPlaybook(t, cfg({ independentCritic: false }), 'claude'), null);
+    });
+
     it('strips a rule section only on explicit false', () => {
       const t = store.templates.get('prawduct');
       // explicit false → stripped

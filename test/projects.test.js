@@ -811,6 +811,26 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(attachDir, '.tangleclaw', 'project.json')));
     });
 
+    it('applies the detected methodology defaultRules to a fresh config (#536)', () => {
+      // The config skeleton ships extension rules false; create/switch apply
+      // the methodology defaultRules but attach historically did not — an
+      // attached prawduct project silently carried independentCritic:false,
+      // which now strips the Critic playbook section (asymmetric-gate class).
+      const attachDir = path.join(projectsDir, 'attach-default-rules');
+      fs.mkdirSync(path.join(attachDir, '.prawduct'), { recursive: true });
+
+      const result = projects.attachProject('attach-default-rules');
+      assert.ok(result.project);
+      assert.equal(result.project.methodology.id, 'prawduct');
+
+      const cfg = JSON.parse(fs.readFileSync(
+        path.join(attachDir, '.tangleclaw', 'project.json'), 'utf8'));
+      // prawduct defaultRules declare these enabled ({enabled:true} object form)
+      assert.equal(cfg.rules.extensions.independentCritic, true);
+      assert.equal(cfg.rules.extensions.docsParity, true);
+      assert.equal(cfg.rules.extensions.decisionFramework, true);
+    });
+
     it('reads existing .tangleclaw/project.json', () => {
       const attachDir = path.join(projectsDir, 'has-config');
       fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
