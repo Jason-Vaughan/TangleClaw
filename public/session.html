@@ -37,27 +37,25 @@
            Populated by `renderMethodologyActions` in session.js after loadProject. -->
       <span id="methodologyActions" class="methodology-actions"></span>
 
-      <!-- Medusa session-comms control (MED-2K9P Chunk 02). The two-head mark
-           carries on/off status (RED off / GREEN on, pulsing while connecting)
-           and an AMBER "!" error state kept distinct from off. The inbound head
-           lights transiently on a received message and the badge counts unread.
-           Click the heads to toggle this session's listener; click the badge to
-           open the inbox (marks read). Hidden until the session is known.
-           Real Medusa art (MED-2K9P art upgrade): two facing heads + the central
-           bridge, downscaled to alpha-preserving WebP. Status is carried by STATE
-           (gold at rest, dimmed/desaturated when off, glow on a received message),
-           not by flat recolor — so the gold brand art survives. -->
+      <!-- Medusa session-comms control (MED-2K9P). Two facing heads flank the
+           MEDUSA emblem (real gold art, alpha-preserving WebP). Status is carried
+           by STATE, not a flat recolor: gold at rest (listening), dimmed +
+           desaturated when off, an amber glow (+ "!" glyph) on error kept distinct
+           from off; the inbound head glows transiently on a received message and
+           the badge counts unread. Click the heads to toggle this session's
+           listener; click the badge to open the inbox (marks read); the panel's ✕
+           / Escape close it. Hidden until the session is known. -->
       <span class="medusa-control is-off" id="medusaControl" hidden>
         <button class="medusa-heads" id="medusaHeads" type="button"
                 aria-pressed="false" aria-label="Medusa session comms: off. Click to enable.">
           <span class="medusa-mark" aria-hidden="true">
             <!-- Left head = inbound (this session receiving); right = outbound
-                 (this session sending — lights in Chunk 03). Bridge = the medium. -->
-            <img class="medusa-head medusa-head--in" src="/medusa-head-left.webp" alt="" width="17" height="20">
-            <img class="medusa-bridge" src="/medusa-bridge.webp" alt="" width="24" height="12">
-            <img class="medusa-head medusa-head--out" src="/medusa-head-right.webp" alt="" width="17" height="20">
+                 (this session sending — lights in Chunk 03). The MEDUSA emblem
+                 sits between the two facing heads as the centerpiece. -->
+            <img class="medusa-head medusa-head--in" src="/medusa-head-left.webp" alt="" width="27" height="32">
+            <img class="medusa-emblem" src="/medusa-wordmark.webp" alt="" width="26" height="12">
+            <img class="medusa-head medusa-head--out" src="/medusa-head-right.webp" alt="" width="27" height="32">
           </span>
-          <img class="medusa-wordmark" src="/medusa-wordmark.webp" alt="" aria-hidden="true" width="35" height="16">
           <span class="medusa-warn" aria-hidden="true">!</span>
         </button>
         <button class="medusa-badge" id="medusaBadge" type="button" hidden aria-label="Open Medusa inbox">0</button>

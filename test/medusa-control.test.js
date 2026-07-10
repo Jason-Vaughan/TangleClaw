@@ -100,25 +100,31 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     });
   });
 
-  // MED-2K9P art upgrade (approach B): real gold WebP art, per-head <img> so the
-  // inbound/outbound heads glow independently; status carried by state, not recolor.
+  // MED-2K9P art upgrade (approach B): real gold WebP art — two facing heads
+  // flanking the MEDUSA emblem, per-head <img> so the inbound/outbound heads glow
+  // independently; status carried by state (dim off / amber-glow error), not recolor.
   describe('banner mark uses the real art with per-head elements', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
-    it('renders separate inbound/outbound head images and the bridge', () => {
+    const mark = (html.match(/<span class="medusa-mark"[^>]*>([\s\S]*?)<\/span>/) || [])[1] || '';
+    it('renders separate inbound/outbound head images', () => {
       assert.match(html, /class="medusa-head medusa-head--in"[^>]*src="\/medusa-head-left\.webp"/);
       assert.match(html, /class="medusa-head medusa-head--out"[^>]*src="\/medusa-head-right\.webp"/);
-      assert.match(html, /class="medusa-bridge"[^>]*src="\/medusa-bridge\.webp"/);
       // The crude placeholder SVG paths are gone.
       assert.doesNotMatch(html, /class="golden"/);
     });
-    it('uses the MEDUSA emblem image for the wordmark (not the CSS text)', () => {
-      assert.match(html, /class="medusa-wordmark"[^>]*src="\/medusa-wordmark\.webp"/);
-      assert.doesNotMatch(html, /class="medusa-wordmark"[^>]*>medusa</);
+    it('places the MEDUSA emblem between the two heads (no bridge)', () => {
+      // Order within the mark: inbound head → emblem → outbound head.
+      assert.match(mark, /medusa-head--in[\s\S]*medusa-emblem[\s\S]*medusa-head--out/);
+      assert.match(html, /class="medusa-emblem"[^>]*src="\/medusa-wordmark\.webp"/);
+      // The bridge element and its asset reference are gone.
+      assert.doesNotMatch(html, /medusa-bridge/);
     });
-    it('ships the referenced WebP assets', () => {
-      for (const f of ['medusa-head-left.webp', 'medusa-head-right.webp', 'medusa-bridge.webp', 'medusa-wordmark.webp']) {
+    it('ships the referenced WebP assets — and no longer the bridge', () => {
+      for (const f of ['medusa-head-left.webp', 'medusa-head-right.webp', 'medusa-wordmark.webp']) {
         assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', f)), `${f} missing`);
       }
+      assert.ok(!fs.existsSync(path.join(__dirname, '..', 'public', 'medusa-bridge.webp')),
+        'medusa-bridge.webp should be removed');
     });
   });
 });

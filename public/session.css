@@ -341,19 +341,19 @@ body {
   white-space: nowrap;
 }
 
-/* ── Medusa Session-Comms Control (MED-2K9P Chunk 02) ──
-   The two-head mark carries listener status via `--medusa-color`, driven by a
-   state class on `.medusa-control`. RED=off, GREEN=on (pulsing while
-   connecting), AMBER + "!" glyph=error — off and error stay visually distinct so
-   "off" never reads as "broken" (honest status). Status is never color-only: the
-   aria-label carries the state text, the badge shows unread count, the "!" glyph
-   marks error, and connecting/flow use motion (auto-disabled under
-   prefers-reduced-motion, where the badge + aria-live remain the cues). */
+/* ── Medusa Session-Comms Control (MED-2K9P) ──
+   Two facing heads flank the MEDUSA emblem (real gold art). Listener status is
+   carried by STATE, not a flat recolor (approach B): gold at rest (`listening`),
+   desaturated + dimmed when `off`, an amber glow (+ "!" glyph) on `error` — off
+   and error stay visually distinct so "off" never reads as "broken" (honest
+   status), driven by a state class on `.medusa-control`. Status is never
+   color-only: the aria-label carries the state text, the badge shows unread
+   count, the "!" glyph marks error, and connecting/flow use motion (auto-disabled
+   under prefers-reduced-motion, where the badge + aria-live remain the cues). */
 .medusa-control {
   position: relative;
   display: inline-flex;
   align-items: center;
-  --medusa-color: var(--danger);
 }
 .medusa-control[hidden] { display: none; }
 .medusa-heads {
@@ -377,29 +377,20 @@ body {
 .medusa-mark {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
-  height: 20px;
+  gap: 9px;
+  height: 32px;
 }
-/* Real gold art carries the brand; status is shown by STATE, not a flat recolor
-   (MED-2K9P approach B). Each head is its own <img> so the inbound (left) head can
-   glow independently on a received message and the outbound (right) head lights on
-   send (Chunk 03). The bridge sits lower (mouth level) and stays gold — the medium. */
+/* Real gold art carries the brand. Each head is its own <img> so the inbound
+   (left) head can glow independently on a received message and the outbound
+   (right) head lights on send (Chunk 03); the MEDUSA emblem sits between them,
+   a touch shorter than the heads so they read as the endpoints. All three
+   share the state-driven dim/glow below. */
 .medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
-.medusa-bridge { height: 55%; align-self: center; }
+.medusa-emblem { height: 12px; align-self: center; }
 /* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
 .medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
 /* Error = amber glow on the art, kept distinct from off (the "!" also shows). */
 .medusa-control.is-error .medusa-mark img { filter: drop-shadow(0 0 3px var(--amber)); }
-/* The MEDUSA emblem wordmark (gold art, decorative — aria-hidden; the button
-   carries the accessible label). Dims with the heads when off so the whole
-   control reads inactive together. */
-.medusa-wordmark {
-  height: 16px;
-  width: auto;
-  display: block;
-  transition: filter .2s ease, opacity .2s ease;
-}
-.medusa-control.is-off .medusa-wordmark { filter: grayscale(1) brightness(.7); opacity: .4; }
 .medusa-warn {
   display: none;
   color: var(--amber);
@@ -407,11 +398,8 @@ body {
   font-size: 13px;
   line-height: 1;
 }
-/* ── States ── */
-.medusa-control.is-off     { --medusa-color: var(--danger); }
-.medusa-control.is-connecting { --medusa-color: var(--primary); }
-.medusa-control.is-listening  { --medusa-color: var(--primary); }
-.medusa-control.is-error   { --medusa-color: var(--amber); }
+/* ── States ── (the classes JS toggles; the visual rules live above/below —
+   dim on .is-off, amber glow + "!" on .is-error, breathe on .is-connecting) */
 .medusa-control.is-error .medusa-warn { display: inline; }
 .medusa-control.is-connecting .medusa-mark { animation: medusa-breathe 1.2s ease-in-out infinite; }
 @keyframes medusa-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
