@@ -58,7 +58,11 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // so the toggle's first paint reflects the project's current state.
       const fnIdx = src.indexOf('function openSettings');
       assert.ok(fnIdx >= 0);
-      const slice = src.slice(fnIdx, fnIdx + 5000);
+      // Window spans the whole openSettings body; widened from 5000 as the modal
+      // grew (MED-2K9P Chunk 02 added the Medusa pill), which pushed the
+      // settingsEngine change listener past the old probe bound. Assertions below
+      // are openSettings-specific, so a slightly over-wide window is harmless.
+      const slice = src.slice(fnIdx, fnIdx + 9000);
       assert.match(slice, /renderSilentPrimeToggle\(/);
       assert.match(slice, /initialSilentChecked\s*=\s*!!project\.silentPrime/);
     });
@@ -69,7 +73,11 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // hides the toggle and switching back restores it. Preserves the checkbox's
       // current state across the swap.
       const fnIdx = src.indexOf('function openSettings');
-      const slice = src.slice(fnIdx, fnIdx + 5000);
+      // Window spans the whole openSettings body; widened from 5000 as the modal
+      // grew (MED-2K9P Chunk 02 added the Medusa pill), which pushed the
+      // settingsEngine change listener past the old probe bound. Assertions below
+      // are openSettings-specific, so a slightly over-wide window is harmless.
+      const slice = src.slice(fnIdx, fnIdx + 9000);
       assert.match(slice, /getElementById\(['"]settingsEngine['"]\)\.addEventListener\(['"]change['"]/);
       // The change handler must call renderSilentPrimeToggle (not just update state)
       assert.match(slice, /addEventListener\(['"]change['"][\s\S]+?renderSilentPrimeToggle\(/);

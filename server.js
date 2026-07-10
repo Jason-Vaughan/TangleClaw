@@ -1621,6 +1621,7 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     methodology: result.project.methodology.id,
     tags: result.project.tags,
     silentPrime: result.project.silentPrime,
+    medusaEnabled: result.project.medusaEnabled,
     updatedAt: result.project.updatedAt
   };
 
@@ -1819,6 +1820,61 @@ route('GET', '/api/sessions/:project/medusa/status', (req, res, params) => {
   const active = store.sessions.getActive(project.id);
   const query = parseQuery(reqUrl(req).search);
   const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
+  jsonResponse(res, 200, medusa.getStatus(sessionId));
+});
+
+// POST /api/sessions/:project/medusa/toggle — start or stop this session's Medusa
+// listener (MED-2K9P Chunk 02). The banner control's click-toggle. Resolves the
+// active session like the status route (no active session → 409). Body `{enabled}`
+// sets the desired state explicitly (idempotent — safe against double-clicks);
+// omitted → flips the current state. Returns the resulting status. Thin
+// pass-through to lib/medusa; the browser never talks to the Bridge directly.
+route('POST', '/api/sessions/:project/medusa/toggle', (_req, res, params, body) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to toggle Medusa for', 'NO_SESSION');
+  }
+  const isOn = medusa.getStatus(active.id).state !== 'off';
+  const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
+  if (desired) {
+    medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
+  } else {
+    medusa.stopSession(active.id);
+  }
+  jsonResponse(res, 200, medusa.getStatus(active.id));
+});
+
+// GET /api/sessions/:project/medusa/messages — this session's received inbox
+// (MED-2K9P Chunk 02). Backs the read panel. A pure read (no mark-read side
+// effect on GET); the read panel clears unread via the POST /read endpoint below.
+// Resolves the session id like the status route; no session → an empty inbox.
+route('GET', '/api/sessions/:project/medusa/messages', (req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  const query = parseQuery(reqUrl(req).search);
+  const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
+  const messages = sessionId == null ? [] : medusa.getMessages(sessionId);
+  jsonResponse(res, 200, { messages });
+});
+
+// POST /api/sessions/:project/medusa/read — mark this session's inbox read,
+// clearing the unread badge (MED-2K9P Chunk 02). Fired when the operator opens
+// the read panel. Idempotent; a session with no listener is a safe no-op.
+route('POST', '/api/sessions/:project/medusa/read', (_req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  const sessionId = active ? active.id : null;
+  if (sessionId != null) medusa.markRead(sessionId);
   jsonResponse(res, 200, medusa.getStatus(sessionId));
 });
 

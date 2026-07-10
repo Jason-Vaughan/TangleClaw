@@ -341,6 +341,121 @@ body {
   white-space: nowrap;
 }
 
+/* ── Medusa Session-Comms Control (MED-2K9P Chunk 02) ──
+   The two-head mark carries listener status via `--medusa-color`, driven by a
+   state class on `.medusa-control`. RED=off, GREEN=on (pulsing while
+   connecting), AMBER + "!" glyph=error — off and error stay visually distinct so
+   "off" never reads as "broken" (honest status). Status is never color-only: the
+   aria-label carries the state text, the badge shows unread count, the "!" glyph
+   marks error, and connecting/flow use motion (auto-disabled under
+   prefers-reduced-motion, where the badge + aria-live remain the cues). */
+.medusa-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  --medusa-color: var(--danger);
+}
+.medusa-control[hidden] { display: none; }
+.medusa-heads {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;           /* mobile touch target */
+  padding: 0 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-heads:active { background: var(--elevated-bg); }
+.medusa-heads:focus-visible {
+  outline: 2px solid var(--root-accent);
+  outline-offset: 1px;
+}
+.medusa-mark {
+  height: 20px;
+  width: auto;
+  display: block;
+  overflow: visible;
+}
+/* Recolor the golden head shapes to the status color; keep the black facial
+   features as the banner background so the face reads on any theme. Scoped under
+   .medusa-control so the generic class names can't leak. */
+.medusa-control .golden { fill: var(--medusa-color); stroke: none; transition: fill .2s ease; }
+.medusa-control .black { fill: var(--bg); }
+.medusa-wordmark {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--medusa-color);
+  transition: color .2s ease;
+}
+.medusa-warn {
+  display: none;
+  color: var(--amber);
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1;
+}
+/* ── States ── */
+.medusa-control.is-off     { --medusa-color: var(--danger); }
+.medusa-control.is-connecting { --medusa-color: var(--primary); }
+.medusa-control.is-listening  { --medusa-color: var(--primary); }
+.medusa-control.is-error   { --medusa-color: var(--amber); }
+.medusa-control.is-error .medusa-warn { display: inline; }
+.medusa-control.is-connecting .medusa-mark { animation: medusa-breathe 1.2s ease-in-out infinite; }
+@keyframes medusa-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+/* Transient inbound flow — the inbound (left) head glows on a received message.
+   Filter-only (no transform) so the group's translate/scale is preserved. */
+.medusa-control.flow-in .medusa-head--in { animation: medusa-flow .9s ease-out; }
+@keyframes medusa-flow {
+  0%, 100% { filter: none; }
+  30%      { filter: drop-shadow(0 0 5px var(--primary-bright)) brightness(1.5); }
+}
+/* ── Unread badge ── */
+.medusa-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  margin-left: 1px;
+  border: none;
+  border-radius: 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+}
+.medusa-badge[hidden] { display: none; }
+.medusa-badge:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+/* ── Inbox read panel + peers popover (reuse .group-popover chrome) ──
+   .group-popover sets display:none by default (shown via .open); these are
+   toggled by the [hidden] attribute instead, so restore display and let
+   [hidden] win by specificity. */
+.medusa-panel, .medusa-peers { display: block; }
+.medusa-panel[hidden], .medusa-peers[hidden] { display: none; }
+.medusa-panel {
+  right: 0;
+  left: auto;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.medusa-peers { right: 0; left: auto; }
+.medusa-msg {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.medusa-msg:last-child { border-bottom: none; }
+.medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
+.medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
+.medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
+
 /* ── Banner Action Buttons ── */
 .banner-actions {
   display: flex;

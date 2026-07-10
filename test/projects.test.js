@@ -552,6 +552,33 @@ describe('projects', () => {
       assert.ok(bogus.errors[0].includes('wrapSections'));
     });
 
+    // MED-2K9P Chunk 02: per-project Medusa session-comms auto-enable.
+    it('defaults medusaEnabled to false on enrich', () => {
+      const result = projects.updateProject('new-project', { tags: ['x'] });
+      assert.ok(result.project);
+      assert.equal(result.project.medusaEnabled, false);
+    });
+
+    it('persists medusaEnabled and round-trips it through enrich', () => {
+      const on = projects.updateProject('new-project', { medusaEnabled: true });
+      assert.ok(on.project);
+      assert.equal(on.project.medusaEnabled, true);
+      assert.equal(store.projectConfig.load(on.project.path).medusaEnabled, true);
+
+      const off = projects.updateProject('new-project', { medusaEnabled: false });
+      assert.equal(off.project.medusaEnabled, false);
+      assert.equal(store.projectConfig.load(off.project.path).medusaEnabled, false);
+    });
+
+    it('rejects a non-boolean medusaEnabled without mutating state', () => {
+      projects.updateProject('new-project', { medusaEnabled: true });
+      const bad = projects.updateProject('new-project', { medusaEnabled: 'yes' });
+      assert.equal(bad.project, null);
+      assert.ok(bad.errors[0].includes('medusaEnabled'));
+      // Prior true value is untouched by the rejected update.
+      assert.equal(store.projectConfig.load(store.projects.getByName('new-project').path).medusaEnabled, true);
+    });
+
     // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
     describe('activePlan (#428)', () => {
       let planDir;

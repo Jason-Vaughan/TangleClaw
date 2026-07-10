@@ -764,6 +764,9 @@ function openSettings(name) {
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
   // explicit false disables it).
   const initialVersionBumpChecked = project.versionBumpEnabled !== false;
+  // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
+  // default OFF (only an explicit true opts in).
+  const initialMedusaChecked = !!project.medusaEnabled;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -798,6 +801,14 @@ function openSettings(name) {
           <span class="toggle-switch"></span>
         </label>
         <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
+      </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Enable Medusa session comms</span>
+          <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
       </div>
     </div>
     ${renderProjectRulesSection(project)}`;
@@ -1190,6 +1201,11 @@ async function doSaveSettings() {
   const versionBumpEl = document.getElementById('settingsVersionBump');
   if (versionBumpEl) {
     body.versionBumpEnabled = versionBumpEl.checked;
+  }
+  // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — always present (engine-agnostic)
+  const medusaEl = document.getElementById('settingsMedusa');
+  if (medusaEl) {
+    body.medusaEnabled = medusaEl.checked;
   }
   // CC-6 (#381): wrap-summary section selection. undefined → not rendered (skip);
   // null → all 8 (clear override); array → the chosen subset.
