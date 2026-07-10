@@ -122,8 +122,11 @@ body {
   outline-offset: 2px;
 }
 .banner-logo {
-  width: 22px;
-  height: 22px;
+  /* 29px matches the Medusa crest heads; uses the tight-cropped /logo-banner.png
+     (transparent margin removed) so the serpent fills the frame. Still clears the
+     32px back-button row, so the banner height is unchanged. */
+  width: 29px;
+  height: 29px;
   flex-shrink: 0;
   object-fit: contain;
   aspect-ratio: 1;
