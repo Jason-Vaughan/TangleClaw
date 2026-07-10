@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dashboard (landing.js) wrap trigger is now single-flight — no concurrent wraps, no mid-wrap dismissal (UI-3B8N).** `landing.js` `confirmWrap` (the project-card wrap trigger, distinct from the in-session one fixed in #519) awaited `POST /wrap` *without* disabling the confirm button, so a second click during the in-flight wrap launched a **concurrent** wrap (double commit / pipeline race), and Cancel or a backdrop click could dismiss the modal mid-wrap. Applied the same fix #519 landed on `public/session.js`: the first click sets a `wrapInFlight` flag, disables **both** Confirm and Cancel, flips the label to **"Wrapping…"**, and blocks every close path (`closeWrapModal` guards on a strict `force !== true`, so the Cancel handler's event-arg and the backdrop's no-arg close can't slip through) until the request resolves — all restored in `finally` so a failed or hung wrap re-enables cleanly. Driven purely by the request lifecycle, no timers (per the no-timer-UI rule, #98/#268). Regression pin in `test/landing-wrap-single-flight.test.js` (structural, matching the `session-wrapper.test.js` convention).
+
 ## [4.9.0] - 2026-07-09
 
 ### Added
