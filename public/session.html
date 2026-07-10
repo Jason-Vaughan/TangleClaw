@@ -36,6 +36,59 @@
       <!-- Methodology-declared action buttons (#139 Chunk 11b) render here.
            Populated by `renderMethodologyActions` in session.js after loadProject. -->
       <span id="methodologyActions" class="methodology-actions"></span>
+
+      <!-- Medusa session-comms control (MED-2K9P Chunk 02). The two-head mark
+           carries on/off status (RED off / GREEN on, pulsing while connecting)
+           and an AMBER "!" error state kept distinct from off. The inbound head
+           lights transiently on a received message and the badge counts unread.
+           Click the heads to toggle this session's listener; click the badge to
+           open the inbox (marks read). Hidden until the session is known.
+           Head shapes derived from Medusa's medusa-logo.svg (DECISION A). -->
+      <span class="medusa-control is-off" id="medusaControl" hidden>
+        <button class="medusa-heads" id="medusaHeads" type="button"
+                aria-pressed="false" aria-label="Medusa session comms: off. Click to enable.">
+          <svg class="medusa-mark" viewBox="190 255 420 180" aria-hidden="true" focusable="false">
+            <!-- Left head = inbound (this session receiving). -->
+            <g class="medusa-head medusa-head--in" transform="translate(200, 300)">
+              <path d="M80 120 Q50 100 40 80 Q35 60 45 45 Q60 35 80 40 Q100 50 110 70 Q115 90 105 110 Q95 125 80 120 Z" class="golden"/>
+              <ellipse cx="70" cy="80" rx="8" ry="12" class="black"/>
+              <path d="M85 100 Q95 110 105 100 Q100 115 95 120 Q90 115 85 100 Z" class="black"/>
+              <rect x="88" y="105" width="3" height="8" class="golden"/>
+              <rect x="92" y="105" width="3" height="8" class="golden"/>
+              <rect x="96" y="105" width="3" height="8" class="golden"/>
+              <rect x="100" y="105" width="3" height="8" class="golden"/>
+              <path d="M45 45 Q25 25 15 10 Q5 0 0 -10 Q-5 -20 0 -25 Q10 -20 15 -10 Q25 5 35 20 Q45 35 50 50" class="golden"/>
+              <path d="M60 35 Q45 15 35 0 Q25 -15 30 -25 Q40 -30 45 -20 Q50 -5 55 10 Q60 25 65 40" class="golden"/>
+              <path d="M80 30 Q75 10 70 -5 Q65 -20 70 -30 Q80 -35 85 -25 Q90 -10 85 5 Q80 20 75 35" class="golden"/>
+              <path d="M100 35 Q105 15 110 0 Q115 -15 110 -25 Q100 -30 95 -20 Q90 -5 95 10 Q100 25 105 40" class="golden"/>
+              <path d="M115 45 Q135 25 145 10 Q155 0 160 -10 Q165 -20 160 -25 Q150 -20 145 -10 Q135 5 125 20 Q115 35 110 50" class="golden"/>
+            </g>
+            <!-- Right head = outbound (this session sending — lights in Chunk 03). -->
+            <g class="medusa-head medusa-head--out" transform="translate(600, 300) scale(-1, 1)">
+              <path d="M80 120 Q50 100 40 80 Q35 60 45 45 Q60 35 80 40 Q100 50 110 70 Q115 90 105 110 Q95 125 80 120 Z" class="golden"/>
+              <ellipse cx="70" cy="80" rx="8" ry="12" class="black"/>
+              <path d="M85 100 Q95 110 105 100 Q100 115 95 120 Q90 115 85 100 Z" class="black"/>
+              <rect x="88" y="105" width="3" height="8" class="golden"/>
+              <rect x="92" y="105" width="3" height="8" class="golden"/>
+              <rect x="96" y="105" width="3" height="8" class="golden"/>
+              <rect x="100" y="105" width="3" height="8" class="golden"/>
+              <path d="M45 45 Q25 25 15 10 Q5 0 0 -10 Q-5 -20 0 -25 Q10 -20 15 -10 Q25 5 35 20 Q45 35 50 50" class="golden"/>
+              <path d="M60 35 Q45 15 35 0 Q25 -15 30 -25 Q40 -30 45 -20 Q50 -5 55 10 Q60 25 65 40" class="golden"/>
+              <path d="M80 30 Q75 10 70 -5 Q65 -20 70 -30 Q80 -35 85 -25 Q90 -10 85 5 Q80 20 75 35" class="golden"/>
+              <path d="M100 35 Q105 15 110 0 Q115 -15 110 -25 Q100 -30 95 -20 Q90 -5 95 10 Q100 25 105 40" class="golden"/>
+              <path d="M115 45 Q135 25 145 10 Q155 0 160 -10 Q165 -20 160 -25 Q150 -20 145 -10 Q135 5 125 20 Q115 35 110 50" class="golden"/>
+            </g>
+            <!-- Central bridge — the session-to-session connection. -->
+            <rect x="350" y="390" width="100" height="20" rx="10" class="golden"/>
+          </svg>
+          <span class="medusa-wordmark" aria-hidden="true">medusa</span>
+          <span class="medusa-warn" aria-hidden="true">!</span>
+        </button>
+        <button class="medusa-badge" id="medusaBadge" type="button" hidden aria-label="Open Medusa inbox">0</button>
+        <span class="medusa-peers group-popover" id="medusaPeers" role="tooltip" hidden></span>
+        <div class="medusa-panel group-popover" id="medusaPanel" role="dialog" aria-label="Medusa inbox" hidden></div>
+        <span class="sr-only" id="medusaLive" aria-live="polite"></span>
+      </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
       <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
       <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"

@@ -31,7 +31,12 @@ const sessionState = {
   mouseOn: false,
   launchGraceRemaining: 0,
   wrapCompleting: false,
-  wrapDrawerOpen: false
+  wrapDrawerOpen: false,
+  // MED-2K9P Chunk 02 — Medusa session-comms control state. `unread` mirrors the
+  // server badge; `prevUnread` lets a poll detect a fresh inbound (unread rose)
+  // to fire the transient inbound-head flow + aria-live announcement. `shown`
+  // gates first-render so the control appears once the session is known.
+  medusa: { state: 'off', unread: 0, prevUnread: 0, workspaceId: null, lastError: null, shown: false }
 };
 
 // ── Storage Helpers ──
@@ -830,6 +835,191 @@ let pollTimer = null;
 /**
  * Poll session status and update UI.
  */
+// ── Medusa Session-Comms Control (MED-2K9P Chunk 02) ──
+
+/**
+ * Sync the banner Medusa control to the current listener status held in
+ * sessionState.medusa: status color (via a state class), the unread badge, the
+ * error glyph, and the accessible label. Reveals the control on first render.
+ * When unread rose since the last poll (a fresh inbound), fires the transient
+ * inbound-head flow + an aria-live announcement — the non-color/-motion cue.
+ * @returns {void}
+ */
+function renderMedusaControl() {
+  const control = document.getElementById('medusaControl');
+  if (!control) return;
+  const m = sessionState.medusa;
+
+  if (control.hidden) control.hidden = false;
+
+  // First render seeds prevUnread from the current count so a listener that was
+  // already running (or auto-started) with a pre-existing backlog does NOT flash
+  // the inbound head + announce "new message" for messages that predate this page
+  // view. Only unread that rises *after* the first paint is a fresh arrival.
+  if (!m.shown) {
+    m.shown = true;
+    m.prevUnread = m.unread;
+  }
+
+  const STATE_CLASSES = ['is-off', 'is-connecting', 'is-listening', 'is-error'];
+  STATE_CLASSES.forEach((c) => control.classList.remove(c));
+  control.classList.add(STATE_CLASSES.includes(`is-${m.state}`) ? `is-${m.state}` : 'is-off');
+
+  const heads = document.getElementById('medusaHeads');
+  const label = medusaStateLabel(m);
+  heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
+  heads.setAttribute('aria-label', label);
+  heads.title = label;
+
+  const badge = document.getElementById('medusaBadge');
+  if (m.unread > 0) {
+    badge.textContent = String(m.unread);
+    badge.hidden = false;
+    badge.setAttribute('aria-label', `Open Medusa inbox (${m.unread} unread)`);
+  } else {
+    badge.hidden = true;
+  }
+
+  if (m.unread > m.prevUnread) flowMedusaInbound(m.unread - m.prevUnread);
+  m.prevUnread = m.unread;
+}
+
+/**
+ * Human-readable status text for the control's accessible label + tooltip. This
+ * is the never-color-only source of truth for the listener state.
+ * @param {{state: string, unread: number, lastError: (string|null)}} m - Medusa state.
+ * @returns {string}
+ */
+function medusaStateLabel(m) {
+  const unread = m.unread > 0 ? `, ${m.unread} unread` : '';
+  switch (m.state) {
+    case 'listening': return `Medusa session comms: on, listening${unread}. Click to disable.`;
+    case 'connecting': return `Medusa session comms: connecting${unread}. Click to disable.`;
+    // The listener auto-reconnects with backoff while enabled, so "retry" is
+    // automatic; a click here DISABLES it (toggle → off). Label the real action.
+    case 'error': return `Medusa session comms: error — ${m.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
+    default: return `Medusa session comms: off${unread}. Click to enable.`;
+  }
+}
+
+/**
+ * Fire the transient inbound-head flow animation and announce arrival on the
+ * aria-live region, so a received message is perceivable without relying on
+ * color or motion (the animation is auto-suppressed under reduced-motion).
+ * @param {number} n - Count of new messages this poll.
+ * @returns {void}
+ */
+function flowMedusaInbound(n) {
+  const control = document.getElementById('medusaControl');
+  if (control) {
+    control.classList.remove('flow-in');
+    void control.offsetWidth; // reflow so re-adding restarts the animation
+    control.classList.add('flow-in');
+  }
+  const live = document.getElementById('medusaLive');
+  if (live) live.textContent = n === 1 ? 'New Medusa message received' : `${n} new Medusa messages received`;
+}
+
+/**
+ * Poll the Medusa listener status on the existing session-poll cadence (no new
+ * timer, per the no-UI-timers rule). Updates sessionState.medusa and re-renders.
+ * @returns {Promise<void>}
+ */
+async function pollMedusa() {
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/status`);
+  if (!data) return;
+  const m = sessionState.medusa;
+  m.state = data.state;
+  m.unread = data.unread || 0;
+  m.workspaceId = data.workspaceId || null;
+  m.lastError = data.lastError || null;
+  renderMedusaControl();
+}
+
+/**
+ * Toggle this session's Medusa listener on/off (the heads click). Reflects the
+ * returned status immediately; the next poll reconciles.
+ * @returns {Promise<void>}
+ */
+async function toggleMedusa() {
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/toggle`, { method: 'POST' });
+  if (!data) return;
+  const m = sessionState.medusa;
+  m.state = data.state;
+  m.unread = data.unread || 0;
+  m.workspaceId = data.workspaceId || null;
+  m.lastError = data.lastError || null;
+  renderMedusaControl();
+}
+
+/**
+ * Open the inbox read panel (the badge click): fetch received messages, render
+ * them, and mark the inbox read (clearing the unread badge). Closes the panel if
+ * it is already open (toggle).
+ * @returns {Promise<void>}
+ */
+async function openMedusaInbox() {
+  const panel = document.getElementById('medusaPanel');
+  if (!panel) return;
+  if (!panel.hidden) { panel.hidden = true; return; }
+  hideMedusaPeers();
+
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
+  const messages = (data && data.messages) || [];
+  panel.innerHTML = renderMedusaMessages(messages);
+  panel.hidden = false;
+
+  const status = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/read`, { method: 'POST' });
+  if (status) {
+    sessionState.medusa.unread = status.unread || 0;
+    renderMedusaControl();
+  }
+}
+
+/**
+ * Build the read-panel markup from the inbox (newest first). All message content
+ * is escaped — inbound text is untrusted cross-session data.
+ * @param {Array<{from?: string, message?: string}>} messages - Inbox, oldest first.
+ * @returns {string} HTML.
+ */
+function renderMedusaMessages(messages) {
+  if (!messages.length) {
+    return '<div class="group-popover-title">Medusa inbox</div><div class="medusa-msg-empty">No messages yet.</div>';
+  }
+  const rows = messages.slice().reverse().map((msg) => {
+    const from = esc(msg.from || 'unknown');
+    const body = esc(msg.message || '');
+    return `<div class="medusa-msg"><div class="medusa-msg-from">${from}</div><div class="medusa-msg-body">${body}</div></div>`;
+  }).join('');
+  return `<div class="group-popover-title">Medusa inbox</div>${rows}`;
+}
+
+/**
+ * Show the recent-inbound-peers popover on hover (desktop affordance) listing
+ * the distinct senders in the inbox. No-op when empty or the read panel is open.
+ * @returns {Promise<void>}
+ */
+async function showMedusaPeers() {
+  const peers = document.getElementById('medusaPeers');
+  const panel = document.getElementById('medusaPanel');
+  if (!peers || (panel && !panel.hidden)) return;
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
+  const froms = [...new Set(((data && data.messages) || []).map((msg) => msg.from || 'unknown'))];
+  if (!froms.length) return;
+  peers.innerHTML = '<div class="group-popover-title">Recent inbound</div>' +
+    froms.map((f) => `<div class="group-popover-member">${esc(f)}</div>`).join('');
+  peers.hidden = false;
+}
+
+/**
+ * Hide the peers hover popover.
+ * @returns {void}
+ */
+function hideMedusaPeers() {
+  const peers = document.getElementById('medusaPeers');
+  if (peers) peers.hidden = true;
+}
+
 async function pollStatus() {
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/status`);
   if (!data) return;
@@ -904,6 +1094,10 @@ async function pollStatus() {
     sessionState.idleCount = 0;
     sessionState.chimePlayedForIdle = false;
   }
+
+  // MED-2K9P Chunk 02 — refresh the Medusa control on the same cadence (no new
+  // timer). Skipped once the session has ended.
+  if (!sessionState.ended) await pollMedusa();
 }
 
 /**
@@ -2788,7 +2982,24 @@ function bindEvents() {
     if (!e.target.closest('.group-pill')) {
       document.querySelectorAll('.group-popover.open').forEach(el => el.classList.remove('open'));
     }
+    // MED-2K9P Chunk 02 — close the Medusa inbox/peers popovers on outside click.
+    if (!e.target.closest('.medusa-control')) {
+      const panel = $('medusaPanel');
+      if (panel) panel.hidden = true;
+      hideMedusaPeers();
+    }
   });
+
+  // Medusa session-comms control (MED-2K9P Chunk 02): heads = toggle listener,
+  // hover = recent-peers popover (desktop), badge = open inbox.
+  const medusaHeads = $('medusaHeads');
+  if (medusaHeads) {
+    medusaHeads.addEventListener('click', toggleMedusa);
+    medusaHeads.addEventListener('mouseenter', showMedusaPeers);
+    medusaHeads.addEventListener('mouseleave', hideMedusaPeers);
+  }
+  const medusaBadge = $('medusaBadge');
+  if (medusaBadge) medusaBadge.addEventListener('click', openMedusaInbox);
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);

@@ -17,6 +17,7 @@ const os = require('node:os');
 const { createServer } = require('../server');
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+const sessions = require('../lib/sessions');
 
 const OPEN = 1;
 const CONNECTING = 0;
@@ -218,5 +219,193 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     const { status, data } = await get('/api/sessions/demo/medusa/status?sessionId=ghost');
     assert.equal(status, 200);
     assert.equal(data.state, 'off');
+  });
+});
+
+describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
+  let server;
+  let port;
+  let tempDir;
+  let project;
+  let active;
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c02-'));
+    store._setBasePath(tempDir);
+    store.init();
+    const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c02-proj-'));
+    project = store.projects.create({ name: 'switchboard', path: projPath, engine: 'claude', methodology: 'none' });
+    // A real active-session row so getActive resolves (no tmux needed — the row
+    // is all the routes read).
+    active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-c02' });
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+  });
+
+  afterEach(() => {
+    // Drop any listener a test started so the module singleton doesn't leak.
+    medusa.stopSession(active.id);
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /**
+   * @param {string} urlPath - Path to request.
+   * @param {string} method - HTTP method.
+   * @param {object|null} [body] - JSON body to send.
+   * @returns {Promise<{status: number, data: object}>}
+   */
+  function req(urlPath, method, body) {
+    return new Promise((resolve, reject) => {
+      const payload = body ? JSON.stringify(body) : null;
+      const headers = payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {};
+      const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method, headers }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      r.on('error', reject);
+      if (payload) r.write(payload);
+      r.end();
+    });
+  }
+
+  /**
+   * Pre-seed a driven-to-listening listener for the active session using a fake
+   * socket, so route behavior is deterministic (no real Bridge connection).
+   * @returns {FakeWS} The fake socket, already registered + listening.
+   */
+  function seedListener() {
+    let fake;
+    const { workspaceId } = medusa.startSession({
+      projectPath: project.path, sessionId: active.id, name: project.name,
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    fake._open();
+    fake._recv({ type: 'registered', workspaceId, connectionId: 'c1' });
+    return fake;
+  }
+
+  it('toggle returns 404 for an unknown project', async () => {
+    const { status } = await req('/api/sessions/nope/medusa/toggle', 'POST', {});
+    assert.equal(status, 404);
+  });
+
+  it('toggle returns 409 when the project has no active session', async () => {
+    const solo = store.projects.create({
+      name: 'no-session', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c02-nosess-')),
+      engine: 'claude', methodology: 'none'
+    });
+    assert.ok(solo);
+    const { status, data } = await req('/api/sessions/no-session/medusa/toggle', 'POST', {});
+    assert.equal(status, 409);
+    assert.equal(data.code, 'NO_SESSION');
+  });
+
+  it('toggle {enabled:false} stops a running listener (→ off)', async () => {
+    seedListener();
+    assert.equal(medusa.getStatus(active.id).state, 'listening');
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false });
+    assert.equal(status, 200);
+    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null });
+  });
+
+  it('toggle {enabled:true} is idempotent against an already-listening session', async () => {
+    const fake = seedListener();
+    const before = medusa.getStatus(active.id);
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true });
+    assert.equal(status, 200);
+    assert.equal(data.state, 'listening');
+    assert.equal(data.workspaceId, before.workspaceId);
+    // No second register frame — the existing socket was reused, not replaced.
+    assert.equal(fake.sent.filter((f) => JSON.parse(f).type === 'register').length, 1);
+  });
+
+  it('toggle with no body flips off→on (starts a listener)', async () => {
+    assert.equal(medusa.getStatus(active.id).state, 'off');
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', null);
+    assert.equal(status, 200);
+    // Real socket path (no Bridge up in tests) → connecting, honest and non-off.
+    assert.notEqual(data.state, 'off');
+    assert.match(data.workspaceId, /^switchboard-[0-9a-f]{8}$/);
+  });
+
+  it('messages returns the inbox; read clears the unread badge', async () => {
+    const fake = seedListener();
+    fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: 'peer-a', message: 'ping' } });
+    fake._recv({ type: 'new_message', messageId: 'm2', message: { id: 'm2', from: 'peer-b', message: 'pong' } });
+
+    const msgs = await req('/api/sessions/switchboard/medusa/messages', 'GET');
+    assert.equal(msgs.status, 200);
+    assert.equal(msgs.data.messages.length, 2);
+    assert.equal(msgs.data.messages[0].message, 'ping');
+    // GET is a pure read — unread is untouched.
+    assert.equal(medusa.getStatus(active.id).unread, 2);
+
+    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', {});
+    assert.equal(read.status, 200);
+    assert.equal(read.data.unread, 0);
+    // Messages remain after read (badge cleared, history kept).
+    const after = await req('/api/sessions/switchboard/medusa/messages', 'GET');
+    assert.equal(after.data.messages.length, 2);
+  });
+
+  it('messages returns an empty inbox when no listener is running', async () => {
+    const { status, data } = await req('/api/sessions/switchboard/medusa/messages', 'GET');
+    assert.equal(status, 200);
+    assert.deepEqual(data, { messages: [] });
+  });
+
+  it('read is a safe no-op when no listener is running', async () => {
+    const { status, data } = await req('/api/sessions/switchboard/medusa/read', 'POST', {});
+    assert.equal(status, 200);
+    assert.equal(data.state, 'off');
+  });
+});
+
+describe('lib/sessions — _maybeAutoStartMedusa (per-project auto-enable)', () => {
+  let tempDir;
+  const sid = 'autostart-sess';
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-autostart-'));
+  });
+
+  afterEach(() => {
+    medusa.stopSession(sid);
+  });
+
+  after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('does NOT start a listener when medusaEnabled is absent/false', () => {
+    // No project.json medusaEnabled key → default off.
+    sessions._maybeAutoStartMedusa({ path: tempDir, name: 'AutoOff' }, { id: sid });
+    assert.equal(medusa.getStatus(sid).state, 'off');
+  });
+
+  it('starts a listener when medusaEnabled is true', () => {
+    store.projectConfig.save(tempDir, { medusaEnabled: true });
+    sessions._maybeAutoStartMedusa({ path: tempDir, name: 'AutoOn' }, { id: sid });
+    // Real socket path (no Bridge in tests) → honest non-off state, listener present.
+    assert.notEqual(medusa.getStatus(sid).state, 'off');
+    assert.match(medusa.getStatus(sid).workspaceId, /^autoon-[0-9a-f]{8}$/);
+  });
+
+  it('never throws even if start fails (launch must not be bricked)', () => {
+    // A bogus project path still must not throw out of the helper.
+    assert.doesNotThrow(() => sessions._maybeAutoStartMedusa({ path: '/no/such/dir', name: 'Bad' }, { id: 'x' }));
+    medusa.stopSession('x');
   });
 });
