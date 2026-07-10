@@ -746,8 +746,10 @@ function openSettings(name) {
   // not a separate "None" sentinel. Pre-#151 the dropdown offered a None choice
   // that POSTed `methodology: null` and crashed the backend; retired.
   const currentMeth = project.methodology ? project.methodology.id : 'minimal';
+  // Deprecated methodologies (e.g. V1 prawduct — #536) remain selectable for
+  // already-bound projects but are labeled so the state is visible.
   const methOpts = state.methodologies.map(m =>
-    `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}</option>`
+    `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}${m.deprecated ? ' (deprecated)' : ''}</option>`
   ).join('');
 
   const hasSession = project.session && project.session.active;
@@ -1481,7 +1483,10 @@ function renderCreateStep() {
     const engineOpts = buildEngineOptions(state.engines, createData.engine);
     const methPills = state.methodologies.map(m => {
       const sel = m.id === createData.methodology ? ' selected' : '';
-      return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}</div>`;
+      // Deprecated methodologies (e.g. V1 prawduct, superseded by the V2
+      // plugin — #536) stay pickable but carry a visible badge.
+      const dep = m.deprecated ? ' <span class="meth-deprecated">(deprecated)</span>' : '';
+      return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}${dep}</div>`;
     }).join('');
     // Every project has a methodology (#151) — `minimal` is the no-workflow
     // choice in the methodology picker, no separate "None" pseudo-option.
@@ -1491,6 +1496,7 @@ function renderCreateStep() {
       ? `<div class="meth-detail">
            <div class="meth-detail-name">${esc(selMeth.name)}</div>
            <div class="meth-detail-desc">${esc(selMeth.description || '')}</div>
+           ${selMeth.deprecated && selMeth.deprecationNote ? `<div class="meth-detail-deprecated">⚠ ${esc(selMeth.deprecationNote)}</div>` : ''}
            ${selMeth.phases && selMeth.phases.length ? `<div class="meth-detail-phases">Phases: ${selMeth.phases.map(p => esc(typeof p === 'string' ? p : p.id || p.name)).join(' → ')}</div>` : ''}
          </div>` : '';
     body.innerHTML = `

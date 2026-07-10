@@ -4,6 +4,12 @@
   "description": "Structured governance with discovery, planning, building, and independent Critic review.",
   "type": "methodology",
   "version": "1.0.0",
+  "deprecated": true,
+  "deprecationNote": "Superseded by the Prawduct V2 Claude Code plugin (brookstalley/prawduct). This V1 template remains functional as the fallback for projects not yet migrated to plugin governance; new projects should onboard via the plugin (#536).",
+  "playbookEngines": ["claude"],
+  "playbookRuleSections": {
+    "independentCritic": "### Independent Critic Review"
+  },
   "schemaRevision": 4,
   "phases": [
     {
