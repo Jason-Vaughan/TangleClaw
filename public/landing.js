@@ -1189,6 +1189,13 @@ function wrapProject(name) {
 
 let wrapTarget = null;
 
+/**
+ * True while a wrap `POST` is in flight, so a second confirm can't fire a
+ * concurrent wrap and no close path can dismiss the modal mid-wrap. Reset in
+ * `confirmWrap`'s `finally`. Mirrors the session-page fix (#519 / UI-3B8N).
+ */
+let wrapInFlight = false;
+
 function openWrapModal(name) {
   wrapTarget = name;
   document.getElementById('wrapText').innerHTML =
@@ -1204,24 +1211,63 @@ function openWrapModal(name) {
   document.getElementById('wrapModal').classList.add('open');
 }
 
-function closeWrapModal() {
+/**
+ * Close the wrap modal. Blocked while a wrap is in flight unless forced:
+ * the Cancel handler passes the click Event (not `true`) and the backdrop
+ * handler passes nothing, so a strict `force !== true` check stops both from
+ * dismissing the modal mid-wrap; `confirmWrap` passes `force:true` on success.
+ * @param {boolean} [force] `true` to close past the in-flight guard.
+ */
+function closeWrapModal(force) {
+  if (wrapInFlight && force !== true) return;
   document.getElementById('wrapModal').classList.remove('open');
   wrapTarget = null;
 }
 
+/**
+ * Confirm and execute a wrap for the targeted project (dashboard trigger).
+ * Single-flight: the first click sets an in-flight flag, disables both
+ * buttons, and flips the confirm label to "Wrapping…", so a second click
+ * (or Cancel / backdrop) is a no-op until the request resolves — preventing
+ * a double-click from firing two concurrent wraps. All state is restored in
+ * `finally` so a failed or hung wrap re-enables cleanly. No timers — the
+ * state tracks the request lifecycle (no timer-driven UI lifecycle).
+ */
 async function confirmWrap() {
   if (!wrapTarget) return;
+  // Re-entrancy guard: ignore a second confirm while the first wrap POST is
+  // still in flight, so a double-click can't fire two concurrent wraps.
+  if (wrapInFlight) return;
+
   const pw = document.getElementById('wrapPassword').value;
   const body = {};
   if (pw) body.password = pw;
-  const data = await apiMutate(`/api/sessions/${encodeURIComponent(wrapTarget)}/wrap`, 'POST', body);
-  if (!data) {
-    document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
-    document.getElementById('wrapError').classList.remove('hidden');
-    return;
+
+  const confirmBtn = document.getElementById('wrapConfirmBtn');
+  const cancelBtn = document.getElementById('wrapCancelBtn');
+  const priorLabel = confirmBtn.textContent;
+  wrapInFlight = true;
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  confirmBtn.textContent = 'Wrapping…';
+
+  try {
+    const data = await apiMutate(`/api/sessions/${encodeURIComponent(wrapTarget)}/wrap`, 'POST', body);
+    if (!data) {
+      // Failure — surface inline and let `finally` re-enable so the operator
+      // can fix (e.g. wrong password) and retry without reopening.
+      document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
+      document.getElementById('wrapError').classList.remove('hidden');
+      return;
+    }
+    closeWrapModal(true); // force-close past the in-flight guard on success
+    await loadProjects();
+  } finally {
+    wrapInFlight = false;
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+    confirmBtn.textContent = priorLabel;
   }
-  closeWrapModal();
-  await loadProjects();
 }
 
 // ── Theme ──
