@@ -4,7 +4,7 @@
 
 ## 2026-07-10: Chore — session-banner logo size-matched to the Medusa crest (29px, de-padded)
 
-<!-- prawduct: type=chore | chunks=banner-logo-size | scope=logo-rebrand -->
+<!-- prawduct: type=chore | chunks=banner-logo-size | scope=logo-rebrand | status=merged -->
 
 **Why:** operator note — the banner serpent read smaller than the Medusa heads beside it (22px vs 29px) and carried visible transparent margin. **What:** (1) added `public/logo-banner.png` — the green-serpent emblem **tight-cropped to its opaque bbox** (the shared 1024² source has ~5–8% transparent margin; cropped to a centered square so the serpent fills the frame), 128² for retina. (2) `.banner-logo` CSS bumped **22px → 29px** to match the Medusa crest heads; still clears the 32px back-button row so banner height is unchanged. (3) Pointed both banner `<img class="banner-logo">` (session.html + openclaw-view.html) at the new tight asset (was the padded shared `icons/icon-192.png`). The shared PWA/favicon/apple-touch icons are left untouched — they *want* the safe margin (maskable/rounded OS treatment). No `CACHE_NAME` bump needed (session.css + navigations are network-first). **Tests:** n/a (CSS + asset); previewed at 29px next to the Medusa crest for size-match. **VRF:** operator eyeball (banner) after hard refresh.
 
