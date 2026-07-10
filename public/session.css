@@ -360,7 +360,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 44px;           /* mobile touch target */
+  min-height: 30px;           /* match .banner-btn so the control doesn't stretch the banner row */
   padding: 0 6px;
   background: none;
   border: 1px solid transparent;
@@ -378,7 +378,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  height: 32px;
+  height: 29px;
 }
 /* Real gold art carries the brand. Each head is its own <img> so the inbound
    (left) head can glow independently on a received message and the outbound
@@ -390,7 +390,7 @@ body {
    `.medusa-mark img` height:100% above is more specific than a bare `.medusa-emblem`,
    so this override must also qualify with `img` to win (else the emblem renders at
    full head-height). */
-.medusa-mark img.medusa-emblem { height: 26px; align-self: center; }
+.medusa-mark img.medusa-emblem { height: 23px; align-self: center; }
 /* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
 .medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
 /* Error = amber glow on the art, kept distinct from off (the "!" also shows). */
