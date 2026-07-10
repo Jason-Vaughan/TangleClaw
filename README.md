@@ -27,23 +27,39 @@ What started as session persistence grew into a full orchestration platform — 
 ## Screenshots
 
 <p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project%20splash%20screen%20with%20sampele%20cards.png?raw=true" alt="TangleClaw dashboard" width="800">
-  <br><em>Dashboard — project cards with engine badges, methodology status, git info, and session indicators</em>
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" alt="TangleClaw dashboard" width="800">
+  <br><em>Dashboard — every managed project with engine badges, methodology status, git info, and session indicators</em>
 </p>
 
 <p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project%20info%20panel%20expanded.png?raw=true" alt="Project info panel" width="800">
-  <br><em>Project detail panel — engine, methodology, active session, git state, settings, and session management</em>
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" alt="Project info panel" width="800">
+  <br><em>Project detail panel — engine, methodology, active session, git state, groups, and session management</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true" alt="Session History and Search" width="800">
+  <br><em>Session History &amp; Search (new in 4.0) — every wrapped session, searchable across summaries and full transcripts, filterable by date, type, tags, and files touched</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true" alt="In-session view with the Session Switchboard control" width="800">
+  <br><em>In-session view — the terminal wrapper with the command bar, wrap and peek controls, and the <strong>Session Switchboard</strong> control (the two heads beside <em>Wrap</em>)</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" alt="Project Master" width="800">
+  <br><em>Project Master (new in 4.0) — a persistent, read-only assistant that sees across the whole fleet: what's running, what's idle, what shipped</em>
 </p>
 
 ## What TangleClaw Does
 
 - **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
 - **Session continuity** *(new in 4.0)* — every session ends with a structured wrap: a per-session summary, an updated project changelog, and a resume prime so the next session starts with "we left off at X — continue?" instead of a cold open. Full transcripts are snapshotted at wrap and everything is searchable from a per-project **Session History & Search** drawer — filter by date, tags, type, or files touched, then drill from summary into the raw transcript
-- **Five built-in engines** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/) (Google's Gemini CLI successor), [Aider](https://aider.chat), and [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw). Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
+- **Four local engines, plus remote OpenClaw** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/) (Google's Gemini CLI successor), and [Aider](https://aider.chat) run locally; [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) sessions run on a remote host and attach through its connection registry. Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
 - **Launch mode selector** — pick a permission mode when you start a session: Interactive, Accept Edits, Plan Only, Auto, or Bypass. The mode propagates to the engine natively, including remote OpenClaw sessions via ClawBridge
 - **Secure remote access** *(new in 4.0)* — an optional, reversible [Caddy ingress](deploy/INGRESS.md) puts TLS and a password gate in front of everything (dashboard, terminals, APIs), with a break-glass admin reset and machine-to-machine **service tokens** so other projects' scripts can still call the PortHub and shared-docs APIs
 - **Project Master** *(new in 4.0)* — a persistent, fleet-aware assistant session (🧠 in the header) that sees cross-project status: what's running, what's idle, what shipped. Available as a landing-page pane and an in-session drawer
+- **Session Switchboard** *(beta)* — direct session-to-session messaging, so sessions coordinate with each other instead of routing everything through you. A two-head control in the session banner shows honest listener status and lights up on inbound messages, with a per-project auto-enable toggle. **Functionally in beta:** receiving and status are live today; outbound send is landing next
 - **Methodology enforcement** — pluggable JSON templates define phases, rules, and session behavior. Rules are structural gates, not suggestions. First-class [Prawduct](https://github.com/brookstalley/prawduct) integration — projects governed by the Prawduct V2 plugin get their governance from the plugin itself, with TangleClaw deferring automatically and surfacing drift visibly
 - **Session rules & self-improvement** *(new in 4.0)* — durable behavioral directives injected into every session, editable from a per-project Project Rules modal — and the AI can propose rule improvements at wrap time, gated by an independent Critic review with version history and rollback ([docs](docs/session-rules-self-improvement.md))
 - **Orchestration profiles** *(new in 4.0)* — bind a project to an OpenAI-compatible endpoint (e.g. a LiteLLM front door serving local models) and its engine launches against it, per project, with no engine-config edits. Key references stay hygienic: `env:`/`file:` indirection, never keys in argv
@@ -67,6 +83,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Terminal copy & touch that actually work** — plain drag copies terminal text to *your* clipboard (even on a remote browser), one-finger drag scrolls on mobile, long-press selects with a native-style Copy pill
 - **File upload** — send files into the project directory from the session wrapper, with flag-only secret scanning (an amber badge warns you; nothing is blocked or scrubbed)
 - **Idle chime** — audio notification when the terminal goes idle, so you know the agent has finished
+- **Session Switchboard** *(beta)* — inter-session messaging over a lightweight listener each session registers on launch. The banner control (two facing heads) carries listener state — off / connecting / listening / error — never by color alone: the accessible label announces state, an unread badge counts inbound messages, the inbound head lights on each new arrival, and an aria-live region announces them. A per-project **Enable session comms** toggle (default off) auto-starts the listener for new sessions of that project; the banner control is the per-session override. Receiving is live; outbound send is in progress
 
 ### Continuity (new in 4.0)
 - **Per-project continuity store** — `<project>/.tangleclaw/continuity/`: a curated `index.md` hot tier (rewritten each wrap, read back as the next session's resume), an append-only `changelog.md`, per-session 8-section wrap summaries, and a self-maintaining `## Map` of the project's features
@@ -97,15 +114,16 @@ What started as session persistence grew into a full orchestration platform — 
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
 ### Security & Remote Access
-- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
+- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
 - **Forced admin setup** — behind the ingress, the first-run wizard requires creating an admin login before anything else works
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
 - **User attribution** — when the ingress authenticates a user, TangleClaw records who did what
+- **Auth-drift warning** — the dashboard flags when the ingress auth *config* and the *live* Caddy state disagree, so a half-applied gate can't quietly masquerade as protection
 - **HTTPS via mkcert, one click** — for direct (no-ingress) mode, a wizard generates localhost certs and hot-swaps the server to HTTPS
 
 ### Integrations
-- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, and instance version display
+- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, instance version display, and a per-connection ClawBridge port (auto-allocated or explicit)
 - **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — live background-process visibility on OpenClaw instances, remote session pre-create with permission modes, and remote wrap capture
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation: ingests exchange data, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
@@ -297,7 +315,7 @@ curl -s http://localhost:3102/api/health | python3 -m json.tool
 
 Planned features and improvements — contributions and feedback welcome.
 
-- **Session Switchboard** — inter-session agent messaging, so sessions can coordinate directly instead of through the operator
+- **Session Switchboard — outbound send** — the switchboard's receive side and banner control are in beta today (see [What TangleClaw Does](#what-tangleclaw-does)); the remaining piece is letting a session *send* to another and pick a target
 - **Project Master actions** — today the Master assistant is read-only; next it acts (confirm-gated) on your behalf across the fleet
 - **TangleMeth** — AI-guided methodology builder: an interview generates a complete methodology framework (phase docs, enforcement hooks, artifact templates, test suites) instead of hand-written JSON
 - **Cross-model governance** — extend the deeper governance layers beyond Claude Code to the other engines
