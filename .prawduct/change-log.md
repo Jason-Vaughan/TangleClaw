@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-10: Fix — Medusa banner real art + un-dismissable inbox modal fix (MED-2K9P Chunk 02 follow-up)
+
+<!-- prawduct: type=fix | chunks=02-followup | scope=med-2k9p -->
+
+**Why:** operator smoke of the shipped Chunk-02 banner surfaced (a) a hard bug — the inbox read panel could not be dismissed once opened — and (b) that the placeholder head art wasn't good enough; the operator supplied production Medusa artwork. **What:** (1) **Inbox-modal fix** (`public/session.{js,css}`) — opening the inbox marks it read → `unread` drops to 0 → the toggle **badge self-hides**, leaving no close control and no Escape handler (a hard trap on touch, where the only remaining path — an outside tap — is undiscoverable once the badge vanishes). Root-cause fix: an explicit **✕ close** button in the panel header (delegated handler, since the panel `innerHTML` re-renders on each open), **Escape-to-close** (scoped to when the panel is open), and a dedicated `closeMedusaInbox()`. (2) **Art upgrade** (`public/session.{html,css}`, approach B, operator-ratified) — replaced the hand-vectored placeholder SVG with production gold WebP art as per-head `<img>` pieces (`public/medusa-head-left.webp`, `medusa-head-right.webp`, `medusa-bridge.webp`) plus the `medusa-wordmark.webp` MEDUSA emblem, downscaled ~525 KB PNG → ~19 KB alpha-preserving WebP. Status is now carried by **state, not a flat recolor**: gold at rest (`listening`), **dim + desaturate** when off, amber glow on error (with the "!"), inbound head still glows on receive — the gold brand survives while status stays honest and distinct per state; keeping the heads as separate images preserves the per-head status Chunk 03's outbound needs. `CACHE_NAME` `-38→-39`. **Deferred to backlog:** MED-4T7K (accept-&-insert), MED-6P2N (auto-toggle), MED-9X3B (autonomous relay — flagged: command-injection trust surface, needs a threat model). **Critic:** `chunk` then `cumulative`, 0 blocking. **Tests:** `test/medusa-control.test.js` (+ close-button in empty+populated panel, ✕/Escape wiring, per-head art present, emblem wordmark used, placeholder-gone, assets ship), cache pin `test/openclaw-bridge-port-row.test.js` `-38→-39`. Full suite 1988/0/1 @ e28b08d. **VRF:** visual change — operator on-device eyeball owed.
+
 ## 2026-07-10: Feat — Medusa banner control + receive badge + per-project auto-enable (MED-2K9P Chunk 02)
 
 <!-- prawduct: type=feat | chunks=02 | scope=med-2k9p | status=merged -->
