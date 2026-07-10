@@ -2381,13 +2381,20 @@ function renderPrResolutionWidget(widget) {
   wrap.dataset.optionsKey = 'prHandling';
   wrap.dataset.kind = 'pr-check';
 
-  const label = document.createElement('label');
+  // a11y (UI-7H4K): the caption spans N per-PR selects, so it's a group
+  // caption (not a single-control <label>). Mark the list a labelled group
+  // and give each select its own accessible name from the PR title below.
+  const groupLabelId = 'wrapPrResolveGroupLabel';
+  const label = document.createElement('div');
   label.className = 'wrap-decision-label';
+  label.id = groupLabelId;
   label.textContent = `Resolve ${widget.prs.length} open PR${widget.prs.length === 1 ? '' : 's'} on this branch:`;
   wrap.appendChild(label);
 
   const list = document.createElement('div');
   list.className = 'wrap-decision-prlist';
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-labelledby', groupLabelId);
   for (const pr of widget.prs) {
     const row = document.createElement('div');
     row.className = 'wrap-decision-prrow';
@@ -2406,12 +2413,15 @@ function renderPrResolutionWidget(widget) {
       titleEl = document.createElement('span');
     }
     titleEl.className = 'wrap-decision-prtitle';
+    titleEl.id = `wrapPrTitle-${pr.number}`;
     titleEl.textContent = `#${pr.number} ${pr.title}`;
     titleEl.title = pr.url || '';
 
     const sel = document.createElement('select');
     sel.className = 'wrap-decision-prselect';
     sel.dataset.prNumber = String(pr.number);
+    // a11y (UI-7H4K): name this resolution select by its PR title.
+    sel.setAttribute('aria-labelledby', titleEl.id);
     for (const opt of [
       { v: '', label: '— pick —' },
       { v: 'merge', label: 'Merge before wrap' },
@@ -2455,8 +2465,10 @@ function renderPlanPickerWidget(widget) {
   wrap.className = 'wrap-decision wrap-decision--planpick';
   wrap.dataset.kind = 'priming-roll';
 
+  const selId = 'wrapPlanPickSelect';
   const label = document.createElement('label');
   label.className = 'wrap-decision-label';
+  label.htmlFor = selId; // a11y (UI-7H4K): tie the label to its single control
   label.textContent = `Multiple in-progress plans (${widget.candidates.length}) — pick which one this session was working from:`;
   wrap.appendChild(label);
 
@@ -2469,6 +2481,7 @@ function renderPlanPickerWidget(widget) {
 
   const sel = document.createElement('select');
   sel.className = 'wrap-decision-planselect';
+  sel.id = selId;
   sel.title = 'Pick the build plan this session was working from — it will be saved as this project’s active plan.';
   const placeholder = document.createElement('option');
   placeholder.value = '';
