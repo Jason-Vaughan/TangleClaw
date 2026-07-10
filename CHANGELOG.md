@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-07-10
+
 ### Changed
 
 - **Session-banner logo enlarged to match the Medusa crest (29px) and de-padded.** The banner serpent rendered at 22px with ~5–8% transparent margin baked into the shared icon, so it read smaller than the Medusa heads beside it. Added a tight-cropped banner-only asset (`public/logo-banner.png`, margin removed so the serpent fills the frame) and bumped `.banner-logo` to 29px — matching the crest heads. Still clears the 32px back-button row, so the banner height is unchanged. Session + OpenClaw-view banners both updated; the shared PWA/favicon/apple-touch icons keep their safe margin untouched.
