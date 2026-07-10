@@ -869,7 +869,7 @@ function renderMedusaControl() {
   const label = medusaStateLabel(m);
   heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
   heads.setAttribute('aria-label', label);
-  heads.title = label;
+  heads.title = medusaHelpText(m);
 
   const badge = document.getElementById('medusaBadge');
   if (m.unread > 0) {
@@ -900,6 +900,26 @@ function medusaStateLabel(m) {
     case 'error': return `Medusa session comms: error — ${m.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
     default: return `Medusa session comms: off${unread}. Click to enable.`;
   }
+}
+
+/**
+ * Richer hover-tooltip help (the `title`), distinct from the concise aria-label:
+ * explains what Medusa *is* and what this session is *doing* in the current
+ * state. Desktop-hover affordance; touch / assistive-tech users still get the
+ * state from the aria-label (medusaStateLabel).
+ * @param {{state: string, unread: number, lastError: (string|null)}} m - Medusa state.
+ * @returns {string}
+ */
+function medusaHelpText(m) {
+  const doing = {
+    listening: 'On — listening for messages from your other TangleClaw sessions'
+      + (m.unread > 0 ? ` (${m.unread} unread — click the badge to read)` : ''),
+    connecting: 'Connecting to the message bridge…',
+    error: `Enabled but can't reach the bridge — ${m.lastError || 'auto-retrying'}`,
+  }[m.state] || 'Off — this session can\'t send or receive session messages';
+  const action = m.state === 'off' ? 'connect this session' : 'disconnect';
+  return `Medusa: session-to-session comms (the switchboard) — message your other `
+    + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.`;
 }
 
 /**
@@ -983,15 +1003,30 @@ async function openMedusaInbox() {
  * @returns {string} HTML.
  */
 function renderMedusaMessages(messages) {
+  // Header carries an explicit ✕ close: the badge that opens the panel self-hides
+  // on read (unread → 0), so it can't be the only dismiss control (mobile trap).
+  const head = '<div class="group-popover-title medusa-panel-head"><span>Medusa inbox</span>'
+    + '<button type="button" class="medusa-panel-close" aria-label="Close inbox">✕</button></div>';
   if (!messages.length) {
-    return '<div class="group-popover-title">Medusa inbox</div><div class="medusa-msg-empty">No messages yet.</div>';
+    return `${head}<div class="medusa-msg-empty">No messages yet.</div>`;
   }
   const rows = messages.slice().reverse().map((msg) => {
     const from = esc(msg.from || 'unknown');
     const body = esc(msg.message || '');
     return `<div class="medusa-msg"><div class="medusa-msg-from">${from}</div><div class="medusa-msg-body">${body}</div></div>`;
   }).join('');
-  return `<div class="group-popover-title">Medusa inbox</div>${rows}`;
+  return `${head}${rows}`;
+}
+
+/**
+ * Close the inbox read panel (the ✕ button and Escape). Safe to call when already
+ * closed. Separate from openMedusaInbox's toggle so the badge — which self-hides on
+ * read — is never the only path to dismiss the panel.
+ * @returns {void}
+ */
+function closeMedusaInbox() {
+  const panel = document.getElementById('medusaPanel');
+  if (panel) panel.hidden = true;
 }
 
 /**
@@ -3000,6 +3035,20 @@ function bindEvents() {
   }
   const medusaBadge = $('medusaBadge');
   if (medusaBadge) medusaBadge.addEventListener('click', openMedusaInbox);
+  // The inbox panel needs its own dismiss paths: the ✕ (delegated — the panel's
+  // innerHTML is re-rendered on each open) and Escape. The badge self-hides on read,
+  // so it cannot be relied on to close the panel it just opened.
+  const medusaPanel = $('medusaPanel');
+  if (medusaPanel) {
+    medusaPanel.addEventListener('click', (e) => {
+      if (e.target.closest('.medusa-panel-close')) closeMedusaInbox();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const panel = $('medusaPanel');
+    if (panel && !panel.hidden) { closeMedusaInbox(); hideMedusaPeers(); }
+  });
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);

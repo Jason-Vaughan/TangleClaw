@@ -341,26 +341,26 @@ body {
   white-space: nowrap;
 }
 
-/* ── Medusa Session-Comms Control (MED-2K9P Chunk 02) ──
-   The two-head mark carries listener status via `--medusa-color`, driven by a
-   state class on `.medusa-control`. RED=off, GREEN=on (pulsing while
-   connecting), AMBER + "!" glyph=error — off and error stay visually distinct so
-   "off" never reads as "broken" (honest status). Status is never color-only: the
-   aria-label carries the state text, the badge shows unread count, the "!" glyph
-   marks error, and connecting/flow use motion (auto-disabled under
-   prefers-reduced-motion, where the badge + aria-live remain the cues). */
+/* ── Medusa Session-Comms Control (MED-2K9P) ──
+   Two facing heads flank the MEDUSA emblem (real gold art). Listener status is
+   carried by STATE, not a flat recolor (approach B): gold at rest (`listening`),
+   desaturated + dimmed when `off`, an amber glow (+ "!" glyph) on `error` — off
+   and error stay visually distinct so "off" never reads as "broken" (honest
+   status), driven by a state class on `.medusa-control`. Status is never
+   color-only: the aria-label carries the state text, the badge shows unread
+   count, the "!" glyph marks error, and connecting/flow use motion (auto-disabled
+   under prefers-reduced-motion, where the badge + aria-live remain the cues). */
 .medusa-control {
   position: relative;
   display: inline-flex;
   align-items: center;
-  --medusa-color: var(--danger);
 }
 .medusa-control[hidden] { display: none; }
 .medusa-heads {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 44px;           /* mobile touch target */
+  min-height: 30px;           /* match .banner-btn so the control doesn't stretch the banner row */
   padding: 0 6px;
   background: none;
   border: 1px solid transparent;
@@ -375,23 +375,26 @@ body {
   outline-offset: 1px;
 }
 .medusa-mark {
-  height: 20px;
-  width: auto;
-  display: block;
-  overflow: visible;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 29px;
 }
-/* Recolor the golden head shapes to the status color; keep the black facial
-   features as the banner background so the face reads on any theme. Scoped under
-   .medusa-control so the generic class names can't leak. */
-.medusa-control .golden { fill: var(--medusa-color); stroke: none; transition: fill .2s ease; }
-.medusa-control .black { fill: var(--bg); }
-.medusa-wordmark {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .3px;
-  color: var(--medusa-color);
-  transition: color .2s ease;
-}
+/* Real gold art carries the brand. Each head is its own <img> so the inbound
+   (left) head can glow independently on a received message and the outbound
+   (right) head lights on send (Chunk 03); the MEDUSA emblem sits between them,
+   a touch shorter than the heads so they read as the endpoints. All three
+   share the state-driven dim/glow below. */
+.medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
+/* Emblem: a touch shorter than the heads (they read as the endpoints). The
+   `.medusa-mark img` height:100% above is more specific than a bare `.medusa-emblem`,
+   so this override must also qualify with `img` to win (else the emblem renders at
+   full head-height). */
+.medusa-mark img.medusa-emblem { height: 23px; align-self: center; }
+/* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
+.medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
+/* Error = amber glow on the art, kept distinct from off (the "!" also shows). */
+.medusa-control.is-error .medusa-mark img { filter: drop-shadow(0 0 3px var(--amber)); }
 .medusa-warn {
   display: none;
   color: var(--amber);
@@ -399,11 +402,8 @@ body {
   font-size: 13px;
   line-height: 1;
 }
-/* ── States ── */
-.medusa-control.is-off     { --medusa-color: var(--danger); }
-.medusa-control.is-connecting { --medusa-color: var(--primary); }
-.medusa-control.is-listening  { --medusa-color: var(--primary); }
-.medusa-control.is-error   { --medusa-color: var(--amber); }
+/* ── States ── (the classes JS toggles; the visual rules live above/below —
+   dim on .is-off, amber glow + "!" on .is-error, breathe on .is-connecting) */
 .medusa-control.is-error .medusa-warn { display: inline; }
 .medusa-control.is-connecting .medusa-mark { animation: medusa-breathe 1.2s ease-in-out infinite; }
 @keyframes medusa-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
@@ -455,6 +455,25 @@ body {
 .medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
 .medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
 .medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
+/* Explicit dismiss control — the badge that opens the inbox self-hides once read
+   (unread → 0), so the panel needs its own close affordance. Touch-first: relying
+   on an outside tap left the panel un-closeable on mobile once the badge vanished. */
+.medusa-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.medusa-panel-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
+.medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 
 /* ── Banner Action Buttons ── */
 .banner-actions {

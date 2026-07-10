@@ -53,9 +53,9 @@ describe('OpenClaw connection card — conditional Bridge Port row (#491)', () =
   });
 
   it('CACHE_NAME is bumped so active service workers pick up the new card', () => {
-    // This test owns the exact current pin (latest bump: MED-2K9P Chunk 02 →
-    // v3-38, which edits session.*/ui.js). Older generations assert "past
-    // v3-NN" — see bridge-port-input.test.js.
-    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-38';/);
+    // This test owns the exact current pin (latest bump: MED-2K9P art upgrade +
+    // inbox close-button fix → v3-39, which edits session.*/ui.js). Older
+    // generations assert "past v3-NN" — see bridge-port-input.test.js.
+    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-39';/);
   });
 });
