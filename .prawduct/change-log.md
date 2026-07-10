@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-10: Fix — V1 prawduct playbook gated by engine + rule; V1 methodology deprecated (#536)
+
+<!-- prawduct: type=fix | chunks=v1-remnant-bugfix | scope=prawduct-v1-remnant-bugfix | status=shipped -->
+
+**Why:** TC never fully migrated off its V1-internal `prawduct` methodology — the full "Session Playbook: Prawduct" (incl. the Independent Critic protocol) was injected into every non-plugin-governed project's generated config: 19 CLAUDE.md files fleet-wide, including non-Claude engines where the governance cannot apply, and regardless of `independentCritic: false` (the render mismatch the TiLT v2 session hit, running V1 prose + a hand-rolled Critic instead of the plugin's `critic-reviewer`). Operator decision: **bugfix now, migrate later** — don't strip governance from the 12 unmigrated drift/vendored projects. **What:** template-declared, generator-enforced gates (template.json reconciles additively into live installs on boot #136; playbook.md is user-owned after first copy, so stripping is heading-based at render time): `playbookEngines: ["claude"]` + `playbookRuleSections: {independentCritic: "### Independent Critic Review"}` (strips on **explicit false** only), via a single `_renderPlaybook` replacing the four per-engine `getPlaybook` sites (`lib/engines.js`). V1 template marked `deprecated` + `deprecationNote` (surfaced by `listTemplates`, badged in both pickers; `CACHE_NAME` v3-40). Critic findings fixed in-branch: `attachProject` now applies detected-methodology `defaultRules` like create/switch (asymmetric-gate class), and `_renderPlaybook` warns on heading-miss / strips-to-empty. **Verified live:** boot merged the new template keys; ClawCode-x/.codex.yaml + both .antigravity.md lost the playbook; TiLT v2 (inner, explicit false) lost only the Critic section; UCI/Notse/WhitePapers (true) kept it; plugin-governed untouched. **Tests:** `test/prawduct-playbook-gating.test.js` (12), attach default-rules pin (`test/projects.test.js`), CACHE_NAME pin update; suite 4036/0-fail. **Critic:** cumulative (0 blocking, 3 warnings) → fixes → verify-resolutions chain (0/0/0).
+
 ## 2026-07-10: Chore — session-banner logo size-matched to the Medusa crest (29px, de-padded)
 
 <!-- prawduct: type=chore | chunks=banner-logo-size | scope=logo-rebrand | status=merged -->
