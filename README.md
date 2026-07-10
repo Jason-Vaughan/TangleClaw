@@ -27,13 +27,28 @@ What started as session persistence grew into a full orchestration platform — 
 ## Screenshots
 
 <p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project%20splash%20screen%20with%20sampele%20cards.png?raw=true" alt="TangleClaw dashboard" width="800">
-  <br><em>Dashboard — project cards with engine badges, methodology status, git info, and session indicators</em>
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" alt="TangleClaw dashboard" width="800">
+  <br><em>Dashboard — every managed project with engine badges, methodology status, git info, and session indicators</em>
 </p>
 
 <p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project%20info%20panel%20expanded.png?raw=true" alt="Project info panel" width="800">
-  <br><em>Project detail panel — engine, methodology, active session, git state, settings, and session management</em>
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" alt="Project info panel" width="800">
+  <br><em>Project detail panel — engine, methodology, active session, git state, groups, and session management</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true" alt="Session History and Search" width="800">
+  <br><em>Session History &amp; Search (new in 4.0) — every wrapped session, searchable across summaries and full transcripts, filterable by date, type, tags, and files touched</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true" alt="In-session view with the Session Switchboard control" width="800">
+  <br><em>In-session view — the terminal wrapper with the command bar, wrap and peek controls, and the <strong>Session Switchboard</strong> control (the two heads beside <em>Wrap</em>)</em>
+</p>
+
+<p align="center">
+  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" alt="Project Master" width="800">
+  <br><em>Project Master (new in 4.0) — a persistent, read-only assistant that sees across the whole fleet: what's running, what's idle, what shipped</em>
 </p>
 
 ## What TangleClaw Does
@@ -99,15 +114,16 @@ What started as session persistence grew into a full orchestration platform — 
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
 ### Security & Remote Access
-- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
+- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
 - **Forced admin setup** — behind the ingress, the first-run wizard requires creating an admin login before anything else works
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
 - **User attribution** — when the ingress authenticates a user, TangleClaw records who did what
+- **Auth-drift warning** — the dashboard flags when the ingress auth *config* and the *live* Caddy state disagree, so a half-applied gate can't quietly masquerade as protection
 - **HTTPS via mkcert, one click** — for direct (no-ingress) mode, a wizard generates localhost certs and hot-swaps the server to HTTPS
 
 ### Integrations
-- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, and instance version display
+- **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** — SSH or Web UI mode, connection registry, health checks, auto SSH tunnels with self-healing, reverse proxy, auto device pairing, instance version display, and a per-connection ClawBridge port (auto-allocated or explicit)
 - **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** — live background-process visibility on OpenClaw instances, remote session pre-create with permission modes, and remote wrap capture
 - **[Eval Audit Mode](docs/eval-audit-mode.md)** — multi-tiered AI agent evaluation: ingests exchange data, scores with intelligent gating, tracks baselines, detects drift, generates incidents
 
