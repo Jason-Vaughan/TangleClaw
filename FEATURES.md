@@ -169,3 +169,8 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `test/wrap-drawer.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/wrap-pipeline.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/wrap-step-priming-roll.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-09)
+
+- **TBD** — touched in this session: `test/landing-wrap-single-flight.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-drawer-select-a11y.test.js`. <!-- describe -->
