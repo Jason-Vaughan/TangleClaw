@@ -203,6 +203,21 @@ describe('MedusaListener', () => {
     l.stop();
   });
 
+  it('caps the inbox at maxInbox, dropping the oldest', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', maxInbox: 3, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      sockets[0]._message({ type: 'new_message', messageId: id, message: { id, message: id } });
+    }
+    // Oldest two ('a','b') dropped; most-recent three retained in order.
+    assert.deepEqual(l.inbox.map((m) => m.id), ['c', 'd', 'e']);
+    assert.equal(l.unread, 5); // unread counter is independent of the cap.
+    l.stop();
+  });
+
   it('markRead resets unread but keeps the inbox', () => {
     const { factory, sockets } = makeFactory();
     const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
