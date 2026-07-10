@@ -26,30 +26,40 @@ What started as session persistence grew into a full orchestration platform — 
 
 ## Screenshots
 
-<p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" alt="TangleClaw dashboard" width="800">
-  <br><em>Dashboard — every managed project with engine badges, methodology status, git info, and session indicators</em>
-</p>
+<sub><em>Click any screenshot to open it full size.</em></sub>
 
-<p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" alt="Project info panel" width="800">
-  <br><em>Project detail panel — engine, methodology, active session, git state, groups, and session management</em>
-</p>
-
-<p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true" alt="Session History and Search" width="800">
-  <br><em>Session History &amp; Search (new in 4.0) — every wrapped session, searchable across summaries and full transcripts, filterable by date, type, tags, and files touched</em>
-</p>
-
-<p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true" alt="In-session view with the Session Switchboard control" width="800">
-  <br><em>In-session view — the terminal wrapper with the command bar, wrap and peek controls, and the <strong>Session Switchboard</strong> control (the two heads beside <em>Wrap</em>)</em>
-</p>
-
-<p align="center">
-  <img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" alt="Project Master" width="800">
-  <br><em>Project Master (new in 4.0) — a persistent, read-only assistant that sees across the whole fleet: what's running, what's idle, what shipped</em>
-</p>
+<table>
+<tr>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" width="400" alt="TangleClaw dashboard"></a>
+  <br><sub><b>Dashboard</b> — every managed project with engine badges, methodology status, git info, and session indicators</sub>
+</td>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" width="400" alt="Project detail panel"></a>
+  <br><sub><b>Project detail panel</b> — engine, methodology, active session, git state, groups, and session management</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true" width="400" alt="Session History and Search"></a>
+  <br><sub><b>Session History &amp; Search</b> <i>(new in 4.0)</i> — every wrapped session, searchable across summaries and full transcripts; filter by date, type, tags, files touched</sub>
+</td>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true" width="400" alt="In-session view with the Session Switchboard control"></a>
+  <br><sub><b>In-session view</b> — the terminal wrapper with the command bar, wrap/peek controls, and the <b>Session Switchboard</b> control (the two heads beside <i>Wrap</i>)</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" width="400" alt="Project Master"></a>
+  <br><sub><b>Project Master</b> <i>(new in 4.0)</i> — a persistent, read-only fleet assistant that pops open as a drawer inside any session (and as a landing-page pane): what's running, what's idle, what shipped</sub>
+</td>
+<td width="50%" align="center" valign="top">
+  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true" width="400" alt="Project settings"></a>
+  <br><sub><b>Project settings</b> — per-project engine, methodology, tags, Project Map / Feature Index, auto version bump, and the <b>Enable Medusa session comms</b> switch</sub>
+</td>
+</tr>
+</table>
 
 ## What TangleClaw Does
 
