@@ -895,7 +895,9 @@ function medusaStateLabel(m) {
   switch (m.state) {
     case 'listening': return `Medusa session comms: on, listening${unread}. Click to disable.`;
     case 'connecting': return `Medusa session comms: connecting${unread}. Click to disable.`;
-    case 'error': return `Medusa session comms: error — ${m.lastError || 'cannot reach the bridge'}${unread}. Click to retry.`;
+    // The listener auto-reconnects with backoff while enabled, so "retry" is
+    // automatic; a click here DISABLES it (toggle → off). Label the real action.
+    case 'error': return `Medusa session comms: error — ${m.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
     default: return `Medusa session comms: off${unread}. Click to enable.`;
   }
 }
