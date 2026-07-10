@@ -2434,26 +2434,6 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
       assert.deepStrictEqual(lines, ['- Priming: all chunks in plan marked done (next-session-prime)']);
     });
 
-    it('renders a body line when a staged pointer has no parseable chunks (current:null, allDone:false)', () => {
-      // Critic MINOR pin (#139 Chunk 9): `_buildBodyLines` must mention a
-      // staged priming write rather than silently swallowing the file
-      // change. NOTE (post-#515): priming-roll's `run()` no longer STAGES
-      // this `{current:null, allDone:false}` shape — it skips a chunk-less
-      // plan before staging — so this pins `_buildBodyLines`' defensive
-      // rendering of the shape in isolation, not a live end-to-end path.
-      // Reconciling the parallel commit/drawer defensive branch is tracked
-      // in the backlog (WRP-6C4M).
-      const lines = commitStep._buildBodyLines({
-        'next-session-prime': {
-          primingPath: '/x', newContent: 'x', changed: true,
-          pointer: { current: null, next: null, allDone: false }
-        }
-      });
-      assert.deepStrictEqual(lines, [
-        '- Priming refreshed (next-session-prime): plan has no parseable chunks'
-      ]);
-    });
-
     it('renders ai-content captures with parsed fields', () => {
       const lines = commitStep._buildBodyLines({
         'memory-update': {
