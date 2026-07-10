@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-10: Chore — new TangleClaw logo (green serpent) across all in-app icons
+
+<!-- prawduct: type=chore | chunks=logo-rebrand | scope=logo-rebrand -->
+
+**Why:** operator branding refresh — new green-serpent emblem, wanted everywhere (in-app + GitHub). **What:** replaced all in-app icon assets **in place** (no reference/HTML/manifest changes): `public/logo-icon.png` (favicon + landing dash-logo), `public/logo.png` (onerror fallback), `public/icons/icon-192.png` (session-banner mini + PWA), `public/icons/icon-512.png` (PWA), `public/icons/apple-touch-icon.png` — all resized (Pillow LANCZOS) from the operator-supplied **transparent** 1024² PNG. Favicon **2.5 MB → 256 KB**. Kept the `logo-text.png` text wordmark (new art is icon-only). The GitHub README emblem (separate `project-assets` repo, previously a flattened black-bg variant) is refreshed to the same transparent version in the same pass. **Design note:** the new art is a self-contained transparent emblem (corners alpha-0, soft green glow halo), so it drops onto any background — unlike the first (black-bg) candidate whose snake coiled around opaque black and couldn't be keyed transparent. **Tests:** n/a (binary asset swap; no code/manifest change); previewed on dark + light at banner/landing/96px sizes. **VRF:** operator eyeball owed (favicon/banner after hard refresh).
+
 ## 2026-07-10: Fix — Medusa banner real art + un-dismissable inbox modal fix (MED-2K9P Chunk 02 follow-up)
 
 <!-- prawduct: type=fix | chunks=02-followup | scope=med-2k9p | status=merged -->
