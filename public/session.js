@@ -869,7 +869,7 @@ function renderMedusaControl() {
   const label = medusaStateLabel(m);
   heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
   heads.setAttribute('aria-label', label);
-  heads.title = label;
+  heads.title = medusaHelpText(m);
 
   const badge = document.getElementById('medusaBadge');
   if (m.unread > 0) {
@@ -900,6 +900,26 @@ function medusaStateLabel(m) {
     case 'error': return `Medusa session comms: error — ${m.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
     default: return `Medusa session comms: off${unread}. Click to enable.`;
   }
+}
+
+/**
+ * Richer hover-tooltip help (the `title`), distinct from the concise aria-label:
+ * explains what Medusa *is* and what this session is *doing* in the current
+ * state. Desktop-hover affordance; touch / assistive-tech users still get the
+ * state from the aria-label (medusaStateLabel).
+ * @param {{state: string, unread: number, lastError: (string|null)}} m - Medusa state.
+ * @returns {string}
+ */
+function medusaHelpText(m) {
+  const doing = {
+    listening: 'On — listening for messages from your other TangleClaw sessions'
+      + (m.unread > 0 ? ` (${m.unread} unread — click the badge to read)` : ''),
+    connecting: 'Connecting to the message bridge…',
+    error: `Enabled but can't reach the bridge — ${m.lastError || 'auto-retrying'}`,
+  }[m.state] || 'Off — this session can\'t send or receive session messages';
+  const action = m.state === 'off' ? 'connect this session' : 'disconnect';
+  return `Medusa: session-to-session comms (the switchboard) — message your other `
+    + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.`;
 }
 
 /**

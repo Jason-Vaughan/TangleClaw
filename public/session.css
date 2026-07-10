@@ -386,7 +386,11 @@ body {
    a touch shorter than the heads so they read as the endpoints. All three
    share the state-driven dim/glow below. */
 .medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
-.medusa-emblem { height: 12px; align-self: center; }
+/* Emblem: a touch shorter than the heads (they read as the endpoints). The
+   `.medusa-mark img` height:100% above is more specific than a bare `.medusa-emblem`,
+   so this override must also qualify with `img` to win (else the emblem renders at
+   full head-height). */
+.medusa-mark img.medusa-emblem { height: 26px; align-self: center; }
 /* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
 .medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
 /* Error = amber glow on the art, kept distinct from off (the "!" also shows). */

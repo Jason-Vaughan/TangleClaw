@@ -127,4 +127,19 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
         'medusa-bridge.webp should be removed');
     });
   });
+
+  // Hover help — the control's `title` explains what Medusa is + what it's doing,
+  // distinct from the concise aria-label (which stays the accessible name).
+  describe('control has descriptive hover help', () => {
+    it('medusaHelpText explains the switchboard and the live state', () => {
+      const body = fnBody('medusaHelpText');
+      assert.match(body, /switchboard|session-to-session/);
+      assert.match(body, /listening/);   // the "on" state describes what it's doing
+    });
+    it('wires the tooltip to the help text, not the terse aria-label', () => {
+      assert.match(src, /heads\.title\s*=\s*medusaHelpText\(m\)/);
+      // aria-label stays the concise state label (accessible name hygiene).
+      assert.match(src, /heads\.setAttribute\('aria-label', label\)/);
+    });
+  });
 });
