@@ -174,3 +174,11 @@ entries that span multiple co-equal locations.
 
 - **TBD** — touched in this session: `test/landing-wrap-single-flight.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/wrap-drawer-select-a11y.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-09)
+
+- **TBD** — touched in this session: `lib/medusa-listener.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa-registry.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-medusa.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/medusa-listener.test.js`. <!-- describe -->
