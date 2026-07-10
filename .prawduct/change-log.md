@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-10: Feat — Medusa listener core, the session switchboard's server-side spine (MED-2K9P Chunk 01)
+
+<!-- prawduct: type=feat | chunks=01 | scope=med-2k9p | status=merged -->
+
+**Why:** MED-2K9P Chunk 01 (build plan `.prawduct/artifacts/build-plan.md`) — the keystone of in-banner session-to-session comms ("the switchboard"), realizing the vision of replacing the tmux `send-keys` hack after a live Medusa v1.0.0-rc dogfood confirmed delivery works. Merged as PR #525 (main `49f8049`). **What:** a per-session **in-TC-server WebSocket client** (`lib/medusa-listener.js`) that registers a workspace against the Medusa Bridge, receives inbound messages (post-`registered` offline-queue drain + live pushes, both `new_message` envelopes), keeps presence fresh via `listener_heartbeat`, and exposes an observable state machine (`off`/`connecting`/`listening`/`error`) over a **bounded** in-memory inbox (most-recent 500) with capped-exponential-backoff reconnect; a `wsFactory` seam for tests. Plus `lib/medusa-registry.js` (mints/persists/reuses a stable `<slug>-<hex>` workspace id at `<project>/.tangleclaw/medusa/registry.json`, corrupt→empty) and `lib/medusa.js` (per-session lifecycle + status/inbox pass-throughs). Surfaced read-only via `GET /api/sessions/:project/medusa/status`. **No UI (Chunk 02).** Zero new deps (Node 22 built-in `WebSocket`). **verify-api findings (locked in `api-notes-medusa.md`):** the Bridge WS is on the HTTP port **+1** (`:3010`); WS-register + `POST /messages/direct` are **unauthenticated** (no `A2A_SECRET` on TC's path — dropped a planned deliverable); WS-only registration is not addressable offline (store-and-forward needs an HTTP register → Chunk 04). **Critic:** `final` → `verify-resolutions` → `cumulative` → `verify-resolutions` (chain), 0 blocking; the cumulative WARNING (unbounded inbox) resolved by the 500-cap. Independent PR review: 0 blocking/0 warning/3 notes. Trust model: trusted-local loopback. **Tests:** `test/medusa-listener.test.js` + `test/api-medusa.test.js` (+30); full suite 1970/0/1 @ b62ec1c.
+
 ## 2026-07-09: Chore — prune the injected config surface (global-rules + guides + TC's CLAUDE.md)
 
 <!-- prawduct: type=chore | chunks=prune-injected-config | scope=config-injection-prune | status=merged -->
