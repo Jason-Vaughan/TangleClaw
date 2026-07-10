@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Medusa banner control now uses the real Medusa artwork (MED-2K9P art upgrade).** Replaced the hand-vectored placeholder head SVG with the production gold art — two facing heads flanking the central bridge, plus the MEDUSA emblem wordmark — as per-head `<img>` pieces (`public/medusa-head-left.webp`, `medusa-head-right.webp`, `medusa-bridge.webp`, `medusa-wordmark.webp`), downscaled from ~525 KB of source PNG to ~19 KB of alpha-preserving WebP. Status is now carried by **state, not a flat recolor** (approach B): the gold art stays the brand at rest (`listening`), **dims + desaturates** when `off`, glows amber on `error` (alongside the "!"), and the inbound head still glows on a received message — so the artwork survives while the status read stays honest and distinct per state. Keeping the heads as separate images preserves the per-head status the control needs (inbound left / outbound right in Chunk 03). `public/session.html`, `public/session.css`; `CACHE_NAME` bumped `v3-38 → v3-39` (edits `session.*`). New source-probe assertions in `test/medusa-control.test.js` (per-head art present, emblem wordmark used, placeholder SVG gone, assets ship).
+
+### Fixed
+
+- **The Medusa inbox panel could not be dismissed once opened (MED-2K9P Chunk 02 bug).** Opening the inbox marks it read → `unread` drops to 0 → the badge that toggles the panel **self-hid**, leaving no close control and no Escape handler — a hard trap on touch (the only remaining path, an outside tap, is undiscoverable once the badge vanishes). Added an explicit **✕ close** button in the panel header (delegated handler, since the panel's `innerHTML` re-renders on each open), **Escape-to-close**, and a dedicated `closeMedusaInbox()` (`public/session.js`, `public/session.css`). Regression pins in `test/medusa-control.test.js` (close button rendered in both the empty and populated panel, and the close + Escape wiring).
+
 ## [4.11.0] - 2026-07-09
 
 ### Added

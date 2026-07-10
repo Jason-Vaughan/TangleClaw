@@ -375,23 +375,31 @@ body {
   outline-offset: 1px;
 }
 .medusa-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   height: 20px;
+}
+/* Real gold art carries the brand; status is shown by STATE, not a flat recolor
+   (MED-2K9P approach B). Each head is its own <img> so the inbound (left) head can
+   glow independently on a received message and the outbound (right) head lights on
+   send (Chunk 03). The bridge sits lower (mouth level) and stays gold — the medium. */
+.medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
+.medusa-bridge { height: 55%; align-self: center; }
+/* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
+.medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
+/* Error = amber glow on the art, kept distinct from off (the "!" also shows). */
+.medusa-control.is-error .medusa-mark img { filter: drop-shadow(0 0 3px var(--amber)); }
+/* The MEDUSA emblem wordmark (gold art, decorative — aria-hidden; the button
+   carries the accessible label). Dims with the heads when off so the whole
+   control reads inactive together. */
+.medusa-wordmark {
+  height: 16px;
   width: auto;
   display: block;
-  overflow: visible;
+  transition: filter .2s ease, opacity .2s ease;
 }
-/* Recolor the golden head shapes to the status color; keep the black facial
-   features as the banner background so the face reads on any theme. Scoped under
-   .medusa-control so the generic class names can't leak. */
-.medusa-control .golden { fill: var(--medusa-color); stroke: none; transition: fill .2s ease; }
-.medusa-control .black { fill: var(--bg); }
-.medusa-wordmark {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .3px;
-  color: var(--medusa-color);
-  transition: color .2s ease;
-}
+.medusa-control.is-off .medusa-wordmark { filter: grayscale(1) brightness(.7); opacity: .4; }
 .medusa-warn {
   display: none;
   color: var(--amber);
@@ -455,6 +463,25 @@ body {
 .medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
 .medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
 .medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
+/* Explicit dismiss control — the badge that opens the inbox self-hides once read
+   (unread → 0), so the panel needs its own close affordance. Touch-first: relying
+   on an outside tap left the panel un-closeable on mobile once the badge vanished. */
+.medusa-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.medusa-panel-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
+.medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 
 /* ── Banner Action Buttons ── */
 .banner-actions {

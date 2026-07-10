@@ -71,4 +71,54 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     assert.match(body, /getElementById\(['"]medusaLive['"]\)/);
     assert.match(body, /new Medusa message/);
   });
+
+  // Regression — inbox modal could not be dismissed once opened: opening it marks
+  // read → unread 0 → the badge (the toggle) self-hides, leaving no close control
+  // and no Escape handler (mobile trap). Fix: explicit ✕ in the panel header, a
+  // delegated close handler, Escape-to-close, and a dedicated closeMedusaInbox().
+  describe('inbox panel is dismissable (regression: self-hiding badge left it stuck)', () => {
+    it('renders an explicit close button in both the empty and populated panel', () => {
+      const body = fnBody('renderMedusaMessages');
+      // The shared header holds the ✕ close control...
+      assert.match(body, /medusa-panel-close/);
+      assert.match(body, /aria-label="Close inbox"/);
+      // ...and it is used in both branches (header const, no lone title left behind).
+      assert.doesNotMatch(body, /'<div class="group-popover-title">Medusa inbox<\/div>'/);
+    });
+
+    it('exposes a dedicated close path separate from the open toggle', () => {
+      const body = fnBody('closeMedusaInbox');
+      assert.match(body, /panel\.hidden\s*=\s*true/);
+    });
+
+    it('wires the close button (delegated) and Escape to close the panel', () => {
+      // Delegated because the panel innerHTML is re-rendered on each open.
+      assert.match(src, /\.medusa-panel-close'\)\)\s*closeMedusaInbox\(\)/);
+      // Escape closes the open panel.
+      assert.match(src, /e\.key !== 'Escape'/);
+      assert.match(src, /!panel\.hidden.*closeMedusaInbox\(\)/s);
+    });
+  });
+
+  // MED-2K9P art upgrade (approach B): real gold WebP art, per-head <img> so the
+  // inbound/outbound heads glow independently; status carried by state, not recolor.
+  describe('banner mark uses the real art with per-head elements', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
+    it('renders separate inbound/outbound head images and the bridge', () => {
+      assert.match(html, /class="medusa-head medusa-head--in"[^>]*src="\/medusa-head-left\.webp"/);
+      assert.match(html, /class="medusa-head medusa-head--out"[^>]*src="\/medusa-head-right\.webp"/);
+      assert.match(html, /class="medusa-bridge"[^>]*src="\/medusa-bridge\.webp"/);
+      // The crude placeholder SVG paths are gone.
+      assert.doesNotMatch(html, /class="golden"/);
+    });
+    it('uses the MEDUSA emblem image for the wordmark (not the CSS text)', () => {
+      assert.match(html, /class="medusa-wordmark"[^>]*src="\/medusa-wordmark\.webp"/);
+      assert.doesNotMatch(html, /class="medusa-wordmark"[^>]*>medusa</);
+    });
+    it('ships the referenced WebP assets', () => {
+      for (const f of ['medusa-head-left.webp', 'medusa-head-right.webp', 'medusa-bridge.webp', 'medusa-wordmark.webp']) {
+        assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', f)), `${f} missing`);
+      }
+    });
+  });
 });

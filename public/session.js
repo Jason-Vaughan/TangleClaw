@@ -983,15 +983,30 @@ async function openMedusaInbox() {
  * @returns {string} HTML.
  */
 function renderMedusaMessages(messages) {
+  // Header carries an explicit ✕ close: the badge that opens the panel self-hides
+  // on read (unread → 0), so it can't be the only dismiss control (mobile trap).
+  const head = '<div class="group-popover-title medusa-panel-head"><span>Medusa inbox</span>'
+    + '<button type="button" class="medusa-panel-close" aria-label="Close inbox">✕</button></div>';
   if (!messages.length) {
-    return '<div class="group-popover-title">Medusa inbox</div><div class="medusa-msg-empty">No messages yet.</div>';
+    return `${head}<div class="medusa-msg-empty">No messages yet.</div>`;
   }
   const rows = messages.slice().reverse().map((msg) => {
     const from = esc(msg.from || 'unknown');
     const body = esc(msg.message || '');
     return `<div class="medusa-msg"><div class="medusa-msg-from">${from}</div><div class="medusa-msg-body">${body}</div></div>`;
   }).join('');
-  return `<div class="group-popover-title">Medusa inbox</div>${rows}`;
+  return `${head}${rows}`;
+}
+
+/**
+ * Close the inbox read panel (the ✕ button and Escape). Safe to call when already
+ * closed. Separate from openMedusaInbox's toggle so the badge — which self-hides on
+ * read — is never the only path to dismiss the panel.
+ * @returns {void}
+ */
+function closeMedusaInbox() {
+  const panel = document.getElementById('medusaPanel');
+  if (panel) panel.hidden = true;
 }
 
 /**
@@ -3000,6 +3015,20 @@ function bindEvents() {
   }
   const medusaBadge = $('medusaBadge');
   if (medusaBadge) medusaBadge.addEventListener('click', openMedusaInbox);
+  // The inbox panel needs its own dismiss paths: the ✕ (delegated — the panel's
+  // innerHTML is re-rendered on each open) and Escape. The badge self-hides on read,
+  // so it cannot be relied on to close the panel it just opened.
+  const medusaPanel = $('medusaPanel');
+  if (medusaPanel) {
+    medusaPanel.addEventListener('click', (e) => {
+      if (e.target.closest('.medusa-panel-close')) closeMedusaInbox();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const panel = $('medusaPanel');
+    if (panel && !panel.hidden) { closeMedusaInbox(); hideMedusaPeers(); }
+  });
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);
