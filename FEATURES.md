@@ -182,3 +182,9 @@ entries that span multiple co-equal locations.
 - **TBD** — touched in this session: `lib/medusa.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/api-medusa.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/medusa-listener.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-09)
+
+- **TBD** — touched in this session: `public/session.html`. <!-- describe -->
+- **TBD** — touched in this session: `test/medusa-control.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/settings-modal-silentprime.test.js`. <!-- describe -->
