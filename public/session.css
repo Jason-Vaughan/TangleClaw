@@ -413,6 +413,9 @@ body {
 /* Transient inbound flow — the inbound (left) head glows on a received message.
    Filter-only (no transform) so the group's translate/scale is preserved. */
 .medusa-control.flow-in .medusa-head--in { animation: medusa-flow .9s ease-out; }
+/* Transient outbound flow — the outbound (right) head glows on a successful send,
+   mirroring the inbound glow so the two directions read symmetrically. */
+.medusa-control.flow-out .medusa-head--out { animation: medusa-flow .9s ease-out; }
 @keyframes medusa-flow {
   0%, 100% { filter: none; }
   30%      { filter: drop-shadow(0 0 5px var(--primary-bright)) brightness(1.5); }
@@ -477,6 +480,66 @@ body {
 }
 .medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
 .medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+
+/* ── Compose (outbound) — button + panel form (MED-2K9P Chunk 03) ── */
+.medusa-compose {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  margin-left: 1px;
+  border: none;
+  border-radius: 10px;
+  background: var(--elevated-bg);
+  color: var(--root-accent);
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-compose[hidden] { display: none; }
+.medusa-compose:hover { color: var(--text); }
+.medusa-compose:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+/* Reuse the .medusa-panel chrome (right-anchored popover); the form stacks. */
+.medusa-compose-label {
+  display: block;
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.medusa-compose-target,
+.medusa-compose-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 6px;
+  background: var(--elevated-bg);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.medusa-compose-text { resize: vertical; min-height: 48px; white-space: pre-wrap; }
+.medusa-compose-target:focus-visible,
+.medusa-compose-text:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-compose-send {
+  margin-top: 8px;
+  width: 100%;
+  min-height: 34px;
+  border: none;
+  border-radius: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-compose-send:hover { background: var(--primary-bright); }
+.medusa-compose-send:disabled { opacity: .6; cursor: default; }
+.medusa-compose-send:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 
 /* ── Banner Action Buttons ── */
 .banner-actions {

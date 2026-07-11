@@ -59,8 +59,14 @@
           <span class="medusa-warn" aria-hidden="true">!</span>
         </button>
         <button class="medusa-badge" id="medusaBadge" type="button" hidden aria-label="Open Medusa inbox">0</button>
+        <!-- Compose (outbound, MED-2K9P Chunk 03): shown only while the listener is
+             on (you must be registered to send). Opens the compose panel; the
+             outbound (right) head lights on a successful send. -->
+        <button class="medusa-compose" id="medusaCompose" type="button" hidden
+                aria-label="Compose a Medusa message" aria-haspopup="dialog" aria-expanded="false">➤</button>
         <span class="medusa-peers group-popover" id="medusaPeers" role="tooltip" hidden></span>
         <div class="medusa-panel group-popover" id="medusaPanel" role="dialog" aria-label="Medusa inbox" hidden></div>
+        <div class="medusa-panel medusa-compose-panel group-popover" id="medusaComposePanel" role="dialog" aria-label="Compose a Medusa message" hidden></div>
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>

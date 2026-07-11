@@ -880,6 +880,16 @@ function renderMedusaControl() {
     badge.hidden = true;
   }
 
+  // Compose (outbound) is only meaningful while the listener is on — you must be
+  // registered to have a truthful `from`. Hide it (and any open compose panel)
+  // when off so an off session never offers a send that would fail.
+  const compose = document.getElementById('medusaCompose');
+  if (compose) {
+    const canSend = m.state !== 'off';
+    compose.hidden = !canSend;
+    if (!canSend) closeMedusaCompose();
+  }
+
   if (m.unread > m.prevUnread) flowMedusaInbound(m.unread - m.prevUnread);
   m.prevUnread = m.unread;
 }
@@ -941,6 +951,30 @@ function flowMedusaInbound(n) {
 }
 
 /**
+ * Fire the transient outbound-head flow animation on a successful send, mirroring
+ * flowMedusaInbound: the outbound (right) head lights and the arrival is announced
+ * on the aria-live region so the send is perceivable without relying on color or
+ * motion (the animation self-suppresses under prefers-reduced-motion).
+ * @param {string} label - Human label for the target (name or id).
+ * @param {string} status - The honest send status ('received' | 'queued').
+ * @returns {void}
+ */
+function flowMedusaOutbound(label, status) {
+  const control = document.getElementById('medusaControl');
+  if (control) {
+    control.classList.remove('flow-out');
+    void control.offsetWidth; // reflow so re-adding restarts the animation
+    control.classList.add('flow-out');
+  }
+  const live = document.getElementById('medusaLive');
+  if (live) {
+    live.textContent = status === 'queued'
+      ? `Message queued for ${label} (offline)`
+      : `Message delivered to ${label}`;
+  }
+}
+
+/**
  * Poll the Medusa listener status on the existing session-poll cadence (no new
  * timer, per the no-UI-timers rule). Updates sessionState.medusa and re-renders.
  * @returns {Promise<void>}
@@ -983,6 +1017,7 @@ async function openMedusaInbox() {
   if (!panel) return;
   if (!panel.hidden) { panel.hidden = true; return; }
   hideMedusaPeers();
+  closeMedusaCompose();
 
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
   const messages = (data && data.messages) || [];
@@ -1053,6 +1088,126 @@ async function showMedusaPeers() {
 function hideMedusaPeers() {
   const peers = document.getElementById('medusaPeers');
   if (peers) peers.hidden = true;
+}
+
+/**
+ * Open the compose panel (the ➤ button): fetch the live roster, render the target
+ * picker + message field, and focus it. Toggles closed if already open. Closes
+ * the read panel / peers so the two right-anchored popovers never overlap.
+ * @returns {Promise<void>}
+ */
+async function openMedusaCompose() {
+  const panel = document.getElementById('medusaComposePanel');
+  const compose = document.getElementById('medusaCompose');
+  if (!panel) return;
+  if (!panel.hidden) { closeMedusaCompose(); return; }
+
+  closeMedusaInbox();
+  hideMedusaPeers();
+
+  panel.innerHTML = renderMedusaCompose(null); // loading state first (honest, no fake list)
+  panel.hidden = false;
+  if (compose) compose.setAttribute('aria-expanded', 'true');
+
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/roster`);
+  // Honesty: a FAILED roster fetch (api() → null, e.g. Bridge unreachable) is NOT
+  // the same as an empty roster. Surface the real error (with retry) rather than
+  // falsely claiming "no other sessions are online" — the feature's honest-status
+  // constraint runs both directions, not just the false-"sent" one (Critic Chunk 03).
+  if (data === null) {
+    panel.innerHTML = renderMedusaCompose([], api.lastError || 'the message bridge is unreachable');
+    return;
+  }
+  panel.innerHTML = renderMedusaCompose(data.workspaces || []);
+  const select = document.getElementById('medusaTarget');
+  if (select) select.focus();
+}
+
+/**
+ * Build the compose-panel markup: a target picker from the roster, a message
+ * field, and a Send button. All roster-supplied text (names/ids) is escaped —
+ * workspace names are cross-session data. A null roster renders a loading state;
+ * an empty roster renders an honest "no other sessions" state with Send disabled.
+ * @param {Array<{id: string, name?: string, connected?: boolean, listener?: {active?: boolean}}>|null} workspaces - Roster, or null while loading.
+ * @param {string} [errorMsg] - When set, render an honest failure/retry state instead of a roster.
+ * @returns {string} HTML.
+ */
+function renderMedusaCompose(workspaces, errorMsg) {
+  const head = '<div class="group-popover-title medusa-panel-head"><span>Send a message</span>'
+    + '<button type="button" class="medusa-panel-close" aria-label="Close compose">✕</button></div>';
+  if (errorMsg) {
+    // A real fetch failure — never disguised as an empty roster (honest status).
+    return `${head}<div class="medusa-msg-empty">Couldn't load sessions: ${esc(errorMsg)} Reopen to retry.</div>`;
+  }
+  if (workspaces === null) {
+    return `${head}<div class="medusa-msg-empty">Loading sessions…</div>`;
+  }
+  if (!workspaces.length) {
+    return `${head}<div class="medusa-msg-empty">No other Medusa sessions are online to message.</div>`;
+  }
+  const options = workspaces.map((w) => {
+    const online = w.connected || (w.listener && w.listener.active);
+    const label = esc(w.name || w.id) + (online ? '' : ' (offline)');
+    return `<option value="${esc(w.id)}">${label}</option>`;
+  }).join('');
+  return `${head}`
+    + '<label class="medusa-compose-label" for="medusaTarget">To</label>'
+    + `<select class="medusa-compose-target" id="medusaTarget">${options}</select>`
+    + '<label class="medusa-compose-label" for="medusaComposeText">Message</label>'
+    + '<textarea class="medusa-compose-text" id="medusaComposeText" rows="3" '
+    + 'placeholder="Message another session…"></textarea>'
+    + '<button type="button" class="medusa-compose-send" id="medusaSendBtn">Send</button>';
+}
+
+/**
+ * Send the composed message (the Send button): POST to the send endpoint with the
+ * chosen target + text, then surface the HONEST result via a toast — delivered
+ * (`received`), queued (recipient offline), or failed — never a blanket "sent".
+ * On success the outbound head lights, the field clears, and the panel closes.
+ * @returns {Promise<void>}
+ */
+async function sendMedusaMessage() {
+  const select = document.getElementById('medusaTarget');
+  const text = document.getElementById('medusaComposeText');
+  const btn = document.getElementById('medusaSendBtn');
+  if (!select || !text) return;
+
+  const to = select.value;
+  const message = text.value.trim();
+  const label = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.replace(/ \(offline\)$/, '') : to;
+  if (!to) { showMethodologyActionToast('Pick a session to message.', true); return; }
+  if (!message) { showMethodologyActionToast('Type a message to send.', true); text.focus(); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/send`, 'POST', { to, message });
+
+  if (result && result.status) {
+    // Honest outcome — delivered vs queued are DIFFERENT and both true.
+    if (result.status === 'queued') {
+      showMethodologyActionToast(`Queued for ${label} — offline, they'll get it on reconnect.`, false);
+    } else {
+      showMethodologyActionToast(`Delivered to ${label}.`, false);
+    }
+    flowMedusaOutbound(label, result.status);
+    closeMedusaCompose();
+  } else {
+    // api() surfaces the server's error message on api.lastError; never claim sent.
+    const msg = api.lastError || 'send failed';
+    showMethodologyActionToast(`Couldn't send: ${msg}`, true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+  }
+}
+
+/**
+ * Close the compose panel (the ✕, Escape, send success, or going off). Safe when
+ * already closed. Clears the transient message field so a reopen starts fresh.
+ * @returns {void}
+ */
+function closeMedusaCompose() {
+  const panel = document.getElementById('medusaComposePanel');
+  const compose = document.getElementById('medusaCompose');
+  if (panel) panel.hidden = true;
+  if (compose) compose.setAttribute('aria-expanded', 'false');
 }
 
 async function pollStatus() {
@@ -3044,10 +3199,23 @@ function bindEvents() {
       if (e.target.closest('.medusa-panel-close')) closeMedusaInbox();
     });
   }
+  // Compose (outbound): the ➤ opens the picker; the panel's controls are delegated
+  // because its innerHTML is re-rendered on each open (the ✕ close + the Send button).
+  const medusaCompose = $('medusaCompose');
+  if (medusaCompose) medusaCompose.addEventListener('click', openMedusaCompose);
+  const medusaComposePanel = $('medusaComposePanel');
+  if (medusaComposePanel) {
+    medusaComposePanel.addEventListener('click', (e) => {
+      if (e.target.closest('.medusa-panel-close')) { closeMedusaCompose(); return; }
+      if (e.target.closest('.medusa-compose-send')) sendMedusaMessage();
+    });
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     const panel = $('medusaPanel');
     if (panel && !panel.hidden) { closeMedusaInbox(); hideMedusaPeers(); }
+    const composePanel = $('medusaComposePanel');
+    if (composePanel && !composePanel.hidden) closeMedusaCompose();
   });
 
   // Banner buttons

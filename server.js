@@ -1878,6 +1878,53 @@ route('POST', '/api/sessions/:project/medusa/read', (_req, res, params) => {
   jsonResponse(res, 200, medusa.getStatus(sessionId));
 });
 
+// GET /api/sessions/:project/medusa/roster — the live roster of other registered
+// workspaces this session can message (MED-2K9P Chunk 03), proxied from the Bridge
+// (`GET /workspaces`) with the calling session's own workspace excluded. Requires
+// an active session (409). The browser never calls the Bridge directly.
+route('GET', '/api/sessions/:project/medusa/roster', async (_req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to list a roster for', 'NO_SESSION');
+  }
+  try {
+    const workspaces = await medusa.getRoster({ sessionId: active.id });
+    jsonResponse(res, 200, { workspaces });
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_ROSTER_FAILED');
+  }
+});
+
+// POST /api/sessions/:project/medusa/send — send a direct message from this
+// session to another workspace (MED-2K9P Chunk 03). Body `{ to, message }`.
+// Requires an active session (409). Returns the HONEST result — `received`
+// (delivered live) or `queued` (recipient offline) — never a blanket "sent";
+// validation and Bridge failures surface as errors, not false successes.
+route('POST', '/api/sessions/:project/medusa/send', async (_req, res, params, body) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to send from', 'NO_SESSION');
+  }
+  try {
+    const result = await medusa.sendMessage({
+      sessionId: active.id,
+      to: body && body.to,
+      message: body && body.message
+    });
+    jsonResponse(res, 200, result);
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED');
+  }
+});
+
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
 // request once the session view has opened the wrap drawer, so the poll won't
 // reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.
