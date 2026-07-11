@@ -104,96 +104,96 @@ entries that span multiple co-equal locations.
 
 ## TODO (auto-stubbed 2026-07-04)
 
-- **TBD** — touched in this session: `test/api-openclaw.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-openclaw.test.js`. Tests the /api/openclaw/connections route family (CRUD + test/approve).
 
 ## TODO (auto-stubbed 2026-07-06)
 
-- **TBD** — touched in this session: `docs/openclaw-setup.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/bridge-port-input.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/master-drawer-frontend.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/openclaw-bridge-port-row.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/openclaw-setup.md`. Operator guide for setting up an OpenClaw remote-agent connection.
+- **TBD** — touched in this session: `test/bridge-port-input.test.js`. Tests tcParseBridgePort Bridge-port field parsing (#489).
+- **TBD** — touched in this session: `test/master-drawer-frontend.test.js`. Tests the in-session Project Master drawer frontend (#331).
+- **TBD** — touched in this session: `test/openclaw-bridge-port-row.test.js`. Tests the conditional Bridge Port row on the OpenClaw card (#491); owns the exact CACHE_NAME pin.
 
 ## TODO (auto-stubbed 2026-07-06)
 
-- **TBD** — touched in this session: `data/porthub-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/caddy.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/ttyd-attach.js`. <!-- describe -->
-- **TBD** — touched in this session: `public/setup.js`. <!-- describe -->
-- **TBD** — touched in this session: `scripts/ingress-cutover.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth-credential-durability.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth2-wizard-admin.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/engines.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/https-setup.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ingress-cutover.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/master.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ttyd-attach-sync.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ttyd-plist.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `data/porthub-guide.md`. Injected guide documenting the PortHub port-registry API for project configs.
+- **TBD** — touched in this session: `lib/caddy.js`. Caddyfile generation + integrity-stamped ingress config for the Caddy auth gate (AUTH-1).
+- **TBD** — touched in this session: `lib/ttyd-attach.js`. Resolves the canonical ~/.tangleclaw ttyd attach-script install location (TCC-safe).
+- **TBD** — touched in this session: `public/setup.js`. First-run setup wizard frontend.
+- **TBD** — touched in this session: `scripts/ingress-cutover.js`. Renders launchd plist templates and cuts the server over to Caddy ingress.
+- **TBD** — touched in this session: `test/auth-credential-durability.test.js`. Regression tests for auth credential durability / lockout (#397).
+- **TBD** — touched in this session: `test/auth2-wizard-admin.test.js`. Tests the AUTH-2 setup-wizard admin step (frontend).
+- **TBD** — touched in this session: `test/engines.test.js`. Tests engine detection + per-engine config generation.
+- **TBD** — touched in this session: `test/https-setup.test.js`. Tests HTTPS/mkcert setup helpers.
+- **TBD** — touched in this session: `test/ingress-cutover.test.js`. Tests the ingress-cutover plist/Caddy logic.
+- **TBD** — touched in this session: `test/master.test.js`. Tests buildMasterClaudeMd (Project Master session config).
+- **TBD** — touched in this session: `test/ttyd-attach-sync.test.js`. Tests lib/ttyd-attach install-location sync.
+- **TBD** — touched in this session: `test/ttyd-plist.test.js`. Tests the com.tangleclaw.ttyd.plist launchd definition.
 
 ## TODO (auto-stubbed 2026-07-08)
 
-- **TBD** — touched in this session: `docs/session-rules-self-improvement.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/orchestration-profiles-store.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-rules.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/sessions-webui.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/sessions.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-openclaw.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-portleases.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-session-mode.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/session-rules-self-improvement.md`. Docs for session rules + the wrap-time self-improvement loop (#347).
+- **TBD** — touched in this session: `test/orchestration-profiles-store.test.js`. Tests the orchestration-profiles seed/store (TB-1/#357).
+- **TBD** — touched in this session: `test/session-rules.test.js`. Tests the sessionRules store API (#347).
+- **TBD** — touched in this session: `test/sessions-webui.test.js`. Tests the Web UI (OpenClaw) session lifecycle.
+- **TBD** — touched in this session: `test/sessions.test.js`. Tests the core session lifecycle (launch/wrap/kill).
+- **TBD** — touched in this session: `test/store-openclaw.test.js`. Tests the store.openclawConnections persistence layer.
+- **TBD** — touched in this session: `test/store-portleases.test.js`. Tests the store.portLeases (PortHub) persistence layer.
+- **TBD** — touched in this session: `test/store-session-mode.test.js`. Tests the schema v6 session_mode column.
+- **TBD** — touched in this session: `test/store.test.js`. Tests the core SQLite store / project records.
 
 ## TODO (auto-stubbed 2026-07-08)
 
-- **TBD** — touched in this session: `docs/auth-status-surfacing.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/auth-identity.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/path-tokens.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-auth-identity.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-session-rules-selfimprove.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth-identity.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth-status-warning.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/path-tokens.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-rules-panel.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/auth-status-surfacing.md`. Docs for surfacing auth config-vs-live drift status (AUTH-2K9D).
+- **TBD** — touched in this session: `lib/auth-identity.js`. Resolves proxy-authenticated request identity (AUTH-3).
+- **TBD** — touched in this session: `lib/path-tokens.js`. Shared path-token matcher/regex helper (CON-8H3Z).
+- **TBD** — touched in this session: `test/api-auth-identity.test.js`. Tests /api/server-info currentUser over proxy identity (AUTH-3).
+- **TBD** — touched in this session: `test/api-session-rules-selfimprove.test.js`. Tests the session-rules self-improvement API (D1b).
+- **TBD** — touched in this session: `test/auth-identity.test.js`. Tests auth-identity.resolveRequestUser.
+- **TBD** — touched in this session: `test/auth-status-warning.test.js`. Tests the dashboard auth-status drift warning (AUTH-2K9D).
+- **TBD** — touched in this session: `test/path-tokens.test.js`. Tests path-tokens.makePathTokenRegex (CON-8H3Z).
+- **TBD** — touched in this session: `test/session-rules-panel.test.js`. Tests the Session Rules panel UI (#347).
 
 ## TODO (auto-stubbed 2026-07-09)
 
-- **TBD** — touched in this session: `data/global-rules.md`. <!-- describe -->
-- **TBD** — touched in this session: `data/session-memory-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `data/shared-docs-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-globalrules.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/server.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `data/global-rules.md`. The injected Global Rules doc shared across TC-managed projects.
+- **TBD** — touched in this session: `data/session-memory-guide.md`. Injected guide documenting the file-based session memory system.
+- **TBD** — touched in this session: `data/shared-docs-guide.md`. Injected guide documenting the shared-documents API.
+- **TBD** — touched in this session: `test/api-globalrules.test.js`. Tests the /api/rules/global route.
+- **TBD** — touched in this session: `test/server.test.js`. Tests the HTTP server / route table.
 
 ## TODO (auto-stubbed 2026-07-09)
 
-- **TBD** — touched in this session: `public/session.css`. <!-- describe -->
-- **TBD** — touched in this session: `test/projects.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-wrapper.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-drawer.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-pipeline.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-priming-roll.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `public/session.css`. Styles for the session-wrapper page (banner, terminal, Medusa control, drawers).
+- **TBD** — touched in this session: `test/projects.test.js`. Tests the projects store/enrichment + preferences (incl. medusaEnabled).
+- **TBD** — touched in this session: `test/session-wrapper.test.js`. Tests the session-wrapper UI shell.
+- **TBD** — touched in this session: `test/wrap-drawer.test.js`. Tests the wrap-drawer buildStepRow helpers.
+- **TBD** — touched in this session: `test/wrap-pipeline.test.js`. Tests the server-side wrap pipeline runner (#139).
+- **TBD** — touched in this session: `test/wrap-step-priming-roll.test.js`. Tests the priming-roll wrap step helpers (#139).
 
 ## TODO (auto-stubbed 2026-07-09)
 
-- **TBD** — touched in this session: `test/landing-wrap-single-flight.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-drawer-select-a11y.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/landing-wrap-single-flight.test.js`. Tests the single-flight dashboard wrap trigger (UI-3B8N).
+- **TBD** — touched in this session: `test/wrap-drawer-select-a11y.test.js`. Tests a11y labels on wrap-drawer decision selects (UI-7H4K).
 
 ## TODO (auto-stubbed 2026-07-09)
 
-- **TBD** — touched in this session: `lib/medusa-listener.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/medusa-registry.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/medusa.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-medusa.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/medusa-listener.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa-listener.js`. Per-session Medusa Bridge WebSocket listener + state machine (MED-2K9P).
+- **TBD** — touched in this session: `lib/medusa-registry.js`. Session-to-workspace-id mint/persist/forget registry for Medusa (MED-2K9P).
+- **TBD** — touched in this session: `lib/medusa.js`. Medusa service layer: listener lifecycle, send, roster, and session-end teardown (MED-2K9P).
+- **TBD** — touched in this session: `test/api-medusa.test.js`. Tests the Medusa service + /medusa/* routes (status/toggle/messages/read/send/roster).
+- **TBD** — touched in this session: `test/medusa-listener.test.js`. Tests the MedusaListener WS client — reconnect, de-dup, socket-identity guard.
 
 ## TODO (auto-stubbed 2026-07-09)
 
-- **TBD** — touched in this session: `public/session.html`. <!-- describe -->
-- **TBD** — touched in this session: `test/medusa-control.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/settings-modal-silentprime.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `public/session.html`. HTML shell for the per-session page (banner + Medusa control markup).
+- **TBD** — touched in this session: `test/medusa-control.test.js`. Frontend source-probes for the banner Medusa control (MED-2K9P).
+- **TBD** — touched in this session: `test/settings-modal-silentprime.test.js`. Tests the Project Settings modal silentPrime toggle (#103).
 
 ## TODO (auto-stubbed 2026-07-10)
 
-- **TBD** — touched in this session: `public/openclaw-view.html`. <!-- describe -->
+- **TBD** — touched in this session: `public/openclaw-view.html`. HTML shell for the OpenClaw remote-agent view.
 
 ## TODO (auto-stubbed 2026-07-10)
 
-- **TBD** — touched in this session: `docs/methodology-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/prawduct-playbook-gating.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `docs/methodology-guide.md`. Docs for methodology template.json fields + authoring.
+- **TBD** — touched in this session: `test/prawduct-playbook-gating.test.js`. Tests engine/rule gating of the V1 prawduct playbook (#536).
