@@ -159,6 +159,24 @@ describe('lib/medusa — service layer', () => {
     medusa.stopSession(sid);
     assert.equal(b.workspaceId, a.workspaceId);
   });
+
+  it('forgetSession stops the listener AND forgets the id (fresh start mints a NEW id) — MED-2K9P Chunk 04', () => {
+    const sid = 'svc-forget';
+    const a = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Forget Me', wsFactory: (u) => new FakeWS(u) });
+    assert.notEqual(medusa.getStatus(sid).state, 'off');
+    medusa.forgetSession({ projectPath: tempDir, sessionId: sid });
+    // Listener stopped...
+    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    // ...and the id forgotten — unlike stopSession, a fresh start mints a NEW id.
+    const b = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Forget Me', wsFactory: (u) => new FakeWS(u) });
+    started.push(sid);
+    assert.notEqual(b.workspaceId, a.workspaceId);
+  });
+
+  it('forgetSession is a safe no-op for an unknown session and never throws on a bad path', () => {
+    assert.doesNotThrow(() => medusa.forgetSession({ projectPath: tempDir, sessionId: 'never-started' }));
+    assert.doesNotThrow(() => medusa.forgetSession({ projectPath: '/no/such/dir', sessionId: 'x' }));
+  });
 });
 
 describe('API — GET /api/sessions/:project/medusa/status', () => {
@@ -407,6 +425,24 @@ describe('lib/sessions — _maybeAutoStartMedusa (per-project auto-enable)', () 
     // A bogus project path still must not throw out of the helper.
     assert.doesNotThrow(() => sessions._maybeAutoStartMedusa({ path: '/no/such/dir', name: 'Bad' }, { id: 'x' }));
     medusa.stopSession('x');
+  });
+
+  it('_teardownMedusa stops a session listener + forgets its id (MED-2K9P Chunk 04)', () => {
+    const project = { path: tempDir, name: 'Teardown' };
+    const session = { id: 'teardown-sess' };
+    const a = medusa.startSession({ projectPath: project.path, sessionId: session.id, name: project.name, wsFactory: (u) => new FakeWS(u) });
+    assert.notEqual(medusa.getStatus(session.id).state, 'off');
+    sessions._teardownMedusa(project, session);
+    assert.equal(medusa.getStatus(session.id).state, 'off');
+    // Id forgotten → a fresh start after teardown mints a new id.
+    const b = medusa.startSession({ projectPath: project.path, sessionId: session.id, name: project.name, wsFactory: (u) => new FakeWS(u) });
+    medusa.stopSession(session.id);
+    assert.notEqual(b.workspaceId, a.workspaceId);
+  });
+
+  it('_teardownMedusa is a safe no-op when project or session is missing', () => {
+    assert.doesNotThrow(() => sessions._teardownMedusa(null, { id: 'x' }));
+    assert.doesNotThrow(() => sessions._teardownMedusa({ path: tempDir }, null));
   });
 });
 
