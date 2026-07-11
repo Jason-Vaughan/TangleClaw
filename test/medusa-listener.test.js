@@ -323,6 +323,68 @@ describe('MedusaListener', () => {
     l.stop();
   });
 
+  // ── MED-2K9P Chunk 04: resilience hardening ──
+
+  it('de-dups a repeated messageId (no double-inject / double-unread)', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    const env = { type: 'new_message', messageId: 'dup-1', message: { id: 'dup-1', message: 'once' } };
+    sockets[0]._message(env);
+    sockets[0]._message(env); // exact duplicate (e.g. drain overlapping a live push)
+    assert.equal(l.inbox.length, 1, 'duplicate must not be re-injected');
+    assert.equal(l.unread, 1, 'duplicate must not re-increment unread');
+    // A different messageId still lands.
+    sockets[0]._message({ type: 'new_message', messageId: 'dup-2', message: { id: 'dup-2', message: 'twice' } });
+    assert.equal(l.inbox.length, 2);
+    l.stop();
+  });
+
+  it('a late event from a superseded socket cannot perturb live state (identity guard)', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    // Force a reconnect: the old socket (sockets[0]) is now superseded.
+    sockets[0]._closeEvent(1006);
+    await delay(40);
+    assert.ok(sockets.length >= 2, 'expected a reconnect socket');
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    // The OLD socket now fires late events — they must be ignored entirely.
+    sockets[0]._errorEvent('late error from dead socket');
+    sockets[0]._closeEvent(1011);
+    sockets[0]._message({ type: 'new_message', messageId: 'ghost', message: { id: 'ghost' } });
+    assert.equal(l.state, 'listening', 'stale socket must not flip state');
+    assert.equal(l.inbox.length, 0, 'stale socket must not inject a message');
+    assert.equal(l.lastError, null, 'stale socket must not set lastError');
+    l.stop();
+  });
+
+  it('recovers to listening after a Bridge drop and reconnect', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    // Bridge drops.
+    sockets[0]._closeEvent(1006);
+    assert.equal(l.state, 'connecting');
+    assert.match(l.lastError, /closed/);
+    // Reconnect + re-register → back to listening, error cleared.
+    await delay(40);
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    assert.equal(l.lastError, null);
+    l.stop();
+  });
+
   it('getStatus returns the observable snapshot shape', () => {
     const { factory } = makeFactory();
     const l = new MedusaListener({ workspaceId: 'ws-9', wsFactory: factory });

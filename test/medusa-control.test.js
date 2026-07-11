@@ -142,4 +142,82 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(src, /heads\.setAttribute\('aria-label', label\)/);
     });
   });
+
+  // MED-2K9P Chunk 03 — compose (outbound). The visual is operator-verified, but
+  // the honest-result contract, XSS guard on roster names, no-new-timer rule, and
+  // off-state gating are correctness-relevant and cheap to pin against regression.
+  describe('compose / outbound send (MED-2K9P Chunk 03)', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
+
+    it('renders the compose button + panel elements in the control', () => {
+      assert.match(html, /id="medusaCompose"[^>]*aria-haspopup="dialog"/);
+      assert.match(html, /id="medusaComposePanel"[^>]*role="dialog"/);
+    });
+
+    it('escapes untrusted roster names/ids in the target picker (XSS guard)', () => {
+      const body = fnBody('renderMedusaCompose');
+      assert.match(body, /esc\(w\.id\)/);
+      assert.match(body, /esc\(w\.name/);
+      // Nothing raw-interpolates a roster field into the option markup.
+      assert.doesNotMatch(body, /\$\{w\.id\}/);
+      assert.doesNotMatch(body, /\$\{w\.name\}/);
+    });
+
+    it('surfaces the honest send result — queued is distinct from received, and failure never claims "sent"', () => {
+      const body = fnBody('sendMedusaMessage');
+      // Branches on the real status; queued is called out separately from delivered.
+      assert.match(body, /result\.status\s*===\s*'queued'/);
+      assert.match(body, /Queued/);
+      assert.match(body, /Delivered/);
+      // The failure path reports it couldn't send — no blanket success.
+      assert.match(body, /Couldn't send/);
+      // It never asserts a bare "Sent"/"Message sent" success (which would hide queued/failed).
+      assert.doesNotMatch(body, /Message sent|['"`]Sent/);
+    });
+
+    it('validates a target + non-empty message client-side before POSTing', () => {
+      const body = fnBody('sendMedusaMessage');
+      assert.match(body, /Pick a session/);
+      assert.match(body, /Type a message/);
+      // Uses the shared apiMutate JSON path to the send endpoint.
+      assert.match(body, /apiMutate\([\s\S]*?medusa\/send/);
+    });
+
+    it('distinguishes a failed roster fetch from an empty roster (never a false "nobody home")', () => {
+      // renderMedusaCompose has a dedicated error branch...
+      const render = fnBody('renderMedusaCompose');
+      assert.match(render, /errorMsg/);
+      assert.match(render, /Couldn't load sessions/);
+      // ...and openMedusaCompose routes a null (failed) fetch into it with the real error.
+      const open = fnBody('openMedusaCompose');
+      assert.match(open, /data === null/);
+      assert.match(open, /api\.lastError/);
+    });
+
+    it('gates the compose control on listener state — hidden + closed when off', () => {
+      const body = fnBody('renderMedusaControl');
+      assert.match(body, /m\.state\s*!==\s*'off'/);
+      assert.match(body, /closeMedusaCompose\(\)/);
+    });
+
+    it('lights the outbound head and announces the send on the aria-live region', () => {
+      const body = fnBody('flowMedusaOutbound');
+      assert.match(body, /flow-out/);
+      assert.match(body, /getElementById\(['"]medusaLive['"]\)/);
+      assert.match(body, /delivered|queued/i);
+    });
+
+    it('adds no new UI timer — compose rides existing plumbing (no-timer rule #98/#268)', () => {
+      for (const name of ['openMedusaCompose', 'renderMedusaCompose', 'sendMedusaMessage', 'flowMedusaOutbound', 'closeMedusaCompose']) {
+        assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
+      }
+    });
+
+    it('wires the compose button, delegated Send, and Escape/✕ to close', () => {
+      assert.match(src, /medusaCompose'?\)?\.addEventListener\('click', openMedusaCompose\)/);
+      assert.match(src, /\.medusa-compose-send'\)\)\s*sendMedusaMessage\(\)/);
+      // Escape closes the open compose panel too.
+      assert.match(src, /composePanel && !composePanel\.hidden\)\s*closeMedusaCompose\(\)/);
+    });
+  });
 });
