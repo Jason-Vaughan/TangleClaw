@@ -2870,6 +2870,9 @@ route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params
         const active = store.sessions.getActive(proj.id);
         if (active && active.sessionMode === 'webui') {
           store.sessions.kill(active.id, 'Tunnel killed from connection panel');
+          // Forget the killed session's Medusa listener + id (MED-2K9P Chunk 04)
+          // so a tunnel-killed webui session doesn't strand a ghost roster peer.
+          medusa.forgetSession({ projectPath: proj.path, sessionId: active.id });
         }
       }
     }

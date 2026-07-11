@@ -1200,7 +1200,8 @@ async function sendMedusaMessage() {
 
 /**
  * Close the compose panel (the ✕, Escape, send success, or going off). Safe when
- * already closed. Clears the transient message field so a reopen starts fresh.
+ * already closed. The transient message field is not persisted — reopening
+ * re-renders the panel from scratch (renderMedusaCompose), so it always starts fresh.
  * @returns {void}
  */
 function closeMedusaCompose() {

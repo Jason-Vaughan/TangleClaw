@@ -446,6 +446,42 @@ describe('lib/sessions — _maybeAutoStartMedusa (per-project auto-enable)', () 
   });
 });
 
+describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 04)', () => {
+  // The behavioral stop-and-forget is covered above; these source-probes pin that
+  // every terminal transition actually calls teardown, so a new end path can't
+  // silently strand a live listener (a ghost roster peer) — Critic Chunk 04.
+  const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
+  const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+  /**
+   * Slice a named function body out of a source string.
+   * @param {string} src - The source.
+   * @param {string} name - Function name.
+   * @returns {string} The body slice.
+   */
+  function fnBody(src, name) {
+    const start = src.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `function ${name} not found`);
+    const next = src.indexOf('\nfunction ', start + 1);
+    return src.slice(start, next === -1 ? undefined : next);
+  }
+
+  for (const fn of ['killSession', '_completeV2Wrap', 'completeWrap', 'autoCompleteWrap']) {
+    it(`${fn} tears down Medusa`, () => {
+      assert.match(fnBody(sessionsSrc, fn), /_teardownMedusa\(/, `${fn} must call _teardownMedusa`);
+    });
+  }
+
+  it('the stale-wrapping recovery path tears down the recovered session', () => {
+    // Inside launchSession; anchor on the recovery marker + the teardown call nearby.
+    assert.match(sessionsSrc, /auto-recovered stale wrapping row'\);[\s\S]{0,200}_teardownMedusa\(project, wrapping\)/);
+  });
+
+  it('the tunnel-kill path (server.js) forgets the killed webui session', () => {
+    assert.match(serverSrc, /Tunnel killed from connection panel'\);[\s\S]{0,200}medusa\.forgetSession\(/);
+  });
+});
+
 /**
  * A minimal fake Medusa Bridge HTTP server keyed to the verify-api shapes
  * (2026-07-10): `POST /messages/direct` → received / queued / 404-not-found;
