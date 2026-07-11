@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Global rule made engine-agnostic: plans/design docs "openable from anywhere."** Reworded the operator-added Build-Plans rule in `data/global-rules.md` to state the *outcome* — a shareable hosted link the operator can open from any device — rather than a Claude-native "Artifact," so it degrades gracefully when injected into non-Claude engine sessions (Gemini/Codex/etc.). Verified the global- and session-rule injection path renders into every non-plugin project's config at launch (`lib/engines.js`). Filed #542 (TangleClaw-served plan/design doc links) to give every engine a hosting floor.
+
 ## [4.13.0] - 2026-07-10
 
 ### Added
