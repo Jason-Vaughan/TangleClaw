@@ -249,6 +249,30 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     }
   });
 
+  it('a reconnect window HOLDS a pending wake — never consumes it (Critic cumulative WARNING)', () => {
+    // The listener preserves inbox/unread across a reconnect. Ticks landing in
+    // the connecting/error backoff window must not advance the watermark: the
+    // wake fires as soon as the listener is back, with no new arrival needed.
+    const world = installWorld({
+      status: { state: 'connecting', workspaceId: 'w', unread: 1, lastError: null }
+    });
+    for (let i = 0; i < 4; i++) wake._internal.tick(); // whole window spent reconnecting
+    assert.equal(world.injected.length, 0, 'no injection while not listening');
+    world.status = { state: 'listening', workspaceId: 'w', unread: 1, lastError: null };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the held wake fires after recovery — same mail, no new edge required');
+  });
+
+  it('never nudges a wrapping session', () => {
+    const wrapping = { ...claudeSession(1), status: 'wrapping' };
+    const world = installWorld({ sessions: [wrapping] });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+    world.sessions = [{ ...claudeSession(1), status: 'active' }];
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'same session nudges once active again');
+  });
+
   it('skips webui sessions and non-claude engines (Slice-1 gate)', () => {
     const webui = { id: 2, projectId: 20, sessionMode: 'webui', tmuxSession: null, engineId: 'openclaw:c1' };
     const gemini = { id: 3, projectId: 30, sessionMode: 'tmux', tmuxSession: 'tc-3', engineId: 'gemini' };
