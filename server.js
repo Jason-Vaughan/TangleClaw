@@ -47,6 +47,7 @@ const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const wrapSentinel = require('./lib/wrap-sentinel');
+const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
@@ -1622,6 +1623,7 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     tags: result.project.tags,
     silentPrime: result.project.silentPrime,
     medusaEnabled: result.project.medusaEnabled,
+    medusaWake: result.project.medusaWake,
     updatedAt: result.project.updatedAt
   };
 
@@ -4209,6 +4211,10 @@ if (require.main === module) {
     // sessions for the `TANGLECLAW_WRAP` marker and raises a per-project flag
     // that the session view's status poll turns into an opened wrap drawer.
     wrapSentinel.start();
+    // Start the Medusa wake-nudge monitor (MED-2K9P v2 T2) — idle-gated inbox
+    // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
+    // when fresh inbound mail is waiting and the pane is at a bare prompt.
+    medusaWake.start();
   };
 
   // Bind localhost-only in caddy mode (Caddy fronts us); all interfaces otherwise.
@@ -4231,6 +4237,7 @@ if (require.main === module) {
     ttydWatcher.stop();
     tunnelMonitor.stop();
     wrapSentinel.stop();
+    medusaWake.stop();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();
