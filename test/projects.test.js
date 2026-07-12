@@ -579,6 +579,33 @@ describe('projects', () => {
       assert.equal(store.projectConfig.load(store.projects.getByName('new-project').path).medusaEnabled, true);
     });
 
+    // MED-2K9P v2 T2: per-project idle-gated wake opt-in (same shape as medusaEnabled).
+    it('defaults medusaWake to false on enrich', () => {
+      const result = projects.updateProject('new-project', { tags: ['x'] });
+      assert.ok(result.project);
+      assert.equal(result.project.medusaWake, false);
+    });
+
+    it('persists medusaWake and round-trips it through enrich', () => {
+      const on = projects.updateProject('new-project', { medusaWake: true });
+      assert.ok(on.project);
+      assert.equal(on.project.medusaWake, true);
+      assert.equal(store.projectConfig.load(on.project.path).medusaWake, true);
+
+      const off = projects.updateProject('new-project', { medusaWake: false });
+      assert.equal(off.project.medusaWake, false);
+      assert.equal(store.projectConfig.load(off.project.path).medusaWake, false);
+    });
+
+    it('rejects a non-boolean medusaWake without mutating state', () => {
+      projects.updateProject('new-project', { medusaWake: true });
+      const bad = projects.updateProject('new-project', { medusaWake: 'yes' });
+      assert.equal(bad.project, null);
+      assert.ok(bad.errors[0].includes('medusaWake'));
+      // Prior true value is untouched by the rejected update.
+      assert.equal(store.projectConfig.load(store.projects.getByName('new-project').path).medusaWake, true);
+    });
+
     // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
     describe('activePlan (#428)', () => {
       let planDir;

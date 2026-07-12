@@ -769,6 +769,9 @@ function openSettings(name) {
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
   // default OFF (only an explicit true opts in).
   const initialMedusaChecked = !!project.medusaEnabled;
+  // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated server-side
+  // (Claude/tmux only in Slice 1); default OFF (a wake spends a real turn).
+  const initialMedusaWakeChecked = !!project.medusaWake;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -811,6 +814,14 @@ function openSettings(name) {
           <span class="toggle-switch"></span>
         </label>
         <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
+      </div>
+      <div class="form-group">
+        <label class="gs-toggle-label">
+          <span>Auto-wake on inbound messages</span>
+          <input type="checkbox" id="settingsMedusaWake" ${initialMedusaWakeChecked ? 'checked' : ''}>
+          <span class="toggle-switch"></span>
+        </label>
+        <div class="form-hint">When a Medusa message arrives and this project's session is idle, nudge the session to read its inbox — spending a turn. Never interrupts a busy turn; waits for the next idle moment. Claude sessions only for now. Off by default.</div>
       </div>
     </div>
     ${renderProjectRulesSection(project)}`;
@@ -1208,6 +1219,11 @@ async function doSaveSettings() {
   const medusaEl = document.getElementById('settingsMedusa');
   if (medusaEl) {
     body.medusaEnabled = medusaEl.checked;
+  }
+  // Medusa idle-gated wake opt-in (MED-2K9P v2 T2) — always present (server gates engine)
+  const medusaWakeEl = document.getElementById('settingsMedusaWake');
+  if (medusaWakeEl) {
+    body.medusaWake = medusaWakeEl.checked;
   }
   // CC-6 (#381): wrap-summary section selection. undefined → not rendered (skip);
   // null → all 8 (clear override); array → the chosen subset.
