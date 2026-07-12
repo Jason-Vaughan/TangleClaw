@@ -197,3 +197,8 @@ entries that span multiple co-equal locations.
 
 - **TBD** — touched in this session: `docs/methodology-guide.md`. Docs for methodology template.json fields + authoring.
 - **TBD** — touched in this session: `test/prawduct-playbook-gating.test.js`. Tests engine/rule gating of the V1 prawduct playbook (#536).
+
+## TODO (auto-stubbed 2026-07-11)
+
+- **TBD** — touched in this session: `lib/medusa-wake.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/medusa-wake.test.js`. <!-- describe -->
