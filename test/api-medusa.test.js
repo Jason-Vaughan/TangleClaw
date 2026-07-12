@@ -780,3 +780,154 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.code, 'NO_SESSION');
   });
 });
+
+describe('MED-2K9P v2 T1 — workspace-id pre-mint + launch threading', () => {
+  const medusaRegistry = require('../lib/medusa-registry');
+  let tempDir;
+  const started = [];
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-t1-'));
+  });
+
+  afterEach(() => {
+    while (started.length) medusa.stopSession(started.pop());
+  });
+
+  after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('mintId returns a slug-8hex id and does NOT persist it', () => {
+    const id = medusaRegistry.mintId('Pre Mint');
+    assert.match(id, /^pre-mint-[0-9a-f]{8}$/);
+    // Nothing written — the registry file does not exist yet.
+    assert.equal(fs.existsSync(path.join(tempDir, '.tangleclaw', 'medusa', 'registry.json')), false);
+  });
+
+  it('mintWorkspaceId (service facade) delegates to the registry mint', () => {
+    assert.match(medusa.mintWorkspaceId('Facade Mint'), /^facade-mint-[0-9a-f]{8}$/);
+  });
+
+  it('ensureWorkspaceId adopts a preferredId when no entry exists', () => {
+    const preferred = medusaRegistry.mintId('Adopt Me');
+    const got = medusaRegistry.ensureWorkspaceId(tempDir, 't1-adopt', 'Adopt Me', preferred);
+    assert.equal(got, preferred);
+    // Persisted: a later preferred-less call returns the adopted id.
+    assert.equal(medusaRegistry.ensureWorkspaceId(tempDir, 't1-adopt', 'Adopt Me'), preferred);
+  });
+
+  it('ensureWorkspaceId without preferredId keeps an existing entry (stability regression)', () => {
+    const first = medusaRegistry.ensureWorkspaceId(tempDir, 't1-stable', 'Stable');
+    const second = medusaRegistry.ensureWorkspaceId(tempDir, 't1-stable', 'Stable');
+    assert.equal(second, first);
+  });
+
+  it('ensureWorkspaceId supersedes a stale differing entry when the launch supplies preferredId', () => {
+    const stale = medusaRegistry.ensureWorkspaceId(tempDir, 't1-stale', 'Stale');
+    const preferred = medusaRegistry.mintId('Stale');
+    const got = medusaRegistry.ensureWorkspaceId(tempDir, 't1-stale', 'Stale', preferred);
+    assert.equal(got, preferred);
+    assert.notEqual(got, stale);
+    // The supersede is durable, not just the return value.
+    assert.equal(medusaRegistry.getWorkspaceId(tempDir, 't1-stale'), preferred);
+  });
+
+  it('startSession registers under a caller-supplied workspaceId (prime ↔ listener identity seam)', () => {
+    const preferred = medusa.mintWorkspaceId('Seam Test');
+    const sid = 't1-seam';
+    started.push(sid);
+    let fake;
+    const status = medusa.startSession({
+      projectPath: tempDir, sessionId: sid, name: 'Seam Test',
+      workspaceId: preferred,
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    assert.equal(status.workspaceId, preferred);
+    fake._open();
+    // The WS register frame carries the SAME id the prime was given.
+    assert.deepEqual(JSON.parse(fake.sent[0]), { type: 'register', workspaceId: preferred });
+  });
+
+  it('_maybeAutoStartMedusa threads the pre-minted id through to the listener', () => {
+    store.projectConfig.save(tempDir, { medusaEnabled: true });
+    const preferred = medusa.mintWorkspaceId('Thread Test');
+    const sid = 't1-thread';
+    started.push(sid);
+    sessions._maybeAutoStartMedusa({ path: tempDir, name: 'Thread Test' }, { id: sid }, preferred);
+    assert.equal(medusa.getStatus(sid).workspaceId, preferred);
+  });
+
+  it('_maybeAutoStartMedusa without a workspaceId keeps the mint-fresh behavior (webui/toggle path)', () => {
+    store.projectConfig.save(tempDir, { medusaEnabled: true });
+    const sid = 't1-nothread';
+    started.push(sid);
+    sessions._maybeAutoStartMedusa({ path: tempDir, name: 'No Thread' }, { id: sid });
+    assert.match(medusa.getStatus(sid).workspaceId, /^no-thread-[0-9a-f]{8}$/);
+  });
+});
+
+describe('MED-2K9P v2 T1 — medusa.readContract (consumer-contract resolution)', () => {
+  let tempDir;
+  let savedEnv;
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-contract-'));
+    savedEnv = process.env.MEDUSA_CONTRACT_PATH;
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
+    else process.env.MEDUSA_CONTRACT_PATH = savedEnv;
+  });
+
+  after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('resolves via the MEDUSA_CONTRACT_PATH env override first', () => {
+    const envDoc = path.join(tempDir, 'env-contract.md');
+    fs.writeFileSync(envDoc, '# Env Contract\n');
+    const projDir = path.join(tempDir, 'medusa-proj');
+    fs.mkdirSync(path.join(projDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(projDir, 'docs', 'CONSUMER-CONTRACT.md'), '# Project Contract\n');
+
+    process.env.MEDUSA_CONTRACT_PATH = envDoc;
+    const got = medusa.readContract({ medusaProjectPath: projDir });
+    assert.equal(got.text, '# Env Contract\n');
+    assert.equal(got.source, envDoc);
+  });
+
+  it('falls back to <medusaProjectPath>/docs/CONSUMER-CONTRACT.md', () => {
+    delete process.env.MEDUSA_CONTRACT_PATH;
+    const projDir = path.join(tempDir, 'medusa-proj2');
+    fs.mkdirSync(path.join(projDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(projDir, 'docs', 'CONSUMER-CONTRACT.md'), '# Project Contract 2\n');
+    const got = medusa.readContract({ medusaProjectPath: projDir });
+    assert.equal(got.text, '# Project Contract 2\n');
+    assert.equal(got.source, path.join(projDir, 'docs', 'CONSUMER-CONTRACT.md'));
+  });
+
+  it('reports every path tried when nothing resolves (honest failure)', () => {
+    delete process.env.MEDUSA_CONTRACT_PATH;
+    const got = medusa.readContract({ medusaProjectPath: path.join(tempDir, 'nope') });
+    assert.equal(got.text, null);
+    assert.equal(got.tried.length, 1);
+    assert.match(got.tried[0], /CONSUMER-CONTRACT\.md \(ENOENT\)/);
+  });
+
+  it('treats an empty contract file as unresolved, not a silent blank injection', () => {
+    const emptyDoc = path.join(tempDir, 'empty.md');
+    fs.writeFileSync(emptyDoc, '   \n');
+    process.env.MEDUSA_CONTRACT_PATH = emptyDoc;
+    const got = medusa.readContract({});
+    assert.equal(got.text, null);
+    assert.match(got.tried[0], /\(empty\)$/);
+  });
+
+  it('returns an empty tried list when there are no candidates at all', () => {
+    delete process.env.MEDUSA_CONTRACT_PATH;
+    const got = medusa.readContract({});
+    assert.deepEqual(got, { text: null, tried: [] });
+  });
+});

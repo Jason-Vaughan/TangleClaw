@@ -92,6 +92,69 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Owned project: `prime-test`'), 'prime should name the owned project');
     });
 
+    describe('Medusa switchboard section (MED-2K9P v2 T1)', () => {
+      let projDir;
+      let savedEnv;
+
+      before(() => {
+        projDir = path.join(projectsDir, 'prime-test');
+        savedEnv = process.env.MEDUSA_CONTRACT_PATH;
+      });
+
+      afterEach(() => {
+        if (savedEnv === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
+        else process.env.MEDUSA_CONTRACT_PATH = savedEnv;
+        store.projectConfig.save(projDir, {});
+      });
+
+      it('injects contract + identity + role for an opted-in launch', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\nRegister then drain.\n');
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+        assert.ok(prompt.includes('## Medusa Switchboard'), 'prime should carry the switchboard section');
+        assert.ok(prompt.includes('`prime-test-cafe0123`'), 'prime should carry the exact workspace id');
+        assert.ok(prompt.includes('the initiator ends the conversation'), 'prime should carry the participant role');
+        assert.ok(prompt.includes('GET /api/sessions/prime-test/medusa/messages'), 'prime should point at the TC inbox API');
+        assert.ok(prompt.includes('do NOT register your own WS connection'), 'prime must forbid a second consumer on the id');
+        assert.ok(prompt.includes('# Fixture Consumer Contract'), 'prime should embed the contract text');
+        assert.ok(prompt.includes(contractFile), 'prime should name the contract source');
+      });
+
+      it('injects NOTHING when medusaEnabled is off, even if an id is passed', () => {
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+        assert.equal(prompt.includes('Medusa Switchboard'), false);
+      });
+
+      it('injects NOTHING without a workspace id (non-launch callers never fabricate identity)', () => {
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine);
+        assert.equal(prompt.includes('Medusa Switchboard'), false);
+      });
+
+      it('still injects identity + role with an HONEST note when the contract is unresolvable', () => {
+        process.env.MEDUSA_CONTRACT_PATH = path.join(projDir, 'no-such-contract.md');
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+        assert.ok(prompt.includes('`prime-test-cafe0123`'), 'identity still injects');
+        assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'missing contract is surfaced, not silent');
+        assert.ok(prompt.includes('no-such-contract.md'), 'the tried path is named');
+      });
+    });
+
     it('does not inject methodology heading or description (#102 — already in CLAUDE.md + pill)', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
