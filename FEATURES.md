@@ -200,5 +200,5 @@ entries that span multiple co-equal locations.
 
 ## TODO (auto-stubbed 2026-07-11)
 
-- **TBD** — touched in this session: `lib/medusa-wake.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/medusa-wake.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/medusa-wake.js`. Boot-time idle-gated wake monitor: nudges an opted-in (`medusaWake`) session's pane about fresh switchboard mail, only when provably idle (busy-marker absent + bare-`❯` prompt + 2-tick debounce) (MED-2K9P v2 T2).
+- **TBD** — touched in this session: `test/medusa-wake.test.js`. Tests the wake monitor — pane idle-policy pinned byte-for-byte against live spike captures, debounce/watermark/burst/retry semantics, per-gate blocking (MED-2K9P v2 T2).
