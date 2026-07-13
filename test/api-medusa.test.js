@@ -484,14 +484,19 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
 
 /**
  * A minimal fake Medusa Bridge HTTP server keyed to the verify-api shapes
- * (2026-07-10): `POST /messages/direct` → received / queued / 404-not-found;
- * `GET /workspaces` → a roster. Records every send body so tests can assert the
- * truthful `from` and that a rejected send never reached the Bridge.
- * @returns {{server: import('node:http').Server, received: object[], setRoster: (r: object[]) => void}}
+ * (2026-07-10, loops re-probed 2026-07-13): `POST /messages/direct` → received /
+ * queued / 404-not-found; `GET /workspaces` → a roster; `POST /loops` → a
+ * 201 loop object in `state: initiated` (the real Bridge does NOT notify the
+ * target on open — Medusa#47), or 404 when a participant is unknown. Records
+ * every send and loop-open body so tests can assert the truthful `from`/
+ * `initiator` and that a rejected call never reached the Bridge.
+ * @returns {{server: import('node:http').Server, received: object[], loops: object[], setRoster: (r: object[]) => void}}
  */
 function makeFakeBridge() {
   /** @type {object[]} */
   const received = [];
+  /** @type {object[]} */
+  const loops = [];
   /** @type {object[]} */
   let roster = [
     { id: 'live-ws', name: 'Live', listener: { active: true }, connected: true },
@@ -522,10 +527,30 @@ function makeFakeBridge() {
       if (req.method === 'GET' && req.url === '/workspaces') {
         return json(res, 200, { count: roster.length, workspaces: roster, telemetry: {} });
       }
+      if (req.method === 'POST' && req.url === '/loops') {
+        if (body.target === 'ghost-ws') {
+          // Mirror the real Bridge's participant check (live probe 2026-07-13).
+          return json(res, 404, { error: 'Initiator or target workspace not found' });
+        }
+        loops.push(body);
+        return json(res, 201, {
+          id: `loop-${loops.length}`,
+          initiator: body.initiator,
+          target: body.target,
+          task: body.task,
+          doneCriteria: body.doneCriteria,
+          mode: body.mode,
+          guards: body.guards,
+          round: 0,
+          state: 'initiated',
+          closeSignal: null,
+          createdAt: '2026-07-13T00:00:00.000Z'
+        });
+      }
       return json(res, 404, { error: 'unmatched' });
     });
   });
-  return { server, received, setRoster: (r) => { roster = r; } };
+  return { server, received, loops, setRoster: (r) => { roster = r; } };
 }
 
 describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
@@ -779,6 +804,192 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(status, 409);
     assert.equal(data.code, 'NO_SESSION');
   });
+
+  it('loop route returns 404 for an unknown project', async () => {
+    const { status } = await req('/api/sessions/nope/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    assert.equal(status, 404);
+  });
+
+  it('loop route returns 409 when the project has no active session', async () => {
+    const { status, data } = await req('/api/sessions/no-session-c03/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    assert.equal(status, 409);
+    assert.equal(data.code, 'NO_SESSION');
+  });
+
+  it('loop route opens a loop and reports the honest task-delivery status', async () => {
+    const { status, data } = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 'do the thing', doneCriteria: 'the thing is done',
+      mode: 'supervised', guards: { maxRounds: 5, maxWallTimeSeconds: 120 }
+    });
+    assert.equal(status, 200);
+    assert.equal(data.loop.state, 'initiated');
+    assert.equal(data.loop.initiator, workspaceId);
+    assert.deepEqual(data.loop.guards, { maxRounds: 5, maxWallTimeSeconds: 120 });
+    assert.equal(data.taskDelivery.status, 'received');
+    // The task notice actually went to the target over the public send path.
+    assert.equal(bridge.received.length, 1);
+    assert.equal(bridge.received[0].to, 'live-ws');
+    assert.match(bridge.received[0].message, /do the thing/);
+  });
+
+  it('loop route surfaces validation failures as 400s', async () => {
+    const { status, data } = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: '', doneCriteria: 'd'
+    });
+    assert.equal(status, 400);
+    assert.equal(data.code, 'EMPTY_TASK');
+  });
+});
+
+describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
+  let bridge;
+  let tempDir;
+  const sid = 't3-loop-svc';
+  let workspaceId;
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-t3-svc-'));
+    bridge = makeFakeBridge();
+    await new Promise((resolve) => bridge.server.listen(0, '127.0.0.1', resolve));
+    medusa._setBridgeHttpUrl(`http://127.0.0.1:${bridge.server.address().port}`);
+  });
+
+  beforeEach(() => {
+    let fake;
+    const status = medusa.startSession({
+      projectPath: tempDir, sessionId: sid, name: 'Looper',
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    workspaceId = status.workspaceId;
+    fake._open();
+    fake._recv({ type: 'registered', workspaceId, connectionId: 'c1' });
+    bridge.received.length = 0;
+    bridge.loops.length = 0;
+  });
+
+  afterEach(() => {
+    medusa.stopSession(sid);
+  });
+
+  after(async () => {
+    medusa._setBridgeHttpUrl();
+    await new Promise((resolve) => bridge.server.close(resolve));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('opens a loop with a truthful initiator, then delivers the task notice to the target', async () => {
+    const result = await medusa.openLoop({
+      sessionId: sid, target: 'live-ws', task: 'audit the tests', doneCriteria: 'all green',
+      mode: 'autonomous', guards: { maxRounds: 3, maxWallTimeSeconds: 60 }
+    });
+    assert.equal(result.loop.id, 'loop-1');
+    assert.equal(result.loop.state, 'initiated');
+    assert.equal(result.taskDelivery.status, 'received');
+    // The Bridge saw the loop open with the session's workspace id as initiator.
+    assert.equal(bridge.loops.length, 1);
+    assert.equal(bridge.loops[0].initiator, workspaceId);
+    assert.equal(bridge.loops[0].mode, 'autonomous');
+    // The out-of-band task notice (Medusa#47 workaround) reached the target,
+    // names the loop id, and tells the agent how to respond.
+    assert.equal(bridge.received.length, 1);
+    assert.equal(bridge.received[0].to, 'live-ws');
+    assert.equal(bridge.received[0].from, workspaceId);
+    assert.match(bridge.received[0].message, /loop-1/);
+    assert.match(bridge.received[0].message, /audit the tests/);
+    assert.match(bridge.received[0].message, /POST \/loops\/loop-1\/message/);
+  });
+
+  it('defaults: supervised mode, maxRounds 10, maxWallTimeSeconds 600', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    assert.equal(bridge.loops[0].mode, 'supervised');
+    assert.deepEqual(bridge.loops[0].guards, { maxRounds: 10, maxWallTimeSeconds: 600 });
+  });
+
+  it('an offline target still opens the loop — task notice queues (honest, not false-delivered)', async () => {
+    const result = await medusa.openLoop({ sessionId: sid, target: 'offline-ws', task: 't', doneCriteria: 'd' });
+    assert.equal(result.taskDelivery.status, 'queued');
+  });
+
+  for (const [name, args, code] of [
+    ['empty task', { target: 'live-ws', task: '  ', doneCriteria: 'd' }, 'EMPTY_TASK'],
+    ['empty done criteria', { target: 'live-ws', task: 't', doneCriteria: '' }, 'EMPTY_DONE_CRITERIA'],
+    ['missing target', { task: 't', doneCriteria: 'd' }, 'NO_TARGET'],
+    ['bad mode', { target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'yolo' }, 'BAD_MODE'],
+    ['zero maxRounds', { target: 'live-ws', task: 't', doneCriteria: 'd', guards: { maxRounds: 0 } }, 'BAD_GUARDS'],
+    ['non-integer wall-clock', { target: 'live-ws', task: 't', doneCriteria: 'd', guards: { maxWallTimeSeconds: 1.5 } }, 'BAD_GUARDS']
+  ]) {
+    it(`rejects ${name} BEFORE hitting the Bridge`, async () => {
+      await assert.rejects(
+        () => medusa.openLoop({ sessionId: sid, ...args }),
+        (err) => { assert.equal(err.code, code); assert.equal(err.httpStatus, 400); return true; }
+      );
+      assert.equal(bridge.loops.length, 0);
+      assert.equal(bridge.received.length, 0);
+    });
+  }
+
+  it('refuses a loop with the session itself', async () => {
+    await assert.rejects(
+      () => medusa.openLoop({ sessionId: sid, target: workspaceId, task: 't', doneCriteria: 'd' }),
+      (err) => { assert.equal(err.code, 'SELF_TARGET'); return true; }
+    );
+  });
+
+  it('refuses when the session is not listening', async () => {
+    medusa.stopSession(sid);
+    await assert.rejects(
+      () => medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' }),
+      (err) => { assert.equal(err.code, 'NOT_LISTENING'); assert.equal(err.httpStatus, 409); return true; }
+    );
+  });
+
+  it('a Bridge rejection is an honest failure and the task notice is never sent', async () => {
+    await assert.rejects(
+      () => medusa.openLoop({ sessionId: sid, target: 'ghost-ws', task: 't', doneCriteria: 'd' }),
+      (err) => {
+        assert.equal(err.code, 'LOOP_REJECTED');
+        assert.equal(err.httpStatus, 502);
+        assert.match(err.message, /not found/);
+        return true;
+      }
+    );
+    assert.equal(bridge.received.length, 0);
+  });
+
+  it('an unreachable Bridge surfaces honestly', async () => {
+    await assert.rejects(
+      () => medusa.openLoop({
+        sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd',
+        fetchImpl: () => Promise.reject(new Error('ECONNREFUSED'))
+      }),
+      (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); return true; }
+    );
+  });
+
+  it('a created-but-undelivered loop error NAMES the orphaned loop id (no silent half-success)', async () => {
+    // First fetch (loop open) succeeds against the fake Bridge; second (direct
+    // send) fails — the seam mimics the Bridge dying between the two calls.
+    let call = 0;
+    const flaky = (url, opts) => {
+      call += 1;
+      if (call === 1) return fetch(url, opts);
+      return Promise.reject(new Error('ECONNRESET'));
+    };
+    await assert.rejects(
+      () => medusa.openLoop({
+        sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', fetchImpl: flaky
+      }),
+      (err) => {
+        assert.equal(err.code, 'TASK_DELIVERY_FAILED');
+        assert.match(err.message, /loop-1/);
+        return true;
+      }
+    );
+  });
 });
 
 describe('MED-2K9P v2 T1 — workspace-id pre-mint + launch threading', () => {
@@ -929,5 +1140,55 @@ describe('MED-2K9P v2 T1 — medusa.readContract (consumer-contract resolution)'
     delete process.env.MEDUSA_CONTRACT_PATH;
     const got = medusa.readContract({});
     assert.deepEqual(got, { text: null, tried: [] });
+  });
+});
+
+describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (TC#549, v2 T3)', () => {
+  const projects = require('../lib/projects');
+  let tempDir;
+  let projDir;
+  let active;
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-'));
+    store._setBasePath(tempDir);
+    store.init();
+    projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-proj-'));
+    const project = store.projects.create({ name: 'live-flip', path: projDir, engine: 'claude', methodology: 'none' });
+    active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-549' });
+  });
+
+  after(() => {
+    medusa.stopSession(active.id);
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(projDir, { recursive: true, force: true });
+  });
+
+  it('OFF→ON registers the live session immediately (no relaunch needed)', () => {
+    assert.equal(medusa.getStatus(active.id).state, 'off');
+    const result = projects.updateProject('live-flip', { medusaEnabled: true });
+    assert.equal(result.errors.length, 0);
+    // The listener is up for the ALREADY-RUNNING session — the TC#549 contract.
+    // (Real socket path, no Bridge in tests → honest non-off state; the guard
+    // this pins: remove the _syncLiveMedusaListener call and this stays 'off'.)
+    assert.notEqual(medusa.getStatus(active.id).state, 'off');
+    assert.match(medusa.getStatus(active.id).workspaceId, /^live-flip-[0-9a-f]{8}$/);
+  });
+
+  it('ON→OFF stops the live session listener immediately', () => {
+    assert.notEqual(medusa.getStatus(active.id).state, 'off');
+    const result = projects.updateProject('live-flip', { medusaEnabled: false });
+    assert.equal(result.errors.length, 0);
+    assert.equal(medusa.getStatus(active.id).state, 'off');
+  });
+
+  it('a project with NO live session flips the pref cleanly (listener untouched)', () => {
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-idle-'));
+    store.projects.create({ name: 'idle-flip', path: otherDir, engine: 'claude', methodology: 'none' });
+    const result = projects.updateProject('idle-flip', { medusaEnabled: true });
+    assert.equal(result.errors.length, 0);
+    assert.equal(store.projectConfig.load(otherDir).medusaEnabled, true);
+    fs.rmSync(otherDir, { recursive: true, force: true });
   });
 });

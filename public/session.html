@@ -59,14 +59,14 @@
           <span class="medusa-warn" aria-hidden="true">!</span>
         </button>
         <button class="medusa-badge" id="medusaBadge" type="button" hidden aria-label="Open Medusa inbox">0</button>
-        <!-- Compose (outbound, MED-2K9P Chunk 03): shown only while the listener is
-             on (you must be registered to send). Opens the compose panel; the
-             outbound (right) head lights on a successful send. -->
-        <button class="medusa-compose" id="medusaCompose" type="button" hidden
-                aria-label="Compose a Medusa message" aria-haspopup="dialog" aria-expanded="false">➤</button>
+        <!-- Loop launch (MED-2K9P v2 T3): replaces the deprecated manual compose
+             box. Shown only while the listener is on (you must be registered to
+             initiate). Opens the loop setup modal; the outbound (right) head
+             lights when the task notice is delivered. -->
+        <button class="medusa-compose" id="medusaLoop" type="button" hidden
+                aria-label="Set up a session loop" aria-haspopup="dialog" aria-expanded="false">➤</button>
         <span class="medusa-peers group-popover" id="medusaPeers" role="tooltip" hidden></span>
         <div class="medusa-panel group-popover" id="medusaPanel" role="dialog" aria-label="Medusa inbox" hidden></div>
-        <div class="medusa-panel medusa-compose-panel group-popover" id="medusaComposePanel" role="dialog" aria-label="Compose a Medusa message" hidden></div>
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
@@ -251,6 +251,57 @@
       <div class="modal-actions">
         <button class="btn" id="uploadCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="uploadSubmitBtn" disabled>Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Medusa Loop Setup Modal (MED-2K9P v2 T3). Replaces the deprecated manual
+       compose box: the initiator picks a target session, states the task + the
+       done criteria it will judge against, chooses the judge mode, and sets the
+       server-enforced runaway guards. Launch creates the Medusa loop object and
+       delivers the task notice to the target (honest delivered/queued result).
+       Only maxRounds + wall-clock are offered — the two guards the Bridge
+       actually enforces; an unenforced token knob would be a dishonest control. -->
+  <div class="modal-backdrop" id="medusaLoopModal">
+    <div class="modal-content" role="dialog" aria-label="Set up a session loop" aria-modal="true">
+      <h3 class="modal-title">Session Loop</h3>
+      <div class="form-group">
+        <label class="form-label" for="medusaLoopTarget">Work with</label>
+        <select class="form-select" id="medusaLoopTarget" disabled></select>
+        <div class="form-hint" id="medusaLoopRosterStatus">Loading sessions…</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="medusaLoopTask">Task</label>
+        <textarea class="form-textarea" id="medusaLoopTask" rows="3"
+                  placeholder="What should the other session do?"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="medusaLoopDone">Done criteria</label>
+        <textarea class="form-textarea" id="medusaLoopDone" rows="2"
+                  placeholder="How will you judge it complete?"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="medusaLoopMode">Judge mode</label>
+        <select class="form-select" id="medusaLoopMode">
+          <option value="supervised" selected>Supervised — you judge each round</option>
+          <option value="autonomous">Autonomous — this session's agent judges</option>
+        </select>
+        <div class="form-hint">Only the initiator ends the loop. Guards below stop a runaway either way.</div>
+      </div>
+      <div class="medusa-loop-guards">
+        <div class="form-group">
+          <label class="form-label" for="medusaLoopMaxRounds">Max rounds</label>
+          <input type="number" class="form-input" id="medusaLoopMaxRounds" value="10" min="1" step="1" inputmode="numeric">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="medusaLoopMaxMinutes">Max minutes</label>
+          <input type="number" class="form-input" id="medusaLoopMaxMinutes" value="10" min="1" step="1" inputmode="numeric">
+        </div>
+      </div>
+      <div id="medusaLoopError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="medusaLoopCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="medusaLoopLaunchBtn">Launch loop</button>
       </div>
     </div>
   </div>

@@ -53,9 +53,12 @@ describe('OpenClaw connection card — conditional Bridge Port row (#491)', () =
   });
 
   it('CACHE_NAME is bumped so active service workers pick up the new card', () => {
-    // This test owns the exact current pin (latest bump: Medusa outbound compose,
-    // MED-2K9P v2 T2 → v3-42, which edits ui.js). Older generations assert
-    // "past v3-NN" — see bridge-port-input.test.js.
-    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-42';/);
+    // Assert "at or past the generation that shipped this card" (v3-42), not the
+    // exact current value — an exact pin breaks on every later legitimate bump
+    // (this one snapped on the v3-43 loop-modal bump). Pattern per
+    // bridge-port-input.test.js.
+    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-(\d+)';/);
+    const gen = Number(sw.match(/const CACHE_NAME = 'tangleclaw-v3-(\d+)';/)[1]);
+    assert.ok(gen >= 42, `SW cache generation must be ≥ 42 (got ${gen})`);
   });
 });

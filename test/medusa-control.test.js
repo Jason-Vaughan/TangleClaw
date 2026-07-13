@@ -143,19 +143,31 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     });
   });
 
-  // MED-2K9P Chunk 03 — compose (outbound). The visual is operator-verified, but
-  // the honest-result contract, XSS guard on roster names, no-new-timer rule, and
-  // off-state gating are correctness-relevant and cheap to pin against regression.
-  describe('compose / outbound send (MED-2K9P Chunk 03)', () => {
+  // MED-2K9P v2 T3 — loop setup modal (replaces the Chunk 03 manual compose box;
+  // that box is deliberately GONE per the T3 acceptance, and its security/
+  // honesty pins carry over here: XSS guard on roster names, honest result +
+  // roster states, no-new-timer rule, off-state gating). Visual is operator-VRF'd.
+  describe('loop setup modal (MED-2K9P v2 T3)', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
 
-    it('renders the compose button + panel elements in the control', () => {
-      assert.match(html, /id="medusaCompose"[^>]*aria-haspopup="dialog"/);
-      assert.match(html, /id="medusaComposePanel"[^>]*role="dialog"/);
+    it('the manual compose box is gone (T3 acceptance)', () => {
+      assert.doesNotMatch(html, /medusaComposePanel/);
+      assert.doesNotMatch(src, /sendMedusaMessage|renderMedusaCompose|openMedusaCompose/);
+    });
+
+    it('renders the loop button + modal form elements', () => {
+      assert.match(html, /id="medusaLoop"[^>]*aria-haspopup="dialog"/);
+      assert.match(html, /id="medusaLoopModal"/);
+      for (const id of ['medusaLoopTarget', 'medusaLoopTask', 'medusaLoopDone', 'medusaLoopMode', 'medusaLoopMaxRounds', 'medusaLoopMaxMinutes', 'medusaLoopLaunchBtn', 'medusaLoopCancelBtn']) {
+        assert.match(html, new RegExp(`id="${id}"`), `${id} missing from the modal`);
+      }
+      // Both judge modes are selectable from the start (operator-ratified §8).
+      assert.match(html, /value="supervised"/);
+      assert.match(html, /value="autonomous"/);
     });
 
     it('escapes untrusted roster names/ids in the target picker (XSS guard)', () => {
-      const body = fnBody('renderMedusaCompose');
+      const body = fnBody('renderMedusaLoopTargets');
       assert.match(body, /esc\(w\.id\)/);
       assert.match(body, /esc\(w\.name/);
       // Nothing raw-interpolates a roster field into the option markup.
@@ -163,41 +175,46 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.doesNotMatch(body, /\$\{w\.name\}/);
     });
 
-    it('surfaces the honest send result — queued is distinct from received, and failure never claims "sent"', () => {
-      const body = fnBody('sendMedusaMessage');
-      // Branches on the real status; queued is called out separately from delivered.
-      assert.match(body, /result\.status\s*===\s*'queued'/);
-      assert.match(body, /Queued/);
-      assert.match(body, /Delivered/);
-      // The failure path reports it couldn't send — no blanket success.
-      assert.match(body, /Couldn't send/);
-      // It never asserts a bare "Sent"/"Message sent" success (which would hide queued/failed).
-      assert.doesNotMatch(body, /Message sent|['"`]Sent/);
+    it('surfaces the honest launch result — queued is distinct from delivered, and failure never claims launched', () => {
+      const body = fnBody('launchMedusaLoop');
+      // Branches on the real task-delivery status; queued is called out separately.
+      assert.match(body, /taskDelivery\.status\s*===\s*'queued'/);
+      assert.match(body, /queued/);
+      assert.match(body, /delivered/);
+      // The failure path reports it couldn't open — no blanket success.
+      assert.match(body, /Couldn't open loop/);
+      assert.doesNotMatch(body, /['"`]Launched/);
     });
 
-    it('validates a target + non-empty message client-side before POSTing', () => {
-      const body = fnBody('sendMedusaMessage');
+    it('validates target, task, done criteria, and positive-integer guards client-side before POSTing', () => {
+      const body = fnBody('launchMedusaLoop');
       assert.match(body, /Pick a session/);
-      assert.match(body, /Type a message/);
-      // Uses the shared apiMutate JSON path to the send endpoint.
-      assert.match(body, /apiMutate\([\s\S]*?medusa\/send/);
+      assert.match(body, /Describe the task/);
+      assert.match(body, /done criteria/);
+      assert.match(body, /Number\.isInteger\(maxRounds\)/);
+      assert.match(body, /Number\.isInteger\(maxMinutes\)/);
+      // Uses the shared apiMutate JSON path to the loop endpoint, converting
+      // operator-facing minutes to the contract's wall-clock seconds.
+      assert.match(body, /apiMutate\([\s\S]*?medusa\/loop/);
+      assert.match(body, /maxWallTimeSeconds:\s*maxMinutes\s*\*\s*60/);
     });
 
     it('distinguishes a failed roster fetch from an empty roster (never a false "nobody home")', () => {
-      // renderMedusaCompose has a dedicated error branch...
-      const render = fnBody('renderMedusaCompose');
-      assert.match(render, /errorMsg/);
-      assert.match(render, /Couldn't load sessions/);
-      // ...and openMedusaCompose routes a null (failed) fetch into it with the real error.
-      const open = fnBody('openMedusaCompose');
+      // The empty-roster state is honest and disables the picker...
+      const render = fnBody('renderMedusaLoopTargets');
+      assert.match(render, /No other Medusa sessions/);
+      assert.match(render, /disabled = true/);
+      // ...and openMedusaLoopModal routes a null (failed) fetch to the real error.
+      const open = fnBody('openMedusaLoopModal');
       assert.match(open, /data === null/);
       assert.match(open, /api\.lastError/);
+      assert.match(open, /Couldn't load sessions/);
     });
 
-    it('gates the compose control on listener state — hidden + closed when off', () => {
+    it('gates the loop control on listener state — hidden + closed when off', () => {
       const body = fnBody('renderMedusaControl');
       assert.match(body, /m\.state\s*!==\s*'off'/);
-      assert.match(body, /closeMedusaCompose\(\)/);
+      assert.match(body, /closeMedusaLoopModal\(\)/);
     });
 
     it('lights the outbound head and announces the send on the aria-live region', () => {
@@ -207,17 +224,30 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(body, /delivered|queued/i);
     });
 
-    it('adds no new UI timer — compose rides existing plumbing (no-timer rule #98/#268)', () => {
-      for (const name of ['openMedusaCompose', 'renderMedusaCompose', 'sendMedusaMessage', 'flowMedusaOutbound', 'closeMedusaCompose']) {
+    it('adds no new UI timer — the modal rides existing plumbing (no-timer rule #98/#268)', () => {
+      for (const name of ['openMedusaLoopModal', 'renderMedusaLoopTargets', 'launchMedusaLoop', 'flowMedusaOutbound', 'closeMedusaLoopModal']) {
         assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
       }
     });
 
-    it('wires the compose button, delegated Send, and Escape/✕ to close', () => {
-      assert.match(src, /medusaCompose'?\)?\.addEventListener\('click', openMedusaCompose\)/);
-      assert.match(src, /\.medusa-compose-send'\)\)\s*sendMedusaMessage\(\)/);
-      // Escape closes the open compose panel too.
-      assert.match(src, /composePanel && !composePanel\.hidden\)\s*closeMedusaCompose\(\)/);
+    it('wires the loop button, Launch/Cancel, and Escape to close', () => {
+      assert.match(src, /medusaLoop'?\)?\.addEventListener\('click', openMedusaLoopModal\)/);
+      assert.match(src, /medusaLoopLaunchBtn'?\)?\.addEventListener\('click', launchMedusaLoop\)/);
+      assert.match(src, /medusaLoopCancelBtn'?\)?\.addEventListener\('click', closeMedusaLoopModal\)/);
+      // Escape closes the open loop modal too.
+      assert.match(src, /loopModal\.classList\.contains\('open'\)\)\s*closeMedusaLoopModal\(\)/);
+    });
+
+    it('a launch failure keeps the modal open (form input never lost)', () => {
+      const body = fnBody('launchMedusaLoop');
+      // The failure branch shows the inline error; only the success branch closes.
+      // (The success branch has a nested queued/delivered else — split on the
+      // LAST else, which is the launch-failure branch.)
+      assert.match(body, /fail\(`Couldn't open loop/);
+      const successBranch = body.slice(body.indexOf('result && result.loop'), body.lastIndexOf('} else {'));
+      assert.match(successBranch, /closeMedusaLoopModal\(\)/);
+      const failureBranch = body.slice(body.lastIndexOf('} else {'));
+      assert.doesNotMatch(failureBranch, /closeMedusaLoopModal\(\)/);
     });
   });
 });

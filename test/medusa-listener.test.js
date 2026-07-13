@@ -397,6 +397,120 @@ describe('MedusaListener', () => {
   });
 });
 
+describe('MedusaListener — ACK-on-read (TC#547)', () => {
+  /**
+   * Parse a socket's outbound `ack` frames.
+   * @param {FakeWebSocket} socket - The fake socket.
+   * @returns {Array<{type: string, messageIds: string[]}>} Ack frames, in order.
+   */
+  function ackFrames(socket) {
+    return socket.sent.map((s) => JSON.parse(s)).filter((f) => f.type === 'ack');
+  }
+
+  /**
+   * Start a listener, register it, and deliver the given envelope ids.
+   * @param {string[]} ids - Envelope messageIds to deliver.
+   * @returns {{l: MedusaListener, sockets: FakeWebSocket[]}}
+   */
+  function listeningWith(ids) {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    for (const id of ids) {
+      sockets[0]._message({ type: 'new_message', messageId: id, message: { id, message: id } });
+    }
+    return { l, sockets };
+  }
+
+  it('does NOT ack on receipt — an unread message stays queued Hub-side', () => {
+    const { l, sockets } = listeningWith(['m1', 'm2']);
+    assert.equal(ackFrames(sockets[0]).length, 0);
+    l.stop();
+  });
+
+  it('markRead acks every read message id in one frame', () => {
+    const { l, sockets } = listeningWith(['m1', 'm2']);
+    l.markRead();
+    const acks = ackFrames(sockets[0]);
+    assert.equal(acks.length, 1);
+    assert.deepEqual(acks[0].messageIds.sort(), ['m1', 'm2']);
+    l.stop();
+  });
+
+  it('a confirmed ack is not re-sent on the next markRead or reconnect (multi-hop)', () => {
+    const { l, sockets } = listeningWith(['m1']);
+    l.markRead();
+    sockets[0]._message({ type: 'ack_response', success: true, messageIds: ['m1'] });
+    // Hop 2: another markRead with nothing pending sends nothing new.
+    l.markRead();
+    assert.equal(ackFrames(sockets[0]).length, 1);
+    // Hop 3: a reconnect re-register must not re-flush a confirmed ack.
+    sockets[0]._closeEvent();
+    // (reconnect is timer-driven; drive a fresh connect deterministically)
+    l.stop();
+    l.start();
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(ackFrames(sockets[1]).length, 0);
+    l.stop();
+  });
+
+  it('an UNconfirmed ack re-flushes on the next registered handshake (lost-frame retry)', () => {
+    const { l, sockets } = listeningWith(['m1', 'm2']);
+    l.markRead(); // ack sent, but the Hub never answers (lost frame)
+    l.stop();
+    l.start();
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    const acks = ackFrames(sockets[1]);
+    assert.equal(acks.length, 1);
+    assert.deepEqual(acks[0].messageIds.sort(), ['m1', 'm2']);
+    // The Hub's post-register drain redelivers the un-acked messages; the
+    // de-dup keeps them out of the inbox AND unread stays read (no re-badge).
+    sockets[1]._message({ type: 'new_message', messageId: 'm1', message: { id: 'm1', message: 'm1' } });
+    assert.equal(l.unread, 0);
+    assert.equal(l.inbox.length, 2);
+    l.stop();
+  });
+
+  it('a failed ack_response leaves ids awaiting (never confirmed-by-assumption)', () => {
+    const { l, sockets } = listeningWith(['m1']);
+    l.markRead();
+    sockets[0]._message({ type: 'ack_response', success: false, messageIds: ['m1'] });
+    l.stop();
+    l.start();
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(ackFrames(sockets[1]).length, 1, 'unconfirmed id must re-flush');
+    l.stop();
+  });
+
+  it('messages read AFTER an earlier confirmed batch ack independently', () => {
+    const { l, sockets } = listeningWith(['m1']);
+    l.markRead();
+    sockets[0]._message({ type: 'ack_response', success: true, messageIds: ['m1'] });
+    sockets[0]._message({ type: 'new_message', messageId: 'm2', message: { id: 'm2', message: 'm2' } });
+    assert.equal(l.unread, 1);
+    l.markRead();
+    const acks = ackFrames(sockets[0]);
+    assert.equal(acks.length, 2);
+    assert.deepEqual(acks[1].messageIds, ['m2']);
+    l.stop();
+  });
+
+  it('a message with no envelope id is readable without acking (nothing to ack)', () => {
+    const { l, sockets } = listeningWith([]);
+    sockets[0]._message({ type: 'new_message', message: { id: 'x', message: 'no envelope id' } });
+    assert.equal(l.unread, 1);
+    l.markRead();
+    assert.equal(l.unread, 0);
+    assert.equal(ackFrames(sockets[0]).length, 0);
+    l.stop();
+  });
+});
+
 describe('medusa-registry', () => {
   let tmpDir;
 

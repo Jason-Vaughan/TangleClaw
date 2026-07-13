@@ -1927,6 +1927,37 @@ route('POST', '/api/sessions/:project/medusa/send', async (_req, res, params, bo
   }
 });
 
+// POST /api/sessions/:project/medusa/loop — open a Medusa loop from this session
+// to a target workspace (MED-2K9P v2 T3, the setup modal's launch). Body
+// `{ target, task, doneCriteria, mode, guards }`. Requires an active session
+// (409). Returns `{ loop, taskDelivery }` — the created loop object plus the
+// HONEST delivery status of the task notice (`received` live / `queued`
+// offline). Validation and Bridge failures surface as errors, never a false
+// "launched"; a created-but-undelivered loop error names the orphaned loop id.
+route('POST', '/api/sessions/:project/medusa/loop', async (_req, res, params, body) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to open a loop from', 'NO_SESSION');
+  }
+  try {
+    const result = await medusa.openLoop({
+      sessionId: active.id,
+      target: body && body.target,
+      task: body && body.task,
+      doneCriteria: body && body.doneCriteria,
+      mode: body && body.mode,
+      guards: body && body.guards
+    });
+    jsonResponse(res, 200, result);
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
+  }
+});
+
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
 // request once the session view has opened the wrap drawer, so the poll won't
 // reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.

@@ -880,14 +880,14 @@ function renderMedusaControl() {
     badge.hidden = true;
   }
 
-  // Compose (outbound) is only meaningful while the listener is on — you must be
-  // registered to have a truthful `from`. Hide it (and any open compose panel)
-  // when off so an off session never offers a send that would fail.
-  const compose = document.getElementById('medusaCompose');
-  if (compose) {
+  // Loop launch (outbound) is only meaningful while the listener is on — you
+  // must be registered to be a truthful initiator. Hide it (and any open setup
+  // modal) when off so an off session never offers a launch that would fail.
+  const loopBtn = document.getElementById('medusaLoop');
+  if (loopBtn) {
     const canSend = m.state !== 'off';
-    compose.hidden = !canSend;
-    if (!canSend) closeMedusaCompose();
+    loopBtn.hidden = !canSend;
+    if (!canSend) closeMedusaLoopModal();
   }
 
   if (m.unread > m.prevUnread) flowMedusaInbound(m.unread - m.prevUnread);
@@ -1017,7 +1017,7 @@ async function openMedusaInbox() {
   if (!panel) return;
   if (!panel.hidden) { panel.hidden = true; return; }
   hideMedusaPeers();
-  closeMedusaCompose();
+  closeMedusaLoopModal();
 
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
   const messages = (data && data.messages) || [];
@@ -1091,124 +1091,145 @@ function hideMedusaPeers() {
 }
 
 /**
- * Open the compose panel (the ➤ button): fetch the live roster, render the target
- * picker + message field, and focus it. Toggles closed if already open. Closes
- * the read panel / peers so the two right-anchored popovers never overlap.
+ * Open the loop setup modal (the ➤ button) — MED-2K9P v2 T3, replacing the
+ * deprecated manual compose box. Fetches the live roster into the target
+ * picker, resets transient state, and focuses the first field. Toggles closed
+ * if already open. Closes the read panel / peers popovers first.
  * @returns {Promise<void>}
  */
-async function openMedusaCompose() {
-  const panel = document.getElementById('medusaComposePanel');
-  const compose = document.getElementById('medusaCompose');
-  if (!panel) return;
-  if (!panel.hidden) { closeMedusaCompose(); return; }
+async function openMedusaLoopModal() {
+  const modal = document.getElementById('medusaLoopModal');
+  const loopBtn = document.getElementById('medusaLoop');
+  if (!modal) return;
+  if (modal.classList.contains('open')) { closeMedusaLoopModal(); return; }
 
   closeMedusaInbox();
   hideMedusaPeers();
 
-  panel.innerHTML = renderMedusaCompose(null); // loading state first (honest, no fake list)
-  panel.hidden = false;
-  if (compose) compose.setAttribute('aria-expanded', 'true');
+  const select = document.getElementById('medusaLoopTarget');
+  const status = document.getElementById('medusaLoopRosterStatus');
+  const error = document.getElementById('medusaLoopError');
+  if (error) { error.hidden = true; error.textContent = ''; }
+  if (select) { select.innerHTML = ''; select.disabled = true; }
+  if (status) status.textContent = 'Loading sessions…'; // honest loading state, no fake list
+
+  modal.classList.add('open');
+  if (loopBtn) loopBtn.setAttribute('aria-expanded', 'true');
 
   const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/roster`);
   // Honesty: a FAILED roster fetch (api() → null, e.g. Bridge unreachable) is NOT
-  // the same as an empty roster. Surface the real error (with retry) rather than
-  // falsely claiming "no other sessions are online" — the feature's honest-status
-  // constraint runs both directions, not just the false-"sent" one (Critic Chunk 03).
+  // the same as an empty roster. Surface the real error rather than falsely
+  // claiming "no other sessions are online" — the honest-status constraint runs
+  // both directions (carried over from the compose box this modal replaces).
   if (data === null) {
-    panel.innerHTML = renderMedusaCompose([], api.lastError || 'the message bridge is unreachable');
+    if (status) status.textContent = `Couldn't load sessions: ${api.lastError || 'the message bridge is unreachable'} Reopen to retry.`;
     return;
   }
-  panel.innerHTML = renderMedusaCompose(data.workspaces || []);
-  const select = document.getElementById('medusaTarget');
-  if (select) select.focus();
+  renderMedusaLoopTargets(data.workspaces || []);
 }
 
 /**
- * Build the compose-panel markup: a target picker from the roster, a message
- * field, and a Send button. All roster-supplied text (names/ids) is escaped —
- * workspace names are cross-session data. A null roster renders a loading state;
- * an empty roster renders an honest "no other sessions" state with Send disabled.
- * @param {Array<{id: string, name?: string, connected?: boolean, listener?: {active?: boolean}}>|null} workspaces - Roster, or null while loading.
- * @param {string} [errorMsg] - When set, render an honest failure/retry state instead of a roster.
- * @returns {string} HTML.
+ * Populate the loop target picker from the roster. All roster-supplied text
+ * (names/ids) is escaped — workspace names are cross-session data. An empty
+ * roster renders an honest "no other sessions" state with the picker disabled.
+ * @param {Array<{id: string, name?: string, connected?: boolean, listener?: {active?: boolean}}>} workspaces - Roster entries.
+ * @returns {void}
  */
-function renderMedusaCompose(workspaces, errorMsg) {
-  const head = '<div class="group-popover-title medusa-panel-head"><span>Send a message</span>'
-    + '<button type="button" class="medusa-panel-close" aria-label="Close compose">✕</button></div>';
-  if (errorMsg) {
-    // A real fetch failure — never disguised as an empty roster (honest status).
-    return `${head}<div class="medusa-msg-empty">Couldn't load sessions: ${esc(errorMsg)} Reopen to retry.</div>`;
-  }
-  if (workspaces === null) {
-    return `${head}<div class="medusa-msg-empty">Loading sessions…</div>`;
-  }
+function renderMedusaLoopTargets(workspaces) {
+  const select = document.getElementById('medusaLoopTarget');
+  const status = document.getElementById('medusaLoopRosterStatus');
+  if (!select) return;
   if (!workspaces.length) {
-    return `${head}<div class="medusa-msg-empty">No other Medusa sessions are online to message.</div>`;
+    select.innerHTML = '';
+    select.disabled = true;
+    if (status) status.textContent = 'No other Medusa sessions are online to loop with.';
+    return;
   }
-  const options = workspaces.map((w) => {
+  select.innerHTML = workspaces.map((w) => {
     const online = w.connected || (w.listener && w.listener.active);
     const label = esc(w.name || w.id) + (online ? '' : ' (offline)');
     return `<option value="${esc(w.id)}">${label}</option>`;
   }).join('');
-  return `${head}`
-    + '<label class="medusa-compose-label" for="medusaTarget">To</label>'
-    + `<select class="medusa-compose-target" id="medusaTarget">${options}</select>`
-    + '<label class="medusa-compose-label" for="medusaComposeText">Message</label>'
-    + '<textarea class="medusa-compose-text" id="medusaComposeText" rows="3" '
-    + 'placeholder="Message another session…"></textarea>'
-    + '<button type="button" class="medusa-compose-send" id="medusaSendBtn">Send</button>';
+  select.disabled = false;
+  if (status) status.textContent = 'Offline targets get the task when they reconnect.';
+  select.focus();
 }
 
 /**
- * Send the composed message (the Send button): POST to the send endpoint with the
- * chosen target + text, then surface the HONEST result via a toast — delivered
- * (`received`), queued (recipient offline), or failed — never a blanket "sent".
- * On success the outbound head lights, the field clears, and the panel closes.
+ * Launch the loop (the Launch button): validate the form client-side, POST to
+ * the loop endpoint, and surface the HONEST result — the loop id plus whether
+ * the task notice was delivered live or queued (offline target) — never a
+ * blanket "launched". Failure keeps the modal open with the real error so the
+ * operator's form input is not lost.
  * @returns {Promise<void>}
  */
-async function sendMedusaMessage() {
-  const select = document.getElementById('medusaTarget');
-  const text = document.getElementById('medusaComposeText');
-  const btn = document.getElementById('medusaSendBtn');
-  if (!select || !text) return;
+async function launchMedusaLoop() {
+  const select = document.getElementById('medusaLoopTarget');
+  const task = document.getElementById('medusaLoopTask');
+  const done = document.getElementById('medusaLoopDone');
+  const mode = document.getElementById('medusaLoopMode');
+  const rounds = document.getElementById('medusaLoopMaxRounds');
+  const minutes = document.getElementById('medusaLoopMaxMinutes');
+  const btn = document.getElementById('medusaLoopLaunchBtn');
+  const error = document.getElementById('medusaLoopError');
+  if (!select || !task || !done) return;
 
-  const to = select.value;
-  const message = text.value.trim();
-  const label = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.replace(/ \(offline\)$/, '') : to;
-  if (!to) { showMethodologyActionToast('Pick a session to message.', true); return; }
-  if (!message) { showMethodologyActionToast('Type a message to send.', true); text.focus(); return; }
+  /**
+   * Show an inline validation/launch error (keeps the modal + input intact).
+   * @param {string} msg - Human-readable reason.
+   * @returns {void}
+   */
+  const fail = (msg) => {
+    if (error) { error.textContent = msg; error.hidden = false; }
+  };
+  if (error) { error.hidden = true; error.textContent = ''; }
 
-  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/send`, 'POST', { to, message });
+  const target = select.value;
+  const label = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.replace(/ \(offline\)$/, '') : target;
+  if (!target) { fail('Pick a session to loop with.'); return; }
+  if (!task.value.trim()) { fail('Describe the task.'); task.focus(); return; }
+  if (!done.value.trim()) { fail('State the done criteria you will judge against.'); done.focus(); return; }
+  const maxRounds = parseInt(rounds && rounds.value, 10);
+  const maxMinutes = parseInt(minutes && minutes.value, 10);
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) { fail('Max rounds must be a positive whole number.'); return; }
+  if (!Number.isInteger(maxMinutes) || maxMinutes < 1) { fail('Max minutes must be a positive whole number.'); return; }
 
-  if (result && result.status) {
-    // Honest outcome — delivered vs queued are DIFFERENT and both true.
-    if (result.status === 'queued') {
-      showMethodologyActionToast(`Queued for ${label} — offline, they'll get it on reconnect.`, false);
+  if (btn) { btn.disabled = true; btn.textContent = 'Launching…'; }
+  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/loop`, 'POST', {
+    target,
+    task: task.value.trim(),
+    doneCriteria: done.value.trim(),
+    mode: mode ? mode.value : 'supervised',
+    guards: { maxRounds, maxWallTimeSeconds: maxMinutes * 60 }
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Launch loop'; }
+
+  if (result && result.loop) {
+    // Honest outcome — a live delivery and an offline queue are DIFFERENT and both true.
+    if (result.taskDelivery && result.taskDelivery.status === 'queued') {
+      showMethodologyActionToast(`Loop opened with ${label} — task queued, they'll get it on reconnect.`, false);
     } else {
-      showMethodologyActionToast(`Delivered to ${label}.`, false);
+      showMethodologyActionToast(`Loop opened with ${label} — task delivered.`, false);
     }
-    flowMedusaOutbound(label, result.status);
-    closeMedusaCompose();
+    flowMedusaOutbound(label, result.taskDelivery && result.taskDelivery.status);
+    closeMedusaLoopModal();
   } else {
-    // api() surfaces the server's error message on api.lastError; never claim sent.
-    const msg = api.lastError || 'send failed';
-    showMethodologyActionToast(`Couldn't send: ${msg}`, true);
-    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+    // api() surfaces the server's error message on api.lastError; never claim launched.
+    fail(`Couldn't open loop: ${api.lastError || 'launch failed'}`);
   }
 }
 
 /**
- * Close the compose panel (the ✕, Escape, send success, or going off). Safe when
- * already closed. The transient message field is not persisted — reopening
- * re-renders the panel from scratch (renderMedusaCompose), so it always starts fresh.
+ * Close the loop setup modal (Cancel, Escape, launch success, or going off).
+ * Safe when already closed. Field values persist until the next open resets
+ * the roster; the task/criteria text survives an accidental close.
  * @returns {void}
  */
-function closeMedusaCompose() {
-  const panel = document.getElementById('medusaComposePanel');
-  const compose = document.getElementById('medusaCompose');
-  if (panel) panel.hidden = true;
-  if (compose) compose.setAttribute('aria-expanded', 'false');
+function closeMedusaLoopModal() {
+  const modal = document.getElementById('medusaLoopModal');
+  const loopBtn = document.getElementById('medusaLoop');
+  if (modal) modal.classList.remove('open');
+  if (loopBtn) loopBtn.setAttribute('aria-expanded', 'false');
 }
 
 async function pollStatus() {
@@ -3200,23 +3221,20 @@ function bindEvents() {
       if (e.target.closest('.medusa-panel-close')) closeMedusaInbox();
     });
   }
-  // Compose (outbound): the ➤ opens the picker; the panel's controls are delegated
-  // because its innerHTML is re-rendered on each open (the ✕ close + the Send button).
-  const medusaCompose = $('medusaCompose');
-  if (medusaCompose) medusaCompose.addEventListener('click', openMedusaCompose);
-  const medusaComposePanel = $('medusaComposePanel');
-  if (medusaComposePanel) {
-    medusaComposePanel.addEventListener('click', (e) => {
-      if (e.target.closest('.medusa-panel-close')) { closeMedusaCompose(); return; }
-      if (e.target.closest('.medusa-compose-send')) sendMedusaMessage();
-    });
-  }
+  // Loop launch (MED-2K9P v2 T3): the ➤ opens the setup modal (static markup —
+  // direct wiring, no delegation needed); Launch/Cancel + Escape close paths.
+  const medusaLoop = $('medusaLoop');
+  if (medusaLoop) medusaLoop.addEventListener('click', openMedusaLoopModal);
+  const medusaLoopLaunchBtn = $('medusaLoopLaunchBtn');
+  if (medusaLoopLaunchBtn) medusaLoopLaunchBtn.addEventListener('click', launchMedusaLoop);
+  const medusaLoopCancelBtn = $('medusaLoopCancelBtn');
+  if (medusaLoopCancelBtn) medusaLoopCancelBtn.addEventListener('click', closeMedusaLoopModal);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     const panel = $('medusaPanel');
     if (panel && !panel.hidden) { closeMedusaInbox(); hideMedusaPeers(); }
-    const composePanel = $('medusaComposePanel');
-    if (composePanel && !composePanel.hidden) closeMedusaCompose();
+    const loopModal = $('medusaLoopModal');
+    if (loopModal && loopModal.classList.contains('open')) closeMedusaLoopModal();
   });
 
   // Banner buttons

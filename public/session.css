@@ -481,7 +481,9 @@ body {
 .medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
 .medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 
-/* ── Compose (outbound) — button + panel form (MED-2K9P Chunk 03) ── */
+/* ── Loop launch (outbound) — the ➤ button (MED-2K9P v2 T3; class name kept
+   from the compose era it replaced — same banner slot, same visual). The setup
+   form itself rides the shared modal + form-* primitives. ── */
 .medusa-compose {
   min-width: 20px;
   height: 20px;
@@ -501,45 +503,13 @@ body {
 .medusa-compose[hidden] { display: none; }
 .medusa-compose:hover { color: var(--text); }
 .medusa-compose:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
-/* Reuse the .medusa-panel chrome (right-anchored popover); the form stacks. */
-.medusa-compose-label {
-  display: block;
-  margin: 6px 0 2px;
-  font-size: 11px;
-  color: var(--text-muted);
+/* The two guard fields sit side by side; stacking happens naturally on very
+   narrow screens via the min column width. */
+.medusa-loop-guards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0 12px;
 }
-.medusa-compose-target,
-.medusa-compose-text {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 5px 6px;
-  background: var(--elevated-bg);
-  color: var(--text);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: inherit;
-}
-.medusa-compose-text { resize: vertical; min-height: 48px; white-space: pre-wrap; }
-.medusa-compose-target:focus-visible,
-.medusa-compose-text:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
-.medusa-compose-send {
-  margin-top: 8px;
-  width: 100%;
-  min-height: 34px;
-  border: none;
-  border-radius: 4px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-.medusa-compose-send:hover { background: var(--primary-bright); }
-.medusa-compose-send:disabled { opacity: .6; cursor: default; }
-.medusa-compose-send:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 
 /* ── Banner Action Buttons ── */
 .banner-actions {
@@ -1245,6 +1215,27 @@ body {
   font-family: monospace;
 }
 .password-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+/* Generic modal text/number/textarea fields (same 44px-target look as
+   .form-select / .password-input, proportional font). */
+.form-input,
+.form-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.form-textarea { resize: vertical; white-space: pre-wrap; }
+.form-input:focus,
+.form-textarea:focus {
   outline: none;
   border-color: var(--primary);
 }
