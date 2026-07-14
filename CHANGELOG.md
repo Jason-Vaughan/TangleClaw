@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Prime truncation no longer silently drops the Resume wait-guard and wrap instructions on `medusaEnabled` launches (#557).** Since v4.15.0 (T1), the embedded Medusa consumer contract (~14K chars) blew the methodology template's prime size cap (`prime.maxTokens * 4`), and the blind tail-truncation in `generatePrimePrompt` cut every section after it — the Resume block's "MUST NOT start the work until the operator confirms" guard, Active Learnings, and the wrap-sentinel instruction (typed "wrap" stopped opening the drawer). Observed live 2026-07-14: a bypass-mode Gemini session booted with a mission-shaped prime and no wait directive and went straight into unprompted switchboard exploration. Fix (`lib/sessions.js`): the contract is bulk reference material and now **yields to directives** — `_medusaPrimeSection` carries identity + role only, and new `_medusaContractSection` appends the contract LAST, budgeted to the space the cap leaves: full when it fits, trimmed with an honest `[contract truncated to fit the prime size budget — full doc at <path>]` note, or omitted with a pointer when the remaining budget can't hold a useful fragment (< 400 chars); the blind slice survives only as a safety net that the medusa path can no longer trip. The switchboard section also gains an explicit **"context, not a task"** line — participation is event-driven (act when a message arrives or the operator asks), never a boot mission, regardless of truncation. Tests (`test/sessions.test.js`): the #557 regression pin (oversized contract + continuity index + template cap → Resume guard, wrap sentinel, identity, and honest trim note all present; blind slice must not fire; verified failing pre-fix), budget-floor omission, no-cap full embed, event-driven guard line.
+
 ## [4.17.0] - 2026-07-13
 
 ### Added
