@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Engine-aware wake nudge — the idle-gated switchboard wake now fires for antigravity/Gemini-CLI targets, not just Claude (#560, first chunk of Switchboard v2 Slice 2).** `lib/medusa-wake.js` no longer hard-skips `engineId !== 'claude'`; idle/busy detection is driven by a per-engine `ENGINE_WAKE_PROFILES` registry, each entry carrying live-probed markers (`{ busyMarker, promptRe, idleMarker }`). Claude's path is byte-for-byte unchanged (`esc to interrupt` + bare `❯`, no positive idle marker). The antigravity profile (`esc to cancel` + bare `>` + a required `? for shortcuts` at-rest marker) was derived from a live pane capture (2026-07-14), which surfaced the load-bearing finding that **Gemini-CLI keeps its bare `>` prompt rendered mid-turn** — so unlike Claude the busy-marker gate can't be the sole guard, and a positive at-rest marker is required. That positive marker also makes the (auto-approve builder → unforceable) permission-dialog case **fail-safe by construction**: a dialog drops `? for shortcuts`, so it reads non-idle even though the bare `>` persists. webui/gateway sessions and engines with no live-captured profile (codex, aider) are skipped and logged once per session, never silently woken against a guessed idle signature. Before this, a `medusaWake:true` non-Claude target received inbox mail but was never nudged, so supervised/autonomous loops against it were structurally dead without a manual `tmux send-keys` nudge (observed live 2026-07-14). Tests (`test/medusa-wake.test.js`): antigravity idle/busy/dialog/typing `_assessPane` matrix, cross-profile non-match (Claude pane not idle under the antigravity profile and vice-versa), full idle→nudge tick for an antigravity session, and the unprofiled-engine/webui skip gate; all existing Claude pins preserved.
+
 ## [4.17.1] - 2026-07-13
 
 ### Fixed
