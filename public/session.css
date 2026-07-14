@@ -511,6 +511,81 @@ body {
   gap: 0 12px;
 }
 
+/* ── Loop view (MED-2K9P v2 T4): the ⟳ chip + loops panel. The chip's TEXT is
+   the primary status cue (round count / live count) — the glow below is the
+   ambient, color-only counterpart and never stands alone. ── */
+.medusa-loops-chip {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 1px;
+  border: none;
+  border-radius: 10px;
+  background: var(--elevated-bg);
+  color: var(--root-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loops-chip[hidden] { display: none; }
+.medusa-loops-chip:hover { color: var(--text); }
+.medusa-loops-chip:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+/* Live-loop glow on the mark — ambient pulse while any loop is in a live
+   protocol state. Suppressed under reduced motion (the chip text still says
+   R2/10, so nothing is lost). */
+.medusa-control.has-live-loop .medusa-mark img { filter: drop-shadow(0 0 3px var(--root-accent)); }
+.medusa-control.has-live-loop .medusa-mark { animation: medusa-loop-glow 2.4s ease-in-out infinite; }
+@keyframes medusa-loop-glow { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+@media (prefers-reduced-motion: reduce) {
+  .medusa-control.has-live-loop .medusa-mark { animation: none; }
+}
+.medusa-loops-panel { min-width: 260px; max-width: 360px; }
+.medusa-loop-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.medusa-loop-row:last-child { border-bottom: none; }
+.medusa-loop-who { font-weight: 600; color: var(--root-accent); font-size: 12px; }
+.medusa-loop-meta { color: var(--text); font-size: 11px; margin: 2px 0 4px; }
+.medusa-loop-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.medusa-force-done {
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  background: none;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px; /* touch-first: the kill-switch must be easy to hit, hard to miss */
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-force-done:hover { background: var(--danger); color: #fff; }
+.medusa-force-done:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }
+.medusa-loop-transcript-toggle {
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0 8px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-transcript-toggle:hover { color: var(--text); background: var(--elevated-bg); }
+.medusa-loop-transcript-toggle:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-note { color: var(--text-muted); font-size: 11px; font-style: italic; }
+.medusa-loop-transcript { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--elevated-bg); }
+.medusa-loop-transcript-note { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
+
 /* ── Banner Action Buttons ── */
 .banner-actions {
   display: flex;

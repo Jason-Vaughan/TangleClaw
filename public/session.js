@@ -36,7 +36,10 @@ const sessionState = {
   // server badge; `prevUnread` lets a poll detect a fresh inbound (unread rose)
   // to fire the transient inbound-head flow + aria-live announcement. `shown`
   // gates first-render so the control appears once the session is known.
-  medusa: { state: 'off', unread: 0, prevUnread: 0, workspaceId: null, lastError: null, shown: false }
+  // v2 T4: `loops` carries the session's known loops with live Bridge state
+  // (from the status poll); `loopsError` is the honest reason when the loop
+  // fetch failed (never a silently-empty list).
+  medusa: { state: 'off', unread: 0, prevUnread: 0, workspaceId: null, lastError: null, shown: false, loops: [], loopsError: null }
 };
 
 // ── Storage Helpers ──
@@ -890,8 +893,59 @@ function renderMedusaControl() {
     if (!canSend) closeMedusaLoopModal();
   }
 
+  renderMedusaLoopsChip(m);
+
   if (m.unread > m.prevUnread) flowMedusaInbound(m.unread - m.prevUnread);
   m.prevUnread = m.unread;
+}
+
+/** @type {string[]} Loop states in which the Bridge still accepts messages/close (mirrors lib/medusa). */
+const MEDUSA_LIVE_LOOP_STATES = ['initiated', 'responded', 'continue'];
+
+/**
+ * Sync the loop-view chip + the live-loop glow to the session's known loops
+ * (MED-2K9P v2 T4). The chip is the ALWAYS-TEXT status cue (round count for a
+ * single live loop, a count otherwise) so state is never color-only; the glow
+ * on the mark is the ambient counterpart. Hidden when no loops are known. If
+ * the loops panel is open, its content re-renders on the same poll so the
+ * round count / state it shows is live.
+ * @param {{state: string, loops: Array<object>, loopsError: (string|null)}} m - Medusa state.
+ * @returns {void}
+ */
+function renderMedusaLoopsChip(m) {
+  const chip = document.getElementById('medusaLoopsChip');
+  const control = document.getElementById('medusaControl');
+  if (!chip || !control) return;
+  const loops = m.loops || [];
+  const live = loops.filter((l) => MEDUSA_LIVE_LOOP_STATES.includes(l.state));
+
+  control.classList.toggle('has-live-loop', live.length > 0);
+
+  if (!loops.length && !m.loopsError) {
+    chip.hidden = true;
+    const panel = document.getElementById('medusaLoopsPanel');
+    if (panel && !panel.hidden) closeMedusaLoopsPanel();
+    return;
+  }
+  chip.hidden = false;
+  if (m.loopsError) {
+    chip.textContent = '⟳ ?';
+    chip.setAttribute('aria-label', `Session loops unavailable: ${m.loopsError}`);
+  } else if (live.length === 1) {
+    const l = live[0];
+    const max = l.guards && l.guards.maxRounds ? `/${l.guards.maxRounds}` : '';
+    chip.textContent = `⟳ R${l.round}${max}`;
+    chip.setAttribute('aria-label', `Open session loops (1 live loop, round ${l.round}${max ? ` of ${l.guards.maxRounds}` : ''})`);
+  } else if (live.length > 1) {
+    chip.textContent = `⟳ ${live.length}`;
+    chip.setAttribute('aria-label', `Open session loops (${live.length} live loops)`);
+  } else {
+    chip.textContent = `⟳ ${loops.length} ended`;
+    chip.setAttribute('aria-label', `Open session loops (${loops.length} ended)`);
+  }
+
+  const panel = document.getElementById('medusaLoopsPanel');
+  if (panel && !panel.hidden) renderMedusaLoopsPanel();
 }
 
 /**
@@ -956,7 +1010,9 @@ function flowMedusaInbound(n) {
  * on the aria-live region so the send is perceivable without relying on color or
  * motion (the animation self-suppresses under prefers-reduced-motion).
  * @param {string} label - Human label for the target (name or id).
- * @param {string} status - The honest send status ('received' | 'queued').
+ * @param {string} status - The honest send status ('received' | 'queued'), or
+ *   'invited' for a loop open (TC#552: the Bridge delivers the invite itself
+ *   and does not report live-vs-queued, so the announcement claims neither).
  * @returns {void}
  */
 function flowMedusaOutbound(label, status) {
@@ -970,7 +1026,9 @@ function flowMedusaOutbound(label, status) {
   if (live) {
     live.textContent = status === 'queued'
       ? `Message queued for ${label} (offline)`
-      : `Message delivered to ${label}`;
+      : status === 'invited'
+        ? `Loop invite sent to ${label}`
+        : `Message delivered to ${label}`;
   }
 }
 
@@ -987,6 +1045,8 @@ async function pollMedusa() {
   m.unread = data.unread || 0;
   m.workspaceId = data.workspaceId || null;
   m.lastError = data.lastError || null;
+  m.loops = data.loops || [];
+  m.loopsError = data.loopsError || null;
   renderMedusaControl();
 }
 
@@ -1205,13 +1265,12 @@ async function launchMedusaLoop() {
   if (btn) { btn.disabled = false; btn.textContent = 'Launch loop'; }
 
   if (result && result.loop) {
-    // Honest outcome — a live delivery and an offline queue are DIFFERENT and both true.
-    if (result.taskDelivery && result.taskDelivery.status === 'queued') {
-      showMethodologyActionToast(`Loop opened with ${label} — task queued, they'll get it on reconnect.`, false);
-    } else {
-      showMethodologyActionToast(`Loop opened with ${label} — task delivered.`, false);
-    }
-    flowMedusaOutbound(label, result.taskDelivery && result.taskDelivery.status);
+    // Honest outcome (TC#552): the Bridge itself delivers the loopInvite —
+    // durably queued, pushed live when the target is online — and its open
+    // response does not report live-vs-queued, so neither do we. The toast
+    // states exactly what the contract guarantees, no invented "delivered".
+    showMethodologyActionToast(`Loop opened with ${label} — the Bridge delivers the invite (live, or on their reconnect).`, false);
+    flowMedusaOutbound(label, 'invited');
     closeMedusaLoopModal();
   } else {
     // api() surfaces the server's error message on api.lastError; never claim launched.
@@ -1230,6 +1289,170 @@ function closeMedusaLoopModal() {
   const loopBtn = document.getElementById('medusaLoop');
   if (modal) modal.classList.remove('open');
   if (loopBtn) loopBtn.setAttribute('aria-expanded', 'false');
+}
+
+// ── Medusa Loop View (MED-2K9P v2 T4) ──
+
+/** @type {Set<string>} Loop ids whose transcript is expanded in the loops panel. */
+const medusaExpandedTranscripts = new Set();
+
+/**
+ * Open the loops panel (the ⟳ chip click) — the banner's live view of every
+ * loop this session knows about. Toggles closed if already open. Content
+ * renders from the state the status poll already carries (no extra fetch;
+ * each poll re-renders it live while open).
+ * @returns {Promise<void>}
+ */
+async function openMedusaLoopsPanel() {
+  const panel = document.getElementById('medusaLoopsPanel');
+  if (!panel) return;
+  if (!panel.hidden) { closeMedusaLoopsPanel(); return; }
+  closeMedusaInbox();
+  hideMedusaPeers();
+  closeMedusaLoopModal();
+  panel.hidden = false;
+  const chip = document.getElementById('medusaLoopsChip');
+  if (chip) chip.setAttribute('aria-expanded', 'true');
+  await renderMedusaLoopsPanel();
+}
+
+/**
+ * Close the loops panel (✕, Escape, outside click, or the chip vanishing).
+ * Safe when already closed. Transcript expansion state is kept so reopening
+ * restores the operator's view.
+ * @returns {void}
+ */
+function closeMedusaLoopsPanel() {
+  const panel = document.getElementById('medusaLoopsPanel');
+  if (panel) panel.hidden = true;
+  const chip = document.getElementById('medusaLoopsChip');
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Human-readable outcome label for a loop, honest to the Bridge's semantics:
+ * `halted` is ONLY ever the server's runaway guards (round/wall-clock);
+ * force-done lands as `complete` with `closeSignal.reason: 'force-done'` (the
+ * Bridge has no external halt transition), so the label comes from the
+ * structured closeSignal, never from guesswork.
+ * @param {{state: string, closeSignal?: (object|null)}} loop - Bridge loop object.
+ * @returns {string}
+ */
+function medusaLoopStateLabel(loop) {
+  if (loop.state === 'halted') return 'halted by guard';
+  if (loop.state === 'complete') {
+    const reason = loop.closeSignal && loop.closeSignal.reason;
+    return reason === 'force-done' ? 'ended by force-done' : 'complete';
+  }
+  return loop.state; // initiated | responded | continue — live protocol states.
+}
+
+/**
+ * Render the loops panel: one row per known loop — who with, mode, role, the
+ * live state + round count, force-done (initiator side, live states only),
+ * and an expandable transcript. The transcript is labeled for what it honestly
+ * is: the rounds THIS session observed (its inbound loop messages plus the
+ * opening task) — the Bridge retains no full round history to fetch. All
+ * Bridge-supplied text (tasks, ids, reasons, message bodies) is escaped:
+ * cross-session data is untrusted.
+ * @returns {Promise<void>}
+ */
+async function renderMedusaLoopsPanel() {
+  const panel = document.getElementById('medusaLoopsPanel');
+  if (!panel) return;
+  const m = sessionState.medusa;
+  const loops = m.loops || [];
+
+  const head = '<div class="group-popover-title medusa-panel-head"><span>Session loops</span>'
+    + '<button type="button" class="medusa-panel-close" aria-label="Close session loops">✕</button></div>';
+
+  if (m.loopsError) {
+    panel.innerHTML = `${head}<div class="medusa-msg-empty">Loops unavailable: ${esc(m.loopsError)}</div>`;
+    return;
+  }
+  if (!loops.length) {
+    panel.innerHTML = `${head}<div class="medusa-msg-empty">No loops yet.</div>`;
+    return;
+  }
+
+  // One inbox fetch serves every expanded transcript (local in-memory read).
+  let inbox = null;
+  if (medusaExpandedTranscripts.size > 0) {
+    const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/medusa/messages`);
+    inbox = (data && data.messages) || [];
+  }
+
+  const rows = loops.map((loop) => {
+    const live = MEDUSA_LIVE_LOOP_STATES.includes(loop.state);
+    const other = loop.role === 'initiator' ? loop.target : loop.initiator;
+    const maxRounds = loop.guards && loop.guards.maxRounds;
+    const round = `round ${loop.round}${maxRounds ? `/${maxRounds}` : ''}`;
+    const stateLabel = medusaLoopStateLabel(loop);
+    const expanded = medusaExpandedTranscripts.has(loop.id);
+
+    let actions = '';
+    if (live && loop.role === 'initiator') {
+      actions += `<button type="button" class="medusa-force-done" data-loop-id="${esc(loop.id)}">Force-done</button>`;
+    } else if (loop.state === 'halted') {
+      // Guard semantics surfaced: a halted loop cannot be closed (Bridge 400).
+      actions += '<span class="medusa-loop-note">guard-halted — cannot be closed</span>';
+    }
+    actions += `<button type="button" class="medusa-loop-transcript-toggle" data-loop-id="${esc(loop.id)}" aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Hide' : 'Transcript'}</button>`;
+
+    let transcript = '';
+    if (expanded) {
+      const observed = (inbox || []).filter((msg) => msg.loopId === loop.id);
+      const entries = [
+        `<div class="medusa-msg"><div class="medusa-msg-from">task → ${esc(loop.target)}</div><div class="medusa-msg-body">${esc(loop.task || '')}</div></div>`
+      ].concat(observed.map((msg) => `<div class="medusa-msg"><div class="medusa-msg-from">${esc(msg.from || 'unknown')}</div><div class="medusa-msg-body">${esc(msg.message || '')}</div></div>`));
+      transcript = `<div class="medusa-loop-transcript">`
+        + `<div class="medusa-loop-transcript-note">As observed by this session (the Bridge keeps no full history)${observed.length ? '' : ' — no rounds observed here yet'}</div>`
+        + entries.join('')
+        + '</div>';
+    }
+
+    return `<div class="medusa-loop-row is-${esc(loop.state)}">`
+      + `<div class="medusa-loop-who">${loop.role === 'initiator' ? '→' : '←'} ${esc(other)}</div>`
+      + `<div class="medusa-loop-meta">${esc(loop.mode || 'supervised')} · ${esc(stateLabel)} · ${esc(round)}</div>`
+      + `<div class="medusa-loop-actions">${actions}</div>`
+      + transcript
+      + '</div>';
+  }).join('');
+
+  panel.innerHTML = `${head}${rows}`;
+}
+
+/**
+ * Force-done a loop (the kill-switch): confirm, POST, and surface the HONEST
+ * outcome — the Bridge records `complete` with a structured force-done
+ * closeSignal (only its own guards produce `halted`). A rejection (guard-halted
+ * loop, Bridge down) surfaces verbatim — the loop view never pretends a loop
+ * ended. State refresh rides the next poll; the local copy updates immediately
+ * so the panel doesn't lag the action.
+ * @param {string} loopId - The loop to end.
+ * @returns {Promise<void>}
+ */
+async function forceDoneMedusaLoop(loopId) {
+  const yes = window.confirm('End this loop now? The other session gets a close notice; this cannot be undone.');
+  if (!yes) return;
+  const result = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/force-done`,
+    'POST',
+    {}
+  );
+  if (result && result.loopState) {
+    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
+    if (loop) {
+      loop.state = result.loopState;
+      loop.closeSignal = result.closeSignal || loop.closeSignal;
+    }
+    showMethodologyActionToast('Loop ended (force-done).', false);
+    const live = document.getElementById('medusaLive');
+    if (live) live.textContent = 'Loop ended by force-done';
+    renderMedusaControl();
+  } else {
+    showMethodologyActionToast(`Couldn't end loop: ${api.lastError || 'the bridge rejected it'}`, true);
+  }
 }
 
 async function pollStatus() {
@@ -3199,6 +3422,7 @@ function bindEvents() {
       const panel = $('medusaPanel');
       if (panel) panel.hidden = true;
       hideMedusaPeers();
+      closeMedusaLoopsPanel(); // v2 T4 — the loops panel dismisses the same way.
     }
   });
 
@@ -3229,12 +3453,33 @@ function bindEvents() {
   if (medusaLoopLaunchBtn) medusaLoopLaunchBtn.addEventListener('click', launchMedusaLoop);
   const medusaLoopCancelBtn = $('medusaLoopCancelBtn');
   if (medusaLoopCancelBtn) medusaLoopCancelBtn.addEventListener('click', closeMedusaLoopModal);
+  // Loop view (MED-2K9P v2 T4): the ⟳ chip opens the loops panel; its content
+  // re-renders every poll, so all row controls are delegated.
+  const medusaLoopsChip = $('medusaLoopsChip');
+  if (medusaLoopsChip) medusaLoopsChip.addEventListener('click', openMedusaLoopsPanel);
+  const medusaLoopsPanel = $('medusaLoopsPanel');
+  if (medusaLoopsPanel) {
+    medusaLoopsPanel.addEventListener('click', (e) => {
+      if (e.target.closest('.medusa-panel-close')) { closeMedusaLoopsPanel(); return; }
+      const forceBtn = e.target.closest('.medusa-force-done');
+      if (forceBtn) { forceDoneMedusaLoop(forceBtn.dataset.loopId); return; }
+      const toggleBtn = e.target.closest('.medusa-loop-transcript-toggle');
+      if (toggleBtn) {
+        const id = toggleBtn.dataset.loopId;
+        if (medusaExpandedTranscripts.has(id)) medusaExpandedTranscripts.delete(id);
+        else medusaExpandedTranscripts.add(id);
+        renderMedusaLoopsPanel();
+      }
+    });
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     const panel = $('medusaPanel');
     if (panel && !panel.hidden) { closeMedusaInbox(); hideMedusaPeers(); }
     const loopModal = $('medusaLoopModal');
     if (loopModal && loopModal.classList.contains('open')) closeMedusaLoopModal();
+    const loopsPanel = $('medusaLoopsPanel');
+    if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
   });
 
   // Banner buttons

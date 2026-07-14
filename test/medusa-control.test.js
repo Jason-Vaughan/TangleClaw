@@ -175,12 +175,13 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.doesNotMatch(body, /\$\{w\.name\}/);
     });
 
-    it('surfaces the honest launch result — queued is distinct from delivered, and failure never claims launched', () => {
+    it('surfaces the honest launch result — the Bridge-delivered invite is stated as such, and failure never claims launched', () => {
       const body = fnBody('launchMedusaLoop');
-      // Branches on the real task-delivery status; queued is called out separately.
-      assert.match(body, /taskDelivery\.status\s*===\s*'queued'/);
-      assert.match(body, /queued/);
-      assert.match(body, /delivered/);
+      // TC#552: the out-of-band task notice is gone — the toast claims only
+      // what the contract guarantees (the Bridge delivers the invite; its open
+      // response reports no live-vs-queued, so neither does the UI).
+      assert.doesNotMatch(body, /taskDelivery/);
+      assert.match(body, /the Bridge delivers the invite/);
       // The failure path reports it couldn't open — no blanket success.
       assert.match(body, /Couldn't open loop/);
       assert.doesNotMatch(body, /['"`]Launched/);
@@ -241,13 +242,94 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     it('a launch failure keeps the modal open (form input never lost)', () => {
       const body = fnBody('launchMedusaLoop');
       // The failure branch shows the inline error; only the success branch closes.
-      // (The success branch has a nested queued/delivered else — split on the
-      // LAST else, which is the launch-failure branch.)
       assert.match(body, /fail\(`Couldn't open loop/);
       const successBranch = body.slice(body.indexOf('result && result.loop'), body.lastIndexOf('} else {'));
       assert.match(successBranch, /closeMedusaLoopModal\(\)/);
       const failureBranch = body.slice(body.lastIndexOf('} else {'));
       assert.doesNotMatch(failureBranch, /closeMedusaLoopModal\(\)/);
+    });
+  });
+
+  // MED-2K9P v2 T4 — banner loop view + force-done. Visuals are operator-VRF'd;
+  // these pin the security/honesty/a11y contracts: XSS guard on Bridge-supplied
+  // loop data, honest state labels (halted is ONLY the server guard; force-done
+  // renders from the structured closeSignal), the never-color-only status cue,
+  // the no-new-timer rule, and the control invariant surfacing.
+  describe('banner loop view + force-done (MED-2K9P v2 T4)', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
+
+    it('renders the loops chip + loops panel markup', () => {
+      assert.match(html, /id="medusaLoopsChip"[^>]*aria-haspopup="dialog"/);
+      assert.match(html, /id="medusaLoopsPanel"[^>]*role="dialog"/);
+    });
+
+    it('the status poll carries the loops (rides the existing cadence, no new timer)', () => {
+      const body = fnBody('pollMedusa');
+      assert.match(body, /m\.loops\s*=\s*data\.loops/);
+      assert.match(body, /m\.loopsError\s*=\s*data\.loopsError/);
+      for (const name of ['renderMedusaLoopsChip', 'openMedusaLoopsPanel', 'renderMedusaLoopsPanel', 'forceDoneMedusaLoop', 'closeMedusaLoopsPanel']) {
+        assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
+      }
+    });
+
+    it('the chip text carries the status (round count / live count) — the glow is never the only cue', () => {
+      const body = fnBody('renderMedusaLoopsChip');
+      // Text content set alongside the has-live-loop class toggle.
+      assert.match(body, /has-live-loop/);
+      assert.match(body, /chip\.textContent/);
+      assert.match(body, /R\$\{l\.round\}/);
+      // A loop-fetch failure surfaces on the chip, never a silent hide.
+      assert.match(body, /loopsError/);
+    });
+
+    it('the live-loop glow animation is suppressed under prefers-reduced-motion', () => {
+      assert.match(css, /has-live-loop[\s\S]*?animation:\s*medusa-loop-glow/);
+      assert.match(css, /prefers-reduced-motion[\s\S]{0,200}has-live-loop[\s\S]{0,100}animation:\s*none/);
+    });
+
+    it('escapes every Bridge-supplied field in the loops panel (XSS guard — loop data is cross-session)', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      for (const expr of ['esc\\(other\\)', 'esc\\(loop\\.id\\)', 'esc\\(loop\\.task', 'esc\\(loop\\.target\\)', 'esc\\(stateLabel\\)', 'esc\\(msg\\.from', 'esc\\(msg\\.message', 'esc\\(m\\.loopsError\\)']) {
+        assert.match(body, new RegExp(expr), `${expr} must be escaped`);
+      }
+      assert.doesNotMatch(body, /\$\{loop\.task\}|\$\{loop\.id\}|\$\{msg\.message\}|\$\{msg\.from\}|\$\{other\}/);
+    });
+
+    it('state labels are honest: halted is only the server guard; force-done renders from the structured closeSignal', () => {
+      const body = fnBody('medusaLoopStateLabel');
+      assert.match(body, /halted by guard/);
+      assert.match(body, /closeSignal\s*&&\s*loop\.closeSignal\.reason/);
+      assert.match(body, /'force-done'/);
+    });
+
+    it('force-done is initiator-only in the UI and a halted loop surfaces "cannot be closed" (guard semantics)', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      assert.match(body, /live\s*&&\s*loop\.role\s*===\s*'initiator'/);
+      assert.match(body, /guard-halted — cannot be closed/);
+    });
+
+    it('force-done confirms, POSTs to the force-done endpoint, and never pretends on failure', () => {
+      const body = fnBody('forceDoneMedusaLoop');
+      assert.match(body, /window\.confirm\(/);
+      assert.match(body, /apiMutate\([\s\S]*?force-done/);
+      assert.match(body, /Couldn't end loop/);
+      assert.match(body, /api\.lastError/);
+      // Success is announced on the aria-live region (non-color cue).
+      assert.match(body, /medusaLive/);
+    });
+
+    it('the transcript is labeled as observed-only (the Bridge keeps no full history)', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      assert.match(body, /As observed by this session/);
+    });
+
+    it('wires the chip, panel delegation (close / force-done / transcript), Escape, and outside click', () => {
+      assert.match(src, /medusaLoopsChip'?\)?\.addEventListener\('click', openMedusaLoopsPanel\)/);
+      assert.match(src, /\.medusa-force-done'\)/);
+      assert.match(src, /\.medusa-loop-transcript-toggle'\)/);
+      assert.match(src, /loopsPanel\.hidden\)\s*closeMedusaLoopsPanel\(\)/);
+      assert.match(src, /closeMedusaLoopsPanel\(\); \/\/ v2 T4/);
     });
   });
 });

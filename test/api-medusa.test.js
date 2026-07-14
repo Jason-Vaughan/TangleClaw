@@ -230,7 +230,8 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
   it('returns an off status when the project has no active session', async () => {
     const { status, data } = await get('/api/sessions/demo/medusa/status');
     assert.equal(status, 200);
-    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    // `loops` joined the status payload in MED-2K9P v2 T4 (banner loop view).
+    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null, loops: [] });
   });
 
   it('honors the ?sessionId= fallback (off for a session with no listener)', async () => {
@@ -446,6 +447,79 @@ describe('lib/sessions — _maybeAutoStartMedusa (per-project auto-enable)', () 
   });
 });
 
+describe('lib/sessions — resyncMedusaListeners (TC#550, MED-2K9P v2 T4)', () => {
+  let tempDir;
+  let onProj;
+  let offProj;
+  let onActive;
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-resync-'));
+    store._setBasePath(tempDir);
+    store.init();
+    const onPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-on-'));
+    const offPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-off-'));
+    onProj = store.projects.create({ name: 'resync-on', path: onPath, engine: 'claude', methodology: 'none' });
+    offProj = store.projects.create({ name: 'resync-off', path: offPath, engine: 'claude', methodology: 'none' });
+    store.projectConfig.save(onPath, { medusaEnabled: true });
+    store.projectConfig.save(offPath, { medusaEnabled: false });
+    onActive = store.sessions.start({ projectId: onProj.id, engineId: 'claude', tmuxSession: 'fake-resync-on' });
+    store.sessions.start({ projectId: offProj.id, engineId: 'claude', tmuxSession: 'fake-resync-off' });
+  });
+
+  afterEach(() => {
+    medusa.stopSession(onActive.id);
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('re-starts listeners ONLY for live sessions whose project opted in (same predicate as launch)', () => {
+    // Simulate the post-restart state: sessions live in the DB, no listeners.
+    assert.equal(medusa.getStatus(onActive.id).state, 'off');
+    const { resynced } = sessions.resyncMedusaListeners();
+    assert.equal(resynced, 1);
+    assert.notEqual(medusa.getStatus(onActive.id).state, 'off');
+  });
+
+  it('reuses the persisted workspace id — identity is stable across the restart', () => {
+    const first = medusa.startSession({
+      projectPath: onProj.path, sessionId: onActive.id, name: onProj.name, wsFactory: (u) => new FakeWS(u)
+    });
+    medusa.stopSession(onActive.id); // the "restart" drops the in-memory listener…
+    sessions.resyncMedusaListeners(); // …and boot re-sync brings it back
+    assert.equal(medusa.getStatus(onActive.id).workspaceId, first.workspaceId);
+  });
+
+  it('is idempotent against an already-running listener (startSession per-session idempotency)', () => {
+    sessions.resyncMedusaListeners();
+    const ws = medusa.getStatus(onActive.id).workspaceId;
+    const { resynced } = sessions.resyncMedusaListeners();
+    assert.equal(resynced, 1); // counted, but startSession did not double-start
+    assert.equal(medusa.getStatus(onActive.id).workspaceId, ws);
+  });
+
+  it('a broken project record never blocks the sweep (non-throwing per project)', () => {
+    const badPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-bad-'));
+    const bad = store.projects.create({ name: 'resync-bad', path: badPath, engine: 'claude', methodology: 'none' });
+    store.projectConfig.save(badPath, { medusaEnabled: true });
+    store.sessions.start({ projectId: bad.id, engineId: 'claude', tmuxSession: 'fake-resync-bad' });
+    fs.rmSync(badPath, { recursive: true, force: true }); // config load will fail
+    let result;
+    assert.doesNotThrow(() => { result = sessions.resyncMedusaListeners(); });
+    // The healthy opt-in project still re-synced despite the broken one.
+    assert.ok(result.resynced >= 1);
+    assert.notEqual(medusa.getStatus(onActive.id).state, 'off');
+  });
+
+  it('server boot actually calls the re-sync (source pin — a regression here re-opens TC#550)', () => {
+    const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(serverSrc, /medusaWake\.start\(\);[\s\S]{0,400}sessions\.resyncMedusaListeners\(\)/);
+  });
+});
+
 describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 04)', () => {
   // The behavioral stop-and-forget is covered above; these source-probes pin that
   // every terminal transition actually calls teardown, so a new end path can't
@@ -484,19 +558,25 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
 
 /**
  * A minimal fake Medusa Bridge HTTP server keyed to the verify-api shapes
- * (2026-07-10, loops re-probed 2026-07-13): `POST /messages/direct` → received /
- * queued / 404-not-found; `GET /workspaces` → a roster; `POST /loops` → a
- * 201 loop object in `state: initiated` (the real Bridge does NOT notify the
- * target on open — Medusa#47), or 404 when a participant is unknown. Records
- * every send and loop-open body so tests can assert the truthful `from`/
- * `initiator` and that a rejected call never reached the Bridge.
- * @returns {{server: import('node:http').Server, received: object[], loops: object[], setRoster: (r: object[]) => void}}
+ * (2026-07-10, loops re-probed 2026-07-13, close/read mirrored from Bridge
+ * source 2026-07-14): `POST /messages/direct` → received / queued /
+ * 404-not-found; `GET /workspaces` → a roster; `POST /loops` → a 201 loop
+ * object in `state: initiated` (the Bridge delivers the loopInvite itself
+ * since Medusa PR #48); `GET /loops/:id` → the stored loop or 404;
+ * `POST /loops/:id/close` → initiator-only (403), already-complete/halted →
+ * 400, else `complete` with the closeSignal recorded. Records every send and
+ * loop-open body so tests can assert the truthful `from`/`initiator` and that
+ * a rejected call never reached the Bridge. `loopStore` (id → loop object) is
+ * exposed so tests can force states (`halted`, rounds) directly.
+ * @returns {{server: import('node:http').Server, received: object[], loops: object[], loopStore: Map<string, object>, setRoster: (r: object[]) => void}}
  */
 function makeFakeBridge() {
   /** @type {object[]} */
   const received = [];
   /** @type {object[]} */
   const loops = [];
+  /** @type {Map<string, object>} */
+  const loopStore = new Map();
   /** @type {object[]} */
   let roster = [
     { id: 'live-ws', name: 'Live', listener: { active: true }, connected: true },
@@ -533,7 +613,7 @@ function makeFakeBridge() {
           return json(res, 404, { error: 'Initiator or target workspace not found' });
         }
         loops.push(body);
-        return json(res, 201, {
+        const loop = {
           id: `loop-${loops.length}`,
           initiator: body.initiator,
           target: body.target,
@@ -545,12 +625,37 @@ function makeFakeBridge() {
           state: 'initiated',
           closeSignal: null,
           createdAt: '2026-07-13T00:00:00.000Z'
-        });
+        };
+        loopStore.set(loop.id, loop);
+        return json(res, 201, loop);
+      }
+      const loopMatch = req.url.match(/^\/loops\/([^/]+)(?:\/(close))?$/);
+      if (loopMatch) {
+        const loop = loopStore.get(decodeURIComponent(loopMatch[1]));
+        if (!loop) return json(res, 404, { error: `Loop ${loopMatch[1]} not found` });
+        if (!loopMatch[2] && req.method === 'GET') {
+          return json(res, 200, loop);
+        }
+        if (loopMatch[2] === 'close' && req.method === 'POST') {
+          // Mirrors the real close handler (Bridge source, 2026-07-14).
+          if (!body.from || !body.closeSignal) {
+            return json(res, 400, { error: 'Missing required close fields (from, closeSignal)' });
+          }
+          if (body.from !== loop.initiator) {
+            return json(res, 403, { error: 'Only the initiator may close the loop.' });
+          }
+          if (loop.state === 'complete' || loop.state === 'halted') {
+            return json(res, 400, { error: `Loop is already in ${loop.state} state` });
+          }
+          loop.state = 'complete';
+          loop.closeSignal = body.closeSignal;
+          return json(res, 200, { success: true, loopState: loop.state, closeSignal: loop.closeSignal });
+        }
       }
       return json(res, 404, { error: 'unmatched' });
     });
   });
-  return { server, received, loops, setRoster: (r) => { roster = r; } };
+  return { server, received, loops, loopStore, setRoster: (r) => { roster = r; } };
 }
 
 describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
@@ -706,6 +811,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     fake._open();
     fake._recv({ type: 'registered', workspaceId, connectionId: 'c1' });
     bridge.received.length = 0;
+    // Fresh Bridge loop store per test — stale TC-tracked ids 404-drop on the
+    // next read (the untrack-on-404 path), so loop assertions stay isolated.
+    bridge.loops.length = 0;
+    bridge.loopStore.clear();
   });
 
   afterEach(() => {
@@ -820,7 +929,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.code, 'NO_SESSION');
   });
 
-  it('loop route opens a loop and reports the honest task-delivery status', async () => {
+  it('loop route opens a loop — no out-of-band task notice (TC#552: the Bridge delivers the loopInvite)', async () => {
     const { status, data } = await req('/api/sessions/sender/medusa/loop', 'POST', {
       target: 'live-ws', task: 'do the thing', doneCriteria: 'the thing is done',
       mode: 'supervised', guards: { maxRounds: 5, maxWallTimeSeconds: 120 }
@@ -829,11 +938,10 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.loop.state, 'initiated');
     assert.equal(data.loop.initiator, workspaceId);
     assert.deepEqual(data.loop.guards, { maxRounds: 5, maxWallTimeSeconds: 120 });
-    assert.equal(data.taskDelivery.status, 'received');
-    // The task notice actually went to the target over the public send path.
-    assert.equal(bridge.received.length, 1);
-    assert.equal(bridge.received[0].to, 'live-ws');
-    assert.match(bridge.received[0].message, /do the thing/);
+    // TC#552: the response carries no taskDelivery and TC sent no direct
+    // message — the server-side loopInvite is the single notification.
+    assert.equal(data.taskDelivery, undefined);
+    assert.equal(bridge.received.length, 0);
   });
 
   it('loop route surfaces validation failures as 400s', async () => {
@@ -842,6 +950,67 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     });
     assert.equal(status, 400);
     assert.equal(data.code, 'EMPTY_TASK');
+  });
+
+  it('status route carries the known loops (the banner loop view rides the status poll) — MED-2K9P v2 T4', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 'watch me', doneCriteria: 'seen'
+    });
+    assert.equal(open.status, 200);
+    const { status, data } = await req('/api/sessions/sender/medusa/status', 'GET');
+    assert.equal(status, 200);
+    assert.equal(data.state, 'listening');
+    assert.equal(data.loops.length, 1);
+    assert.equal(data.loops[0].id, open.data.loop.id);
+    assert.equal(data.loops[0].role, 'initiator');
+    assert.equal(data.loopsError, undefined);
+  });
+
+  it('status route degrades honestly when the Bridge is unreachable mid-poll (loops:[] + loopsError, listener status intact)', async () => {
+    await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task: 't', doneCriteria: 'd' });
+    const goodUrl = `http://127.0.0.1:${bridge.server.address().port}`;
+    medusa._setBridgeHttpUrl('http://127.0.0.1:1'); // nothing listens here
+    try {
+      const { status, data } = await req('/api/sessions/sender/medusa/status', 'GET');
+      assert.equal(status, 200);
+      assert.equal(data.state, 'listening');
+      assert.deepEqual(data.loops, []);
+      assert.match(data.loopsError, /unreachable/);
+    } finally {
+      medusa._setBridgeHttpUrl(goodUrl);
+    }
+  });
+
+  it('force-done route ends an initiated loop with the structured force-done closeSignal', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 'stop me', doneCriteria: 'never'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'responded';
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST');
+    assert.equal(status, 200);
+    assert.equal(data.loopState, 'complete');
+    assert.equal(data.closeSignal.reason, 'force-done');
+  });
+
+  it('force-done on a guard-halted loop → 400 verbatim ("a halted loop cannot be closed")', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'halted';
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/force-done`, 'POST');
+    assert.equal(status, 400);
+    assert.equal(data.code, 'FORCE_DONE_REJECTED');
+    assert.match(data.error, /already in halted state/);
+  });
+
+  it('force-done route returns 404 for an unknown project and 409 with no active session', async () => {
+    const a = await req('/api/sessions/nope/medusa/loops/loop-1/force-done', 'POST');
+    assert.equal(a.status, 404);
+    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/force-done', 'POST');
+    assert.equal(b.status, 409);
+    assert.equal(b.data.code, 'NO_SESSION');
   });
 });
 
@@ -881,26 +1050,22 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('opens a loop with a truthful initiator, then delivers the task notice to the target', async () => {
+  it('opens a loop with a truthful initiator and sends NO out-of-band task notice (TC#552 — the Bridge delivers the loopInvite)', async () => {
     const result = await medusa.openLoop({
       sessionId: sid, target: 'live-ws', task: 'audit the tests', doneCriteria: 'all green',
       mode: 'autonomous', guards: { maxRounds: 3, maxWallTimeSeconds: 60 }
     });
     assert.equal(result.loop.id, 'loop-1');
     assert.equal(result.loop.state, 'initiated');
-    assert.equal(result.taskDelivery.status, 'received');
+    // TC#552: the Medusa#47 workaround is gone — no taskDelivery in the result
+    // and no direct message behind the Bridge's back (a second notice would
+    // double-notify the target on top of the server-side loopInvite).
+    assert.equal(result.taskDelivery, undefined);
+    assert.equal(bridge.received.length, 0);
     // The Bridge saw the loop open with the session's workspace id as initiator.
     assert.equal(bridge.loops.length, 1);
     assert.equal(bridge.loops[0].initiator, workspaceId);
     assert.equal(bridge.loops[0].mode, 'autonomous');
-    // The out-of-band task notice (Medusa#47 workaround) reached the target,
-    // names the loop id, and tells the agent how to respond.
-    assert.equal(bridge.received.length, 1);
-    assert.equal(bridge.received[0].to, 'live-ws');
-    assert.equal(bridge.received[0].from, workspaceId);
-    assert.match(bridge.received[0].message, /loop-1/);
-    assert.match(bridge.received[0].message, /audit the tests/);
-    assert.match(bridge.received[0].message, /POST \/loops\/loop-1\/message/);
   });
 
   it('defaults: supervised mode, maxRounds 10, maxWallTimeSeconds 600', async () => {
@@ -909,9 +1074,10 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
     assert.deepEqual(bridge.loops[0].guards, { maxRounds: 10, maxWallTimeSeconds: 600 });
   });
 
-  it('an offline target still opens the loop — task notice queues (honest, not false-delivered)', async () => {
+  it('an offline target still opens the loop — the Bridge queues its loopInvite durably (nothing extra for TC to send)', async () => {
     const result = await medusa.openLoop({ sessionId: sid, target: 'offline-ws', task: 't', doneCriteria: 'd' });
-    assert.equal(result.taskDelivery.status, 'queued');
+    assert.equal(result.loop.id, 'loop-1');
+    assert.equal(bridge.received.length, 0);
   });
 
   for (const [name, args, code] of [
@@ -947,7 +1113,7 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
     );
   });
 
-  it('a Bridge rejection is an honest failure and the task notice is never sent', async () => {
+  it('a Bridge rejection is an honest failure (no loop, nothing sent)', async () => {
     await assert.rejects(
       () => medusa.openLoop({ sessionId: sid, target: 'ghost-ws', task: 't', doneCriteria: 'd' }),
       (err) => {
@@ -969,26 +1135,208 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
       (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); return true; }
     );
   });
+});
 
-  it('a created-but-undelivered loop error NAMES the orphaned loop id (no silent half-success)', async () => {
-    // First fetch (loop open) succeeds against the fake Bridge; second (direct
-    // send) fails — the seam mimics the Bridge dying between the two calls.
-    let call = 0;
-    const flaky = (url, opts) => {
-      call += 1;
-      if (call === 1) return fetch(url, opts);
-      return Promise.reject(new Error('ECONNRESET'));
-    };
+describe('lib/medusa — getLoops / forceDoneLoop (MED-2K9P v2 T4)', () => {
+  let bridge;
+  let tempDir;
+  const sid = 't4-loop-view-svc';
+  let workspaceId;
+  let fake;
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-t4-svc-'));
+    bridge = makeFakeBridge();
+    await new Promise((resolve) => bridge.server.listen(0, '127.0.0.1', resolve));
+    medusa._setBridgeHttpUrl(`http://127.0.0.1:${bridge.server.address().port}`);
+  });
+
+  beforeEach(() => {
+    const status = medusa.startSession({
+      projectPath: tempDir, sessionId: sid, name: 'Viewer',
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    workspaceId = status.workspaceId;
+    fake._open();
+    fake._recv({ type: 'registered', workspaceId, connectionId: 'c1' });
+    bridge.received.length = 0;
+    bridge.loops.length = 0;
+    bridge.loopStore.clear();
+  });
+
+  afterEach(() => {
+    medusa.stopSession(sid);
+  });
+
+  after(async () => {
+    medusa._setBridgeHttpUrl();
+    await new Promise((resolve) => bridge.server.close(resolve));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('returns [] for a session with no listener (no identity → no vantage point)', async () => {
+    assert.deepEqual(await medusa.getLoops({ sessionId: 'nobody' }), []);
+  });
+
+  it('returns [] when the session knows no loops (and never hits the Bridge)', async () => {
+    assert.deepEqual(await medusa.getLoops({
+      sessionId: sid,
+      fetchImpl: () => { throw new Error('should not be called'); }
+    }), []);
+  });
+
+  it('lists a loop opened by this session with live Bridge state and role=initiator', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 'do it', doneCriteria: 'done' });
+    const loops = await medusa.getLoops({ sessionId: sid });
+    assert.equal(loops.length, 1);
+    assert.equal(loops[0].id, 'loop-1');
+    assert.equal(loops[0].state, 'initiated');
+    assert.equal(loops[0].round, 0);
+    assert.equal(loops[0].role, 'initiator');
+  });
+
+  it('reflects Bridge-side state changes on the next read (round advance, guard halt)', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    const stored = bridge.loopStore.get('loop-1');
+    stored.state = 'responded';
+    stored.round = 2;
+    let loops = await medusa.getLoops({ sessionId: sid });
+    assert.equal(loops[0].state, 'responded');
+    assert.equal(loops[0].round, 2);
+    stored.state = 'halted';
+    loops = await medusa.getLoops({ sessionId: sid });
+    assert.equal(loops[0].state, 'halted');
+  });
+
+  it('re-learns a loop from an inbound loop-tagged message (the target side\'s only discovery path)', async () => {
+    // Seed the Bridge with a loop initiated by SOMEONE ELSE targeting us.
+    bridge.loopStore.set('loop-x', {
+      id: 'loop-x', initiator: 'other-ws', target: workspaceId, task: 'review',
+      doneCriteria: 'ok', mode: 'supervised', guards: { maxRounds: 5, maxWallTimeSeconds: 60 },
+      round: 0, state: 'initiated', closeSignal: null, createdAt: '2026-07-14T00:00:00.000Z'
+    });
+    // The loopInvite lands in this session's inbox tagged with loopId.
+    fake._recv({
+      type: 'new_message', messageId: 'm-1',
+      message: { id: 'm-1', from: 'other-ws', to: workspaceId, message: 'New loop invitation', loopId: 'loop-x' }
+    });
+    const loops = await medusa.getLoops({ sessionId: sid });
+    assert.equal(loops.length, 1);
+    assert.equal(loops[0].id, 'loop-x');
+    assert.equal(loops[0].role, 'target');
+  });
+
+  it('a Bridge 404 untracks the loop (Bridge restarted, loop store lost) — no phantom rows', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    bridge.loopStore.clear(); // the Bridge "restarted"
+    assert.deepEqual(await medusa.getLoops({ sessionId: sid }), []);
+    // Untracked for good: the next read doesn't re-fetch the dead id.
+    assert.deepEqual(await medusa.getLoops({
+      sessionId: sid,
+      fetchImpl: () => { throw new Error('should not be called'); }
+    }), []);
+  });
+
+  it('an unreachable Bridge surfaces honestly (no silently-empty loop list)', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
     await assert.rejects(
-      () => medusa.openLoop({
-        sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', fetchImpl: flaky
-      }),
+      () => medusa.getLoops({ sessionId: sid, fetchImpl: () => Promise.reject(new Error('ECONNREFUSED')) }),
+      (err) => { assert.equal(err.code, 'BRIDGE_UNREACHABLE'); return true; }
+    );
+  });
+
+  it('sorts active loops before ended ones', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 'a', doneCriteria: 'd' });
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 'b', doneCriteria: 'd' });
+    bridge.loopStore.get('loop-1').state = 'halted';
+    const loops = await medusa.getLoops({ sessionId: sid });
+    assert.deepEqual(loops.map((l) => l.id), ['loop-2', 'loop-1']);
+  });
+
+  it('force-done closes via the contract with a structured force-done closeSignal (honest complete, not a fake halted)', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    // Force-done works mid-round too — advance to responded first.
+    bridge.loopStore.get('loop-1').state = 'responded';
+    const result = await medusa.forceDoneLoop({ sessionId: sid, loopId: 'loop-1' });
+    assert.equal(result.loopState, 'complete');
+    assert.equal(result.closeSignal.reason, 'force-done');
+    // The Bridge recorded the close with this session's truthful identity.
+    assert.equal(bridge.loopStore.get('loop-1').state, 'complete');
+    assert.equal(bridge.loopStore.get('loop-1').closeSignal.reason, 'force-done');
+  });
+
+  it('a guard-halted loop cannot be force-done — the Bridge 400 surfaces verbatim', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    bridge.loopStore.get('loop-1').state = 'halted';
+    await assert.rejects(
+      () => medusa.forceDoneLoop({ sessionId: sid, loopId: 'loop-1' }),
       (err) => {
-        assert.equal(err.code, 'TASK_DELIVERY_FAILED');
-        assert.match(err.message, /loop-1/);
+        assert.equal(err.code, 'FORCE_DONE_REJECTED');
+        assert.equal(err.httpStatus, 400);
+        assert.match(err.message, /already in halted state/);
         return true;
       }
     );
+  });
+
+  it('only the initiator may force-done — a target-side attempt is a Bridge 403, surfaced', async () => {
+    // A loop initiated by someone else; this session is the target.
+    bridge.loopStore.set('loop-x', {
+      id: 'loop-x', initiator: 'other-ws', target: workspaceId, task: 't',
+      doneCriteria: 'd', mode: 'supervised', guards: {}, round: 1,
+      state: 'responded', closeSignal: null, createdAt: '2026-07-14T00:00:00.000Z'
+    });
+    await assert.rejects(
+      () => medusa.forceDoneLoop({ sessionId: sid, loopId: 'loop-x' }),
+      (err) => {
+        assert.equal(err.code, 'FORCE_DONE_REJECTED');
+        assert.equal(err.httpStatus, 403);
+        assert.match(err.message, /Only the initiator/);
+        return true;
+      }
+    );
+    assert.equal(bridge.loopStore.get('loop-x').state, 'responded');
+  });
+
+  it('an unknown loop id is a 404, not a silent success', async () => {
+    await assert.rejects(
+      () => medusa.forceDoneLoop({ sessionId: sid, loopId: 'loop-ghost' }),
+      (err) => { assert.equal(err.code, 'FORCE_DONE_REJECTED'); assert.equal(err.httpStatus, 404); return true; }
+    );
+  });
+
+  it('refuses force-done when the session is not listening', async () => {
+    medusa.stopSession(sid);
+    await assert.rejects(
+      () => medusa.forceDoneLoop({ sessionId: sid, loopId: 'loop-1' }),
+      (err) => { assert.equal(err.code, 'NOT_LISTENING'); assert.equal(err.httpStatus, 409); return true; }
+    );
+  });
+
+  it('a banner toggle cycle keeps loop tracking; session END (forgetSession) drops it', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
+    // Toggle off + on (same session id, fresh listener) — the loop stays visible.
+    medusa.stopSession(sid);
+    const status = medusa.startSession({
+      projectPath: tempDir, sessionId: sid, name: 'Viewer',
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    fake._open();
+    fake._recv({ type: 'registered', workspaceId: status.workspaceId, connectionId: 'c2' });
+    let loops = await medusa.getLoops({ sessionId: sid });
+    assert.equal(loops.length, 1);
+    // Session end forgets the identity AND the tracked loops.
+    medusa.forgetSession({ projectPath: tempDir, sessionId: sid });
+    medusa.startSession({
+      projectPath: tempDir, sessionId: sid, name: 'Viewer',
+      wsFactory: (u) => (fake = new FakeWS(u))
+    });
+    fake._open();
+    loops = await medusa.getLoops({
+      sessionId: sid,
+      fetchImpl: () => { throw new Error('should not be called'); }
+    });
+    assert.deepEqual(loops, []);
   });
 });
 
