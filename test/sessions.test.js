@@ -105,6 +105,11 @@ describe('sessions', () => {
         if (savedEnv === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
         else process.env.MEDUSA_CONTRACT_PATH = savedEnv;
         store.projectConfig.save(projDir, {});
+        // #557 fixtures — continuity index + oversized contract must never
+        // leak into sibling tests (readIndex flips the prime into its Resume
+        // branch for every later generatePrimePrompt call).
+        fs.rmSync(path.join(projDir, '.tangleclaw'), { recursive: true, force: true });
+        fs.rmSync(path.join(projDir, 'fixture-contract.md'), { force: true });
       });
 
       it('injects contract + identity + role for an opted-in launch', () => {
@@ -152,6 +157,91 @@ describe('sessions', () => {
         assert.ok(prompt.includes('`prime-test-cafe0123`'), 'identity still injects');
         assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'missing contract is surfaced, not silent');
         assert.ok(prompt.includes('no-such-contract.md'), 'the tried path is named');
+      });
+
+      it('tells the session participation is event-driven, not a boot task (#557)', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\nRegister then drain.\n');
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+        assert.ok(
+          prompt.includes('This section is context, not a task'),
+          'the switchboard section must not read as a boot mission'
+        );
+      });
+
+      it('#557 regression: directive sections survive the template cap — the contract yields, honestly', () => {
+        const wrapSentinel = require('../lib/wrap-sentinel');
+        // An oversized contract: alone it exceeds the minimal template's
+        // 2000-token (8000-char) prime cap several times over. Pre-fix, the
+        // blind tail truncation cut the Resume wait-guard and the wrap
+        // instructions out of the prime — the #557 live regression.
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Big Consumer Contract\n' + 'protocol detail line\n'.repeat(1500));
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        store.projectConfig.save(projDir, { medusaEnabled: true });
+        const continuityDir = path.join(projDir, '.tangleclaw', 'continuity');
+        fs.mkdirSync(continuityDir, { recursive: true });
+        fs.writeFileSync(path.join(continuityDir, 'index.md'), [
+          '# Continuity Index — prime-test',
+          '',
+          '## Current state',
+          'Mid-build on the fixture feature.',
+          '',
+          '## Next action',
+          '- finish the fixture feature',
+          ''
+        ].join('\n'));
+
+        const project = store.projects.getByName('prime-test');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+        // Every load-bearing directive survives the cap.
+        assert.ok(prompt.includes('## Resume'), 'Resume block survives the cap');
+        assert.ok(prompt.includes('MUST NOT start the work'), 'the wait-for-confirmation guard survives the cap');
+        assert.ok(prompt.includes('## Wrapping this session'), 'wrap instructions survive the cap');
+        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN), 'the wrap sentinel token survives the cap');
+        assert.ok(prompt.includes('`prime-test-cafe0123`'), 'the workspace identity survives the cap');
+        // The contract yields — trimmed with an honest note, never a blind slice.
+        assert.ok(
+          prompt.includes('truncated to fit the prime size budget'),
+          'the contract trim is announced honestly'
+        );
+        assert.ok(prompt.includes(contractFile), 'the trim note names the source doc');
+        assert.equal(
+          prompt.includes('[Prime prompt truncated]'), false,
+          'the blind tail truncation must not fire on the medusa path'
+        );
+        assert.ok(prompt.length <= 2000 * 4, 'the prime respects the template cap');
+      });
+
+      it('#557: contract body is omitted (with a pointer) when the budget cannot hold a useful fragment', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\n' + 'line\n'.repeat(200));
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+
+        const lines = sessions._medusaContractSection(100);
+        const section = lines.join('\n');
+        assert.ok(section.includes('Omitted to fit the prime size budget'), 'omission is announced');
+        assert.ok(section.includes(contractFile), 'the pointer names the source doc');
+        assert.equal(section.includes('line\nline'), false, 'no contract body ships');
+      });
+
+      it('#557: the full contract still embeds when no cap constrains it', () => {
+        const contractFile = path.join(projDir, 'fixture-contract.md');
+        const body = '# Fixture Consumer Contract\n' + 'protocol detail line\n'.repeat(50);
+        fs.writeFileSync(contractFile, body);
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+
+        const section = sessions._medusaContractSection(Infinity).join('\n');
+        assert.ok(section.includes(body.trim()), 'the whole contract embeds under an infinite budget');
+        assert.equal(section.includes('truncated'), false, 'no trim note when nothing was trimmed');
       });
     });
 
