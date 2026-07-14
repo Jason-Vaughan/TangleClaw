@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Supervised loop continue/feedback + satisfied closeout — the FEEDBACK and CLOSEOUT halves of the loop control spine land in the banner (TC#561, completes MED-2K9P v2 Slice 1's control spine).** The loops panel exposed only Force-done + Transcript, and the server had only open + force-done routes — so an initiator could observe and kill a supervised loop but never **continue it with feedback** or **close it as satisfied** (design §1: "initiator judges → CLOSEOUT (satisfied, ends) or FEEDBACK (loops)"); round-2 feedback had to be POSTed to the Bridge by hand. Now, when a loop this session initiated is in `state === 'responded'`, the panel shows **Send feedback** (opens an inline labelled composer → `POST .../medusa/loops/:id/continue {message}` → Bridge `POST /loops/:id/message`, advancing `responded → continue`, round++) and **Mark done** (a *satisfied* closeout → `POST .../medusa/loops/:id/closeout` → Bridge close with `closeSignal.reason: 'satisfied'`, labeled "ended — marked done", distinct from the force-done kill-switch). The affordances gate on `responded` because the Bridge accepts an initiator round only after the target replies (posting while `initiated` → `400 "target response first"`); a stale-state click surfaces the Bridge's 400 verbatim, never a false "sent". The feedback text goes over HTTP as data, never a keystroke; every Bridge-supplied field stays `esc()`d. `forceDoneLoop` was refactored onto a shared `_closeLoop` helper (force-done and satisfied differ only by reason + label). `CACHE_NAME` v3-44 → v3-45. Tests: continue happy-path/empty-feedback-400/wrong-state-400-passthrough/maxRounds-auto-halt + closeout satisfied/already-closed-400/no-session-409 against the fake Bridge's new stateful `/loops/:id/message` handler (`test/api-medusa.test.js`); source-probes for the responded-only gate, labelled composer + XSS esc, honest distinct labels, and delegated wiring (`test/medusa-control.test.js`).
+
 ## [4.17.1] - 2026-07-13
 
 ### Fixed

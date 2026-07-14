@@ -332,4 +332,69 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(src, /closeMedusaLoopsPanel\(\); \/\/ v2 T4/);
     });
   });
+
+  // TC#561 — the FEEDBACK + satisfied-CLOSEOUT half of the loop control spine.
+  // Visuals are operator-VRF'd; the source pins the gate (only when the
+  // initiator can actually judge), the honest labels, and the wiring.
+  describe('supervised continue/feedback + satisfied closeout (TC#561)', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
+
+    it('defines the continue + closeout handlers', () => {
+      for (const name of ['continueMedusaLoop', 'closeoutMedusaLoop']) {
+        assert.ok(src.includes(`function ${name}(`), `${name} must be defined`);
+      }
+    });
+
+    it('offers Send feedback + Mark done ONLY when the initiator can judge (responded state)', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      // The gate is role initiator AND state responded — never for a target,
+      // never in initiated/continue/complete (the Bridge would 400 a round).
+      assert.match(body, /loop\.role\s*===\s*'initiator'\s*&&\s*loop\.state\s*===\s*'responded'/);
+      assert.match(body, /medusa-loop-continue/);
+      assert.match(body, /medusa-loop-closeout/);
+      // The composer only renders under the same canJudge gate.
+      assert.match(body, /canJudge\s*&&\s*feedbackOpen/);
+    });
+
+    it('the feedback composer has a labelled textarea and escapes the target name (no raw interpolation)', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      assert.match(body, /medusa-loop-feedback-label/);
+      assert.match(body, /<textarea[^>]*medusa-loop-feedback-input/);
+      assert.match(body, /placeholder="What should \$\{esc\(other\)\}/);
+      assert.doesNotMatch(body, /\$\{other\}/); // never raw
+    });
+
+    it('continue validates non-empty feedback, POSTs to the continue endpoint, and never pretends on failure', () => {
+      const body = fnBody('continueMedusaLoop');
+      assert.match(body, /Enter feedback before sending/);       // client-side guard
+      assert.match(body, /apiMutate\([\s\S]*?\/continue/);
+      assert.match(body, /Couldn't send feedback/);
+      assert.match(body, /api\.lastError/);
+      // Optimistic advance uses the Bridge's returned state/round, not a guess.
+      assert.match(body, /loop\.state\s*=\s*result\.loopState/);
+    });
+
+    it('closeout is a SATISFIED close, labeled distinctly from force-done', () => {
+      const body = fnBody('closeoutMedusaLoop');
+      assert.match(body, /window\.confirm\(/);
+      assert.match(body, /apiMutate\([\s\S]*?\/closeout/);
+      assert.match(body, /marked done/);
+      assert.doesNotMatch(body, /force-done/); // the satisfied path must not borrow the kill-switch label
+      assert.match(body, /Couldn't close loop/);
+    });
+
+    it('wires the new delegated controls (continue toggle, feedback send, closeout)', () => {
+      assert.match(src, /\.medusa-loop-closeout'\)/);
+      assert.match(src, /\.medusa-loop-continue'\)/);
+      assert.match(src, /\.medusa-loop-feedback-send'\)/);
+      // The composer open-state is a Set mirroring the transcript one.
+      assert.match(src, /medusaExpandedFeedback/);
+    });
+
+    it('styles the new controls (accent continue/send, quiet closeout, ≥36px touch targets)', () => {
+      assert.match(css, /\.medusa-loop-continue[\s\S]*?min-height:\s*36px/);
+      assert.match(css, /\.medusa-loop-closeout[\s\S]*?min-height:\s*36px/);
+      assert.match(css, /\.medusa-loop-feedback-input/);
+    });
+  });
 });

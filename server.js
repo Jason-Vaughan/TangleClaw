@@ -1999,6 +1999,52 @@ route('POST', '/api/sessions/:project/medusa/loops/:loopId/force-done', async (_
   }
 });
 
+// POST /api/sessions/:project/medusa/loops/:loopId/continue — send an initiator
+// FEEDBACK round to continue a supervised loop this session initiated (TC#561 —
+// the FEEDBACK half of the design §1 control spine). Body `{ message }`. Rides
+// the Bridge's `POST /loops/:id/message`; valid only once the target has
+// responded (`state === 'responded'`) — a wrong-state click surfaces the
+// Bridge's 400 verbatim, never a false "sent".
+route('POST', '/api/sessions/:project/medusa/loops/:loopId/continue', async (_req, res, params, body) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to continue a loop from', 'NO_SESSION');
+  }
+  try {
+    const result = await medusa.continueLoop({ sessionId: active.id, loopId: params.loopId, message: body && body.message });
+    jsonResponse(res, 200, result);
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CONTINUE_FAILED');
+  }
+});
+
+// POST /api/sessions/:project/medusa/loops/:loopId/closeout — the SATISFIED
+// closeout of a loop this session initiated (TC#561 — the CLOSEOUT half of the
+// control spine). Distinct from force-done (the kill-switch): rides the Bridge
+// close with `closeSignal.reason: 'satisfied'` so the outcome is labeled
+// "ended — marked done", not "ended by force-done". Same initiator-only (403)
+// / already-closed (400) / unknown (404) passthrough.
+route('POST', '/api/sessions/:project/medusa/loops/:loopId/closeout', async (_req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to close a loop from', 'NO_SESSION');
+  }
+  try {
+    const result = await medusa.closeoutLoop({ sessionId: active.id, loopId: params.loopId });
+    jsonResponse(res, 200, result);
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CLOSEOUT_FAILED');
+  }
+});
+
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
 // request once the session view has opened the wrap drawer, so the poll won't
 // reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.

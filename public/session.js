@@ -1296,6 +1296,9 @@ function closeMedusaLoopModal() {
 /** @type {Set<string>} Loop ids whose transcript is expanded in the loops panel. */
 const medusaExpandedTranscripts = new Set();
 
+/** @type {Set<string>} Loop ids whose initiator feedback composer is open (TC#561). */
+const medusaExpandedFeedback = new Set();
+
 /**
  * Open the loops panel (the ⟳ chip click) — the banner's live view of every
  * loop this session knows about. Toggles closed if already open. Content
@@ -1390,14 +1393,36 @@ async function renderMedusaLoopsPanel() {
     const stateLabel = medusaLoopStateLabel(loop);
     const expanded = medusaExpandedTranscripts.has(loop.id);
 
+    // The initiator judges only when the target has responded (design §1). The
+    // Bridge accepts a feedback round / posts only in `responded` state, so the
+    // FEEDBACK + satisfied-CLOSEOUT affordances gate on it (TC#561); force-done
+    // (the kill-switch) stays available for any live loop this session owns.
+    const canJudge = loop.role === 'initiator' && loop.state === 'responded';
+    const feedbackOpen = medusaExpandedFeedback.has(loop.id);
     let actions = '';
     if (live && loop.role === 'initiator') {
+      if (canJudge) {
+        actions += `<button type="button" class="medusa-loop-continue" data-loop-id="${esc(loop.id)}" aria-expanded="${feedbackOpen ? 'true' : 'false'}">Send feedback</button>`;
+        actions += `<button type="button" class="medusa-loop-closeout" data-loop-id="${esc(loop.id)}">Mark done</button>`;
+      }
       actions += `<button type="button" class="medusa-force-done" data-loop-id="${esc(loop.id)}">Force-done</button>`;
     } else if (loop.state === 'halted') {
       // Guard semantics surfaced: a halted loop cannot be closed (Bridge 400).
       actions += '<span class="medusa-loop-note">guard-halted — cannot be closed</span>';
     }
     actions += `<button type="button" class="medusa-loop-transcript-toggle" data-loop-id="${esc(loop.id)}" aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? 'Hide' : 'Transcript'}</button>`;
+
+    // Inline feedback composer (the FEEDBACK half of the control spine). Labeled
+    // textarea + Send; the message is sent over HTTP as data, never a keystroke.
+    let feedback = '';
+    if (canJudge && feedbackOpen) {
+      const fid = `medusaFeedback-${esc(loop.id)}`;
+      feedback = '<div class="medusa-loop-feedback">'
+        + `<label class="medusa-loop-feedback-label" for="${fid}">Feedback to continue this loop</label>`
+        + `<textarea id="${fid}" class="medusa-loop-feedback-input" rows="2" placeholder="What should ${esc(other)} do next?"></textarea>`
+        + `<button type="button" class="medusa-loop-feedback-send" data-loop-id="${esc(loop.id)}">Send</button>`
+        + '</div>';
+    }
 
     let transcript = '';
     if (expanded) {
@@ -1415,6 +1440,7 @@ async function renderMedusaLoopsPanel() {
       + `<div class="medusa-loop-who">${loop.role === 'initiator' ? '→' : '←'} ${esc(other)}</div>`
       + `<div class="medusa-loop-meta">${esc(loop.mode || 'supervised')} · ${esc(stateLabel)} · ${esc(round)}</div>`
       + `<div class="medusa-loop-actions">${actions}</div>`
+      + feedback
       + transcript
       + '</div>';
   }).join('');
@@ -1452,6 +1478,71 @@ async function forceDoneMedusaLoop(loopId) {
     renderMedusaControl();
   } else {
     showMethodologyActionToast(`Couldn't end loop: ${api.lastError || 'the bridge rejected it'}`, true);
+  }
+}
+
+/**
+ * Send an initiator FEEDBACK round to continue a supervised loop (TC#561, the
+ * FEEDBACK half of the control spine). Validates non-empty text client-side,
+ * POSTs the round, and on success closes the composer and optimistically
+ * advances the local loop (`responded → continue`, round from the Bridge) so
+ * the panel doesn't lag the poll. A rejection surfaces verbatim — never a false
+ * "sent".
+ * @param {string} loopId - The loop to continue.
+ * @param {string} message - The initiator's feedback text for this round.
+ * @returns {Promise<void>}
+ */
+async function continueMedusaLoop(loopId, message) {
+  const text = (message || '').trim();
+  if (!text) { showMethodologyActionToast('Enter feedback before sending.', true); return; }
+  const result = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/continue`,
+    'POST',
+    { message: text }
+  );
+  if (result && result.loopState) {
+    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
+    if (loop) {
+      loop.state = result.loopState;
+      if (typeof result.round === 'number') loop.round = result.round;
+    }
+    medusaExpandedFeedback.delete(loopId);
+    showMethodologyActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
+    renderMedusaControl();
+  } else {
+    showMethodologyActionToast(`Couldn't send feedback: ${api.lastError || 'the bridge rejected it'}`, true);
+  }
+}
+
+/**
+ * Satisfied closeout (TC#561, the CLOSEOUT half of the control spine) — end a
+ * loop as *done*, distinct from the force-done kill-switch. Confirms, POSTs the
+ * satisfied close, and labels the outcome "marked done" (not "force-done") so
+ * the operator's judgment is never mislabeled.
+ * @param {string} loopId - The loop to close as satisfied.
+ * @returns {Promise<void>}
+ */
+async function closeoutMedusaLoop(loopId) {
+  const yes = window.confirm('Mark this loop done? The other session gets a close notice; this cannot be undone.');
+  if (!yes) return;
+  const result = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/closeout`,
+    'POST',
+    {}
+  );
+  if (result && result.loopState) {
+    const loop = (sessionState.medusa.loops || []).find((l) => l.id === loopId);
+    if (loop) {
+      loop.state = result.loopState;
+      loop.closeSignal = result.closeSignal || loop.closeSignal;
+    }
+    medusaExpandedFeedback.delete(loopId);
+    showMethodologyActionToast('Loop ended — marked done.', false);
+    const live = document.getElementById('medusaLive');
+    if (live) live.textContent = 'Loop ended — marked done';
+    renderMedusaControl();
+  } else {
+    showMethodologyActionToast(`Couldn't close loop: ${api.lastError || 'the bridge rejected it'}`, true);
   }
 }
 
@@ -3463,6 +3554,23 @@ function bindEvents() {
       if (e.target.closest('.medusa-panel-close')) { closeMedusaLoopsPanel(); return; }
       const forceBtn = e.target.closest('.medusa-force-done');
       if (forceBtn) { forceDoneMedusaLoop(forceBtn.dataset.loopId); return; }
+      const closeoutBtn = e.target.closest('.medusa-loop-closeout');
+      if (closeoutBtn) { closeoutMedusaLoop(closeoutBtn.dataset.loopId); return; }
+      const continueBtn = e.target.closest('.medusa-loop-continue');
+      if (continueBtn) {
+        const id = continueBtn.dataset.loopId;
+        if (medusaExpandedFeedback.has(id)) medusaExpandedFeedback.delete(id);
+        else medusaExpandedFeedback.add(id);
+        renderMedusaLoopsPanel();
+        return;
+      }
+      const sendBtn = e.target.closest('.medusa-loop-feedback-send');
+      if (sendBtn) {
+        const id = sendBtn.dataset.loopId;
+        const ta = document.getElementById(`medusaFeedback-${id}`);
+        continueMedusaLoop(id, ta ? ta.value : '');
+        return;
+      }
       const toggleBtn = e.target.closest('.medusa-loop-transcript-toggle');
       if (toggleBtn) {
         const id = toggleBtn.dataset.loopId;

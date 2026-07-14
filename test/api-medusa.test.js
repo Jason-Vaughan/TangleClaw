@@ -629,7 +629,7 @@ function makeFakeBridge() {
         loopStore.set(loop.id, loop);
         return json(res, 201, loop);
       }
-      const loopMatch = req.url.match(/^\/loops\/([^/]+)(?:\/(close))?$/);
+      const loopMatch = req.url.match(/^\/loops\/([^/]+)(?:\/(close|message))?$/);
       if (loopMatch) {
         const loop = loopStore.get(decodeURIComponent(loopMatch[1]));
         if (!loop) return json(res, 404, { error: `Loop ${loopMatch[1]} not found` });
@@ -650,6 +650,26 @@ function makeFakeBridge() {
           loop.state = 'complete';
           loop.closeSignal = body.closeSignal;
           return json(res, 200, { success: true, loopState: loop.state, closeSignal: loop.closeSignal });
+        }
+        if (loopMatch[2] === 'message' && req.method === 'POST') {
+          // Mirrors the real message/round handler (api-notes-medusa.md §T4):
+          // the initiator may post only after the target responds; posting
+          // while `initiated` is 400. A post from the initiator advances
+          // `responded → continue` (round++), the maxRounds guard auto-halting.
+          if (!body.from || typeof body.message !== 'string' || !body.message) {
+            return json(res, 400, { error: 'Missing required message fields (from, message)' });
+          }
+          if (loop.state === 'complete' || loop.state === 'halted') {
+            return json(res, 400, { error: `Loop is already in ${loop.state} state` });
+          }
+          if (body.from === loop.initiator && loop.state === 'initiated') {
+            return json(res, 400, { error: 'Initiated loop expects target response first' });
+          }
+          loop.round = (loop.round || 0) + 1;
+          loop.state = body.from === loop.initiator ? 'continue' : 'responded';
+          const maxRounds = loop.guards && loop.guards.maxRounds;
+          if (maxRounds && loop.round >= maxRounds) loop.state = 'halted';
+          return json(res, 200, { success: true, loopState: loop.state, round: loop.round, messageId: `msg-${loop.round}`, delivered: true });
         }
       }
       return json(res, 404, { error: 'unmatched' });
@@ -1009,6 +1029,85 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     const a = await req('/api/sessions/nope/medusa/loops/loop-1/force-done', 'POST');
     assert.equal(a.status, 404);
     const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/force-done', 'POST');
+    assert.equal(b.status, 409);
+    assert.equal(b.data.code, 'NO_SESSION');
+  });
+
+  // ── TC#561: continue (FEEDBACK) + closeout (satisfied CLOSEOUT) ──
+
+  it('continue route sends an initiator feedback round → responded advances to continue (round++)', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 'do the thing', doneCriteria: 'done well'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'responded'; // target has replied
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'try again, but tidier' });
+    assert.equal(status, 200);
+    assert.equal(data.loopState, 'continue');
+    assert.equal(data.round, 1);
+    assert.equal(data.delivered, true);
+  });
+
+  it('continue route rejects empty feedback client-of-server-side (400 EMPTY_FEEDBACK, never reaches the Bridge)', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'responded';
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: '   ' });
+    assert.equal(status, 400);
+    assert.equal(data.code, 'EMPTY_FEEDBACK');
+  });
+
+  it('continue route passes the Bridge "target response first" 400 through verbatim (wrong-state click)', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    const loopId = open.data.loop.id; // still `initiated` — target hasn't responded
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'go' });
+    assert.equal(status, 400);
+    assert.equal(data.code, 'CONTINUE_REJECTED');
+    assert.match(data.error, /target response first/);
+  });
+
+  it('continue route: maxRounds guard auto-halts on the round that reaches the cap', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd', guards: { maxRounds: 1 }
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'responded';
+    const { data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/continue`, 'POST', { message: 'once' });
+    assert.equal(data.loopState, 'halted', 'round 1 hits maxRounds:1 → Bridge halts');
+  });
+
+  it('closeout route ends a responded loop as SATISFIED (distinct reason from force-done)', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 'wrap it', doneCriteria: 'good enough'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'responded';
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST');
+    assert.equal(status, 200);
+    assert.equal(data.loopState, 'complete');
+    assert.equal(data.closeSignal.reason, 'satisfied');
+  });
+
+  it('closeout on an already-closed loop → 400 verbatim (CLOSEOUT_REJECTED)', async () => {
+    const open = await req('/api/sessions/sender/medusa/loop', 'POST', {
+      target: 'live-ws', task: 't', doneCriteria: 'd'
+    });
+    const loopId = open.data.loop.id;
+    bridge.loopStore.get(loopId).state = 'complete';
+    const { status, data } = await req(`/api/sessions/sender/medusa/loops/${loopId}/closeout`, 'POST');
+    assert.equal(status, 400);
+    assert.equal(data.code, 'CLOSEOUT_REJECTED');
+  });
+
+  it('continue + closeout routes return 409 with no active session', async () => {
+    const a = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/continue', 'POST', { message: 'x' });
+    assert.equal(a.status, 409);
+    assert.equal(a.data.code, 'NO_SESSION');
+    const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/closeout', 'POST');
     assert.equal(b.status, 409);
     assert.equal(b.data.code, 'NO_SESSION');
   });
