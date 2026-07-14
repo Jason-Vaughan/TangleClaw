@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-14: Fix — prime truncation dropped the Resume wait-guard + wrap sentinel on medusaEnabled launches (#557)
+
+<!-- prawduct: type=fix | chunks=557 | scope=med-2k9p-v2 | status=merged -->
+
+**Why:** Operator-reported live regression during the T4 VRF sweep: a freshly-relaunched bypass-mode Gemini session "went to town" at boot (unprompted switchboard/continuity exploration — "thought I was hacked"), while interactive mode sat inert. Root cause reproduced offline against the live store: T1's consumer-contract embed (~14K chars) blows the methodology template's prime cap (`prime.maxTokens * 4`; prawduct 16000, minimal 8000), and `generatePrimePrompt`'s blind tail-truncation silently cut every section after the contract — the Resume block's wait-for-confirmation guard, Active Learnings, and the wrap-sentinel instruction (typed "wrap" dead too). The session booted with a mission-shaped prime and no wait directive; permission mode was the only thing separating quiet from chaos. **What:** bulk reference yields to directives (`lib/sessions.js`) — `_medusaPrimeSection` now carries identity + role only; new `_medusaContractSection` appends the contract LAST, budgeted to the space the cap leaves (full / trimmed with an honest `[contract truncated to fit the prime size budget — full doc at <path>]` note / omitted-with-pointer below a 400-char floor); the blind slice survives only as a safety net the medusa path can no longer trip. Plus an explicit "**context, not a task**" line — participation is event-driven, never a boot mission, truncated or not. Live re-render: portfolio prime 15,996/16,000 chars, every directive present. **Tests:** #557 regression pin (oversized contract + continuity index + cap → all directives survive, honest trim note, blind slice must NOT fire; verified failing pre-fix), budget-floor omission, infinite-budget full embed, guard-line presence (`test/sessions.test.js`); full suite 4186/0/1. **Critic:** verify-resolutions chain (0 blocking, 1 warning — stale test evidence, refreshed) extending cumulative `ce1d1359` to HEAD `62f625c`.
+
 ## 2026-07-14: Feat — banner loop view + force-done + boot listener re-sync (MED-2K9P v2 Slice 1, chunk T4 — TC side complete; Round-3 e2e RAN LIVE)
 
 <!-- prawduct: type=feat | chunks=T4 | scope=med-2k9p-v2 | status=merged -->
