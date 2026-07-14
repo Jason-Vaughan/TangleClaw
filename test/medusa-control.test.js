@@ -396,5 +396,19 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(css, /\.medusa-loop-closeout[\s\S]*?min-height:\s*36px/);
       assert.match(css, /\.medusa-loop-feedback-input/);
     });
+
+    it('the poll re-render never wipes an in-progress feedback composer (focused or dirty)', () => {
+      // Regression (Critic warning): pollMedusa → renderMedusaControl re-renders
+      // the panel each tick; without this guard the textarea is recreated empty
+      // and mid-compose feedback is lost.
+      const body = fnBody('renderMedusaLoopsPanel');
+      assert.match(body, /medusa-loop-feedback-input/);
+      assert.match(body, /document\.activeElement\s*===\s*openComposer/);
+      assert.match(body, /openComposer\.value\.trim\(\)/);
+      // The guard returns BEFORE the panel innerHTML is rebuilt.
+      const guardIdx = body.indexOf('openComposer');
+      const renderIdx = body.indexOf('panel.innerHTML =');
+      assert.ok(guardIdx >= 0 && renderIdx > guardIdx, 'guard precedes the re-render');
+    });
   });
 });

@@ -1363,6 +1363,15 @@ function medusaLoopStateLabel(loop) {
 async function renderMedusaLoopsPanel() {
   const panel = document.getElementById('medusaLoopsPanel');
   if (!panel) return;
+  // Don't let the status-poll re-render wipe an in-progress feedback composer
+  // (TC#561): if a composer textarea is focused or carries draft text, keep the
+  // current DOM this tick. The panel refreshes on the next tick once the
+  // operator sends or closes it — while a loop sits `responded` awaiting the
+  // initiator, no state it would show is changing anyway.
+  const openComposer = panel.querySelector('.medusa-loop-feedback-input');
+  if (openComposer && (document.activeElement === openComposer || openComposer.value.trim())) {
+    return;
+  }
   const m = sessionState.medusa;
   const loops = m.loops || [];
 
