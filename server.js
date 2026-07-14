@@ -1814,7 +1814,12 @@ route('GET', '/api/sessions/:project/status', (_req, res, params) => {
 // project's active session (matching how the sessions route family resolves it
 // via store.sessions.getActive); a `?sessionId=` query param is honored as a
 // fallback when no session is active. No active session → an `off` status.
-route('GET', '/api/sessions/:project/medusa/status', (req, res, params) => {
+// MED-2K9P v2 T4: the response also carries `loops` — the session's known
+// loops with live Bridge state — so the banner loop view rides the existing
+// status poll (no new timer). A Bridge failure during the loop fetch degrades
+// honestly: `loops: []` plus a `loopsError` naming the reason, never a silent
+// empty list; the listener status itself is still returned.
+route('GET', '/api/sessions/:project/medusa/status', async (req, res, params) => {
   const project = store.projects.getByName(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
@@ -1822,7 +1827,17 @@ route('GET', '/api/sessions/:project/medusa/status', (req, res, params) => {
   const active = store.sessions.getActive(project.id);
   const query = parseQuery(reqUrl(req).search);
   const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
-  jsonResponse(res, 200, medusa.getStatus(sessionId));
+  const status = medusa.getStatus(sessionId);
+  let loops = [];
+  let loopsError = null;
+  if (sessionId != null && status.state !== 'off') {
+    try {
+      loops = await medusa.getLoops({ sessionId });
+    } catch (err) {
+      loopsError = err.message;
+    }
+  }
+  jsonResponse(res, 200, loopsError ? { ...status, loops, loopsError } : { ...status, loops });
 });
 
 // POST /api/sessions/:project/medusa/toggle — start or stop this session's Medusa
@@ -1930,10 +1945,11 @@ route('POST', '/api/sessions/:project/medusa/send', async (_req, res, params, bo
 // POST /api/sessions/:project/medusa/loop — open a Medusa loop from this session
 // to a target workspace (MED-2K9P v2 T3, the setup modal's launch). Body
 // `{ target, task, doneCriteria, mode, guards }`. Requires an active session
-// (409). Returns `{ loop, taskDelivery }` — the created loop object plus the
-// HONEST delivery status of the task notice (`received` live / `queued`
-// offline). Validation and Bridge failures surface as errors, never a false
-// "launched"; a created-but-undelivered loop error names the orphaned loop id.
+// (409). Returns `{ loop }` — the created loop object; the Bridge itself
+// delivers the loopInvite to the target (durably queued, pushed live when the
+// target is online — Medusa#47 fixed upstream, so TC's out-of-band task notice
+// was dropped, TC#552). Validation and Bridge failures surface as errors,
+// never a false "launched".
 route('POST', '/api/sessions/:project/medusa/loop', async (_req, res, params, body) => {
   const project = store.projects.getByName(params.project);
   if (!project) {
@@ -1955,6 +1971,31 @@ route('POST', '/api/sessions/:project/medusa/loop', async (_req, res, params, bo
     jsonResponse(res, 200, result);
   } catch (err) {
     errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
+  }
+});
+
+// POST /api/sessions/:project/medusa/loops/:loopId/force-done — the human
+// kill-switch on a loop this session initiated (MED-2K9P v2 T4). Rides the
+// Bridge's initiator-only close with a structured
+// `closeSignal.reason: 'force-done'` (the Bridge reserves `halted` for its own
+// runaway guards — no external halt transition exists). Bridge rejections pass
+// through with their real status: 403 = not the initiator (the control
+// invariant), 400 = already complete or guard-halted ("a halted loop cannot be
+// closed"), 404 = the Bridge no longer knows the loop.
+route('POST', '/api/sessions/:project/medusa/loops/:loopId/force-done', async (_req, res, params) => {
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const active = store.sessions.getActive(project.id);
+  if (!active) {
+    return errorResponse(res, 409, 'No active session to end a loop from', 'NO_SESSION');
+  }
+  try {
+    const result = await medusa.forceDoneLoop({ sessionId: active.id, loopId: params.loopId });
+    jsonResponse(res, 200, result);
+  } catch (err) {
+    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_FORCE_DONE_FAILED');
   }
 });
 
@@ -4246,6 +4287,10 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
+    // listeners are in-memory, so without this a server restart silently
+    // deregistered every running session from the switchboard.
+    sessions.resyncMedusaListeners();
   };
 
   // Bind localhost-only in caddy mode (Caddy fronts us); all interfaces otherwise.

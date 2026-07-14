@@ -65,8 +65,16 @@
              lights when the task notice is delivered. -->
         <button class="medusa-compose" id="medusaLoop" type="button" hidden
                 aria-label="Set up a session loop" aria-haspopup="dialog" aria-expanded="false">➤</button>
+        <!-- Loop view chip (MED-2K9P v2 T4): appears when this session knows of
+             any loop. Text is the live status (round count / live-loop count) —
+             the non-color counterpart of the mark's live-loop glow. Opens the
+             loops panel: per-loop status, force-done (initiator side), and the
+             transcript as observed by this session. -->
+        <button class="medusa-loops-chip" id="medusaLoopsChip" type="button" hidden
+                aria-label="Open session loops" aria-haspopup="dialog" aria-expanded="false"></button>
         <span class="medusa-peers group-popover" id="medusaPeers" role="tooltip" hidden></span>
         <div class="medusa-panel group-popover" id="medusaPanel" role="dialog" aria-label="Medusa inbox" hidden></div>
+        <div class="medusa-panel medusa-loops-panel group-popover" id="medusaLoopsPanel" role="dialog" aria-label="Session loops" hidden></div>
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
