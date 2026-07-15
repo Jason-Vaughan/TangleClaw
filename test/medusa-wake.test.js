@@ -1,15 +1,18 @@
 'use strict';
 
-// Tests for lib/medusa-wake.js (MED-2K9P v2 Slice 1, chunk T2) — the idle-gated
-// wake-nudge monitor. Drives `_internal.tick()` deterministically with stubbed
-// seams (no tmux, no Bridge, no store); `stop()` between tests clears state.
+// Tests for lib/medusa-wake.js (MED-2K9P v2 Slice 1 chunk T2, extended by #560
+// engine-aware wake) — the idle-gated wake-nudge monitor. Drives
+// `_internal.tick()` deterministically with stubbed seams (no tmux, no Bridge,
+// no store); `stop()` between tests clears state.
 //
 // The safety contract under test, in order:
 //   1. a busy turn is NEVER interrupted (busy marker / no bare prompt / dialog)
 //   2. the nudge carries only TC-controlled bytes (message text never injected)
 //   3. one nudge per fresh-mail edge (watermark; burst = single wake)
 //   4. explicit `medusaWake: true` only; listener must be `listening`
-//   5. Slice-1 transport/engine gates (webui / non-claude skipped, logged once)
+//   5. engine-aware transport/engine gates (#560): webui + engines with no
+//      `ENGINE_WAKE_PROFILES` entry skipped and logged once; profiled engines
+//      (claude, antigravity) each judged against their own live-probed markers
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,7 +22,11 @@ setLevel('error');
 
 const wake = require('../lib/medusa-wake');
 
-// ── Pane fixtures (from the 2026-07-11 live spike captures) ──
+/** The live-probed detection profiles the module ships (#560). */
+const CLAUDE = wake.ENGINE_WAKE_PROFILES.claude;
+const ANTIGRAVITY = wake.ENGINE_WAKE_PROFILES.antigravity;
+
+// ── Claude pane fixtures (from the 2026-07-11 live spike captures) ──
 
 /** An idle Claude Code pane: bare prompt, no busy marker. */
 const IDLE_PANE = [
@@ -46,9 +53,55 @@ const TYPING_PANE = [
   '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
 ];
 
+// ── antigravity / Gemini-CLI pane fixtures (#560 live spike, 2026-07-14) ──
+// The bare `>` prompt persists mid-turn, so idle turns on the positive
+// `? for shortcuts` at-rest marker, not the prompt alone.
+
+/** Idle antigravity pane: bare `>` between rules + the at-rest status hint. */
+const AG_IDLE_PANE = [
+  '  DONE: #51 — PR#56',
+  '─────────────────────',
+  '>',
+  '─────────────────────',
+  '? for shortcuts                                    Gemini 3.5 Flash (Medium)'
+];
+/** Busy antigravity pane: bare `>` STILL rendered, but generating + `esc to cancel`. */
+const AG_BUSY_PANE = [
+  '⣷  Generating...',
+  '─────────────────────',
+  '>',
+  '─────────────────────',
+  'esc to cancel                                      Gemini 3.5 Flash (Medium)'
+];
+/**
+ * A dialog/menu analog with NO busy marker present — bare `>` still rendered,
+ * but the at-rest `? for shortcuts` hint is gone. Deliberately omits
+ * `esc to cancel` to isolate that the POSITIVE idle marker (not the busy gate)
+ * is what refuses it — the fail-safe that covers the unverified real dialog UI.
+ */
+const AG_DIALOG_PANE = [
+  '  Apply this change?  ● Yes   ○ No',
+  '─────────────────────',
+  '>',
+  '─────────────────────',
+  'enter to confirm · ↑↓ to select                    Gemini 3.5 Flash (Medium)'
+];
+/** Operator mid-typing in antigravity: prompt line is non-bare. */
+const AG_TYPING_PANE = [
+  '─────────────────────',
+  '> what is the status',
+  '─────────────────────',
+  '? for shortcuts                                    Gemini 3.5 Flash (Medium)'
+];
+
 /** A live tmux Claude session record. */
 function claudeSession(id = 1) {
   return { id, projectId: id * 10, sessionMode: 'tmux', tmuxSession: `tc-${id}`, engineId: 'claude' };
+}
+
+/** A live tmux antigravity session record. */
+function antigravitySession(id = 1) {
+  return { id, projectId: id * 10, sessionMode: 'tmux', tmuxSession: `tc-${id}`, engineId: 'antigravity' };
 }
 
 /**
@@ -85,26 +138,50 @@ function tickThroughDebounce() {
   for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
 }
 
-describe('medusa-wake — _assessPane (the idle policy, pinned byte-for-byte)', () => {
+describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)', () => {
   it('judges a bare-prompt pane with no busy marker idle', () => {
-    assert.deepEqual(wake._assessPane(IDLE_PANE), { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE), { idle: true, reason: 'at-prompt' });
   });
   it('judges a turn-in-flight pane busy even though the bare prompt is rendered', () => {
-    assert.deepEqual(wake._assessPane(BUSY_PANE), { idle: false, reason: 'turn-in-flight' });
+    assert.deepEqual(wake._assessPane(BUSY_PANE, CLAUDE), { idle: false, reason: 'turn-in-flight' });
   });
   it('refuses a permission dialog (selector row is not a bare prompt)', () => {
-    assert.deepEqual(wake._assessPane(DIALOG_PANE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(DIALOG_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
   });
   it('refuses to type over an operator\'s half-typed input', () => {
-    assert.deepEqual(wake._assessPane(TYPING_PANE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
   });
   it('strips ANSI before judging (a colored busy marker still blocks)', () => {
     const colored = ['❯ ', '[2mesc to interrupt[0m'];
-    assert.deepEqual(wake._assessPane(colored), { idle: false, reason: 'turn-in-flight' });
+    assert.deepEqual(wake._assessPane(colored, CLAUDE), { idle: false, reason: 'turn-in-flight' });
   });
   it('judges an empty/unknown pane not-idle (fail closed)', () => {
-    assert.equal(wake._assessPane([]).idle, false);
-    assert.equal(wake._assessPane(['some random TUI']).idle, false);
+    assert.equal(wake._assessPane([], CLAUDE).idle, false);
+    assert.equal(wake._assessPane(['some random TUI'], CLAUDE).idle, false);
+  });
+});
+
+describe('medusa-wake — _assessPane (antigravity idle policy, #560)', () => {
+  it('judges a bare `>` pane with the at-rest hint idle', () => {
+    assert.deepEqual(wake._assessPane(AG_IDLE_PANE, ANTIGRAVITY), { idle: true, reason: 'at-prompt' });
+  });
+  it('judges a generating pane busy EVEN THOUGH the bare `>` prompt persists', () => {
+    // The load-bearing #560 finding: antigravity keeps `>` mid-turn, so the
+    // busy marker (not the prompt) is what blocks a nudge here.
+    assert.deepEqual(wake._assessPane(AG_BUSY_PANE, ANTIGRAVITY), { idle: false, reason: 'turn-in-flight' });
+  });
+  it('refuses a dialog/menu: bare `>` present but the at-rest hint is gone → not-at-rest', () => {
+    // Fail-safe by construction — the positive `? for shortcuts` marker is
+    // absent during a dialog, so an unverified dialog UI still reads non-idle.
+    assert.deepEqual(wake._assessPane(AG_DIALOG_PANE, ANTIGRAVITY), { idle: false, reason: 'not-at-rest' });
+  });
+  it('refuses to type over half-typed antigravity input (prompt non-bare)', () => {
+    assert.deepEqual(wake._assessPane(AG_TYPING_PANE, ANTIGRAVITY), { idle: false, reason: 'no-bare-prompt' });
+  });
+  it('a Claude-idle pane is NOT idle under the antigravity profile (markers do not cross)', () => {
+    // The bug this chunk fixes, from the other direction: Claude's `❯` never
+    // matches antigravity's `>` promptRe, and Claude lacks `? for shortcuts`.
+    assert.equal(wake._assessPane(IDLE_PANE, ANTIGRAVITY).idle, false);
   });
 });
 
@@ -273,11 +350,28 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 1, 'same session nudges once active again');
   });
 
-  it('skips webui sessions and non-claude engines (Slice-1 gate)', () => {
+  it('skips webui sessions and unprofiled engines (#560 gate)', () => {
+    // webui has no pane; codex/gemini(retired) have no live-captured profile.
     const webui = { id: 2, projectId: 20, sessionMode: 'webui', tmuxSession: null, engineId: 'openclaw:c1' };
-    const gemini = { id: 3, projectId: 30, sessionMode: 'tmux', tmuxSession: 'tc-3', engineId: 'gemini' };
-    const world = installWorld({ sessions: [webui, gemini] });
+    const codex = { id: 3, projectId: 30, sessionMode: 'tmux', tmuxSession: 'tc-3', engineId: 'codex' };
+    const gemini = { id: 4, projectId: 40, sessionMode: 'tmux', tmuxSession: 'tc-4', engineId: 'gemini' };
+    const world = installWorld({ sessions: [webui, codex, gemini] });
     tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('nudges an idle antigravity session using its own profile (#560)', () => {
+    // The bug fix, end-to-end: a profiled non-Claude engine wakes on fresh mail.
+    const world = installWorld({ sessions: [antigravitySession(1)], pane: AG_IDLE_PANE });
+    wake._internal.tick();
+    assert.equal(world.injected.length, 0, 'first idle tick is debounce');
+    wake._internal.tick();
+    assert.equal(world.injected.length, 1, 'second idle tick nudges the antigravity pane');
+  });
+
+  it('never nudges a generating antigravity pane (bare `>` persists mid-turn)', () => {
+    const world = installWorld({ sessions: [antigravitySession(1)], pane: AG_BUSY_PANE });
+    for (let i = 0; i < 5; i++) wake._internal.tick();
     assert.equal(world.injected.length, 0);
   });
 
