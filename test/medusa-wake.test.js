@@ -126,8 +126,8 @@ function installWorld(overrides = {}) {
   wake._internal.getStatus = () => world.status;
   wake._internal.getMessages = () => world.inbox;
   wake._internal.capturePane = () => ({ lines: world.pane });
-  wake._internal.injectCommand = (projectName, command) => {
-    world.injected.push({ projectName, command });
+  wake._internal.injectCommand = (projectName, command, options) => {
+    world.injected.push({ projectName, command, options });
     return world.injectResult;
   };
   return world;
@@ -276,6 +276,39 @@ describe('medusa-wake — nudge injection', () => {
     assert.equal(world.injected.length, 2, 'retried after transient failure');
     tickThroughDebounce();
     assert.equal(world.injected.length, 2, 'success advanced the watermark');
+  });
+});
+
+describe('medusa-wake — nudge addresses the judged session (MED-7Q4C)', () => {
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  it('passes the judged session id to injectCommand, not just the project name', () => {
+    // The defect: idleness was judged on `session.tmuxSession` but injected via
+    // `injectCommand(project.name)`, which re-resolves the active session on its
+    // own. Reverting to project-name-only addressing fails this assertion.
+    const world = installWorld();
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1);
+    assert.deepEqual(world.injected[0].options, { sessionId: world.sessions[0].id });
+  });
+
+  it('addresses each session by its OWN id when one project holds two live sessions', () => {
+    // The reachable-divergence case the fix exists for: two live tmux sessions
+    // under one project. Each judged pane must be nudged on its own handle —
+    // with project-name-only addressing both nudges would race to whichever
+    // session `getActive` happens to pick.
+    const a = claudeSession(1);
+    const b = { ...claudeSession(2), projectId: a.projectId, tmuxSession: 'tc-2' };
+    const world = installWorld({ sessions: [a, b] });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 2, 'both live sessions are nudged');
+    assert.deepEqual(
+      world.injected.map((i) => i.options.sessionId).sort(),
+      [a.id, b.id].sort(),
+      'each nudge carries its own session id — never one id twice'
+    );
   });
 });
 
