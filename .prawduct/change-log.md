@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-14: Feat — engine-aware wake nudge (TC#560, first chunk of Switchboard v2 Slice 2)
+
+<!-- prawduct: type=feat | chunks=560 | scope=med-2k9p-v2 | status=branch -->
+
+**Why:** The idle-gated switchboard wake (`lib/medusa-wake.js`) hard-skipped `engineId !== 'claude'` and used Claude-only TUI markers, so a `medusaWake:true` non-Claude target (antigravity/Gemini-CLI) received inbox mail but was never nudged — supervised/autonomous loops against it were structurally dead without a manual `tmux send-keys` nudge (observed live 2026-07-14, loop `80b935a2` sat at round 0 until its wall-time guard halted it). **What:** replaced the Claude-only gate + module-level markers with a per-engine `ENGINE_WAKE_PROFILES` registry (`{busyMarker, promptRe, idleMarker}`) keyed by `engineId`; `_assessPane` takes a profile. Claude's path is byte-for-byte unchanged (`esc to interrupt` + bare `❯`, no idle marker). The antigravity profile (`esc to cancel` + bare `>` + a required `? for shortcuts` at-rest marker) was derived from a LIVE pane capture (Medusa builder pane, 2026-07-14) — which surfaced the load-bearing finding that Gemini-CLI keeps its bare `>` prompt rendered mid-turn, so the busy-marker gate can't be the sole guard and a positive at-rest marker is required. That positive marker also makes the (unforceable, auto-approve builder) permission-dialog case fail-safe by construction (a dialog drops `? for shortcuts` → reads non-idle). webui and unprofiled engines (codex, aider — no live signature captured) stay skipped-and-logged, never woken against a guessed idle signature. **Tests:** antigravity idle/busy/dialog/typing `_assessPane` matrix, cross-profile non-match (Claude pane not idle under the antigravity profile and vice-versa), full idle→nudge tick for an antigravity session, unprofiled-engine/webui skip gate; all Claude pins preserved (`test/medusa-wake.test.js`); full suite 0-fail. **Critic:** verify-resolutions chain (0 blocking/warning, 1 note) — the note (real-dialog capture unforceable on the auto-approve builder) anticipated and enqueued. **VRF queued:** VRF-560-engine-aware-wake.
+
 ## 2026-07-14: Fix — prime truncation dropped the Resume wait-guard + wrap sentinel on medusaEnabled launches (#557)
 
 <!-- prawduct: type=fix | chunks=557 | scope=med-2k9p-v2 | status=merged -->
