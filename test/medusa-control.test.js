@@ -397,18 +397,43 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(css, /\.medusa-loop-feedback-input/);
     });
 
-    it('the poll re-render never wipes an in-progress feedback composer (focused or dirty)', () => {
-      // Regression (Critic warning): pollMedusa → renderMedusaControl re-renders
-      // the panel each tick; without this guard the textarea is recreated empty
-      // and mid-compose feedback is lost.
+    it('the poll re-render defers to a FOCUSED composer but can never deadlock (keys on focus, not DOM value)', () => {
+      // Regression (Critic cumulative BLOCKING): a guard keyed on residual
+      // textarea .value froze the panel forever after a send (sent text stays
+      // in the DOM). The guard must key on focus only, so a blurred/sent
+      // composer always re-renders.
       const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /medusa-loop-feedback-input/);
-      assert.match(body, /document\.activeElement\s*===\s*openComposer/);
-      assert.match(body, /openComposer\.value\.trim\(\)/);
+      assert.match(body, /focusedComposer\s*&&\s*document\.activeElement\s*===\s*focusedComposer/);
+      assert.doesNotMatch(body, /\.value\.trim\(\)/, 'must NOT gate the re-render on residual DOM value (deadlock source)');
       // The guard returns BEFORE the panel innerHTML is rebuilt.
-      const guardIdx = body.indexOf('openComposer');
+      const guardIdx = body.indexOf('focusedComposer');
       const renderIdx = body.indexOf('panel.innerHTML =');
       assert.ok(guardIdx >= 0 && renderIdx > guardIdx, 'guard precedes the re-render');
+    });
+
+    it('draft text survives re-render via the drafts Map (seeded into the textarea), cleared on send/close', () => {
+      const body = fnBody('renderMedusaLoopsPanel');
+      // The textarea is seeded from the draft Map and carries data-loop-id.
+      assert.match(body, /medusaFeedbackDrafts\.get\(loop\.id\)/);
+      assert.match(body, /data-loop-id="\$\{esc\(loop\.id\)\}"[^>]*medusa-loop-feedback-input|medusa-loop-feedback-input[^>]*data-loop-id/);
+      assert.match(body, /\$\{esc\(draft\)\}<\/textarea>/); // seeded + escaped
+      // Drafts are persisted on input and cleared on send + on close.
+      assert.match(src, /addEventListener\('input'[\s\S]*?medusaFeedbackDrafts\.set/);
+      assert.match(fnBody('continueMedusaLoop'), /medusaFeedbackDrafts\.delete\(loopId\)/);
+    });
+
+    it('the satisfied closeout label survives a refresh (durable row, not just the toast)', () => {
+      const body = fnBody('medusaLoopStateLabel');
+      assert.match(body, /reason\s*===\s*'satisfied'/);
+      assert.match(body, /marked done/);
+      // force-done stays distinct.
+      assert.match(body, /'force-done'/);
+    });
+
+    it('the continue toast is honest when the round hit maxRounds and the Bridge auto-halted', () => {
+      const body = fnBody('continueMedusaLoop');
+      assert.match(body, /result\.loopState\s*===\s*'halted'/);
+      assert.match(body, /halted/);
     });
   });
 });

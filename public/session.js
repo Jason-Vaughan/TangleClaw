@@ -1299,6 +1299,12 @@ const medusaExpandedTranscripts = new Set();
 /** @type {Set<string>} Loop ids whose initiator feedback composer is open (TC#561). */
 const medusaExpandedFeedback = new Set();
 
+/** @type {Map<string, string>} Loop id → in-progress feedback draft, preserved
+ * across poll re-renders so typed text is never lost (TC#561). Cleared on send
+ * or when the composer is closed. The Map is the source of truth for draft
+ * text; the DOM textarea is seeded from it. */
+const medusaFeedbackDrafts = new Map();
+
 /**
  * Open the loops panel (the ⟳ chip click) — the banner's live view of every
  * loop this session knows about. Toggles closed if already open. Content
@@ -1345,7 +1351,9 @@ function medusaLoopStateLabel(loop) {
   if (loop.state === 'halted') return 'halted by guard';
   if (loop.state === 'complete') {
     const reason = loop.closeSignal && loop.closeSignal.reason;
-    return reason === 'force-done' ? 'ended by force-done' : 'complete';
+    if (reason === 'force-done') return 'ended by force-done';
+    if (reason === 'satisfied') return 'ended — marked done';
+    return 'complete';
   }
   return loop.state; // initiated | responded | continue — live protocol states.
 }
@@ -1363,13 +1371,15 @@ function medusaLoopStateLabel(loop) {
 async function renderMedusaLoopsPanel() {
   const panel = document.getElementById('medusaLoopsPanel');
   if (!panel) return;
-  // Don't let the status-poll re-render wipe an in-progress feedback composer
-  // (TC#561): if a composer textarea is focused or carries draft text, keep the
-  // current DOM this tick. The panel refreshes on the next tick once the
-  // operator sends or closes it — while a loop sits `responded` awaiting the
-  // initiator, no state it would show is changing anyway.
-  const openComposer = panel.querySelector('.medusa-loop-feedback-input');
-  if (openComposer && (document.activeElement === openComposer || openComposer.value.trim())) {
+  // Don't let the status-poll re-render fight the operator's typing (TC#561):
+  // while a feedback textarea is FOCUSED, keep the current DOM this tick (a
+  // re-render would move the caret / drop focus). Draft text itself is never
+  // lost regardless of focus — it lives in `medusaFeedbackDrafts` and re-seeds
+  // the textarea on every render — so a blurred composer re-renders freely and
+  // a successful send (which clears the draft + focus) always refreshes. The
+  // guard keys on focus, NOT residual DOM value, so it can never deadlock.
+  const focusedComposer = panel.querySelector('.medusa-loop-feedback-input');
+  if (focusedComposer && document.activeElement === focusedComposer) {
     return;
   }
   const m = sessionState.medusa;
@@ -1426,9 +1436,10 @@ async function renderMedusaLoopsPanel() {
     let feedback = '';
     if (canJudge && feedbackOpen) {
       const fid = `medusaFeedback-${esc(loop.id)}`;
+      const draft = medusaFeedbackDrafts.get(loop.id) || '';
       feedback = '<div class="medusa-loop-feedback">'
         + `<label class="medusa-loop-feedback-label" for="${fid}">Feedback to continue this loop</label>`
-        + `<textarea id="${fid}" class="medusa-loop-feedback-input" rows="2" placeholder="What should ${esc(other)} do next?"></textarea>`
+        + `<textarea id="${fid}" class="medusa-loop-feedback-input" data-loop-id="${esc(loop.id)}" rows="2" placeholder="What should ${esc(other)} do next?">${esc(draft)}</textarea>`
         + `<button type="button" class="medusa-loop-feedback-send" data-loop-id="${esc(loop.id)}">Send</button>`
         + '</div>';
     }
@@ -1516,7 +1527,14 @@ async function continueMedusaLoop(loopId, message) {
       if (typeof result.round === 'number') loop.round = result.round;
     }
     medusaExpandedFeedback.delete(loopId);
-    showMethodologyActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
+    medusaFeedbackDrafts.delete(loopId);
+    if (result.loopState === 'halted') {
+      // The feedback landed but pushed the round to maxRounds — the Bridge
+      // auto-halted the loop. Say so honestly; it did NOT continue.
+      showMethodologyActionToast('Feedback sent — loop hit its round cap and halted.', false);
+    } else {
+      showMethodologyActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
+    }
     renderMedusaControl();
   } else {
     showMethodologyActionToast(`Couldn't send feedback: ${api.lastError || 'the bridge rejected it'}`, true);
@@ -1546,6 +1564,7 @@ async function closeoutMedusaLoop(loopId) {
       loop.closeSignal = result.closeSignal || loop.closeSignal;
     }
     medusaExpandedFeedback.delete(loopId);
+    medusaFeedbackDrafts.delete(loopId);
     showMethodologyActionToast('Loop ended — marked done.', false);
     const live = document.getElementById('medusaLive');
     if (live) live.textContent = 'Loop ended — marked done';
@@ -3568,8 +3587,12 @@ function bindEvents() {
       const continueBtn = e.target.closest('.medusa-loop-continue');
       if (continueBtn) {
         const id = continueBtn.dataset.loopId;
-        if (medusaExpandedFeedback.has(id)) medusaExpandedFeedback.delete(id);
-        else medusaExpandedFeedback.add(id);
+        if (medusaExpandedFeedback.has(id)) {
+          medusaExpandedFeedback.delete(id);
+          medusaFeedbackDrafts.delete(id); // closing the composer discards the draft
+        } else {
+          medusaExpandedFeedback.add(id);
+        }
         renderMedusaLoopsPanel();
         return;
       }
@@ -3587,6 +3610,12 @@ function bindEvents() {
         else medusaExpandedTranscripts.add(id);
         renderMedusaLoopsPanel();
       }
+    });
+    // Persist feedback drafts as they're typed (TC#561) so a poll re-render
+    // re-seeds the textarea from the Map rather than losing in-progress text.
+    medusaLoopsPanel.addEventListener('input', (e) => {
+      const ta = e.target.closest('.medusa-loop-feedback-input');
+      if (ta && ta.dataset.loopId) medusaFeedbackDrafts.set(ta.dataset.loopId, ta.value);
     });
   }
   document.addEventListener('keydown', (e) => {
