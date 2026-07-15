@@ -1151,6 +1151,113 @@ describe('sessions', () => {
     });
   });
 
+  // ── injectCommand explicit session addressing (MED-7Q4C) ──
+  //
+  // `getActive` is a project-scoped "most recently started active session"
+  // lookup, and nothing in the schema forbids a project holding two. A caller
+  // that resolves a session itself (medusa-wake judges a pane idle) must be able
+  // to address THAT session, or judgment and delivery silently diverge.
+
+  describe('injectCommand with options.sessionId', () => {
+    let sessions;
+    let tmux;
+    let projectId;
+    let sent;
+    let started = [];
+    let originalHasSession;
+    let originalSendKeys;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      tmux = require('../lib/tmux');
+
+      const projDir = path.join(projectsDir, 'inject-multi');
+      fs.mkdirSync(projDir, { recursive: true });
+      projectId = store.projects.create({
+        name: 'inject-multi',
+        path: projDir,
+        engine: 'claude',
+        methodology: 'minimal'
+      }).id;
+    });
+
+    beforeEach(() => {
+      sent = [];
+      originalHasSession = tmux.hasSession;
+      originalSendKeys = tmux.sendKeys;
+      tmux.hasSession = () => true;
+      tmux.sendKeys = (session, command) => { sent.push({ session, command }); };
+    });
+
+    // Kill every session these tests started, pass or fail — an assertion that
+    // throws before an inline cleanup would otherwise leak an active session
+    // into the suites that follow.
+    afterEach(() => {
+      tmux.hasSession = originalHasSession;
+      tmux.sendKeys = originalSendKeys;
+      for (const s of started) {
+        if (store.sessions.get(s.id).status === 'active') store.sessions.kill(s.id, 'test cleanup');
+      }
+      started = [];
+    });
+
+    /** Start a session and register it for unconditional afterEach cleanup. */
+    function startSession(tmuxSession, owningProjectId = projectId) {
+      const s = store.sessions.start({ projectId: owningProjectId, engineId: 'claude', tmuxSession });
+      started.push(s);
+      return s;
+    }
+
+    it('sends to the addressed session, not to getActive\'s pick', () => {
+      const a = startSession('tc-multi-a');
+      const b = startSession('tc-multi-b');
+
+      // Derive the target from getActive's ACTUAL pick rather than assuming the
+      // tie-break, then address the other one — so the assertion proves the
+      // sessionId is honored no matter which way the ordering falls.
+      const picked = store.sessions.getActive(projectId);
+      const other = [a, b].find((s) => s.id !== picked.id);
+
+      const result = sessions.injectCommand('inject-multi', 'wake up', { sessionId: other.id });
+      assert.equal(result.ok, true);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].session, other.tmuxSession);
+      assert.notEqual(sent[0].session, picked.tmuxSession, 'sessionId must override the getActive lookup');
+    });
+
+    it('still resolves getActive when no sessionId is given', () => {
+      startSession('tc-multi-solo');
+      const result = sessions.injectCommand('inject-multi', 'wake up');
+      assert.equal(result.ok, true);
+      assert.equal(sent[0].session, 'tc-multi-solo');
+    });
+
+    it('refuses a session belonging to another project', () => {
+      const foreign = startSession('tc-foreign', store.projects.getByName('prime-test').id);
+      startSession('tc-multi-own');
+      const result = sessions.injectCommand('inject-multi', 'wake up', { sessionId: foreign.id });
+      assert.equal(result.ok, false);
+      assert.ok(result.error.includes('not a session of'));
+      assert.equal(sent.length, 0, 'a foreign id must not fall back to this project\'s own pane');
+    });
+
+    it('refuses a session that is no longer active', () => {
+      const dead = startSession('tc-multi-dead');
+      store.sessions.kill(dead.id, 'test');
+      const result = sessions.injectCommand('inject-multi', 'wake up', { sessionId: dead.id });
+      assert.equal(result.ok, false);
+      assert.ok(result.error.includes('not active'));
+      assert.equal(sent.length, 0, 'a dead session\'s stale tmux name must never be addressed');
+    });
+
+    it('refuses an unknown session id', () => {
+      const result = sessions.injectCommand('inject-multi', 'wake up', { sessionId: 999999 });
+      assert.equal(result.ok, false);
+      assert.ok(result.error.includes('not a session of'));
+      assert.equal(sent.length, 0);
+    });
+  });
+
   describe('peek', () => {
     let sessions;
 
