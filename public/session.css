@@ -586,6 +586,59 @@ body {
 .medusa-loop-transcript { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--elevated-bg); }
 .medusa-loop-transcript-note { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
 
+/* Continue (FEEDBACK) + Mark done (satisfied CLOSEOUT) — the initiator's judge
+   controls (TC#561). Continue/Send use the accent; Mark done is a quiet
+   confirm (distinct from the danger-styled force-done kill-switch). */
+.medusa-loop-continue,
+.medusa-loop-feedback-send {
+  border: 1px solid var(--root-accent);
+  border-radius: 4px;
+  background: none;
+  color: var(--root-accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-continue:hover,
+.medusa-loop-feedback-send:hover { background: var(--root-accent); color: #fff; }
+.medusa-loop-continue:focus-visible,
+.medusa-loop-feedback-send:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-closeout {
+  border: 1px solid var(--text-muted);
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-loop-closeout:hover { background: var(--elevated-bg); }
+.medusa-loop-closeout:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-feedback { margin: 6px 0 2px; display: flex; flex-direction: column; gap: 4px; }
+.medusa-loop-feedback-label { color: var(--text-muted); font-size: 10px; }
+.medusa-loop-feedback-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.medusa-loop-feedback-input:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+.medusa-loop-feedback-send { align-self: flex-start; }
+
 /* ── Banner Action Buttons ── */
 .banner-actions {
   display: flex;
