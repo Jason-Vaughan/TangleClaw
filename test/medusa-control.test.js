@@ -442,3 +442,98 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     });
   });
 });
+
+// ── #566: the loops panel dismissed itself on any synchronous control click ──
+//
+// The outside-click dismiss decided "was this outside?" with a live
+// `e.target.closest('.medusa-control')`. But the panel's delegated handlers
+// replace `panel.innerHTML`, orphaning the clicked button BEFORE the
+// document-level listener runs — `closest()` on an orphan returns null, so the
+// panel read its own click as an outside click and hid itself. Controls that
+// `await` an HTTP call first were accidentally safe (the await let the event
+// finish bubbling first); the purely synchronous ones — Send feedback,
+// Transcript-collapse — were not.
+//
+// These are BEHAVIORAL tests, not source probes: `clickHitsSelector` is pure, so
+// we lift it out of the browser file and run it against synthetic event objects.
+// That reproduces the orphaned-target condition a source probe cannot see, and
+// is why this class of bug shipped in the first place (no DOM harness; TST-6L2P).
+
+/**
+ * Lift the pure predicate out of `public/session.js` and return it callable.
+ * @returns {(event: object, selector: string) => boolean}
+ */
+function loadClickHitsSelector() {
+  const body = fnBody('clickHitsSelector');
+  return new Function(`${body}\nreturn clickHitsSelector;`)();
+}
+
+/**
+ * A stand-in DOM node that matches only the selectors it is given.
+ * @param {string[]} selectors - Selectors this node matches.
+ * @returns {object}
+ */
+function node(selectors = []) {
+  return { matches: (s) => selectors.includes(s) };
+}
+
+describe('public/session.js — outside-click dismiss survives a re-render (#566)', () => {
+  const hits = loadClickHitsSelector();
+
+  it('reports INSIDE for a target the panel already detached (the #566 regression)', () => {
+    // The exact shipped failure: the clicked button has been orphaned by
+    // `renderMedusaLoopsPanel`, so a live closest() finds nothing — but the
+    // dispatch-time path still carries the control. Verdict must be "inside",
+    // or the panel dismisses itself mid-click.
+    const control = node(['.medusa-control']);
+    const orphanedButton = {
+      matches: () => false,
+      closest: () => null // detached: innerHTML was replaced by the inner handler
+    };
+    const event = {
+      target: orphanedButton,
+      composedPath: () => [orphanedButton, control, { /* document */ }, { /* window */ }]
+    };
+    assert.equal(hits(event, '.medusa-control'), true);
+  });
+
+  it('still reports OUTSIDE for a genuine outside click', () => {
+    // The dismiss must keep working — the fix must not pin the verdict to true.
+    const elsewhere = node(['.terminal']);
+    const event = { target: elsewhere, composedPath: () => [elsewhere, node([])] };
+    assert.equal(hits(event, '.medusa-control'), false);
+  });
+
+  it('reports INSIDE for an attached target inside the control', () => {
+    const control = node(['.medusa-control']);
+    const button = node(['.medusa-force-done']);
+    const event = { target: button, composedPath: () => [button, control] };
+    assert.equal(hits(event, '.medusa-control'), true);
+  });
+
+  it('tolerates non-element entries in the path (document/window expose no matches)', () => {
+    const control = node(['.medusa-control']);
+    const button = node([]);
+    const event = { target: button, composedPath: () => [button, null, {}, control] };
+    assert.doesNotThrow(() => hits(event, '.medusa-control'));
+    assert.equal(hits(event, '.medusa-control'), true);
+  });
+
+  it('falls back to closest() when composedPath is unavailable', () => {
+    const control = node(['.medusa-control']);
+    const event = { target: { matches: () => false, closest: (s) => (s === '.medusa-control' ? control : null) } };
+    assert.equal(hits(event, '.medusa-control'), true);
+    const outside = { target: { matches: () => false, closest: () => null } };
+    assert.equal(hits(outside, '.medusa-control'), false);
+  });
+
+  it('the dismiss handler uses the path predicate, never a live target query', () => {
+    // Pins the call sites: a regression here silently reintroduces #566, and the
+    // behavioral tests above cannot see the wiring.
+    const bind = fnBody('bindEvents');
+    const dismiss = bind.slice(0, bind.indexOf('// Medusa session-comms control'));
+    assert.match(dismiss, /clickHitsSelector\(e,\s*'\.medusa-control'\)/);
+    assert.match(dismiss, /clickHitsSelector\(e,\s*'\.group-pill'\)/);
+    assert.doesNotMatch(dismiss, /e\.target\.closest/);
+  });
+});
