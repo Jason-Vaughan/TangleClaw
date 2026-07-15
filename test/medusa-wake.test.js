@@ -1,15 +1,18 @@
 'use strict';
 
-// Tests for lib/medusa-wake.js (MED-2K9P v2 Slice 1, chunk T2) — the idle-gated
-// wake-nudge monitor. Drives `_internal.tick()` deterministically with stubbed
-// seams (no tmux, no Bridge, no store); `stop()` between tests clears state.
+// Tests for lib/medusa-wake.js (MED-2K9P v2 Slice 1 chunk T2, extended by #560
+// engine-aware wake) — the idle-gated wake-nudge monitor. Drives
+// `_internal.tick()` deterministically with stubbed seams (no tmux, no Bridge,
+// no store); `stop()` between tests clears state.
 //
 // The safety contract under test, in order:
 //   1. a busy turn is NEVER interrupted (busy marker / no bare prompt / dialog)
 //   2. the nudge carries only TC-controlled bytes (message text never injected)
 //   3. one nudge per fresh-mail edge (watermark; burst = single wake)
 //   4. explicit `medusaWake: true` only; listener must be `listening`
-//   5. Slice-1 transport/engine gates (webui / non-claude skipped, logged once)
+//   5. engine-aware transport/engine gates (#560): webui + engines with no
+//      `ENGINE_WAKE_PROFILES` entry skipped and logged once; profiled engines
+//      (claude, antigravity) each judged against their own live-probed markers
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
