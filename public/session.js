@@ -3530,16 +3530,49 @@ function handleWrapCompleted(data) {
 
 // ── Event Bindings ──
 
+/**
+ * Did a click originate inside an element matching `selector`?
+ *
+ * Reads the event's propagation path, which the DOM fixes at DISPATCH time —
+ * deliberately NOT a live `e.target.closest(selector)` query, which is evaluated
+ * when the handler runs and lies once an inner handler has re-rendered.
+ *
+ * #566: the loops panel's delegated handlers replace `panel.innerHTML`, which
+ * orphans the clicked button before this document-level dismiss listener sees
+ * the event. `closest()` on an orphan walks no ancestors and returns null, so
+ * every in-panel click read as "outside" and the panel dismissed itself. Only
+ * controls that happened to `await` an HTTP call first were safe (the await let
+ * the event finish bubbling before the re-render) — the synchronous ones
+ * (Send feedback, Transcript-collapse) broke. Reading the dispatch-time path
+ * makes the verdict independent of what handlers do to the DOM afterwards.
+ *
+ * @param {Event} event - The click event.
+ * @param {string} selector - CSS selector for the container to test against.
+ * @returns {boolean} True when the click originated inside a matching element.
+ */
+function clickHitsSelector(event, selector) {
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : null;
+  if (path && path.length) {
+    return path.some((node) => node && typeof node.matches === 'function' && node.matches(selector));
+  }
+  // Fallback for environments without composedPath: the live query, which is
+  // correct whenever the target is still attached.
+  const target = event.target;
+  return !!(target && typeof target.closest === 'function' && target.closest(selector));
+}
+
 function bindEvents() {
   const $ = (id) => document.getElementById(id);
 
-  // Close group popovers on outside click
+  // Close group popovers on outside click. Both predicates read the
+  // dispatch-time path (#566) — a re-rendering inner handler must never be able
+  // to make its own click look like an outside one.
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.group-pill')) {
+    if (!clickHitsSelector(e, '.group-pill')) {
       document.querySelectorAll('.group-popover.open').forEach(el => el.classList.remove('open'));
     }
     // MED-2K9P Chunk 02 — close the Medusa inbox/peers popovers on outside click.
-    if (!e.target.closest('.medusa-control')) {
+    if (!clickHitsSelector(e, '.medusa-control')) {
       const panel = $('medusaPanel');
       if (panel) panel.hidden = true;
       hideMedusaPeers();
