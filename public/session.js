@@ -1373,13 +1373,15 @@ async function renderMedusaLoopsPanel() {
   if (!panel) return;
   // Don't let the status-poll re-render fight the operator's typing (TC#561):
   // while a feedback textarea is FOCUSED, keep the current DOM this tick (a
-  // re-render would move the caret / drop focus). Draft text itself is never
-  // lost regardless of focus — it lives in `medusaFeedbackDrafts` and re-seeds
-  // the textarea on every render — so a blurred composer re-renders freely and
-  // a successful send (which clears the draft + focus) always refreshes. The
-  // guard keys on focus, NOT residual DOM value, so it can never deadlock.
-  const focusedComposer = panel.querySelector('.medusa-loop-feedback-input');
-  if (focusedComposer && document.activeElement === focusedComposer) {
+  // re-render would move the caret / drop focus). Key on `document.activeElement`
+  // (the composer actually focused — multi-composer safe, not a first-match
+  // query) scoped to this panel. Draft text itself is never lost regardless of
+  // focus — it lives in `medusaFeedbackDrafts` and re-seeds the textarea on
+  // every render — so a blurred composer re-renders freely and a successful
+  // send (which clears the draft + focus) always refreshes. The guard keys on
+  // focus, NOT residual DOM value, so it can never deadlock.
+  const active = document.activeElement;
+  if (active && active.closest && active.closest('.medusa-loop-feedback-input') && panel.contains(active)) {
     return;
   }
   const m = sessionState.medusa;

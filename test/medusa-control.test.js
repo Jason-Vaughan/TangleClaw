@@ -397,16 +397,21 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       assert.match(css, /\.medusa-loop-feedback-input/);
     });
 
-    it('the poll re-render defers to a FOCUSED composer but can never deadlock (keys on focus, not DOM value)', () => {
+    it('the poll re-render defers to the FOCUSED composer (multi-composer safe) but can never deadlock', () => {
       // Regression (Critic cumulative BLOCKING): a guard keyed on residual
       // textarea .value froze the panel forever after a send (sent text stays
-      // in the DOM). The guard must key on focus only, so a blurred/sent
-      // composer always re-renders.
+      // in the DOM). The guard keys on document.activeElement — the composer
+      // actually focused, scoped to the panel — so a blurred/sent composer
+      // always re-renders, AND a non-first composer is protected too (a
+      // first-match querySelector would drop focus on the 2nd of two).
       const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /focusedComposer\s*&&\s*document\.activeElement\s*===\s*focusedComposer/);
+      assert.match(body, /document\.activeElement/);
+      assert.match(body, /active\.closest\('\.medusa-loop-feedback-input'\)/);
+      assert.match(body, /panel\.contains\(active\)/);
       assert.doesNotMatch(body, /\.value\.trim\(\)/, 'must NOT gate the re-render on residual DOM value (deadlock source)');
+      assert.doesNotMatch(body, /panel\.querySelector\('\.medusa-loop-feedback-input'\)/, 'first-match query drops focus for a non-first composer');
       // The guard returns BEFORE the panel innerHTML is rebuilt.
-      const guardIdx = body.indexOf('focusedComposer');
+      const guardIdx = body.indexOf('document.activeElement');
       const renderIdx = body.indexOf('panel.innerHTML =');
       assert.ok(guardIdx >= 0 && renderIdx > guardIdx, 'guard precedes the re-render');
     });
