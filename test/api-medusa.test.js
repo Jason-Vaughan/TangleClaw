@@ -1167,10 +1167,45 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
     assert.equal(bridge.loops[0].mode, 'autonomous');
   });
 
-  it('defaults: supervised mode, maxRounds 10, maxWallTimeSeconds 600', async () => {
+  // MED-6V3R: the wall clock is enforced as total elapsed since first delivery
+  // — never paused, never reset per round — so it bounds AGENT WORK when
+  // autonomous but the INITIATOR'S DELIBERATION when supervised. A supervised
+  // loop cannot run away (a round needs a human send; maxRounds already bounds
+  // it), so its clock is an abandonment bound. One shared default cannot be
+  // right for both; the old 600s pinned here halted live fixtures three times
+  // purely because the operator stepped away (VRF-561).
+  it('defaults: supervised mode, maxRounds 10, and the supervised 8h wall clock', async () => {
     await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd' });
     assert.equal(bridge.loops[0].mode, 'supervised');
-    assert.deepEqual(bridge.loops[0].guards, { maxRounds: 10, maxWallTimeSeconds: 600 });
+    assert.deepEqual(bridge.loops[0].guards, { maxRounds: 10, maxWallTimeSeconds: 28800 });
+  });
+
+  it('defaults the wall clock PER MODE — autonomous keeps the 10-minute runaway bound', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'autonomous' });
+    assert.equal(bridge.loops[0].mode, 'autonomous');
+    assert.equal(bridge.loops[0].guards.maxWallTimeSeconds, 600);
+  });
+
+  it('supervised gets a strictly larger budget than autonomous — the modes bound different things (VRF-561 regression)', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'supervised' });
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'autonomous' });
+    const [supervised, autonomous] = bridge.loops;
+    assert.ok(
+      supervised.guards.maxWallTimeSeconds > autonomous.guards.maxWallTimeSeconds,
+      'a supervised loop must not inherit the autonomous runaway bound — it measures human thinking time'
+    );
+  });
+
+  it('an explicit wall clock still wins over the per-mode default, in both modes', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', guards: { maxWallTimeSeconds: 90 } });
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'autonomous', guards: { maxWallTimeSeconds: 90 } });
+    assert.equal(bridge.loops[0].guards.maxWallTimeSeconds, 90);
+    assert.equal(bridge.loops[1].guards.maxWallTimeSeconds, 90);
+  });
+
+  it('the per-mode default does not disturb maxRounds', async () => {
+    await medusa.openLoop({ sessionId: sid, target: 'live-ws', task: 't', doneCriteria: 'd', mode: 'autonomous', guards: { maxRounds: 3 } });
+    assert.deepEqual(bridge.loops[0].guards, { maxRounds: 3, maxWallTimeSeconds: 600 });
   });
 
   it('an offline target still opens the loop — the Bridge queues its loopInvite durably (nothing extra for TC to send)', async () => {
