@@ -294,8 +294,17 @@
           <option value="supervised" selected>Supervised — you judge each round</option>
           <option value="autonomous">Autonomous — this session's agent judges</option>
         </select>
-        <div class="form-hint">Only the initiator ends the loop. Guards below stop a runaway either way.</div>
+        <!-- MED-6V3R: this used to read "Guards below stop a runaway either way",
+             which is the framing the per-mode wall clock exists to retire — a
+             supervised loop has no runaway to stop. Max rounds is the guard that
+             is genuinely true of both modes. -->
+        <div class="form-hint">Only the initiator ends the loop. Max rounds bounds it either way.</div>
       </div>
+      <!-- MED-6V3R: the wall clock bounds a DIFFERENT thing per mode — agent work
+           when autonomous, the initiator's deliberation when supervised — so both
+           the preset and the hint follow the judge mode. The value below is the
+           supervised preset (the default mode); session.js re-syncs both on every
+           mode change, and never overwrites a value the operator edited. -->
       <div class="medusa-loop-guards">
         <div class="form-group">
           <label class="form-label" for="medusaLoopMaxRounds">Max rounds</label>
@@ -303,9 +312,10 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="medusaLoopMaxMinutes">Max minutes</label>
-          <input type="number" class="form-input" id="medusaLoopMaxMinutes" value="10" min="1" step="1" inputmode="numeric">
+          <input type="number" class="form-input" id="medusaLoopMaxMinutes" value="480" min="1" step="1" inputmode="numeric" aria-describedby="medusaLoopGuardHint">
         </div>
       </div>
+      <div class="form-hint" id="medusaLoopGuardHint">Supervised: rounds only advance when you send, so this drops the loop if you never respond — it is not runaway protection. Max rounds is.</div>
       <div id="medusaLoopError" class="form-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" id="medusaLoopCancelBtn">Cancel</button>

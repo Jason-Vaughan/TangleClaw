@@ -1151,6 +1151,49 @@ function hideMedusaPeers() {
 }
 
 /**
+ * Per-mode wall-clock guard presets for the loop modal (MED-6V3R). The Bridge
+ * halts a loop on total elapsed since first delivery — the clock never pauses
+ * and never resets per round — so the same knob bounds a different thing in
+ * each mode, and one shared preset cannot be honest for both. Kept in sync with
+ * `DEFAULT_WALL_SECONDS` in `lib/medusa.js`, which serves API callers that omit
+ * the guard; this modal always sends an explicit value.
+ * @type {{supervised: {minutes: number, hint: string}, autonomous: {minutes: number, hint: string}}}
+ */
+const MEDUSA_LOOP_GUARD_PRESETS = {
+  supervised: {
+    minutes: 480,
+    hint: 'Supervised: rounds only advance when you send, so this drops the loop if you never respond — it is not runaway protection. Max rounds is.'
+  },
+  autonomous: {
+    minutes: 10,
+    hint: 'Autonomous: agents drive every round unattended, so this bounds their work. The clock starts on first delivery and never pauses.'
+  }
+};
+
+/**
+ * @type {boolean} True once the operator edits Max minutes. A mode switch then
+ * leaves their number alone: silently discarding a deliberate value is the same
+ * defect the feedback composer was faulted for (VRF-561).
+ */
+let medusaLoopMinutesDirty = false;
+
+/**
+ * Sync the wall-clock guard control to the selected judge mode (MED-6V3R) —
+ * the preset and the hint both follow the mode, since the guard is runaway
+ * protection when autonomous and an abandonment bound when supervised. An
+ * operator-edited value is preserved across the switch.
+ * @returns {void}
+ */
+function syncMedusaLoopGuardMode() {
+  const mode = document.getElementById('medusaLoopMode');
+  const minutes = document.getElementById('medusaLoopMaxMinutes');
+  const hint = document.getElementById('medusaLoopGuardHint');
+  const preset = MEDUSA_LOOP_GUARD_PRESETS[mode && mode.value] || MEDUSA_LOOP_GUARD_PRESETS.supervised;
+  if (hint) hint.textContent = preset.hint;
+  if (minutes && !medusaLoopMinutesDirty) minutes.value = String(preset.minutes);
+}
+
+/**
  * Open the loop setup modal (the ➤ button) — MED-2K9P v2 T3, replacing the
  * deprecated manual compose box. Fetches the live roster into the target
  * picker, resets transient state, and focuses the first field. Toggles closed
@@ -1172,6 +1215,7 @@ async function openMedusaLoopModal() {
   if (error) { error.hidden = true; error.textContent = ''; }
   if (select) { select.innerHTML = ''; select.disabled = true; }
   if (status) status.textContent = 'Loading sessions…'; // honest loading state, no fake list
+  syncMedusaLoopGuardMode(); // the hint must match the mode the modal actually opens on
 
   modal.classList.add('open');
   if (loopBtn) loopBtn.setAttribute('aria-expanded', 'true');
@@ -3607,6 +3651,12 @@ function bindEvents() {
   if (medusaLoopLaunchBtn) medusaLoopLaunchBtn.addEventListener('click', launchMedusaLoop);
   const medusaLoopCancelBtn = $('medusaLoopCancelBtn');
   if (medusaLoopCancelBtn) medusaLoopCancelBtn.addEventListener('click', closeMedusaLoopModal);
+  // MED-6V3R: the wall-clock guard means something different per mode, so the
+  // preset + hint track the mode — unless the operator has typed their own value.
+  const medusaLoopMode = $('medusaLoopMode');
+  if (medusaLoopMode) medusaLoopMode.addEventListener('change', syncMedusaLoopGuardMode);
+  const medusaLoopMaxMinutes = $('medusaLoopMaxMinutes');
+  if (medusaLoopMaxMinutes) medusaLoopMaxMinutes.addEventListener('input', () => { medusaLoopMinutesDirty = true; });
   // Loop view (MED-2K9P v2 T4): the ⟳ chip opens the loops panel; its content
   // re-renders every poll, so all row controls are delegated.
   const medusaLoopsChip = $('medusaLoopsChip');

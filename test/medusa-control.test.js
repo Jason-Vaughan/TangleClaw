@@ -248,6 +248,96 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       const failureBranch = body.slice(body.lastIndexOf('} else {'));
       assert.doesNotMatch(failureBranch, /closeMedusaLoopModal\(\)/);
     });
+
+    // ── Mode-aware wall-clock guard (MED-6V3R) ──
+    // The modal ALWAYS sends an explicit maxWallTimeSeconds, so lib/medusa.js's
+    // per-mode default never fires for this path — the prefill below is what an
+    // operator actually gets. That makes the client preset and the server default
+    // two independent copies of one number, so the drift is pinned explicitly.
+
+    /**
+     * The supervised default the server applies to guard-omitting API callers.
+     * Read from source because `DEFAULT_WALL_SECONDS` is module-private.
+     * @returns {number} Seconds.
+     */
+    function serverSupervisedDefaultSeconds() {
+      const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'medusa.js'), 'utf8');
+      const block = lib.match(/const DEFAULT_WALL_SECONDS = \{([\s\S]*?)\}/);
+      assert.ok(block, 'DEFAULT_WALL_SECONDS not found in lib/medusa.js');
+      const supervised = block[1].match(/supervised:\s*(\d+)/);
+      assert.ok(supervised, 'supervised key not found in DEFAULT_WALL_SECONDS');
+      return Number(supervised[1]);
+    }
+
+    it('the modal prefills the SUPERVISED budget, not the autonomous runaway bound (VRF-561 regression)', () => {
+      const input = html.match(/<input[^>]*id="medusaLoopMaxMinutes"[^>]*>/);
+      assert.ok(input, 'medusaLoopMaxMinutes input not found');
+      const value = Number((input[0].match(/value="(\d+)"/) || [])[1]);
+      assert.ok(value > 10, `prefill ${value} is the autonomous bound — a supervised loop would halt while the operator thinks`);
+      assert.equal(value, 480);
+    });
+
+    it('the client preset and the server default agree on the supervised budget (independent copies)', () => {
+      const preset = src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/);
+      assert.ok(preset, 'supervised preset minutes not found');
+      assert.equal(Number(preset[1]) * 60, serverSupervisedDefaultSeconds());
+    });
+
+    it('the HTML prefill matches the client preset (the modal opens on supervised)', () => {
+      const input = html.match(/<input[^>]*id="medusaLoopMaxMinutes"[^>]*>/)[0];
+      const prefill = Number(input.match(/value="(\d+)"/)[1]);
+      const preset = Number(src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
+      assert.equal(prefill, preset);
+    });
+
+    it('both modes carry a distinct preset and hint — the knob says which thing it bounds', () => {
+      const presets = src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?\n\};/);
+      assert.ok(presets, 'MEDUSA_LOOP_GUARD_PRESETS not found');
+      const supervised = Number(presets[0].match(/supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
+      const autonomous = Number(presets[0].match(/autonomous:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
+      assert.ok(supervised > autonomous, 'supervised must not inherit the autonomous runaway bound');
+      // Each mode states what its clock actually measures, rather than a shared
+      // label that is true in only one of them.
+      assert.match(presets[0], /supervised:\s*\{[\s\S]*?hint:\s*'[^']*not runaway protection/);
+      assert.match(presets[0], /autonomous:\s*\{[\s\S]*?hint:\s*'[^']*bounds their work/);
+      // The hint is programmatically tied to the control it explains.
+      assert.match(html, /id="medusaLoopMaxMinutes"[^>]*aria-describedby="medusaLoopGuardHint"/);
+      assert.match(html, /id="medusaLoopGuardHint"/);
+    });
+
+    it('a mode switch re-syncs the guard, and opening the modal syncs it too', () => {
+      assert.match(src, /medusaLoopMode\.addEventListener\('change', syncMedusaLoopGuardMode\)/);
+      assert.match(fnBody('openMedusaLoopModal'), /syncMedusaLoopGuardMode\(\)/);
+    });
+
+    it('a mode switch never overwrites an operator-edited value (no silent discard)', () => {
+      // The dirty flag is module state, not residual DOM state — a value the
+      // operator typed survives a mode switch. Silently discarding deliberate
+      // input is the defect the feedback composer was faulted for (VRF-561).
+      assert.match(src, /medusaLoopMaxMinutes\.addEventListener\('input', \(\) => \{ medusaLoopMinutesDirty = true; \}\)/);
+      const body = fnBody('syncMedusaLoopGuardMode');
+      assert.match(body, /if \(minutes && !medusaLoopMinutesDirty\) minutes\.value/);
+      // The hint always follows the mode — only the VALUE is guarded.
+      const hintLine = body.match(/if \(hint\) hint\.textContent = preset\.hint;/);
+      assert.ok(hintLine, 'the hint must re-sync unconditionally');
+      assert.ok(body.indexOf('hint.textContent') < body.indexOf('medusaLoopMinutesDirty'));
+    });
+
+    it('an unknown mode value falls back to the supervised preset (never undefined)', () => {
+      assert.match(fnBody('syncMedusaLoopGuardMode'), /\|\| MEDUSA_LOOP_GUARD_PRESETS\.supervised/);
+    });
+
+    it('no hint claims the wall clock stops a runaway in BOTH modes (Critic NOTE)', () => {
+      // A supervised loop has no runaway to stop, so "guards stop a runaway
+      // either way" is false of the wall clock and contradicts the per-mode hint
+      // below it. maxRounds is the guard that IS true of both modes.
+      // Asserted against rendered markup only: the source comment deliberately
+      // quotes the retired wording to explain why it went, and a reader never
+      // sees it — matching raw text would pin the comment, not the UI.
+      const rendered = html.replace(/<!--[\s\S]*?-->/g, '');
+      assert.doesNotMatch(rendered, /runaway either way/);
+      assert.match(rendered, /Max rounds bounds it either way/);
+    });
   });
 
   // MED-2K9P v2 T4 — banner loop view + force-done. Visuals are operator-VRF'd;
