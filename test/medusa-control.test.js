@@ -326,6 +326,18 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     it('an unknown mode value falls back to the supervised preset (never undefined)', () => {
       assert.match(fnBody('syncMedusaLoopGuardMode'), /\|\| MEDUSA_LOOP_GUARD_PRESETS\.supervised/);
     });
+
+    it('no hint claims the wall clock stops a runaway in BOTH modes (Critic NOTE)', () => {
+      // A supervised loop has no runaway to stop, so "guards stop a runaway
+      // either way" is false of the wall clock and contradicts the per-mode hint
+      // below it. maxRounds is the guard that IS true of both modes.
+      // Asserted against rendered markup only: the source comment deliberately
+      // quotes the retired wording to explain why it went, and a reader never
+      // sees it — matching raw text would pin the comment, not the UI.
+      const rendered = html.replace(/<!--[\s\S]*?-->/g, '');
+      assert.doesNotMatch(rendered, /runaway either way/);
+      assert.match(rendered, /Max rounds bounds it either way/);
+    });
   });
 
   // MED-2K9P v2 T4 — banner loop view + force-done. Visuals are operator-VRF'd;

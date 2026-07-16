@@ -294,7 +294,11 @@
           <option value="supervised" selected>Supervised — you judge each round</option>
           <option value="autonomous">Autonomous — this session's agent judges</option>
         </select>
-        <div class="form-hint">Only the initiator ends the loop. Guards below stop a runaway either way.</div>
+        <!-- MED-6V3R: this used to read "Guards below stop a runaway either way",
+             which is the framing the per-mode wall clock exists to retire — a
+             supervised loop has no runaway to stop. Max rounds is the guard that
+             is genuinely true of both modes. -->
+        <div class="form-hint">Only the initiator ends the loop. Max rounds bounds it either way.</div>
       </div>
       <!-- MED-6V3R: the wall clock bounds a DIFFERENT thing per mode — agent work
            when autonomous, the initiator's deliberation when supervised — so both
