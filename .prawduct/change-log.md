@@ -19,6 +19,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-17: Feat — GitHub Actions CI runs the full test suite on PRs and push-to-main (CI-9F3T)
+
+<!-- prawduct: type=feat | chunks=01 | scope=ci-9f3t -->
+
+**Why:** The repo had no CI — `.github/` held only issue templates, so nothing ran the ~4300-test suite on push or PR and "tests pass" rested entirely on session discipline (the exact gap the 2026-07-16 Critic warning surfaced: stale test evidence at HEAD, invisible until review). Public repo, so the absence was also a visible hygiene gap. **What:** `.github/workflows/test.yml` — `Tests` workflow: checkout@v4, setup-node@v4 pinned to Node 22 (`node:sqlite` floor; matches the production launchd runtime), running the README-canonical `node --test 'test/*.test.js'` verbatim on ubuntu-latest; triggers `pull_request` (gating) + `push: branches: [main]` (badge truth). README gains the live status badge. Headless-safety verified before enabling, not assumed: all platform-coupled tests (launchctl/tmux/darwin) mock via argv-plans or injected platform, the single real `tmux kill-session` is a try/catch'd cleanup, and git-using tests init temp repos with their own `user.email`/`user.name` (runners ship no global identity). **Deliberate walls:** required-check branch protection is a follow-up after the first green main run (it changes `gh pr merge --auto` semantics — operator-visible); DEP-8H7W's `--disable-warning=ExperimentalWarning` stays that item's scope (CI uses the canonical invocation verbatim so command drift is impossible by construction). **Tests:** `test/ci-workflow.test.js` source pins — canonical command cross-checked against README (both must move together), PR + push-to-main triggers, Node 22 pin, badge presence. Revert-verified: mutating triggers/Node fails exactly the 2 relevant pins. Full suite green at HEAD (4320 tests / 0 fail).
+
 ## 2026-07-17: Feat — version-bump wrap step stamps prawduct change-log entries shipped at release-promote (WRP-9F2K)
 
 <!-- prawduct: type=feat | chunks=WRP-9F2K | scope=wrp-9f2k | status=merged -->
