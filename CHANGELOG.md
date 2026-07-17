@@ -16,6 +16,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **The `test` check is now a required status check on `main` (backlog CI-2V8Q, follow-up to CI-9F3T).** Branch protection settings change, no repo code: `gh pr merge --auto` now genuinely waits for the suite to pass before the server-side merge instead of merging instantly, closing the loop on CI as a gate rather than a badge. `enforce_admins` stays off, so operator direct pushes to `main` (incident hot-fixes, release stamps) still work. This PR is its own live verification — it was created with `--auto` and could only merge after its `test` check went green.
+
 - **Reconciled `.gitignore` with the prawduct session-file contract** (post-sync advisory `gitignore-contract-drift-v1`). Added the six missing session-file entries (`.bug-inbox`, `.critic-active`, `.critic-partials/`, `.governance-ledger.jsonl`, `.session-base-tree`, `.work-model-index.json`) and dropped the `.prawduct/artifacts/build-plan.md` ignore — build plans are tracked-by-contract now. Mechanical `prawduct-hook update-gitignore` run; no code changes.
 
 ## [4.19.1] - 2026-07-17
