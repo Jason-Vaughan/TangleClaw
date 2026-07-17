@@ -23,9 +23,6 @@ docs/methodology-extractions/
 # Runtime database (generated at startup)
 data/tangleclaw.db
 
-# Unreleased methodology templates
-data/templates/tilt/
-
 # TLS certificates (generated locally, contain private keys)
 data/certs/
 

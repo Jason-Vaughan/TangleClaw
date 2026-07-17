@@ -1,0 +1,18 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # node:sqlite requires Node 22+; matches the production runtime
+          node-version: 22
+      - name: Run test suite
+        run: node --test 'test/*.test.js'

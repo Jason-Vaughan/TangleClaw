@@ -96,7 +96,8 @@ describe('git', () => {
       const { execSync } = require('node:child_process');
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'git-test-'));
       try {
-        execSync('git init && git commit --allow-empty -m "init"', { cwd: tmp, encoding: 'utf8' });
+        // Local identity: CI runners ship git with no global user configured
+        execSync('git init && git config user.email t@example.com && git config user.name Test && git commit --allow-empty -m "init"', { cwd: tmp, encoding: 'utf8' });
         const info = git._fetchInfo(tmp);
         assert.ok(info !== null);
         assert.equal(info.latestTag, null);
