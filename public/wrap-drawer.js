@@ -463,6 +463,38 @@
   }
 
   /**
+   * #583 — Decide how to reattach to a server-side wrap run after a wrap
+   * POST failed (connection died, page reloaded, or 409 WRAP_IN_PROGRESS).
+   * Pure decision over the `GET /wrap/status` payload:
+   *
+   *   - `'watch'`  — a pipeline is running; poll it to completion.
+   *   - `'render'` — a run finished at/after the caller's POST went out;
+   *     its retained result IS this wrap's outcome — render the drawer.
+   *   - `'error'`  — nothing to reattach to (no run, or only a STALE
+   *     result from some previous wrap — which must never render as this
+   *     one's). Caller falls back to its own error UI.
+   *
+   * @param {object|null} status - `GET /wrap/status` body
+   *   (`{running, finishedAt, result, …}`), or null on a failed fetch.
+   * @param {number} postStartedAtMs - Epoch ms when the caller's wrap POST
+   *   went out — the freshness gate for a finished result.
+   * @returns {'watch'|'render'|'error'}
+   */
+  function wrapWatchDecision(status, postStartedAtMs) {
+    if (!status || typeof status !== 'object') return 'error';
+    if (status.running === true) return 'watch';
+    if (
+      status.result
+      && typeof status.finishedAt === 'number'
+      && typeof postStartedAtMs === 'number'
+      && status.finishedAt >= postStartedAtMs
+    ) {
+      return 'render';
+    }
+    return 'error';
+  }
+
+  /**
    * Whether `handleSessionEnded`'s auto-redirect countdown should start.
    * When the wrap drawer is open it is showing the operator's blocked /
    * warning report — the report is the primary source of truth for why a
@@ -491,6 +523,7 @@
     collectOptionsFromAccessors,
     accumulateAiContentSkips,
     buildReportText,
+    wrapWatchDecision,
     shouldStartEndedCountdown
   };
 

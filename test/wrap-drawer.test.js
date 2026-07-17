@@ -722,6 +722,37 @@ describe('wrap-drawer helpers — shouldStartEndedCountdown (#268)', () => {
   });
 });
 
+describe('wrap-drawer helpers — wrapWatchDecision (#583)', () => {
+  const H = loadHelpers();
+
+  it('a running run is watched', () => {
+    assert.equal(H.wrapWatchDecision({ running: true, result: null, finishedAt: null }, 1000), 'watch');
+    // running wins even when a stale result rides along in the payload
+    assert.equal(H.wrapWatchDecision({ running: true, result: { ok: true }, finishedAt: 1 }, 1000), 'watch');
+  });
+
+  it('a finished run at/after the POST instant renders as this wrap\'s outcome', () => {
+    const result = { ok: true, pipelineResult: {} };
+    assert.equal(H.wrapWatchDecision({ running: false, result, finishedAt: 1000 }, 1000), 'render');
+    assert.equal(H.wrapWatchDecision({ running: false, result, finishedAt: 5000 }, 1000), 'render');
+  });
+
+  it('THE STALE PIN: a result older than the POST must never render as this wrap\'s', () => {
+    const result = { ok: true, pipelineResult: {} };
+    assert.equal(H.wrapWatchDecision({ running: false, result, finishedAt: 999 }, 1000), 'error');
+  });
+
+  it('nothing to reattach to → error (no run, no result, bad shapes)', () => {
+    assert.equal(H.wrapWatchDecision(null, 1000), 'error');
+    assert.equal(H.wrapWatchDecision(undefined, 1000), 'error');
+    assert.equal(H.wrapWatchDecision('not-an-object', 1000), 'error');
+    assert.equal(H.wrapWatchDecision({ running: false, result: null, finishedAt: null }, 1000), 'error');
+    assert.equal(H.wrapWatchDecision({ running: false, result: { ok: true }, finishedAt: null }, 1000), 'error');
+    // a non-number postStartedAtMs can't prove freshness — refuse to render
+    assert.equal(H.wrapWatchDecision({ running: false, result: { ok: true }, finishedAt: 5000 }, undefined), 'error');
+  });
+});
+
 describe('wrap-drawer helpers — status tooltips (#222)', () => {
   const H = loadHelpers();
 

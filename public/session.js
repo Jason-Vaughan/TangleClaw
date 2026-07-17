@@ -2936,6 +2936,10 @@ async function confirmWrap() {
   confirmBtn.textContent = 'Wrapping…';
   document.getElementById('wrapError').classList.add('hidden');
 
+  // #583: freshness gate for the reattach path — a finished run older
+  // than this instant is some previous wrap's outcome, not this one's.
+  const postStartedAt = Date.now();
+
   try {
     const data = await apiMutate(
       `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
@@ -2944,10 +2948,18 @@ async function confirmWrap() {
     );
 
     if (!data) {
-      // Failure — surface inline and let `finally` re-enable so the operator
-      // can fix (e.g. wrong password) and retry without reopening.
-      document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
-      document.getElementById('wrapError').classList.remove('hidden');
+      // #583: a failed POST does NOT mean no wrap is running. The pipeline
+      // outlives its connection (409 WRAP_IN_PROGRESS, a proxy 502, a
+      // dropped fetch) — probe /wrap/status and reattach before claiming
+      // failure. Re-POSTing here is exactly what re-fired the content
+      // steps in the 2026-07-16 incident.
+      const handled = await watchWrapRun(postStartedAt, pw);
+      if (!handled) {
+        // Genuine failure (bad password, no session) — surface inline and
+        // let `finally` re-enable so the operator can fix and retry.
+        document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed. Check password.';
+        document.getElementById('wrapError').classList.remove('hidden');
+      }
       return;
     }
 
@@ -3023,6 +3035,11 @@ function openWrapDrawer(pipelineResult, password) {
   // Flag the open drawer so a concurrent session-ended poll doesn't start
   // the auto-redirect countdown and navigate the blocked report away (#268).
   sessionState.wrapDrawerOpen = true;
+  // #583: on the reattach path the drawer can open AFTER handleSessionEnded
+  // already started its countdown (the watch loop polls every few seconds,
+  // the ended poll can win the race) — the #268 rule is drawer-open ⇒ no
+  // auto-redirect, so a countdown already ticking is cancelled here.
+  cancelEndedCountdown();
   renderWrapDrawer(pipelineResult);
   document.getElementById('wrapDrawerBackdrop').classList.add('open');
   document.getElementById('wrapDrawer').classList.add('open');
@@ -3587,6 +3604,10 @@ async function retryWrap() {
 
   const retryBtn = document.getElementById('wrapDrawerRetryBtn');
   retryBtn.disabled = true;
+  // #583: freshness gate + password captured BEFORE any reattach path can
+  // close the drawer (closeWrapDrawer clears currentWrapPassword).
+  const retryStartedAt = Date.now();
+  const retryPassword = currentWrapPassword;
   try {
     const data = await apiMutate(
       `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
@@ -3606,12 +3627,19 @@ async function retryWrap() {
       sessionState.pollInterval = 2000;
       startPolling();
     } else {
-      // M3: apiMutate returned null — surface api.lastError inline so
-      // the user sees what went wrong (401/403/404/500/network).
-      // apiMutate is a thin wrapper; the side-channel error lives on
-      // the underlying api() function (api-helper.js:33-49).
+      // #583: the retry POST failing may mean the pipeline is still
+      // running (this retry raced another trigger to a 409, or the
+      // connection died mid-retry) — probe and reattach before rendering
+      // a dead-end error.
       const lastErr = (typeof api !== 'undefined' && api.lastError) || 'Retry failed — see browser console.';
-      renderWrapDrawerError(lastErr);
+      const handled = await watchWrapRun(retryStartedAt, retryPassword);
+      if (!handled) {
+        // M3: genuine failure — surface api.lastError inline so the user
+        // sees what went wrong (401/403/404/500/network). apiMutate is a
+        // thin wrapper; the side-channel error lives on the underlying
+        // api() function (api-helper.js:33-49).
+        renderWrapDrawerError(lastErr);
+      }
     }
   } finally {
     retryBtn.disabled = false;
@@ -3648,6 +3676,160 @@ function showWrappingState() {
   // Show wrapping bar
   document.getElementById('sessionWrapping').classList.remove('hidden');
   document.getElementById('sessionWrapIdle').classList.remove('open');
+}
+
+/**
+ * Undo `showWrappingState` for a wrap that finished BLOCKED (#583) — the
+ * session is still alive, so the operator gets their action buttons back
+ * and the wrapping bar goes away. No-op once the session has ended
+ * (`handleSessionEnded`/`handleWrapCompleted` own that state and must not
+ * have buttons re-enabled under them).
+ */
+function clearWrappingState() {
+  if (sessionState.ended) return;
+  sessionState.wrapping = false;
+
+  const dot = document.getElementById('statusDot');
+  dot.classList.remove('wrapping');
+  dot.title = 'Active';
+
+  document.getElementById('wrapBtn').disabled = false;
+  document.getElementById('killBtn').disabled = false;
+  document.getElementById('cmdBtn').disabled = false;
+  document.getElementById('commandSend').disabled = false;
+
+  document.getElementById('sessionWrapping').classList.add('hidden');
+}
+
+/**
+ * True while a #583 wrap-run watch loop is polling. One loop at a time —
+ * a second caller (e.g. init probe racing a confirm-time reattach) treats
+ * the run as already handled instead of starting a duplicate poller.
+ * @type {boolean}
+ */
+let wrapWatchInFlight = false;
+
+/**
+ * #583 — Reattach to a server-side wrap run this page can't see through
+ * its own POST. The pipeline deliberately outlives its triggering
+ * connection (a phone locking mid-wrap is normal operation), so a failed
+ * wrap POST does NOT mean no wrap is running: it may have gotten 409
+ * WRAP_IN_PROGRESS, or the connection died while the run carried on.
+ *
+ * Probes `GET /wrap/status` and follows `wrapWatchDecision`:
+ *   - running → show the wrapping bar (the terminal stays visible — that
+ *     IS the wrap happening) and poll until the run finishes, then render
+ *     the drawer with its result exactly as the original POST would have.
+ *   - finished fresh → straight to the drawer.
+ *   - nothing to reattach to → return false; the caller shows its own error.
+ *
+ * A run that vanishes mid-watch without a fresh result means a server
+ * restart killed it (the registry is process-local) — surfaced honestly
+ * via the drawer error banner; a fresh wrap is safe at that point.
+ *
+ * @param {number} postStartedAtMs - Epoch ms when the caller's wrap POST
+ *   went out; gates result freshness so a PREVIOUS wrap's retained
+ *   outcome never renders as this one's.
+ * @param {string} [password] - Password replayed on drawer retries (M1).
+ * @returns {Promise<boolean>} true when the run was handled here.
+ */
+async function watchWrapRun(postStartedAtMs, password) {
+  const H = window.tcWrapDrawerHelpers;
+  if (wrapWatchInFlight) return true;
+  // Claim synchronously, BEFORE the first await — two near-simultaneous
+  // callers (init probe racing a confirm-time reattach) must not both pass
+  // the guard during the probe (Critic note, chunk 583).
+  wrapWatchInFlight = true;
+
+  const statusUrl = `/api/sessions/${encodeURIComponent(projectName)}/wrap/status`;
+  try {
+    let status = await api(statusUrl);
+    let decision = H.wrapWatchDecision(status, postStartedAtMs);
+    if (decision === 'error') return false;
+
+    // Whatever surface triggered this (modal or drawer retry), the watch
+    // owns the screen now; both closes are idempotent.
+    closeWrapModal(true);
+    closeWrapDrawer();
+
+    if (decision === 'watch') {
+      showWrappingState();
+      while (decision === 'watch') {
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        const next = await api(statusUrl);
+        // A failed poll is a connection blip — the run outlives it; keep
+        // watching. State stays server-driven, never wall-clock-bounded.
+        if (!next) continue;
+        status = next;
+        decision = H.wrapWatchDecision(status, postStartedAtMs);
+      }
+      clearWrappingState();
+    }
+
+    if (decision === 'render' && status.result && status.result.pipelineResult) {
+      openWrapDrawer(status.result.pipelineResult, typeof password === 'string' ? password : '');
+    } else if (decision === 'render' && status.result) {
+      // A fresh result WITHOUT a pipelineResult: the pipeline itself threw
+      // before producing per-step results. Show the run's real error — not
+      // the restart notice, which would misdiagnose it (Critic warning,
+      // chunk 583). Nothing was committed (the commit step is last).
+      openWrapDrawerNotice(
+        'Wrap failed',
+        status.result.error
+          || 'The wrap failed before its pipeline produced a result. Nothing was committed; it is safe to start a new wrap.'
+      );
+    } else {
+      // Ran, then vanished without a fresh result: a server restart killed
+      // the pipeline mid-flight. Nothing was committed by it (the commit
+      // step is last) — say so and leave the operator free to re-wrap.
+      openWrapDrawerNotice(
+        'Wrap did not survive a server restart',
+        'The wrap pipeline was killed mid-run (most likely a server restart). Its commit step never ran, so nothing was committed. It is safe to start a new wrap.'
+      );
+    }
+    return true;
+  } finally {
+    wrapWatchInFlight = false;
+  }
+}
+
+/**
+ * Cancel a ticking session-ended auto-redirect countdown (#583). The #268
+ * rule is drawer-open ⇒ no auto-redirect; when the drawer opens after the
+ * countdown already started (reattach race), the countdown must die rather
+ * than navigate the report away mid-read. Idempotent.
+ */
+function cancelEndedCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  const countdownEl = document.getElementById('countdown');
+  if (countdownEl) countdownEl.textContent = '';
+}
+
+/**
+ * Open the wrap drawer as a plain notice (#583) — status banner + message,
+ * no step list — for outcomes that have no pipeline result to render
+ * (e.g. the watched run was killed by a server restart).
+ *
+ * @param {string} label - Banner headline.
+ * @param {string} detail - Explanation the operator acts on.
+ */
+function openWrapDrawerNotice(label, detail) {
+  sessionState.wrapDrawerOpen = true;
+  cancelEndedCountdown();
+  document.getElementById('wrapStepList').innerHTML = '';
+  document.getElementById('wrapDrawerDecision').innerHTML = '';
+  document.getElementById('wrapDrawerDecision').classList.add('hidden');
+  document.getElementById('wrapDrawerRetryBtn').classList.add('hidden');
+  document.getElementById('wrapDrawerDoneBtn').classList.remove('hidden');
+  document.getElementById('wrapDrawerCancelBtn').textContent = 'Close';
+  renderWrapDrawerError(detail);
+  const statusEl = document.getElementById('wrapDrawerStatus');
+  if (statusEl.firstChild) statusEl.firstChild.textContent = label;
+  document.getElementById('wrapDrawerBackdrop').classList.add('open');
+  document.getElementById('wrapDrawer').classList.add('open');
 }
 
 /**
@@ -4106,6 +4288,20 @@ async function initSession() {
   // Start polling if session is active
   if (!sessionState.ended) {
     startPolling();
+  }
+
+  // #583: a wrap pipeline may be running server-side from a previous page
+  // load (its POST died with that page). Reattach so the run is visible
+  // and its result lands in the drawer, instead of the operator re-wrapping
+  // blind. Only a RUNNING run reattaches on load — a finished one belongs
+  // to whichever page triggered it. Deliberately not awaited: init must
+  // not block on a multi-minute wrap.
+  if (!sessionState.ended) {
+    api(`/api/sessions/${encodeURIComponent(projectName)}/wrap/status`).then((wrapStatus) => {
+      if (wrapStatus && wrapStatus.running === true) {
+        watchWrapRun(Date.now(), '');
+      }
+    });
   }
 
   // Poll model status every 2 minutes (setTimeout chain to avoid burst storms)
