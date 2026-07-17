@@ -119,7 +119,10 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
     it('touchend stages the text and shows the Copy pill — NO direct clipboard write in touchend', () => {
       // Safari refused every touchend-time write on-device (iterations 4-6);
       // the pill's tap is a real click in the same document — the #435 flow.
-      assert.match(shim, /doc\.addEventListener\('touchend', endSelect, \{ passive: true \}\);/);
+      // #574 wrapped the touchend handler to add tap-to-focus: it must still
+      // run endSelect FIRST, stay passive, and touchcancel stays bare endSelect.
+      assert.match(shim, /doc\.addEventListener\('touchend', \(\) => \{\s*\n\s*endSelect\(\);/);
+      assert.match(shim, /\}, \{ passive: true \}\);\s*\n\s*doc\.addEventListener\('touchcancel', endSelect, \{ passive: true \}\);/);
       assert.match(shim, /pendingCopyText = term\.getSelection\(\) \|\| '';/);
       assert.match(shim, /showPill\(lastPoint\);/);
       assert.match(shim, /doc\.tcTouchSelectActive = false;/);

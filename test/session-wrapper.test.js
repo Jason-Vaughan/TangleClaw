@@ -629,8 +629,12 @@ describe('Session Wrapper UI', () => {
       assert.ok(js.includes('/terminal/'));
     });
 
-    it('should include mouse guard for touch devices', () => {
-      assert.ok(js.includes('function startMouseGuard()'));
+    it('must NOT reinstate the touch mouse guard (#574)', () => {
+      // The old touch-only 3s poll forced tmux mouse OFF, which is mutually
+      // exclusive with the #443 touch-scroll shim (it needs mouse ON to
+      // reach tmux copy-mode). Deep pins live in select-mode-mouse.test.js.
+      assert.ok(!js.includes('startMouseGuard'),
+        'the touch mouse guard was removed in #574 — reinstating it kills touch-scroll');
       assert.ok(js.includes('ontouchstart'));
     });
 

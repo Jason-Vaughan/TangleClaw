@@ -196,7 +196,7 @@ Tap **Peek** to open a bottom drawer showing the last few lines of terminal outp
 
 #### Select
 
-Tap **Select** to temporarily enable text selection in the terminal. This toggles tmux mouse mode off so you can select and copy text from the terminal output using normal touch/click-drag gestures. After 30 seconds, mouse mode automatically reverts to its previous state, so you don't have to remember to switch it back.
+Tap **Select** to enable text selection in the terminal, and tap **Done** to leave it. Select mode adjusts tmux mouse mode so normal touch/click-drag gestures select text instead of reaching the terminal app (on desktop it turns mouse mode off; on touch devices it turns it on). It stays on until you tap Done — there is no auto-revert timer (#574; timer-driven UI reverts are banned by #98/#268) — and leaving select mode restores the mouse state you had before entering. On touch devices you can also long-press to select without Select mode at all (a Copy pill appears on release).
 
 #### Upload
 

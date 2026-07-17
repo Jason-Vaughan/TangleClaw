@@ -323,6 +323,50 @@
   }
 
   /**
+   * Decide the tmux mouse value select mode should POST (#574 RC2, pure).
+   * Entering keeps the legacy platform split: mobile turns mouse ON (frees
+   * native text selection), desktop turns it OFF (a plain drag reaches
+   * xterm's local selection engine). Exiting must restore the pre-select
+   * state on BOTH platforms — the old mobile exit hardcoded `false`, which
+   * stranded a session-level `mouse off` override, and the #443 touch-scroll
+   * shim needs mouse ON, so one Select round-trip killed touch-scroll for
+   * every later visit to that session.
+   * @param {{entering: boolean, isMobile: boolean, mouseOn: boolean}} opts -
+   *   `entering` = toggling INTO select mode; `mouseOn` = the pre-select
+   *   effective mouse state to restore on exit
+   * @returns {boolean} the value to send to /api/tmux/mouse
+   */
+  function tcSelectModeMouse(opts) {
+    if (opts.entering) return !!opts.isMobile;
+    return !!opts.mouseOn;
+  }
+
+  /**
+   * Classify whether a completed touch gesture was a clean TAP that should
+   * focus the terminal (#574 RC4, pure).
+   *
+   * On a touch-only device every mouse event is one Safari synthesizes
+   * right after a touch, so the #445 ghost-mouse suppression (which
+   * swallows all mouse events within 1s of touch activity to protect the
+   * copy path) also swallows the synthesized mousedown that used to give
+   * xterm's hidden textarea focus — the soft keyboard could never appear.
+   * Invisible on hybrid devices, where a real mouse works 1s after the
+   * last touch. The fix is a deliberate `term.focus()` on a clean tap's
+   * touchend (inside the gesture, so iOS honors it); this predicate is the
+   * "clean tap" decision, lifted out so it executes under test (TST-6L2P).
+   *
+   * @param {{multiTouch: boolean, wasPill: boolean, selectActivated: boolean,
+   *   movedPastSlop: boolean}} g - Gesture history: a second finger ever
+   *   landed; the touch started on the Copy pill (its tap must stay a
+   *   click); long-press select mode activated; the finger moved past the
+   *   long-press slop (a scroll, not a tap)
+   * @returns {boolean} true when the gesture is a clean tap
+   */
+  function tcIsFocusTap(g) {
+    return !g.multiTouch && !g.wasPill && !g.selectActivated && !g.movedPastSlop;
+  }
+
+  /**
    * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
    *
    * The previous per-page shims listened on `.xterm-viewport` — but xterm's
@@ -600,6 +644,13 @@
     let lastPoint = null;
     let pendingCopyText = '';
 
+    // Tap-to-focus gesture history (#574 RC4) — reset on each fresh
+    // single-finger touchstart, classified by tcIsFocusTap at touchend.
+    let gestureMultiTouch = false;
+    let gestureWasPill = false;
+    let gestureSelectActivated = false;
+    let gestureMovedPastSlop = false;
+
     // The copy itself happens from a TAP on a visible Copy pill — the same
     // click-in-same-document flow as the #435-proven upload copy buttons.
     // Copying directly in touchend never satisfied Safari's gesture rules
@@ -680,6 +731,15 @@
 
     doc.addEventListener('touchstart', (e) => {
       lastTouchTs = Date.now();
+      if (e.touches.length === 1) {
+        // Fresh gesture — reset the tap classification (#574 RC4)
+        gestureMultiTouch = false;
+        gestureWasPill = e.target === pill;
+        gestureSelectActivated = false;
+        gestureMovedPastSlop = false;
+      } else {
+        gestureMultiTouch = true;
+      }
       if (e.target === pill) return; // the pill's own tap must stay a click
       hidePill(); // any new terminal touch dismisses a pending pill
       if (e.touches.length !== 1) {
@@ -697,7 +757,11 @@
         const cell = cellFromTouch(pressPoint);
         if (!cell) return;
         // Enter select mode: anchor + a one-cell selection as the visual cue.
+        // gestureSelectActivated deliberately shadows tcTouchSelectActive for
+        // the tap classifier: endSelect clears the live flag BEFORE touchend
+        // classifies the gesture, so only this sticky copy can veto the focus.
         doc.tcTouchSelectActive = true;
+        gestureSelectActivated = true;
         selectAnchor = cell;
         lastPoint = pressPoint; // pill anchor even if the finger never moves
         applySelection(cell, cell);
@@ -720,6 +784,7 @@
       if (pressPoint &&
           (Math.abs(t.clientX - pressPoint.clientX) > SLOP_PX ||
            Math.abs(t.clientY - pressPoint.clientY) > SLOP_PX)) {
+        gestureMovedPastSlop = true; // a scroll, not a tap (#574 RC4)
         cancelPress();
       }
     }, { passive: false });
@@ -743,7 +808,28 @@
         showPill(lastPoint);
       }
     };
-    doc.addEventListener('touchend', endSelect, { passive: true });
+    doc.addEventListener('touchend', () => {
+      endSelect();
+      // Tap-to-focus (#574 RC4): the ghost-mouse suppression above swallows
+      // the synthesized mousedown that used to focus xterm's textarea, so a
+      // clean tap must focus it deliberately — here, inside the touchend
+      // gesture window, where iOS raises the soft keyboard. touchcancel
+      // never focuses (the system took the gesture back).
+      if (tcIsFocusTap({
+        multiTouch: gestureMultiTouch,
+        wasPill: gestureWasPill,
+        selectActivated: gestureSelectActivated,
+        movedPastSlop: gestureMovedPastSlop
+      })) {
+        try {
+          term.focus();
+        } catch (err) {
+          // Terminal disposed mid-gesture — nothing to focus. Logged so a
+          // remote Web Inspector can tell a throw from a predicate rejection.
+          if (iframeWin.console) iframeWin.console.debug('tc tap-to-focus skipped:', err);
+        }
+      }
+    }, { passive: true });
     doc.addEventListener('touchcancel', endSelect, { passive: true });
 
     return true;
@@ -806,6 +892,8 @@
   global.tcCellFromPoint = tcCellFromPoint;
   global.tcSelectionSpan = tcSelectionSpan;
   global.tcParseBridgePort = tcParseBridgePort;
+  global.tcSelectModeMouse = tcSelectModeMouse;
+  global.tcIsFocusTap = tcIsFocusTap;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
