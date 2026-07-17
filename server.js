@@ -36,6 +36,7 @@ const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
+const wrapRunRegistry = require('./lib/wrap-run-registry');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
@@ -408,7 +409,19 @@ route('POST', '/api/master/ensure', (_req, res) => {
 // detect when the new process is up and reloads. Returns 501 when no
 // restart mechanism is available (e.g. bare-node, Linux today) so the
 // frontend can hide the button cleanly.
-route('POST', '/api/server/restart', (_req, res) => {
+route('POST', '/api/server/restart', (_req, res, _params, body) => {
+  // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
+  // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
+  // orphaned its content steps). Refuse while a wrap runs unless the
+  // operator explicitly forces past the guard. Checked BEFORE mechanism
+  // detection so the refusal path can never schedule an exec.
+  const wrappingProject = wrapRunRegistry.anyRunning();
+  if (wrappingProject && !(body && body.force === true)) {
+    return errorResponse(res, 409,
+      `A session wrap is running for "${wrappingProject}" — restarting now would kill it mid-pipeline. ` +
+      'Wait for it to finish (GET /api/sessions/:project/wrap/status), or retry with {"force": true}.',
+      'WRAP_RESTART_BLOCKED');
+  }
   const mechanism = serverInfo.detectRestartMechanism();
   if (!mechanism) {
     jsonResponse(res, 501, {
@@ -2118,6 +2131,12 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
 
   const options = body && typeof body.options === 'object' && body.options !== null ? body.options : undefined;
   const result = await sessions.triggerWrap(params.project, options);
+  // #583 — server-side single-flight: a wrap pipeline is already running
+  // for this project. 409 (not 500) so the frontend can switch to watching
+  // the running run via GET /wrap/status instead of re-triggering it.
+  if (!result.ok && result.code === 'WRAP_IN_PROGRESS') {
+    return errorResponse(res, 409, result.error, 'WRAP_IN_PROGRESS');
+  }
   // V2 may return ok:false from the pipeline (a blocked step). That's not a
   // server error — it's an expected pipeline outcome the drawer renders.
   // Surface it with HTTP 200 + `pipelineResult` so the frontend can paint
@@ -2129,10 +2148,24 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     return errorResponse(res, 500, result.error || 'Wrap failed', 'INTERNAL_ERROR');
   }
 
+  jsonResponse(res, 200, _wrapResultPayload(params.project, result));
+});
+
+/**
+ * Shape a `sessions.triggerWrap` result into the wrap POST's response
+ * payload. Shared by `POST /wrap` and `GET /wrap/status` (#583) so the
+ * reattach path renders the exact payload the original POST would have
+ * delivered had its connection survived — the two can't drift.
+ *
+ * @param {string} projectName - Route-level project name
+ * @param {object} result - `sessions.triggerWrap` return value
+ * @returns {object} Response payload
+ */
+function _wrapResultPayload(projectName, result) {
   const payload = {
     ok: result.ok,
     sessionId: result.sessionId,
-    project: params.project,
+    project: projectName,
     status: result.ok ? 'wrapping' : 'blocked',
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
@@ -2140,7 +2173,26 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
   };
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
-  jsonResponse(res, 200, payload);
+  return payload;
+}
+
+// GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets a
+// client whose wrap POST connection died (proxy 502, page reload, phone
+// lock) reattach: `running` + `currentStepId` while the pipeline runs,
+// then the finished run's `result` in the same shape the POST would have
+// returned. Registry is process-local: after a server restart this
+// honestly reports no run (nothing survived the restart).
+route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
+  const status = sessions.getWrapRunStatus(params.project);
+  jsonResponse(res, 200, {
+    project: params.project,
+    running: status.running,
+    sessionId: status.sessionId,
+    startedAt: status.startedAt,
+    currentStepId: status.currentStepId,
+    finishedAt: status.finishedAt,
+    result: status.result ? _wrapResultPayload(params.project, status.result) : null
+  });
 });
 
 // POST /api/sessions/:project/wrap/complete — Manual wrap completion

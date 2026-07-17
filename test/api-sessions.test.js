@@ -266,7 +266,11 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         assert.equal(res.body.ok, true);
-        assert.deepEqual(receivedOptions, { skipTests: true, criticSkipRationale: 'short turn' });
+        // #583 amended the threading contract: body options pass through
+        // unchanged, plus the wrap-run registry's progress hook rides along.
+        const { onStepStart, ...userOptions } = receivedOptions;
+        assert.deepEqual(userOptions, { skipTests: true, criticSkipRationale: 'short turn' });
+        assert.equal(typeof onStepStart, 'function', '#583 progress hook threaded to the runner');
         assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
         assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
         assert.equal(res.body.status, 'wrapping');
@@ -387,7 +391,10 @@ describe('api-sessions', () => {
           options: { prHandling: { '42': 'merge', '43': 'defer' } }
         });
         assert.equal(res.status, 200);
-        assert.deepEqual(receivedOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
+        // #583: user options unchanged + the registry progress hook.
+        const { onStepStart, ...userOptions } = receivedOptions;
+        assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
+        assert.equal(typeof onStepStart, 'function');
 
         // Pin the key-type contract: string-keyed PR numbers reach the
         // runner unchanged, matching `_normalizeHandling`'s
@@ -431,8 +438,11 @@ describe('api-sessions', () => {
           options: 'not-an-object'
         });
         assert.equal(res.status, 200);
-        assert.equal(received, undefined,
-          'non-object options bodies must be discarded before reaching the runner');
+        // #583: a discarded options body still reaches the runner carrying
+        // ONLY the registry progress hook — no user keys are invented from
+        // the malformed body.
+        assert.deepEqual(Object.keys(received), ['onStepStart'],
+          'non-object options bodies must be discarded before reaching the runner (only the #583 hook remains)');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         store.projectConfig.save(project.path, {

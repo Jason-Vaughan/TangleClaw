@@ -1950,6 +1950,125 @@ describe('sessions', () => {
       }
     });
 
+    // #583 — THE incident regression pin. 2026-07-16: a wrap POST died with
+    // a mid-flight server restart, the operator re-POSTed, and a second full
+    // pipeline re-fired every AI content step from step 0. Client-side
+    // single-flight (#519) can't span tabs/devices/reloads — the guard must
+    // live server-side: one running pipeline per project, a concurrent
+    // trigger rejected WITHOUT starting a second pipeline, and the finished
+    // run's result retrievable after the triggering connection is gone.
+    it('#583 — second triggerWrap while a V2 pipeline is in flight is rejected and starts NO second pipeline', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-single-flight-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let pipelineCalls = 0;
+      let releaseGate;
+      const gate = new Promise((resolve) => { releaseGate = resolve; });
+      wrapPipelineMod.runWrapPipeline = async (projectName, options) => {
+        pipelineCalls += 1;
+        // Report progress like the real runner would, then hold the
+        // pipeline open so the second trigger races a genuinely-running run.
+        if (options && typeof options.onStepStart === 'function') {
+          options.onStepStart('changelog-update', 'ai-content');
+        }
+        await gate;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+
+      try {
+        const first = sessions.triggerWrap('prime-test');
+        // Let the first trigger claim the registry slot before racing it.
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const status = sessions.getWrapRunStatus('prime-test');
+        assert.equal(status.running, true, 'registry reports the run while in flight');
+        assert.equal(status.currentStepId, 'changelog-update', 'progress hook feeds the registry');
+
+        const second = await sessions.triggerWrap('prime-test');
+        assert.equal(second.ok, false, 'concurrent wrap is rejected');
+        assert.equal(second.code, 'WRAP_IN_PROGRESS', 'rejection carries the machine-readable code');
+        assert.ok(second.wrapRun && typeof second.wrapRun.startedAt === 'number',
+          'rejection carries the running run info (since when)');
+        assert.equal(pipelineCalls, 1, 'THE PIN: the second trigger must not start a second pipeline');
+
+        releaseGate();
+        const firstResult = await first;
+        assert.equal(firstResult.ok, true, 'the original wrap completes normally');
+
+        const after = sessions.getWrapRunStatus('prime-test');
+        assert.equal(after.running, false, 'registry frees the slot on completion');
+        assert.ok(after.result && after.result.pipelineResult,
+          'the finished result stays retrievable for a client whose POST connection died');
+        assert.equal(typeof after.finishedAt, 'number', 'finishedAt recorded for freshness checks');
+
+        // With the run finished, a NEW wrap may start (explicit human retry).
+        const third = await sessions.triggerWrap('prime-test');
+        assert.equal(third.ok, true, 'a fresh wrap after completion is allowed');
+        assert.equal(pipelineCalls, 2, 'the fresh wrap runs a new pipeline');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        wrapRunRegistry._resetForTests();
+        const cfg = store.projectConfig.load(project.path);
+        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
+      }
+    });
+
+    it('#583 — a pipeline that throws still frees the single-flight slot and records the failure', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-throw-slot-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: true
+      });
+
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => { throw new Error('pipeline exploded'); };
+
+      try {
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, false);
+        assert.match(result.error, /pipeline exploded/);
+
+        const status = sessions.getWrapRunStatus('prime-test');
+        assert.equal(status.running, false, 'a thrown pipeline must not leave the slot claimed');
+        assert.ok(status.result && status.result.error.includes('pipeline exploded'),
+          'the failure is recorded for the reattach path');
+
+        // The slot is genuinely free — a retry starts a new pipeline.
+        wrapPipelineMod.runWrapPipeline = async () => (
+          { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null }
+        );
+        const retry = await sessions.triggerWrap('prime-test');
+        assert.equal(retry.ok, true, 'retry after a thrown pipeline is not locked out');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        wrapRunRegistry._resetForTests();
+        const cfg = store.projectConfig.load(project.path);
+        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
+      }
+    });
+
     it('wrapV2:true forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
@@ -1989,16 +2108,27 @@ describe('sessions', () => {
           prHandling: { '42': 'merge' }
         };
         await sessions.triggerWrap('prime-test', opts);
-        assert.deepEqual(receivedOptions, opts,
-          'options object must reach runWrapPipeline unchanged');
+        // #583 amended the threading contract: user options pass through
+        // unchanged, PLUS the wrap-run registry's progress hook rides
+        // along (and nothing else).
+        const { onStepStart, ...userOptions } = receivedOptions;
+        assert.deepEqual(userOptions, opts,
+          'user options must reach runWrapPipeline unchanged');
+        assert.equal(typeof onStepStart, 'function',
+          '#583: the registry progress hook is threaded to the runner');
 
-        // Undefined options on the entry call surfaces as undefined at
-        // the runner (NOT silently coerced to {}) so the runner's own
-        // default-param can govern.
+        // Omitted options still reach the runner carrying ONLY the hook —
+        // no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.equal(receivedOptions, undefined,
-          'omitted options must reach the runner as undefined');
+        assert.deepEqual(Object.keys(receivedOptions), ['onStepStart'],
+          'omitted options add only the #583 progress hook');
+
+        // A caller-supplied onStepStart (an HTTP body can only carry JSON,
+        // but defend the seam) can never displace the registry hook.
+        await sessions.triggerWrap('prime-test', { onStepStart: 'not-a-function' });
+        assert.equal(typeof receivedOptions.onStepStart, 'function',
+          'caller options must not override the registry progress hook');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         const cfg = store.projectConfig.load(project.path);

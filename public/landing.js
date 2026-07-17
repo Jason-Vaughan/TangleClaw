@@ -258,6 +258,30 @@ function renderStaleServerBanner(info) {
  *
  * @returns {Promise<void>}
  */
+/**
+ * POST /api/server/restart through the #583 wrap guard. The server
+ * refuses (409 WRAP_RESTART_BLOCKED) while a wrap pipeline is mid-flight —
+ * restarting then kills the wrap and orphans its AI content steps (the
+ * 2026-07-16 incident). On that refusal, ask the operator explicitly and
+ * retry with {force:true} only on a yes. Shared by the stale-server
+ * restart (#235) and the update-and-restart flow (#229) so both gates
+ * behave identically.
+ *
+ * @returns {Promise<object|null>} The restart response, or null when the
+ *   POST failed / the operator declined to force.
+ */
+async function postServerRestart() {
+  let resp = await apiMutate('/api/server/restart', 'POST', {});
+  if (!resp && api.lastErrorCode === 'WRAP_RESTART_BLOCKED') {
+    const proceed = window.confirm(
+      `${api.lastError}\n\nForce the restart anyway? The running wrap will be killed mid-pipeline.`
+    );
+    if (!proceed) return null;
+    resp = await apiMutate('/api/server/restart', 'POST', { force: true });
+  }
+  return resp;
+}
+
 async function triggerServerRestart() {
   if (state.restartInFlight) return;
   state.restartInFlight = true;
@@ -315,7 +339,7 @@ async function triggerServerRestart() {
 
   let postResp;
   try {
-    postResp = await apiMutate('/api/server/restart', 'POST', {});
+    postResp = await postServerRestart();
   } catch (err) {
     state.restartInFlight = false;
     setBtnState('Restart TangleClaw', false);
@@ -488,7 +512,7 @@ async function applyUpdateAndRestart(data) {
 
   let restartResp;
   try {
-    restartResp = await apiMutate('/api/server/restart', 'POST', {});
+    restartResp = await postServerRestart();
   } catch (err) {
     restartResp = null;
     api.lastError = err && err.message;
