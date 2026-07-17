@@ -3920,6 +3920,168 @@ describe('wrap-step version-bump — integration with commit._flushStagedWrites 
   });
 });
 
+describe('wrap-step version-bump — prawduct change-log release stamp (WRP-9F2K)', () => {
+  const versionBump = require('../lib/wrap-steps/version-bump');
+  const commitStep = require('../lib/wrap-steps/commit');
+  let tmpRoot;
+  let origInternal;
+
+  before(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vb-stamp-'));
+    origInternal = { ...versionBump._internal };
+  });
+
+  after(() => {
+    Object.assign(versionBump._internal, origInternal);
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    Object.assign(versionBump._internal, origInternal);
+    versionBump._internal.todayIso = () => '2026-07-17';
+  });
+
+  const TAG_MERGED = '<!-- prawduct: type=fix | chunks=42 | scope=demo | status=merged -->';
+  const TAG_SHIPPED = '<!-- prawduct: type=feat | chunks=41 | scope=old | status=shipped -->';
+  const TAG_STATUSLESS = '<!-- prawduct: type=chore | chunks=43 | scope=oops -->';
+
+  /** Build a promotable project; changeLog=null skips the .prawduct file. */
+  function makeStampProject(changeLogText) {
+    const dir = fs.mkdtempSync(path.join(tmpRoot, 'proj-'));
+    fs.writeFileSync(path.join(dir, 'version.json'), JSON.stringify({ version: '1.2.3' }));
+    fs.writeFileSync(path.join(dir, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n### Fixed\n- a fix\n\n## [1.2.3] - 2026-07-01\n');
+    if (typeof changeLogText === 'string') {
+      fs.mkdirSync(path.join(dir, '.prawduct'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.prawduct', 'change-log.md'), changeLogText);
+    }
+    return { name: 'stamp-proj', path: dir };
+  }
+
+  function ctx(project) {
+    return { project, step: { id: 'version-bump', kind: 'version-bump' }, staged: {}, options: {} };
+  }
+
+  describe('_flipMergedTagLines (pure)', () => {
+    it('flips merged tag lines only; shipped tags and body prose are untouched', () => {
+      const text = [
+        '# Change Log',
+        TAG_MERGED,
+        'Body prose that mentions status=merged and must stay verbatim.',
+        TAG_SHIPPED,
+        '## Another entry'
+      ].join('\n');
+      const r = versionBump._flipMergedTagLines(text);
+      assert.equal(r.flipped, 1);
+      assert.equal(r.statusless, 0);
+      const lines = r.newText.split('\n');
+      assert.equal(lines[1], TAG_MERGED.replace('status=merged', 'status=shipped'));
+      assert.equal(lines[2], 'Body prose that mentions status=merged and must stay verbatim.',
+        'prose lines must never be rewritten');
+      assert.equal(lines[3], TAG_SHIPPED, 'already-shipped tag lines unchanged');
+    });
+
+    it('counts statusless tag lines without flipping them (missed-stamp diagnostic preserved)', () => {
+      const r = versionBump._flipMergedTagLines([TAG_STATUSLESS, TAG_MERGED].join('\n'));
+      assert.equal(r.flipped, 1);
+      assert.equal(r.statusless, 1);
+      assert.match(r.newText, /scope=oops -->/, 'statusless tag line survives');
+      assert.doesNotMatch(r.newText.split('\n')[0], /status=/, 'no status invented on the statusless line');
+    });
+
+    it('no tag lines → zero counts, text byte-identical', () => {
+      const text = '# Nothing here\n- just bullets\n';
+      const r = versionBump._flipMergedTagLines(text);
+      assert.deepStrictEqual({ flipped: r.flipped, statusless: r.statusless }, { flipped: 0, statusless: 0 });
+      assert.equal(r.newText, text);
+    });
+  });
+
+  it('promote stages the change-log rewrite: merged flipped, counts + detail reported', async () => {
+    const project = makeStampProject([TAG_MERGED, 'prose status=merged stays', TAG_MERGED.replace('chunks=42', 'chunks=44'), TAG_STATUSLESS, TAG_SHIPPED].join('\n'));
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'done');
+    const entry = c.staged['version-bump:prawduct-change-log'];
+    assert.ok(entry, 'third staged entry present');
+    assert.equal(entry.changed, true);
+    assert.equal(entry.changeLogFlipped, 2);
+    assert.equal((entry.newContent.match(/status=shipped/g) || []).length, 3, '2 flips + 1 pre-existing shipped');
+    assert.match(entry.newContent, /prose status=merged stays/, 'prose untouched in staged content');
+    assert.deepStrictEqual(result.output.changeLog, { flipped: 2, statusless: 1 });
+    assert.match(result.output.detail, /stamped 2 change-log entries shipped/);
+  });
+
+  it('no .prawduct/change-log.md → no staged entry and no changeLog output field', async () => {
+    const project = makeStampProject(null);
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'done', 'promote itself unaffected');
+    assert.equal(c.staged['version-bump:prawduct-change-log'], undefined);
+    assert.equal(result.output.changeLog, undefined);
+    assert.equal(result.output.changeLogWarning, undefined);
+  });
+
+  it('all entries already shipped → counts reported but nothing staged (no no-op write)', async () => {
+    const project = makeStampProject([TAG_SHIPPED, TAG_SHIPPED].join('\n'));
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'done');
+    assert.equal(c.staged['version-bump:prawduct-change-log'], undefined);
+    assert.deepStrictEqual(result.output.changeLog, { flipped: 0, statusless: 0 });
+    assert.doesNotMatch(result.output.detail, /stamped/);
+  });
+
+  it('no promote (empty [Unreleased]) → flip does not run even with merged entries present', async () => {
+    const project = makeStampProject(TAG_MERGED);
+    fs.writeFileSync(path.join(project.path, 'CHANGELOG.md'),
+      '## [Unreleased]\n\n## [1.2.3] - 2026-07-01\n');
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'skipped', 'no entries to promote');
+    assert.equal(c.staged['version-bump:prawduct-change-log'], undefined,
+      'no release happened, so nothing may be stamped shipped');
+  });
+
+  it('change-log read failure degrades to changeLogWarning; step still done (never-blocks)', async () => {
+    const project = makeStampProject(TAG_MERGED);
+    const realRead = origInternal.readFileSync;
+    versionBump._internal.readFileSync = (p, enc) => {
+      if (String(p).includes('.prawduct')) throw new Error('EACCES boom');
+      return realRead(p, enc);
+    };
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'done', 'flip failure must not fail the step');
+    assert.equal(c.staged['version-bump:prawduct-change-log'], undefined);
+    assert.match(result.output.changeLogWarning, /EACCES boom/);
+    assert.match(result.output.detail, /change-log release stamp failed/);
+  });
+
+  it('flushes through commit._flushStagedWrites: shipped stamp lands on disk with the release', async () => {
+    const project = makeStampProject(['# Change Log', TAG_MERGED].join('\n'));
+    const c = ctx(project);
+    const result = await versionBump.run(c);
+    assert.equal(result.status, 'done');
+    const flushed = commitStep._flushStagedWrites(c.staged);
+    assert.equal(flushed.length, 3, 'version + CHANGELOG + prawduct change-log all flush');
+    const onDisk = fs.readFileSync(path.join(project.path, '.prawduct', 'change-log.md'), 'utf8');
+    assert.match(onDisk, /status=shipped/);
+    assert.doesNotMatch(onDisk, /status=merged/);
+  });
+
+  it('commit body renders the stamp line without colliding with the Bumped dedup', () => {
+    const staged = {
+      'version-bump:version-json': { primingPath: '/x/version.json', newContent: '{}', changed: true, oldVersion: '1.2.3', newVersion: '1.2.4', bumpLevel: 'patch' },
+      'version-bump:changelog': { primingPath: '/x/CHANGELOG.md', newContent: 'c', changed: true, oldVersion: '1.2.3', newVersion: '1.2.4', bumpLevel: 'patch' },
+      'version-bump:prawduct-change-log': { primingPath: '/x/.prawduct/change-log.md', newContent: 'p', changed: true, changeLogFlipped: 3 }
+    };
+    const body = commitStep._buildBodyLines(staged);
+    assert.deepStrictEqual(body.filter((l) => l.includes('Bumped')).length, 1, 'Bumped line deduped');
+    assert.ok(body.includes('- Stamped 3 prawduct change-log entries status=shipped'), `body was: ${body.join(' | ')}`);
+  });
+});
+
 describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => {
   const versionBump = require('../lib/wrap-steps/version-bump');
   let tmpDir;
