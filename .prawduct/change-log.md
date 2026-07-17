@@ -19,6 +19,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-17: Chore — FEATURES.md symbol-anchor convention + stub fold-in + citation contract test (DOC-3K7Q)
+
+<!-- prawduct: type=chore | chunks=01 | scope=doc-3k7q -->
+
+**Why:** FEATURES.md `:line` pointers were stale by hundreds of lines (janitor DOC-3K7Q: `GET /api/projects` cited `server.js:855`, actually ~`:1333`; discovery confirmed worse — `enrichProject` `:559` → `:848`) and ~50 TBD auto-stubs across 13 TODO sections (5 duplicate same-day headings) buried the curated index; the file also listed only 1 of 3 shipped methodology templates. **Discovery correction:** the janitor blamed the features-toc wrap step for refreshing-but-not-verifying line numbers — reading `lib/wrap-steps/features-toc.js` disproved that (the step only appends path stubs, no line refs); the rot source was the format convention prescribed by the file header and `FEATURE_INDEX_TEMPLATE`. **What:** FEATURES.md fully rewritten to `file.js#symbolName` / route-string anchors (all curated prose preserved; every anchor mechanically verified before writing); TODO stubs folded — real features promoted into curated sections, test stubs consolidated into a `## Tests` map; minimal + tilt template entries added; `FEATURE_INDEX_TEMPLATE` format comment in `lib/projects.js` now prescribes the anchor convention with an explicit "NO :line pointers" rule. **Enforcement:** new `test/features-index.test.js` — 5 contract pins (no `:line` pointers; every cited committed-repo path exists; every `path#symbol` anchor greps in its file; no unfolded auto-stub sections; template prescribes the convention). Scoped to committed roots (`lib`,`public`,`test`,`data`,`deploy`,`scripts`,`docs`,`.github`) so gitignored local paths (`.prawduct/`, `.tangleclaw/`) can't fail CI's fresh checkout. Revert-verified: probe entry with fake path + `:42` pointer fails exactly 3 pins. The contract test caught 3 of the rewrite's own citations before commit (2 illustrative fake paths, 1 extension-less path) — working as intended. **Walls:** features-toc step logic untouched (its stub format was already line-free); PROJECT-MAP.md untouched.
+
 ## 2026-07-17: Feat — GitHub Actions CI runs the full test suite on PRs and push-to-main (CI-9F3T)
 
 <!-- prawduct: type=feat | chunks=01 | scope=ci-9f3t | status=merged -->
