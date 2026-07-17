@@ -757,6 +757,9 @@
         const cell = cellFromTouch(pressPoint);
         if (!cell) return;
         // Enter select mode: anchor + a one-cell selection as the visual cue.
+        // gestureSelectActivated deliberately shadows tcTouchSelectActive for
+        // the tap classifier: endSelect clears the live flag BEFORE touchend
+        // classifies the gesture, so only this sticky copy can veto the focus.
         doc.tcTouchSelectActive = true;
         gestureSelectActivated = true;
         selectAnchor = cell;
@@ -820,7 +823,11 @@
       })) {
         try {
           term.focus();
-        } catch (_) { /* terminal disposed mid-gesture — nothing to focus */ }
+        } catch (err) {
+          // Terminal disposed mid-gesture — nothing to focus. Logged so a
+          // remote Web Inspector can tell a throw from a predicate rejection.
+          if (iframeWin.console) iframeWin.console.debug('tc tap-to-focus skipped:', err);
+        }
       }
     }, { passive: true });
     doc.addEventListener('touchcancel', endSelect, { passive: true });
