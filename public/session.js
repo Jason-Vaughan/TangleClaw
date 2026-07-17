@@ -29,6 +29,9 @@ const sessionState = {
   ended: false,
   wrapping: false,
   mouseOn: false,
+  // #579 — whether mouseOn is a session-level override (vs inherited from
+  // the global). Select-mode exit restores inherited state by UNSETTING.
+  mouseExplicit: false,
   launchGraceRemaining: 0,
   wrapCompleting: false,
   wrapDrawerOpen: false,
@@ -2372,10 +2375,12 @@ async function closeSettings() {
     });
   }
 
-  // Apply mouse toggle
+  // Apply mouse toggle — an operator's deliberate Settings choice IS a
+  // session-explicit override (#579), unlike select mode's transient flips.
   const newMouse = document.getElementById('mouseToggle').checked;
   if (newMouse !== sessionState.mouseOn) {
     sessionState.mouseOn = newMouse;
+    sessionState.mouseExplicit = true;
     await apiMutate('/api/tmux/mouse', 'POST', {
       session: projectName,
       on: newMouse
@@ -2404,34 +2409,166 @@ let selectModeActive = false;
  *
  * Explicit toggle only — no auto-revert timer (#574: the old 30s rug-pull
  * violated the no-UI-timers rule, #98/#268). Leaving select mode restores
- * the pre-select mouse state on BOTH platforms via tcSelectModeMouse — the
- * old mobile exit hardcoded mouse OFF, stranding a session-level override
- * that killed touch-scroll (the #443 shim needs mouse ON).
+ * the pre-select mouse CONFIGURATION via tcSelectModeMouse (#574 + #579):
+ * an explicit session-level value is set back; an inherited one is
+ * restored by UNSETTING, so no session-level override is stranded (#579 —
+ * the benign-valued sibling of the #574 stranded-`off` bug). The
+ * pre-select state is snapshotted fresh on entry, not trusted from page
+ * load — another tab or the operator may have changed it since.
  */
 async function toggleSelect() {
   const isMobile = 'ontouchstart' in window;
   const btn = document.getElementById('selectBtn');
 
   if (selectModeActive) {
-    // Leaving select mode — restore the pre-select mouse state
+    // Leaving select mode — restore the pre-select mouse configuration
     selectModeActive = false;
     btn.textContent = 'Select';
     btn.classList.remove('select-active');
-    await apiMutate('/api/tmux/mouse', 'POST', {
-      session: projectName,
-      on: tcSelectModeMouse({ entering: false, isMobile, mouseOn: sessionState.mouseOn })
+    const restore = tcSelectModeMouse({
+      entering: false,
+      isMobile,
+      mouseOn: sessionState.mouseOn,
+      mouseExplicit: sessionState.mouseExplicit
     });
+    const data = await apiMutate('/api/tmux/mouse', 'POST', {
+      session: projectName,
+      ...restore
+    });
+    // Track the post-restore effective state the server reports.
+    if (data && typeof data.mouse === 'boolean') {
+      sessionState.mouseOn = data.mouse;
+      sessionState.mouseExplicit = !!data.explicit;
+    }
     return;
   }
 
-  // Enter select mode
+  // Enter select mode — snapshot the CURRENT state first so exit restores
+  // reality, not a stale page-load value.
+  const fresh = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
+  if (fresh && typeof fresh.mouse === 'boolean') {
+    sessionState.mouseOn = fresh.mouse;
+    sessionState.mouseExplicit = !!fresh.explicit;
+  }
   selectModeActive = true;
   btn.textContent = 'Done';
   btn.classList.add('select-active');
   await apiMutate('/api/tmux/mouse', 'POST', {
     session: projectName,
-    on: tcSelectModeMouse({ entering: true, isMobile, mouseOn: sessionState.mouseOn })
+    ...tcSelectModeMouse({
+      entering: true,
+      isMobile,
+      mouseOn: sessionState.mouseOn,
+      mouseExplicit: sessionState.mouseExplicit
+    })
   });
+}
+
+// ── Paste (#402) ──
+
+/**
+ * Resolve the xterm.js Terminal instance inside the session terminal
+ * iframe. Same accessor family as applyTerminalTheme — ttyd exposes the
+ * instance on its window as `term` (older builds: `terminal`).
+ * @returns {object|null} the terminal, or null when the frame isn't ready
+ */
+function _sessionTerm() {
+  const frame = document.getElementById('terminalFrame');
+  try {
+    const win = frame && frame.contentWindow;
+    return (win && (win.term || win.terminal)) || null;
+  } catch (_) {
+    return null; // cross-origin or not loaded yet
+  }
+}
+
+/**
+ * Feed text into the terminal as a PASTE — through xterm's paste(), which
+ * applies bracketed-paste framing when the app enabled it, exactly like a
+ * desktop Cmd-V. Never write clipboard text raw: bypassing bracketed
+ * paste is how multi-line input corrupts (#192 — inherited here, not
+ * worsened).
+ * @param {string} text - The text to paste
+ * @returns {boolean} true when text was delivered to the terminal
+ */
+function insertPasteText(text) {
+  if (!text) return false;
+  const term = _sessionTerm();
+  if (!term || typeof term.paste !== 'function') return false;
+  try {
+    term.paste(text);
+    if (typeof term.focus === 'function') term.focus();
+  } catch (_) {
+    return false; // terminal disposed mid-call — caller toasts the honest reason
+  }
+  return true;
+}
+
+/**
+ * Open the paste-catcher modal (#402 fallback path) with a cleared box.
+ */
+function openPasteCatcher() {
+  const ta = document.getElementById('pasteCatcherText');
+  ta.value = '';
+  document.getElementById('pasteCatcher').classList.add('open');
+  ta.focus();
+}
+
+/**
+ * Close the paste-catcher modal.
+ */
+function closePasteCatcher() {
+  document.getElementById('pasteCatcher').classList.remove('open');
+}
+
+/**
+ * The Paste button (#402): iOS Safari offers no native paste path into
+ * xterm (no Cmd-V; the long-press Paste callout can't target xterm's
+ * hidden textarea). Secure contexts read the clipboard inside this tap's
+ * gesture (iOS shows its native permission bubble); plain-HTTP (no
+ * Clipboard API), rejected reads, and empty reads fall to the catcher — a
+ * real textarea the native Paste callout CAN service — rather than
+ * silently doing nothing.
+ */
+async function pasteToTerminal() {
+  const nav = window.navigator;
+  const path = tcPastePath({
+    hasClipboardRead: !!(nav.clipboard && typeof nav.clipboard.readText === 'function'),
+    secure: window.isSecureContext === true
+  });
+  if (path === 'clipboard') {
+    try {
+      const text = await nav.clipboard.readText();
+      if (text) {
+        if (!insertPasteText(text)) {
+          showMethodologyActionToast("Couldn't paste: the terminal isn't ready yet.", true);
+        }
+        return;
+      }
+      // Empty read — iOS also returns '' on some denials; offer the catcher.
+    } catch (_) {
+      // Permission denied / API rejection — the catcher still works.
+    }
+  }
+  openPasteCatcher();
+}
+
+/**
+ * Insert the catcher textarea's content into the terminal and close the
+ * modal. Honest refusals: an empty box or an unready terminal toasts the
+ * real reason and keeps the modal open.
+ */
+function insertFromPasteCatcher() {
+  const text = document.getElementById('pasteCatcherText').value;
+  if (!text) {
+    showMethodologyActionToast('Nothing to insert — paste into the box first.', true);
+    return;
+  }
+  if (!insertPasteText(text)) {
+    showMethodologyActionToast("Couldn't paste: the terminal isn't ready yet.", true);
+    return;
+  }
+  closePasteCatcher();
 }
 
 // ── Upload Modal ──
@@ -3669,10 +3806,20 @@ function bindEvents() {
     if (loopModal && loopModal.classList.contains('open')) closeMedusaLoopModal();
     const loopsPanel = $('medusaLoopsPanel');
     if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
+    const catcher = $('pasteCatcher');
+    if (catcher && catcher.classList.contains('open')) closePasteCatcher();
   });
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);
+  $('pasteBtn').addEventListener('click', pasteToTerminal);
+  $('pasteCatcherInsert').addEventListener('click', insertFromPasteCatcher);
+  $('pasteCatcherCancel').addEventListener('click', closePasteCatcher);
+  $('pasteCatcher').addEventListener('click', (e) => {
+    // Backdrop tap closes; e.currentTarget comparison is dispatch-time-safe
+    // (no re-render races — the #566 composedPath hazard doesn't apply).
+    if (e.target === e.currentTarget) closePasteCatcher();
+  });
   $('uploadBtn').addEventListener('click', openUploadModal);
   $('cmdBtn').addEventListener('click', toggleCommandBar);
   $('peekBtn').addEventListener('click', openPeek);
@@ -3869,6 +4016,13 @@ async function initSession() {
     renderCommandPills();
   }
 
+  // #402: touch devices get the explicit Paste affordance (tmux sessions
+  // only — webui sessions have no xterm instance to paste into). Desktop
+  // keeps Cmd-V and a clean banner.
+  if (!isWebui && 'ontouchstart' in window) {
+    document.getElementById('pasteBtn').hidden = false;
+  }
+
   // Update chime indicator
   updateChimeIndicator();
 
@@ -3890,6 +4044,7 @@ async function initSession() {
     const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
     if (mouseData) {
       sessionState.mouseOn = mouseData.mouse;
+      sessionState.mouseExplicit = !!mouseData.explicit;
     }
   }
 }

@@ -171,6 +171,26 @@ describe('API — system, engines, tmux', () => {
       assert.equal(status, 404);
       assert.ok(data.error.includes('No-Such-Project-v99'), 'should reference normalized tmux name');
     });
+
+    it('should accept unset: true in place of on (#579)', async () => {
+      // 404 (session lookup), NOT 400 — proves unset passed validation.
+      const { status, data } = await request('POST', '/api/tmux/mouse', {
+        session: '__nonexistent_session__',
+        unset: true
+      });
+      assert.equal(status, 404);
+      assert.equal(data.code, 'NOT_FOUND');
+    });
+
+    it('should reject on + unset together (#579 — mutually exclusive)', async () => {
+      const { status, data } = await request('POST', '/api/tmux/mouse', {
+        session: 'test',
+        on: true,
+        unset: true
+      });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
   });
 
   describe('GET /api/tmux/mouse/:session', () => {

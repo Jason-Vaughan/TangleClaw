@@ -20,6 +20,12 @@
  * the logic executes under test even though the DOM can't:
  * tcSelectModeMouse (public/api-helper.js) and _resolveMouseValue
  * (lib/tmux.js). Source probes pin the wiring.
+ *
+ * #579 (UI-2P7T) extends the family: restoring a pre-select state that was
+ * INHERITED from the global by SETTING its value strands a benign-valued
+ * session-level override (found live in VRF-574 leg 4). The restore now
+ * distinguishes inherited from explicit (_resolveMouseState / getMouseState
+ * / unsetMouse in lib/tmux.js; tcSelectModeMouse returns {on}|{unset}).
  */
 
 const { describe, it, before } = require('node:test');
@@ -71,31 +77,107 @@ describe('Effective tmux mouse state (#574 RC1 — _resolveMouseValue)', () => {
   });
 
   it('getMouse is wired to read the global fallback', () => {
+    // Re-pointed for #579: the reads moved into getMouseState (getMouse
+    // delegates to it) — the #574 intent (global fallback consulted) is
+    // unchanged, the guard follows the code to its new home.
     const tmuxJs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
-    const body = functionBody(tmuxJs, 'function getMouse(');
-    assert.ok(body.includes('show-options -g -v mouse'),
-      'getMouse must read the global mouse value as the no-override fallback');
-    assert.ok(body.includes('_resolveMouseValue('),
-      'getMouse must resolve through the tested pure helper');
+    const getBody = functionBody(tmuxJs, 'function getMouse(');
+    assert.ok(getBody.includes('getMouseState('),
+      'getMouse must delegate to the source-aware getMouseState');
+    const stateBody = functionBody(tmuxJs, 'function getMouseState(');
+    assert.ok(stateBody.includes('show-options -g -v mouse'),
+      'getMouseState must read the global mouse value as the no-override fallback');
+    assert.ok(stateBody.includes('_resolveMouseState('),
+      'getMouseState must resolve through the tested pure helper');
   });
 });
 
-describe('Select-mode mouse decision (#574 RC2 — tcSelectModeMouse)', () => {
-  it('exiting select mode RESTORES the pre-select state on mobile (THE regression)', () => {
-    // The old mobile exit hardcoded `false`, permanently stranding a
+describe('Select-mode mouse decision (#574 RC2 + #579 — tcSelectModeMouse)', () => {
+  // Contract evolution (#579): the function now returns the /api/tmux/mouse
+  // BODY FIELDS — `{on}` to set, `{unset: true}` to restore-by-unsetting —
+  // because a boolean cannot express "put back the inherited state". The
+  // #574 cases below are the same behavioral contracts as before, restated
+  // in the richer shape (explicit pre-select state → the same value comes
+  // back); none are weakened.
+
+  it('exiting restores an EXPLICIT pre-select state on mobile (THE #574 regression)', () => {
+    // The old mobile exit hardcoded mouse off, permanently stranding a
     // session-level `mouse off` override that killed touch-scroll.
-    assert.equal(tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: true }), true);
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: true, mouseExplicit: true }),
+      { on: true });
   });
 
-  it('exiting select mode restores the pre-select state on every platform', () => {
-    assert.equal(tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: true }), true);
-    assert.equal(tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: false }), false);
-    assert.equal(tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: false }), false);
+  it('exiting restores an INHERITED pre-select state by UNSETTING (THE #579 regression)', () => {
+    // Restoring an inherited state by SETTING the value strands a
+    // benign-valued session-level override (found live in VRF-574 leg 4:
+    // one Select→Done left `mouse on` pinned on the TangleClaw session).
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: true, mouseExplicit: false }),
+      { unset: true });
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: false, mouseExplicit: false }),
+      { unset: true });
+  });
+
+  it('exiting restores explicit values on every platform, in both directions', () => {
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: true, mouseExplicit: true }),
+      { on: true });
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: true, mouseOn: false, mouseExplicit: true }),
+      { on: false });
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: false, isMobile: false, mouseOn: false, mouseExplicit: true }),
+      { on: false });
   });
 
   it('entering keeps the platform split (mobile: mouse on, desktop: mouse off)', () => {
-    assert.equal(tcSelectModeMouse({ entering: true, isMobile: true, mouseOn: false }), true);
-    assert.equal(tcSelectModeMouse({ entering: true, isMobile: false, mouseOn: true }), false);
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: true, isMobile: true, mouseOn: false, mouseExplicit: false }),
+      { on: true });
+    assert.deepEqual(
+      tcSelectModeMouse({ entering: true, isMobile: false, mouseOn: true, mouseExplicit: true }),
+      { on: false });
+  });
+});
+
+describe('Mouse state source (#579 — _resolveMouseState)', () => {
+  const { _resolveMouseState } = require('../lib/tmux.js');
+
+  it('an inherited value reports explicit: false (the restore-by-unset signal)', () => {
+    assert.deepEqual(_resolveMouseState('', 'on'), { on: true, explicit: false });
+    assert.deepEqual(_resolveMouseState('', 'off'), { on: false, explicit: false });
+  });
+
+  it('a session-level override reports explicit: true with its own value', () => {
+    assert.deepEqual(_resolveMouseState('off', 'on'), { on: false, explicit: true });
+    assert.deepEqual(_resolveMouseState('on', 'off'), { on: true, explicit: true });
+    assert.deepEqual(_resolveMouseState('on', 'on'), { on: true, explicit: true });
+  });
+
+  it('_resolveMouseValue keeps its boolean contract through the shared resolution', () => {
+    assert.equal(_resolveMouseValue('', 'on'), true);
+    assert.equal(_resolveMouseValue('off', 'on'), false);
+  });
+
+  it('is wired: getMouseState resolves through the tested helper; unsetMouse uses set -u', () => {
+    const tmuxJs = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
+    const stateBody = functionBody(tmuxJs, 'function getMouseState(');
+    assert.ok(stateBody.includes('_resolveMouseState('),
+      'getMouseState must resolve through the tested pure helper');
+    const unsetBody = functionBody(tmuxJs, 'function unsetMouse(');
+    assert.ok(unsetBody.includes('set-option -u'),
+      'unsetMouse must remove the session-level override, not write a value');
+  });
+
+  it('is wired: the mouse routes carry the source and accept unset (#579)', () => {
+    const serverJs = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.ok(serverJs.includes("'/api/tmux/mouse/:session'") &&
+      serverJs.includes('explicit: state.explicit'),
+      'GET must report whether the value is a session-level override');
+    assert.ok(serverJs.includes('tmux.unsetMouse('),
+      'POST must route unset: true to tmux.unsetMouse');
   });
 });
 
@@ -118,8 +200,18 @@ describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
     const calls = body.split('tcSelectModeMouse(').length - 1;
     assert.equal(calls, 2,
       'enter and exit must both use the tested pure decision (found ' + calls + ' call(s))');
-    assert.ok(body.includes('entering: false, isMobile, mouseOn: sessionState.mouseOn'),
-      'the exit path must restore sessionState.mouseOn — never a platform hardcode');
+    assert.ok(body.includes('mouseOn: sessionState.mouseOn') &&
+      body.includes('mouseExplicit: sessionState.mouseExplicit'),
+      'the restore decision must carry BOTH the pre-select value and its ' +
+      'source (#579) — never a platform hardcode');
+  });
+
+  it('toggleSelect snapshots the pre-select state FRESH on entry (#579)', () => {
+    // A page-load snapshot goes stale the moment another tab or the
+    // operator changes the mouse state; exit would then "restore" history.
+    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    assert.ok(body.includes('/api/tmux/mouse/'),
+      'entering select mode must re-read the live mouse state before flipping it');
   });
 
   it('the touch-only mouse guard stays removed (#574 RC3)', () => {
