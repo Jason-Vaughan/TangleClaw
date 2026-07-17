@@ -827,7 +827,6 @@ document.addEventListener('visibilitychange', () => {
   if (_pageVisible && !wasVisible) {
     // Tab regained focus — restart polling fresh (no queued bursts)
     if (pollTimer) startPolling();
-    if (mouseGuardTimer) startMouseGuard();
   }
 });
 
@@ -1909,47 +1908,12 @@ function applyWebuiMode() {
   document.getElementById('commandBar').classList.add('hidden');
 }
 
-// ── Mouse Guard ──
-
-let mouseGuardTimer = null;
-
-/**
- * Periodically check tmux mouse mode and turn it off if it drifted on.
- * Only active on touch devices. Uses setTimeout chain to prevent burst storms.
- */
-function startMouseGuard() {
-  if (!('ontouchstart' in window)) return;
-  stopMouseGuard();
-  mouseGuardTimer = true; // sentinel
-  function scheduleNext() {
-    if (!mouseGuardTimer) return;
-    mouseGuardTimer = setTimeout(async () => {
-      if (!mouseGuardTimer) return;
-      if (!_pageVisible) return; // skip while hidden
-      const data = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-      if (data && data.mouse && !sessionState.mouseOn) {
-        await apiMutate('/api/tmux/mouse', 'POST', {
-          session: projectName,
-          on: false
-        });
-      }
-      scheduleNext();
-    }, 3000);
-  }
-  scheduleNext();
-}
-
-/**
- * Stop mouse guard polling.
- */
-function stopMouseGuard() {
-  if (mouseGuardTimer && mouseGuardTimer !== true) {
-    clearTimeout(mouseGuardTimer);
-  }
-  mouseGuardTimer = null;
-}
-
 // ── Command Bar ──
+// (The old touch-only "mouse guard" — a 3s poll forcing tmux mouse OFF —
+// was removed in #574. It existed to hold mouse off for the pre-#445 native
+// mobile selection, which long-press select superseded, and with mouse OFF
+// the #443 touch-scroll shim cannot work: the guard and the shim were
+// mutually exclusive designs.)
 
 /**
  * Toggle the command bar visibility.
@@ -2431,49 +2395,43 @@ function updateChimeIndicator() {
 
 // ── Select Mode ──
 
-let selectTimer = null;
+let selectModeActive = false;
 
 /**
  * Toggle text selection mode by flipping tmux mouse.
  * On mobile: mouse ON = select mode (allows native text selection).
  * On desktop: mouse OFF = select mode (allows native text selection).
+ *
+ * Explicit toggle only — no auto-revert timer (#574: the old 30s rug-pull
+ * violated the no-UI-timers rule, #98/#268). Leaving select mode restores
+ * the pre-select mouse state on BOTH platforms via tcSelectModeMouse — the
+ * old mobile exit hardcoded mouse OFF, stranding a session-level override
+ * that killed touch-scroll (the #443 shim needs mouse ON).
  */
 async function toggleSelect() {
   const isMobile = 'ontouchstart' in window;
   const btn = document.getElementById('selectBtn');
 
-  if (selectTimer) {
-    // Already in select mode — revert
-    clearTimeout(selectTimer);
-    selectTimer = null;
+  if (selectModeActive) {
+    // Leaving select mode — restore the pre-select mouse state
+    selectModeActive = false;
     btn.textContent = 'Select';
     btn.classList.remove('select-active');
-    // Restore original mouse state
     await apiMutate('/api/tmux/mouse', 'POST', {
       session: projectName,
-      on: isMobile ? false : sessionState.mouseOn
+      on: tcSelectModeMouse({ entering: false, isMobile, mouseOn: sessionState.mouseOn })
     });
     return;
   }
 
   // Enter select mode
+  selectModeActive = true;
   btn.textContent = 'Done';
   btn.classList.add('select-active');
   await apiMutate('/api/tmux/mouse', 'POST', {
     session: projectName,
-    on: isMobile ? true : false
+    on: tcSelectModeMouse({ entering: true, isMobile, mouseOn: sessionState.mouseOn })
   });
-
-  // Auto-revert after 30 seconds
-  selectTimer = setTimeout(async () => {
-    selectTimer = null;
-    btn.textContent = 'Select';
-    btn.classList.remove('select-active');
-    await apiMutate('/api/tmux/mouse', 'POST', {
-      session: projectName,
-      on: isMobile ? false : sessionState.mouseOn
-    });
-  }, 30000);
 }
 
 // ── Upload Modal ──
@@ -3927,9 +3885,8 @@ async function initSession() {
     }, 120000);
   })();
 
-  // Mouse guard and initial mouse state — tmux only
+  // Initial mouse state — tmux only
   if (!isWebui) {
-    startMouseGuard();
     const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
     if (mouseData) {
       sessionState.mouseOn = mouseData.mouse;
