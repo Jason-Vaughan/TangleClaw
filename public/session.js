@@ -2403,6 +2403,78 @@ function updateChimeIndicator() {
 let selectModeActive = false;
 
 /**
+ * localStorage key for this project's select-mode intent marker (UI-8W3D).
+ * @returns {string}
+ */
+function selectMarkerKey() {
+  return `tcSelectPending:${projectName}`;
+}
+
+/**
+ * Persist the pre-select mouse state BEFORE flipping tmux (UI-8W3D). If the
+ * page dies mid-select (reload, close, crash) the exit restore never runs;
+ * this marker is how the next visit knows a restore is owed and what to
+ * restore. Written before the enter POST on purpose: a crash between write
+ * and POST leaves only a harmless idempotent repair, while the opposite
+ * order leaves a strand with no marker.
+ * @param {{on: boolean, explicit: boolean}} state - The pre-select state
+ */
+function writeSelectMarker(state) {
+  try {
+    localStorage.setItem(selectMarkerKey(),
+      JSON.stringify({ on: state.on, explicit: state.explicit }));
+  } catch (_) { /* storage unavailable — abandonment repair degrades, select still works */ }
+}
+
+/** Remove the select-mode intent marker (clean exit, or repair done). */
+function clearSelectMarker() {
+  try {
+    localStorage.removeItem(selectMarkerKey());
+  } catch (_) { /* storage unavailable */ }
+}
+
+/**
+ * Repair a mouse override stranded by an interrupted Select (UI-8W3D).
+ * A marker present at page load means the previous visit entered select
+ * mode and never exited — replay the exit restore from the marker's
+ * recorded pre-select state (unset when it was inherited, per #579) and
+ * clear the marker. Localstorage is the source of truth, cleared on the
+ * mutation (the #566/TC#561 SoT rule); no timers. Known accepted edge:
+ * a second tab reloading while the first is legitimately mid-select
+ * repairs under it — rare, and strictly better than stranding forever.
+ * @returns {Promise<boolean>} true when a repair POST was issued
+ */
+async function repairAbandonedSelect() {
+  let marker = null;
+  try {
+    marker = tcParseSelectMarker(localStorage.getItem(selectMarkerKey()));
+  } catch (_) {
+    return false; // storage unavailable — nothing recorded, nothing owed
+  }
+  if (!marker) return false;
+  const isMobile = 'ontouchstart' in window;
+  const data = await apiMutate('/api/tmux/mouse', 'POST', {
+    session: projectName,
+    ...tcSelectModeMouse({
+      entering: false,
+      isMobile,
+      mouseOn: marker.on,
+      mouseExplicit: marker.explicit
+    })
+  });
+  // Only clear on a successful restore — a failed POST (server down) keeps
+  // the marker so the NEXT load can still repair.
+  if (data && typeof data.mouse === 'boolean') {
+    clearSelectMarker();
+    sessionState.mouseOn = data.mouse;
+    sessionState.mouseExplicit = !!data.explicit;
+    console.debug('Restored tmux mouse state stranded by an interrupted Select (UI-8W3D)');
+    return true;
+  }
+  return false;
+}
+
+/**
  * Toggle text selection mode by flipping tmux mouse.
  * On mobile: mouse ON = select mode (allows native text selection).
  * On desktop: mouse OFF = select mode (allows native text selection).
@@ -2439,6 +2511,8 @@ async function toggleSelect() {
     if (data && typeof data.mouse === 'boolean') {
       sessionState.mouseOn = data.mouse;
       sessionState.mouseExplicit = !!data.explicit;
+      // Clean exit — the restore ran, so no repair is owed (UI-8W3D).
+      clearSelectMarker();
     }
     return;
   }
@@ -2450,6 +2524,9 @@ async function toggleSelect() {
     sessionState.mouseOn = fresh.mouse;
     sessionState.mouseExplicit = !!fresh.explicit;
   }
+  // Record the restore intent BEFORE flipping tmux (UI-8W3D): if this page
+  // dies mid-select, the next load replays the exit from this marker.
+  writeSelectMarker({ on: sessionState.mouseOn, explicit: sessionState.mouseExplicit });
   selectModeActive = true;
   btn.textContent = 'Done';
   btn.classList.add('select-active');
@@ -4039,12 +4116,17 @@ async function initSession() {
     }, 120000);
   })();
 
-  // Initial mouse state — tmux only
+  // Initial mouse state — tmux only. First repair any override a previous
+  // visit stranded by dying mid-select (UI-8W3D); the repair's POST response
+  // already carries the fresh state, so the plain GET only runs otherwise.
   if (!isWebui) {
-    const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
-    if (mouseData) {
-      sessionState.mouseOn = mouseData.mouse;
-      sessionState.mouseExplicit = !!mouseData.explicit;
+    const repaired = await repairAbandonedSelect();
+    if (!repaired) {
+      const mouseData = await api(`/api/tmux/mouse/${encodeURIComponent(projectName)}`);
+      if (mouseData) {
+        sessionState.mouseOn = mouseData.mouse;
+        sessionState.mouseExplicit = !!mouseData.explicit;
+      }
     }
   }
 }

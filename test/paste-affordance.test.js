@@ -126,8 +126,13 @@ describe('Paste affordance wiring (#402 — source probes)', () => {
       'the catcher must be a REAL textarea; only that receives the native Paste callout');
   });
 
-  it('the service worker cache name was bumped with the shell change', () => {
-    assert.match(swJs, /CACHE_NAME = 'tangleclaw-v3-49'/,
+  it('the service worker cache name is at or past the #402 shell version', () => {
+    // A floor, not an exact pin: later shell changes legitimately bump past
+    // v3-49 (v3-50 landed with UI-8W3D the same day); regressing BELOW the
+    // #402 version would resurrect the stale-shell invisibility.
+    const m = swJs.match(/CACHE_NAME = 'tangleclaw-v3-(\d+)'/);
+    assert.ok(m, 'CACHE_NAME must keep the tangleclaw-v3-N form');
+    assert.ok(Number(m[1]) >= 49,
       'public/* shell changes are invisible to installed SWs without a CACHE_NAME bump');
   });
 });

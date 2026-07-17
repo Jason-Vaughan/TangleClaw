@@ -181,6 +181,59 @@ describe('Mouse state source (#579 — _resolveMouseState)', () => {
   });
 });
 
+describe('Select abandonment repair (UI-8W3D — tcParseSelectMarker + wiring)', () => {
+  const { tcParseSelectMarker } = globalThis;
+
+  it('parses a valid marker (the recorded pre-select state)', () => {
+    assert.deepEqual(tcParseSelectMarker('{"on":true,"explicit":false}'),
+      { on: true, explicit: false });
+    assert.deepEqual(tcParseSelectMarker('{"on":false,"explicit":true}'),
+      { on: false, explicit: true });
+  });
+
+  it('rejects absent, malformed, or wrong-shaped storage — corrupt data must never drive a tmux write', () => {
+    assert.equal(tcParseSelectMarker(null), null);
+    assert.equal(tcParseSelectMarker(''), null);
+    assert.equal(tcParseSelectMarker('not json'), null);
+    assert.equal(tcParseSelectMarker('"a string"'), null);
+    assert.equal(tcParseSelectMarker('[]'), null);
+    assert.equal(tcParseSelectMarker('{"on":"yes","explicit":false}'), null);
+    assert.equal(tcParseSelectMarker('{"on":true}'), null);
+    assert.equal(tcParseSelectMarker('{}'), null);
+  });
+
+  it('drops extraneous fields rather than passing them through to the POST', () => {
+    assert.deepEqual(tcParseSelectMarker('{"on":true,"explicit":true,"session":"evil"}'),
+      { on: true, explicit: true });
+  });
+
+  it('is wired: enter writes the marker BEFORE the tmux flip; clean exit clears it', () => {
+    const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+    const body = functionBody(sessionJs, 'async function toggleSelect(');
+    const writeAt = body.indexOf('writeSelectMarker(');
+    const enterPostAt = body.indexOf('entering: true');
+    assert.ok(writeAt !== -1 && enterPostAt !== -1 && writeAt < enterPostAt,
+      'the marker must be recorded before the enter POST — a crash between ' +
+      'them must leave a harmless repair, never an unmarked strand');
+    assert.ok(body.includes('clearSelectMarker('),
+      'a clean Done exit must clear the marker so no phantom repair fires');
+  });
+
+  it('is wired: page init repairs through the tested exit decision and parses via the tested reader', () => {
+    const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+    const body = functionBody(sessionJs, 'async function repairAbandonedSelect(');
+    assert.ok(body, 'repairAbandonedSelect must exist');
+    assert.ok(body.includes('tcParseSelectMarker('),
+      'raw storage must go through the validating parser');
+    assert.ok(body.includes('tcSelectModeMouse(') && body.includes('entering: false'),
+      'the repair must replay the same exit-restore decision (#579 unset semantics)');
+    assert.ok(body.includes('clearSelectMarker('),
+      'a successful repair must clear the marker (SoT cleared on the mutation)');
+    assert.ok(!body.includes('setTimeout'),
+      'the repair is load-time state reconciliation — no timers (#98/#268)');
+  });
+});
+
 describe('Select-mode + mouse-guard wiring (#574 source pins)', () => {
   let sessionJs;
 
