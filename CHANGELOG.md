@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-07-16
+
 ### Added
 
 - **Operator kill switch for session wrap: `wrapDisabled` config flag (incident hot-fix).** During the 2026-07-16 wrap, the AI-content steps re-fired repeatedly into the session (multiple `changelog-update` prompts for one wrap) — root cause not yet diagnosed, tracked in the follow-up issue. Until it is, the operator can hard-stop all wraps: `PATCH /api/config {"wrapDisabled": true}` makes `POST /api/sessions/:project/wrap` refuse with **503 `WRAP_DISABLED`** before any other processing (including the password gate — disabled means disabled), and the error names the flag so re-enabling is one PATCH. Tests: refuses-while-set (and names the flag), normal handling restored when cleared (`test/api-system.test.js`).
