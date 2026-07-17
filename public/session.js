@@ -3736,14 +3736,17 @@ let wrapWatchInFlight = false;
 async function watchWrapRun(postStartedAtMs, password) {
   const H = window.tcWrapDrawerHelpers;
   if (wrapWatchInFlight) return true;
+  // Claim synchronously, BEFORE the first await — two near-simultaneous
+  // callers (init probe racing a confirm-time reattach) must not both pass
+  // the guard during the probe (Critic note, chunk 583).
+  wrapWatchInFlight = true;
 
   const statusUrl = `/api/sessions/${encodeURIComponent(projectName)}/wrap/status`;
-  let status = await api(statusUrl);
-  let decision = H.wrapWatchDecision(status, postStartedAtMs);
-  if (decision === 'error') return false;
-
-  wrapWatchInFlight = true;
   try {
+    let status = await api(statusUrl);
+    let decision = H.wrapWatchDecision(status, postStartedAtMs);
+    if (decision === 'error') return false;
+
     // Whatever surface triggered this (modal or drawer retry), the watch
     // owns the screen now; both closes are idempotent.
     closeWrapModal(true);
@@ -3765,6 +3768,16 @@ async function watchWrapRun(postStartedAtMs, password) {
 
     if (decision === 'render' && status.result && status.result.pipelineResult) {
       openWrapDrawer(status.result.pipelineResult, typeof password === 'string' ? password : '');
+    } else if (decision === 'render' && status.result) {
+      // A fresh result WITHOUT a pipelineResult: the pipeline itself threw
+      // before producing per-step results. Show the run's real error — not
+      // the restart notice, which would misdiagnose it (Critic warning,
+      // chunk 583). Nothing was committed (the commit step is last).
+      openWrapDrawerNotice(
+        'Wrap failed',
+        status.result.error
+          || 'The wrap failed before its pipeline produced a result. Nothing was committed; it is safe to start a new wrap.'
+      );
     } else {
       // Ran, then vanished without a fresh result: a server restart killed
       // the pipeline mid-flight. Nothing was committed by it (the commit

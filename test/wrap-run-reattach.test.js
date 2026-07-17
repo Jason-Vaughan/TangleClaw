@@ -71,8 +71,22 @@ describe('wrap-run reattach wiring (#583)', () => {
       assert.ok(body.includes('/wrap/status'), 'watches the wrap-run status endpoint');
       assert.ok(body.includes('clearWrappingState()'),
         'a blocked (still-active-session) outcome restores the action buttons');
-      assert.ok(body.includes('wrapWatchInFlight'),
-        'single watch loop at a time — a concurrent caller must not start a duplicate poller');
+      assert.ok(body.indexOf('wrapWatchInFlight = true') < body.indexOf('await api('),
+        'the single-flight flag is claimed synchronously BEFORE the first awaited call — two near-simultaneous callers must not both pass the guard (Critic note, chunk 583)');
+    });
+
+    it('a fresh thrown-pipeline result renders ITS error, never the restart notice (Critic warning, chunk 583)', () => {
+      const body = functionBody(sessionSrc, 'async function watchWrapRun(');
+      // Three distinct outcomes, in precedence order: pipelineResult drawer,
+      // fresh-result-without-pipelineResult (pipeline threw — show its
+      // error), vanished run (restart notice).
+      const pipelineBranch = body.indexOf('status.result.pipelineResult');
+      const thrownBranch = body.indexOf('status.result.error');
+      const restartNotice = body.indexOf('did not survive a server restart');
+      assert.ok(pipelineBranch !== -1 && thrownBranch !== -1 && restartNotice !== -1,
+        'all three render outcomes exist');
+      assert.ok(pipelineBranch < thrownBranch && thrownBranch < restartNotice,
+        'a fresh result without pipelineResult surfaces the run\'s real error BEFORE falling to the vanished-run restart diagnosis');
     });
 
     it('opening the drawer cancels a ticking ended-countdown (#268 rule holds on the reattach race)', () => {
