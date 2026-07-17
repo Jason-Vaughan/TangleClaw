@@ -323,22 +323,45 @@
   }
 
   /**
-   * Decide the tmux mouse value select mode should POST (#574 RC2, pure).
-   * Entering keeps the legacy platform split: mobile turns mouse ON (frees
-   * native text selection), desktop turns it OFF (a plain drag reaches
-   * xterm's local selection engine). Exiting must restore the pre-select
-   * state on BOTH platforms — the old mobile exit hardcoded `false`, which
-   * stranded a session-level `mouse off` override, and the #443 touch-scroll
-   * shim needs mouse ON, so one Select round-trip killed touch-scroll for
-   * every later visit to that session.
-   * @param {{entering: boolean, isMobile: boolean, mouseOn: boolean}} opts -
-   *   `entering` = toggling INTO select mode; `mouseOn` = the pre-select
-   *   effective mouse state to restore on exit
-   * @returns {boolean} the value to send to /api/tmux/mouse
+   * Decide the /api/tmux/mouse body select mode should POST (#574 RC2 +
+   * #579, pure). Entering keeps the legacy platform split: mobile turns
+   * mouse ON (frees native text selection), desktop turns it OFF (a plain
+   * drag reaches xterm's local selection engine). Exiting must restore the
+   * pre-select CONFIGURATION, not just its value (#579): when the
+   * pre-select state was inherited from the global, restoring by SETTING
+   * the value strands a session-level override that pins the session
+   * against future global changes — the benign-valued sibling of the #574
+   * stranded-`off` bug. Inherited state is restored by unsetting.
+   * @param {{entering: boolean, isMobile: boolean, mouseOn: boolean,
+   *   mouseExplicit: boolean}} opts - `entering` = toggling INTO select
+   *   mode; `mouseOn`/`mouseExplicit` = the pre-select effective mouse
+   *   state and whether it was a session-level override (from
+   *   GET /api/tmux/mouse's `explicit`)
+   * @returns {{on: boolean}|{unset: true}} the /api/tmux/mouse body fields
    */
   function tcSelectModeMouse(opts) {
-    if (opts.entering) return !!opts.isMobile;
-    return !!opts.mouseOn;
+    if (opts.entering) return { on: !!opts.isMobile };
+    if (opts.mouseExplicit) return { on: !!opts.mouseOn };
+    return { unset: true };
+  }
+
+  /**
+   * Decide which paste path the Paste affordance should take (#402, pure).
+   *
+   * iOS Safari offers no native route into xterm (no Cmd-V; the long-press
+   * Paste callout cannot target xterm's hidden textarea), so TC ships its
+   * own affordance with two paths: read the clipboard directly when the
+   * Clipboard API is usable, else surface a real textarea the native Paste
+   * callout CAN service. `navigator.clipboard` only exists in a secure
+   * context (#427 precedent: the copy path), so the plain-HTTP-over-
+   * Tailscale setup takes the catcher by design, not as an error.
+   * @param {{hasClipboardRead: boolean, secure: boolean}} env -
+   *   `hasClipboardRead` = navigator.clipboard.readText is callable;
+   *   `secure` = window.isSecureContext
+   * @returns {'clipboard'|'catcher'}
+   */
+  function tcPastePath(env) {
+    return (env.hasClipboardRead && env.secure) ? 'clipboard' : 'catcher';
   }
 
   /**
@@ -893,6 +916,7 @@
   global.tcSelectionSpan = tcSelectionSpan;
   global.tcParseBridgePort = tcParseBridgePort;
   global.tcSelectModeMouse = tcSelectModeMouse;
+  global.tcPastePath = tcPastePath;
   global.tcIsFocusTap = tcIsFocusTap;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;

@@ -78,6 +78,11 @@
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
+      <!-- #402: iOS has no route into xterm's hidden textarea (no Cmd-V, and
+           the native Paste callout can't reach it), so touch devices get an
+           explicit affordance. Ships hidden; revealed on touch support only —
+           desktop keeps Cmd-V and a clean banner. -->
+      <button class="banner-btn" id="pasteBtn" aria-label="Paste clipboard text into the terminal" hidden>Paste</button>
       <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
       <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
               aria-expanded="false" aria-controls="commandBar">Cmd</button>
@@ -240,6 +245,24 @@
   </div>
 
   <!-- Upload Modal -->
+  <!-- Paste catcher (#402): the fallback paste path. Plain-HTTP contexts have
+       no Clipboard API, and a rejected readText() must not dead-end — a REAL
+       textarea is the one element iOS's native long-press Paste callout can
+       service. State-driven open/close only, no timers (#98/#268). -->
+  <div class="modal-backdrop" id="pasteCatcher">
+    <div class="modal-content" role="dialog" aria-label="Paste into terminal" aria-modal="true">
+      <h3 class="modal-title">Paste into terminal</h3>
+      <p class="modal-text">Long-press the box and choose Paste, then tap Insert.</p>
+      <textarea class="form-textarea paste-catcher-text" id="pasteCatcherText" rows="4"
+                aria-label="Text to insert into the terminal"
+                autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+      <div class="modal-actions">
+        <button class="btn" id="pasteCatcherCancel">Cancel</button>
+        <button class="btn btn-primary" id="pasteCatcherInsert">Insert</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="uploadModal">
     <div class="modal-content upload-content" role="dialog" aria-label="Upload file" aria-modal="true">
       <h3 class="modal-title">Upload File</h3>

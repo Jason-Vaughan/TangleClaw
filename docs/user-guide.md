@@ -196,7 +196,11 @@ Tap **Peek** to open a bottom drawer showing the last few lines of terminal outp
 
 #### Select
 
-Tap **Select** to enable text selection in the terminal, and tap **Done** to leave it. Select mode adjusts tmux mouse mode so normal touch/click-drag gestures select text instead of reaching the terminal app (on desktop it turns mouse mode off; on touch devices it turns it on). It stays on until you tap Done — there is no auto-revert timer (#574; timer-driven UI reverts are banned by #98/#268) — and leaving select mode restores the mouse state you had before entering. On touch devices you can also long-press to select without Select mode at all (a Copy pill appears on release).
+Tap **Select** to enable text selection in the terminal, and tap **Done** to leave it. Select mode adjusts tmux mouse mode so normal touch/click-drag gestures select text instead of reaching the terminal app (on desktop it turns mouse mode off; on touch devices it turns it on). It stays on until you tap Done — there is no auto-revert timer (#574; timer-driven UI reverts are banned by #98/#268) — and leaving select mode restores the mouse configuration you had before entering: an explicit per-session setting is set back, and a state inherited from the global config is restored by removing the session-level override entirely (#579), so a Select round-trip leaves no residue. On touch devices you can also long-press to select without Select mode at all (a Copy pill appears on release).
+
+#### Paste (touch devices)
+
+On iPhone and other touch devices a **Paste** button appears in the session banner (#402) — iOS has no Cmd-V, and its native long-press Paste menu can't reach the terminal's hidden input, so this button is the paste path. Tap it and the clipboard is read directly (iOS shows its permission bubble the first time) and inserted into the terminal as a proper paste — multi-line text gets the same bracketed-paste framing a desktop Cmd-V would. When the clipboard can't be read directly (plain-HTTP setups have no clipboard API, or you decline the permission), a small **Paste into terminal** box opens instead: long-press the box, choose Paste from the iOS menu, and tap **Insert**. The button only appears on touch devices with a tmux-backed session — desktop keeps its normal Cmd-V.
 
 #### Upload
 

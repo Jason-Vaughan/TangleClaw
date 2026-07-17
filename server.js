@@ -1260,19 +1260,35 @@ route('POST', '/api/update/apply', (_req, res) => {
   jsonResponse(res, result.code === 'git-error' ? 500 : 409, result);
 });
 
-// POST /api/tmux/mouse
+// POST /api/tmux/mouse — set a session-level mouse value, or `unset: true`
+// to remove the override so the session inherits the global again (#579).
 route('POST', '/api/tmux/mouse', (_req, res, _params, body) => {
   if (!body || typeof body.session !== 'string') {
     return errorResponse(res, 400, 'session is required', 'BAD_REQUEST');
   }
-  if (typeof body.on !== 'boolean') {
-    return errorResponse(res, 400, 'on must be a boolean', 'BAD_REQUEST');
+  const unset = body.unset === true;
+  if (!unset && typeof body.on !== 'boolean') {
+    return errorResponse(res, 400, 'on must be a boolean (or pass unset: true)', 'BAD_REQUEST');
+  }
+  if (unset && typeof body.on === 'boolean') {
+    return errorResponse(res, 400, 'on and unset are mutually exclusive', 'BAD_REQUEST');
   }
 
   try {
     const tmuxName = tmux.toSessionName(body.session);
-    tmux.setMouse(tmuxName, body.on, { hooks: !!body.hooks });
-    jsonResponse(res, 200, { mouse: body.on, session: body.session });
+    if (unset) {
+      tmux.unsetMouse(tmuxName);
+    } else {
+      tmux.setMouse(tmuxName, body.on, { hooks: !!body.hooks });
+    }
+    // Report the post-op EFFECTIVE state — after an unset that is whatever
+    // the session now inherits, which the client cannot know on its own.
+    const state = tmux.getMouseState(tmuxName);
+    jsonResponse(res, 200, {
+      mouse: state.on,
+      explicit: state.explicit,
+      session: body.session
+    });
   } catch (err) {
     return errorResponse(res, 404, err.message, 'NOT_FOUND');
   }
@@ -2373,12 +2389,17 @@ route('GET', '/api/uploads', (req, res) => {
   jsonResponse(res, 200, { uploads: list });
 });
 
-// GET /api/tmux/mouse/:session
+// GET /api/tmux/mouse/:session — effective value plus its source (#579):
+// `explicit` = a session-level override exists (vs inherited from global).
 route('GET', '/api/tmux/mouse/:session', (_req, res, params) => {
   try {
     const tmuxName = tmux.toSessionName(params.session);
-    const mouse = tmux.getMouse(tmuxName);
-    jsonResponse(res, 200, { mouse, session: params.session });
+    const state = tmux.getMouseState(tmuxName);
+    jsonResponse(res, 200, {
+      mouse: state.on,
+      explicit: state.explicit,
+      session: params.session
+    });
   } catch (err) {
     return errorResponse(res, 404, err.message, 'NOT_FOUND');
   }

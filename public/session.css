@@ -1362,6 +1362,9 @@ body {
   font-family: inherit;
 }
 .form-textarea { resize: vertical; white-space: pre-wrap; }
+/* Paste catcher (#402): terminal-bound text reads better monospace, and the
+   box must stay comfortably tappable on iPhone (the primary platform). */
+.paste-catcher-text { font-family: var(--mono, monospace); min-height: 88px; }
 .form-input:focus,
 .form-textarea:focus {
   outline: none;
