@@ -52,9 +52,16 @@ __pycache__/
 .prawduct/.gates-waived
 .prawduct/reflections.md
 .prawduct/sync-manifest.json
-.prawduct/artifacts/build-plan.md
 .prawduct/.sync-pending
 .prawduct/.advisories.json
 
 # Prawduct plugin version marker (per-repo last-seen)
 .prawduct/.prawduct-version
+
+# Prawduct session files
+.prawduct/.bug-inbox
+.prawduct/.critic-active
+.prawduct/.critic-partials/
+.prawduct/.governance-ledger.jsonl
+.prawduct/.session-base-tree
+.prawduct/.work-model-index.json
