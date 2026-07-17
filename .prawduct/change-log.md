@@ -2,6 +2,12 @@
 
 <!-- Append new entries at the top. -->
 
+## 2026-07-16: Fix — operator kill switch for session wrap (`wrapDisabled`) — incident hot-fix
+
+<!-- prawduct: type=fix | chunks=wrap-kill-switch | scope=ops -->
+
+**Why:** Live incident during this evening's wrap: the wrap pipeline's AI-content steps re-fired repeatedly into the session (the `changelog-update` prompt arrived at least twice for one wrap; operator observed "several wrap attempts just retry over and over") and the operator directed an immediate disable while other work proceeds. Root cause NOT diagnosed yet — the follow-up bug issue carries what's known. **What:** `POST /api/sessions/:project/wrap` now checks `store.config.load().wrapDisabled === true` FIRST (before even the password gate — disabled means disabled regardless of caller) and refuses with 503 `WRAP_DISABLED`, the message naming the flag and the re-enable call (`PATCH /api/config {"wrapDisabled": false}`). `wrapDisabled` added to the PATCH allowlist. No UI — the Wrap button surfaces the honest 503 error toast; this is a temporary operational switch, not a feature. Shipped **direct to main** under the incident-hot-fix branch exception; flag set live on cursatory + server restarted + 503 verified. **Tests:** refuses-while-set + names-the-flag, cleared-flag-restores-normal-handling (`test/api-system.test.js`, isolated temp store).
+
 ## 2026-07-16: Fix — interrupted Select can no longer permanently strand the tmux mouse override (UI-8W3D)
 
 <!-- prawduct: type=fix | chunks=UI-8W3D | scope=ui-8w3d | status=merged -->

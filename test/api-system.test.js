@@ -193,6 +193,28 @@ describe('API — system, engines, tmux', () => {
     });
   });
 
+  describe('POST /api/sessions/:project/wrap — operator kill switch (2026-07-16 wrap-retry incident)', () => {
+    it('refuses every wrap with 503 WRAP_DISABLED while config.wrapDisabled is set', async () => {
+      const patched = await request('PATCH', '/api/config', { wrapDisabled: true });
+      assert.equal(patched.status, 200);
+      // No password sent on purpose: the kill switch must fire BEFORE the
+      // password gate — disabled means disabled, regardless of caller.
+      const { status, data } = await request('POST', '/api/sessions/AnyProject/wrap', {});
+      assert.equal(status, 503);
+      assert.equal(data.code, 'WRAP_DISABLED');
+      assert.ok(data.error.includes('wrapDisabled'),
+        'the refusal must name the flag so the operator knows how to re-enable');
+    });
+
+    it('clearing the flag restores normal wrap handling', async () => {
+      const patched = await request('PATCH', '/api/config', { wrapDisabled: false });
+      assert.equal(patched.status, 200);
+      const { data } = await request('POST', '/api/sessions/__no_such_project__/wrap', {});
+      assert.notEqual(data.code, 'WRAP_DISABLED',
+        'with the flag off the route must fall through to normal handling');
+    });
+  });
+
   describe('GET /api/tmux/mouse/:session', () => {
     it('should return 404 for non-existent session', async () => {
       const { status, data } = await request('GET', '/api/tmux/mouse/__nonexistent_session__');

@@ -507,7 +507,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'stripAiCoauthors', 'ingressMode', 'publicDomain',
     'caddyHttpsPort', 'caddyHttpPort',
     'authEnabled', 'basicAuthUser', 'basicAuthHash',
-    'serviceTokenEnabled'
+    'serviceTokenEnabled', 'wrapDisabled'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -2101,6 +2101,16 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 // user choices the drawer collected on retry after a blocked step
 // (`{skipTests, criticSkipRationale, prHandling}`). Legacy V1 path ignores it.
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
+  // Operator kill switch (incident 2026-07-16: wrap content steps re-fired
+  // repeatedly into the session). Checked before anything else — while set,
+  // no wrap can start regardless of caller. Re-enable via
+  // PATCH /api/config {"wrapDisabled": false}.
+  if (store.config.load().wrapDisabled === true) {
+    return errorResponse(res, 503,
+      'Session wrap is temporarily disabled by the operator (wrapDisabled). ' +
+      'Re-enable via PATCH /api/config {"wrapDisabled": false}.',
+      'WRAP_DISABLED');
+  }
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
