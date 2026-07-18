@@ -204,6 +204,23 @@ describe('scanForStrandedConfigs (#592)', () => {
     assert.equal(result.scanned, 2);
     assert.deepStrictEqual(result.stranded, []);
   });
+
+  it('captures a config-load failure as a "(config)" error instead of throwing', () => {
+    registerProject('any');
+    const configFile = path.join(tmpDir, 'tangleclaw', 'config.json');
+    const original = fs.readFileSync(configFile, 'utf8');
+    try {
+      fs.writeFileSync(configFile, '{ not json');
+      const result = projects.scanForStrandedConfigs();
+      assert.equal(result.errors.length, 1);
+      assert.equal(result.errors[0].name, '(config)');
+      assert.match(result.errors[0].error, /projectsDir resolve failed/);
+      assert.deepStrictEqual(result.stranded, []);
+      assert.equal(result.scanned, 0);
+    } finally {
+      fs.writeFileSync(configFile, original);
+    }
+  });
 });
 
 describe('stranded-configs API (#592)', () => {

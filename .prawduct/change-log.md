@@ -26,7 +26,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-## 2026-07-18: Feat — stranded-config guard: detect governance files in unregistered ancestor dirs (#592, Chunk 02)
+## 2026-07-17: Feat — stranded-config guard: detect governance files in unregistered ancestor dirs (#592, Chunk 02)
 
 <!-- prawduct: type=feat | chunks=02 | scope=prawduct-v2-sunset | status=shipped -->
 
@@ -34,7 +34,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 **Classification:** build
 
-## 2026-07-18: Fix — recordVersion silent failure under server load order (#584, Chunk 01)
+## 2026-07-17: Fix — recordVersion silent failure under server load order (#584, Chunk 01)
 
 <!-- prawduct: type=fix | chunks=01 | scope=prawduct-v2-sunset | status=shipped -->
 
