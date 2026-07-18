@@ -51,6 +51,11 @@ NL prompt (×2 incl. the minimal-methodology variant), wrapping-status transitio
 DEFAULT_PROJECT_CONFIG must not re-seed the key; #101 version-cache write re-pinned on the
 pipeline path); inert `wrapV2` fixture writes swept from sessions/api-sessions/store suites.
 Suite 4338/0/1 (net −9 tests from the consolidation), JUnit evidence recorded.
+**Deliberate residue:** `store.sessions.setWrapping` lost its last production caller (the
+legacy branch was it), but the surrounding wrapping-status machinery (`completeWrap`,
+`autoCompleteWrap`, `POST /wrap/complete`, the #91 wrap-state persistence) stays LIVE — the
+frontend's manual-complete flow posts to it and `completeWrap` also serves active sessions.
+Not stripped here: the wrap-flow redesign (Wrap v2, Phase B) replaces this layer wholesale.
 
 ## 2026-07-18: Chore — fleet remnant sweep: vendored V1 product-hook eradicated (Chunk 04)
 
