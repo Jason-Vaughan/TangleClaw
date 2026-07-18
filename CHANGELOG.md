@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.20.1] - 2026-07-17
+
 ### Fixed
 
 - **The dashboard auth chip no longer false-positives the amber `configured-no-identity` warning on direct-loopback loads (backlog AUTH-5N2J).** In caddy mode a request hitting `localhost:3102` directly (local browser, AI-session `curl`) carries no `X-Auth-User` — the chip read that as a broken identity gate even when caddy auth was healthy. Since Caddy also connects from loopback, the remote address can't distinguish the two paths; the discriminator is proxy evidence: Caddy's `reverse_proxy` always sets `X-Forwarded-For`, a direct client sends none. `resolveAuthStatus` now returns a new `configured-bypassed` status (chip renders nothing — gate health is unknowable from a request that never traversed it) when identity AND `X-Forwarded-For` are both absent; a proxied request without identity still warns `configured-no-identity` (the real AUTH-3 signal, preserved). `X-Forwarded-For` is consulted only to classify the diagnostic — `resolveRequestUser`'s spoof defense is untouched, so spoofing it can at most show the spoofer a warning chip. Design amendment recorded in `docs/auth-status-surfacing.md`. Tests: bypass regression (unit + live-socket API), proxied-no-identity preserved, spoof-direction pins, frontend mapper pinned to exactly two warning states.
