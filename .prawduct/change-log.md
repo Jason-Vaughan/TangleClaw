@@ -11,17 +11,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   new chunk ids, so borrowed tags rot (the ART-4K9M failure). A scope with no build-plan
   file is fine — regen-views flags it only while status=merged, and deliberately not once
   status=shipped (retired/planless scopes are expected history).
-- status= : (none) on branch → `merged` when the PR merges (stamp-merged does this) →
-  `shipped` when a release containing the work goes out (the release flip). regen-views
-  derives build-plan Status checkboxes from status=shipped ONLY — leaving released work
-  stuck at `merged` makes regen un-tick genuinely shipped chunks (2026-07-17 back-stamp:
-  29 entries were stuck at merged across v4.5.0–v4.19.0).
+- status= : (none) on branch → `shipped` stamped at merge (AMENDED 2026-07-17, ratified
+  under ART-7W2J/PRW-9K4C: upstream trunk semantics — TC restarts the server onto main
+  right after merge, so merged work IS live; the wrap's version number is bookkeeping.
+  The prior intermediate `merged` state created a merge→wrap window where prawduct
+  3.0.5's fail-closed regen-views flagged every planless small-fix scope fatally).
+  The WRP-9F2K release flip stays as a safety net (flips any `merged` stragglers at
+  the next wrap promote); a STATUSLESS tag line remains the missed-stamp diagnostic.
+  TC skips `release=` tokens — CHANGELOG.md is TC's release-notes surface, not
+  prawduct's release-notes.md. regen-views derives build-plan Status checkboxes from
+  status=shipped ONLY — the old convention left released work stuck at `merged`, which
+  un-ticked genuinely shipped chunks (2026-07-17 back-stamp: 29 entries across
+  v4.5.0–v4.19.0).
 -->
 
 
 ## 2026-07-17: Fix — auth chip false-positive on direct-loopback loads: proxy-evidence split (AUTH-5N2J)
 
-<!-- prawduct: type=fix | chunks=01 | scope=auth-5n2j | status=merged -->
+<!-- prawduct: type=fix | chunks=01 | scope=auth-5n2j | status=shipped -->
 
 **Why:** Janitor-filed AUTH-5N2J (surfaced during the AUTH-2K9D VRF): in caddy mode, any direct-loopback dashboard load (`localhost:3102` bypassing caddy) ambered the `configured-no-identity` chip against a healthy gate — the AUTH-2K9D design assumed all browser traffic traverses Caddy, which holds remotely but not locally (the 127.0.0.1 bind accepts direct connections). **Discovery (stage was `idea`):** root cause is that Caddy proxies from loopback too, so remote address can't discriminate; the decided contract is proxy evidence — Caddy's `reverse_proxy` sets `X-Forwarded-For` unconditionally (verified against the live hand-edited Caddyfile: every block proxies), a direct client sends none. Decision recorded as an amendment in `docs/auth-status-surfacing.md`. **What:** `resolveAuthStatus` (`lib/auth-identity.js`) splits the no-identity branch: `x-forwarded-for` present → `configured-no-identity` (real AUTH-3 warning preserved); absent → new `configured-bypassed` status, which the chip deliberately renders as nothing (`_authStatusWarning` unchanged — unknown states already map to null; JSDoc documents the silence as intentional). `PROXY_EVIDENCE_HEADER` exported; enum extended. **Spoof wall:** the header classifies the diagnostic only — `resolveRequestUser`'s config-gated trust is untouched; spoofed XFF at worst shows the spoofer an amber chip (pinned by test). **Tests:** unit bypass regression (incl. empty/whitespace/array XFF edges), live-socket API regression (the exact former false-positive request shape now reports `configured-bypassed`), proxied-no-identity coverage, spoof-direction pins, and a frontend structural pin that exactly two states warn.
 
