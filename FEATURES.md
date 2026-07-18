@@ -140,7 +140,6 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 
 ## TODO (auto-stubbed 2026-07-18)
 
-- **TBD** — touched in this session: `data/templates/tilt/template.json`. <!-- describe -->
 - **TBD** — touched in this session: `docs/adr/0002-wrap-pipeline-contract.md`. <!-- describe -->
 - **TBD** — touched in this session: `docs/adr/0008-project-master-session-model.md`. <!-- describe -->
 - **TBD** — touched in this session: `docs/eval-audit-mode.md`. <!-- describe -->
