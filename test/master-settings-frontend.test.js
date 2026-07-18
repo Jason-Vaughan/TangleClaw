@@ -81,6 +81,16 @@ describe('Master settings surface — frontend', () => {
       assert.match(masterSection, /\?confirm=true/);
     });
 
+    it('version restore of a baseline rule confirms and sends the flag (gate symmetric with edit/disable/delete)', () => {
+      const restoreFn = masterSection.slice(
+        masterSection.indexOf('async function restoreMasterRuleVersion'),
+        masterSection.indexOf('function handleMasterSettingsEvent')
+      );
+      assert.match(restoreFn, /createdBy === 'system'/);
+      assert.match(restoreFn, /confirmBaselineEdit = true/);
+      assert.match(restoreFn, /if \(!confirm\(/);
+    });
+
     it('exposes version history with per-version restore and Restore defaults', () => {
       assert.match(masterSection, /data-action="master-rule-history"/);
       assert.match(masterSection, /data-action="master-restore-version"/);

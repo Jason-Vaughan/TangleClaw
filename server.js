@@ -1314,12 +1314,27 @@ route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
   jsonResponse(res, 200, { versions });
 });
 
-// POST /api/session-rules/:id/restore — roll back to a prior version
+// POST /api/session-rules/:id/restore — roll back to a prior version.
+// Restore is a mutation like PUT/DELETE, so shipped Master baseline rules take
+// the same eyes-open gate when the restore would weaken them (content change
+// or restoring a disabled snapshot) — the gate predicates must stay symmetric
+// across every path that can alter a rule, or the confirm is bypassable.
 route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
   if (!body || body.versionNo === undefined) {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
   try {
+    const existing = store.sessionRules.get(Number(params.id));
+    if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
+      const target = store.sessionRules.listVersions(Number(params.id))
+        .find((v) => v.versionNo === Number(body.versionNo));
+      const weakens = !target || target.content !== existing.content || !target.enabled;
+      if (weakens) {
+        return errorResponse(res, 400,
+          'This is a shipped Master boundary rule — restoring a version that changes or disables it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
+          'CONFIRM_REQUIRED');
+      }
+    }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
     const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
     jsonResponse(res, 200, rule);
@@ -4468,12 +4483,19 @@ if (require.main === module) {
   // Project Master auto-start: launch the reserved master session at boot
   // when the operator opted in (master.autoStart). Failure is logged, never
   // fatal — the brain icon's on-demand ensure remains the fallback path.
+  // ensureMasterSession types tmux/engine failures into result.error but can
+  // still THROW on filesystem faults (home/memory/guardrail writes), so the
+  // never-fatal claim needs the catch, matching the neighboring boot blocks.
   if (master.masterSettings(config).autoStart) {
-    const result = master.ensureMasterSession();
-    if (result.error) {
-      log.warn('Master auto-start failed', { error: result.error });
-    } else {
-      log.info('Master auto-start', { created: result.created, engine: result.engine });
+    try {
+      const result = master.ensureMasterSession();
+      if (result.error) {
+        log.warn('Master auto-start failed', { error: result.error });
+      } else {
+        log.info('Master auto-start', { created: result.created, engine: result.engine });
+      }
+    } catch (err) {
+      log.warn('Master auto-start failed', { error: err.message });
     }
   }
 

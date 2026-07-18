@@ -1149,17 +1149,28 @@ function collectWrapSectionsSelection() {
 }
 
 /**
- * Transient status message in the Project Rules section.
+ * Transient status message in a rules section (shared by the Project Rules
+ * and Master settings surfaces).
+ * @param {string} elementId - The status element's id
  * @param {string} text
  * @param {boolean} ok
  */
-function _setProjectRulesStatus(text, ok) {
-  const status = document.getElementById('projectRulesStatus');
+function _setRulesStatus(elementId, text, ok) {
+  const status = document.getElementById(elementId);
   if (!status) return;
   status.textContent = text;
   status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
   status.classList.remove('hidden');
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+/**
+ * Transient status message in the Project Rules section.
+ * @param {string} text
+ * @param {boolean} ok
+ */
+function _setProjectRulesStatus(text, ok) {
+  _setRulesStatus('projectRulesStatus', text, ok);
 }
 
 async function saveSettings() {
@@ -3011,9 +3022,6 @@ async function refreshMasterDot() {
 // full version history + restore (the first UI consumer of the D1b
 // versions machinery).
 
-/** Settings snapshot from the last openMasterSettings() fetch. */
-let masterSettingsSnapshot = null;
-
 /**
  * Open the Master settings modal: fetch status (settings live inside it) and
  * groups for the scope select, render the form, then load the Hard rules.
@@ -3023,9 +3031,12 @@ async function openMasterSettings() {
     api('/api/master/status'),
     api('/api/groups')
   ]);
-  if (!status || !status.settings) return;
-  masterSettingsSnapshot = status.settings;
-  renderMasterSettingsBody(status.settings, (groupsData && groupsData.groups) || groupsData || []);
+  if (!status || !status.settings) {
+    // Surface the failure where the gear lives instead of silently no-oping.
+    setMasterStatus('down', api.lastError || 'Master settings unavailable', true);
+    return;
+  }
+  renderMasterSettingsBody(status.settings, (groupsData && groupsData.groups) || []);
   document.getElementById('masterSettingsModal').classList.add('open');
   loadMasterRules();
 }
@@ -3241,12 +3252,20 @@ async function toggleMasterRuleHistory(id) {
 }
 
 /**
- * Roll a rule back to a prior version.
+ * Roll a rule back to a prior version. Restoring a shipped baseline rule to
+ * different/disabled content is a weakening mutation like edit/disable, so it
+ * carries the same eyes-open confirm (the server refuses it without the flag).
  * @param {number} id - Rule id
  * @param {number} versionNo - Target version
  */
 async function restoreMasterRuleVersion(id, versionNo) {
-  const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', { versionNo });
+  const body = { versionNo };
+  const rule = await _getMasterRule(id);
+  if (rule && rule.createdBy === 'system') {
+    if (!confirm(`Restore this shipped boundary rule to v${versionNo}? If the version differs from the current text, this changes the boundary.`)) return;
+    body.confirmBaselineEdit = true;
+  }
+  const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', body);
   if (data) _setMasterRulesStatus(`Restored v${versionNo}`, true);
   else _setMasterRulesStatus('Restore failed', false);
   loadMasterRules();
@@ -3284,7 +3303,6 @@ async function saveMasterSettings() {
   const data = await apiMutate('/api/config', 'PATCH', { master: masterPatch });
   if (data) {
     _setMasterRulesStatus('Settings saved — engine/scope apply on next master start', true);
-    masterSettingsSnapshot = { ...masterSettingsSnapshot, ...masterPatch };
   } else {
     _setMasterRulesStatus(api.lastError || 'Save failed', false);
   }
@@ -3301,12 +3319,7 @@ function closeMasterSettings() {
  * @param {boolean} ok
  */
 function _setMasterRulesStatus(text, ok) {
-  const status = document.getElementById('masterRulesStatus');
-  if (!status) return;
-  status.textContent = text;
-  status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
-  status.classList.remove('hidden');
-  setTimeout(() => { status.classList.add('hidden'); }, 3000);
+  _setRulesStatus('masterRulesStatus', text, ok);
 }
 
 // ── Event Bindings ──

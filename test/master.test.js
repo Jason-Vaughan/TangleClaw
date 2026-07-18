@@ -183,8 +183,13 @@ describe('ensureMasterSession', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
     assert.match(src, /master\.masterSettings\(config\)\.autoStart/,
       'server startup must consult the autoStart setting');
-    assert.match(src, /Master auto-start failed/,
-      'auto-start failure must be logged, never fatal');
+    // "Never fatal" needs a real catch: ensureMasterSession types tmux/engine
+    // failures into result.error but THROWS on fs faults — an uncaught throw
+    // here is self-locking (autoStart is only disablable via the crashed
+    // server's own API).
+    const block = src.slice(src.indexOf('Project Master auto-start'), src.indexOf('Master auto-start failed'));
+    assert.match(block, /try \{/,
+      'the auto-start block must catch throws, not just typed errors');
   });
 
   it('never records a sessions-table row — the master is not a project session', () => {

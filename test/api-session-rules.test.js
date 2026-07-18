@@ -203,6 +203,27 @@ describe('api/session-rules (#347/D1a)', () => {
       assert.equal(deleteMine.status, 200);
     });
 
+    it('version restore carries the same baseline gate as PUT/DELETE (no bypass through history)', async () => {
+      const system = store.sessionRules.create({ content: 'boundary v1', kind: 'master', createdBy: 'system' });
+      // Build history: v1 (create) → v2 (confirmed content edit).
+      await request('PUT', `/api/session-rules/${system.id}`, { content: 'boundary v2', confirmBaselineEdit: true });
+
+      // Restoring v1 changes content → gate fires without the flag.
+      const noConfirm = await request('POST', `/api/session-rules/${system.id}/restore`, { versionNo: 1 });
+      assert.equal(noConfirm.status, 400);
+      assert.equal(noConfirm.data.code, 'CONFIRM_REQUIRED');
+
+      // Restoring the identical current state weakens nothing → no confirm needed.
+      const noop = await request('POST', `/api/session-rules/${system.id}/restore`, { versionNo: 2 });
+      assert.equal(noop.status, 200);
+
+      const confirmed = await request('POST', `/api/session-rules/${system.id}/restore`, { versionNo: 1, confirmBaselineEdit: true });
+      assert.equal(confirmed.status, 200);
+      assert.equal(confirmed.data.content, 'boundary v1');
+
+      await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
+    });
+
     it('POST /api/master/rules/restore-defaults replaces everything with the shipped baseline', async () => {
       const master = require('../lib/master');
       await request('POST', '/api/session-rules', { content: 'stray custom rule', kind: 'master' });
