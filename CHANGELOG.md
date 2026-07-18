@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.23.0] - 2026-07-18
+
 ### Changed
 
 - **The legacy V1 NL-prompt wrap path is removed — the server-side wrap pipeline is now the only wrap route (backlog WRP-2Q6H, V1 Sunset Phase A Chunk 05).** `lib/sessions.js#triggerWrap` no longer consults `projConfig.wrapV2`: the gate, the NL-prompt-via-tmux fall-through, and the webui "requires the V2 wrap pipeline" dead-end are all deleted, many release cycles after the #196 default-flip's documented one-cycle grace window. `wrapV2` is no longer seeded into project configs (`DEFAULT_PROJECT_CONFIG` drops the key); stale on-disk keys are ignored by every reader, and the one live opt-out in the fleet (litellm-smoketest, whose `minimal` methodology has a full `wrap_pipeline`) had its stale key removed. The `lib/skills.js` shim survives — contrary to the original strip plan, `getWrapSkill`/`wrapShapeFromTemplate` are still consumed by the pipeline's response shaping, `autoCompleteWrap`, skill listing, and `lib/eval-audit.js`, and the bundled templates still carry legacy `wrap` blocks whose retirement belongs to the methodology-layer removal. ADR 0002's status line records the excision. Tests: legacy-behavior pins (byte-equal NL prompt, wrapping-status transition, #101 no-version-protocol-in-prompt, webui-legacy error) consolidated into retirement pins — explicit `wrapV2:false`, absent flag, fresh project, and webui-with-stale-opt-out all route to the pipeline; `DEFAULT_PROJECT_CONFIG` pinned to not re-seed the key; the #101 version-cache write re-pinned on the pipeline path.
