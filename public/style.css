@@ -635,6 +635,50 @@ body {
 }
 .master-dot.down { background: var(--danger); }
 
+/* Master settings modal — access tiers, enforcement badge, Hard-rules history */
+#masterSettingsBtn { margin-left: auto; min-height: 32px; }
+.master-enforcement-badge {
+  padding: 6px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.master-access-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.master-access-option {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px;
+  min-height: 44px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.master-access-option .form-hint { grid-column: 3; margin: 0; }
+.master-access-disabled { opacity: 0.5; cursor: not-allowed; }
+.master-access-name { font-weight: 600; text-transform: capitalize; }
+.master-rules-section .btn { min-height: 32px; }
+.master-rule-history {
+  margin: 0 0 8px 24px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border, #333);
+  font-size: 12px;
+}
+.master-rule-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+.master-rule-version-meta { color: var(--text-muted); flex-shrink: 0; }
+.master-rule-version-content { flex: 1 1 100%; }
+
 .audit-panel {
   max-height: 0;
   overflow: hidden;

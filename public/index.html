@@ -70,6 +70,7 @@
       <span class="master-dot" id="masterPanelDot" aria-hidden="true"></span>
       <span class="master-status-text" id="masterStatusText">Checking&hellip;</span>
       <button class="btn btn-small hidden" id="masterRetryBtn">Retry</button>
+      <button class="btn btn-small" id="masterSettingsBtn" aria-label="Master settings" title="Master settings — access level, engine, scope, Hard rules">&#9881;</button>
     </div>
     <div class="master-frame-wrap">
       <iframe id="masterFrame" class="master-frame" title="Project Master terminal"></iframe>
@@ -206,6 +207,20 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <span style="flex:1"></span>
         <button class="btn" id="ocSetupCloseBtn">Close</button>
         <button class="btn btn-primary" id="ocSetupCopyBtn">Copy prompt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project Master Settings Modal — access level, engine, scope,
+       availability, and the editable Hard-rules block (version history +
+       restore). Body markup is rendered by ui.js on open. -->
+  <div class="modal-backdrop" id="masterSettingsModal">
+    <div class="modal-content" role="dialog" aria-label="Master settings" aria-modal="true" style="max-width:540px;max-height:85vh;overflow-y:auto">
+      <h3 class="modal-title">Master Settings</h3>
+      <div id="masterSettingsBody"></div>
+      <div class="modal-actions">
+        <button class="btn" id="masterSettingsCloseBtn">Close</button>
+        <button class="btn btn-primary" id="masterSettingsSaveBtn">Save</button>
       </div>
     </div>
   </div>

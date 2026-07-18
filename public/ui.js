@@ -1149,17 +1149,28 @@ function collectWrapSectionsSelection() {
 }
 
 /**
- * Transient status message in the Project Rules section.
+ * Transient status message in a rules section (shared by the Project Rules
+ * and Master settings surfaces).
+ * @param {string} elementId - The status element's id
  * @param {string} text
  * @param {boolean} ok
  */
-function _setProjectRulesStatus(text, ok) {
-  const status = document.getElementById('projectRulesStatus');
+function _setRulesStatus(elementId, text, ok) {
+  const status = document.getElementById(elementId);
   if (!status) return;
   status.textContent = text;
   status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
   status.classList.remove('hidden');
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
+}
+
+/**
+ * Transient status message in the Project Rules section.
+ * @param {string} text
+ * @param {boolean} ok
+ */
+function _setProjectRulesStatus(text, ok) {
+  _setRulesStatus('projectRulesStatus', text, ok);
 }
 
 async function saveSettings() {
@@ -3004,11 +3015,324 @@ async function refreshMasterDot() {
   if (status && status.exists) setMasterStatus('live');
 }
 
+// ── Master settings modal ──
+// Access level (read-only enforced; higher tiers disabled until each ships
+// with real structural enforcement), engine, scope, availability, and the
+// editable Hard-rules block backed by /api/session-rules?kind=master with
+// full version history + restore (the first UI consumer of the D1b
+// versions machinery).
+
+/**
+ * Open the Master settings modal: fetch status (settings live inside it) and
+ * groups for the scope select, render the form, then load the Hard rules.
+ */
+async function openMasterSettings() {
+  const [status, groupsData] = await Promise.all([
+    api('/api/master/status'),
+    api('/api/groups')
+  ]);
+  if (!status || !status.settings) {
+    // Surface the failure where the gear lives instead of silently no-oping.
+    setMasterStatus('down', api.lastError || 'Master settings unavailable', true);
+    return;
+  }
+  renderMasterSettingsBody(status.settings, (groupsData && groupsData.groups) || []);
+  document.getElementById('masterSettingsModal').classList.add('open');
+  loadMasterRules();
+}
+
+/**
+ * Render the settings form into #masterSettingsBody.
+ * @param {object} s - status.settings from GET /api/master/status
+ * @param {object[]} groups - Project groups for the scope select
+ */
+function renderMasterSettingsBody(s, groups) {
+  const body = document.getElementById('masterSettingsBody');
+  const tierHints = {
+    'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory; everything else needs your approval in the master terminal.',
+    'suggest': 'Not available yet — ships only with real enforcement (draft-but-never-commit).',
+    'write': 'Not available yet — ships only with real enforcement (full tool access).'
+  };
+  const accessRadios = s.accessLevels.map((level) => {
+    const enabled = s.enabledAccessLevels.includes(level);
+    return `
+      <label class="master-access-option${enabled ? '' : ' master-access-disabled'}">
+        <input type="radio" name="masterAccessLevel" value="${esc(level)}"
+               ${level === s.accessLevel ? 'checked' : ''} ${enabled ? '' : 'disabled'}>
+        <span class="master-access-name">${esc(level)}</span>
+        <span class="form-hint">${esc(tierHints[level] || '')}</span>
+      </label>`;
+  }).join('');
+
+  const engineOpts = ['<option value="">(follow default engine)</option>']
+    .concat(state.engines.map((e) =>
+      `<option value="${esc(e.id)}" ${s.engine === e.id ? 'selected' : ''}>${esc(e.name || e.id)}</option>`))
+    .join('');
+
+  const scopeIsGroup = s.scope && s.scope !== 'all';
+  const groupOpts = ['<option value="">All projects</option>']
+    .concat(groups.map((g) =>
+      `<option value="${esc(g.id)}" ${scopeIsGroup && s.scope.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`))
+    .join('');
+
+  body.innerHTML = `
+    <div class="form-hint master-enforcement-badge">
+      Enforcement: <strong>${esc(s.enforcement)}</strong>
+      ${s.enforcement === 'instructional'
+        ? ' — the selected engine cannot be structurally bounded; the boundary is rules-only'
+        : ' — write guard + permission rules regenerate on every master start'}
+    </div>
+    <div class="form-group">
+      <div class="form-label">Access level</div>
+      <div class="master-access-grid">${accessRadios}</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="masterEngineSelect">Engine</label>
+      <select id="masterEngineSelect" class="form-select">${engineOpts}</select>
+      <div class="form-hint">Applies the next time the master session starts (restart via tmux: <code>tmux kill-session -t tangleclaw-master</code>, then reopen).</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="masterScopeSelect">Scope</label>
+      <select id="masterScopeSelect" class="form-select">${groupOpts}</select>
+      <div class="form-hint">A focus setting rendered into the master's identity — not a security boundary.</div>
+    </div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Start with server</span>
+        <input type="checkbox" id="masterAutoStart" ${s.autoStart ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Launch the master session at TangleClaw boot instead of on first open.</div>
+    </div>
+    <div class="form-group master-rules-section">
+      <div class="form-label">Hard rules</div>
+      <div class="form-hint">The master's boundary, rendered into its identity on every start. Shipped baseline rules need an extra confirm to edit, disable, or delete; Restore defaults always recovers them.</div>
+      <div class="session-rules-list" id="masterRulesList" aria-live="polite"></div>
+      <div class="session-rules-add">
+        <textarea class="rules-editor" id="masterRuleInput" rows="2" placeholder="Add a Hard rule…" spellcheck="false"></textarea>
+        <button class="btn btn-small btn-primary" data-action="master-add-rule">Add</button>
+      </div>
+      <button class="btn btn-small" data-action="master-restore-defaults">Restore defaults</button>
+      <div id="masterRulesStatus" class="rules-status hidden" role="status"></div>
+    </div>`;
+}
+
+/** Fetch and render the master Hard rules list. */
+async function loadMasterRules() {
+  const data = await api('/api/session-rules?kind=master');
+  renderMasterRulesList(data ? data.rules || [] : []);
+}
+
+/**
+ * Render the Hard-rules list, newest last (creation order — the order they
+ * render in the identity). System-authored rows carry a baseline badge.
+ * @param {object[]} rules
+ */
+function renderMasterRulesList(rules) {
+  const list = document.getElementById('masterRulesList');
+  if (!list) return;
+  if (rules.length === 0) {
+    list.innerHTML = '<p class="session-rules-empty">No rules — the shipped baseline applies until rules exist.</p>';
+    return;
+  }
+  const ordered = rules.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id - b.id));
+  list.innerHTML = ordered.map((rule) => `
+    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
+      <label class="session-rule-toggle">
+        <input type="checkbox" data-action="master-toggle-rule" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+      </label>
+      <span class="session-rule-content">${rule.createdBy === 'system' ? '<span class="session-rule-badge" title="Shipped baseline rule">baseline</span> ' : ''}${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : ''}${esc(rule.content)}</span>
+      <button class="btn btn-small session-rule-history" data-action="master-rule-history" data-rule-id="${rule.id}" aria-label="Version history" title="Version history">&#8635;</button>
+      <button class="btn btn-small btn-danger session-rule-delete" data-action="master-delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
+    </div>
+    <div class="master-rule-history hidden" id="masterRuleHistory-${rule.id}"></div>
+  `).join('');
+}
+
+/**
+ * Find a rendered rule's record from the last fetch (for system-rule
+ * confirmation). Re-fetches to avoid stale provenance.
+ * @param {number} id - Rule id
+ * @returns {Promise<object|null>}
+ */
+async function _getMasterRule(id) {
+  const data = await api('/api/session-rules?kind=master');
+  return data && data.rules ? data.rules.find((r) => r.id === id) || null : null;
+}
+
+/** Add a Hard rule from the textarea. */
+async function addMasterRule() {
+  const input = document.getElementById('masterRuleInput');
+  const content = input ? input.value.trim() : '';
+  if (!content) return;
+  const data = await apiMutate('/api/session-rules', 'POST', { content, kind: 'master' });
+  if (data) {
+    if (input) input.value = '';
+    _setMasterRulesStatus('Added', true);
+    loadMasterRules();
+  } else {
+    _setMasterRulesStatus('Add failed', false);
+  }
+}
+
+/**
+ * Toggle a Hard rule. Disabling a shipped baseline rule is an eyes-open
+ * action: the server refuses without the confirm flag, the UI asks first.
+ * @param {number} id - Rule id
+ * @param {boolean} enabled - New state
+ */
+async function toggleMasterRule(id, enabled) {
+  const body = { enabled };
+  if (!enabled) {
+    const rule = await _getMasterRule(id);
+    if (rule && rule.createdBy === 'system') {
+      if (!confirm('This is a shipped boundary rule. Disable it anyway? Restore defaults can always bring it back.')) {
+        loadMasterRules();
+        return;
+      }
+      body.confirmBaselineEdit = true;
+    }
+  }
+  const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', body);
+  if (!data) { _setMasterRulesStatus('Update failed', false); }
+  loadMasterRules();
+}
+
+/**
+ * Delete a Hard rule (eyes-open confirm for shipped baseline rules — the
+ * server refuses without ?confirm=true).
+ * @param {number} id - Rule id
+ */
+async function deleteMasterRule(id) {
+  const rule = await _getMasterRule(id);
+  const isBaseline = rule && rule.createdBy === 'system';
+  const msg = isBaseline
+    ? 'This is a shipped boundary rule. Delete it anyway? Restore defaults can always bring it back.'
+    : 'Delete this Hard rule?';
+  if (!confirm(msg)) return;
+  const url = `/api/session-rules/${id}${isBaseline ? '?confirm=true' : ''}`;
+  const data = await apiMutate(url, 'DELETE', {});
+  if (data) _setMasterRulesStatus('Deleted', true);
+  else _setMasterRulesStatus('Delete failed', false);
+  loadMasterRules();
+}
+
+/** Replace all Hard rules with the shipped baseline. */
+async function restoreMasterDefaults() {
+  if (!confirm('Replace ALL Hard rules with the shipped baseline? Version history is preserved.')) return;
+  const data = await apiMutate('/api/master/rules/restore-defaults', 'POST', {});
+  if (data) _setMasterRulesStatus('Baseline restored', true);
+  else _setMasterRulesStatus('Restore failed', false);
+  loadMasterRules();
+}
+
+/**
+ * Toggle a rule's version-history panel: fetch versions and render each with
+ * a Restore button (rollback records its own history entry).
+ * @param {number} id - Rule id
+ */
+async function toggleMasterRuleHistory(id) {
+  const panel = document.getElementById(`masterRuleHistory-${id}`);
+  if (!panel) return;
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  const data = await api(`/api/session-rules/${id}/versions`);
+  const versions = data ? data.versions || [] : [];
+  panel.innerHTML = versions.length === 0
+    ? '<p class="session-rules-empty">No history.</p>'
+    : versions.map((v) => `
+      <div class="master-rule-version">
+        <span class="master-rule-version-meta">v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)} · ${esc(v.createdAt)}${v.enabled ? '' : ' · disabled'}</span>
+        <span class="master-rule-version-content">${esc(v.content)}</span>
+        <button class="btn btn-small" data-action="master-restore-version" data-rule-id="${id}" data-version-no="${v.versionNo}">Restore</button>
+      </div>`).join('');
+  panel.classList.remove('hidden');
+}
+
+/**
+ * Roll a rule back to a prior version. Restoring a shipped baseline rule to
+ * different/disabled content is a weakening mutation like edit/disable, so it
+ * carries the same eyes-open confirm (the server refuses it without the flag).
+ * @param {number} id - Rule id
+ * @param {number} versionNo - Target version
+ */
+async function restoreMasterRuleVersion(id, versionNo) {
+  const body = { versionNo };
+  const rule = await _getMasterRule(id);
+  if (rule && rule.createdBy === 'system') {
+    if (!confirm(`Restore this shipped boundary rule to v${versionNo}? If the version differs from the current text, this changes the boundary.`)) return;
+    body.confirmBaselineEdit = true;
+  }
+  const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', body);
+  if (data) _setMasterRulesStatus(`Restored v${versionNo}`, true);
+  else _setMasterRulesStatus('Restore failed', false);
+  loadMasterRules();
+}
+
+/**
+ * Delegated click/change handler for the master settings body.
+ * @param {Event} e
+ */
+function handleMasterSettingsEvent(e) {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.getAttribute('data-action');
+  const id = Number(target.getAttribute('data-rule-id'));
+  if (action === 'master-add-rule' && e.type === 'click') addMasterRule();
+  else if (action === 'master-toggle-rule' && e.type === 'change') toggleMasterRule(id, target.checked);
+  else if (action === 'master-delete-rule' && e.type === 'click') deleteMasterRule(id);
+  else if (action === 'master-rule-history' && e.type === 'click') toggleMasterRuleHistory(id);
+  else if (action === 'master-restore-defaults' && e.type === 'click') restoreMasterDefaults();
+  else if (action === 'master-restore-version' && e.type === 'click') restoreMasterRuleVersion(id, Number(target.getAttribute('data-version-no')));
+}
+
+/** Persist the settings form via PATCH /api/config { master }. */
+async function saveMasterSettings() {
+  const checked = document.querySelector('input[name="masterAccessLevel"]:checked');
+  const engineSel = document.getElementById('masterEngineSelect');
+  const scopeSel = document.getElementById('masterScopeSelect');
+  const autoStartEl = document.getElementById('masterAutoStart');
+  const masterPatch = {
+    accessLevel: checked ? checked.value : 'read-only',
+    engine: engineSel && engineSel.value ? engineSel.value : null,
+    scope: scopeSel && scopeSel.value ? { type: 'group', groupId: scopeSel.value } : 'all',
+    autoStart: !!(autoStartEl && autoStartEl.checked)
+  };
+  const data = await apiMutate('/api/config', 'PATCH', { master: masterPatch });
+  if (data) {
+    _setMasterRulesStatus('Settings saved — engine/scope apply on next master start', true);
+  } else {
+    _setMasterRulesStatus(api.lastError || 'Save failed', false);
+  }
+}
+
+/** Close the master settings modal. */
+function closeMasterSettings() {
+  document.getElementById('masterSettingsModal').classList.remove('open');
+}
+
+/**
+ * Transient status line in the master settings modal.
+ * @param {string} text
+ * @param {boolean} ok
+ */
+function _setMasterRulesStatus(text, ok) {
+  _setRulesStatus('masterRulesStatus', text, ok);
+}
+
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
 $('masterToggle').addEventListener('click', toggleMaster);
 $('masterRetryBtn').addEventListener('click', ensureMasterAttached);
+$('masterSettingsBtn').addEventListener('click', openMasterSettings);
+$('masterSettingsCloseBtn').addEventListener('click', closeMasterSettings);
+$('masterSettingsSaveBtn').addEventListener('click', saveMasterSettings);
+$('masterSettingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMasterSettings(); });
+$('masterSettingsBody').addEventListener('click', handleMasterSettingsEvent);
+$('masterSettingsBody').addEventListener('change', handleMasterSettingsEvent);
 refreshMasterDot();
 $('portsToggle').addEventListener('click', togglePorts);
 $('openclawToggle').addEventListener('click', toggleOpenclaw);

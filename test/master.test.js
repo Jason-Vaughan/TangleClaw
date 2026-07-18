@@ -179,6 +179,19 @@ describe('ensureMasterSession', () => {
     assert.match(r2.error, /tmux error: boom/);
   });
 
+  it('server boot honors master.autoStart (structural pin — boot code is not unit-launchable)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(src, /master\.masterSettings\(config\)\.autoStart/,
+      'server startup must consult the autoStart setting');
+    // "Never fatal" needs a real catch: ensureMasterSession types tmux/engine
+    // failures into result.error but THROWS on fs faults — an uncaught throw
+    // here is self-locking (autoStart is only disablable via the crashed
+    // server's own API).
+    const block = src.slice(src.indexOf('Project Master auto-start'), src.indexOf('Master auto-start failed'));
+    assert.match(block, /try \{/,
+      'the auto-start block must catch throws, not just typed errors');
+  });
+
   it('never records a sessions-table row — the master is not a project session', () => {
     // Structural guard (the TB-3 no-HTTP-client pattern): the module must not
     // touch the sessions store at all — its only lib/sessions dependency is
@@ -196,6 +209,291 @@ describe('getMasterStatus', () => {
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }) }).exists, true);
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: false }) }).exists, false);
     assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux() }).tmuxSession, 'tangleclaw-master');
+  });
+
+  it('carries the effective settings for the panel/settings UI', () => {
+    const s = master.getMasterStatus({ tmuxLib: fakeTmux() }).settings;
+    assert.equal(s.accessLevel, 'read-only');
+    assert.deepEqual(s.accessLevels, ['read-only', 'suggest', 'write']);
+    assert.deepEqual(s.enabledAccessLevels, ['read-only']);
+    assert.equal(s.engine, null);
+    assert.equal(s.resolvedEngine, 'claude');
+    assert.equal(s.scope, 'all');
+    assert.equal(s.autoStart, false);
+    assert.equal(s.enforcement, 'structural');
+  });
+});
+
+/** Remove every master rule row (store-level delete has no confirm gate). */
+function clearMasterRules() {
+  for (const rule of store.sessionRules.list({ kind: 'master' })) {
+    store.sessionRules.delete(rule.id);
+  }
+}
+
+describe('masterSettings normalization', () => {
+  it('applies defaults for a missing/partial master block (shallow-merge safety)', () => {
+    assert.deepEqual(master.masterSettings({}), { accessLevel: 'read-only', engine: null, scope: 'all', autoStart: false });
+    const partial = master.masterSettings({ master: { autoStart: true } });
+    assert.equal(partial.autoStart, true);
+    assert.equal(partial.accessLevel, 'read-only');
+    assert.equal(partial.engine, null);
+  });
+
+  it('rejects out-of-enum access levels back to read-only', () => {
+    assert.equal(master.masterSettings({ master: { accessLevel: 'god-mode' } }).accessLevel, 'read-only');
+  });
+});
+
+describe('master Hard rules — seeding, fail-safe, restore', () => {
+  beforeEach(clearMasterRules);
+
+  it('seeds the shipped baseline once, idempotently, as system rows', () => {
+    assert.equal(master.seedBaselineMasterRules(), master.MASTER_BASELINE_RULES.length);
+    assert.equal(master.seedBaselineMasterRules(), 0, 'second call must not duplicate');
+    const rules = store.sessionRules.list({ kind: 'master' });
+    assert.equal(rules.length, master.MASTER_BASELINE_RULES.length);
+    for (const rule of rules) {
+      assert.equal(rule.createdBy, 'system');
+      assert.equal(rule.projectId, null);
+    }
+  });
+
+  it('does not re-seed after the operator deleted individual rules (their choice sticks)', () => {
+    master.seedBaselineMasterRules();
+    const rules = store.sessionRules.list({ kind: 'master' });
+    store.sessionRules.delete(rules[0].id);
+    assert.equal(master.seedBaselineMasterRules(), 0);
+    assert.equal(store.sessionRules.list({ kind: 'master' }).length, rules.length - 1);
+  });
+
+  it('restoreDefaultMasterRules replaces custom rules with the baseline, preserving history', () => {
+    master.seedBaselineMasterRules();
+    const custom = store.sessionRules.create({ content: 'my custom boundary', kind: 'master' });
+    const restored = master.restoreDefaultMasterRules();
+    assert.equal(restored.length, master.MASTER_BASELINE_RULES.length);
+    assert.ok(restored.every((r) => r.createdBy === 'system'));
+    assert.ok(!restored.some((r) => r.content === 'my custom boundary'));
+    // History outlives the deleted rule (audit) — the delete op is recorded.
+    const history = store.sessionRules.listVersions(custom.id);
+    assert.ok(history.length >= 2);
+    assert.equal(history[0].op, 'delete');
+  });
+
+  it('buildMasterClaudeMd renders live rules, and falls back to the baseline at zero enabled rules', () => {
+    const withRules = master.buildMasterClaudeMd({ serverPort: 3101 }, {
+      rules: [{ content: 'Custom rule one.' }, { content: 'Custom rule two.' }]
+    });
+    assert.match(withRules, /- Custom rule one\./);
+    assert.match(withRules, /- Custom rule two\./);
+    assert.doesNotMatch(withRules, /Use only GET endpoints/, 'custom rules REPLACE the baseline');
+
+    // Zero enabled rules → the boundary cannot be emptied: baseline renders.
+    const failSafe = master.buildMasterClaudeMd({ serverPort: 3101 }, { rules: [] });
+    assert.match(failSafe, /Use only GET endpoints/);
+    assert.match(failSafe, /Never edit files outside this directory/);
+  });
+});
+
+describe('buildMasterClaudeMd — scope and memory sections', () => {
+  it('renders the all-projects scope by default, with the fallback warning when present', () => {
+    const md = master.buildMasterClaudeMd({ serverPort: 3101 });
+    assert.match(md, /## Scope/);
+    assert.match(md, /All projects on this TangleClaw instance are in scope\./);
+    const warned = master.buildMasterClaudeMd({ serverPort: 3101 }, {
+      scope: { kind: 'all', warning: 'The configured scope group no longer exists; scope fell back to all projects.' }
+    });
+    assert.match(warned, /scope fell back to all projects/);
+  });
+
+  it('renders group scope with the member project list and the honest not-a-boundary line', () => {
+    const md = master.buildMasterClaudeMd({ serverPort: 3101 }, {
+      scope: { kind: 'group', groupName: 'backend', projects: [{ name: 'api-server' }, { name: 'worker' }] }
+    });
+    assert.match(md, /scoped to the \*\*backend\*\* project group/);
+    assert.match(md, /- api-server/);
+    assert.match(md, /- worker/);
+    assert.match(md, /not a security boundary/);
+  });
+
+  it('describes the memory carve-out: TC-refreshed vs master-maintained files', () => {
+    const md = master.buildMasterClaudeMd({ serverPort: 3101 });
+    assert.match(md, /## Memory/);
+    assert.match(md, /memory\/FLEET\.md/);
+    assert.match(md, /memory\/CHANGELOG\.md/);
+    assert.match(md, /never edit them/);
+  });
+});
+
+describe('_resolveScope', () => {
+  it('falls back to all-projects (with warning) when the configured group is gone', () => {
+    const resolved = master._resolveScope({ type: 'group', groupId: 'no-such-group' });
+    assert.equal(resolved.kind, 'all');
+    assert.match(resolved.warning, /no longer exists/);
+  });
+
+  it('resolves a real group to its name and member projects', () => {
+    const p = store.projects.create({ name: 'scope-proj', path: '/tmp/scope-proj' });
+    const g = store.projectGroups.create({ name: 'scope-group' });
+    store.projectGroups.addMember(g.id, p.id);
+    const resolved = master._resolveScope({ type: 'group', groupId: g.id });
+    assert.equal(resolved.kind, 'group');
+    assert.equal(resolved.groupName, 'scope-group');
+    assert.deepEqual(resolved.projects.map((x) => x.name), ['scope-proj']);
+  });
+});
+
+describe('master memory scaffold', () => {
+  it('refreshes TC-maintained files and seeds master-maintained files exactly once', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-mem-'));
+    try {
+      master._refreshMasterMemory(home);
+      const memDir = path.join(home, 'memory');
+      for (const f of ['FLEET.md', 'HOWTO.md', 'MEMORY.md', 'CHANGELOG.md', 'NOTES.md']) {
+        assert.ok(fs.existsSync(path.join(memDir, f)), `${f} must exist`);
+      }
+      // Master-maintained files survive a second refresh untouched…
+      fs.writeFileSync(path.join(memDir, 'NOTES.md'), 'master wrote this');
+      fs.writeFileSync(path.join(memDir, 'CHANGELOG.md'), 'activity entry');
+      // …while TC-maintained files are overwritten (hand-edits are futile).
+      fs.writeFileSync(path.join(memDir, 'FLEET.md'), 'stale hand-edit');
+      master._refreshMasterMemory(home);
+      assert.equal(fs.readFileSync(path.join(memDir, 'NOTES.md'), 'utf8'), 'master wrote this');
+      assert.equal(fs.readFileSync(path.join(memDir, 'CHANGELOG.md'), 'utf8'), 'activity entry');
+      assert.match(fs.readFileSync(path.join(memDir, 'FLEET.md'), 'utf8'), /Generated by TangleClaw/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('lists registered projects (including archived, labeled) in the fleet map', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-fleet-'));
+    try {
+      const p = store.projects.create({ name: 'fleet-proj', path: '/tmp/fleet-proj', engineId: 'claude' });
+      store.projects.archive(p.id);
+      master._refreshMasterMemory(home);
+      const fleet = fs.readFileSync(path.join(home, 'memory', 'FLEET.md'), 'utf8');
+      assert.match(fleet, /\*\*fleet-proj\*\*/);
+      assert.match(fleet, /ARCHIVED/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('read-only guardrails (structural enforcement)', () => {
+  const { spawnSync } = require('node:child_process');
+
+  /** Run the generated guard script with a tool-input payload; returns
+   *  { denied, reason } parsed from its stdout contract. */
+  function runGuard(home, payload) {
+    const script = path.join(home, '.claude', 'hooks', 'guard-writes.js');
+    const res = spawnSync(process.execPath, [script], {
+      input: typeof payload === 'string' ? payload : JSON.stringify(payload),
+      encoding: 'utf8'
+    });
+    assert.equal(res.status, 0, `guard must always exit 0 (got ${res.status}: ${res.stderr})`);
+    if (!res.stdout) return { denied: false };
+    const out = JSON.parse(res.stdout);
+    return {
+      denied: out.hookSpecificOutput.permissionDecision === 'deny',
+      reason: out.hookSpecificOutput.permissionDecisionReason
+    };
+  }
+
+  it('writes settings.json (memory allow rules + PreToolUse matcher) and the guard script', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-guard-'));
+    try {
+      master._writeMasterGuardrails(home);
+      const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+      assert.deepEqual(settings.permissions.allow, ['Edit(./memory/**)', 'Write(./memory/**)']);
+      assert.equal(settings.hooks.PreToolUse[0].matcher, 'Edit|Write|NotebookEdit');
+      assert.match(settings.hooks.PreToolUse[0].hooks[0].command, /guard-writes\.js/);
+      assert.ok(fs.existsSync(path.join(home, '.claude', 'hooks', 'guard-writes.js')));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('the guard allows writes inside memory/ and hard-denies everywhere else — including .claude/ itself', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-guard-'));
+    try {
+      master._writeMasterGuardrails(home);
+      assert.equal(runGuard(home, { tool_input: { file_path: path.join(home, 'memory', 'NOTES.md') } }).denied, false);
+      assert.equal(runGuard(home, { tool_input: { file_path: 'memory/nested/deep.md' } }).denied, false, 'relative paths resolve against the home');
+      assert.equal(runGuard(home, { tool_input: { file_path: path.join(home, 'CLAUDE.md') } }).denied, true);
+      assert.equal(runGuard(home, { tool_input: { file_path: '/etc/hosts' } }).denied, true);
+      // The guard protects its own config — the master cannot edit away its guardrails.
+      assert.equal(runGuard(home, { tool_input: { file_path: path.join(home, '.claude', 'settings.json') } }).denied, true);
+      // Escape attempts via .. resolve outside and deny.
+      assert.equal(runGuard(home, { tool_input: { file_path: 'memory/../CLAUDE.md' } }).denied, true);
+      // A sibling like memory-evil/ must not prefix-match the carve-out.
+      assert.equal(runGuard(home, { tool_input: { file_path: path.join(home, 'memory-evil', 'x.md') } }).denied, true);
+      // NotebookEdit carries notebook_path.
+      assert.equal(runGuard(home, { tool_input: { notebook_path: path.join(home, 'memory', 'n.ipynb') } }).denied, false);
+      assert.equal(runGuard(home, { tool_input: { notebook_path: path.join(home, 'n.ipynb') } }).denied, true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('the guard denies by default on malformed or pathless input (harness fails open on crashes — the guard must not crash)', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-guard-'));
+    try {
+      master._writeMasterGuardrails(home);
+      assert.equal(runGuard(home, 'not json at all').denied, true);
+      assert.equal(runGuard(home, { tool_input: {} }).denied, true);
+      assert.equal(runGuard(home, {}).denied, true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ensureMasterSession — settings integration', () => {
+  let home;
+
+  beforeEach(() => {
+    clearMasterRules();
+    home = path.join(tmpDir, `master-home-s-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  });
+
+  it('seeds the baseline, renders it into CLAUDE.md, scaffolds memory, and writes guardrails (claude engine)', () => {
+    const r = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+    assert.equal(r.created, true);
+    assert.equal(r.engine, 'claude');
+    assert.equal(r.accessLevel, 'read-only');
+    assert.equal(r.enforcement, 'structural');
+    assert.equal(store.sessionRules.list({ kind: 'master' }).length, master.MASTER_BASELINE_RULES.length);
+    assert.match(fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8'), /Use only GET endpoints/);
+    assert.ok(fs.existsSync(path.join(home, 'memory', 'FLEET.md')));
+    assert.ok(fs.existsSync(path.join(home, '.claude', 'settings.json')));
+  });
+
+  it('renders edited rules into the identity on the next ensure', () => {
+    master.seedBaselineMasterRules();
+    store.sessionRules.create({ content: 'Session-rules-backed custom boundary.', kind: 'master' });
+    master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: true }), enginesLib: availableEngines });
+    assert.match(fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8'), /Session-rules-backed custom boundary\./);
+  });
+
+  it('honors master.engine over defaultEngine, and reports instructional enforcement off-claude', () => {
+    const config = store.config.load();
+    const saved = config.master;
+    try {
+      // A non-claude engine id that has no profile: the ensure must resolve it
+      // (proving master.engine wins) and skip the claude-only guardrails.
+      config.master = { accessLevel: 'read-only', engine: 'ghost-engine', scope: 'all', autoStart: false };
+      store.config.save(config);
+      const r = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+      assert.equal(r.engine, 'ghost-engine');
+      assert.equal(r.enforcement, 'instructional');
+      assert.match(r.error, /"ghost-engine" not found/);
+      assert.ok(!fs.existsSync(path.join(home, '.claude')), 'claude-only guardrails must not be written for other engines');
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
   });
 });
 

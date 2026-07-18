@@ -26,6 +26,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Feature — Master settings surface v1 (Chunk 07)
+
+<!-- prawduct: type=feature | chunks=07 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** Phase A Chunk 07 (spec ratified in-session 2026-07-18, both assumptions accepted) —
+the Project Master had a hardcoded prose-only read-only boundary, no settings surface, and
+no continuity; the D1b version-history machinery lost its only UI when Chunk 06 deleted the
+global panel.
+**What:** (1) `master` settings object in global config (accessLevel/engine/scope/autoStart)
+via `PATCH /api/config` merge-then-validate; suggest/write tiers rejected until each ships
+real enforcement. (2) Hard rules → `kind='master'` `session_rules` rows (projectId
+forbidden — singleton exception), seeded from `MASTER_BASELINE_RULES`, fail-safe baseline
+render at zero enabled rules, `POST /api/master/rules/restore-defaults`, eyes-open
+`CONFIRM_REQUIRED` gate on weakening system rows (PUT/DELETE/restore — restore gate added
+after Critic R-2 caught the asymmetry). (3) Structural enforcement on claude: per-ensure
+`.claude/settings.json` (allow writes only under `memory/`) + default-deny PreToolUse
+guard hook, behaviorally tested. (4) Master memory scaffold `~/.tangleclaw/master/memory/`
+(TC-refreshed FLEET/HOWTO; master-owned MEMORY/CHANGELOG/NOTES). (5) Gear → Master
+Settings modal with rules editor + per-rule version history/restore. Boot auto-start
+try/catch-wrapped. Suite 2266/0 top-level (+~50 tests incl. guard-script execution).
+Critic cumulative 0/6/7 → fixes → verify-resolutions 5/6 resolved (R-5 residue = backlog
+SR-6D3W; cosmetic gate ordering = SR-4N6C). PR reviewer next per create flow.
+
 ## 2026-07-18: Feature — settings/rules cleanup + wrap-rules bridge + launch-mode default (Chunk 06)
 
 <!-- prawduct: type=feature | chunks=06 | scope=prawduct-v2-sunset | status=shipped -->

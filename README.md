@@ -120,7 +120,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Dashboard
 - **Project management** — create, attach, archive, filter, tag, and delete projects from a central landing page
-- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer ([ADR 0008](docs/adr/0008-project-master-session-model.md))
+- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, scope, auto-start, editable versioned Hard rules) and a structurally enforced read-only boundary on the Claude engine ([ADR 0008](docs/adr/0008-project-master-session-model.md))
 - **Setup wizard** — first-run guided setup scans for existing projects, detects engines, configures preferences, and walks through HTTPS setup
 - **Universal project version detection** — every project's version resolves through a layered chain (`.tangleclaw/project-version.txt` → `CHANGELOG.md` → `version.json` → `package.json`) and shows on the project card and session banner
 - **One-click self-update** — the update pill's **Update & restart** button fetches the latest release tag, checks it out with fail-closed guards, and restarts the server

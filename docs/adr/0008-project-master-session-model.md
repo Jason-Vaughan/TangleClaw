@@ -1,6 +1,15 @@
 # ADR 0008: Project Master — Harness-Session Singleton with an Instructional Read-Only Boundary
 
 **Status:** Accepted (2026-07-03, chunk G / #331). Shipped across three slices: #440 (`lib/master.js` + API), #442 (landing pane), slice 3 (in-session drawer + this ADR).
+**Amended 2026-07-18 (Master settings surface v1):** the filesystem half of the boundary is now
+**structural** on the Claude engine — every ensure regenerates `.claude/settings.json` plus a
+default-deny PreToolUse guard hook in the master home that hard-blocks Edit/Write/NotebookEdit
+outside the `memory/` carve-out (the master's durable memory, the sole writable path; the guard
+covers `.claude/` itself so it cannot be edited away). The Hard rules moved from hardcoded prose
+into editable, versioned `session_rules` rows (kind `master`) with a shipped-baseline restore
+path. The **API half is unchanged**: mutation endpoints stay open on localhost, GET-only remains
+instructional, and the enforced token scope remains a G2+ concern. See "The read-only boundary"
+below for the original v1 posture this amends.
 **Source issue:** #331 — Project Master. **Ratified design:** 2026-06-16 interview + D7 (reach-from-anywhere), operator decisions 2026-07-01 (home dir, lifecycle).
 **Builds on:** ADR 0005 (AUTH-4 service token — the master's gated-surface credential). **Successor work:** G2 (post-4.0) — actions/relay via Switchboard #333, enforced read-only token scope.
 

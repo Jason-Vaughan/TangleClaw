@@ -402,6 +402,15 @@ route('POST', '/api/master/ensure', (_req, res) => {
   jsonResponse(res, 200, result);
 });
 
+// POST /api/master/rules/restore-defaults — replace every master Hard rule
+// with the shipped baseline (the recovery path if an edit ever weakened the
+// boundary). History survives in session_rule_versions. A live master picks
+// the change up on the next ensure (identity regeneration).
+route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
+  const rules = master.restoreDefaultMasterRules();
+  jsonResponse(res, 200, { ok: true, rules });
+});
+
 // POST /api/server/restart — kick the TC server via the platform's
 // process manager (#235). 202 Accepted is sent BEFORE the exec so the
 // browser sees a clean response, then ~80ms later the launchctl
@@ -499,6 +508,56 @@ route('GET', '/api/config', (_req, res) => {
   jsonResponse(res, 200, redactConfigSecrets(config));
 });
 
+/**
+ * Validate a PATCHed `master` settings object (the Project Master surface).
+ * Merges the patch onto the current effective settings first, so a partial
+ * object never wipes fields (the config-file merge is shallow), then
+ * validates the full shape. Access levels beyond the enabled set are rejected
+ * with an honest reason — a tier ships only WITH its structural enforcement,
+ * never as a prose-only boundary.
+ * @param {*} patch - The PATCH body's `master` value
+ * @param {object} config - Current full config
+ * @returns {{value?: object, error?: string}}
+ */
+function validateMasterPatch(patch, config) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return { error: 'master must be an object' };
+  }
+  const known = ['accessLevel', 'engine', 'scope', 'autoStart'];
+  for (const key of Object.keys(patch)) {
+    if (!known.includes(key)) return { error: `master.${key} is not a settable field` };
+  }
+  const merged = { ...master.masterSettings(config), ...patch };
+  if (!master.MASTER_ACCESS_LEVELS.includes(merged.accessLevel)) {
+    return { error: `master.accessLevel must be one of: ${master.MASTER_ACCESS_LEVELS.join(', ')}` };
+  }
+  if (!master.MASTER_ENABLED_ACCESS_LEVELS.includes(merged.accessLevel)) {
+    return { error: `master.accessLevel "${merged.accessLevel}" is not available yet — it ships only with real structural enforcement (currently enabled: ${master.MASTER_ENABLED_ACCESS_LEVELS.join(', ')})` };
+  }
+  if (merged.engine !== null) {
+    if (typeof merged.engine !== 'string' || !merged.engine) {
+      return { error: 'master.engine must be an engine id string or null' };
+    }
+    if (!store.engines.get(merged.engine)) {
+      return { error: `master.engine "${merged.engine}" is not a configured engine` };
+    }
+  }
+  if (merged.scope !== 'all') {
+    const s = merged.scope;
+    if (!s || typeof s !== 'object' || s.type !== 'group' || !s.groupId || typeof s.groupId !== 'string') {
+      return { error: "master.scope must be 'all' or { type: 'group', groupId }" };
+    }
+    if (!store.projectGroups.get(s.groupId)) {
+      return { error: `master.scope group "${s.groupId}" does not exist` };
+    }
+    merged.scope = { type: 'group', groupId: s.groupId };
+  }
+  if (typeof merged.autoStart !== 'boolean') {
+    return { error: 'master.autoStart must be a boolean' };
+  }
+  return { value: { accessLevel: merged.accessLevel, engine: merged.engine, scope: merged.scope, autoStart: merged.autoStart } };
+}
+
 // PATCH /api/config
 route('PATCH', '/api/config', async (_req, res, _params, body) => {
   if (!body || typeof body !== 'object') {
@@ -520,7 +579,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'stripAiCoauthors', 'ingressMode', 'publicDomain',
     'caddyHttpsPort', 'caddyHttpPort',
     'authEnabled', 'basicAuthUser', 'basicAuthHash',
-    'serviceTokenEnabled', 'wrapDisabled'
+    'serviceTokenEnabled', 'wrapDisabled', 'master'
   ];
 
   const validThemes = ['dark', 'light', 'high-contrast'];
@@ -531,6 +590,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
   for (const [key, value] of Object.entries(body)) {
     if (!allowedFields.includes(key)) continue;
+
+    // Project Master settings — merge-then-validate as one object (partial
+    // patches never wipe fields), stored whole. Handled before the generic
+    // scalar validations because the normalized value replaces the raw one.
+    if (key === 'master') {
+      const check = validateMasterPatch(value, config);
+      if (check.error) return errorResponse(res, 400, check.error, 'BAD_REQUEST');
+      config.master = check.value;
+      continue;
+    }
 
     // Validate specific fields
     if ((key === 'serverPort' || key === 'ttydPort') && typeof value !== 'number') {
@@ -1119,10 +1188,11 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
   try {
     const rule = store.sessionRules.create({
       content: body.content,
-      // Required — store throws BAD_REQUEST when absent (global tier retired).
+      // Required for every kind except 'master' (singleton-scoped, projectId
+      // forbidden) — the store enforces both directions with BAD_REQUEST.
       projectId: body.projectId,
       createdBy: body.createdBy || 'operator',
-      // CC-6 (#381): 'startup' (default) | 'wrap'. Invalid → store throws BAD_REQUEST.
+      // CC-6 (#381): 'startup' (default) | 'wrap' | 'master'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
       criticGate: body.criticGate
@@ -1136,13 +1206,35 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
   }
 }, { maxBodySize: 256 * 1024 });
 
-// PUT /api/session-rules/:id — update { content?, enabled? }
+/**
+ * Eyes-open gate for the Project Master's baseline Hard rules: weakening a
+ * `created_by='system'` master rule (edit, disable, delete) requires an
+ * explicit confirmation flag, mirroring the `confirmBypassHidden` launch-mode
+ * guard — the server enforces it, the UI merely surfaces the confirm. Restore
+ * defaults always recovers the shipped baseline regardless.
+ * @param {object|null} rule - The rule being mutated
+ * @param {boolean} confirmed - Whether the caller sent the confirm flag
+ * @returns {boolean} true when the mutation must be refused
+ */
+function refuseUnconfirmedBaselineEdit(rule, confirmed) {
+  return !!(rule && rule.kind === 'master' && rule.createdBy === 'system' && !confirmed);
+}
+
+// PUT /api/session-rules/:id — update { content?, enabled?, confirmBaselineEdit? }
 route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
   try {
-    const rule = store.sessionRules.update(Number(params.id), body);
+    const existing = store.sessionRules.get(Number(params.id));
+    const weakens = body.content !== undefined || body.enabled === false || body.enabled === 0;
+    if (weakens && refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
+      return errorResponse(res, 400,
+        'This is a shipped Master boundary rule — editing or disabling it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
+        'CONFIRM_REQUIRED');
+    }
+    const { confirmBaselineEdit, ...updates } = body;
+    const rule = store.sessionRules.update(Number(params.id), updates);
     jsonResponse(res, 200, rule);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -1155,9 +1247,17 @@ route('PUT', '/api/session-rules/:id', (_req, res, params, body) => {
   }
 }, { maxBodySize: 256 * 1024 });
 
-// DELETE /api/session-rules/:id
-route('DELETE', '/api/session-rules/:id', (_req, res, params) => {
+// DELETE /api/session-rules/:id — ?confirm=true required for shipped Master
+// baseline rules (see refuseUnconfirmedBaselineEdit)
+route('DELETE', '/api/session-rules/:id', (req, res, params) => {
   try {
+    const query = parseQuery(reqUrl(req).search);
+    const existing = store.sessionRules.get(Number(params.id));
+    if (refuseUnconfirmedBaselineEdit(existing, query.confirm === 'true')) {
+      return errorResponse(res, 400,
+        'This is a shipped Master boundary rule — deleting it requires ?confirm=true (Restore defaults always recovers the baseline)',
+        'CONFIRM_REQUIRED');
+    }
     store.sessionRules.delete(Number(params.id));
     jsonResponse(res, 200, { ok: true, id: Number(params.id) });
   } catch (err) {
@@ -1214,12 +1314,27 @@ route('GET', '/api/session-rules/:id/versions', (_req, res, params) => {
   jsonResponse(res, 200, { versions });
 });
 
-// POST /api/session-rules/:id/restore — roll back to a prior version
+// POST /api/session-rules/:id/restore — roll back to a prior version.
+// Restore is a mutation like PUT/DELETE, so shipped Master baseline rules take
+// the same eyes-open gate when the restore would weaken them (content change
+// or restoring a disabled snapshot) — the gate predicates must stay symmetric
+// across every path that can alter a rule, or the confirm is bypassable.
 route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
   if (!body || body.versionNo === undefined) {
     return errorResponse(res, 400, 'versionNo is required', 'BAD_REQUEST');
   }
   try {
+    const existing = store.sessionRules.get(Number(params.id));
+    if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
+      const target = store.sessionRules.listVersions(Number(params.id))
+        .find((v) => v.versionNo === Number(body.versionNo));
+      const weakens = !target || target.content !== existing.content || !target.enabled;
+      if (weakens) {
+        return errorResponse(res, 400,
+          'This is a shipped Master boundary rule — restoring a version that changes or disables it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
+          'CONFIRM_REQUIRED');
+      }
+    }
     // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
     const rule = store.sessionRules.restore(Number(params.id), Number(body.versionNo), { changedBy: body.changedBy, criticGate: body.criticGate });
     jsonResponse(res, 200, rule);
@@ -4364,6 +4479,25 @@ if (require.main === module) {
 
   // Start sidecar polling for active OpenClaw sessions
   sidecar.syncPolling();
+
+  // Project Master auto-start: launch the reserved master session at boot
+  // when the operator opted in (master.autoStart). Failure is logged, never
+  // fatal — the brain icon's on-demand ensure remains the fallback path.
+  // ensureMasterSession types tmux/engine failures into result.error but can
+  // still THROW on filesystem faults (home/memory/guardrail writes), so the
+  // never-fatal claim needs the catch, matching the neighboring boot blocks.
+  if (master.masterSettings(config).autoStart) {
+    try {
+      const result = master.ensureMasterSession();
+      if (result.error) {
+        log.warn('Master auto-start failed', { error: result.error });
+      } else {
+        log.info('Master auto-start', { created: result.created, engine: result.engine });
+      }
+    } catch (err) {
+      log.warn('Master auto-start failed', { error: err.message });
+    }
+  }
 
   // Run retention policy on startup (purge old eval data)
   try {
