@@ -38,9 +38,10 @@ stranded outer dir (not "9 repos"); the codextest settings claim was STALE (alre
 only the TC prime hook remains); and **CLITS** (unregistered repo) was a missed live carrier
 with active product-hook SessionStart/Stop wiring. **Decisions (operator):** write-mode =
 TC-direct sweep + scoped per-repo commits + push where clean; prawduct-test = full retirement.
-**What:** (1) Hook artifacts deleted in all 13 carriers — 10 scoped chore commits (WhitePapers,
+**What:** (1) Hook artifacts deleted in all 13 carriers — 9 scoped carrier commits (WhitePapers,
 Medusa+lib, TangleWeb+lib, JasonVaughanComPortfolio, Notse, RentalClaw-Project+lib, UCI, CLITS,
-TangleClaw-migrate-sandbox+lib, Kobold); 3 untracked-only carriers needed no commit (ScrapeGoat,
+TangleClaw-migrate-sandbox+lib) plus Kobold's separate orphan-CLAUDE.md commit (item 3) = 10
+commits total; 3 untracked-only carriers needed no commit (ScrapeGoat,
 ClawCode-x, codextest); pushed where the branch had no unrelated commits ahead (Medusa,
 TangleWeb, JasonVaughanComPortfolio); settings de-wired in the same commit as the hook delete
 (CLITS + sandbox settings.json were 100% V1-generated → removed whole; sandbox's also pointed
