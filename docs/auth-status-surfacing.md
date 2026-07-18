@@ -40,11 +40,13 @@ The original design claimed `configured-no-identity` could not false-positive be
 
 **Spoof direction is safe.** `X-Forwarded-For` is consulted only to *classify the diagnostic*, never for identity trust — `resolveRequestUser`'s config-gated spoof defense is unchanged. A direct client spoofing `X-Forwarded-For` can at most show *itself* a false amber chip; it gains no identity and no access. The residual fail-silent case — a proxied request arriving with `X-Forwarded-For` stripped — would suppress a real warning, but Caddy sets the header unconditionally, so that requires a deliberately misconfigured non-Caddy proxy, outside this design's ingress model (ADR 0003).
 
+**Trade-off accepted: the mid-cutover window goes quiet on loopback.** The original design noted that the window after flipping to `caddy` mode but before the cutover regenerates the Caddyfile landed in `configured-no-identity` ("configured but not live" — a useful nudge). In that window the only reachable path is direct loopback, which now classifies as `configured-bypassed` (silent) — by construction indistinguishable, from the request alone, from a deliberate loopback load against a healthy gate. The nudge isn't lost entirely: the API still reports the distinct `configured-bypassed` value, and any through-proxy load during a broken cutover still warns. Accepted as the cost of killing the standing false positive on an access path operators and AI sessions use routinely.
+
 ### Signal — `/api/server-info`
 
 Add an `authStatus` field (enum above) to the `GET /api/server-info` response, computed server-side from the loaded config + the same `resolveRequestUser(req.headers, config)` call the route already makes for `currentUser`. Pure derivation, single source of truth, unit-testable. Backward-compatible additive field; older clients ignore it.
 
-Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(headers, config)` or a `server-info` helper) so the four-state logic is tested independently of the route.
+Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(headers, config)` or a `server-info` helper) so the state logic is tested independently of the route.
 
 **Exposure note:** in direct mode `/api/server-info` is already reachable unauthenticated, and every endpoint already responds — so revealing `configured-inert` leaks nothing an attacker couldn't determine by probing. In caddy mode the endpoint is behind the gate. No new exposure.
 
