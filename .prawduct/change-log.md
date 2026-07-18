@@ -37,8 +37,8 @@ branch, and webui dead-end error deleted); `DEFAULT_PROJECT_CONFIG.wrapV2` remov
 on-disk keys ignored; litellm-smoketest's live `false` opt-out removed as a data op — its
 `minimal` methodology has a full `wrap_pipeline`, so nothing needed the legacy path);
 wrap-pipeline error message no longer advises the deleted opt-out; stale comments updated
-(`_triggerWrapV2` header, ai-content context, `public/session.js` confirmWrap, api-wrap-status
-test); ADR 0002 status line records the excision. **Scoping correction:** the backlog item's
+(`_triggerWrapV2` header, `public/session.js` confirmWrap, api-wrap-status test); ADR 0002
+status line records the excision. **Scoping correction:** the backlog item's
 "strip the `lib/skills.js` shim" sub-goal was based on a stale premise (and a phantom
 `synthesizeLegacyWrap` name) — `getWrapSkill`/`wrapShapeFromTemplate` are still live consumers'
 dependencies (pipeline response shaping, `autoCompleteWrap`, `loadSkills`, `eval-audit`), and
