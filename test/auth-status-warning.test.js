@@ -50,6 +50,13 @@ describe('AUTH-2K9D dashboard warning surface', () => {
     // Both warning texts name the concrete remediation.
     assert.match(landing, /run the Caddy cutover/i);
     assert.match(landing, /header_up X-Auth-User/);
+    // Exactly two states produce a warning: a direct-loopback load that never
+    // traversed the gate ('configured-bypassed') must stay silent — it was the
+    // AUTH-5N2J false-positive.
+    const mapperBody = landing.slice(landing.indexOf('function _authStatusWarning('));
+    const fnBody = mapperBody.slice(0, mapperBody.indexOf('\n}\n') + 2);
+    assert.equal((fnBody.match(/return '⚠/g) || []).length, 2);
+    assert.doesNotMatch(fnBody, /authStatus === 'configured-bypassed'/);
   });
 
   it('is state-driven: shows on a message, hides (clears) otherwise — no dismiss/timer', () => {

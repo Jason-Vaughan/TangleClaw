@@ -124,7 +124,9 @@ async function loadServerInfo() {
 
 /**
  * Human-readable warning for an auth config-vs-live mismatch (AUTH-2K9D), or null
- * for the healthy/expected states (`off`, `live`, or an older server that omits
+ * for the healthy/expected states (`off`, `live`, `configured-bypassed` — a
+ * direct-loopback load that never traversed the gate says nothing about gate
+ * health, so it deliberately renders no warning — or an older server that omits
  * `authStatus`). Text carries the meaning so the chip is not color-only (a11y).
  * @param {string|null|undefined} authStatus
  * @returns {string|null}

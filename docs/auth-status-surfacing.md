@@ -1,6 +1,6 @@
 # Auth status surfacing (AUTH-2K9D)
 
-**Status: built (2026-07-08). `/api/server-info.authStatus` + dashboard warning chip.**
+**Status: built (2026-07-08). `/api/server-info.authStatus` + dashboard warning chip. Amended 2026-07-17 (AUTH-5N2J): direct-loopback bypass split out of `configured-no-identity`.**
 
 Related: [ADR 0003 — Ingress model](adr/0003-ingress-model.md), [ADR 0004 — AUTH-2 basic_auth gate](adr/0004-auth-2-basic-auth-gate.md), `lib/auth-identity.js`, `lib/server-info.js`.
 
@@ -26,15 +26,27 @@ Derived from config `{authEnabled, ingressMode}` and the request-resolved `curre
 | `off` | `authEnabled` falsy | Auth not configured (expected) | none |
 | `live` | `authEnabled` && `ingressMode='caddy'` && `currentUser` present | Gate enforcing, identity flowing | existing 👤 chip |
 | `configured-inert` | `authEnabled` && `ingressMode !== 'caddy'` (i.e. direct or any non-caddy mode) | AUTH-2: config claims auth, no gate enforces it | ⚠ warning |
-| `configured-no-identity` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null | AUTH-3: gate up but no identity arriving (missing `header_up`, or request didn't traverse Caddy) | ⚠ warning |
+| `configured-no-identity` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && `x-forwarded-for` present | AUTH-3: request traversed Caddy but no identity arrived (missing `header_up`) | ⚠ warning |
+| `configured-bypassed` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && no `x-forwarded-for` | AUTH-5N2J: request hit TC's loopback bind directly without traversing Caddy — gate health unknowable from this request | none |
 
-The `configured-no-identity` state is not a false positive: in `caddy` mode TC binds `127.0.0.1`, so a browser reaching `/api/server-info` should traverse Caddy and carry `x-auth-user`. A `null` there means the identity forwarding is broken — exactly the state to flag. The brief window after flipping to `caddy` mode but before the cutover regenerates the Caddyfile also lands here, which is correct ("configured but not live").
+### The loopback-bypass split (AUTH-5N2J, 2026-07-17)
+
+The original design claimed `configured-no-identity` could not false-positive because "a browser reaching `/api/server-info` should traverse Caddy." That held for the intended remote access path but not for local access: TC's `127.0.0.1` bind in caddy mode still accepts direct connections from the machine itself (`localhost:3102` in a local browser, AI-session `curl` checks), and those legitimately carry no identity — the chip went amber against a perfectly healthy gate on every such load (surfaced during the AUTH-2K9D VRF, 2026-07-09).
+
+**Discriminator: proxy evidence, not remote address.** Caddy connects to TC from loopback exactly like a direct local client, so `req.socket.remoteAddress` cannot tell the two apart. What does distinguish them: Caddy's `reverse_proxy` sets `X-Forwarded-For` on every upstream request (Caddy 2.x default, all blocks in the live Caddyfile included), while a direct client sends none. So with no trusted identity:
+
+- `x-forwarded-for` present → the request traversed a proxy that failed to forward identity → **`configured-no-identity`** (the real AUTH-3 warning, preserved).
+- `x-forwarded-for` absent → the request never passed the gate → **`configured-bypassed`**, and the chip deliberately renders nothing: this request proves nothing about gate health, and the operator's actual access path (through Caddy) still reports truthfully.
+
+**Spoof direction is safe.** `X-Forwarded-For` is consulted only to *classify the diagnostic*, never for identity trust — `resolveRequestUser`'s config-gated spoof defense is unchanged. A direct client spoofing `X-Forwarded-For` can at most show *itself* a false amber chip; it gains no identity and no access. The residual fail-silent case — a proxied request arriving with `X-Forwarded-For` stripped — would suppress a real warning, but Caddy sets the header unconditionally, so that requires a deliberately misconfigured non-Caddy proxy, outside this design's ingress model (ADR 0003).
+
+**Trade-off accepted: the mid-cutover window goes quiet on loopback.** The original design noted that the window after flipping to `caddy` mode but before the cutover regenerates the Caddyfile landed in `configured-no-identity` ("configured but not live" — a useful nudge). In that window the only reachable path is direct loopback, which now classifies as `configured-bypassed` (silent) — by construction indistinguishable, from the request alone, from a deliberate loopback load against a healthy gate. The nudge isn't lost entirely: the API still reports the distinct `configured-bypassed` value, and any through-proxy load during a broken cutover still warns. Accepted as the cost of killing the standing false positive on an access path operators and AI sessions use routinely.
 
 ### Signal — `/api/server-info`
 
 Add an `authStatus` field (enum above) to the `GET /api/server-info` response, computed server-side from the loaded config + the same `resolveRequestUser(req.headers, config)` call the route already makes for `currentUser`. Pure derivation, single source of truth, unit-testable. Backward-compatible additive field; older clients ignore it.
 
-Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(headers, config)` or a `server-info` helper) so the four-state logic is tested independently of the route.
+Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(headers, config)` or a `server-info` helper) so the state logic is tested independently of the route.
 
 **Exposure note:** in direct mode `/api/server-info` is already reachable unauthenticated, and every endpoint already responds — so revealing `configured-inert` leaks nothing an attacker couldn't determine by probing. In caddy mode the endpoint is behind the gate. No new exposure.
 
