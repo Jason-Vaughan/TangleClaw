@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The TiLT methodology template is retired (Prawduct V1 Sunset, Phase A).** Operator-ratified 2026-07-17: tilt carried no distinct value over `minimal`, and non-Claude governance is now minimal + session rules. The bundled `data/templates/tilt/` is deleted, and a new `RETIRED_TEMPLATE_IDS` tombstone pass in `lib/store.js#_copyBundledTemplates` removes the synced runtime copy from `~/.tangleclaw/templates/` on boot (mirrors the `RETIRED_ENGINE_IDS` pattern from #457/#458 — without it, existing installs would keep surfacing tilt in methodology pickers forever). Fleet data ops executed alongside: the 2 tilt projects (Kobold, OnDeck-V2) and 4 non-Claude prawduct projects (JasonVaughanComPortfolio, Medusa, ClawCode-x, codextest) were flipped to `minimal` via `PATCH /api/projects/:name`, each archiving its old state dir (`.tilt.archived` / `.prawduct.archived`); their configs regenerate on next boot's project sync. Tests: retirement pins replace the tilt-assumes-bundled assertions (`GET /api/methodologies` excludes tilt + 404s on direct fetch; `.tilt` dirs no longer detect as a methodology; migration scan still surfaces a `.tilt`-marked dir as a project but maps no methodology; boot tombstone removes a pre-existing runtime copy) — tilt-as-fixture tests consolidated onto prawduct/minimal since the behavior they exercised (init/switch/no-overwrite) is template-generic. Docs: `docs/eval-audit-mode.md` TiLT section removed; `FEATURES.md` entry swapped for the tombstone. The `identitySentry` extension-rule key stays in the rules vocabulary — its removal belongs to the settings/rules cleanup chunk.
+
 ## [4.21.0] - 2026-07-17
 
 ### Added

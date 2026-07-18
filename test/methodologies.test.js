@@ -135,7 +135,7 @@ describe('validateTemplate', () => {
   });
 
   it('validates all bundled templates', () => {
-    const templateIds = ['minimal', 'prawduct', 'tilt'];
+    const templateIds = ['minimal', 'prawduct'];
     for (const id of templateIds) {
       const template = store.templates.get(id);
       assert.ok(template, `Template "${id}" should exist`);
@@ -266,11 +266,12 @@ describe('detect', () => {
     assert.equal(result.name, 'Prawduct');
   });
 
-  it('detects tilt methodology via .tilt directory', () => {
+  it('does not detect the retired tilt methodology via .tilt directory', () => {
+    // TiLT was retired (operator-ratified 2026-07-17); a leftover .tilt
+    // state dir must no longer map to any methodology.
     fs.mkdirSync(path.join(projectDir, '.tilt'));
     const result = methodologies.detect(projectDir);
-    assert.ok(result);
-    assert.equal(result.id, 'tilt');
+    assert.equal(result, null);
   });
 
   it('detects minimal methodology via .tangleclaw/project.json file', () => {
@@ -349,13 +350,6 @@ describe('initialize', () => {
     assert.ok(fs.existsSync(path.join(projectDir, '.prawduct', 'project-state.yaml')));
   });
 
-  it('initializes tilt methodology', () => {
-    const result = methodologies.initialize(projectDir, 'tilt');
-    assert.equal(result.success, true);
-    assert.ok(fs.existsSync(path.join(projectDir, '.tilt')));
-    assert.ok(fs.existsSync(path.join(projectDir, '.tilt', 'status.json')));
-  });
-
   it('initializes minimal methodology', () => {
     const result = methodologies.initialize(projectDir, 'minimal');
     assert.equal(result.success, true);
@@ -363,13 +357,13 @@ describe('initialize', () => {
   });
 
   it('does not overwrite existing files', () => {
-    fs.mkdirSync(path.join(projectDir, '.tilt'));
-    fs.writeFileSync(path.join(projectDir, '.tilt', 'status.json'), '{"custom": true}');
+    fs.mkdirSync(path.join(projectDir, '.prawduct'));
+    fs.writeFileSync(path.join(projectDir, '.prawduct', 'project-state.yaml'), 'custom: true\n');
 
-    methodologies.initialize(projectDir, 'tilt');
+    methodologies.initialize(projectDir, 'prawduct');
 
-    const content = JSON.parse(fs.readFileSync(path.join(projectDir, '.tilt', 'status.json'), 'utf8'));
-    assert.equal(content.custom, true);
+    const content = fs.readFileSync(path.join(projectDir, '.prawduct', 'project-state.yaml'), 'utf8');
+    assert.equal(content, 'custom: true\n');
   });
 
   it('returns error for unknown template', () => {
@@ -379,10 +373,10 @@ describe('initialize', () => {
   });
 
   it('reports existing directories as not created', () => {
-    fs.mkdirSync(path.join(projectDir, '.tilt'));
-    const result = methodologies.initialize(projectDir, 'tilt');
+    fs.mkdirSync(path.join(projectDir, '.prawduct'));
+    const result = methodologies.initialize(projectDir, 'prawduct');
     assert.equal(result.success, true);
-    assert.ok(!result.created.includes('.tilt'));
+    assert.ok(!result.created.includes('.prawduct'));
   });
 });
 
@@ -400,12 +394,12 @@ describe('switchMethodology', () => {
     fs.mkdirSync(path.join(projectDir, '.prawduct'));
     fs.writeFileSync(path.join(projectDir, '.prawduct', 'state.yaml'), 'test');
 
-    const result = methodologies.switchMethodology(projectDir, 'prawduct', 'tilt');
+    const result = methodologies.switchMethodology(projectDir, 'prawduct', 'minimal');
     assert.equal(result.success, true);
     assert.ok(result.archivePath);
     assert.ok(result.archivePath.includes('.prawduct.archived'));
     assert.ok(!fs.existsSync(path.join(projectDir, '.prawduct')));
-    assert.ok(fs.existsSync(path.join(projectDir, '.tilt')));
+    assert.ok(fs.existsSync(path.join(projectDir, '.tangleclaw')));
   });
 
   it('handles non-existent current methodology gracefully', () => {
@@ -426,7 +420,7 @@ describe('switchMethodology', () => {
     fs.writeFileSync(path.join(projectDir, '.prawduct', 'state.yaml'), 'test');
     fs.mkdirSync(path.join(projectDir, '.prawduct.archived'));
 
-    const result = methodologies.switchMethodology(projectDir, 'prawduct', 'tilt');
+    const result = methodologies.switchMethodology(projectDir, 'prawduct', 'minimal');
     assert.equal(result.success, true);
     assert.ok(result.archivePath);
     assert.ok(result.archivePath.includes('.prawduct.archived-'));
@@ -656,7 +650,7 @@ describe('listTemplates', () => {
   it('returns all templates with summary fields', () => {
     const list = methodologies.listTemplates();
     assert.ok(Array.isArray(list));
-    assert.ok(list.length >= 3); // minimal, prawduct, tilt
+    assert.ok(list.length >= 2); // minimal, prawduct
 
     const prawduct = list.find((t) => t.id === 'prawduct');
     assert.ok(prawduct);

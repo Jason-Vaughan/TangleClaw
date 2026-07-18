@@ -78,9 +78,7 @@ describe('skills', () => {
     // changes, the wrap NL prompt sent to the AI engine changes — that's a
     // user-visible regression masquerading as a refactor.
     //
-    // Pins the two public bundled templates (prawduct + minimal). The
-    // unreleased `tilt` template is gitignored, so it isn't asserted here
-    // to keep the test robust on fresh clones.
+    // Pins the two bundled templates (prawduct + minimal).
     it('synthesizes legacy shape from wrap_pipeline (post-C2 step list for prawduct)', () => {
       // #139 Chunk 11c added `open-pr-check` + `critic-check` to prawduct's
       // wrap_pipeline.steps[]. CC-1 appended `continuity-write` after

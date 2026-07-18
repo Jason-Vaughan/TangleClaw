@@ -156,13 +156,6 @@ Adds governance-focused dimensions:
 - **Tier 3**: `independent_thinking` (on disagreement), `methodology_compliance` (always)
 - **Judge context**: "You are evaluating an AI agent governed by the Prawduct methodology..."
 
-### TiLT Methodology
-
-Adds identity-focused dimensions:
-- **Tier 2**: `identity_consistency` — Is the agent's identity presentation consistent?
-- **Tier 3**: `identity_sentry_compliance` (always), `trust_signal_accuracy` (high_stakes)
-- **Judge context**: "You are evaluating an AI agent governed by the TiLT methodology..."
-
 ### Custom Methodologies
 
 Any methodology template can include an `evalDimensions` block with:
