@@ -39,7 +39,7 @@ describe('sessionRules self-improvement (D1b)', () => {
 
   describe('version history', () => {
     it('snapshots v1 on create', () => {
-      const rule = store.sessionRules.create({ content: 'first' });
+      const rule = store.sessionRules.create({ content: 'first', projectId: mkProject('sip-1') });
       const versions = store.sessionRules.listVersions(rule.id);
       assert.equal(versions.length, 1);
       assert.equal(versions[0].versionNo, 1);
@@ -48,7 +48,7 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('appends a version on each update (newest first)', () => {
-      const rule = store.sessionRules.create({ content: 'v1 content' });
+      const rule = store.sessionRules.create({ content: 'v1 content', projectId: mkProject('sip-2') });
       store.sessionRules.update(rule.id, { content: 'v2 content' });
       store.sessionRules.update(rule.id, { content: 'v3 content', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
@@ -59,12 +59,12 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('records changedBy on the snapshot', () => {
-      const rule = store.sessionRules.create({ content: 'base', createdBy: 'ai' });
+      const rule = store.sessionRules.create({ content: 'base', createdBy: 'ai', projectId: mkProject('sip-3') });
       assert.equal(store.sessionRules.listVersions(rule.id)[0].changedBy, 'ai');
     });
 
     it('snapshots a tombstone on delete so history survives', () => {
-      const rule = store.sessionRules.create({ content: 'doomed' });
+      const rule = store.sessionRules.create({ content: 'doomed', projectId: mkProject('sip-4') });
       store.sessionRules.delete(rule.id, { changedBy: 'ai', changeReason: 'cleanup' });
       const versions = store.sessionRules.listVersions(rule.id);
       assert.equal(versions[0].op, 'delete');
@@ -76,7 +76,7 @@ describe('sessionRules self-improvement (D1b)', () => {
 
   describe('restore (rollback)', () => {
     it('rolls content + enabled back to a prior version and records the restore', () => {
-      const rule = store.sessionRules.create({ content: 'original' });
+      const rule = store.sessionRules.create({ content: 'original', projectId: mkProject('sip-5') });
       store.sessionRules.update(rule.id, { content: 'risky autonomous edit' });
 
       const restored = store.sessionRules.restore(rule.id, 1);
@@ -89,7 +89,7 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('restores a disabled state', () => {
-      const rule = store.sessionRules.create({ content: 'x' });          // v1 enabled
+      const rule = store.sessionRules.create({ content: 'x', projectId: mkProject('sip-6') });          // v1 enabled
       store.sessionRules.update(rule.id, { enabled: false });            // v2 disabled
       store.sessionRules.update(rule.id, { enabled: true });             // v3 enabled
       const restored = store.sessionRules.restore(rule.id, 2);
@@ -97,13 +97,13 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('throws NOT_FOUND for a missing rule or version', () => {
-      const rule = store.sessionRules.create({ content: 'x' });
+      const rule = store.sessionRules.create({ content: 'x', projectId: mkProject('sip-7') });
       assert.throws(() => store.sessionRules.restore(99999, 1), /not found/);
       assert.throws(() => store.sessionRules.restore(rule.id, 99), /Version 99 not found/);
     });
 
     it('logs a session_rule.restored activity event', () => {
-      const rule = store.sessionRules.create({ content: 'x' });
+      const rule = store.sessionRules.create({ content: 'x', projectId: mkProject('sip-8') });
       store.sessionRules.update(rule.id, { content: 'y' });
       store.sessionRules.restore(rule.id, 1);
       assert.equal(store.activity.query({ eventType: 'session_rule.restored' }).length, 1);
@@ -140,9 +140,10 @@ describe('sessionRules self-improvement (D1b)', () => {
 
   describe('findConflictCandidates (non-authoritative signal)', () => {
     it('surfaces active in-scope rules with significant token overlap, sorted by overlap', () => {
-      store.sessionRules.create({ content: 'Always run the full test suite before committing' });
-      store.sessionRules.create({ content: 'Document every public function with JSDoc' });
-      const candidates = store.sessionRules.findConflictCandidates('Skip running the test suite for small commits', null);
+      const pid = mkProject('conflicts');
+      store.sessionRules.create({ content: 'Always run the full test suite before committing', projectId: pid });
+      store.sessionRules.create({ content: 'Document every public function with JSDoc', projectId: pid });
+      const candidates = store.sessionRules.findConflictCandidates('Skip running the test suite for small commits', pid);
       assert.ok(candidates.length >= 1);
       assert.match(candidates[0].rule.content, /test suite/);
       assert.ok(candidates[0].overlap.length >= 2);
@@ -151,7 +152,7 @@ describe('sessionRules self-improvement (D1b)', () => {
     it('excludes disabled rules and other-project rules', () => {
       const pid = mkProject('p');
       const other = mkProject('other');
-      const off = store.sessionRules.create({ content: 'test suite always required here' });
+      const off = store.sessionRules.create({ content: 'test suite always required here', projectId: pid });
       store.sessionRules.update(off.id, { enabled: false });
       store.sessionRules.create({ content: 'test suite required other project', projectId: other });
       const candidates = store.sessionRules.findConflictCandidates('test suite skip', pid);
@@ -159,14 +160,16 @@ describe('sessionRules self-improvement (D1b)', () => {
     });
 
     it('returns empty for content with no significant tokens', () => {
-      store.sessionRules.create({ content: 'run the full test suite' });
-      assert.deepEqual(store.sessionRules.findConflictCandidates('the and for', null), []);
+      const pid = mkProject('stopwords');
+      store.sessionRules.create({ content: 'run the full test suite', projectId: pid });
+      assert.deepEqual(store.sessionRules.findConflictCandidates('the and for', pid), []);
     });
 
     it('respects minOverlap', () => {
-      store.sessionRules.create({ content: 'alpha beta gamma delta' });
-      assert.equal(store.sessionRules.findConflictCandidates('alpha zeta', null, { minOverlap: 2 }).length, 0);
-      assert.equal(store.sessionRules.findConflictCandidates('alpha zeta', null, { minOverlap: 1 }).length, 1);
+      const pid = mkProject('overlap');
+      store.sessionRules.create({ content: 'alpha beta gamma delta', projectId: pid });
+      assert.equal(store.sessionRules.findConflictCandidates('alpha zeta', pid, { minOverlap: 2 }).length, 0);
+      assert.equal(store.sessionRules.findConflictCandidates('alpha zeta', pid, { minOverlap: 1 }).length, 1);
     });
   });
 });

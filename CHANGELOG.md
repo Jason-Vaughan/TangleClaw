@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-project launch-mode settings replace the retired free-text Mode-rules field (Prawduct V1 Sunset, Phase A settings retask, ratified 2026-07-17).** Two structured settings in the Project Settings modal: **Default launch mode** (an engine launch-mode key; default `default` = "Interactive", validated against the intended engine's `launchModes` at PATCH time) and **Show launch mode picker** (default on; off → the landing Launch button skips the picker and launches directly). Resolution is server-side in `lib/sessions.js#launchSession` — an explicit caller choice wins, otherwise the configured default applies — so UI, ClawBridge, and raw API launches all honor it; a stale key after an engine switch is ignored (falls through to the engine default). **Eyes-open guard:** hiding the picker while the default is a warning-carrying mode (`bypassPermissions`/`fullAuto`/`yesAlways`) removes the red isolated-environments warning from the launch flow, so that combination requires `confirmBypassHidden: true` — enforced server-side in `projects.updateProject` and surfaced in the UI as an explicit confirm modal; a stored, confirmed combination never re-blocks unrelated saves. Picker preselect-from-default lands with the Launch Mode modal facelift (#596).
+- **Wrap rules are now real: `kind='wrap'` session rules inject into the wrap prompt.** `lib/wrap-steps/ai-content.js#_appendWrapRules` appends the project's enabled wrap rules as a `## Project wrap rules` block to every non-empty ai-content prompt, on both the tmux and ClawBridge-gateway paths. Before this bridge the Wrap-rules field stored rows no runtime ever read; the corpus it accumulates carries forward into Wrap v2 (Phase B). A rules-store failure degrades to the bare prompt with a warning — it never blocks a wrap.
+
+### Removed
+
+- **The `mode` session-rule kind and the hidden global session-rules tier are retired (settings/rules cleanup, ratified 2026-07-17).** `SESSION_RULE_KINDS` is now `['startup','wrap']`; `mode` rules had no runtime consumer and their slot became the structured launch-mode settings above. Rules are now always project-scoped: `POST /api/session-rules` requires `projectId`, `?scope=global` is gone, the launch-injection and conflict-candidate queries no longer consult `project_id IS NULL` rows, and `promoteFromLearning` defaults to the learning's own project. The landing page's global Session Rules panel (with its D1b version-history UI — store + API for versions remain; the Master settings surface owns any successor UI) is deleted; the dash bar's remaining rules tier is labeled **Global Rules** (the `data/global-rules.md` document, unchanged). Migration v25 defensively purges any rows in either retired tier (the 2026-07-17 fleet audit found zero), preserving version history. Tests: retired-tier behavior pins consolidated into retirement pins; new real-old-schema migration test for the v24→v25 purge.
+
 ## [4.23.0] - 2026-07-18
 
 ### Changed

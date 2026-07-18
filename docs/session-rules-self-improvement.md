@@ -1,8 +1,12 @@
 # Session rules & the self-improvement loop (D1, #347)
 
-Session rules are durable **behavioral directives** injected into every harness config at
-session launch, cross-model, alongside global-rules. They are distinct from `learnings`
-(AI-accumulated observations) and from the structured core/extension toggles.
+Session rules are durable **per-project behavioral directives**: `startup` rules inject
+into the project's harness config at session launch, cross-model; `wrap` rules inject
+into the wrap pipeline's ai-content prompts. They are distinct from `learnings`
+(AI-accumulated observations), from the structured core/extension toggles, and from the
+Global rules document (`data/global-rules.md`) — which is where cross-project directives
+belong. (An earlier hidden global tier of `session_rules` rows was retired in the Phase A
+settings cleanup.)
 
 - **D1a** — the store + cross-model launch injection + CRUD + a global-rules UI.
 - **D1b** — the self-improvement loop: version history + rollback, learnings→rule
@@ -15,7 +19,9 @@ here).
 
 ## Data model
 
-- `session_rules` — `id`, nullable `project_id` (NULL = global, applies to every project),
+- `session_rules` — `id`, `project_id` (required at the API/store layer — the global
+  NULL-project tier was retired; the column stays nullable pending the Master settings
+  surface, which plans master-scoped rows on this machinery),
   `content`, `enabled`, `created_by` (`operator` | `ai`), nullable `owner` (auth seam),
   nullable `source_learning_id` (provenance for promoted rules), timestamps.
 - `session_rule_versions` — a full snapshot after **every** mutation (`create` / `update` /
@@ -42,13 +48,13 @@ wrote to the table, so both the prime injection and the promote loop were perman
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/session-rules?scope=global` | List rules |
-| `POST /api/session-rules` `{content, projectId?, createdBy?}` | Create |
+| `GET /api/session-rules?projectId=&kind=` | List rules |
+| `POST /api/session-rules` `{content, projectId, createdBy?}` | Create (projectId required) |
 | `PUT /api/session-rules/:id` `{content?, enabled?, changedBy?}` | Update (snapshots a version) |
 | `DELETE /api/session-rules/:id` | Delete (snapshots a tombstone) |
 | `GET /api/session-rules/:id/versions` | Version history (newest first) |
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version |
-| `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed) |
+| `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
 
 `findConflictCandidates` / the `/conflicts` route return active in-scope rules sharing
@@ -96,14 +102,15 @@ Trivial, non-conflicting, **operator-authored** edits skip the gate.
 ## Rule kinds + the wrap-rule self-critique trigger (CC-6, #381)
 
 CC-6 added a **`kind`** discriminator to `session_rules` so the per-project **Project
-Rules modal** can host three rule kinds. The self-improvement engine documented above is
-unchanged — CC-6 only widens what it can sink into.
+Rules modal** can host multiple rule kinds. The self-improvement engine documented above
+is unchanged — CC-6 only widens what it can sink into. (The original third kind, `mode`,
+was retired in the Phase A settings cleanup: harness posture is now the structured
+`defaultLaunchMode` + `showLaunchModePicker` project settings, not free-text rules.)
 
-| kind | When it applies | Launch-injected? |
+| kind | When it applies | Injected? |
 |---|---|---|
-| `startup` (default) | session start — custom priming | **yes** (`## Session Rules`) |
-| `wrap` | wrap time — custom wrap behavior + the self-learning sink | no |
-| `mode` | harness/model posture | no (runtime enforcement = A3 / #209) |
+| `startup` (default) | session start — custom priming | **yes**, at launch (`## Session Rules`) |
+| `wrap` | wrap time — custom wrap behavior + the self-learning sink | **yes**, into the wrap pipeline's ai-content prompts (`## Project wrap rules`) |
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
   predating CC-6 backfill to `startup`, so injection behavior is unchanged.

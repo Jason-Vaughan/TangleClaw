@@ -495,3 +495,83 @@ describe('wrap-step ai-content — CC-7 B1 getBridgeContext guards', () => {
     assert.equal(sent, false);
   });
 });
+
+// Phase A wrap-rules bridge — the project's enabled `kind='wrap'` session
+// rules are appended to every non-empty ai-content prompt as a
+// `## Project wrap rules` block, on both the tmux and gateway paths. This is
+// what makes the Wrap-rules settings field real: before the bridge, wrap
+// rules were stored with no consumer.
+describe('wrap-step ai-content — wrap-rules bridge', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const PROJECT = { id: 7, name: 'proj', path: '/tmp/proj' };
+
+  describe('_appendWrapRules', () => {
+    it('appends enabled wrap rules as a ## Project wrap rules block', () => {
+      aic._internal.listWrapRules = (projectId) => {
+        assert.equal(projectId, 7);
+        return [{ content: 'Always update the roadmap' }, { content: '  Note open threads  ' }];
+      };
+      const out = aic._appendWrapRules('base prompt', PROJECT);
+      assert.match(out, /^base prompt\n\n## Project wrap rules\n/);
+      assert.match(out, /- Always update the roadmap\n- Note open threads$/);
+    });
+
+    it('returns the bare prompt when the project has no wrap rules', () => {
+      aic._internal.listWrapRules = () => [];
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+    });
+
+    it('skips blank-content rules and degrades to the bare prompt on a store failure', () => {
+      aic._internal.listWrapRules = () => [{ content: '   ' }];
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+
+      aic._internal.listWrapRules = () => { throw new Error('db unavailable'); };
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+    });
+  });
+
+  describe('run() sends the rules-bearing prompt (tmux path)', () => {
+    it('the tmux send carries the appended wrap-rules block', async () => {
+      let sentPrompt = null;
+      aic._internal.sendKeys = (_sess, prompt) => { sentPrompt = prompt; };
+      aic._internal.sleep = async () => {};
+      aic._internal.detectIdle = () => ({ idle: true });
+      aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
+      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+
+      const res = await aic.run({
+        project: PROJECT,
+        session: { tmuxSession: 'sess' },
+        step: { id: 'memory-update', kind: 'ai-content', prompt: 'write the block' },
+        previousResults: [],
+        staged: {},
+        options: {}
+      });
+
+      assert.equal(res.status, 'done');
+      assert.match(sentPrompt, /^write the block\n\n## Project wrap rules\n/);
+      assert.match(sentPrompt, /- Close every open loop/);
+    });
+
+    it('an empty step prompt still skips — rules never turn a no-op step into a send', async () => {
+      let sent = false;
+      aic._internal.sendKeys = () => { sent = true; };
+      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+
+      const res = await aic.run({
+        project: PROJECT,
+        session: { tmuxSession: 'sess' },
+        step: { id: 'placeholder', kind: 'ai-content', prompt: '' },
+        previousResults: [],
+        staged: {},
+        options: {}
+      });
+
+      assert.equal(res.status, 'skipped');
+      assert.equal(sent, false);
+    });
+  });
+});

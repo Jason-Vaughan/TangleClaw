@@ -54,10 +54,7 @@
         Audit <span class="dash-badge" id="auditIncidentCount">0</span>
       </button>
       <button class="dash-action" id="rulesToggle" aria-expanded="false" aria-controls="rulesPanel">
-        Rules
-      </button>
-      <button class="dash-action" id="sessionRulesToggle" aria-expanded="false" aria-controls="sessionRulesPanel">
-        Session Rules <span class="dash-badge" id="sessionRulesCount">0</span>
+        Global Rules
       </button>
       <button class="dash-action dash-gear" id="gearBtn" aria-label="Settings" title="Settings">&#9881;</button>
     </div>
@@ -326,22 +323,6 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="rulesStatus" class="rules-status hidden" role="status"></div>
   </div>
 
-  <!-- Session Rules Panel (#347/D1a) -->
-  <div id="sessionRulesPanel" class="session-rules-panel" aria-label="Session rules manager">
-    <p class="session-rules-intro">
-      Durable behavioral directives injected into every project's config at session
-      launch, cross-model — alongside global rules. Changes apply on a project's next
-      session launch or sync.
-    </p>
-    <div id="sessionRulesList" class="session-rules-list" aria-live="polite"></div>
-    <div class="session-rules-add">
-      <textarea class="rules-editor" id="sessionRuleInput" rows="2"
-                placeholder="Add a global session rule…" spellcheck="false"></textarea>
-      <button class="btn btn-small btn-primary" id="sessionRuleAddBtn">Add Rule</button>
-    </div>
-    <div id="sessionRulesStatus" class="rules-status hidden" role="status"></div>
-  </div>
-
   <!-- Reset Confirmation Modal -->
   <div class="modal-backdrop" id="rulesResetModal">
     <div class="modal-content" role="dialog" aria-label="Reset global rules" aria-modal="true">
@@ -499,6 +480,21 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <div class="modal-actions">
         <button class="btn" id="attachConfirmCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="attachConfirmBtn">Attach</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bypass-default + hidden-picker confirmation (eyes-open guard): hiding the
+       launch-mode picker while defaulting to a warning-carrying mode removes the
+       red warning from the launch flow, so the combination is confirmed here. -->
+  <div class="modal-backdrop" id="bypassHiddenModal">
+    <div class="modal-content" role="dialog" aria-label="Confirm hidden bypass launches" aria-modal="true"
+         style="max-width:400px">
+      <h3 class="modal-title">Launch Without Warnings?</h3>
+      <div class="modal-text" id="bypassHiddenText"></div>
+      <div class="modal-actions">
+        <button class="btn" id="bypassHiddenCancelBtn">Cancel</button>
+        <button class="btn btn-danger" id="bypassHiddenConfirmBtn">I understand — save</button>
       </div>
     </div>
   </div>

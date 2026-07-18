@@ -1,11 +1,15 @@
 'use strict';
 
 /*
- * Frontend regression tests for the session-rules management panel (#347/D1a).
- * public/index.html carries the panel markup + dash-bar toggle; public/landing.js
- * has the load/create/toggle/delete wiring; public/ui.js wires the toggle and
- * list event delegation; public/style.css carries the visual treatment. These
- * are source-level structural assertions, matching test/governance-drift-badge.test.js.
+ * Retirement pins for the global session-rules panel (#347/D1a → retired).
+ * The Phase A settings cleanup deleted the hidden global session-rules tier:
+ * cross-project directives belong in the Global rules document, and the
+ * dash-bar panel that authored global rows (with its D1b version-history UI)
+ * went with it. These source-level assertions keep the deletion honest — no
+ * dangling markup, wiring, fetch paths, or orphaned CSS may resurface without
+ * a deliberate decision (the Master settings surface owns any successor
+ * history UI). The per-project rules UI lives on in the Settings modal and is
+ * covered by test/project-rules-modal.test.js.
  */
 
 const { describe, it, before } = require('node:test');
@@ -24,124 +28,38 @@ describe('Session rules panel (#347/D1a)', () => {
     css = fs.readFileSync(path.join(pub, 'style.css'), 'utf8');
   });
 
-  describe('index.html markup', () => {
-    it('has a dash-bar toggle button targeting the panel', () => {
-      assert.match(html, /id="sessionRulesToggle"[^>]*aria-controls="sessionRulesPanel"/);
+  describe('global-tier panel retirement pins', () => {
+    it('index.html carries no panel markup or dash-bar toggle', () => {
+      assert.doesNotMatch(html, /sessionRulesToggle/);
+      assert.doesNotMatch(html, /sessionRulesPanel/);
+      assert.doesNotMatch(html, /sessionRuleInput/);
+      assert.doesNotMatch(html, /sessionRuleAddBtn/);
     });
 
-    it('has a session-rules count badge', () => {
-      assert.match(html, /id="sessionRulesCount"/);
+    it('the dash bar labels the remaining rules tier "Global Rules"', () => {
+      assert.match(html, /id="rulesToggle"[^>]*>\s*Global Rules/);
     });
 
-    it('has the panel with a list container, input, and add button', () => {
-      assert.match(html, /id="sessionRulesPanel"/);
-      assert.match(html, /id="sessionRulesList"/);
-      assert.match(html, /id="sessionRuleInput"/);
-      assert.match(html, /id="sessionRuleAddBtn"/);
-    });
-  });
-
-  describe('landing.js wiring', () => {
-    it('loads global session rules via the scoped API', () => {
-      assert.match(landing, /async function loadSessionRules\(\)/);
-      assert.match(landing, /\/api\/session-rules\?scope=global/);
+    it('landing.js has no global-scope fetch or panel CRUD wiring', () => {
+      assert.doesNotMatch(landing, /scope=global/);
+      assert.doesNotMatch(landing, /loadSessionRules/);
+      assert.doesNotMatch(landing, /createSessionRule/);
+      assert.doesNotMatch(landing, /renderSessionRuleVersions/);
     });
 
-    it('renders rules with toggle + delete actions', () => {
-      assert.match(landing, /function renderSessionRules\(\)/);
-      assert.match(landing, /data-action="toggle"/);
-      assert.match(landing, /data-action="delete"/);
+    it('ui.js has no panel toggle or list event delegation', () => {
+      assert.doesNotMatch(ui, /toggleSessionRules\b/);
+      assert.doesNotMatch(ui, /handleSessionRulesListEvent/);
     });
 
-    it('escapes rule content to prevent XSS', () => {
-      assert.match(landing, /esc\(rule\.content\)/);
-    });
-
-    it('creates via POST, toggles via PUT, deletes via DELETE', () => {
-      assert.match(landing, /apiMutate\('\/api\/session-rules', 'POST'/);
-      assert.match(landing, /apiMutate\(`\/api\/session-rules\/\$\{id\}`, 'PUT'/);
-      assert.match(landing, /apiMutate\(`\/api\/session-rules\/\$\{id\}`, 'DELETE'/);
-    });
-
-    it('loads session rules during init', () => {
-      assert.match(landing, /loadSessionRules\(\)/);
-    });
-  });
-
-  describe('ui.js wiring', () => {
-    it('defines a panel toggle', () => {
-      assert.match(ui, /function toggleSessionRules\(\)/);
-    });
-
-    it('delegates list click/change events to handler', () => {
-      assert.match(ui, /function handleSessionRulesListEvent\(/);
-      assert.match(ui, /\$\('sessionRulesList'\)\.addEventListener\('click', handleSessionRulesListEvent\)/);
-      assert.match(ui, /\$\('sessionRulesList'\)\.addEventListener\('change', handleSessionRulesListEvent\)/);
-    });
-
-    it('wires the toggle and add button', () => {
-      assert.match(ui, /\$\('sessionRulesToggle'\)\.addEventListener\('click', toggleSessionRules\)/);
-      assert.match(ui, /\$\('sessionRuleAddBtn'\)\.addEventListener\('click', createSessionRule\)/);
-    });
-  });
-
-  describe('style.css', () => {
-    it('defines a .session-rules-panel rule with an open state', () => {
-      assert.match(css, /\.session-rules-panel\s*\{/);
-      assert.match(css, /\.session-rules-panel\.open\s*\{/);
-    });
-
-    it('styles disabled rules distinctly', () => {
-      assert.match(css, /\.session-rule-disabled/);
-    });
-  });
-
-  describe('self-improvement UI (D1b)', () => {
-    it('renders a History button and a versions container per rule', () => {
-      assert.match(landing, /data-action="history"/);
-      assert.match(landing, /id="sessionRuleVersions-\$\{rule\.id\}"/);
-    });
-
-    it('shows an AI badge for ai-authored rules', () => {
-      assert.match(landing, /rule\.createdBy === 'ai'/);
-      assert.match(landing, /session-rule-badge/);
-    });
-
-    it('loads versions and renders restore buttons', () => {
-      assert.match(landing, /function toggleSessionRuleVersions\(/);
-      assert.match(landing, /\/api\/session-rules\/\$\{id\}\/versions/);
-      assert.match(landing, /function renderSessionRuleVersions\(/);
-      assert.match(landing, /data-action="restore"/);
-    });
-
-    it('restores via POST /restore', () => {
-      assert.match(landing, /function restoreSessionRule\(/);
-      assert.match(landing, /apiMutate\(`\/api\/session-rules\/\$\{id\}\/restore`, 'POST'/);
-    });
-
-    it('ui.js delegates history + restore actions', () => {
-      assert.match(ui, /action === 'history'/);
-      assert.match(ui, /toggleSessionRuleVersions\(id\)/);
-      assert.match(ui, /action === 'restore'/);
-      assert.match(ui, /restoreSessionRule\(id,/);
-    });
-
-    it('style.css carries version + badge rules', () => {
-      assert.match(css, /\.session-rule-versions/);
-      assert.match(css, /\.session-rule-badge/);
-    });
-
-    it('renders a Critic-gate provenance badge per version (SR-7K2P)', () => {
-      assert.match(landing, /function _criticGateBadge\(/);
-      assert.match(landing, /session-rule-critic-gate/);
-      assert.match(landing, /v\.criticGate/);
-      assert.match(landing, /Critic-reviewed/);
-    });
-
-    it('style.css carries Critic-gate badge rules (SR-7K2P)', () => {
-      assert.match(css, /\.session-rule-critic-gate/);
-      assert.match(css, /\.gate-passed/);
-      assert.match(css, /\.gate-unknown/);
+    it('style.css keeps the shared rule-list classes but not the panel shell', () => {
+      // The Project Rules section of the Settings modal reuses these.
+      assert.match(css, /\.session-rules-list/);
+      assert.match(css, /\.session-rule-item/);
+      // The panel shell and its version-history UI went with the tier.
+      assert.doesNotMatch(css, /\.session-rules-panel/);
+      assert.doesNotMatch(css, /\.session-rule-versions/);
+      assert.doesNotMatch(css, /\.session-rule-critic-gate/);
     });
   });
 });

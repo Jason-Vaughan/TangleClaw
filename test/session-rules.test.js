@@ -2,9 +2,10 @@
 
 /*
  * Store-level tests for the session_rules table + sessionRulesApi (#347/D1a).
- * Covers the CRUD round-trip, the injection query (global + per-project,
- * excludes disabled + other projects), created_by default, cascade delete,
- * and activity logging.
+ * Covers the CRUD round-trip, the injection query (per-project only — the
+ * hidden global tier was retired with the Phase A settings cleanup), the
+ * projectId-required contract, created_by default, cascade delete, and
+ * activity logging.
  */
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
@@ -40,17 +41,18 @@ describe('sessionRules store API (#347/D1a)', () => {
   }
 
   describe('create', () => {
-    it('creates a global rule with operator default and trims content', () => {
-      const rule = store.sessionRules.create({ content: '  Prefer X over Y  ' });
+    it('creates a project-scoped rule with operator default and trims content', () => {
+      const pid = mkProject('proj-trim');
+      const rule = store.sessionRules.create({ content: '  Prefer X over Y  ', projectId: pid });
       assert.equal(rule.content, 'Prefer X over Y');
-      assert.equal(rule.projectId, null);
+      assert.equal(rule.projectId, pid);
       assert.equal(rule.createdBy, 'operator');
       assert.equal(rule.enabled, true);
       assert.equal(rule.owner, null);
       assert.ok(rule.id > 0);
     });
 
-    it('honors an explicit createdBy and projectId', () => {
+    it('honors an explicit createdBy', () => {
       const pid = mkProject('proj-a');
       const rule = store.sessionRules.create({ content: 'AI rule', projectId: pid, createdBy: 'ai' });
       assert.equal(rule.createdBy, 'ai');
@@ -58,35 +60,41 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('rejects empty content', () => {
-      assert.throws(() => store.sessionRules.create({ content: '   ' }), /content is required/);
+      const pid = mkProject('proj-empty');
+      assert.throws(() => store.sessionRules.create({ content: '   ', projectId: pid }), /content is required/);
       assert.throws(() => store.sessionRules.create({}), /content is required/);
     });
 
+    it('rejects a projectId-less create (global tier retired)', () => {
+      assert.throws(() => store.sessionRules.create({ content: 'global?' }), /projectId is required/);
+      assert.throws(() => store.sessionRules.create({ content: 'global?', projectId: null }), /projectId is required/);
+    });
+
     it('logs a session_rule.created activity event', () => {
-      store.sessionRules.create({ content: 'logged rule' });
+      const pid = mkProject('proj-log');
+      store.sessionRules.create({ content: 'logged rule', projectId: pid });
       const events = store.activity.query({ eventType: 'session_rule.created' });
       assert.equal(events.length, 1);
     });
   });
 
   describe('listActiveForProject (injection query)', () => {
-    it('returns global rules plus the matching project rules, ordered', () => {
+    it('returns the project\'s rules in creation order', () => {
       const pidA = mkProject('proj-a');
-      const pidB = mkProject('proj-b');
-      store.sessionRules.create({ content: 'global rule' });
-      store.sessionRules.create({ content: 'project A rule', projectId: pidA });
-      store.sessionRules.create({ content: 'project B rule', projectId: pidB });
+      store.sessionRules.create({ content: 'first rule', projectId: pidA });
+      store.sessionRules.create({ content: 'second rule', projectId: pidA });
 
       const forA = store.sessionRules.listActiveForProject(pidA).map((r) => r.content);
-      assert.deepEqual(forA, ['global rule', 'project A rule']);
+      assert.deepEqual(forA, ['first rule', 'second rule']);
     });
 
     it('excludes disabled rules', () => {
-      const disabled = store.sessionRules.create({ content: 'off rule' });
+      const pid = mkProject('proj-disabled');
+      const disabled = store.sessionRules.create({ content: 'off rule', projectId: pid });
       store.sessionRules.update(disabled.id, { enabled: false });
-      store.sessionRules.create({ content: 'on rule' });
+      store.sessionRules.create({ content: 'on rule', projectId: pid });
 
-      const active = store.sessionRules.listActiveForProject(null).map((r) => r.content);
+      const active = store.sessionRules.listActiveForProject(pid).map((r) => r.content);
       assert.deepEqual(active, ['on rule']);
     });
 
@@ -100,31 +108,32 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.deepEqual(forA, ['A only']);
     });
 
-    it('returns only global rules when projectId is null', () => {
+    it('returns [] when projectId is null (global tier retired)', () => {
       const pidA = mkProject('proj-a');
-      store.sessionRules.create({ content: 'global', projectId: null });
       store.sessionRules.create({ content: 'scoped', projectId: pidA });
 
-      const globals = store.sessionRules.listActiveForProject(null).map((r) => r.content);
-      assert.deepEqual(globals, ['global']);
+      assert.deepEqual(store.sessionRules.listActiveForProject(null), []);
+      assert.deepEqual(store.sessionRules.listActiveForProject(undefined), []);
     });
   });
 
   describe('list', () => {
-    it('filters by scope=global', () => {
+    it('filters by projectId', () => {
       const pidA = mkProject('proj-a');
-      store.sessionRules.create({ content: 'global' });
-      store.sessionRules.create({ content: 'scoped', projectId: pidA });
+      const pidB = mkProject('proj-b');
+      store.sessionRules.create({ content: 'a rule', projectId: pidA });
+      store.sessionRules.create({ content: 'b rule', projectId: pidB });
 
-      const globals = store.sessionRules.list({ scope: 'global' });
-      assert.equal(globals.length, 1);
-      assert.equal(globals[0].content, 'global');
+      const forA = store.sessionRules.list({ projectId: pidA });
+      assert.equal(forA.length, 1);
+      assert.equal(forA[0].content, 'a rule');
     });
 
     it('filters by enabled', () => {
-      const off = store.sessionRules.create({ content: 'off' });
+      const pid = mkProject('proj-enabled');
+      const off = store.sessionRules.create({ content: 'off', projectId: pid });
       store.sessionRules.update(off.id, { enabled: false });
-      store.sessionRules.create({ content: 'on' });
+      store.sessionRules.create({ content: 'on', projectId: pid });
 
       assert.equal(store.sessionRules.list({ enabled: 1 }).length, 1);
       assert.equal(store.sessionRules.list({ enabled: 0 }).length, 1);
@@ -133,14 +142,16 @@ describe('sessionRules store API (#347/D1a)', () => {
 
   describe('get / update / delete', () => {
     it('round-trips through get', () => {
-      const created = store.sessionRules.create({ content: 'fetch me' });
+      const pid = mkProject('proj-get');
+      const created = store.sessionRules.create({ content: 'fetch me', projectId: pid });
       const fetched = store.sessionRules.get(created.id);
       assert.equal(fetched.content, 'fetch me');
       assert.equal(store.sessionRules.get(99999), null);
     });
 
     it('updates content and enabled, bumps updated_at, logs an event', () => {
-      const created = store.sessionRules.create({ content: 'before' });
+      const pid = mkProject('proj-upd');
+      const created = store.sessionRules.create({ content: 'before', projectId: pid });
       const updated = store.sessionRules.update(created.id, { content: 'after', enabled: false });
       assert.equal(updated.content, 'after');
       assert.equal(updated.enabled, false);
@@ -149,7 +160,8 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('rejects empty content on update', () => {
-      const created = store.sessionRules.create({ content: 'keep' });
+      const pid = mkProject('proj-keep');
+      const created = store.sessionRules.create({ content: 'keep', projectId: pid });
       assert.throws(() => store.sessionRules.update(created.id, { content: '  ' }), /cannot be empty/);
     });
 
@@ -159,7 +171,8 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('deletes a rule and logs an event', () => {
-      const created = store.sessionRules.create({ content: 'goner' });
+      const pid = mkProject('proj-del');
+      const created = store.sessionRules.create({ content: 'goner', projectId: pid });
       store.sessionRules.delete(created.id);
       assert.equal(store.sessionRules.get(created.id), null);
       const events = store.activity.query({ eventType: 'session_rule.deleted' });
@@ -170,65 +183,69 @@ describe('sessionRules store API (#347/D1a)', () => {
   describe('cascade delete', () => {
     it('removes a project rule when its project is deleted', () => {
       const pid = mkProject('doomed');
+      const otherPid = mkProject('survivor-proj');
       store.sessionRules.create({ content: 'doomed rule', projectId: pid });
-      store.sessionRules.create({ content: 'survivor (global)' });
+      store.sessionRules.create({ content: 'survivor rule', projectId: otherPid });
 
       store.projects.delete(pid);
 
       const remaining = store.sessionRules.list().map((r) => r.content);
-      assert.deepEqual(remaining, ['survivor (global)']);
+      assert.deepEqual(remaining, ['survivor rule']);
     });
   });
 
   describe('kind discriminator (CC-6, #381)', () => {
     it('defaults a rule to kind=startup', () => {
-      const rule = store.sessionRules.create({ content: 'no kind given' });
+      const pid = mkProject('proj-kind-default');
+      const rule = store.sessionRules.create({ content: 'no kind given', projectId: pid });
       assert.equal(rule.kind, 'startup');
     });
 
     it('honors an explicit valid kind', () => {
-      const wrap = store.sessionRules.create({ content: 'wrap rule', kind: 'wrap' });
-      const mode = store.sessionRules.create({ content: 'mode rule', kind: 'mode' });
+      const pid = mkProject('proj-kind-wrap');
+      const wrap = store.sessionRules.create({ content: 'wrap rule', projectId: pid, kind: 'wrap' });
       assert.equal(wrap.kind, 'wrap');
-      assert.equal(mode.kind, 'mode');
     });
 
-    it('rejects an unknown kind', () => {
+    it('rejects an unknown kind — including the retired mode kind', () => {
+      const pid = mkProject('proj-kind-bad');
       assert.throws(
-        () => store.sessionRules.create({ content: 'bad', kind: 'bogus' }),
+        () => store.sessionRules.create({ content: 'bad', projectId: pid, kind: 'bogus' }),
+        /kind must be one of/
+      );
+      // 'mode' was a valid kind until the Phase A settings retask replaced it
+      // with the structured defaultLaunchMode/showLaunchModePicker settings.
+      assert.throws(
+        () => store.sessionRules.create({ content: 'posture', projectId: pid, kind: 'mode' }),
         /kind must be one of/
       );
     });
 
     it('exposes SESSION_RULE_KINDS', () => {
-      assert.deepEqual(store.SESSION_RULE_KINDS, ['startup', 'wrap', 'mode']);
+      assert.deepEqual(store.SESSION_RULE_KINDS, ['startup', 'wrap']);
     });
 
     it('list filters by kind', () => {
       const pid = mkProject('proj-k');
       store.sessionRules.create({ content: 's', projectId: pid, kind: 'startup' });
       store.sessionRules.create({ content: 'w', projectId: pid, kind: 'wrap' });
-      store.sessionRules.create({ content: 'm', projectId: pid, kind: 'mode' });
 
       assert.deepEqual(store.sessionRules.list({ projectId: pid, kind: 'wrap' }).map((r) => r.content), ['w']);
-      assert.deepEqual(store.sessionRules.list({ projectId: pid, kind: 'mode' }).map((r) => r.content), ['m']);
-      assert.equal(store.sessionRules.list({ projectId: pid }).length, 3);
+      assert.equal(store.sessionRules.list({ projectId: pid }).length, 2);
     });
 
     it('listActiveForProject (launch injection) returns ONLY startup rules', () => {
       const pid = mkProject('proj-inject');
       store.sessionRules.create({ content: 'startup rule', projectId: pid, kind: 'startup' });
       store.sessionRules.create({ content: 'wrap rule', projectId: pid, kind: 'wrap' });
-      store.sessionRules.create({ content: 'mode rule', projectId: pid, kind: 'mode' });
-      store.sessionRules.create({ content: 'global startup', kind: 'startup' });
-      store.sessionRules.create({ content: 'global wrap', kind: 'wrap' });
 
       const injected = store.sessionRules.listActiveForProject(pid).map((r) => r.content);
-      assert.deepEqual(injected, ['startup rule', 'global startup']);
+      assert.deepEqual(injected, ['startup rule']);
     });
 
     it('kind survives a version restore (immutable)', () => {
-      const wrap = store.sessionRules.create({ content: 'v1', kind: 'wrap' });
+      const pid = mkProject('proj-restore');
+      const wrap = store.sessionRules.create({ content: 'v1', projectId: pid, kind: 'wrap' });
       store.sessionRules.update(wrap.id, { content: 'v2' });
       const restored = store.sessionRules.restore(wrap.id, 1);
       assert.equal(restored.kind, 'wrap');
@@ -242,19 +259,28 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.equal(rule.kind, 'wrap');
       assert.equal(rule.createdBy, 'ai');
       assert.equal(rule.sourceLearningId, learning.id);
+      // No projectId override → the rule lands on the learning's own project.
+      assert.equal(rule.projectId, pid);
     });
 
     it('findConflictCandidates scopes to the same kind when opts.kind given', () => {
-      store.sessionRules.create({ content: 'commit before wrapping the session', kind: 'startup' });
-      store.sessionRules.create({ content: 'commit before wrapping the session always', kind: 'wrap' });
+      const pid = mkProject('proj-conflicts');
+      store.sessionRules.create({ content: 'commit before wrapping the session', projectId: pid, kind: 'startup' });
+      store.sessionRules.create({ content: 'commit before wrapping the session always', projectId: pid, kind: 'wrap' });
 
       const sameKind = store.sessionRules.findConflictCandidates(
         'remember to commit before wrapping',
-        null,
+        pid,
         { kind: 'wrap' }
       );
       assert.equal(sameKind.length, 1);
       assert.equal(sameKind[0].rule.kind, 'wrap');
+    });
+
+    it('findConflictCandidates returns [] for a null projectId (global tier retired)', () => {
+      const pid = mkProject('proj-conflicts-null');
+      store.sessionRules.create({ content: 'commit before wrapping the session', projectId: pid });
+      assert.deepEqual(store.sessionRules.findConflictCandidates('commit before wrapping', null), []);
     });
   });
 
@@ -263,7 +289,8 @@ describe('sessionRules store API (#347/D1a)', () => {
       // The whole safety guarantee: the four real writers must only ever emit
       // enum-valid ops. Drive all four through the API and confirm none throws
       // and the recorded history carries exactly the enum values.
-      const rule = store.sessionRules.create({ content: 'v1' });          // op=create
+      const pid = mkProject('proj-ops');
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // op=create
       store.sessionRules.update(rule.id, { content: 'v2' });              // op=update
       store.sessionRules.restore(rule.id, 1);                            // op=restore
       store.sessionRules.delete(rule.id);                                // op=delete
@@ -276,7 +303,8 @@ describe('sessionRules store API (#347/D1a)', () => {
       // Fresh DB gets the CHECK straight from the _createTables DDL. Prove it by
       // attempting a raw insert of a bogus op — the storage layer must reject it
       // even though no application code path would ever produce it.
-      const rule = store.sessionRules.create({ content: 'guarded' });
+      const pid = mkProject('proj-op-check');
+      const rule = store.sessionRules.create({ content: 'guarded', projectId: pid });
       const db = store.getDb();
       assert.throws(
         () => db.prepare(
@@ -298,15 +326,17 @@ describe('sessionRules store API (#347/D1a)', () => {
 
   describe('critic_gate provenance (SR-7K2P)', () => {
     it('derives not-required for an operator edit and unknown for an AI edit', () => {
-      const opRule = store.sessionRules.create({ content: 'op rule' });
+      const pid = mkProject('proj-gate');
+      const opRule = store.sessionRules.create({ content: 'op rule', projectId: pid });
       assert.equal(store.sessionRules.listVersions(opRule.id)[0].criticGate, 'not-required');
 
-      const aiRule = store.sessionRules.create({ content: 'ai rule', createdBy: 'ai' });
+      const aiRule = store.sessionRules.create({ content: 'ai rule', projectId: pid, createdBy: 'ai' });
       assert.equal(store.sessionRules.listVersions(aiRule.id)[0].criticGate, 'unknown');
     });
 
     it('records an explicit attestation on create, update, and restore', () => {
-      const rule = store.sessionRules.create({ content: 'v1', createdBy: 'ai', criticGate: 'passed' });
+      const pid = mkProject('proj-gate-attest');
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid, createdBy: 'ai', criticGate: 'passed' });
       assert.equal(store.sessionRules.listVersions(rule.id)[0].criticGate, 'passed');
 
       store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai', criticGate: 'passed' });
@@ -320,7 +350,8 @@ describe('sessionRules store API (#347/D1a)', () => {
       // The mapping keys off THIS change's author (changed_by), not the rule's
       // original author — an operator-created rule updated by the AI with no
       // attestation must record 'unknown', not inherit 'not-required'.
-      const rule = store.sessionRules.create({ content: 'v1' }); // operator → not-required
+      const pid = mkProject('proj-gate-per-change');
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid }); // operator → not-required
       store.sessionRules.update(rule.id, { content: 'v2', changedBy: 'ai' });
       const versions = store.sessionRules.listVersions(rule.id);
       assert.equal(versions[0].criticGate, 'unknown');   // the AI update
@@ -338,14 +369,15 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('rejects an out-of-enum criticGate with BAD_REQUEST and writes nothing', () => {
+      const pid = mkProject('proj-gate-bad');
       assert.throws(
-        () => store.sessionRules.create({ content: 'bad', criticGate: 'maybe' }),
+        () => store.sessionRules.create({ content: 'bad', projectId: pid, criticGate: 'maybe' }),
         (err) => err.code === 'BAD_REQUEST'
       );
       // The rule was never created — validation runs before any mutation.
       assert.equal(store.sessionRules.list().length, 0);
 
-      const rule = store.sessionRules.create({ content: 'ok' });
+      const rule = store.sessionRules.create({ content: 'ok', projectId: pid });
       assert.throws(
         () => store.sessionRules.update(rule.id, { content: 'v2', criticGate: 'nope' }),
         (err) => err.code === 'BAD_REQUEST'
@@ -359,7 +391,8 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('rejects a direct insert with an out-of-enum critic_gate (fresh-DB CHECK)', () => {
-      const rule = store.sessionRules.create({ content: 'guarded' });
+      const pid = mkProject('proj-gate-check');
+      const rule = store.sessionRules.create({ content: 'guarded', projectId: pid });
       const db = store.getDb();
       assert.throws(
         () => db.prepare(
@@ -381,8 +414,10 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     /** Drive a rule through `total` mutations (1 create + updates) and return it. */
+    let churnSeq = 0;
     function churn(total) {
-      const rule = store.sessionRules.create({ content: 'v1' });
+      const pid = mkProject(`proj-churn-${++churnSeq}`);
+      const rule = store.sessionRules.create({ content: 'v1', projectId: pid });
       for (let i = 2; i <= total; i++) {
         store.sessionRules.update(rule.id, { content: `v${i}` });
       }
@@ -440,7 +475,7 @@ describe('sessionRules store API (#347/D1a)', () => {
     it('prunes per rule — one rule\'s churn never touches another\'s history', () => {
       store._setSessionRuleVersionRetention(2);
       const a = churn(4);
-      const b = store.sessionRules.create({ content: 'b1' });
+      const b = store.sessionRules.create({ content: 'b1', projectId: mkProject('proj-churn-b') });
       assert.equal(store.sessionRules.listVersions(a.id).length, 2);
       assert.equal(store.sessionRules.listVersions(b.id).length, 1);
     });
@@ -482,7 +517,7 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
           created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
           updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
         );
-        INSERT INTO session_rules (content) VALUES ('pre-CC-6 global rule');
+        INSERT INTO session_rules (project_id, content) VALUES (42, 'pre-CC-6 project rule');
       `);
       seed.close();
 
@@ -490,18 +525,20 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       store.init();
 
       const db = store.getDb();
-      // init migrates a v19 DB all the way to the current schema (now v24 — the
-      // kind backfill below is the v19→v20 step in that chain).
+      // init migrates a v19 DB all the way to the current schema (now v25 — the
+      // kind backfill below is the v19→v20 step in that chain). The seeded row is
+      // project-scoped: a global (project_id NULL) row would be purged by the
+      // v24→v25 tier retirement, which has its own migration test below.
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 24);
+      assert.equal(ver.version, 25);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();
       assert.equal(rules.length, 1);
       assert.equal(rules[0].kind, 'startup');
       // …and still injects (no launch-injection regression).
-      const injected = store.sessionRules.listActiveForProject(null).map((r) => r.content);
-      assert.deepEqual(injected, ['pre-CC-6 global rule']);
+      const injected = store.sessionRules.listActiveForProject(42).map((r) => r.content);
+      assert.deepEqual(injected, ['pre-CC-6 project rule']);
     } finally {
       try { store.close(); } catch { /* already closed */ }
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -552,7 +589,7 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       const db = store.getDb();
       // Schema advanced to current (v22→v23 op CHECK, then v23→v24 critic_gate).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 24);
+      assert.equal(ver.version, 25);
 
       // The CHECK constraint is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -684,7 +721,7 @@ describe('sessionRules v23→v24 critic_gate migration (SR-7K2P)', () => {
       const db = store.getDb();
       // Schema advanced to current (the v23→v24 rebuild is the last step).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 24);
+      assert.equal(ver.version, 25);
 
       // The critic_gate CHECK is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -714,6 +751,83 @@ describe('sessionRules v23→v24 critic_gate migration (SR-7K2P)', () => {
         /CHECK constraint failed/i,
         'post-migration: out-of-enum critic_gate rejected'
       );
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sessionRules v24→v25 tier-retirement purge', () => {
+  it('purges mode-kind and global-tier rows, preserving project-scoped rules and all version history', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sr-purge-mig-'));
+    try {
+      // Seed a v24 DB: a session_rules table (with the kind column) holding one
+      // row in each retired tier — a mode-kind rule and a global (project_id
+      // NULL) rule — plus a project-scoped startup rule that must survive, and
+      // a version row for the purged rule (history outlives the rule).
+      // store.init() then fires the v24→v25 purge.
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (24);
+        CREATE TABLE session_rules (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id  INTEGER,
+          content     TEXT    NOT NULL,
+          enabled     INTEGER NOT NULL DEFAULT 1,
+          created_by  TEXT    NOT NULL DEFAULT 'operator',
+          kind        TEXT    NOT NULL DEFAULT 'startup',
+          owner       TEXT,
+          source_learning_id INTEGER,
+          created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rules (id, project_id, content, kind) VALUES
+          (1, 7,    'survivor startup rule', 'startup'),
+          (2, 7,    'stray mode rule',       'mode'),
+          (3, NULL, 'stray global rule',     'startup');
+        CREATE TABLE session_rule_versions (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id       INTEGER NOT NULL,
+          version_no    INTEGER NOT NULL,
+          op            TEXT    NOT NULL CHECK (op IN ('create','update','delete','restore')),
+          content       TEXT    NOT NULL,
+          enabled       INTEGER NOT NULL,
+          created_by    TEXT    NOT NULL,
+          owner         TEXT,
+          changed_by    TEXT    NOT NULL DEFAULT 'operator',
+          change_reason TEXT,
+          critic_gate   TEXT    NOT NULL DEFAULT 'unknown' CHECK (critic_gate IN ('passed','not-required','unknown')),
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO session_rule_versions (rule_id, version_no, op, content, enabled, created_by)
+        VALUES (2, 1, 'create', 'stray mode rule', 1, 'operator');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const db = store.getDb();
+      const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+      assert.equal(ver.version, 25);
+
+      // Only the project-scoped startup rule survives.
+      const rows = db.prepare('SELECT id, content FROM session_rules ORDER BY id').all();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].id, 1);
+      assert.equal(rows[0].content, 'survivor startup rule');
+
+      // The purged rule's version history is preserved (provenance outlives it).
+      const versions = db.prepare('SELECT rule_id FROM session_rule_versions').all();
+      assert.equal(versions.length, 1);
+      assert.equal(versions[0].rule_id, 2);
     } finally {
       try { store.close(); } catch { /* already closed */ }
       fs.rmSync(tmpDir, { recursive: true, force: true });

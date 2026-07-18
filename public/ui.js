@@ -493,38 +493,6 @@ function toggleRules() {
 }
 
 /**
- * Toggle the session rules panel open/closed from the dashboard bar (#347/D1a).
- */
-function toggleSessionRules() {
-  state.sessionRulesOpen = !state.sessionRulesOpen;
-  const panel = document.getElementById('sessionRulesPanel');
-  const toggle = document.getElementById('sessionRulesToggle');
-  panel.classList.toggle('open', state.sessionRulesOpen);
-  toggle.classList.toggle('active', state.sessionRulesOpen);
-  toggle.setAttribute('aria-expanded', state.sessionRulesOpen);
-}
-
-/**
- * Handle clicks/changes within the session-rules list (event delegation).
- * @param {Event} e - The DOM event
- */
-function handleSessionRulesListEvent(e) {
-  const target = e.target.closest('[data-action]');
-  if (!target) return;
-  const id = Number(target.getAttribute('data-rule-id'));
-  const action = target.getAttribute('data-action');
-  if (action === 'toggle') {
-    toggleSessionRule(id, target.checked);
-  } else if (action === 'delete') {
-    deleteSessionRule(id);
-  } else if (action === 'history') {
-    toggleSessionRuleVersions(id);
-  } else if (action === 'restore') {
-    restoreSessionRule(id, Number(target.getAttribute('data-version-no')));
-  }
-}
-
-/**
  * Open the reset confirmation modal.
  */
 function openRulesResetModal() {
@@ -795,6 +763,7 @@ function openSettings(name) {
       <input type="text" class="form-input" id="settingsTags" value="${esc((project.tags || []).join(', '))}"
              autocomplete="off" autocorrect="off" autocapitalize="off">
     </div>
+    <div id="settingsLaunchModeContainer"></div>
     <div class="settings-toggles-grid">
       <div id="settingsSilentPrimeContainer"></div>
       <div id="settingsFeatureIndexContainer"></div>
@@ -830,18 +799,32 @@ function openSettings(name) {
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
   renderProjectMapToggle(initialProjectMapChecked);
-  // CC-6 (#381): populate the three per-project rule lists (async) once the
+  renderLaunchModeSettings(
+    project.engine ? project.engine.id : '',
+    project.defaultLaunchMode || 'default',
+    project.showLaunchModePicker !== false
+  );
+  // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
   loadProjectRules(project.id);
 
   // Re-render on engine dropdown change (chunk 3 polish — Critic Mn5). Without
   // this, switching the dropdown to an engine that lacks supportsSilentPrime
   // leaves a stale checkbox visible; the backend rejects gracefully but the user
-  // shouldn't be able to send a doomed request in the first place.
+  // shouldn't be able to send a doomed request in the first place. Launch-mode
+  // settings re-render for the same reason: mode keys are engine-specific, so a
+  // stale selection would be rejected by the PATCH validation.
   document.getElementById('settingsEngine').addEventListener('change', (e) => {
     const checkbox = document.getElementById('settingsSilentPrime');
     const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
     renderSilentPrimeToggle(e.target.value, checkedNow);
+    const modeEl = document.getElementById('settingsDefaultLaunchMode');
+    const showEl = document.getElementById('settingsShowLaunchPicker');
+    renderLaunchModeSettings(
+      e.target.value,
+      modeEl ? modeEl.value : (project.defaultLaunchMode || 'default'),
+      showEl ? showEl.checked : (project.showLaunchModePicker !== false)
+    );
   });
 
   modal.classList.add('open');
@@ -925,6 +908,53 @@ function renderProjectMapToggle(preserveChecked) {
     </div>`;
 }
 
+/**
+ * Render the per-project launch-mode settings (default mode + picker
+ * visibility) into their stable container. Mode keys are engine-specific, so
+ * this re-renders on engine change like the silent-prime toggle; engines with
+ * no launch modes (or absent from state.engines) render nothing, and the save
+ * path then skips both fields.
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {string} preserveMode - The mode selection to carry over (or initial)
+ * @param {boolean} preserveShow - The picker-visibility state to carry over
+ */
+function renderLaunchModeSettings(engineId, preserveMode, preserveShow) {
+  const container = document.getElementById('settingsLaunchModeContainer');
+  if (!container) return;
+  const profile = (state.engines || []).find(e => e.id === engineId);
+  const modes = profile && profile.launchModes ? profile.launchModes : null;
+  if (!modes) {
+    container.innerHTML = '';
+    return;
+  }
+  const enabledEntries = Object.entries(modes).filter(([, m]) => !m.disabled);
+  if (enabledEntries.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  // A carried-over key that the new engine doesn't define falls back to
+  // 'default' (every bundled engine defines it) so no invalid value is sent.
+  const selected = Object.prototype.hasOwnProperty.call(modes, preserveMode) ? preserveMode : 'default';
+  const opts = enabledEntries.map(([key, m]) =>
+    `<option value="${esc(key)}" ${key === selected ? 'selected' : ''}>${esc(m.label || key)}${m.warning ? ' ⚠' : ''}</option>`
+  ).join('');
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="form-label" for="settingsDefaultLaunchMode">Default launch mode</label>
+      <select class="form-select" id="settingsDefaultLaunchMode">${opts}</select>
+      <div class="form-hint">The mode this project launches in when no mode is chosen at launch — API launches, and direct launches with the picker hidden.</div>
+    </div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Show launch mode picker</span>
+        <input type="checkbox" id="settingsShowLaunchPicker" ${preserveShow ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">When off, Launch skips the mode picker and starts the session directly in the default mode.</div>
+    </div>`;
+}
+
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   settingsTarget = null;
@@ -932,10 +962,11 @@ function closeSettings() {
 }
 
 // ── Project Rules (CC-6, #381) ──
-// A per-project extension of the Settings modal: three rule-kind boxes
-// (startup/wrap/mode) backed by the session_rules store + the 8 wrap-summary
-// section checkboxes. Reuses the D1a/D1b session-rules list pattern, scoped to
-// this project's id + a kind. The DB project id of the open modal.
+// A per-project extension of the Settings modal: two rule-kind boxes
+// (startup/wrap) backed by the session_rules store + the 8 wrap-summary
+// section checkboxes. (The former mode-rules box was retired — harness
+// posture is now the structured Launch settings above the rules grid.)
+// Scoped to this project's id + a kind. The DB project id of the open modal.
 let projectRulesTargetId = null;
 
 // The fixed wrap-summary section vocabulary (mirrors lib/continuity.js
@@ -948,8 +979,7 @@ const WRAP_SECTION_NAMES = [
 
 const PROJECT_RULE_KINDS = [
   { kind: 'startup', label: 'Startup rules', hint: 'Injected into the session config at launch (custom priming for this project).' },
-  { kind: 'wrap', label: 'Wrap rules', hint: 'Custom wrap behavior + the sink where approved self-improvement suggestions land.' },
-  { kind: 'mode', label: 'Mode rules', hint: 'Harness/model posture to keep this project in (runtime enforcement is forthcoming).' }
+  { kind: 'wrap', label: 'Wrap rules', hint: 'Injected into the wrap prompt at session wrap — also the sink where approved self-improvement suggestions land.' }
 ];
 
 /**
@@ -998,7 +1028,7 @@ function renderProjectRulesSection(project) {
 }
 
 /**
- * Fetch this project's rules for all three kinds and render each list.
+ * Fetch this project's rules for each kind and render its list.
  * @param {number} projectId - DB project id
  */
 async function loadProjectRules(projectId) {
@@ -1013,7 +1043,7 @@ async function loadProjectRules(projectId) {
 
 /**
  * Render one kind's rule list into its container.
- * @param {string} kind - 'startup' | 'wrap' | 'mode'
+ * @param {string} kind - 'startup' | 'wrap'
  * @param {object[]} rules - Rules of this kind for the project
  */
 function renderProjectRulesList(kind, rules) {
@@ -1231,10 +1261,85 @@ async function doSaveSettings() {
   if (wrapSel !== undefined) {
     body.wrapSections = wrapSel;
   }
+  // Launch-mode posture — only sent when CHANGED from the project's stored
+  // values, so an already-confirmed bypass+hidden combination never re-trips
+  // the server's eyes-open guard on unrelated saves (tags, toggles, …).
+  const project2 = state.projects.find(p => p.name === settingsTarget);
+  const launchModeEl = document.getElementById('settingsDefaultLaunchMode');
+  const showPickerEl = document.getElementById('settingsShowLaunchPicker');
+  if (launchModeEl && project2 && launchModeEl.value !== (project2.defaultLaunchMode || 'default')) {
+    body.defaultLaunchMode = launchModeEl.value;
+  }
+  if (showPickerEl && project2 && showPickerEl.checked !== (project2.showLaunchModePicker !== false)) {
+    body.showLaunchModePicker = showPickerEl.checked;
+  }
+  // Eyes-open guard (client half — the server enforces the same rule): hiding
+  // the picker while the effective default mode carries a warning removes the
+  // red warning from the launch flow, so route through an explicit confirm.
+  if (body.defaultLaunchMode !== undefined || body.showLaunchModePicker !== undefined) {
+    const effMode = body.defaultLaunchMode !== undefined
+      ? body.defaultLaunchMode
+      : ((project2 && project2.defaultLaunchMode) || 'default');
+    const effShow = body.showLaunchModePicker !== undefined
+      ? body.showLaunchModePicker
+      : (project2 ? project2.showLaunchModePicker !== false : true);
+    const guardProfile = (state.engines || []).find(e => e.id === body.engine);
+    const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
+    if (!effShow && modeConfig && modeConfig.warning) {
+      openBypassHiddenModal(body, effMode, modeConfig);
+      return;
+    }
+  }
 
+  await _submitSettings(body);
+}
+
+/**
+ * Send the settings PATCH and close the modal — the shared tail of
+ * doSaveSettings and the bypass-hidden confirm path.
+ * @param {object} body - PATCH body for /api/projects/:name
+ */
+async function _submitSettings(body) {
+  if (!settingsTarget) return;
   await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
   closeSettings();
   await loadProjects();
+}
+
+// ── Bypass-default + hidden-picker confirm (eyes-open guard) ──
+
+/** The settings PATCH body parked while the confirm modal is open. */
+let pendingBypassHiddenBody = null;
+
+/**
+ * Open the eyes-open confirm for saving a hidden picker with a
+ * warning-carrying default launch mode.
+ * @param {object} body - The PATCH body to send on confirm
+ * @param {string} modeKey - The effective default mode key
+ * @param {object} modeConfig - The engine's launchModes entry for that key
+ */
+function openBypassHiddenModal(body, modeKey, modeConfig) {
+  pendingBypassHiddenBody = body;
+  document.getElementById('bypassHiddenText').innerHTML =
+    `<p>Every launch of <strong>${esc(settingsTarget)}</strong> will start directly in <strong>${esc(modeConfig.label || modeKey)}</strong> mode — no picker, and no warning shown at launch.</p>`
+    + (modeConfig.warning ? `<p class="launch-mode-warning">${esc(modeConfig.warning)}</p>` : '');
+  document.getElementById('bypassHiddenModal').classList.add('open');
+}
+
+/** Close the confirm modal without saving. */
+function closeBypassHiddenModal() {
+  pendingBypassHiddenBody = null;
+  document.getElementById('bypassHiddenModal').classList.remove('open');
+}
+
+/** Confirm — resend the parked body with the server guard's confirm flag. */
+async function confirmBypassHidden() {
+  const body = pendingBypassHiddenBody;
+  if (!body) return;
+  pendingBypassHiddenBody = null;
+  document.getElementById('bypassHiddenModal').classList.remove('open');
+  body.confirmBypassHidden = true;
+  await _submitSettings(body);
 }
 
 // ── Global Settings Modal ──
@@ -2912,10 +3017,6 @@ $('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.c
 $('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
-$('sessionRulesToggle').addEventListener('click', toggleSessionRules);
-$('sessionRuleAddBtn').addEventListener('click', createSessionRule);
-$('sessionRulesList').addEventListener('click', handleSessionRulesListEvent);
-$('sessionRulesList').addEventListener('change', handleSessionRulesListEvent);
 $('rulesResetBtn').addEventListener('click', openRulesResetModal);
 $('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
 $('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);
@@ -2948,6 +3049,9 @@ $('attachConfirmModal').addEventListener('click', (e) => { if (e.target === e.cu
 $('methSwitchCancelBtn').addEventListener('click', closeMethSwitchModal);
 $('methSwitchConfirmBtn').addEventListener('click', confirmMethSwitch);
 $('methSwitchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMethSwitchModal(); });
+$('bypassHiddenCancelBtn').addEventListener('click', closeBypassHiddenModal);
+$('bypassHiddenConfirmBtn').addEventListener('click', confirmBypassHidden);
+$('bypassHiddenModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeBypassHiddenModal(); });
 $('gearBtn').addEventListener('click', openGlobalSettings);
 $('globalSettingsCancelBtn').addEventListener('click', closeGlobalSettings);
 $('globalSettingsSaveBtn').addEventListener('click', saveGlobalSettings);

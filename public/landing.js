@@ -21,8 +21,6 @@ const state = {
   portGroupsOpen: {},
   rulesOpen: false,
   globalRulesContent: '',
-  sessionRulesOpen: false,
-  sessionRules: [],
   modelStatus: {},
   groups: [],
   groupsOpen: false,
@@ -632,177 +630,6 @@ async function resetGlobalRules() {
   setTimeout(() => { status.classList.add('hidden'); }, 3000);
 }
 
-// ── Session Rules (#347/D1a) ──
-
-/**
- * Load global session rules from the API and render the list.
- */
-async function loadSessionRules() {
-  const data = await api('/api/session-rules?scope=global');
-  if (!data) return;
-  state.sessionRules = data.rules || [];
-  const countEl = document.getElementById('sessionRulesCount');
-  if (countEl) countEl.textContent = state.sessionRules.filter((r) => r.enabled).length;
-  renderSessionRules();
-}
-
-/**
- * Render the session rules list into #sessionRulesList.
- */
-function renderSessionRules() {
-  const list = document.getElementById('sessionRulesList');
-  if (!list) return;
-  if (state.sessionRules.length === 0) {
-    list.innerHTML = '<p class="session-rules-empty">No session rules yet. Add one below.</p>';
-    return;
-  }
-  list.innerHTML = state.sessionRules.map((rule) => `
-    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
-      <label class="session-rule-toggle">
-        <input type="checkbox" data-action="toggle" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
-      </label>
-      <span class="session-rule-content">${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored (D1b)">AI</span> ' : ''}${esc(rule.content)}</span>
-      <button class="btn btn-small session-rule-history" data-action="history" data-rule-id="${rule.id}" aria-label="Version history">History</button>
-      <button class="btn btn-small btn-danger session-rule-delete" data-action="delete" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
-    </div>
-    <div class="session-rule-versions hidden" id="sessionRuleVersions-${rule.id}" data-rule-id="${rule.id}"></div>
-  `).join('');
-}
-
-/**
- * Toggle + load the version history for a rule (D1b).
- * @param {number} id - Rule id
- */
-async function toggleSessionRuleVersions(id) {
-  const container = document.getElementById(`sessionRuleVersions-${id}`);
-  if (!container) return;
-  if (!container.classList.contains('hidden')) {
-    container.classList.add('hidden');
-    return;
-  }
-  const data = await api(`/api/session-rules/${id}/versions`);
-  renderSessionRuleVersions(id, data ? data.versions || [] : []);
-  container.classList.remove('hidden');
-}
-
-/**
- * Presentation for a version's Critic-gate attestation (SR-7K2P). Records, never
- * enforces — the server can't summon a Critic, so this is the AI's apply-time
- * attestation surfaced for the operator to audit.
- * @param {string} criticGate - 'passed' | 'not-required' | 'unknown'
- * @returns {{label: string, cls: string, title: string}}
- */
-function _criticGateBadge(criticGate) {
-  switch (criticGate) {
-    case 'passed':
-      return { label: '✓ Critic-reviewed', cls: 'gate-passed', title: 'AI edit attested as passing the Critic gate' };
-    case 'not-required':
-      return { label: '— not required', cls: 'gate-not-required', title: 'Operator/trivial edit that legitimately skips the Critic gate' };
-    default:
-      return { label: '? unknown', cls: 'gate-unknown', title: 'Legacy edit, or an AI edit applied with no Critic attestation' };
-  }
-}
-
-/**
- * Render a rule's version list with restore buttons (D1b) and Critic-gate
- * provenance badges (SR-7K2P).
- * @param {number} id - Rule id
- * @param {object[]} versions - Version rows (newest first)
- */
-function renderSessionRuleVersions(id, versions) {
-  const container = document.getElementById(`sessionRuleVersions-${id}`);
-  if (!container) return;
-  if (versions.length === 0) {
-    container.innerHTML = '<p class="session-rules-empty">No version history.</p>';
-    return;
-  }
-  container.innerHTML = versions.map((v) => {
-    const gate = _criticGateBadge(v.criticGate);
-    return `
-    <div class="session-rule-version">
-      <span class="session-rule-version-meta">v${v.versionNo} · ${esc(v.op)} · ${esc(v.changedBy)}</span>
-      <span class="session-rule-critic-gate ${gate.cls}" title="${esc(gate.title)}">${esc(gate.label)}</span>
-      <span class="session-rule-version-content">${esc(v.content)}</span>
-      <button class="btn btn-small" data-action="restore" data-rule-id="${id}" data-version-no="${v.versionNo}">Restore</button>
-    </div>
-  `;
-  }).join('');
-}
-
-/**
- * Restore a rule to a prior version (D1b).
- * @param {number} id - Rule id
- * @param {number} versionNo - Target version
- */
-async function restoreSessionRule(id, versionNo) {
-  const data = await apiMutate(`/api/session-rules/${id}/restore`, 'POST', { versionNo });
-  if (data) {
-    _setSessionRulesStatus(`Restored to v${versionNo}`, true);
-    await loadSessionRules();
-  } else {
-    _setSessionRulesStatus('Restore failed', false);
-  }
-}
-
-/**
- * Create a new global session rule from the add-form textarea.
- */
-async function createSessionRule() {
-  const input = document.getElementById('sessionRuleInput');
-  const content = input.value.trim();
-  if (!content) return;
-  const data = await apiMutate('/api/session-rules', 'POST', { content });
-  if (data) {
-    input.value = '';
-    _setSessionRulesStatus('Added', true);
-    await loadSessionRules();
-  } else {
-    _setSessionRulesStatus('Add failed', false);
-  }
-}
-
-/**
- * Toggle a session rule's enabled state.
- * @param {number} id - Rule id
- * @param {boolean} enabled - New enabled state
- */
-async function toggleSessionRule(id, enabled) {
-  const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
-  if (data) {
-    await loadSessionRules();
-  } else {
-    _setSessionRulesStatus('Update failed', false);
-  }
-}
-
-/**
- * Delete a session rule.
- * @param {number} id - Rule id
- */
-async function deleteSessionRule(id) {
-  const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
-  if (data) {
-    _setSessionRulesStatus('Deleted', true);
-    await loadSessionRules();
-  } else {
-    _setSessionRulesStatus('Delete failed', false);
-  }
-}
-
-/**
- * Show a transient status message in the session-rules panel.
- * @param {string} text - Message
- * @param {boolean} ok - Success styling when true
- */
-function _setSessionRulesStatus(text, ok) {
-  const status = document.getElementById('sessionRulesStatus');
-  if (!status) return;
-  status.textContent = text;
-  status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
-  status.classList.remove('hidden');
-  setTimeout(() => { status.classList.add('hidden'); }, 3000);
-}
-
 /**
  * Load project groups from the API.
  */
@@ -1081,6 +908,14 @@ async function launchProject(name) {
   // so a legacy openclaw-bound project skips the mode picker here and
   // launches with default mode — acceptable degradation for a deprecated
   // binding pattern (zero such projects existed at cutover).
+  // Per-project picker opt-out: launch directly with no mode picker. The mode
+  // is deliberately NOT sent — the server resolves the project's configured
+  // defaultLaunchMode (lib/sessions.js), keeping one resolution path for the
+  // UI, ClawBridge, and raw API launches alike.
+  if (project && project.showLaunchModePicker === false) {
+    return doLaunchProject(name, null);
+  }
+
   const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
   const engine = (state.engines || []).find(e => e.id === engineId);
   if (engine && engine.launchModes) {
@@ -1434,7 +1269,7 @@ async function init() {
   wireOrphanHooksBanner();
   wireStaleServerBanner();
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadSessionRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();

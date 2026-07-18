@@ -2,7 +2,7 @@
 
 /*
  * Frontend regression tests for the Project Rules modal section (CC-6, #381).
- * public/ui.js carries the per-project rule boxes (startup/wrap/mode) + the 8
+ * public/ui.js carries the per-project rule boxes (startup/wrap) + the 8
  * wrap-section checkboxes, backed by the session_rules store. Source-level
  * structural assertions, matching test/session-rules-panel.test.js.
  */
@@ -44,11 +44,15 @@ describe('Project Rules modal (CC-6, #381)', () => {
       assert.match(ui, /\$\{renderProjectRulesSection\(project\)\}/);
     });
 
-    it('defines the three rule kinds (startup/wrap/mode)', () => {
+    it('defines the two rule kinds (startup/wrap) — mode retired to launch settings', () => {
       assert.match(ui, /PROJECT_RULE_KINDS\s*=/);
       assert.match(ui, /kind: 'startup'/);
       assert.match(ui, /kind: 'wrap'/);
-      assert.match(ui, /kind: 'mode'/);
+      // The mode-rules box was replaced by the structured launch-mode settings.
+      assert.doesNotMatch(ui, /kind: 'mode'/);
+      assert.match(ui, /renderLaunchModeSettings/);
+      assert.match(ui, /settingsDefaultLaunchMode/);
+      assert.match(ui, /settingsShowLaunchPicker/);
     });
 
     it('renders the 8 wrap-section checkboxes with Next action required + disabled', () => {
