@@ -1,0 +1,34 @@
+# tc-cleanroom — TangleClaw first-run acceptance-gate environment.
+#
+# Runs on the habitat Docker host as compose project `tc-cleanroom`. Binding
+# constraints (operator-ratified lockdown, 2026-07-18):
+#   - Dedicated network with `internal: true` — zero egress, no reach to the
+#     host or other stacks. Because Docker ignores published ports on
+#     internal-only networks, this file publishes NOTHING; the walkthrough is
+#     driven entirely through `docker exec`. If a host publish is ever
+#     enabled, it must bind 127.0.0.1 only and use the PortHub-reserved port
+#     (3310, leased to TangleClaw / tc-cleanroom-server).
+#   - Never attach to existing networks; never rely on host.docker.internal.
+#   - The image is pre-baked (tc-cleanroom-base); no pulls at up-time.
+#
+# The TangleClaw repo arrives as a git bundle mounted read-only at /bundle;
+# the walkthrough clones from it inside the container to simulate a fresh
+# `git clone` without any network egress.
+name: tc-cleanroom
+
+services:
+  tc:
+    image: tc-cleanroom-base:latest
+    pull_policy: never
+    container_name: tc-cleanroom-tc
+    init: true
+    command: ["sleep", "infinity"]
+    working_dir: /root
+    networks:
+      - cleanroom
+    volumes:
+      - ./bundle:/bundle:ro
+
+networks:
+  cleanroom:
+    internal: true
