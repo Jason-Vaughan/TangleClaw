@@ -1312,6 +1312,41 @@ describe('engines', () => {
         assert.equal(gSettings.hooks, undefined, 'governed must drop the requires-free methodology hook (the guard, not the requires-filter)');
       });
     });
+
+    describe('syncEngineHooks resolves the engine from the DB, projConfig only as fallback', () => {
+      it('registered non-claude project with no projConfig engine key takes the cleanup branch', () => {
+        // Sibling of the boot-sync engine fix: a registered codex project whose
+        // legacy project.json lacks the `engine` key must NOT resolve as claude
+        // here — that wrote baseline hooks into .claude/settings.json for a
+        // project whose runtime never reads them, and skipped the stale-hooks
+        // cleanup the non-claude branch exists for.
+        // silentPrime true is the discriminator: resolved-as-claude writes the
+        // L1 SessionStart baseline hook; resolved-as-codex takes the cleanup
+        // branch and removes the hooks block entirely.
+        const p = mkProject(
+          { hooks: { SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stale' }] }] } },
+          { methodology: 'minimal', silentPrime: true } // no engine key
+        );
+        store.projects.create({ name: `db-hooks-${path.basename(p)}`, path: p, engine: 'codex' });
+
+        engines.syncEngineHooks(p, store.templates.get('minimal'));
+
+        const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(settings.hooks, undefined,
+          'DB says codex → stale hooks cleared, no baseline hooks written');
+      });
+
+      it('unregistered path still falls back to projConfig.engine', () => {
+        const p = mkProject(
+          { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stale' }] }] } },
+          { engine: 'codex', methodology: 'minimal', silentPrime: false }
+        );
+        engines.syncEngineHooks(p, store.templates.get('minimal'));
+        const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(settings.hooks, undefined,
+          'projConfig engine=codex honored for a path the DB does not know');
+      });
+    });
   });
 
   describe('validateParity', () => {
