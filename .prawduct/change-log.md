@@ -57,8 +57,15 @@ surface was the deleted global panel; rows in the tier were zero, so nothing obs
 is lost) — the Master settings surface (Chunk 07) owns the successor UI. Launch Mode
 modal untouched (facelift + preselect-from-default = GH #596). `session_rules.project_id`
 stays nullable in the schema pending Chunk 07's master-scoped rows.
-**Verification:** full suite green (was 4339, now 4348 — 4347 pass / 1 skip / 0 fail —
-after retirement-pin consolidation + new coverage); new real-old-schema v24→v25 purge
+**Verification:** full suite green (was 4339, now 4352 — 4351 pass / 1 skip / 0 fail —
+after retirement-pin consolidation + new coverage incl. the Critic-fix round); live
+product verification on the restarted server (branch tree 5c5e847, `isStale:false`):
+enrichment exposes both fields, engine-key validation 400s, the eyes-open guard 400s
+with its remediation message and persists nothing, `POST /api/session-rules` without
+projectId 400s with the retirement message, served index.html/ui.js carry the confirm
+modal + renderer, sw.js serves cache gen v3-52. Frontend visuals (settings-modal launch
+section, confirm modal, hidden-picker launch) await operator eyeballs — server-side
+behavior verified via API. New real-old-schema v24→v25 purge
 migration test; new
 `test/launch-mode-settings.test.js` (16 tests: validation, guard combinations incl.
 single-field-completes-the-combo and stored-combo-never-re-blocks, launch resolution

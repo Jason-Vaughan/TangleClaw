@@ -280,7 +280,10 @@ describe('launch-mode settings', () => {
     });
 
     it('a rejected settings save keeps the modal open and surfaces the error', () => {
-      assert.match(ui, /Save failed: \$\{api\.lastError/);
+      // Anchor on the modal's own status element so the pin fails if
+      // _submitSettings alone regresses to close-on-error (a bare
+      // "Save failed" match would stay green via the OpenClaw modal's path).
+      assert.match(ui, /getElementById\('projectRulesStatus'\)[\s\S]{0,200}Save failed: \$\{api\.lastError/);
     });
   });
 });
