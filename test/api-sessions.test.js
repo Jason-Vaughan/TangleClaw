@@ -238,11 +238,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-v2-options-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       // Stub the runner — Chunk 10's options-threading contract is what
       // we're pinning here, not the runner's internal behavior.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
@@ -276,10 +271,6 @@ describe('api-sessions', () => {
         assert.equal(res.body.status, 'wrapping');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
         // Clean up the active session.
         const wrapping = store.sessions.getWrapping(project.id);
         if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
@@ -295,11 +286,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-v2-blocked-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       wrapPipelineMod.runWrapPipeline = async () => ({
@@ -324,10 +310,6 @@ describe('api-sessions', () => {
         assert.equal(res.body.pipelineResult.results[0].status, 'blocked');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
         const wrapping = store.sessions.getWrapping(project.id);
         if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
@@ -342,11 +324,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-v2-threw-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       wrapPipelineMod.runWrapPipeline = async () => { throw new Error('synthetic'); };
@@ -357,10 +334,6 @@ describe('api-sessions', () => {
         assert.match(res.body.error || '', /synthetic/);
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -373,11 +346,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-v2-prhandling-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       let receivedOptions;
@@ -402,10 +370,6 @@ describe('api-sessions', () => {
         assert.equal(typeof Object.keys(receivedOptions.prHandling)[0], 'string');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
         const wrapping = store.sessions.getWrapping(project.id);
         if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
@@ -420,11 +384,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-v2-bad-options-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       let received = 'sentinel';
@@ -445,10 +404,6 @@ describe('api-sessions', () => {
           'non-object options bodies must be discarded before reaching the runner (only the #583 hook remains)');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
         const wrapping = store.sessions.getWrapping(project.id);
         if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
@@ -467,12 +422,14 @@ describe('api-sessions', () => {
         tmuxSession: 'wrap-response-test'
       });
 
-      // Mock tmux — triggerWrap calls sendKeys and setWrapping
-      const tmux = require('../lib/tmux');
-      const originalSendKeys = tmux.sendKeys;
-      const originalHasSession = tmux.hasSession;
-      tmux.sendKeys = () => {};
-      tmux.hasSession = () => true;
+      // Stub the runner — this pins the response's legacy-surviving
+      // field shape, not the pipeline's internals (those are covered in
+      // wrap-pipeline tests).
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => ({
+        ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null
+      });
 
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
@@ -482,8 +439,7 @@ describe('api-sessions', () => {
         assert.ok(Array.isArray(res.body.wrapSteps));
         assert.ok(Array.isArray(res.body.captureFields));
       } finally {
-        tmux.sendKeys = originalSendKeys;
-        tmux.hasSession = originalHasSession;
+        wrapPipelineMod.runWrapPipeline = realRun;
         // Cleanup
         const wrapping = store.sessions.getWrapping(project.id);
         if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');

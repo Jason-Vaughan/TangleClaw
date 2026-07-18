@@ -26,6 +26,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Chore — legacy V1 NL-prompt wrap path stripped (Chunk 05)
+
+<!-- prawduct: type=chore | chunks=05 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** Phase A Chunk 05 / backlog WRP-2Q6H — the legacy NL-prompt-via-tmux wrap survived
+many release cycles past the #196 default-flip's documented one-cycle grace window.
+**What:** `triggerWrap` reduced to project/session checks + the pipeline runner (gate, NL-prompt
+branch, and webui dead-end error deleted); `DEFAULT_PROJECT_CONFIG.wrapV2` removed (stale
+on-disk keys ignored; litellm-smoketest's live `false` opt-out removed as a data op — its
+`minimal` methodology has a full `wrap_pipeline`, so nothing needed the legacy path);
+wrap-pipeline error message no longer advises the deleted opt-out; stale comments updated
+(`_triggerWrapV2` header, `public/session.js` confirmWrap, api-wrap-status test); ADR 0002
+status line records the excision. **Scoping correction:** the backlog item's
+"strip the `lib/skills.js` shim" sub-goal was based on a stale premise (and a phantom
+`synthesizeLegacyWrap` name) — `getWrapSkill`/`wrapShapeFromTemplate` are still live consumers'
+dependencies (pipeline response shaping, `autoCompleteWrap`, `loadSkills`, `eval-audit`), and
+the bundled templates still carry legacy `wrap` blocks; their retirement belongs to the
+methodology-layer removal (Phase B), not here. **Test consolidation (named per the
+tests-never-weaken rule):** the legacy-behavior pins asserted a deleted code path — byte-equal
+NL prompt (×2 incl. the minimal-methodology variant), wrapping-status transition,
+#101 prompt-hygiene pins, and the webui-legacy error test are replaced by retirement pins
+(explicit false / absent / fresh-project / webui-stale-false all route to the pipeline;
+DEFAULT_PROJECT_CONFIG must not re-seed the key; #101 version-cache write re-pinned on the
+pipeline path); inert `wrapV2` fixture writes swept from sessions/api-sessions/store suites.
+Suite 4338/0/1 (net −9 tests from the consolidation), JUnit evidence recorded.
+**Deliberate residue:** `store.sessions.setWrapping` lost its last production caller (the
+legacy branch was it), but the surrounding wrapping-status machinery (`completeWrap`,
+`autoCompleteWrap`, `POST /wrap/complete`, the #91 wrap-state persistence) stays LIVE — the
+frontend's manual-complete flow posts to it and `completeWrap` also serves active sessions.
+Not stripped here: the wrap-flow redesign (Wrap v2, Phase B) replaces this layer wholesale.
+
 ## 2026-07-18: Chore — fleet remnant sweep: vendored V1 product-hook eradicated (Chunk 04)
 
 <!-- prawduct: type=chore | chunks=04 | scope=prawduct-v2-sunset | status=shipped -->
