@@ -1090,26 +1090,28 @@ route('POST', '/api/rules/global/reset', (_req, res) => {
 });
 
 // ── Session Rules API (#347/D1a) ──
-// Durable operator-authored behavioral directives injected cross-model at
-// session launch. Persisting a rule does NOT force a config regen — configs
-// pick it up on next session launch / syncAllProjects, identical to how
-// global-rules edits propagate today. The D1a UI authors GLOBAL rules
-// (projectId omitted); the nullable project_id is schema-ready for D1b.
+// Durable operator/AI-authored per-project behavioral directives. 'startup'
+// rules inject cross-model at session launch; 'wrap' rules inject into the
+// wrap pipeline's ai-content prompt. Persisting a rule does NOT force a
+// config regen — configs pick it up on next session launch / syncAllProjects,
+// identical to how global-rules edits propagate today. Rules are always
+// project-scoped: the hidden global tier (projectId omitted) was retired —
+// cross-project directives belong in the Global rules document
+// (`/api/rules/global` → data/global-rules.md).
 
-// GET /api/session-rules — list (optional ?projectId= / ?scope=global / ?kind=)
+// GET /api/session-rules — list (optional ?projectId= / ?kind=)
 route('GET', '/api/session-rules', (req, res) => {
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
-  if (query.scope === 'global') options.scope = 'global';
-  else if (query.projectId !== undefined) options.projectId = Number(query.projectId);
-  // CC-6 (#381): filter the per-project modal's three boxes by rule kind.
+  if (query.projectId !== undefined) options.projectId = Number(query.projectId);
+  // CC-6 (#381): filter the per-project modal's rule boxes by kind.
   if (query.kind !== undefined) options.kind = query.kind;
   const rules = store.sessionRules.list(options);
   jsonResponse(res, 200, { rules });
 });
 
-// POST /api/session-rules — create { content, projectId?, createdBy?, kind? }
+// POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
@@ -1117,9 +1119,10 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
   try {
     const rule = store.sessionRules.create({
       content: body.content,
-      projectId: body.projectId ?? null,
+      // Required — store throws BAD_REQUEST when absent (global tier retired).
+      projectId: body.projectId,
       createdBy: body.createdBy || 'operator',
-      // CC-6 (#381): 'startup' (default) | 'wrap' | 'mode'. Invalid → store throws BAD_REQUEST.
+      // CC-6 (#381): 'startup' (default) | 'wrap'. Invalid → store throws BAD_REQUEST.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
       criticGate: body.criticGate
@@ -1664,6 +1667,8 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     silentPrime: result.project.silentPrime,
     medusaEnabled: result.project.medusaEnabled,
     medusaWake: result.project.medusaWake,
+    defaultLaunchMode: result.project.defaultLaunchMode,
+    showLaunchModePicker: result.project.showLaunchModePicker,
     updatedAt: result.project.updatedAt
   };
 

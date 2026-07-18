@@ -575,8 +575,8 @@ describe('engines', () => {
     });
 
     afterEach(() => {
-      // Session rules are global by default — clear them so other generator
-      // tests in this shared-store suite don't see leaked content.
+      // Clear rules so other generator tests in this shared-store suite
+      // don't see leaked content.
       for (const rule of store.sessionRules.list()) {
         store.sessionRules.delete(rule.id);
       }
@@ -584,50 +584,54 @@ describe('engines', () => {
     });
 
     it('_getRulesContent surfaces active session rules as sessionRulesLines', () => {
-      store.sessionRules.create({ content: 'Prefer composition over inheritance' });
+      store.sessionRules.create({ content: 'Prefer composition over inheritance', projectId: project.id });
       const rules = engines._getRulesContent({ id: project.id });
       assert.ok(Array.isArray(rules.sessionRulesLines));
       assert.ok(rules.sessionRulesLines.includes('Prefer composition over inheritance'));
     });
 
-    it('_getRulesContent returns global + per-project rules for a project', () => {
-      store.sessionRules.create({ content: 'global directive' });
+    it('_getRulesContent returns ONLY the project\'s own rules (global tier retired)', () => {
+      const otherPath = path.join(tempDir, 'other-rules-proj');
+      fs.mkdirSync(otherPath, { recursive: true });
+      const other = store.projects.create({ name: 'other-rules-proj', path: otherPath, engine: 'claude', methodology: 'none' });
+      store.sessionRules.create({ content: 'other project directive', projectId: other.id });
       store.sessionRules.create({ content: 'project directive', projectId: project.id });
       const rules = engines._getRulesContent({ id: project.id });
-      assert.ok(rules.sessionRulesLines.includes('global directive'));
+      assert.ok(!rules.sessionRulesLines.includes('other project directive'));
       assert.ok(rules.sessionRulesLines.includes('project directive'));
+      store.projects.delete(other.id);
     });
 
     it('excludes disabled rules from sessionRulesLines', () => {
-      const off = store.sessionRules.create({ content: 'disabled directive' });
+      const off = store.sessionRules.create({ content: 'disabled directive', projectId: project.id });
       store.sessionRules.update(off.id, { enabled: false });
       const rules = engines._getRulesContent({ id: project.id });
       assert.ok(!rules.sessionRulesLines.includes('disabled directive'));
     });
 
     it('renders a ## Session Rules section in CLAUDE.md', () => {
-      store.sessionRules.create({ content: 'Always run lint' });
+      store.sessionRules.create({ content: 'Always run lint', projectId: project.id });
       const content = engines._generateClaudeMd({ id: project.id }, null);
       assert.match(content, /## Session Rules/);
       assert.match(content, /- Always run lint/);
     });
 
     it('renders the section in GEMINI.md (cross-model)', () => {
-      store.sessionRules.create({ content: 'Gemini sees this' });
+      store.sessionRules.create({ content: 'Gemini sees this', projectId: project.id });
       const content = engines._generateGeminiMd({ id: project.id }, null);
       assert.match(content, /## Session Rules/);
       assert.match(content, /- Gemini sees this/);
     });
 
     it('renders the section in .codex.yaml (cross-model)', () => {
-      store.sessionRules.create({ content: 'Codex sees this' });
+      store.sessionRules.create({ content: 'Codex sees this', projectId: project.id });
       const content = engines._generateCodexYaml({ id: project.id }, null);
       assert.match(content, /## Session Rules/);
       assert.match(content, /Codex sees this/);
     });
 
     it('renders the section as comments in .aider.conf.yml (cross-model)', () => {
-      store.sessionRules.create({ content: 'Aider sees this' });
+      store.sessionRules.create({ content: 'Aider sees this', projectId: project.id });
       const content = engines._generateAiderConf({ id: project.id }, null);
       assert.match(content, /# Session Rules:/);
       assert.match(content, /#\s+- Aider sees this/);

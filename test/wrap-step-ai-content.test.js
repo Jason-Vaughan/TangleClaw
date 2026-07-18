@@ -288,6 +288,9 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     aic._internal.now = () => 0; // never advances → MAX_WAIT_MS is never hit by the clock
     // A bridge-backed webui session by default; individual tests override.
     aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
+    // No wrap rules by default so prompt assertions stay exact (the real
+    // listWrapRules would hit an uninitialized store and degrade anyway).
+    aic._internal.listWrapRules = () => [];
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
 
@@ -493,5 +496,148 @@ describe('wrap-step ai-content — CC-7 B1 getBridgeContext guards', () => {
     assert.equal(res.status, 'skipped');
     assert.match(res.output.reason, /no ClawBridge sidecar/);
     assert.equal(sent, false);
+  });
+});
+
+// Phase A wrap-rules bridge — the project's enabled `kind='wrap'` session
+// rules are appended to every non-empty ai-content prompt as a
+// `## Project wrap rules` block, on both the tmux and gateway paths. This is
+// what makes the Wrap-rules settings field real: before the bridge, wrap
+// rules were stored with no consumer.
+describe('wrap-step ai-content — wrap-rules bridge', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const PROJECT = { id: 7, name: 'proj', path: '/tmp/proj' };
+
+  describe('_appendWrapRules', () => {
+    it('appends enabled wrap rules as a ## Project wrap rules block', () => {
+      aic._internal.listWrapRules = (projectId) => {
+        assert.equal(projectId, 7);
+        return [{ content: 'Always update the roadmap' }, { content: '  Note open threads  ' }];
+      };
+      const out = aic._appendWrapRules('base prompt', PROJECT);
+      assert.match(out, /^base prompt\n\n## Project wrap rules\n/);
+      assert.match(out, /- Always update the roadmap\n- Note open threads$/);
+    });
+
+    it('returns the bare prompt when the project has no wrap rules', () => {
+      aic._internal.listWrapRules = () => [];
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+    });
+
+    it('skips blank-content rules and degrades to the bare prompt on a store failure', () => {
+      aic._internal.listWrapRules = () => [{ content: '   ' }];
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+
+      aic._internal.listWrapRules = () => { throw new Error('db unavailable'); };
+      assert.equal(aic._appendWrapRules('base prompt', PROJECT), 'base prompt');
+    });
+  });
+
+  describe('run() sends the rules-bearing prompt (tmux path)', () => {
+    it('the tmux send carries the appended wrap-rules block', async () => {
+      let sentPrompt = null;
+      aic._internal.sendKeys = (_sess, prompt) => { sentPrompt = prompt; };
+      aic._internal.sleep = async () => {};
+      aic._internal.detectIdle = () => ({ idle: true });
+      aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
+      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+
+      const res = await aic.run({
+        project: PROJECT,
+        session: { tmuxSession: 'sess' },
+        step: { id: 'memory-update', kind: 'ai-content', prompt: 'write the block' },
+        previousResults: [],
+        staged: {},
+        options: {}
+      });
+
+      assert.equal(res.status, 'done');
+      assert.match(sentPrompt, /^write the block\n\n## Project wrap rules\n/);
+      assert.match(sentPrompt, /- Close every open loop/);
+    });
+
+    it('an empty step prompt still skips — rules never turn a no-op step into a send', async () => {
+      let sent = false;
+      aic._internal.sendKeys = () => { sent = true; };
+      aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+
+      const res = await aic.run({
+        project: PROJECT,
+        session: { tmuxSession: 'sess' },
+        step: { id: 'placeholder', kind: 'ai-content', prompt: '' },
+        previousResults: [],
+        staged: {},
+        options: {}
+      });
+
+      assert.equal(res.status, 'skipped');
+      assert.equal(sent, false);
+    });
+  });
+});
+
+// Wrap-rules bridge parity: the gateway path appends the same block the tmux
+// path does, and the default listWrapRules feeds rules oldest-first (matching
+// startup injection order, not the UI's newest-first list()).
+describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  it('the gateway send carries the appended wrap-rules block', async () => {
+    aic._internal.sleep = async () => {};
+    aic._internal.now = () => 0;
+    aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
+    aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+    let sentMessage = null;
+    aic._internal.bridgeSend = async (a) => { sentMessage = a.message; return { ok: true }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });
+    aic._internal.bridgeGetFile = async () => ({ ok: true, content: RAW_BLOCK });
+
+    const res = await aic._runGatewayCapture({
+      project: { id: 7, name: 'proj', path: '/tmp/proj' },
+      session: { sessionMode: 'webui', tmuxSession: null },
+      step: {
+        id: 'summary-derive', kind: 'ai-content', prompt: 'wrap please',
+        captureFields: ['Summary', 'NextSteps', 'Learnings'],
+        captureFile: '.tangleclaw/.wrap-summary.md'
+      },
+      previousResults: [],
+      staged: {},
+      options: {}
+    });
+
+    assert.equal(res.status, 'done');
+    assert.match(sentMessage, /^wrap please\n\n## Project wrap rules\n/);
+    assert.match(sentMessage, /- Close every open loop/);
+  });
+
+  it('default listWrapRules returns enabled wrap rules oldest-first (store-backed)', () => {
+    const fs2 = require('node:fs');
+    const os2 = require('node:os');
+    const path2 = require('node:path');
+    const store = require('../lib/store');
+    const tmpDir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'tc-wrap-rules-order-'));
+    try {
+      store._setBasePath(tmpDir);
+      store.init();
+      const projPath = path2.join(tmpDir, 'order-proj');
+      fs2.mkdirSync(projPath, { recursive: true });
+      const pid = store.projects.create({ name: 'order-proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
+      store.sessionRules.create({ content: 'first rule', projectId: pid, kind: 'wrap' });
+      store.sessionRules.create({ content: 'second rule', projectId: pid, kind: 'wrap' });
+      const disabled = store.sessionRules.create({ content: 'disabled rule', projectId: pid, kind: 'wrap' });
+      store.sessionRules.update(disabled.id, { enabled: false });
+      store.sessionRules.create({ content: 'a startup rule', projectId: pid, kind: 'startup' });
+
+      const rules = aic._internal.listWrapRules(pid).map((r) => r.content);
+      assert.deepEqual(rules, ['first rule', 'second rule']);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs2.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

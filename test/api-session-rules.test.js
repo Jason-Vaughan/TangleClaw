@@ -2,8 +2,10 @@
 
 /*
  * HTTP route tests for the session-rules REST API (#347/D1a):
- * GET/POST/PUT/DELETE /api/session-rules. Mirrors the harness in
- * test/api-actions.test.js (real server on an ephemeral port).
+ * GET/POST/PUT/DELETE /api/session-rules. Rules are always project-scoped
+ * (the hidden global tier was retired with the Phase A settings cleanup).
+ * Mirrors the harness in test/api-actions.test.js (real server on an
+ * ephemeral port).
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -22,6 +24,7 @@ describe('api/session-rules (#347/D1a)', () => {
   let server;
   let port;
   let tmpDir;
+  let projectId;
 
   function request(method, urlPath, body) {
     return new Promise((resolve, reject) => {
@@ -54,6 +57,9 @@ describe('api/session-rules (#347/D1a)', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-session-rules-'));
     store._setBasePath(path.join(tmpDir, 'store'));
     store.init();
+    const projPath = path.join(tmpDir, 'rules-proj');
+    fs.mkdirSync(projPath, { recursive: true });
+    projectId = store.projects.create({ name: 'rules-proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -69,15 +75,15 @@ describe('api/session-rules (#347/D1a)', () => {
 
   it('full lifecycle: create → list → update → delete', async () => {
     // Create
-    const created = await request('POST', '/api/session-rules', { content: 'Prefer small commits' });
+    const created = await request('POST', '/api/session-rules', { content: 'Prefer small commits', projectId });
     assert.equal(created.status, 201);
     assert.equal(created.data.content, 'Prefer small commits');
-    assert.equal(created.data.projectId, null);
+    assert.equal(created.data.projectId, projectId);
     assert.equal(created.data.createdBy, 'operator');
     const id = created.data.id;
 
-    // List (global scope)
-    const listed = await request('GET', '/api/session-rules?scope=global');
+    // List (project scope)
+    const listed = await request('GET', `/api/session-rules?projectId=${projectId}`);
     assert.equal(listed.status, 200);
     assert.ok(listed.data.rules.some((r) => r.id === id));
 
@@ -91,12 +97,19 @@ describe('api/session-rules (#347/D1a)', () => {
     assert.equal(deleted.status, 200);
     assert.equal(deleted.data.ok, true);
 
-    const afterDelete = await request('GET', '/api/session-rules?scope=global');
+    const afterDelete = await request('GET', `/api/session-rules?projectId=${projectId}`);
     assert.ok(!afterDelete.data.rules.some((r) => r.id === id));
   });
 
+  it('rejects a projectId-less create with 400 (global tier retired)', async () => {
+    const res = await request('POST', '/api/session-rules', { content: 'global?' });
+    assert.equal(res.status, 400);
+    assert.equal(res.data.code, 'BAD_REQUEST');
+    assert.match(res.data.error, /projectId is required/);
+  });
+
   it('rejects empty content with 400', async () => {
-    const res = await request('POST', '/api/session-rules', { content: '   ' });
+    const res = await request('POST', '/api/session-rules', { content: '   ', projectId });
     assert.equal(res.status, 400);
     assert.equal(res.data.code, 'BAD_REQUEST');
   });
@@ -113,27 +126,27 @@ describe('api/session-rules (#347/D1a)', () => {
 
   // CC-6 (#381): kind passthrough on create + list filtering.
   it('creates with a kind and lists filtered by kind', async () => {
-    const wrap = await request('POST', '/api/session-rules', { content: 'wrap the session deeply', kind: 'wrap' });
+    const wrap = await request('POST', '/api/session-rules', { content: 'wrap the session deeply', kind: 'wrap', projectId });
     assert.equal(wrap.status, 201);
     assert.equal(wrap.data.kind, 'wrap');
 
-    const startup = await request('POST', '/api/session-rules', { content: 'prime with project context', kind: 'startup' });
+    const startup = await request('POST', '/api/session-rules', { content: 'prime with project context', kind: 'startup', projectId });
     assert.equal(startup.status, 201);
 
-    const wraps = await request('GET', '/api/session-rules?scope=global&kind=wrap');
+    const wraps = await request('GET', `/api/session-rules?projectId=${projectId}&kind=wrap`);
     assert.equal(wraps.status, 200);
     assert.ok(wraps.data.rules.some((r) => r.id === wrap.data.id));
     assert.ok(!wraps.data.rules.some((r) => r.id === startup.data.id));
   });
 
   it('defaults kind to startup when omitted', async () => {
-    const res = await request('POST', '/api/session-rules', { content: 'no kind here' });
+    const res = await request('POST', '/api/session-rules', { content: 'no kind here', projectId });
     assert.equal(res.status, 201);
     assert.equal(res.data.kind, 'startup');
   });
 
   it('rejects an invalid kind with 400', async () => {
-    const res = await request('POST', '/api/session-rules', { content: 'bad kind', kind: 'nope' });
+    const res = await request('POST', '/api/session-rules', { content: 'bad kind', kind: 'nope', projectId });
     assert.equal(res.status, 400);
     assert.equal(res.data.code, 'BAD_REQUEST');
   });

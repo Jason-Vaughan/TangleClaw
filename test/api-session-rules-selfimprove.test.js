@@ -23,6 +23,7 @@ describe('api/session-rules self-improvement (D1b)', () => {
   let port;
   let tmpDir;
   let learningId;
+  let pid;
 
   function request(method, urlPath, body) {
     return new Promise((resolve, reject) => {
@@ -54,7 +55,7 @@ describe('api/session-rules self-improvement (D1b)', () => {
     store.init();
     const projPath = path.join(tmpDir, 'proj');
     fs.mkdirSync(projPath, { recursive: true });
-    const pid = store.projects.create({ name: 'proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
+    pid = store.projects.create({ name: 'proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
     learningId = store.learnings.create({ projectId: pid, content: 'Prefer dependency injection' }).id;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
@@ -83,8 +84,8 @@ describe('api/session-rules self-improvement (D1b)', () => {
   });
 
   it('surfaces conflict candidates', async () => {
-    await request('POST', '/api/session-rules', { content: 'Always run the full test suite before commit' });
-    const res = await request('POST', '/api/session-rules/conflicts', { content: 'skip the test suite for tiny commit' });
+    await request('POST', '/api/session-rules', { content: 'Always run the full test suite before commit', projectId: pid });
+    const res = await request('POST', '/api/session-rules/conflicts', { content: 'skip the test suite for tiny commit', projectId: pid });
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.data.candidates));
     assert.ok(res.data.candidates.some((c) => /test suite/.test(c.rule.content)));
@@ -95,7 +96,7 @@ describe('api/session-rules self-improvement (D1b)', () => {
   });
 
   it('lists versions and restores a prior version', async () => {
-    const created = (await request('POST', '/api/session-rules', { content: 'rev one' })).data;
+    const created = (await request('POST', '/api/session-rules', { content: 'rev one', projectId: pid })).data;
     await request('PUT', `/api/session-rules/${created.id}`, { content: 'rev two' });
 
     const versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
@@ -109,13 +110,13 @@ describe('api/session-rules self-improvement (D1b)', () => {
 
   it('404 versions for a missing rule; 400 restore without versionNo', async () => {
     assert.equal((await request('GET', '/api/session-rules/99999/versions')).status, 404);
-    const created = (await request('POST', '/api/session-rules', { content: 'z' })).data;
+    const created = (await request('POST', '/api/session-rules', { content: 'z', projectId: pid })).data;
     assert.equal((await request('POST', `/api/session-rules/${created.id}/restore`, {})).status, 400);
   });
 
   it('records the critic_gate attestation through the apply paths and surfaces it on versions (SR-7K2P)', async () => {
     // Operator create with no attestation → derived 'not-required'.
-    const created = (await request('POST', '/api/session-rules', { content: 'gate one' })).data;
+    const created = (await request('POST', '/api/session-rules', { content: 'gate one', projectId: pid })).data;
     let versions = (await request('GET', `/api/session-rules/${created.id}/versions`)).data.versions;
     assert.equal(versions[0].criticGate, 'not-required');
 
@@ -132,9 +133,9 @@ describe('api/session-rules self-improvement (D1b)', () => {
   });
 
   it('400s an out-of-enum criticGate on create, update, promote, and restore (SR-7K2P)', async () => {
-    assert.equal((await request('POST', '/api/session-rules', { content: 'x', criticGate: 'maybe' })).status, 400);
+    assert.equal((await request('POST', '/api/session-rules', { content: 'x', projectId: pid, criticGate: 'maybe' })).status, 400);
     assert.equal((await request('POST', '/api/session-rules/promote', { learningId, criticGate: 'maybe' })).status, 400);
-    const created = (await request('POST', '/api/session-rules', { content: 'valid' })).data;
+    const created = (await request('POST', '/api/session-rules', { content: 'valid', projectId: pid })).data;
     assert.equal((await request('PUT', `/api/session-rules/${created.id}`, { content: 'y', criticGate: 'nope' })).status, 400);
     assert.equal((await request('POST', `/api/session-rules/${created.id}/restore`, { versionNo: 1, criticGate: 'nope' })).status, 400);
   });

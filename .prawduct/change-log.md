@@ -26,6 +26,53 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Feature — settings/rules cleanup + wrap-rules bridge + launch-mode default (Chunk 06)
+
+<!-- prawduct: type=feature | chunks=06 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** Phase A Chunk 06 (ratified 2026-07-17, retask amended same day) — the read-path
+audit found `mode` rules had no runtime, the global session-rules tier had zero rows and a
+hidden UI, and `wrap` rules were stored with no consumer; the Mode-rules slot was retasked
+into structured per-project launch-mode settings.
+**What:** (1) `mode` kind deleted (`SESSION_RULE_KINDS=['startup','wrap']`) and the global
+tier retired — `sessionRules.create` requires `projectId`, `?scope=global` removed,
+injection/conflict queries drop the `project_id IS NULL` arm, `promoteFromLearning`
+defaults to the learning's project, landing-page global panel + its version-history UI
+deleted (store/API versions machinery retained for Chunk 07's master-scoped rules),
+migration v25 defensively purges both retired tiers (zero rows expected; history kept).
+(2) Launch-mode settings: `defaultLaunchMode` (engine mode key, default `'default'`) +
+`showLaunchModePicker` (default true) in `DEFAULT_PROJECT_CONFIG`, PATCH-validated against
+the intended engine's `launchModes`, enriched to the frontend, resolved server-side in
+`launchSession` (explicit choice wins; stale keys ignored); eyes-open guard — hidden
+picker + warning-carrying default requires `confirmBypassHidden: true`, enforced in
+`updateProject` and fronted by a confirm modal; landing Launch skips the picker when
+hidden. Guard keys on the mode's `warning` flag, not a hardcoded name, so it covers
+codex `fullAuto` / aider `yesAlways` too. (3) Wrap-rules bridge:
+`ai-content._appendWrapRules` appends enabled `kind='wrap'` rules to every non-empty
+ai-content prompt (tmux + gateway paths); store failure degrades to the bare prompt.
+(4) Copy pass: dash-bar tier reads "Global Rules"; Project Rules modal down to two kind
+boxes with the wrap hint reflecting real injection.
+**Deliberate residue:** rule version-history UI is temporarily unreachable (its only
+surface was the deleted global panel; rows in the tier were zero, so nothing observable
+is lost) — the Master settings surface (Chunk 07) owns the successor UI. Launch Mode
+modal untouched (facelift + preselect-from-default = GH #596). `session_rules.project_id`
+stays nullable in the schema pending Chunk 07's master-scoped rows.
+**Verification:** full suite green (was 4339, now 4353 — 4352 pass / 1 skip / 0 fail —
+after retirement-pin consolidation + new coverage incl. the Critic-fix round); live
+product verification on the restarted server (branch tree 5c5e847, `isStale:false`):
+enrichment exposes both fields, engine-key validation 400s, the eyes-open guard 400s
+with its remediation message and persists nothing, `POST /api/session-rules` without
+projectId 400s with the retirement message, served index.html/ui.js carry the confirm
+modal + renderer, sw.js serves cache gen v3-52. Frontend visuals (settings-modal launch
+section, confirm modal, hidden-picker launch) await operator eyeballs — server-side
+behavior verified via API. New real-old-schema v24→v25 purge
+migration test; new
+`test/launch-mode-settings.test.js` (16 tests: validation, guard combinations incl.
+single-field-completes-the-combo and stored-combo-never-re-blocks, launch resolution
+via mocked tmux, frontend pins); wrap-rules bridge tests in
+`test/wrap-step-ai-content.test.js` (tmux send carries the block; empty prompt still
+skips). sw.js cache generation bumped (v3-52).
+
 ## 2026-07-18: Chore — legacy V1 NL-prompt wrap path stripped (Chunk 05)
 
 <!-- prawduct: type=chore | chunks=05 | scope=prawduct-v2-sunset | status=shipped -->
