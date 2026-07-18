@@ -11,11 +11,15 @@ Format: - **Name** — short description. `file.js` plus stable anchors:
 re-verifies them, so they rot (DOC-3K7Q found drift of 300+ lines).
 Sub-pointer prefixes ("Backend:", "Handler:", "Core:") are allowed for
 entries that span multiple co-equal locations.
+
+Auto-stub TODO sections appended at wrap are working state, not backlog:
+fold them into the sections above promptly — test/features-index.test.js
+fails any auto-stub section older than 14 days.
 -->
 
 ## UI / Web
 
-- **Landing + session shells** — `public/index.html` is the single HTML host; it loads `/landing.js` (project list, port stats, system stats) and `/session.js` (per-project app shell) via the same document. The standalone per-session page is `public/session.html` + `public/session.css` (banner, terminal, Medusa control, drawers). `public/index.html`, `public/landing.js`, `public/session.js`, `public/session.html`, `public/session.css`.
+- **Landing + session shells** — `public/index.html` is the single HTML host; it loads `/landing.js` (project list, port stats, system stats) and `/session.js` (per-project app shell) via the same document. The standalone per-session page is `public/session.html` + `public/session.css` (banner, terminal, Medusa control, drawers). `public/index.html`, `public/landing.js`, `public/session.js`, `public/session.html`, `public/session.css`. Operator guide: `docs/user-guide.md`.
 - **First-run setup wizard** — guided initial configuration frontend (admin credential step landed with AUTH-2). `public/setup.js`.
 - **Service worker + update propagation** (#246/#258/#380) — `public/sw.js` is cache-first for static assets, network-first for API/navigation/cache-bust-critical scripts; `public/sw-register.js` registers it and forces fresh-worker pickup on iOS (poll `reg.update()` on load + tab-visibility, guarded `controllerchange`→reload). `public/sw.js`, `public/sw-register.js` (loaded by `public/index.html`).
 - **Settings modal** — per-project config editor (engine, methodology, silentPrime, featureIndexEnabled, rules). `public/ui.js#openSettings`.
@@ -113,6 +117,10 @@ entries that span multiple co-equal locations.
 
 Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files pair 1:1 with the module they cover (lib/NAME.js → test/NAME.test.js); the map below covers files whose subject isn't obvious from the name.
 
+- `test/features-index.test.js` — this file's own citation contract (no `:line` pointers, no dangling paths/anchors, stub sections fold within 14 days).
+- `test/api-sessions.test.js` — the `/api/sessions/*` route family; `test/api-system.test.js` — system/config/restart routes; `test/api-wrap-status.test.js` — `GET .../wrap/status` reattach + `WRAP_RESTART_BLOCKED` restart guard (#583).
+- `test/wrap-run-registry.test.js` — wrap-run registry lifecycle/stale-takeover/isolation (#583); `test/wrap-run-reattach.test.js` — session-page wrap-reattach wiring pins (#583).
+- `test/paste-affordance.test.js` — iOS touch Paste button + `tcPastePath` matrix (#402, UI-2P7T); `test/terminal-drag-copy.test.js` — #431 remote drag-copy wiring; `test/select-mode-mouse.test.js` — select-mode mouse handling in the terminal; `test/git.test.js` — `lib/git.js` helpers incl. `latestTag`.
 - `test/api-openclaw.test.js` — the `/api/openclaw/connections` route family (CRUD + test/approve).
 - `test/openclaw-setup-readme.test.js` — OpenClaw connection Read-Me / AI-setup-prompt UI, including the `tcCopyToClipboard` copy path.
 - `test/openclaw-bridge-port-row.test.js` — conditional Bridge Port row on the OpenClaw card (#491); owns the exact CACHE_NAME pin.
