@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.24.0] - 2026-07-18
+
 ### Added
 
 - **Per-project launch-mode settings replace the retired free-text Mode-rules field (Prawduct V1 Sunset, Phase A settings retask, ratified 2026-07-17).** Two structured settings in the Project Settings modal: **Default launch mode** (an engine launch-mode key; default `default` = "Interactive", validated against the intended engine's `launchModes` at PATCH time) and **Show launch mode picker** (default on; off → the landing Launch button skips the picker and launches directly). Resolution is server-side in `lib/sessions.js#launchSession` — an explicit caller choice wins, otherwise the configured default applies — so UI, ClawBridge, and raw API launches all honor it; a stale key after an engine switch is ignored (falls through to the engine default). **Eyes-open guard:** hiding the picker while the default is a warning-carrying mode (`bypassPermissions`/`fullAuto`/`yesAlways`) removes the red isolated-environments warning from the launch flow, so that combination requires `confirmBypassHidden: true` — enforced server-side in `projects.updateProject` and surfaced in the UI as an explicit confirm modal; a stored, confirmed combination never re-blocks unrelated saves. Picker preselect-from-default lands with the Launch Mode modal facelift (#596).
