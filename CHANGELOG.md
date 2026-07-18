@@ -6,7 +6,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
-- **tc-cleanroom first-run acceptance gate** (`deploy/cleanroom/`): compose + provisioner + runbook for exercising TangleClaw's first-time-install experience in a zero-egress Docker container on the habitat host, driven entirely over `ssh` + `docker exec`; `test/cleanroom-compose.test.js` pins the ratified lockdown constraints (internal-only network, no published ports, never pull, compose project pinned to `tc-cleanroom`). First run of the gate filed #614, #615, #616, #617; #613 (PortHub lease silent overwrite) surfaced in the surrounding session.
+- **tc-cleanroom first-run acceptance gate** (`deploy/cleanroom/`): compose + provisioner + tracked image bake recipe + runbook for exercising TangleClaw's first-time-install experience in a zero-egress Docker container on the habitat host, driven entirely over `ssh` + `docker exec`; `test/cleanroom-compose.test.js` pins the ratified lockdown constraints (internal-only network, no published ports, never pull, compose project pinned to `tc-cleanroom`). First run of the gate filed #614, #615, #616, #617; #613 (PortHub lease silent overwrite) surfaced in the surrounding session.
 
 ## [4.25.0] - 2026-07-18
 

@@ -15,9 +15,9 @@ box. Everything is driven through `docker exec`. See the header comments in
 `compose.yaml` and `provision.sh` for the binding constraints and their
 rationale.
 
-The image was baked from `.prawduct/artifacts/tc-cleanroom-bake.sh` (local,
-untracked) during an operator-opened network window; re-baking needs another
-window — the provisioner itself never pulls.
+The image is baked from `bake.sh` (tracked here) during an operator-opened
+network window; re-baking needs another window — the provisioner itself never
+pulls.
 
 ## Run the gate
 

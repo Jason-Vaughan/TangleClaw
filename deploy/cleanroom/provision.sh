@@ -27,12 +27,21 @@ readonly REMOTE_DIR="tc-cleanroom"
 readonly DOCKER_PATH_EXPORT='export PATH="/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"'
 readonly COMPOSE="${DOCKER_PATH_EXPORT}; docker compose -f ~/${REMOTE_DIR}/compose.yaml -p tc-cleanroom"
 
-if [ "${1:-}" = "--down" ]; then
-  # shellcheck disable=SC2029
-  ssh "$HABITAT" "${COMPOSE} down"
-  echo "tc-cleanroom is down (image and ~/${REMOTE_DIR} left in place)."
-  exit 0
-fi
+# Strict argument gate: habitat hosts production stacks, so a typoed teardown
+# flag must fail loudly here — never fall through to a surprise provision.
+case "${1:-}" in
+  --down)
+    # shellcheck disable=SC2029
+    ssh "$HABITAT" "${COMPOSE} down"
+    echo "tc-cleanroom is down (image and ~/${REMOTE_DIR} left in place)."
+    exit 0
+    ;;
+  '') ;; # no args → provision
+  *)
+    echo "usage: $0 [--down]   (unrecognized argument: $1)" >&2
+    exit 2
+    ;;
+esac
 
 echo "==> Bundling repo (HEAD of current branch)"
 BUNDLE="$(mktemp -d)/tc.bundle"
