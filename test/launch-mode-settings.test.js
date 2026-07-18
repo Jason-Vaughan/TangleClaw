@@ -278,5 +278,9 @@ describe('launch-mode settings', () => {
     it('landing launch gate skips the picker when showLaunchModePicker is false', () => {
       assert.match(landing, /showLaunchModePicker === false/);
     });
+
+    it('a rejected settings save keeps the modal open and surfaces the error', () => {
+      assert.match(ui, /Save failed: \$\{api\.lastError/);
+    });
   });
 });
