@@ -453,6 +453,36 @@ describe('projects', () => {
       assert.match(content, /Prawduct/, 'CLAUDE.md should be regenerated from the DB methodology (prawduct)');
     });
 
+    it('regenerates from the DB engine, not projConfig, when project.json lacks an engine key', () => {
+      // Live-fleet bug found during the tilt retirement: codextest's DB said
+      // `codex`, but its project.json had no `engine` key — boot-sync fell
+      // back to claude (`project.engine` was also a dead field; store rows
+      // expose `engineId`), regenerated a CLAUDE.md, and left the operative
+      // .codex.yaml stale for weeks. DB is the single source of truth for the
+      // engine, matching the methodology rule (#320) and the session-launch
+      // path.
+      const { project: proj } = projects.createProject({ name: 'db-engine-wins', engine: 'codex' });
+      assert.equal(proj.engineId, 'codex');
+
+      const projPath = path.join(projectsDir, 'db-engine-wins');
+      const projConfig = store.projectConfig.load(projPath);
+      delete projConfig.engine; // legacy project.json with no engine key
+      store.projectConfig.save(projPath, projConfig);
+
+      const codexYaml = path.join(projPath, '.codex.yaml');
+      const claudeMd = path.join(projPath, 'CLAUDE.md');
+      if (fs.existsSync(codexYaml)) fs.unlinkSync(codexYaml);
+      if (fs.existsSync(claudeMd)) fs.unlinkSync(claudeMd);
+
+      const result = projects.syncAllProjects();
+      assert.ok(result.synced > 0);
+
+      assert.ok(fs.existsSync(codexYaml),
+        '.codex.yaml must be regenerated from the DB engine (codex)');
+      assert.ok(!fs.existsSync(claudeMd),
+        'no CLAUDE.md may be written for a codex project missing projConfig.engine');
+    });
+
     it('defers to the Prawduct V2 plugin at boot: preserves the anchor AND strips the governance hook (#330)', () => {
       // A project later onboarded to the V2 plugin: it carries the install
       // reference plus a leftover TC governance `.hooks` block and a plugin-owned
