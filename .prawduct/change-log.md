@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-18: Feature — settings/rules cleanup + wrap-rules bridge + launch-mode default (Chunk 06)
 
-<!-- prawduct: type=feature | chunks=06 | scope=prawduct-v2-sunset -->
+<!-- prawduct: type=feature | chunks=06 | scope=prawduct-v2-sunset | status=shipped -->
 
 **Why:** Phase A Chunk 06 (ratified 2026-07-17, retask amended same day) — the read-path
 audit found `mode` rules had no runtime, the global session-rules tier had zero rows and a
