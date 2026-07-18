@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Fleet remnant sweep: the vendored Prawduct V1 `tools/product-hook` bundle is eradicated from every live repo on this machine (V1 Sunset Phase A, Chunk 04).** No TangleClaw code changed — this entry records cross-repo fleet maintenance for audit history. 13 carriers swept (the plan's "9 repos" undercounted; CLITS — an unregistered repo with *active* product-hook SessionStart/Stop wiring — was a missed carrier): hook executable + vendored python `tools/lib/` deleted, settings de-wired in the same commit where wired (dangling-hook loop hazard), 10 scoped per-repo chore commits, pushed where branches were clean. TiLT v2's stranded outer `.claude/` + `tools/` (the #592 straggler) deleted; `Kobold/CLAUDE.md` and `codextest/CLAUDE.md` orphan engine configs removed; prawduct-test retired (archived to `~/Backups/prawduct-test-archive-2026-07-18`, deregistered — it had no git remote). Verified clean via filesystem sweep + `GET /api/projects/stranded-configs-scan` returning zero stranded files. Backups deliberately untouched.
+
 ## [4.22.0] - 2026-07-18
 
 ### Changed
