@@ -26,6 +26,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Chore — fleet remnant sweep: vendored V1 product-hook eradicated (Chunk 04)
+
+<!-- prawduct: type=chore | chunks=04 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** Phase A Chunk 04 — the 2026-07-14 plugin rollup left the V1 file-sync install's
+vendored artifacts behind across the fleet. **Pre-build verification corrected the spec:**
+`tools/product-hook` is a single ~178KB bundled executable (not a tree; 4 repos also carried
+the vendored `tools/lib/` python hook lib); the real inventory was 12 live carriers + TiLT v2's
+stranded outer dir (not "9 repos"); the codextest settings claim was STALE (already clean —
+only the TC prime hook remains); and **CLITS** (unregistered repo) was a missed live carrier
+with active product-hook SessionStart/Stop wiring. **Decisions (operator):** write-mode =
+TC-direct sweep + scoped per-repo commits + push where clean; prawduct-test = full retirement.
+**What:** (1) Hook artifacts deleted in all 13 carriers — 9 scoped carrier commits (WhitePapers,
+Medusa+lib, TangleWeb+lib, JasonVaughanComPortfolio, Notse, RentalClaw-Project+lib, UCI, CLITS,
+TangleClaw-migrate-sandbox+lib) plus Kobold's separate orphan-CLAUDE.md commit (item 3) = 10
+commits total; 3 untracked-only carriers needed no commit (ScrapeGoat,
+ClawCode-x, codextest); pushed where the branch had no unrelated commits ahead (Medusa,
+TangleWeb, JasonVaughanComPortfolio); settings de-wired in the same commit as the hook delete
+(CLITS + sandbox settings.json were 100% V1-generated → removed whole; sandbox's also pointed
+its prime hook at the dead `TangleClaw-v3` path). (2) TiLT v2 stranded outer dir: `.claude/`
+(V1 skills tree + settings pair) and `tools/` deleted (non-git). (3) Orphan engine configs from
+the Chunk 03 boundary: `Kobold/CLAUDE.md` (git rm + commit), `codextest/CLAUDE.md` (untracked rm).
+(4) prawduct-test RETIRED: no git remote, so archived by move to
+`~/Backups/prawduct-test-archive-2026-07-18` + deregistered via `DELETE /api/projects` (rows
+gone, files kept). (5) Two backups deliberately untouched (`TangleClaw-v3-backup-pre-bfg`,
+`~/Backups/TangleClaw-v3-2026-03-16`). **Verified:** `find` over Projects shows product-hook
+only in the untouched backup; fleet-wide settings grep clean; TC's own
+`GET /api/projects/stranded-configs-scan` (the Chunk 02 guard) returns `stranded: []` — the
+TiLT v2 straggler it found is resolved. **TC repo diff is bookkeeping only** (plan, change-log,
+CHANGELOG) — no product code changed; the chunk's substance lives in the foreign-repo commits
+listed above.
+
 ## 2026-07-18: Feat — TiLT template retired + fleet downgrades to minimal (Chunk 03)
 
 <!-- prawduct: type=feat | chunks=03 | scope=prawduct-v2-sunset | status=shipped -->
