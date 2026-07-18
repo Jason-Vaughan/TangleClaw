@@ -1662,19 +1662,6 @@ describe('sessions', () => {
       sentCommand = null;
       tmux.sendKeys = (name, cmd, opts) => { sentCommand = cmd; };
       tmux.hasSession = () => true;
-      // #139 Chunk 11c — the default flipped to `wrapV2: true`. Tests
-      // in this block assert legacy NL-prompt behavior; the V2-routing
-      // tests below override this back to `true` per-test. Setting the
-      // baseline `false` here keeps the legacy tests focused on what
-      // they're actually asserting (the legacy path's behavior),
-      // without each test having to repeat the projConfig write.
-      const project = store.projects.getByName('prime-test');
-      if (project) {
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
-      }
     });
 
     afterEach(() => {
@@ -1691,84 +1678,52 @@ describe('sessions', () => {
       }
     });
 
-    it('sets session to wrapping status', async () => {
+    // Retirement pins — the legacy V1 NL-prompt-via-tmux wrap and its
+    // `projConfig.wrapV2` opt-out gate are deleted (backlog WRP-2Q6H).
+    // The consolidated legacy-behavior tests (byte-equal NL prompt pin,
+    // wrapping-status transition, #101 no-version-protocol-in-prompt
+    // pins) asserted a code path that no longer exists; these pins
+    // replace them with the retired contract: every trigger routes to
+    // the pipeline runner, whatever the on-disk flag says.
+    it('explicit wrapV2:false on disk still routes to the pipeline runner (legacy opt-out retired)', async () => {
       const project = store.projects.getByName('prime-test');
       const session = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'trigger-wrap-test'
+        tmuxSession: 'trigger-wrap-optout-retired-test'
+      });
+      store.projectConfig.save(project.path, {
+        ...store.projectConfig.load(project.path),
+        wrapV2: false
       });
 
-      const result = await sessions.triggerWrap('prime-test');
-      assert.ok(result.ok);
-      assert.equal(result.sessionId, session.id);
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let pipelineCalls = 0;
+      wrapPipelineMod.runWrapPipeline = async () => { pipelineCalls += 1; return EMPTY_V2_RESULT; };
 
-      // Session should now be wrapping
-      const wrapping = store.sessions.getWrapping(project.id);
-      assert.ok(wrapping);
-      assert.equal(wrapping.id, session.id);
+      try {
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(pipelineCalls, 1, 'stale wrapV2:false must not divert the wrap — the pipeline is the only path');
+        assert.equal(result.ok, true);
+        assert.equal(result.sessionId, session.id);
+        assert.equal(sentCommand, null, 'no NL prompt may be sent to tmux — the legacy sender is gone');
+        assert.ok(result.pipelineResult, 'result carries the structured pipeline output');
+        assert.ok(Array.isArray(result.wrapSteps), 'legacy response fields survive for the frontend poller');
+        assert.ok(Array.isArray(result.captureFields));
+        assert.equal(result.wrapCommand, null, 'no legacy wrapCommand exists');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        const cfg = store.projectConfig.load(project.path);
+        delete cfg.wrapV2;
+        store.projectConfig.save(project.path, cfg);
+      }
     });
 
-    it('returns wrapSteps and captureFields', async () => {
-      const project = store.projects.getByName('prime-test');
-      store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'trigger-wrap-fields-test'
-      });
-
-      const result = await sessions.triggerWrap('prime-test');
-      assert.ok(result.ok);
-      assert.ok(Array.isArray(result.wrapSteps));
-      assert.ok(Array.isArray(result.captureFields));
-    });
-
-    // #139 Chunk 2 — pin the actual NL prompt triggerWrap sends to tmux.
-    // The build plan's Acceptance line called for a byte-equal snapshot of
-    // the pre-migration wrap command after the schema swap. The shape-pin
-    // tests in skills.test.js cover this transitively, but if a future
-    // refactor reshapes triggerWrap's join (e.g. wraps fields differently
-    // or reorders), the shape pin won't catch it — this snapshot will.
-    //
-    // #139 Chunk 11c updated the expected steps list to reflect prawduct's
-    // wired-in `open-pr-check` + `critic-check` steps. The byte-equal
-    // contract still applies — any drift in `triggerWrap`'s join structure
-    // (separator, capture-field-suffix, command-prefix) will fail this pin.
-    it('sends byte-equal NL wrap prompt for prawduct (legacy path, post-C2 step list)', async () => {
-      const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'trigger-wrap-byteq-test'
-      });
-
-      await sessions.triggerWrap('prime-test');
-      // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
-      // V2 plugin); the byte-equal contract otherwise holds.
-      const expected =
-        'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, learnings-db-write, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
-        'Output these fields as ## markdown headings: summary, nextSteps, learnings';
-      assert.equal(sentCommand, expected,
-        'wrap NL prompt must include the post-C2 step list; any drift in join structure means triggerWrap behavior changed');
-    });
-
-    it('does NOT inject version-recording instruction in wrap command (#101 — TC owns the writer)', async () => {
-      const project = store.projects.getByName('prime-test');
-      store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'trigger-wrap-version-test'
-      });
-
-      await sessions.triggerWrap('prime-test');
-      assert.ok(sentCommand, 'should have sent a command');
-      assert.equal(sentCommand.includes('project-version.txt'), false, 'wrap command should not reference version cache file');
-      assert.equal(sentCommand.includes('re-check the project version'), false, 'wrap command should not include re-record instruction');
-    });
-
-    it('writes project-version.txt directly during wrap (#101)', async () => {
+    // #101 — TC owns the project-version writer. The pipeline path
+    // records the pre-wrap version directly (never by instructing the
+    // AI), same contract the legacy path carried.
+    it('writes project-version.txt directly during a pipeline wrap (#101)', async () => {
       const project = store.projects.getByName('prime-test');
       store.sessions.start({
         projectId: project.id,
@@ -1780,58 +1735,29 @@ describe('sessions', () => {
       // Remove any prior recording so we can detect this wrap's write.
       try { fs.rmSync(cachePath, { force: true }); } catch {}
 
-      await sessions.triggerWrap('prime-test');
-      assert.ok(fs.existsSync(cachePath), 'wrap should produce the version cache file');
-      const body = fs.readFileSync(cachePath, 'utf8');
-      assert.match(body, /^version:\s*\S+/m, 'cache file should contain a version: line');
-      assert.match(body, /^source:\s*\S+/m, 'cache file should contain a source: line');
-      assert.match(body, /^recorded_at:\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m, 'recorded_at should be ISO-8601 UTC');
-    });
-
-    it('preserves custom wrap command without injecting any version protocol (#101)', async () => {
-      const skills = require('../lib/skills');
-      const originalGetWrapSkill = skills.getWrapSkill;
-      skills.getWrapSkill = () => ({
-        command: '/custom-wrap --fast',
-        steps: ['commit'],
-        captureFields: ['summary']
-      });
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
 
       try {
-        const project = store.projects.getByName('prime-test');
-        store.sessions.start({
-          projectId: project.id,
-          engineId: 'claude',
-          tmuxSession: 'trigger-wrap-custom-cmd-test'
-        });
-
         await sessions.triggerWrap('prime-test');
-        assert.ok(sentCommand, 'should have sent a command');
-        assert.ok(sentCommand.includes('/custom-wrap --fast'), 'should start with custom command');
-        assert.equal(sentCommand.includes('project-version.txt'), false, 'custom-command wrap should not include version protocol');
-        assert.equal(sentCommand.includes('re-check the project version'), false, 'custom-command wrap should not include re-record instruction');
+        assert.ok(fs.existsSync(cachePath), 'wrap should produce the version cache file');
+        const body = fs.readFileSync(cachePath, 'utf8');
+        assert.match(body, /^version:\s*\S+/m, 'cache file should contain a version: line');
+        assert.match(body, /^source:\s*\S+/m, 'cache file should contain a source: line');
+        assert.match(body, /^recorded_at:\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m, 'recorded_at should be ISO-8601 UTC');
       } finally {
-        skills.getWrapSkill = originalGetWrapSkill;
+        wrapPipelineMod.runWrapPipeline = realRun;
       }
     });
 
-    // #139 Chunk 3 — `projConfig.wrapV2` opt-in routes to the new
-    // server-side pipeline runner. Default `false` keeps every legacy
-    // assertion above byte-equal (already pinned by the existing tests
-    // in this block, which run with the default config). These two
-    // tests pin the opt-in branch behavior.
-    it('wrapV2:true routes through the wrap pipeline runner and does NOT send tmux command (#139 Chunk 3)', async () => {
+    it('routes through the wrap pipeline runner and does NOT send tmux command (#139 Chunk 3)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'trigger-wrap-v2-test'
-      });
-      // Toggle wrapV2 in the on-disk project config.
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
       });
 
       // Chunk 9 made the `commit` step a real handler — it would
@@ -1866,9 +1792,6 @@ describe('sessions', () => {
           'prawduct pipeline runs all twelve steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
-        // Restore default
-        const cfg = store.projectConfig.load(project.path);
-        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
         for (const kind of realKinds) {
           wrapPipelineMod.STEP_DISPATCH[kind] = dispatchOrig[kind];
         }
@@ -1887,7 +1810,6 @@ describe('sessions', () => {
         tmuxSession: null,
         sessionMode: 'webui'
       });
-      store.projectConfig.save(project.path, { ...origCfg, wrapV2: true });
 
       // Stub the OS-hitting handlers, but leave `ai-content` REAL so the
       // webui-skip path is exercised end-to-end. The content ai-content steps
@@ -1924,7 +1846,10 @@ describe('sessions', () => {
       }
     });
 
-    it('#334 — webui session on the LEGACY wrap path returns a clear error (no tmux send)', async () => {
+    it('webui session with a stale wrapV2:false runs the pipeline (retired opt-out cannot strand it)', async () => {
+      // Before the legacy strip, wrapV2:false + null tmux was a dead end
+      // (the legacy wrap needed a pane). Now the stale key is ignored and
+      // the tmux-free pipeline serves the session.
       const project = store.projects.getByName('prime-test');
       const origCfg = store.projectConfig.load(project.path);
       store.sessions.start({
@@ -1935,15 +1860,17 @@ describe('sessions', () => {
       });
       store.projectConfig.save(project.path, { ...origCfg, wrapV2: false });
 
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+
       try {
         const result = await sessions.triggerWrap('prime-test');
-        assert.equal(result.ok, false);
-        assert.match(result.error, /requires the V2 wrap pipeline/,
-          'clear, actionable error pointing at wrapV2 — not a null-tmux crash');
-        assert.equal(result.error.includes('No active session'), false,
-          'must NOT be the generic no-active-session error — the session exists');
+        assert.equal(result.ok, true, 'stale opt-out must not produce an error for a webui session');
+        assert.ok(result.pipelineResult, 'pipeline served the wrap');
         assert.equal(sentCommand, null, 'must not send keys to a null tmux pane');
       } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
         store.projectConfig.save(project.path, origCfg);
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.wrap(active.id, 'test cleanup');
@@ -1965,11 +1892,6 @@ describe('sessions', () => {
         engineId: 'claude',
         tmuxSession: 'trigger-wrap-single-flight-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const wrapRunRegistry = require('../lib/wrap-run-registry');
       wrapRunRegistry._resetForTests();
@@ -2021,8 +1943,6 @@ describe('sessions', () => {
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         wrapRunRegistry._resetForTests();
-        const cfg = store.projectConfig.load(project.path);
-        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
       }
     });
 
@@ -2034,11 +1954,6 @@ describe('sessions', () => {
         engineId: 'claude',
         tmuxSession: 'trigger-wrap-throw-slot-test'
       });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
-      });
-
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const wrapRunRegistry = require('../lib/wrap-run-registry');
       wrapRunRegistry._resetForTests();
@@ -2064,22 +1979,16 @@ describe('sessions', () => {
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         wrapRunRegistry._resetForTests();
-        const cfg = store.projectConfig.load(project.path);
-        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
       }
     });
 
-    it('wrapV2:true forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
+    it('forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'trigger-wrap-v2-options-test'
-      });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: true
       });
 
       // Capture the options the runner receives by patching the module
@@ -2131,18 +2040,13 @@ describe('sessions', () => {
           'caller options must not override the registry progress hook');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        const cfg = store.projectConfig.load(project.path);
-        store.projectConfig.save(project.path, { ...cfg, wrapV2: false });
       }
     });
 
-    it('wrapV2 absent from projConfig (older on-disk state) routes to V2 path (post-#139 Chunk 11c default flip)', async () => {
+    it('wrapV2 absent from projConfig (older on-disk state) routes to the pipeline', async () => {
       // Older project.json files written before #139 don't carry a
-      // `wrapV2` field. `store.projectConfig.load` deep-merges with
-      // DEFAULT_PROJECT_CONFIG; post-Chunk-11c the default is `true`,
-      // so absence-of-flag means V2 path. Inverted from the
-      // pre-#139-Chunk-11c assertion (which required absent → legacy)
-      // — see the CHANGELOG entry for Chunk 11c for the migration note.
+      // `wrapV2` field. The retired flag is no longer consulted at all,
+      // so absence-of-flag runs the pipeline like everything else.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const originalRun = wrapPipelineMod.runWrapPipeline;
       wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
@@ -2165,16 +2069,10 @@ describe('sessions', () => {
       try {
         const result = await sessions.triggerWrap('prime-test');
         // V2 path ran → no tmux command sent; pipelineResult present.
-        assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
-        assert.ok(result.pipelineResult, 'absent wrapV2 must default to V2 path post-Chunk-11c');
+        assert.equal(sentCommand, null, 'the pipeline path must not send any tmux command');
+        assert.ok(result.pipelineResult, 'absent wrapV2 must run the pipeline');
       } finally {
         wrapPipelineMod.runWrapPipeline = originalRun;
-        // Restore an explicit wrapV2:false so other tests in this block
-        // (beforeEach baseline) get a deterministic legacy default.
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: false
-        });
       }
     });
 
@@ -2205,23 +2103,12 @@ describe('sessions', () => {
 
         const project = store.projects.getByName('prime-test');
         store.projects.update(project.id, { methodology: 'prawduct' });
-        store.projectConfig.save(project.path, {
-          ...store.projectConfig.load(project.path),
-          wrapV2: true
-        });
       });
 
       afterEach(() => {
         wrapPipelineMod.runWrapPipeline = originalRun;
         tmux.killSession = originalKill;
         store.documentLocks.releaseBySession = originalReleaseBySession;
-        const project = store.projects.getByName('prime-test');
-        if (project) {
-          store.projectConfig.save(project.path, {
-            ...store.projectConfig.load(project.path),
-            wrapV2: false
-          });
-        }
       });
 
       /**
@@ -2556,13 +2443,18 @@ describe('sessions', () => {
       });
     });
 
-    // #139 Chunk 11c — default-flip contract pins.
-    describe('wrapV2 default flip (#139 Chunk 11c)', () => {
-      it('DEFAULT_PROJECT_CONFIG.wrapV2 is true', () => {
-        assert.equal(store.DEFAULT_PROJECT_CONFIG.wrapV2, true);
+    // Retirement pins for the `wrapV2` flag itself — the flag is no
+    // longer seeded into fresh configs, and a fresh project (no on-disk
+    // config at all) runs the pipeline. The legacy-opt-out byte-equal
+    // NL-prompt pins that lived here asserted deleted behavior and were
+    // consolidated into the opt-out-retired pins earlier in this block.
+    describe('wrapV2 flag retired', () => {
+      it('DEFAULT_PROJECT_CONFIG no longer carries a wrapV2 key', () => {
+        assert.equal('wrapV2' in store.DEFAULT_PROJECT_CONFIG, false,
+          'the retired flag must not be re-seeded into project configs');
       });
 
-      it('a fresh project (no on-disk config) routes to the V2 path', async () => {
+      it('a fresh project (no on-disk config) runs the pipeline', async () => {
         const wrapPipelineMod = require('../lib/wrap-pipeline');
         const originalRun = wrapPipelineMod.runWrapPipeline;
         wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
@@ -2571,8 +2463,7 @@ describe('sessions', () => {
         store.projects.update(project.id, { methodology: 'prawduct' });
 
         // Wipe any prior project.json so this test asserts the
-        // "fresh-project" default path. (beforeEach above persists a
-        // wrapV2:false baseline — we explicitly remove it here.)
+        // fresh-project path.
         const cfgPath = path.join(project.path, '.tangleclaw', 'project.json');
         if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
 
@@ -2584,78 +2475,12 @@ describe('sessions', () => {
 
         try {
           const result = await sessions.triggerWrap('prime-test');
-          assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
-          assert.ok(result.pipelineResult, 'fresh project must route to V2 by default');
+          assert.equal(sentCommand, null, 'the pipeline path must not send any tmux command');
+          assert.ok(result.pipelineResult, 'fresh project must run the pipeline');
         } finally {
           wrapPipelineMod.runWrapPipeline = originalRun;
-          // The outer describe's `beforeEach` re-establishes the
-          // `wrapV2: false` baseline before each test, so no explicit
-          // restore is needed here — only the runWrapPipeline stub
-          // needs unwinding.
         }
       });
-    });
-
-    it('wrapV2:false (explicit opt-out) uses the legacy NL-prompt path with the post-Chunk-11c step list', async () => {
-      // #139 Chunk 11c — the default is now `true`. Projects opting back
-      // to the legacy NL-prompt-via-tmux flow set `wrapV2: false` in
-      // their `.tangleclaw/project.json`. The prompt structure is
-      // byte-equal to the pre-Chunk-11c legacy path; the only change is
-      // the comma-joined step list inside `Wrap steps:` (now reflects
-      // prawduct's wired-in `open-pr-check` + `critic-check`), which is
-      // a function of the methodology template, not the legacy path's
-      // own behavior. Identical to the Chunk-2 byte-equal pin in
-      // structure — any drift in prompt prefix, separator, or
-      // capture-fields suffix means triggerWrap's legacy branch
-      // changed.
-      const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'prawduct' });
-      // Explicitly persist wrapV2:false so this test is self-contained.
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: false
-      });
-      store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'trigger-wrap-v2-false-test'
-      });
-
-      await sessions.triggerWrap('prime-test');
-      // C2 (#353) stripped the L3 `critic-check` step (governance moved to the
-      // V2 plugin); the legacy NL-prompt structure is otherwise unchanged.
-      const expected =
-        'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: open-pr-check, version-bump, changelog-update, learnings-capture, learnings-db-write, next-session-prime, features-toc, project-map, index-describe, memory-update, commit, continuity-write\n' +
-        'Output these fields as ## markdown headings: summary, nextSteps, learnings';
-      assert.equal(sentCommand, expected,
-        'explicit wrapV2:false opt-out must produce the legacy NL prompt with the post-C2 step list');
-    });
-
-    // #139 Chunk 11c — verify the minimal-methodology opt-out path is
-    // intact too. Minimal's pipeline (`learnings-capture`, `memory-update`,
-    // `commit`) is a different step set from prawduct, so the legacy NL
-    // prompt should reflect minimal's steps.
-    it('wrapV2:false (explicit opt-out) on a minimal-methodology project produces the minimal step list', async () => {
-      const project = store.projects.getByName('prime-test');
-      store.projects.update(project.id, { methodology: 'minimal' });
-      store.projectConfig.save(project.path, {
-        ...store.projectConfig.load(project.path),
-        wrapV2: false
-      });
-      store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'trigger-wrap-minimal-optout-test'
-      });
-
-      await sessions.triggerWrap('prime-test');
-      const expected =
-        'Perform a session wrap. Commit all uncommitted work, then output a wrap summary.\n' +
-        'Wrap steps: learnings-capture, memory-update, commit\n' +
-        'Output these fields as ## markdown headings: summary';
-      assert.equal(sentCommand, expected,
-        'minimal-methodology + wrapV2:false must produce the legacy NL prompt with minimal\'s step list');
     });
   });
 

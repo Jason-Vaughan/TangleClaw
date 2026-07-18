@@ -2904,11 +2904,11 @@ function closeWrapModal(force) {
 /**
  * Confirm and execute wrap.
  *
- * V1 path (legacy NL-prompt-via-tmux wrap, `wrapV2:false`) returns no
- * `pipelineResult`; the modal closes and the existing polling loop
- * waits for tmux to settle. V2 path returns `pipelineResult` carrying
- * the runner's per-step results — the multi-step drawer takes over
- * (#139 Chunk 10).
+ * The wrap POST returns `pipelineResult` carrying the runner's per-step
+ * results — the multi-step drawer takes over (#139 Chunk 10). The
+ * no-`pipelineResult` branch below is defensive only (e.g. an error
+ * response): the modal closes and the polling loop waits for the
+ * session to settle.
  */
 async function confirmWrap() {
   // Re-entrancy guard: ignore a second confirm while the first wrap POST is

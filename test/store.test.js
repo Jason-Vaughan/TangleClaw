@@ -670,32 +670,16 @@ describe('store', () => {
       assert.equal(loaded.engine, 'claude', 'claude-code should be migrated to claude on load');
     });
 
-    // #139 Chunk 11c — round-trip pin for the legacy opt-out path. The
-    // CHANGELOG's migration guarantee ("existing projects with `wrapV2:
-    // false` keep the legacy path") rests entirely on this round-trip:
-    // a future refactor of `projectConfigApi.load`'s deep-merge that
-    // accidentally let `DEFAULT_PROJECT_CONFIG.wrapV2: true` overwrite
-    // an explicit `false` would silently route every legacy-opt-out
-    // project to V2. This test is the load-bearing pin.
-    it('should preserve explicit wrapV2:false across save/load round-trip (#139 Chunk 11c)', () => {
-      store.projectConfig.save(projectDir, { wrapV2: false });
-      const loaded = store.projectConfig.load(projectDir);
-      assert.equal(loaded.wrapV2, false,
-        'explicit wrapV2:false on disk must survive deep-merge with the default-true config');
-    });
-
-    it('should preserve explicit wrapV2:true across save/load round-trip (#139 Chunk 11c)', () => {
-      store.projectConfig.save(projectDir, { wrapV2: true });
-      const loaded = store.projectConfig.load(projectDir);
-      assert.equal(loaded.wrapV2, true);
-    });
-
-    it('should fill in wrapV2:true (default) when the on-disk config omits the field (#139 Chunk 11c)', () => {
-      // Persist a config that omits wrapV2 entirely — simulates an
-      // older project.json written before the field existed.
+    // The wrapV2 flag is retired: the pipeline is the only wrap path, so
+    // the default config must not re-seed the key. Stale keys on disk
+    // still round-trip (the deep-merge preserves unknown keys) but no
+    // reader consults them — pinned in sessions.test.js's retirement
+    // block. These replace the #139 Chunk 11c default-flip pins.
+    it('does not seed a wrapV2 key when the on-disk config omits it (flag retired)', () => {
       store.projectConfig.save(projectDir, { engine: 'claude' });
       const loaded = store.projectConfig.load(projectDir);
-      assert.equal(loaded.wrapV2, true, 'absent flag must default to true post-Chunk-11c');
+      assert.equal('wrapV2' in loaded, false,
+        'the retired flag must not re-enter configs via the default merge');
     });
 
     it('should handle malformed JSON gracefully', () => {

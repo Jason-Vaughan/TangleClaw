@@ -92,8 +92,8 @@ describe('api wrap-run status + single-flight (#583)', () => {
       methodology: 'minimal'
     });
     projectId = project.id;
-    // Post-#139-Chunk-11c the default projConfig is wrapV2:true — the V2
-    // server-side pipeline path (the one #583 guards) is the default route.
+    // The server-side pipeline (the path #583 guards) is the only wrap
+    // route — the legacy NL-prompt path and its wrapV2 gate are retired.
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
