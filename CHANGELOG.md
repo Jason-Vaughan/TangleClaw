@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.25.0] - 2026-07-18
+
 ### Added
 
 - **Master settings surface v1 (Prawduct V1 Sunset, Phase A; spec ratified 2026-07-18).** The brain-icon panel gains a gear → **Master Settings** modal governing the Project Master singleton: **access level** (`read-only` default and the only selectable tier — `suggest`/`write` render disabled and the server rejects them until each ships with real enforcement, never prose-only boundaries), **engine** (follow the default engine or pin one; applies on next master start), **scope** (all projects or one group — rendered into the master's identity as a focus setting, explicitly not a security boundary), and **auto-start** (launch the master at server boot; default on-demand). Settings live in global config (`master` object, `PATCH /api/config` with merge-then-validate whole-object semantics).

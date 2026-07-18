@@ -137,3 +137,22 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/wrap-pipeline.test.js` — server-side wrap pipeline runner (#139); `test/wrap-drawer.test.js` — wrap-drawer `buildStepRow` helpers; `test/wrap-step-priming-roll.test.js` — priming-roll wrap step helpers; `test/landing-wrap-single-flight.test.js` — single-flight dashboard wrap trigger (UI-3B8N); `test/wrap-drawer-select-a11y.test.js` — a11y labels on wrap-drawer decision selects (UI-7H4K).
 - `test/api-medusa.test.js` — Medusa service + `/medusa/*` routes; `test/medusa-listener.test.js` — MedusaListener WS client (reconnect, de-dup, socket-identity guard); `test/medusa-wake.test.js` — wake monitor (pane idle-policy pinned byte-for-byte against live spike captures, debounce/watermark/burst/retry, per-gate blocking); `test/medusa-control.test.js` — banner Medusa control frontend.
 - `test/settings-modal-silentprime.test.js` — Project Settings modal silentPrime toggle (#103); `test/projects.test.js` — projects store/enrichment + preferences (incl. `medusaEnabled`); `test/engines.test.js` — engine detection + per-engine config generation; `test/https-setup.test.js` — HTTPS/mkcert setup helpers; `test/server.test.js` — HTTP server / route table; `test/api-globalrules.test.js` — the `/api/rules/global` route; `test/prawduct-playbook-gating.test.js` — engine/rule gating of the V1 prawduct playbook (#536).
+
+## TODO (auto-stubbed 2026-07-18)
+
+- **TBD** — touched in this session: `data/templates/tilt/template.json`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0002-wrap-pipeline-contract.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0008-project-master-session-model.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/eval-audit-mode.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-config.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-methodologies.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-session-rules.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/methodologies.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/migration.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-rules-modal.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-version-require-cycle.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-rules-selfimprove.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/skills.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-projects.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/stranded-configs.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-ai-content.test.js`. <!-- describe -->
