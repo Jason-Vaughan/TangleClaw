@@ -105,10 +105,22 @@ describe('AUTH-3 — /api/server-info currentUser (proxy identity over HTTP)', (
     assert.equal(res.body.currentUser, null);
   });
 
-  it("reports authStatus 'configured-no-identity' when caddy gate up but no identity (AUTH-3)", async () => {
+  it("reports authStatus 'configured-no-identity' when a proxied request lacks identity (AUTH-3)", async () => {
     setConfig({ ingressMode: 'caddy', authEnabled: true });
-    const res = await get(server, '/api/server-info');
+    // X-Forwarded-For marks the request as having traversed Caddy, so the
+    // missing identity is real evidence of broken header_up forwarding.
+    const res = await get(server, '/api/server-info', { 'X-Forwarded-For': '100.64.0.7' });
     assert.equal(res.body.authStatus, 'configured-no-identity');
+  });
+
+  it("reports authStatus 'configured-bypassed' on a direct loopback request (AUTH-5N2J regression)", async () => {
+    setConfig({ ingressMode: 'caddy', authEnabled: true });
+    // This request really does hit the server's loopback listener with no proxy
+    // in front — exactly the dashboard-on-localhost load that used to
+    // false-positive the amber configured-no-identity warning.
+    const res = await get(server, '/api/server-info');
+    assert.equal(res.body.authStatus, 'configured-bypassed');
+    assert.equal(res.body.currentUser, null);
   });
 
   it("reports authStatus 'off' when auth is disabled", async () => {

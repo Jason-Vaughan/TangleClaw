@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveRequestUser, resolveAuthStatus, IDENTITY_HEADER, AUTH_STATUSES } = require('../lib/auth-identity');
+const { resolveRequestUser, resolveAuthStatus, IDENTITY_HEADER, PROXY_EVIDENCE_HEADER, AUTH_STATUSES } = require('../lib/auth-identity');
 
 const CADDY_AUTH = { ingressMode: 'caddy', authEnabled: true };
 
@@ -70,17 +70,42 @@ describe('auth-identity.resolveAuthStatus (AUTH-2K9D)', () => {
     assert.equal(resolveAuthStatus({ [IDENTITY_HEADER]: 'jason' }, CADDY_AUTH), 'live');
   });
 
-  it("returns 'configured-no-identity' when caddy+authEnabled but no identity arrives (AUTH-3)", () => {
-    assert.equal(resolveAuthStatus({}, CADDY_AUTH), 'configured-no-identity');
-    assert.equal(resolveAuthStatus({ [IDENTITY_HEADER]: '' }, CADDY_AUTH), 'configured-no-identity');
+  it("returns 'configured-no-identity' when a proxied request arrives without identity (AUTH-3)", () => {
+    // X-Forwarded-For proves the request traversed Caddy, so a missing identity
+    // header there is real evidence the header_up forwarding is broken.
+    const proxied = { [PROXY_EVIDENCE_HEADER]: '100.64.0.7' };
+    assert.equal(resolveAuthStatus(proxied, CADDY_AUTH), 'configured-no-identity');
+    assert.equal(resolveAuthStatus({ ...proxied, [IDENTITY_HEADER]: '' }, CADDY_AUTH), 'configured-no-identity');
     // Ambiguous duplicate header fails closed in resolveRequestUser → still no identity.
-    assert.equal(resolveAuthStatus({ [IDENTITY_HEADER]: ['jason', 'attacker'] }, CADDY_AUTH), 'configured-no-identity');
+    assert.equal(resolveAuthStatus({ ...proxied, [IDENTITY_HEADER]: ['jason', 'attacker'] }, CADDY_AUTH), 'configured-no-identity');
+    // A duplicated X-Forwarded-For (array) is still traversal evidence.
+    assert.equal(resolveAuthStatus({ [PROXY_EVIDENCE_HEADER]: ['1.2.3.4', '5.6.7.8'] }, CADDY_AUTH), 'configured-no-identity');
+  });
+
+  it("returns 'configured-bypassed' on a direct-loopback request in caddy mode (AUTH-5N2J regression)", () => {
+    // The false-positive scenario: `localhost:3102` bypassing caddy carries no
+    // X-Forwarded-For and no identity — gate health is unknowable, not broken.
+    assert.equal(resolveAuthStatus({}, CADDY_AUTH), 'configured-bypassed');
+    // Empty/whitespace X-Forwarded-For is not traversal evidence.
+    assert.equal(resolveAuthStatus({ [PROXY_EVIDENCE_HEADER]: '' }, CADDY_AUTH), 'configured-bypassed');
+    assert.equal(resolveAuthStatus({ [PROXY_EVIDENCE_HEADER]: '   ' }, CADDY_AUTH), 'configured-bypassed');
+    assert.equal(resolveAuthStatus({ [PROXY_EVIDENCE_HEADER]: [] }, CADDY_AUTH), 'configured-bypassed');
+  });
+
+  it('never trusts identity based on proxy evidence — spoof defense unchanged (AUTH-5N2J)', () => {
+    // A direct client spoofing X-Forwarded-For gains nothing: identity trust is
+    // config-gated in resolveRequestUser, and the worst outcome is the spoofer
+    // showing itself the amber warning chip.
+    const spoofed = { [PROXY_EVIDENCE_HEADER]: '9.9.9.9', [IDENTITY_HEADER]: 'attacker' };
+    assert.equal(resolveRequestUser(spoofed, { ingressMode: 'direct', authEnabled: true }), null);
+    assert.equal(resolveAuthStatus(spoofed, { ingressMode: 'direct', authEnabled: true }), 'configured-inert');
   });
 
   it('tolerates missing headers / config without throwing', () => {
     assert.equal(resolveAuthStatus(null, null), 'off');
     assert.equal(resolveAuthStatus(undefined, undefined), 'off');
-    assert.equal(resolveAuthStatus(null, CADDY_AUTH), 'configured-no-identity');
+    // No headers object at all ⇒ no proxy evidence ⇒ bypassed, not a warning.
+    assert.equal(resolveAuthStatus(null, CADDY_AUTH), 'configured-bypassed');
   });
 
   it('only ever returns a value from the AUTH_STATUSES enum', () => {
@@ -88,7 +113,8 @@ describe('auth-identity.resolveAuthStatus (AUTH-2K9D)', () => {
       [{}, { authEnabled: false }],
       [{}, { ingressMode: 'direct', authEnabled: true }],
       [{ [IDENTITY_HEADER]: 'jason' }, CADDY_AUTH],
-      [{}, CADDY_AUTH]
+      [{}, CADDY_AUTH],
+      [{ [PROXY_EVIDENCE_HEADER]: '1.2.3.4' }, CADDY_AUTH]
     ];
     for (const [h, c] of cases) {
       assert.ok(AUTH_STATUSES.includes(resolveAuthStatus(h, c)), `${resolveAuthStatus(h, c)} in enum`);
