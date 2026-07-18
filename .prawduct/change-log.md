@@ -57,7 +57,7 @@ surface was the deleted global panel; rows in the tier were zero, so nothing obs
 is lost) — the Master settings surface (Chunk 07) owns the successor UI. Launch Mode
 modal untouched (facelift + preselect-from-default = GH #596). `session_rules.project_id`
 stays nullable in the schema pending Chunk 07's master-scoped rows.
-**Verification:** full suite green (was 4339, now 4352 — 4351 pass / 1 skip / 0 fail —
+**Verification:** full suite green (was 4339, now 4353 — 4352 pass / 1 skip / 0 fail —
 after retirement-pin consolidation + new coverage incl. the Critic-fix round); live
 product verification on the restarted server (branch tree 5c5e847, `isStale:false`):
 enrichment exposes both fields, engine-key validation 400s, the eyes-open guard 400s
