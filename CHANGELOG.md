@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-07-17
+
 ### Added
 
 - **The version-bump wrap step now stamps the prawduct change-log at release time (backlog WRP-9F2K).** When the step promotes `[Unreleased]` into a dated release, it also flips every `<!-- prawduct: ... status=merged ... -->` tag line in that project's `.prawduct/change-log.md` to `status=shipped` — staged through the same single-transaction flush as the version bump, so the ledger and the release change state in one wrap commit. This mechanizes the manual release-checklist flip whose omission let 29 entries rot at `status=merged` across ~15 releases (the ART-4K9M back-stamp); `regen-views` derives build-plan Status checkboxes from `status=shipped` only, so the rot silently un-ticked genuinely shipped chunks. Blanket by design (a promote means everything merged is in the release); statusless tag lines are counted but never flipped (a missing `status=` is the missed-merge-stamp diagnostic); projects without a `.prawduct/change-log.md` are untouched; a flip failure degrades to a step-output warning, honoring the step's never-blocks contract. The step output reports the flip count (wrap drawer + wrap commit body). Tests: pure flip matrix (prose immunity, statusless preservation), handler staging/no-promote/no-file/read-failure gates, flush round-trip, commit-body line — revert-verified (4 pins fail with the stamp neutered).
