@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-18: Feature — Master settings surface v1 (Chunk 07)
 
-<!-- prawduct: type=feature | chunks=07 | scope=prawduct-v2-sunset -->
+<!-- prawduct: type=feature | chunks=07 | scope=prawduct-v2-sunset | status=shipped -->
 
 **Why:** Phase A Chunk 07 (spec ratified in-session 2026-07-18, both assumptions accepted) —
 the Project Master had a hardcoded prose-only read-only boundary, no settings surface, and
