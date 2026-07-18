@@ -150,4 +150,68 @@ describe('api/session-rules (#347/D1a)', () => {
     assert.equal(res.status, 400);
     assert.equal(res.data.code, 'BAD_REQUEST');
   });
+
+  // Master Hard rules — singleton-scoped kind + the eyes-open baseline guard.
+  describe('master kind', () => {
+    it('creates without a projectId and rejects one when provided', async () => {
+      const ok = await request('POST', '/api/session-rules', { content: 'master boundary rule', kind: 'master' });
+      assert.equal(ok.status, 201);
+      assert.equal(ok.data.kind, 'master');
+      assert.equal(ok.data.projectId, null);
+
+      const bad = await request('POST', '/api/session-rules', { content: 'scoped master?', kind: 'master', projectId });
+      assert.equal(bad.status, 400);
+      assert.match(bad.data.error, /singleton-scoped/);
+    });
+
+    it('still requires projectId for non-master kinds', async () => {
+      const res = await request('POST', '/api/session-rules', { content: 'needs a project', kind: 'startup' });
+      assert.equal(res.status, 400);
+    });
+
+    it('guards system (baseline) rules: edit/disable/delete need the confirm flag; operator rules do not', async () => {
+      const system = store.sessionRules.create({ content: 'shipped boundary', kind: 'master', createdBy: 'system' });
+
+      const editNoConfirm = await request('PUT', `/api/session-rules/${system.id}`, { content: 'weakened' });
+      assert.equal(editNoConfirm.status, 400);
+      assert.equal(editNoConfirm.data.code, 'CONFIRM_REQUIRED');
+
+      const disableNoConfirm = await request('PUT', `/api/session-rules/${system.id}`, { enabled: false });
+      assert.equal(disableNoConfirm.status, 400);
+      assert.equal(disableNoConfirm.data.code, 'CONFIRM_REQUIRED');
+
+      // Re-enabling and no-op updates never need the confirm.
+      const reEnable = await request('PUT', `/api/session-rules/${system.id}`, { enabled: true });
+      assert.equal(reEnable.status, 200);
+
+      const disableConfirmed = await request('PUT', `/api/session-rules/${system.id}`, { enabled: false, confirmBaselineEdit: true });
+      assert.equal(disableConfirmed.status, 200);
+      assert.equal(disableConfirmed.data.enabled, false);
+
+      const deleteNoConfirm = await request('DELETE', `/api/session-rules/${system.id}`);
+      assert.equal(deleteNoConfirm.status, 400);
+      assert.equal(deleteNoConfirm.data.code, 'CONFIRM_REQUIRED');
+
+      const deleteConfirmed = await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
+      assert.equal(deleteConfirmed.status, 200);
+
+      // Operator-authored master rules mutate freely — the guard is provenance-scoped.
+      const mine = await request('POST', '/api/session-rules', { content: 'my own rule', kind: 'master' });
+      const editMine = await request('PUT', `/api/session-rules/${mine.data.id}`, { content: 'my edited rule' });
+      assert.equal(editMine.status, 200);
+      const deleteMine = await request('DELETE', `/api/session-rules/${mine.data.id}`);
+      assert.equal(deleteMine.status, 200);
+    });
+
+    it('POST /api/master/rules/restore-defaults replaces everything with the shipped baseline', async () => {
+      const master = require('../lib/master');
+      await request('POST', '/api/session-rules', { content: 'stray custom rule', kind: 'master' });
+      const res = await request('POST', '/api/master/rules/restore-defaults');
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ok, true);
+      assert.equal(res.data.rules.length, master.MASTER_BASELINE_RULES.length);
+      assert.ok(res.data.rules.every((r) => r.createdBy === 'system'));
+      assert.ok(!res.data.rules.some((r) => r.content === 'stray custom rule'));
+    });
+  });
 });

@@ -631,4 +631,59 @@ describe('API endpoints', () => {
       assert.equal(data.code, 'BODY_TOO_LARGE');
     });
   });
+
+  // Project Master settings — merge-then-validate whole-object semantics.
+  describe('PATCH /api/config { master }', () => {
+    it('accepts a valid patch and stores the full normalized shape', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+      assert.equal(status, 200);
+      assert.deepEqual(store.config.load().master, {
+        accessLevel: 'read-only', engine: null, scope: 'all', autoStart: true
+      });
+    });
+
+    it('a partial patch merges onto current settings instead of wiping fields', async () => {
+      await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { engine: 'claude' } });
+      assert.equal(status, 200);
+      const saved = store.config.load().master;
+      assert.equal(saved.engine, 'claude');
+      assert.equal(saved.autoStart, true, 'earlier field must survive the second patch');
+    });
+
+    it('rejects not-yet-enforced access levels with an honest reason', async () => {
+      for (const level of ['suggest', 'write']) {
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: level } });
+        assert.equal(status, 400);
+        assert.match(data.error, /structural enforcement/);
+      }
+      const unknown = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'root' } });
+      assert.equal(unknown.status, 400);
+    });
+
+    it('rejects unknown fields, unconfigured engines, missing groups, and bad shapes', async () => {
+      const cases = [
+        { master: { sneaky: true } },
+        { master: { engine: 'no-such-engine' } },
+        { master: { scope: { type: 'group', groupId: 'no-such-group' } } },
+        { master: { scope: 'some-string' } },
+        { master: { autoStart: 'yes' } },
+        { master: 'read-only' },
+        { master: ['read-only'] }
+      ];
+      for (const body of cases) {
+        const { status } = await request(server, 'PATCH', '/api/config', body);
+        assert.equal(status, 400, `expected 400 for ${JSON.stringify(body)}`);
+      }
+    });
+
+    it('accepts a group scope for a real group', async () => {
+      const group = store.projectGroups.create({ name: 'master-scope-group' });
+      const { status } = await request(server, 'PATCH', '/api/config', {
+        master: { scope: { type: 'group', groupId: group.id } }
+      });
+      assert.equal(status, 200);
+      assert.deepEqual(store.config.load().master.scope, { type: 'group', groupId: group.id });
+    });
+  });
 });

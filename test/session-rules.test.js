@@ -222,7 +222,7 @@ describe('sessionRules store API (#347/D1a)', () => {
     });
 
     it('exposes SESSION_RULE_KINDS', () => {
-      assert.deepEqual(store.SESSION_RULE_KINDS, ['startup', 'wrap']);
+      assert.deepEqual(store.SESSION_RULE_KINDS, ['startup', 'wrap', 'master']);
     });
 
     it('list filters by kind', () => {
