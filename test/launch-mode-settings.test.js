@@ -90,6 +90,24 @@ describe('launch-mode settings', () => {
       assert.match(result.errors[0], /bypassPermissions/);
     });
 
+    it('rejects a disabled mode key (symmetric with the picker filter)', () => {
+      mkProject('lm-disabled');
+      const claude = store.engines.get('claude');
+      const patched = {
+        ...claude,
+        launchModes: { ...claude.launchModes, plan: { ...claude.launchModes.plan, disabled: true } }
+      };
+      const originalGet = store.engines.get;
+      store.engines.get = (id) => (id === 'claude' ? patched : originalGet.call(store.engines, id));
+      try {
+        const result = projects.updateProject('lm-disabled', { defaultLaunchMode: 'plan' });
+        assert.equal(result.project, null);
+        assert.match(result.errors[0], /disabled for engine "claude"/);
+      } finally {
+        store.engines.get = originalGet;
+      }
+    });
+
     it('rejects an empty or non-string mode', () => {
       mkProject('lm-empty');
       assert.match(projects.updateProject('lm-empty', { defaultLaunchMode: '  ' }).errors[0], /non-empty string/);
@@ -200,6 +218,26 @@ describe('launch-mode settings', () => {
       store.projectConfig.save(project.path, projConfig);
 
       assert.equal(launchAndReadMode('lm-launch-explicit', { launchMode: 'acceptEdits' }), 'acceptEdits');
+    });
+
+    it('ignores a configured mode the engine has disabled (falls back to engine default)', () => {
+      const project = mkProject('lm-launch-disabled');
+      const projConfig = store.projectConfig.load(project.path);
+      projConfig.defaultLaunchMode = 'plan';
+      store.projectConfig.save(project.path, projConfig);
+
+      const claude = store.engines.get('claude');
+      const patched = {
+        ...claude,
+        launchModes: { ...claude.launchModes, plan: { ...claude.launchModes.plan, disabled: true } }
+      };
+      const originalGet = store.engines.get;
+      store.engines.get = (id) => (id === 'claude' ? patched : originalGet.call(store.engines, id));
+      try {
+        assert.equal(launchAndReadMode('lm-launch-disabled'), 'default');
+      } finally {
+        store.engines.get = originalGet;
+      }
     });
 
     it('ignores a configured key the engine does not define (stale after engine switch)', () => {

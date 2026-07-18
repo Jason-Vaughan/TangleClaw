@@ -1296,12 +1296,24 @@ async function doSaveSettings() {
 
 /**
  * Send the settings PATCH and close the modal — the shared tail of
- * doSaveSettings and the bypass-hidden confirm path.
+ * doSaveSettings and the bypass-hidden confirm path. A server rejection
+ * (validation, or the eyes-open guard tripping on stale two-tab state) keeps
+ * the modal OPEN and surfaces the error, instead of silently closing as if
+ * the save succeeded.
  * @param {object} body - PATCH body for /api/projects/:name
  */
 async function _submitSettings(body) {
   if (!settingsTarget) return;
-  await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
+  const res = await apiMutate(`/api/projects/${encodeURIComponent(settingsTarget)}`, 'PATCH', body);
+  if (!res) {
+    const status = document.getElementById('projectRulesStatus');
+    if (status) {
+      status.textContent = `Save failed: ${api.lastError || 'server rejected the update'}`;
+      status.className = 'rules-status rules-status-err';
+      status.classList.remove('hidden');
+    }
+    return;
+  }
   closeSettings();
   await loadProjects();
 }
