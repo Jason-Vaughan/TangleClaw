@@ -343,6 +343,27 @@ describe('store', () => {
         'legacy wrap block must be preserved as-is when bundled drops it');
     });
 
+    it('init() tombstones the retired tilt template out of the runtime templates dir', () => {
+      // TiLT was retired 2026-07-17 (no distinct value over minimal). Deleting
+      // the bundled dir only stops SEEDING it — an install that synced tilt
+      // before the retirement keeps its runtime copy forever, since
+      // _copyBundledTemplates never deletes. The RETIRED_TEMPLATE_IDS pass
+      // must remove it on boot, same semantics as RETIRED_ENGINE_IDS.
+      const tiltDir = path.join(tmpDir, 'templates', 'tilt');
+      fs.mkdirSync(tiltDir, { recursive: true });
+      fs.writeFileSync(path.join(tiltDir, 'template.json'), JSON.stringify({
+        id: 'tilt', name: 'TiLT', description: 'stale runtime copy',
+        type: 'methodology', version: '1.0.0'
+      }));
+
+      store.init();
+
+      assert.ok(!fs.existsSync(tiltDir),
+        'runtime tilt template dir must be removed on init');
+      assert.equal(store.templates.get('tilt'), null,
+        'retired tilt template must not resolve from the store');
+    });
+
     it('fresh init() copies a bundled prawduct template with NO governance hooks and no critic-check step (C2 strip, #353)', () => {
       // C2 (#353) retired the V1 platform governance from the bundled prawduct
       // template: the `product-hook` SessionStart/Stop hooks and the L3

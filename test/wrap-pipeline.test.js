@@ -3295,7 +3295,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
 });
 
 describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9)', () => {
-  // The bundled prawduct / minimal / tilt templates must declare
+  // The bundled prawduct / minimal templates must declare
   // `blocker: true` on the commit step so a git failure halts the
   // pipeline. The back-compat shim ignores the `blocker` field, so
   // adding it here doesn't change the legacy NL prompt byte-equal pin.
@@ -3322,18 +3322,6 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
 
   it('minimal commit step has blocker:true', () => {
     const t = store.templates.get('minimal');
-    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
-    assert.ok(commitStep);
-    assert.equal(commitStep.blocker, true);
-  });
-
-  // The `tilt` bundled template is gitignored (`.gitignore:24` — "Unreleased
-  // methodology templates"), so a CI clone may not have it on disk. When
-  // present locally we still want to verify it carries the same blocker:true
-  // contract so a future un-gitignore lands cleanly.
-  it('tilt commit step has blocker:true (skipped when tilt not present)', () => {
-    const t = store.templates.get('tilt');
-    if (!t) return; // skip — tilt not in this checkout
     const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
     assert.ok(commitStep);
     assert.equal(commitStep.blocker, true);

@@ -176,8 +176,8 @@ describe('store.projects', () => {
 
     it('updates methodology', () => {
       const created = store.projects.create({ name: 'update-method', path: '/tmp/update-method' });
-      const updated = store.projects.update(created.id, { methodology: 'tilt' });
-      assert.equal(updated.methodology, 'tilt');
+      const updated = store.projects.update(created.id, { methodology: 'prawduct' });
+      assert.equal(updated.methodology, 'prawduct');
     });
 
     it('throws for unknown id', () => {

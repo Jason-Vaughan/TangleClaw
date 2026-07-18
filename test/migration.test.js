@@ -51,13 +51,16 @@ describe('migration — detectExistingProjects', () => {
     assert.ok(found.methodology, 'should have detected methodology');
   });
 
-  it('detects project with .tilt methodology marker', () => {
+  it('no longer detects a .tilt marker as a project (tilt retired)', () => {
+    // TiLT was retired (operator-ratified 2026-07-17). The scan surfaces
+    // dirs with a TC config or a detectable methodology; a leftover .tilt
+    // dir is neither anymore, so it must not read as an existing project.
     const projDir = path.join(projectsDir, 'tilt-proj');
     fs.mkdirSync(path.join(projDir, '.tilt'), { recursive: true });
 
     const result = projects.detectExistingProjects();
-    const found = result.detected.find(d => d.name === 'tilt-proj');
-    assert.ok(found, 'should detect project with .tilt marker');
+    assert.ok(!result.detected.some(d => d.name === 'tilt-proj'),
+      'a bare .tilt dir must no longer register as a project marker');
   });
 
   it('skips already registered projects', () => {

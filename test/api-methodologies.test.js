@@ -76,7 +76,7 @@ describe('GET /api/methodologies', () => {
     const { status, data } = await request('GET', '/api/methodologies');
     assert.equal(status, 200);
     assert.ok(Array.isArray(data.methodologies));
-    assert.ok(data.methodologies.length >= 3);
+    assert.ok(data.methodologies.length >= 2);
 
     // Check shape of each template
     for (const m of data.methodologies) {
@@ -99,12 +99,12 @@ describe('GET /api/methodologies', () => {
     assert.ok(prawduct.defaultRules.docsParity.definition, 'docsParity should have a definition');
   });
 
-  it('includes tilt with identity sentry default', async () => {
+  it('does not include the retired tilt template', async () => {
+    // The TiLT methodology was retired (operator-ratified 2026-07-17: no
+    // distinct value over minimal). Pin its absence so a stale runtime
+    // templates dir or a revert can't silently resurrect it in pickers.
     const { data } = await request('GET', '/api/methodologies');
-    const tilt = data.methodologies.find((m) => m.id === 'tilt');
-    assert.ok(tilt);
-    assert.deepEqual(tilt.phases, ['setup', 'development', 'review']);
-    assert.equal(tilt.defaultRules.identitySentry, true);
+    assert.ok(!data.methodologies.some((m) => m.id === 'tilt'));
   });
 
   it('includes minimal with empty phases and rules', async () => {
@@ -134,13 +134,10 @@ describe('GET /api/methodologies/:id', () => {
     assert.ok(data.defaultRules);
   });
 
-  it('returns full template for tilt', async () => {
+  it('returns 404 for the retired tilt template', async () => {
     const { status, data } = await request('GET', '/api/methodologies/tilt');
-    assert.equal(status, 200);
-    assert.equal(data.id, 'tilt');
-    assert.ok(data.phases.length === 3);
-    assert.equal(data.detection.strategy, 'directory');
-    assert.equal(data.detection.target, '.tilt');
+    assert.equal(status, 404);
+    assert.equal(data.code, 'NOT_FOUND');
   });
 
   it('returns full template for minimal', async () => {
