@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-18: Chore — legacy V1 NL-prompt wrap path stripped (Chunk 05)
 
-<!-- prawduct: type=chore | chunks=05 | scope=prawduct-v2-sunset -->
+<!-- prawduct: type=chore | chunks=05 | scope=prawduct-v2-sunset | status=shipped -->
 
 **Why:** Phase A Chunk 05 / backlog WRP-2Q6H — the legacy NL-prompt-via-tmux wrap survived
 many release cycles past the #196 default-flip's documented one-cycle grace window.
