@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-18: Chore — fleet remnant sweep: vendored V1 product-hook eradicated (Chunk 04)
 
-<!-- prawduct: type=chore | chunks=04 | scope=prawduct-v2-sunset -->
+<!-- prawduct: type=chore | chunks=04 | scope=prawduct-v2-sunset | status=shipped -->
 
 **Why:** Phase A Chunk 04 — the 2026-07-14 plugin rollup left the V1 file-sync install's
 vendored artifacts behind across the fleet. **Pre-build verification corrected the spec:**
