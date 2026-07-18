@@ -1434,6 +1434,17 @@ route('GET', '/api/projects/orphan-hooks-scan', (_req, res) => {
   jsonResponse(res, 200, result);
 });
 
+// GET /api/projects/stranded-configs-scan — Read-only inventory of governance
+// configs (CLAUDE.md, .claude/settings.json) stranded in unregistered ancestor
+// dirs of registered projects (#592). No repair counterpart by design — a
+// stranded file can contain hand-written content, so removal is an operator
+// decision. MUST be registered before GET /api/projects/:name so the literal
+// path wins.
+route('GET', '/api/projects/stranded-configs-scan', (_req, res) => {
+  const result = projects.scanForStrandedConfigs();
+  jsonResponse(res, 200, result);
+});
+
 // POST /api/projects/repair-orphan-hooks — Strip orphan hook entries from
 // affected projects. Body: `{ project?: string }` for single-target. Returns
 // `{ repaired, skipped, errors }` (#145, chunk 2).
@@ -4371,6 +4382,22 @@ if (require.main === module) {
     }
   } catch (err) {
     log.warn('Startup project sync failed', { error: err.message });
+  }
+
+  // Stranded-config guard (#592): governance files in unregistered ancestor
+  // dirs re-inject retired methodology into nested projects' sessions (Claude
+  // Code loads every ancestor CLAUDE.md). Detection only — see the API route.
+  try {
+    const strandedResult = projects.scanForStrandedConfigs();
+    for (const s of strandedResult.stranded) {
+      log.warn('Stranded governance config in ancestor dir (#592)', {
+        dir: s.dir,
+        files: s.files,
+        affectedProjects: s.affectedProjects
+      });
+    }
+  } catch (err) {
+    log.warn('Stranded-config scan failed', { error: err.message });
   }
 
   // Start document lock expiry timer (every 5 minutes)
