@@ -26,6 +26,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Fix — recordVersion silent failure under server load order (#584, Chunk 01)
+
+<!-- prawduct: type=fix | chunks=01 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** Phase A Chunk 01 — the campaign's active-silent-corruption item. `lib/project-version.js` top-level-required `./projects` from inside the `projects → sessions → project-version → projects` require cycle; entered via `projects.js` (the server's load order), it captured projects' *partial* exports, so `detectVersion` threw `projects._readChangelogVersion is not a function` into `recordVersion`'s warn-and-bail catch — every session launch and wrap, fleet-wide, since the feature landed (#101/#117 shipped both cycle edges in one commit — born broken; unit tests loaded `project-version` first, the order that always worked). Fix: lazy require at call time inside `detectVersion` (the `lib/wrap-steps/index-describe.js`/`project-map.js` pattern). Sibling audit: that was the LAST top-level capture of `./projects` inside the cycle. Regression: `test/project-version-require-cycle.test.js` loads `projects.js` first in its own process and pins `detectVersion` + the cache write — revert-verified (2 fail on old code). Full suite 4330/4329 pass, 0 fail. Critic (verify-resolutions over cumulative → HEAD): 0 blocking / 1 warning (this missing change-log entry — resolved by this entry) / 2 notes. Same session: root-caused + fixed the briefing blindness that hid this campaign (nested `active_build_plan` pointer vs the plugin's column-0 YAML reader; V1-legacy `build_plan:` block stripped from project-state.yaml — local state, no commit).
+
+**Classification:** bugfix
+
 ## 2026-07-17: Fix — auth chip false-positive on direct-loopback loads: proxy-evidence split (AUTH-5N2J)
 
 <!-- prawduct: type=fix | chunks=01 | scope=auth-5n2j | status=shipped -->
