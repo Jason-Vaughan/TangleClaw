@@ -167,6 +167,20 @@
         if (counts.otherOpen) parts.push(`${counts.otherOpen} other open`);
         return parts.length ? parts.join(', ') : 'No open PRs';
       }
+      case 'pr-merge': {
+        // This step never blocks, so `blockers` is always empty and the row's
+        // detail line is the only place a failed enqueue can surface at all.
+        const failures = Array.isArray(output.failures) ? output.failures : [];
+        if (failures.length) {
+          return failures.length === 1
+            ? failures[0]
+            : `${failures.length} PRs could not be enqueued`;
+        }
+        if (output.enqueued) {
+          return `Auto-merge enqueued for ${output.enqueued} PR${output.enqueued === 1 ? '' : 's'}`;
+        }
+        return null;
+      }
       case 'test':
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;

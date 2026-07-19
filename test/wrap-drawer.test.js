@@ -407,6 +407,43 @@ describe('wrap-drawer helpers — decisionWidgetForBlockedStep', () => {
   });
 });
 
+describe('wrap-drawer helpers — pr-merge detail (#570)', () => {
+  const H = loadHelpers();
+
+  it('surfaces the reason a single enqueue failed', () => {
+    // pr-merge never blocks, so `blockers` is always empty — this line is the
+    // only place the failure reaches the operator.
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions',
+      kind: 'pr-merge',
+      status: 'done',
+      output: {
+        warning: true,
+        enqueued: 0,
+        failures: ['PR #42: auto-merge could not be enqueued — Auto-merge is not allowed']
+      },
+      blockers: []
+    }, {});
+    assert.match(row.detail, /PR #42: auto-merge could not be enqueued/);
+  });
+
+  it('summarizes when several failed', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: ['a', 'b'], enqueued: 0 }, blockers: []
+    }, {});
+    assert.equal(row.detail, '2 PRs could not be enqueued');
+  });
+
+  it('reports the count on the happy path', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: [], enqueued: 1 }, blockers: []
+    }, {});
+    assert.equal(row.detail, 'Auto-merge enqueued for 1 PR');
+  });
+});
+
 describe('wrap-drawer helpers — prCheckResolutionWidget', () => {
   const H = loadHelpers();
 

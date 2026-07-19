@@ -27,19 +27,6 @@ All notable changes to TangleClaw are documented in this file.
   plugin. The action still runs the Critic and surfaces findings; only the false promise
   is gone.
 
-### Removed
-
-- **The `critic-check` wrap step and its handler (#570).** Dispatched but referenced by no
-  bundled template since #353 — ~600 lines of dead-but-maintained governance code whose
-  only visible trace was the stale promise above. Removed with it: the
-  `options.criticSkipRationale` option, the wrap drawer's skip-rationale textarea, and the
-  Critic skip-rationale / `Critic-override` commit-body lines. `lint` and `test` stay as
-  opt-in step primitives for templates that declare them.
-- **Dead `wrap_pipeline.promptTemplates` and the inert `wrap_contract` layer (#570).**
-  `promptTemplates` was never read (the runner consumes only `.steps`); `wrap_contract`
-  was validated and honored as a methodology default that no bundled or live template ever
-  declared. Per-project `wrapSections` remains the way to choose wrap-summary sections.
-
 - **The wrap path no longer requires one engine's layout or prompts (#612, widened).**
   `priming-roll` resolved plans and priming files inside `.claude/`, so a project on
   any other engine silently found no plan — the step reported "nothing to roll", a
@@ -59,6 +46,19 @@ All notable changes to TangleClaw are documented in this file.
 - **`data/global-rules.md` (and TangleClaw's own `CLAUDE.md`) prescribe
   `<project-root>/.tangleclaw/plans/`** for new plans, replacing the engine-specific
   location.
+
+### Removed
+
+- **The `critic-check` wrap step and its handler (#570).** Dispatched but referenced by no
+  bundled template since #353 — ~600 lines of dead-but-maintained governance code whose
+  only visible trace was the stale promise above. Removed with it: the
+  `options.criticSkipRationale` option, the wrap drawer's skip-rationale textarea, and the
+  Critic skip-rationale / `Critic-override` commit-body lines. `lint` and `test` stay as
+  opt-in step primitives for templates that declare them.
+- **Dead `wrap_pipeline.promptTemplates` and the inert `wrap_contract` layer (#570).**
+  `promptTemplates` was never read (the runner consumes only `.steps`); `wrap_contract`
+  was validated and honored as a methodology default that no bundled or live template ever
+  declared. Per-project `wrapSections` remains the way to choose wrap-summary sections.
 
 ### Fixed
 
