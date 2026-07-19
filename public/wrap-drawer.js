@@ -328,9 +328,43 @@
       return { label: 'Wrap committed — release BLOCKED, did not ship', tone: 'error', detail: why };
     }
     if (outcome === 'pending') {
-      return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'auto-merge armed; the PR merges once its checks pass' };
+      // Deliberately does NOT claim auto-merge is armed: the probe reads
+      // `state`/`mergeStateStatus` only, so arming is not something this knows.
+      return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'the PR has not merged yet; it lands when its checks pass' };
     }
     return { label: 'Wrap committed — release not confirmed', tone: 'provisional', detail: (status && status.reason) || 'could not confirm the PR state' };
+  }
+
+  /**
+   * Compose the resolved release outcome with the pipeline's own banner, so a
+   * release probe can never erase a problem the pipeline already reported.
+   *
+   * Precedence, most severe first:
+   *  1. A BLOCKED release wins outright — the release didn't land, which is the
+   *     most severe fact available and the whole point of #638.
+   *  2. Otherwise a pipeline-level `warning`/`error` is preserved, with the
+   *     release outcome appended as detail. Without this a wrap that "completed
+   *     with warnings" (or whose close-loop failed to arm) would be repainted
+   *     "Wrap shipped — PR merged", re-opening the false-success class.
+   *  3. Otherwise the release banner stands on its own.
+   *
+   * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
+   * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
+   * @returns {{label: string, tone: string, detail: string|null}}
+   */
+  function composeReleaseBanner(baseStatus, prStatus) {
+    const release = prOutcomeBanner(prStatus);
+    const base = baseStatus || {};
+    if (release.tone === 'error') return release;
+    if (base.tone === 'warning' || base.tone === 'error') {
+      const outcome = (prStatus && prStatus.outcome) || 'unknown';
+      return {
+        label: base.label,
+        tone: base.tone,
+        detail: [base.detail, `release: ${outcome}`].filter(Boolean).join(' · ')
+      };
+    }
+    return release;
   }
 
   /**
@@ -486,6 +520,17 @@
         options.skipAiContent = { [stepId]: true };
       }
     }
+    // #540 ask-mode — the operator's version-bump choice, captured in the wrap
+    // modal and replayed on every retry (the pipeline re-runs from step 0, so
+    // version-bump needs it each attempt). Empty string = Auto (the CHANGELOG
+    // heuristic), which must NOT be sent: version-bump treats any out-of-set
+    // value as a reason to skip rather than falling back to the heuristic.
+    if (accessors.bumpLevel) {
+      const level = accessors.bumpLevel();
+      if (typeof level === 'string' && level.length > 0) {
+        options.bumpLevel = level;
+      }
+    }
     return options;
   }
 
@@ -598,6 +643,7 @@
     summarizePipelineStatus,
     wrapPrInfo,
     prOutcomeBanner,
+    composeReleaseBanner,
     summarizeSkips,
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,

@@ -2872,6 +2872,11 @@ function openWrapModal() {
     `Wrap the session for <strong>${esc(projectName)}</strong>? This sends the wrap command and ends the session.`;
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
+  // #540 — reset the bump choice to Auto on every open. Without this a "Major"
+  // picked and then cancelled silently re-arms on a later wrap in the same
+  // page session, bumping a major nobody asked for this time.
+  const bumpEl = document.getElementById('wrapBumpLevel');
+  if (bumpEl) bumpEl.value = '';
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (sessionState.config && sessionState.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -3037,6 +3042,15 @@ let wrapSkippedAiSteps = {};
 let wrapBumpLevel = '';
 
 /**
+ * The pipeline's own status banner for the currently-rendered wrap (#638).
+ * Retained so a release-state recheck composes against the pipeline's verdict
+ * — a warning or error the pipeline reported must survive a green release
+ * rather than being repainted as "shipped". Cleared on drawer close.
+ * @type {{label: string, tone: string, detail: string|null}|null}
+ */
+let currentWrapBaseStatus = null;
+
+/**
  * Open the wrap drawer with a rendered pipeline result and wire its
  * action buttons for the current state (retry / done / close).
  *
@@ -3071,6 +3085,7 @@ function closeWrapDrawer() {
   if (skipRoll) { skipRoll.innerHTML = ''; skipRoll.classList.add('hidden'); }
   currentWrapPassword = '';
   currentWrapPipelineResult = null;
+  currentWrapBaseStatus = null;
   sessionState.wrapDrawerOpen = false;
 }
 
@@ -3106,7 +3121,7 @@ async function copyWrapReport() {
  * @param {{label: string, tone: string, detail: string|null}} status
  * @param {{prUrl: string|null}|null} [prForRecheck] - Wrap PR to offer a recheck for.
  */
-function paintWrapStatus(status, prForRecheck) {
+function paintWrapStatus(status, prForRecheck, baseStatus) {
   const statusEl = document.getElementById('wrapDrawerStatus');
   statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
   statusEl.innerHTML = '';
@@ -3119,7 +3134,10 @@ function paintWrapStatus(status, prForRecheck) {
     btn.className = 'wrap-drawer-recheck';
     btn.textContent = 'Recheck release';
     btn.title = 'Re-query GitHub for this wrap PR’s merge outcome.';
-    btn.addEventListener('click', () => resolveWrapPrStatus(prForRecheck, btn));
+    // Pass the ORIGINAL pipeline status, not the currently-painted one, so
+    // repeated rechecks compose against the pipeline's own verdict rather than
+    // compounding a previous release banner.
+    btn.addEventListener('click', () => resolveWrapPrStatus(prForRecheck, btn, baseStatus));
     statusEl.appendChild(btn);
   }
   if (status.detail) {
@@ -3140,7 +3158,7 @@ function paintWrapStatus(status, prForRecheck) {
  * @param {{prUrl: string|null}} pr - Wrap PR handle from `wrapPrInfo`.
  * @param {HTMLButtonElement|null} btn - The recheck button, disabled while in flight.
  */
-async function resolveWrapPrStatus(pr, btn) {
+async function resolveWrapPrStatus(pr, btn, baseStatus) {
   if (!pr || !pr.prUrl || !window.tcWrapDrawerHelpers) return;
   if (btn) btn.disabled = true;
   const data = await api(
@@ -3148,8 +3166,13 @@ async function resolveWrapPrStatus(pr, btn) {
   );
   if (btn) btn.disabled = false;
   if (!data || typeof data.outcome !== 'string') return; // leave provisional as-is
-  const banner = window.tcWrapDrawerHelpers.prOutcomeBanner(data);
-  paintWrapStatus(banner, data.outcome === 'merged' ? null : pr);
+  // Compose rather than replace: a pipeline-level warning/error must survive a
+  // green release, or the probe would repaint a problem wrap as "shipped".
+  const banner = window.tcWrapDrawerHelpers.composeReleaseBanner(
+    baseStatus || currentWrapBaseStatus,
+    data
+  );
+  paintWrapStatus(banner, data.outcome === 'merged' ? null : pr, baseStatus || currentWrapBaseStatus);
 }
 
 /**
@@ -3190,9 +3213,10 @@ function renderSkipRoll(pipelineResult) {
 function renderWrapDrawer(pipelineResult) {
   const H = window.tcWrapDrawerHelpers;
   const status = H.summarizePipelineStatus(pipelineResult);
+  currentWrapBaseStatus = status;
 
   // Status banner (repaintable — the #638 release resolution repaints it).
-  paintWrapStatus(status, status.pr);
+  paintWrapStatus(status, status.pr, status);
 
   // #571 item 4 — honest skip rollup under the banner.
   renderSkipRoll(pipelineResult);
@@ -3203,7 +3227,7 @@ function renderWrapDrawer(pipelineResult) {
   // single event-triggered fetch (not a repeating timer), with an explicit
   // "Recheck release" button for re-polling — honoring the no-timer-driven-UI
   // rule (#98/#268).
-  if (status.pr && status.pr.prUrl) resolveWrapPrStatus(status.pr, null);
+  if (status.pr && status.pr.prUrl) resolveWrapPrStatus(status.pr, null, status);
 
   // Build all view-model rows once; both the step list and the
   // decision-widget loop consume the same array (N6 — avoid double-
@@ -3687,7 +3711,9 @@ async function retryWrap() {
       const el = decisionEl.querySelector('input[data-options-key="skipAiContent"]');
       if (!el || el.checked !== true) return null;
       return el.dataset.stepId || null;
-    }
+    },
+    // #540 ask-mode — replay the modal's bump choice on each retry.
+    bumpLevel: () => wrapBumpLevel
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
@@ -3697,10 +3723,6 @@ async function retryWrap() {
   // it would re-block. The merge lives in a pure drawer helper so it's unit-
   // testable; `wrapSkippedAiSteps` is the session-level accumulator.
   H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
-
-  // #540 ask-mode — replay the operator's bump-level choice on every retry (the
-  // pipeline re-runs from step 0, so version-bump needs it each attempt).
-  if (wrapBumpLevel) options.bumpLevel = wrapBumpLevel;
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.

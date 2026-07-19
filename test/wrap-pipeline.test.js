@@ -113,7 +113,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+        ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
       );
     });
 
@@ -121,7 +121,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
+        ['pr-check', 'ai-content', 'version-bump', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -222,7 +222,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           }
         });
         assert.equal(result.blockedAt, 'changelog-update', 'throwing hook must not change pipeline outcome');
-        assert.deepStrictEqual(started, ['open-pr-check', 'version-bump', 'changelog-update'],
+        assert.deepStrictEqual(started, ['open-pr-check', 'changelog-update'],
           'hook fires only for steps that actually dispatch — never for pending steps after the halt');
       } finally {
         for (const kind of wrapKinds) {
@@ -375,6 +375,16 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['version-bump'] = {
         run: async () => { throw new Error('boom from version-bump'); }
       };
+      // `changelog-update` is a blocker:true ai-content step that now runs
+      // BEFORE version-bump (it must, or the commit flush of version-bump's
+      // staged CHANGELOG snapshot would discard the AI's edit). With no live
+      // session the real handler blocks there and version-bump would never
+      // dispatch, so no-op it to keep this test about the throw-handling
+      // contract rather than about step order.
+      const originalAi = wrapPipeline.STEP_DISPATCH['ai-content'];
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
+      };
       // Mark version-bump as blocker:true on a local prawduct copy.
       const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
       const step = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'version-bump');
@@ -391,6 +401,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           'thrown error message must surface in blockers[]');
       } finally {
         wrapPipeline.STEP_DISPATCH['version-bump'] = original;
+        wrapPipeline.STEP_DISPATCH['ai-content'] = originalAi;
         delete step.blocker;
         store.templates.save(prawduct);
       }

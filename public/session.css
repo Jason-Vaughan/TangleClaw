@@ -1978,7 +1978,9 @@ body {
 .wrap-drawer-recheck {
   margin-left: 10px;
   font-size: 0.8rem;
-  padding: 2px 8px;
+  /* 44px minimum touch target — the drawer is used from a phone. */
+  min-height: 44px;
+  padding: 2px 12px;
   cursor: pointer;
   background: var(--elevated-bg);
   color: var(--text-primary);

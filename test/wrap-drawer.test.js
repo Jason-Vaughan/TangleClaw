@@ -928,3 +928,53 @@ describe('wrap-drawer helpers — summarizeSkips (#571 item 4)', () => {
     assert.equal(roll.skips.length, 0);
   });
 });
+
+// #638 — the release probe must never erase a problem the pipeline already
+// reported. Without composition, a wrap that "completed with warnings" got
+// repainted "Wrap shipped — PR merged", re-opening the false-success class this
+// work exists to close.
+describe('wrap-drawer helpers — composeReleaseBanner precedence', () => {
+  const H = loadHelpers();
+
+  it('a BLOCKED release outranks everything, including a clean pipeline', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed', tone: 'success', detail: 'abc' },
+      { outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'BLOCKED' }
+    );
+    assert.equal(out.tone, 'error');
+    assert.match(out.label, /BLOCKED/);
+  });
+
+  it('a pipeline WARNING survives a merged release (not repainted as shipped)', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap completed with warnings', tone: 'warning', detail: 'Warnings on: project-map' },
+      { outcome: 'merged' }
+    );
+    assert.equal(out.tone, 'warning', 'the warning is not erased by a green release');
+    assert.match(out.label, /warnings/);
+    assert.match(out.detail, /release: merged/, 'but the release outcome is still reported');
+  });
+
+  it('a close-loop error survives a pending release', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: 'arm failed' },
+      { outcome: 'pending' }
+    );
+    assert.equal(out.tone, 'warning');
+    assert.match(out.detail, /release: pending/);
+  });
+
+  it('a clean pipeline takes the release banner as-is', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed — release pending PR merge', tone: 'provisional', detail: 'sha' },
+      { outcome: 'merged' }
+    );
+    assert.equal(out.tone, 'success');
+    assert.match(out.label, /shipped/);
+  });
+
+  it('tolerates a missing base status', () => {
+    const out = H.composeReleaseBanner(null, { outcome: 'pending' });
+    assert.equal(out.tone, 'provisional');
+  });
+});
