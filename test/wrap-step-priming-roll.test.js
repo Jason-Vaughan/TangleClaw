@@ -7,7 +7,7 @@
 // staged-write single-transaction discipline.
 // Extracted from wrap-pipeline.test.js per TST-4X8N (focused per-submodule suites).
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -590,17 +590,19 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
 
     // Single-transaction: real fs must NOT have a priming file yet.
     assert.equal(
-      fs.existsSync(path.join(projectPath, '.claude/priming/build-session.md')),
+      fs.existsSync(path.join(projectPath, '.tangleclaw/priming/build-session.md')),
       false,
       'handler must NOT write to disk — that is the Chunk 9 commit step'
     );
 
-    // Staged shape pinned for commit-step consumption.
+    // Staged shape pinned for commit-step consumption. A project with no
+    // priming file yet gets TangleClaw's own location, not the engine's —
+    // new work must not perpetuate the legacy home.
     const stagedEntry = ctx.staged['next-session-prime'];
     assert.ok(stagedEntry, 'must stage under step.id');
     assert.equal(
       stagedEntry.primingPath,
-      path.join(projectPath, '.claude/priming/build-session.md')
+      path.join(projectPath, '.tangleclaw/priming/build-session.md')
     );
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:BEGIN/);
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:END/);
@@ -1174,5 +1176,128 @@ describe('wrap-step priming-roll — Critic-caught edges (#620)', () => {
       assert.match(result.output.reason, /### Chunk N:/);
       assert.match(result.output.reason, /## Status/);
     });
+  });
+});
+
+describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widened)', () => {
+  // Plans and priming files are TangleClaw orchestration state. They used to
+  // resolve under `.claude/`, so a project on any other engine silently found
+  // no plan and the step reported "nothing to roll" — a failure that looked
+  // like success. These pin the TC-owned home, the legacy fallback that keeps
+  // pre-move projects working, and the precedence between them.
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+
+  let tmpDir;
+  let projectPath;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-priming-paths-'));
+    projectPath = fs.mkdtempSync(path.join(tmpDir, 'proj-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Write a plan into an arbitrary plans directory.
+   * @param {string} relDir - Project-relative plans directory
+   * @param {string} name - Plan filename
+   * @param {string} body - Plan markdown
+   * @returns {string} Absolute path written
+   */
+  function writePlanIn(relDir, name, body) {
+    const dir = path.join(projectPath, relDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, body);
+    return p;
+  }
+
+  const PLAN_BODY = ['### Chunk 1: Done ✅', '### Chunk 2: Active'].join('\n');
+
+  it('names TangleClaw\'s own directory as the default, not any engine\'s', () => {
+    // The regression this chunk exists to prevent. If either default points
+    // back inside an engine-owned directory, a non-Claude project silently
+    // resolves nothing again.
+    assert.equal(primingRoll.DEFAULT_PLANS_DIR, '.tangleclaw/plans');
+    assert.equal(primingRoll.DEFAULT_PRIMING_PATH, '.tangleclaw/priming/build-session.md');
+    assert.doesNotMatch(primingRoll.DEFAULT_PLANS_DIR, /\.claude/);
+    assert.doesNotMatch(primingRoll.DEFAULT_PRIMING_PATH, /\.claude/);
+  });
+
+  it('resolves a plan from .tangleclaw/plans', () => {
+    writePlanIn('.tangleclaw/plans', 'plan.md', PLAN_BODY);
+    const resolved = primingRoll._resolvePlansDir(projectPath);
+    assert.equal(resolved.relative, '.tangleclaw/plans');
+    assert.equal(resolved.legacy, false);
+  });
+
+  it('falls back to legacy .claude/plans so pre-move projects keep working', () => {
+    writePlanIn('.claude/plans', 'plan.md', PLAN_BODY);
+    const resolved = primingRoll._resolvePlansDir(projectPath);
+    assert.equal(resolved.relative, '.claude/plans');
+    assert.equal(resolved.legacy, true);
+  });
+
+  it('prefers the TangleClaw home when both exist', () => {
+    writePlanIn('.claude/plans', 'legacy.md', PLAN_BODY);
+    writePlanIn('.tangleclaw/plans', 'current.md', PLAN_BODY);
+    const resolved = primingRoll._resolvePlansDir(projectPath);
+    assert.equal(resolved.relative, '.tangleclaw/plans');
+    assert.equal(resolved.legacy, false);
+  });
+
+  it('returns null when neither directory exists', () => {
+    assert.equal(primingRoll._resolvePlansDir(projectPath), null);
+  });
+
+  it('names BOTH locations when no plans directory is found', async () => {
+    const result = await primingRoll.run({
+      project: { path: projectPath },
+      step: { id: 'next-session-prime' },
+      staged: {}
+    });
+    // An error naming only one home sends the operator to the wrong place.
+    assert.match(result.blockers.join(' '), /\.tangleclaw\/plans/);
+    assert.match(result.blockers.join(' '), /\.claude\/plans/);
+  });
+
+  it('resolves a bare activePlan filename against the LEGACY dir when that is where plans live', () => {
+    // The escape hatch must not pin itself to the preferred constant, or it
+    // breaks exactly the pre-move projects the fallback protects.
+    writePlanIn('.claude/plans', 'chosen.md', PLAN_BODY);
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectPath, '.tangleclaw', 'project.json'),
+      JSON.stringify({ activePlan: 'chosen.md' })
+    );
+    const resolved = primingRoll._resolvePlanPath(projectPath, {});
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.planPath, path.join(projectPath, '.claude/plans/chosen.md'));
+  });
+
+  it('sends a NEW priming file to the TangleClaw home', () => {
+    assert.equal(
+      primingRoll._resolvePrimingPath(projectPath, {}),
+      path.join(projectPath, '.tangleclaw/priming/build-session.md')
+    );
+  });
+
+  it('keeps writing to an EXISTING legacy priming file rather than orphaning it', () => {
+    const legacy = path.join(projectPath, '.claude/priming');
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'build-session.md'), '# existing\n');
+    assert.equal(
+      primingRoll._resolvePrimingPath(projectPath, {}),
+      path.join(projectPath, '.claude/priming/build-session.md')
+    );
+  });
+
+  it('lets an explicit step.primingPath outrank both', () => {
+    assert.equal(
+      primingRoll._resolvePrimingPath(projectPath, { primingPath: 'custom/prime.md' }),
+      path.join(projectPath, 'custom/prime.md')
+    );
   });
 });

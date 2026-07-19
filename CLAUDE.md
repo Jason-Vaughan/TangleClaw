@@ -32,20 +32,21 @@ These rules apply to all TangleClaw-managed projects, across all engines. Edit t
 
 ## Build Plans & Chunks
 
-Claude Code stores plans globally at `~/.claude/plans/`, so they get lost across sessions and collide between projects.
+Some engines store plans in their own global directory (Claude Code uses `~/.claude/plans/`), so plans get lost across sessions and collide between projects.
 
-**Rule: Keep plans local to the project.**
-- After creating/updating a plan in plan mode, copy it to `<project-root>/.claude/plans/<name>.md`.
-- Memory entries and handoffs must reference the project-local copy by **absolute path** — never ambiguous relative paths like `.claude/plans/...`.
-- Don't rely on `~/.claude/plans/` as the cross-session source of truth.
+**Rule: Keep plans local to the project, in TangleClaw's directory — not an engine's.**
+- After creating/updating a plan in plan mode, copy it to `<project-root>/.tangleclaw/plans/<name>.md`.
+- The location is deliberately engine-neutral: a plan is project state, not engine state, so a project that switches engines keeps its plans. TangleClaw's wrap reads `.tangleclaw/plans/` first and still falls back to a legacy `.claude/plans/` directory where one exists, so existing projects keep working — but new plans go in the TangleClaw location.
+- Memory entries and handoffs must reference the project-local copy by **absolute path** — never ambiguous relative paths like `.tangleclaw/plans/...`.
+- Don't rely on an engine's global plans directory as the cross-session source of truth.
 
-**Rule: Make plans and design docs openable from anywhere, not just as a local file path.** A `.claude/plans/...` path can't be opened from another machine, and the operator often reads on a different device.
+**Rule: Make plans and design docs openable from anywhere, not just as a local file path.** A local file path can't be opened from another machine, and the operator often reads on a different device.
 - When you present a substantial plan, design doc, or reference deliverable, also make it available at a **shareable hosted link** the operator can open from any device — using whatever publishing capability your engine or harness provides.
 - Keep the **same** link updated in place as the document evolves; don't mint a new link on each edit.
 - The project-local file stays the canonical source; the shared link mirrors it.
 
 **Rule: Archive plans whose chunk has shipped.** A plan outlives its purpose the moment its PR merges; leaving it beside active plans makes future sessions treat closed work as ready (the 2026-05-23 failure: recommended a chunk whose issue had closed 18 days earlier).
-- When a plan's issue closes / PR merges, **move it to `<project-root>/.claude/plans/archive/`** rather than deleting — preserves the rationale without polluting the active listing.
+- When a plan's issue closes / PR merges, **move it to `<project-root>/.tangleclaw/plans/archive/`** (or the legacy `.claude/plans/archive/` if that is where the project's plans still live) rather than deleting — preserves the rationale without polluting the active listing.
 - Before treating any plan as canonical, verify its issue is still **OPEN** (`gh issue view <N> --json state -q .state`), even for non-archived files. Archiving is convention; the issue-state check is the contract (it protects across fresh clones, which have no local archive).
 
 ## Memory Hygiene

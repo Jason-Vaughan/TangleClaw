@@ -4,6 +4,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The wrap path no longer requires one engine's layout or prompts (#612, widened).**
+  `priming-roll` resolved plans and priming files inside `.claude/`, so a project on
+  any other engine silently found no plan — the step reported "nothing to roll", a
+  failure that looked like success. Plans are project state, not engine state, so they
+  now resolve under `.tangleclaw/plans/` and `.tangleclaw/priming/`, with the legacy
+  `.claude/` locations still read where they exist. Verified against the live fleet:
+  all 13 projects with plans resolve through the fallback, so nothing moved and nothing
+  broke. A project that switches engines now keeps its plans.
+- **Bundled wrap prompts are engine-neutral.** The `changelog-update` prompt named
+  `CLAUDE.md` to every engine; it now uses a `{engineConfigFile}` token resolved from
+  the project's own engine profile (`CLAUDE.md`, `.codex.yaml`, `.aider.conf.yml`,
+  `.antigravity.md`, or a generic phrase for engines with no config file). The
+  capture-file rationale no longer attributes markdown rendering to a named product —
+  the mechanism was always engine-neutral, only the wording was not.
+- **`data/global-rules.md` (and TangleClaw's own `CLAUDE.md`) prescribe
+  `<project-root>/.tangleclaw/plans/`** for new plans, replacing the engine-specific
+  location.
+
+
 ### Fixed
 
 - **Startup session rules are delivered again, on every engine (#595).** `kind='startup'`
