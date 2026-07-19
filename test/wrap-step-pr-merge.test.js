@@ -9,7 +9,6 @@ const { describe, it, before, beforeEach } = require('node:test');
 const assert = require('node:assert');
 
 const prMerge = require('../lib/wrap-steps/pr-merge');
-const prCheck = require('../lib/wrap-steps/pr-check');
 
 describe('wrap-step pr-merge — staged-resolution discovery', () => {
   it('finds the gate\'s staged entry by shape, not by step id', () => {
@@ -34,18 +33,15 @@ describe('wrap-step pr-merge — staged-resolution discovery', () => {
 
 describe('wrap-step pr-merge — handler', () => {
   let originals;
-  let gitOriginals;
 
   before(() => {
-    originals = { ...prCheck._internal };
-    gitOriginals = { ...prMerge._internal };
+    originals = { ...prMerge._internal };
   });
 
   beforeEach(() => {
-    Object.assign(prCheck._internal, originals);
-    Object.assign(prMerge._internal, gitOriginals);
+    Object.assign(prMerge._internal, originals);
     // No test in this file may shell out to `gh pr merge` or to git.
-    prCheck._internal.enqueueAutoMerge = async () => ({ ok: true, reason: null });
+    prMerge._internal.enqueueAutoMerge = async () => ({ ok: true, reason: null });
     prMerge._internal.exec = async (file, args) => {
       if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
       if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '' };
@@ -72,7 +68,7 @@ describe('wrap-step pr-merge — handler', () => {
 
   it('enqueues auto-merge for each merge resolution', async () => {
     const calls = [];
-    prCheck._internal.enqueueAutoMerge = async (cwd, number) => {
+    prMerge._internal.enqueueAutoMerge = async (cwd, number) => {
       calls.push({ cwd, number });
       return { ok: true, reason: null };
     };
@@ -99,7 +95,7 @@ describe('wrap-step pr-merge — handler', () => {
       return { exitCode: 0, stdout: '', stderr: '' };
     };
     let mergedAfterPush = null;
-    prCheck._internal.enqueueAutoMerge = async () => {
+    prMerge._internal.enqueueAutoMerge = async () => {
       mergedAfterPush = calls.some((c) => c.startsWith('push'));
       return { ok: true, reason: null };
     };
@@ -158,7 +154,7 @@ describe('wrap-step pr-merge — handler', () => {
 
   it('enqueues NOTHING when the push fails — a stale PR beats a merged-but-incomplete one', async () => {
     let merged = 0;
-    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    prMerge._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
     prMerge._internal.exec = async (file, args) => {
       if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
       if (args[0] === 'rev-list') return { exitCode: 0, stdout: '1\n', stderr: '' };
@@ -175,7 +171,7 @@ describe('wrap-step pr-merge — handler', () => {
 
   it('declines on detached HEAD rather than guessing what to push', async () => {
     let merged = 0;
-    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    prMerge._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
     prMerge._internal.exec = async (file, args) => {
       if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'HEAD\n', stderr: '' };
       return { exitCode: 0, stdout: '', stderr: '' };
@@ -187,7 +183,7 @@ describe('wrap-step pr-merge — handler', () => {
 
   it('never touches the remote for defer or ignore', async () => {
     let merged = 0;
-    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    prMerge._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
     const result = await prMerge.run(ctx({ 42: 'defer', 43: 'ignore' }));
     assert.equal(merged, 0);
     assert.equal(result.status, 'skipped');
@@ -198,7 +194,7 @@ describe('wrap-step pr-merge — handler', () => {
     // This step runs after `commit`: the commit has landed and the session's
     // AI steps have already fired, so failing the pipeline here would leave a
     // half-finished wrap whose only recovery is re-running everything.
-    prCheck._internal.enqueueAutoMerge = async () => ({
+    prMerge._internal.enqueueAutoMerge = async () => ({
       ok: false, reason: 'Auto-merge is not allowed for this repository'
     });
     const result = await prMerge.run(ctx({ 42: 'merge' }));
@@ -215,7 +211,7 @@ describe('wrap-step pr-merge — handler', () => {
   it('keeps the record of earlier successes when a later enqueue throws', async () => {
     // The remote is already mutated by the time PR 42 throws; discarding that
     // record would leave the operator unable to tell what actually happened.
-    prCheck._internal.enqueueAutoMerge = async (cwd, number) => {
+    prMerge._internal.enqueueAutoMerge = async (cwd, number) => {
       if (number === '42') throw new Error('network died');
       return { ok: true, reason: null };
     };

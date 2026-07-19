@@ -1525,9 +1525,6 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     prCheck._internal.isGhAvailable = async () => true;
     prCheck._internal.getCurrentBranch = async () => 'feat/x';
     prCheck._internal.listOpenPrs = async () => ({ ok: true, prs: [], reason: null });
-    // Stubbed by default: a `merge` resolution now really enqueues auto-merge,
-    // and no unit test may shell out to `gh pr merge`.
-    prCheck._internal.enqueueAutoMerge = async () => ({ ok: true, reason: null });
     return {
       project: { name: 'sandbox', path: projectPath, id: 1 },
       session: null,
@@ -1643,9 +1640,14 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     ]);
   });
 
-  it('never enqueues a merge itself — that is pr-merge\'s job, after commit', async () => {
-    let merged = 0;
-    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+  it('holds no remote-mutating capability at all — that lives in pr-merge', async () => {
+    // Stronger than "does not call it": the gate's docstring promises it never
+    // touches the remote, so the ability to do so must not live in this module.
+    assert.equal(prCheck._internal.enqueueAutoMerge, undefined,
+      'pr-check must expose no merge seam');
+    assert.equal(prCheck._applyResolutions, undefined,
+      'applying resolutions belongs to pr-merge, which runs after commit');
+
     const ctx = buildContext({ id: 'open-pr-check' }, { prHandling: { 42: 'merge' } });
     prCheck._internal.listOpenPrs = async () => ({
       ok: true,
@@ -1654,8 +1656,7 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     });
     const result = await prCheck.run(ctx);
     assert.equal(result.ok, true);
-    assert.equal(merged, 0,
-      'the gate must not touch the remote — enqueueing before commit would merge a PR missing the wrap commit');
+    assert.equal(result.output.applied, undefined, 'the gate reports decisions, not outcomes');
   });
 
   it('blocks when part of the request is invalid, even if the rest is valid', async () => {
@@ -1756,16 +1757,16 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
   });
 });
 
-describe('wrap-step pr-check — defaultEnqueueAutoMerge', () => {
-  const prCheck = require('../lib/wrap-steps/pr-check');
+describe('wrap-step pr-merge — defaultEnqueueAutoMerge', () => {
+  const prMerge = require('../lib/wrap-steps/pr-merge');
   let originals;
 
   before(() => {
-    originals = { ...prCheck._internal };
+    originals = { ...prMerge._internal };
   });
 
   beforeEach(() => {
-    Object.assign(prCheck._internal, originals);
+    Object.assign(prMerge._internal, originals);
   });
 
   it('enqueues auto-merge rather than merging outright', () => {
@@ -1773,7 +1774,7 @@ describe('wrap-step pr-check — defaultEnqueueAutoMerge', () => {
     // checks in charge of when the merge lands, so a wrap can never force a
     // merge over red checks. --squash keeps the default branch linear.
     let cmd = null;
-    prCheck._internal.exec = async (c) => {
+    prMerge._internal.execShell = async (c) => {
       cmd = c;
       return { exitCode: 0, stdout: '', stderr: '', error: null };
     };
@@ -1784,7 +1785,7 @@ describe('wrap-step pr-check — defaultEnqueueAutoMerge', () => {
   });
 
   it('reports gh\'s reason on a non-zero exit', async () => {
-    prCheck._internal.exec = async () => ({
+    prMerge._internal.execShell = async () => ({
       exitCode: 1, stdout: '', stderr: 'Auto-merge is not allowed for this repository\n', error: null
     });
     const r = await originals.enqueueAutoMerge('/tmp/x', 7);
@@ -1793,7 +1794,7 @@ describe('wrap-step pr-check — defaultEnqueueAutoMerge', () => {
   });
 
   it('truncates a runaway gh error so the blocker stays readable', async () => {
-    prCheck._internal.exec = async () => ({
+    prMerge._internal.execShell = async () => ({
       exitCode: 1, stdout: '', stderr: 'x'.repeat(500), error: null
     });
     const r = await originals.enqueueAutoMerge('/tmp/x', 7);

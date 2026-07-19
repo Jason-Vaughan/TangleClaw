@@ -391,10 +391,10 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
   });
 
   it('schema is backward-compatible — old entries without ranAt still read as branch-matched', async () => {
-    // Wrap pipeline's critic-check defaultLoadCriticRuns filters by
-    // `typeof entry.branchName === "string"` only. New `ranAt` field is
-    // additive. Pin that old entries (no ranAt) AND new entries
-    // (ranAt:"ack" / ranAt:"actual") coexist without breaking the filter.
+    // Readers of `.tangleclaw/critic-runs.json` identify an entry by
+    // `typeof entry.branchName === "string"`; the `ranAt` field is additive.
+    // Pin that old entries (no ranAt) AND new entries (ranAt:"ack" /
+    // ranAt:"actual") coexist without breaking that predicate.
     const filePath = path.join(projectPath, '.tangleclaw', 'critic-runs.json');
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([
@@ -408,8 +408,8 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
     assert.equal(arr[0].ranAt, undefined, 'old entry left untouched');
     assert.equal(arr[1].ranAt, 'ack', 'new entry carries ranAt');
     assert.equal(typeof arr[0].branchName, 'string',
-      'old entry still passes critic-check.js branch-name filter');
+      'old entry still carries the branch-name key readers match on');
     assert.equal(typeof arr[1].branchName, 'string',
-      'new entry still passes critic-check.js branch-name filter');
+      'new entry still carries the branch-name key readers match on');
   });
 });

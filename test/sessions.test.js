@@ -2014,7 +2014,6 @@ describe('sessions', () => {
       try {
         const opts = {
           skipTests: true,
-          criticSkipRationale: 'rationale text',
           prHandling: { '42': 'merge' }
         };
         await sessions.triggerWrap('prime-test', opts);
