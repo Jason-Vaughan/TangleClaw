@@ -172,3 +172,15 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 
 - **TBD** — touched in this session: `test/prawduct-aicontent-prompts.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/wrap-engine-agnostic.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-19)
+
+- **TBD** — touched in this session: `docs/configuration-reference.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/project-paths.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/actions-invoke-critic.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/feature-index.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-paths.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/version-bump-fail-closed.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-continuity-write.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-features-toc.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-pr-merge.test.js`. <!-- describe -->
