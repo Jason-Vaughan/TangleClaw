@@ -42,7 +42,8 @@ not design.
 **What:** markup moved to `.modal-backdrop > .modal-content.create-modal`
 (`public/index.html`); new CSS block mirrors the `.settings-modal` flex pattern —
 header + step dots `flex-shrink: 0`, `#createBody` scrolls (`flex: 1 1 auto`,
-`min-height: 0`, `overflow-y: auto`); `openCreateDrawer`/`closeCreateDrawer` now toggle
+`min-height: 0`, `overflow-y: auto`); `openCreateModal`/`closeCreateModal` (renamed from `…Drawer` — see the Critic
+paragraph below) toggle
 `.open` on the backdrop only (the content's scale-in comes from
 `.modal-backdrop.open .modal-content`); backdrop click guarded with
 `e.target === e.currentTarget`. `.drawer`, `.drawer.open`, `.drawer-backdrop`, `.drawer-backdrop.open` and

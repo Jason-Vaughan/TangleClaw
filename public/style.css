@@ -1894,7 +1894,7 @@ body {
   font-style: italic;
 }
 
-/* ── Bottom-Sheet Drawer ── */
+/* ── Create Project modal chrome (header / title / body) ── */
 .create-modal-header {
   display: flex;
   align-items: center;
