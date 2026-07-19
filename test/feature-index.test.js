@@ -160,6 +160,42 @@ describe('feature-index (#207, chunk 1)', () => {
     });
   });
 
+  describe('updateProject — versionFilePath (#540)', () => {
+    it('rejects non-string values', () => {
+      projects.createProject({ name: 'vfp-type', methodology: 'minimal' });
+      for (const bad of [1, true, {}, []]) {
+        const update = projects.updateProject('vfp-type', { versionFilePath: bad });
+        assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
+        assert.ok(update.errors[0].includes('versionFilePath'));
+      }
+    });
+
+    it('rejects absolute paths and ".." escapes — this field feeds a write path', () => {
+      projects.createProject({ name: 'vfp-escape', methodology: 'minimal' });
+      for (const bad of ['/etc/passwd.json', '../outside.json', 'a/../../b.json']) {
+        const update = projects.updateProject('vfp-escape', { versionFilePath: bad });
+        assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
+        assert.ok(update.errors[0].includes('versionFilePath'));
+      }
+    });
+
+    it('defaults to null, persists a relative path, and clears on empty string', () => {
+      projects.createProject({ name: 'vfp-persist', methodology: 'minimal' });
+      assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
+
+      const set = projects.updateProject('vfp-persist', { versionFilePath: 'VERSION.json' });
+      assert.ok(set.project);
+      assert.equal(set.errors.length, 0);
+      assert.equal(store.projectConfig.load(set.project.path).versionFilePath, 'VERSION.json');
+      assert.equal(projects.getProject('vfp-persist').versionFilePath, 'VERSION.json');
+
+      const cleared = projects.updateProject('vfp-persist', { versionFilePath: '' });
+      assert.ok(cleared.project);
+      assert.equal(store.projectConfig.load(cleared.project.path).versionFilePath, null);
+      assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
+    });
+  });
+
   describe('updateProject — seeding behavior on toggle', () => {
     it('seeds FEATURES.md on false → true transition when file absent', () => {
       const created = projects.createProject({

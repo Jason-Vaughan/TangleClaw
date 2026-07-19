@@ -26,6 +26,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
+
+<!-- prawduct: type=fix | chunks=04a | scope=wrap-v2 -->
+
+**Why:** three paths in `version-bump` where the step silently did something other
+than what was asked — the same defect class, found by #540's re-verification from a
+TiLT v2 session. The step only probed lowercase `version.json` before falling back to
+`package.json`, so on a case-sensitive filesystem a `VERSION.json` project resolved
+nothing, fell through, and bumped an unrelated version — writing a bogus release
+heading above the real one. The drift guard that existed to catch exactly that was
+`if (topReleased && …)`, and its parser returns null for any non-3-octet changelog, so
+on the 4-octet scheme that triggers the bug the guard skipped *itself*. And an
+out-of-set `bumpLevel` override fell through to the heuristic, turning a typo into a
+different bump with no signal.
+
+**What:** `versionFilePath` project setting (API-validated, UI text field, rejected if
+absolute or `..`-escaping at both the API and the write site, since the commit step
+flushes whatever it resolves to); a configured path resolves or skips, never falls
+back. New `_hasReleaseHeadings` splits the two reasons `_topReleasedVersion` returns
+null — no headings yet (first release, still bumps) vs headings that don't parse
+(scheme this step can't extend, stops). Invalid `bumpLevel` skips naming the bad
+value. 18 tests, 7 of which fail against the prior code.
+
+**Chunk 04 was split** into 04a/04b/04c; the plan carries the reasoning. 04b (spine +
+fail-closed agent verification) and 04c (per-project wrap config) turned out larger
+than the plan assumed — 04b redefines what `pipelineResult.ok` means, 04c needs a
+per-project step-override mechanism that survives `FRAMEWORK_OWNED_PATHS` template
+syncs. #540's `ask` mode is explicitly descoped to 04b, which owns the drawer.
+
+**Classification:** build
+
 ## 2026-07-18: Phase A Chunk 08 — tc-cleanroom first-run acceptance gate (#618)
 
 <!-- prawduct: type=feature | chunks=08 | scope=prawduct-v2-sunset | status=shipped -->

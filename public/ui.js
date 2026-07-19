@@ -777,6 +777,11 @@ function openSettings(name) {
         <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump <code>version.json</code>/<code>package.json</code> semver. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
       </div>
       <div class="form-group">
+        <label class="form-label" for="settingsVersionFilePath">Version file path</label>
+        <input type="text" class="form-input" id="settingsVersionFilePath" placeholder="version.json" value="${esc(project.versionFilePath || '')}">
+        <div class="form-hint">Leave blank to probe <code>version.json</code>, then <code>package.json</code>. Set this when the file has a different name or case (e.g. <code>VERSION.json</code>) — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump <code>package.json</code> instead. Must be a relative path inside the project.</div>
+      </div>
+      <div class="form-group">
         <label class="gs-toggle-label">
           <span>Enable Medusa session comms</span>
           <input type="checkbox" id="settingsMedusa" ${initialMedusaChecked ? 'checked' : ''}>
@@ -1255,6 +1260,12 @@ async function doSaveSettings() {
   const versionBumpEl = document.getElementById('settingsVersionBump');
   if (versionBumpEl) {
     body.versionBumpEnabled = versionBumpEl.checked;
+  }
+  // Explicit version-file path (#540) — always present (engine-agnostic).
+  // Blank clears it back to the built-in probe order.
+  const versionFilePathEl = document.getElementById('settingsVersionFilePath');
+  if (versionFilePathEl) {
+    body.versionFilePath = versionFilePathEl.value.trim();
   }
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — always present (engine-agnostic)
   const medusaEl = document.getElementById('settingsMedusa');

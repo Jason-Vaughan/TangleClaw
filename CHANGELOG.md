@@ -4,6 +4,24 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The wrap's version bump now stops instead of quietly bumping the wrong thing (#540, #571).**
+  Three paths where the step silently did something other than what was asked. (1) It only
+  ever probed lowercase `version.json`, then fell back to `package.json` — so on a
+  case-sensitive filesystem a project whose file is `VERSION.json` resolved nothing, fell
+  through, and bumped an unrelated `package.json` version, inserting a bogus release heading
+  above the real one. A new **Version file path** setting names the file explicitly; a
+  configured path resolves or the step skips, and never falls back. (2) The drift guard that
+  would have caught this was written `if (topReleased && …)`, and its parser returns nothing
+  for any changelog whose headings aren't 3-octet `## [X.Y.Z] - YYYY-MM-DD` — so on a
+  4-octet scheme the guard skipped *itself* rather than firing. It now distinguishes "no
+  release headings yet" (a first release, which still bumps) from "headings I can't parse"
+  (a scheme this step can't extend safely, which stops). (3) A `bumpLevel` override outside
+  `patch`/`minor`/`major` fell through to the heuristic, so asking for `patch` and typing
+  `pathc` produced a minor bump with no signal; it now skips and names the bad value. Each
+  skip reports why, so an inert step is distinguishable from a satisfied one.
+
 ## [4.26.0] - 2026-07-18
 
 ### Changed
