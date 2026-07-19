@@ -49,7 +49,7 @@ container clones without network. The first gate run filed #614, #615, #616, #61
 
 ## 2026-07-19: Chunk 02 — engine-agnostic wrap sweep (#612 widened)
 
-<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=02 -->
+<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=02 | status=shipped -->
 
 **Why:** the wrap had two shapes of engine coupling. The severe one was runtime path
 resolution: `priming-roll` resolved plans and priming files inside `.claude/`, so a
@@ -90,7 +90,7 @@ vacuity guard in the new suite caught its own bug: the template's steps live at
 
 ## 2026-07-19: Chunk 01 — startup session-rule delivery + delivery ledger (#595)
 
-<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 -->
+<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 | status=shipped -->
 
 **Why:** Phase B discovery found the channel the whole Wrap v2 design depends on was
 severed. `kind='startup'` rules were assembled only inside `engines._getRulesContent`,
