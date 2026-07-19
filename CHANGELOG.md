@@ -13,7 +13,9 @@ All notable changes to TangleClaw are documented in this file.
   now resolve under `.tangleclaw/plans/` and `.tangleclaw/priming/`, with the legacy
   `.claude/` locations still read where they exist. Verified against the live fleet:
   all 13 projects with plans resolve through the fallback, so nothing moved and nothing
-  broke. A project that switches engines now keeps its plans.
+  broke. A project that switches engines now keeps its plans. The "Set active plan"
+  picker validates against the same resolved directory, so a plan under
+  `.tangleclaw/plans/` is now accepted where it was previously rejected outright.
 - **Bundled wrap prompts are engine-neutral.** The `changelog-update` prompt named
   `CLAUDE.md` to every engine; it now uses a `{engineConfigFile}` token resolved from
   the project's own engine profile (`CLAUDE.md`, `.codex.yaml`, `.aider.conf.yml`,
@@ -23,7 +25,6 @@ All notable changes to TangleClaw are documented in this file.
 - **`data/global-rules.md` (and TangleClaw's own `CLAUDE.md`) prescribe
   `<project-root>/.tangleclaw/plans/`** for new plans, replacing the engine-specific
   location.
-
 
 ### Fixed
 
@@ -936,7 +937,6 @@ All notable changes to TangleClaw are documented in this file.
   - **Critic-driven adjustments**: Independent Critic flagged 0 BLOCKERs / 1 MAJOR / 3 MINORs / 2 NITs. MAJOR + 2 MINORs addressed in-chunk. **M1** (fail-open test passed for the wrong reason) — original test seeded an existing cache file then `chmod 0o500`'d the directory, but POSIX `O_WRONLY|O_TRUNC` on an *existing* file succeeds inside a r-o directory (the test silently exercised the success path, not the catch block). Rewrote the test to stub `fs.writeFileSync` so it throws unconditionally; added positive assertions that the stub was invoked exactly once AND that no cache file was created. The stub-based approach is also cross-platform robust (chmod-based fail-open tests no-op when run as root). **N1** (`_readVersionCacheFile` JSDoc was doubly stale) — comment still referenced "AI on session start and wrap once the session-lifecycle hook lands in #55 chunks 2+" from before #101 made TC the writer. Refreshed to document both current TC-side writers (`lib/project-version.js:recordVersion` for the rich chain incl. git-tag, `lib/projects.js:_writeVersionCacheFile` for the #165 self-heal). **N2** (preserve-cached-when-live-null trade-off not documented in-code) — added a sentence to `_detectProjectVersion`'s JSDoc explaining the accepted trade-off: a project whose only live source was deleted will keep showing the pre-deletion value until the next session launch's `recordVersion` rewrites the cache with `source: fallback`. The alternative (clobber on null) would regress git-tag-only projects on every enrichment, which is worse. N3 (test pollution risk from chmod permission failures) accepted as-is — N1 fix removed the chmod entirely, so the concern no longer applies. NITs (CHANGELOG count framing, duplicated JSDoc rationale) accepted as-is.
 
 ## [3.16.1] - 2026-05-13
-
 
 > 🛟 **Recommended bug-fix release.** Three OpenClaw / methodology-hook fixes since v3.16.0: **chunk-1 orphan-hook protection now reaches pre-#146 runtime templates** (#158) — closes the session-killing infinite Stop-hook loop that resurfaced on TC-v3 itself when chunk-1's `requires` filter silently no-op'd on pre-v3.15.0 runtime templates; **OpenClaw connection flow fixes** (#160) — surfaces real save errors, fixes Bridge Port silently defaulting to 3201 for non-ClawBridge deployments, and replaces the generic "check SSH connectivity" message with the actual SSH failure (local-bind conflict, auth failure, network error); **OpenClaw Web UI cached-WS-URL routing fix** (#162) — clicking a second OpenClaw connection's Web UI button no longer loads the first connection's dashboard via stale localStorage cache. Anyone on v3.16.0 will get the update-pill notification with a clickable link to this release page.
 
