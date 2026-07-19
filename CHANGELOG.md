@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.27.0] - 2026-07-19
+
 ### Added
 
 - **A "Version file path" setting, for projects whose version file isn't `version.json` (#540).**
