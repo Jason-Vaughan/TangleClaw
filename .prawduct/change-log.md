@@ -26,6 +26,59 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Discovery — #595 rule delivery is severed, not merely unverified (wrap-v2)
+
+<!-- prawduct: type=discovery | scope=wrap-v2 -->
+
+**Why:** The operator ratified a standing design rule ("TangleClaw can't require what
+won't work on all models — Claude-native means HINT only") and asked for it to be written
+into session rules as self-learning. Writing it was easy; **verifying it arrived was
+not** — and that verification is what produced this finding.
+
+**What:** `kind='startup'` session rules are **structurally undeliverable on every
+plugin-governed project**. Trace: `listActiveForProject` has exactly ONE consumer
+(`lib/engines.js:310`, inside `generateConfig`); `generateConfig` has two call sites,
+`validateParity()` (`:1009`, a helper) and `writeEngineConfig` (`:1322`); and
+`writeEngineConfig` returns early at `:1312` for plugin-governed projects, before ever
+reaching the injection. The early return is correct on its own terms (#330 — otherwise
+launch/boot/PATCH would clobber the plugin's CLAUDE.md), but rule injection lives
+downstream of it, so deferring config generation silently defers rule DELIVERY, which the
+plugin neither knows about nor performs.
+
+**Blast radius: 13 of 13 `governed-plugin` projects** — Monad-1, Notse, PV-AI-Guidebook,
+RentalClaw-Project, ScrapeGoat, TangleBrain, TangleClaw, TangleWeb, TiLT Claw, TiLT v2,
+UCI, Volta, WhitePapers. Live fleet inventory: 4 rules — 3 `kind='master'` (delivered via
+`lib/master.js`, a separate path that works) and 1 `kind='startup'` (the rule created
+here, undelivered). The project-rules tier has **zero working instances fleet-wide** and
+failed on first real use.
+
+**Why it matters:** the ratified Wrap v2 direction makes `session_rules` the
+self-improvement channel ("wraps propose rule updates, applied at next launch"). That
+channel is severed for exactly the 13 projects the campaign targets — so #595 is promoted
+from "first-class requirement" to **hard prerequisite** and becomes Chunk 01 of the Phase
+B plan. It also corrects a stale fact in the direction artifact: the 2026-07-17 read-path
+audit recorded "`startup` rules inject correctly," which is false for governed projects
+(the audit presumably checked a non-governed one). Corrected in place.
+
+**Asymmetry made visible:** Chunk 06 wired `kind='wrap'` rules via
+`ai-content._appendWrapRules`, which reads the DB at wrap time and DOES work. So `wrap`
+is live while `startup` is dead — Chunk 01 unifies both on one mechanism with one
+verification story.
+
+**Also produced:** the Phase B build plan (`artifacts/wrap-v2-build-plan.md`, 6 chunks,
+hosted mirror minted) and three operator ratifications — `open-pr-check` becomes a real
+gate rather than the inert probe it is today; the engine-agnostic standing rule (session
+rule id 5); and #595 gets discovery before planning. `active_build_plan` repointed from
+the completed Phase A plan to the new one; Phase A stays in place as reference by
+operator decision, deliberately not archived. Verified the repoint end-to-end by running
+the priming-roll step: it now resolves `wrap-v2-build-plan.md` and reports Chunk 01 — the
+fix shipped earlier today proving itself on the exact handoff it exists to protect.
+
+⚠ **The standing rule is itself currently undelivered** — it is a `startup` rule on a
+governed project, i.e. the very defect above. It is honored in-session by authorship
+only, and will not reach the next session until Chunk 01 ships.
+
+
 ## 2026-07-18: Discovery — Phase B step inventory (wrap-v2)
 
 <!-- prawduct: type=discovery | scope=wrap-v2 -->
