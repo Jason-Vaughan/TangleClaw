@@ -716,9 +716,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       featuresToc._internal.execSync = (cmd) => {
         if (cmd.includes(`${SHA}^{commit}`)) return Buffer.from(''); // SHA resolves
         // The OLD (branch) range is empty — this is the wrap-on-main bug condition.
-        if (cmd.includes('git diff --name-only main...HEAD')) return Buffer.from('');
+        if (cmd.includes('main...HEAD')) return Buffer.from('');
         // The NEW (session) range captures everything merged since the last wrap.
-        if (cmd.includes(`git diff --name-only ${SHA}..HEAD`)) {
+        if (cmd.includes(`${SHA}..HEAD`)) {
           sawSessionDiff = true;
           return 'lib/merged-a.js\nlib/merged-b.js\n';
         }
@@ -897,6 +897,103 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       const lines = commitStep._buildBodyLines(staged);
       assert.ok(lines.includes('- Feature Index: created (3 stub(s) appended)'),
         'self-heal create with drift reports the appended count');
+    });
+  });
+
+  describe('deleted files are never stubbed (dangling-citation regression)', () => {
+    let tmpDir;
+    let projectPath;
+    let createdProject;
+    let firstSha;
+
+    // Driven against a REAL git repo, not a stubbed execSync: the behavior under
+    // test IS git's `--diff-filter=d` semantics, and a stub could only prove the
+    // flag string was passed, never that it excludes what we think it excludes.
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-features-toc-deleted-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const cfg = store.config.load();
+      cfg.projectsDir = projectsDir;
+      store.config.save(cfg);
+
+      projectPath = path.join(projectsDir, 'features-toc-deleted');
+      fs.mkdirSync(path.join(projectPath, 'lib'), { recursive: true });
+
+      const git = (cmd) => execSync(`git ${cmd}`, { cwd: projectPath, stdio: 'ignore' });
+      git('init -q');
+      git('config user.email test@example.com');
+      git('config user.name Test');
+      git('config commit.gpgsign false');
+
+      // Baseline commit — this is where the previous wrap left off.
+      fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n\n## UI\n');
+      fs.writeFileSync(path.join(projectPath, 'lib', 'doomed.js'), '// removed later\n');
+      git('add -A');
+      git('commit -q -m baseline');
+      firstSha = execSync('git rev-parse HEAD', { cwd: projectPath, encoding: 'utf8' }).trim();
+
+      // The session: add one file, delete another. Mirrors the real #637 trigger
+      // (a wrap-step file disposed of mid-session), which stubbed the deleted
+      // path and blocked that wrap's own PR on the citation contract.
+      fs.writeFileSync(path.join(projectPath, 'lib', 'kept.js'), '// still here\n');
+      fs.rmSync(path.join(projectPath, 'lib', 'doomed.js'));
+      git('add -A');
+      git('commit -q -m session');
+
+      createdProject = store.projects.create({
+        name: 'features-toc-deleted', path: projectPath, engine: 'claude', methodology: 'minimal'
+      });
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('stubs a file added this session but NOT one deleted this session', async () => {
+      store.projectConfig.save(projectPath, {
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: firstSha
+      });
+
+      const origToday = featuresToc._internal.todayIso;
+      featuresToc._internal.todayIso = () => '2026-07-19';
+      try {
+        const staged = {};
+        const result = await featuresToc.run({ project: createdProject, staged });
+
+        assert.equal(result.status, 'done');
+        assert.deepEqual(result.output.addedFiles, ['lib/kept.js'],
+          'the added file is stubbed; the deleted file must not appear');
+        assert.equal(result.output.addedCount, 1);
+
+        const { newContent } = staged['features-toc:append'];
+        assert.match(newContent, /lib\/kept\.js/);
+        assert.doesNotMatch(newContent, /doomed/,
+          'a stub for a deleted path is a dangling citation — it fails the FEATURES.md citation contract and blocks the wrap PR');
+      } finally {
+        featuresToc._internal.todayIso = origToday;
+      }
+    });
+
+    it('skips entirely when the session only deleted files (nothing left to describe)', async () => {
+      // Second session: delete the file the first one added, touching nothing else.
+      const headBefore = execSync('git rev-parse HEAD', { cwd: projectPath, encoding: 'utf8' }).trim();
+      fs.rmSync(path.join(projectPath, 'lib', 'kept.js'));
+      execSync('git add -A && git commit -q -m "delete only"', { cwd: projectPath, stdio: 'ignore' });
+
+      store.projectConfig.save(projectPath, {
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: headBefore
+      });
+
+      const staged = {};
+      const result = await featuresToc.run({ project: createdProject, staged });
+
+      assert.equal(result.ok, true, 'never blocks');
+      assert.equal(result.status, 'skipped');
+      assert.equal(staged['features-toc:append'], undefined, 'nothing staged when there is no drift');
     });
   });
 });

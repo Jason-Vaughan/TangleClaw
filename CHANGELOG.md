@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The wrap no longer stubs Feature Index entries for files the session deleted (#637).**
+  `features-toc` built its auto-stub list from `git diff --name-only`, which reports deleted
+  paths alongside added ones, and filtered only on path shape — extension, prefix, basename —
+  never on whether the file still existed. So a session that removed a file got a
+  `- **TBD** — touched in this session: \`<deleted path>\`` entry pointing at nothing. That is
+  not merely noise: `FEATURES.md`'s citation contract asserts every cited path exists on disk,
+  so the stub failed the required test gate and blocked the wrap's *own* PR from merging,
+  stranding that wrap's version bump on an unmerged branch while every step still reported
+  success. The diff now uses `--diff-filter=d` to exclude deletions. Renames arrive as
+  delete+add, so the stale path drops out and the new one is still stubbed.
+
 ## [4.27.0] - 2026-07-19
 
 ### Added
