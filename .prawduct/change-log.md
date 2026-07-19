@@ -44,10 +44,13 @@ different bump with no signal.
 **What:** `versionFilePath` project setting (API-validated, UI text field, rejected if
 absolute or `..`-escaping at both the API and the write site, since the commit step
 flushes whatever it resolves to); a configured path resolves or skips, never falls
-back. New `_hasReleaseHeadings` splits the two reasons `_topReleasedVersion` returns
-null — no headings yet (first release, still bumps) vs headings that don't parse
-(scheme this step can't extend, stops). Invalid `bumpLevel` skips naming the bad
-value. 18 tests, 7 of which fail against the prior code.
+back. New `_hasForeignSchemeHeadings` splits the two reasons `_topReleasedVersion`
+returns null — no headings yet (first release, still bumps) vs a version in another
+scheme (stops). It keys on the version's shape alone, so a heading that omits the
+date or uses an en-dash is still recognized as ordinary semver; keying it on
+everything `_topReleasedVersion` rejects would have hard-skipped those projects and
+blamed their "versioning scheme". Invalid `bumpLevel` skips naming the bad value.
+28 test cases, 7 of which fail against the prior code.
 
 **Chunk 04 was split** into 04a/04b/04c; the plan carries the reasoning. 04b (spine +
 fail-closed agent verification) and 04c (per-project wrap config) turned out larger

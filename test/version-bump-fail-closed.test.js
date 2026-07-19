@@ -265,7 +265,9 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       ['no date', '## [1.4.2]'],
       ['en-dash separator', '## [1.4.2] – 2026-05-01'],
       ['trailing annotation', '## [1.4.2] - 2026-05-01 (hotfix)'],
-      ['unreleased with trailing text', '## [Unreleased] - TBD']
+      ['unreleased with trailing text', '## [Unreleased] - TBD'],
+      ['prerelease tag', '## [1.4.2-beta.1] - 2026-05-01'],
+      ['build metadata', '## [1.4.2+build.5] - 2026-05-01']
     ]) {
       it(`does not treat a 3-octet heading with ${label} as a foreign scheme`, () => {
         const text = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n${heading}\n\n### Fixed\n- y\n`;
