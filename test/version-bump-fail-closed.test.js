@@ -511,3 +511,39 @@ describe('project-version honors versionFilePath (#540)', () => {
     assert.equal(projectVersion.detectVersion(dir).source, 'package.json');
   });
 });
+
+// Diagnostic-text contracts: a refusal must read as one sentence naming the
+// setting, and must attribute the cause to the configuration when that is what
+// is wrong. Both were Critic notes — behavior was correct, the message wasn't.
+describe('version-bump refusal messages read as one sentence', () => {
+  let savedInternal;
+  let savedLoad;
+
+  beforeEach(() => {
+    savedInternal = { ...vb._internal };
+    savedLoad = store.projectConfig.load;
+  });
+  afterEach(() => {
+    Object.assign(vb._internal, savedInternal);
+    store.projectConfig.load = savedLoad;
+  });
+
+  it('composes the field name with the reason, without a doubled noun', async () => {
+    vb._internal.existsSync = () => true;
+    vb._internal.readFileSync = () => '{"version":"1.0.0"}';
+    store.projectConfig.load = () => ({ versionFilePath: '../../outside.json' });
+
+    const c = ctx();
+    const r = await vb.run(c);
+    assert.match(r.output.reason, /versionFilePath "\.\.\/\.\.\/outside\.json" resolves outside the project root/);
+    assert.doesNotMatch(r.output.reason, /versionFilePath path /, 'no doubled noun');
+  });
+
+  it('blames the configuration when a configured package.json is missing', () => {
+    // Not "package.json not found", which reads as though the probe ran.
+    vb._internal.existsSync = () => false;
+    const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/package.json');
+    assert.ok(s.skip);
+    assert.match(s.skip, /configured versionFilePath/);
+  });
+});
