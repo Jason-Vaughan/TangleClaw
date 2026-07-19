@@ -1180,6 +1180,24 @@ route('GET', '/api/session-rules', (req, res) => {
   jsonResponse(res, 200, { rules });
 });
 
+// GET /api/session-rules/deliveries — the #595 delivery ledger. Answers "did
+// session X receive rule set Y" (?sessionId=) and "is this project actually
+// receiving its rules" (?projectId=, newest first). Undelivered attempts are
+// included on purpose: an empty-looking project and a severed channel must be
+// distinguishable, which is the failure this ledger exists to expose.
+route('GET', '/api/session-rules/deliveries', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (query.sessionId !== undefined) {
+    return jsonResponse(res, 200, { deliveries: store.sessionRuleDeliveries.listForSession(Number(query.sessionId)) });
+  }
+  if (query.projectId !== undefined) {
+    const options = {};
+    if (query.limit !== undefined) options.limit = Number(query.limit);
+    return jsonResponse(res, 200, { deliveries: store.sessionRuleDeliveries.listForProject(Number(query.projectId), options) });
+  }
+  return errorResponse(res, 400, 'sessionId or projectId query parameter is required', 'BAD_REQUEST');
+});
+
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {

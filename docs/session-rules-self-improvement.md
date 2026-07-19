@@ -109,11 +109,20 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
 
 | kind | When it applies | Injected? |
 |---|---|---|
-| `startup` (default) | session start — custom priming | **yes**, at launch (`## Session Rules`) |
+| `startup` (default) | session start — custom priming | **yes**, into the session prime at launch (`## Project Rules`) |
 | `wrap` | wrap time — custom wrap behavior + the self-learning sink | **yes**, into the wrap pipeline's ai-content prompts (`## Project wrap rules`) |
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
   predating CC-6 backfill to `startup`, so injection behavior is unchanged.
+- **Both kinds now deliver the same way (#595):** plain string concatenation into the
+  prompt at send time — `sessions.buildStartupRulesSection` at launch, `_appendWrapRules`
+  at wrap — with no file, hook, or engine capability in the path. Startup rules previously
+  travelled inside the generated engine config file, which `writeEngineConfig` skips
+  wholesale for plugin-governed projects; the tier therefore delivered nothing on every
+  governed project while still accepting writes. Each launch now records the outcome in
+  the `session_rule_deliveries` ledger (`GET /api/session-rules/deliveries`), including
+  attempts that did **not** arrive — without those rows a severed channel is
+  indistinguishable from a project that simply has no rules.
 - `POST /api/session-rules` and `/promote` accept `kind`; `GET /api/session-rules?kind=`
   filters; `/conflicts` accepts `{kind}` so a proposed wrap rule is only compared against
   other wrap rules. An invalid kind is a 400.

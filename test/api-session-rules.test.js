@@ -235,4 +235,33 @@ describe('api/session-rules (#347/D1a)', () => {
       assert.ok(!res.data.rules.some((r) => r.content === 'stray custom rule'));
     });
   });
+
+  describe('GET /api/session-rules/deliveries (#595)', () => {
+    it('returns a session\'s deliveries, including the undelivered attempts', async () => {
+      store.sessionRuleDeliveries.record({ sessionId: 9001, projectId, engineId: 'openclaw', channel: 'none', delivered: false, skipReason: 'engine declares no prime channel', ruleIds: [1], digest: 'sha-x' });
+      store.sessionRuleDeliveries.record({ sessionId: 9001, projectId, engineId: 'claude', channel: 'prime-file', delivered: true, ruleIds: [1], digest: 'sha-x' });
+
+      const res = await request('GET', '/api/session-rules/deliveries?sessionId=9001');
+      assert.equal(res.status, 200);
+      assert.equal(res.data.deliveries.length, 2);
+      // A ledger that hid failures could not distinguish "no rules" from
+      // "rules never arrived" — the whole point of #595.
+      assert.ok(res.data.deliveries.some((d) => d.delivered === false && /no prime channel/.test(d.skipReason)));
+      assert.ok(res.data.deliveries.some((d) => d.delivered === true && d.digest === 'sha-x'));
+    });
+
+    it('returns a project\'s delivery history newest-first', async () => {
+      store.sessionRuleDeliveries.record({ sessionId: 9002, projectId, engineId: 'claude', channel: 'prime-paste', delivered: true, digest: 'newest' });
+      const res = await request('GET', `/api/session-rules/deliveries?projectId=${projectId}&limit=1`);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.deliveries.length, 1);
+      assert.equal(res.data.deliveries[0].digest, 'newest');
+    });
+
+    it('rejects a query naming neither a session nor a project', async () => {
+      const res = await request('GET', '/api/session-rules/deliveries');
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'BAD_REQUEST');
+    });
+  });
 });
