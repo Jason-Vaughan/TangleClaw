@@ -34,15 +34,23 @@ describe('wrap-step pr-merge — staged-resolution discovery', () => {
 
 describe('wrap-step pr-merge — handler', () => {
   let originals;
+  let gitOriginals;
 
   before(() => {
     originals = { ...prCheck._internal };
+    gitOriginals = { ...prMerge._internal };
   });
 
   beforeEach(() => {
     Object.assign(prCheck._internal, originals);
-    // No test in this file may shell out to `gh pr merge`.
+    Object.assign(prMerge._internal, gitOriginals);
+    // No test in this file may shell out to `gh pr merge` or to git.
     prCheck._internal.enqueueAutoMerge = async () => ({ ok: true, reason: null });
+    prMerge._internal.exec = async (file, args) => {
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
   });
 
   /** Context with a gate entry already staged, as the real pipeline would. */
@@ -77,6 +85,71 @@ describe('wrap-step pr-merge — handler', () => {
     assert.equal(calls[0].cwd, '/tmp/sandbox-pr-merge');
     assert.equal(result.output.enqueued, 2);
     assert.equal(result.output.applied['42'].ok, true);
+  });
+
+  it('pushes the branch before enqueueing — a PR merged without the wrap commit is unrecoverable', async () => {
+    // `commit` only pushes on the auto-branch path, and a session-scoped PR is
+    // by definition on a feature branch — the path where the wrap commit stays
+    // local. Enqueueing first would merge a PR that lacks it.
+    const calls = [];
+    prMerge._internal.exec = async (file, args) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '2\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    let mergedAfterPush = null;
+    prCheck._internal.enqueueAutoMerge = async () => {
+      mergedAfterPush = calls.some((c) => c.startsWith('push'));
+      return { ok: true, reason: null };
+    };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(result.output.pushed, true);
+    assert.equal(mergedAfterPush, true, 'the push must happen before the enqueue');
+    assert.ok(calls.includes('push -u origin feat/x'));
+  });
+
+  it('does not push when the branch is already current', async () => {
+    const calls = [];
+    prMerge._internal.exec = async (file, args) => {
+      calls.push(args[0]);
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(result.output.pushed, false);
+    assert.ok(!calls.includes('push'));
+    assert.equal(result.output.enqueued, 1);
+  });
+
+  it('enqueues NOTHING when the push fails — a stale PR beats a merged-but-incomplete one', async () => {
+    let merged = 0;
+    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    prMerge._internal.exec = async (file, args) => {
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '1\n', stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: 'remote rejected: protected branch\n' };
+    };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(result.ok, true, 'still must not block');
+    assert.equal(merged, 0);
+    assert.equal(result.output.warning, true);
+    assert.equal(result.output.pushed, false);
+    assert.match(result.output.failures[0], /Branch not pushed.*protected branch/);
+    assert.match(result.output.remediation, /Push the branch and merge the PR yourself/);
+  });
+
+  it('declines on detached HEAD rather than guessing what to push', async () => {
+    let merged = 0;
+    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    prMerge._internal.exec = async (file, args) => {
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'HEAD\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(merged, 0);
+    assert.match(result.output.failures[0], /detached/);
   });
 
   it('never touches the remote for defer or ignore', async () => {

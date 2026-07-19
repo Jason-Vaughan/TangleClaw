@@ -10,9 +10,11 @@ All notable changes to TangleClaw are documented in this file.
   `open-pr-check` validated `merge`/`defer`/`ignore` resolutions and then applied none of
   them, so a branch's PR could go stale for weeks while every wrap reported success. It now
   blocks when a session-scoped open PR has no resolution, and a new final step applies what
-  you chose: each `merge` gets GitHub auto-merge enqueued (`gh pr merge --auto --squash
-  --delete-branch`), so branch protection and required checks still decide when it lands and
-  a wrap can never force a merge over red checks. Gate and apply are separate steps because
+  you chose: the branch is pushed so the PR actually contains the wrap commit, then each
+  `merge` gets GitHub auto-merge enqueued (`gh pr merge --auto --squash --delete-branch`), so
+  branch protection and required checks still decide when it lands and a wrap can never force
+  a merge over red checks. If the push fails, nothing is enqueued — a stale PR is recoverable,
+  a PR merged and branch-deleted without the wrap commit is not. Gate and apply are separate steps because
   they need opposite positions — blocking is only cheap before the wrap has prompted the
   session or committed, while the merge must come after the wrap commit or it would merge a
   PR missing it. `ignore` is the escape hatch: the gate demands a decision, not a particular

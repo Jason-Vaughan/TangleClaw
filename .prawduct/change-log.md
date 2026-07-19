@@ -78,7 +78,12 @@ step after `commit` strands the wrap, because `_completeV2Wrap` is skipped whene
 pipeline reports failure. The step was therefore SPLIT — `open-pr-check` gates first and
 stays read-only, a new `pr-merge` kind applies the resolutions last and never blocks. One
 step could not be both first and last, which is the thing neither round-1 position could
-have fixed.
+have fixed. Round 3 then caught the split's own rationale being false: "runs after `commit`"
+does not mean the PR contains the wrap commit, because `commit` pushes only on the
+auto-branch path and a session-scoped PR is always on a feature branch — the one path where
+the commit stays local. `pr-merge` now pushes before enqueueing, and enqueues nothing if it
+can't. An ordering rationale is a claim about state; "runs later" is not the same as "the
+state it needs holds."
 
 **Classification:** build
 
