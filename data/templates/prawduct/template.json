@@ -10,7 +10,7 @@
   "playbookRuleSections": {
     "independentCritic": "### Independent Critic Review"
   },
-  "schemaRevision": 4,
+  "schemaRevision": 5,
   "phases": [
     {
       "id": "discovery",
@@ -51,11 +51,8 @@
   },
   "wrap_pipeline": {
     "schemaVersion": "1.0",
-    "promptTemplates": {
-      "claude": "Perform a session wrap. Commit all uncommitted work, then output a wrap summary."
-    },
     "steps": [
-      {"id": "open-pr-check", "kind": "pr-check", "blocker": false},
+      {"id": "open-pr-check", "kind": "pr-check", "blocker": true},
       {"id": "version-bump", "kind": "version-bump", "blocker": false},
       {
         "id": "changelog-update",
@@ -90,7 +87,8 @@
         ]
       },
       {"id": "commit", "kind": "commit", "blocker": true},
-      {"id": "continuity-write", "kind": "continuity-write", "blocker": false}
+      {"id": "continuity-write", "kind": "continuity-write", "blocker": false},
+      {"id": "apply-pr-resolutions", "kind": "pr-merge", "blocker": false}
     ]
   },
   "prime": {
@@ -123,7 +121,7 @@
       "label": "Run Critic",
       "command": "invoke-critic",
       "confirm": true,
-      "confirmMessage": "Spawn an Independent Critic review for this branch.\n\nThe Critic will review the current diff against your project state, then surface findings in the session UI. This typically takes 30 seconds to 2 minutes. The wrap step's critic-check will pass once findings are recorded. Continue?",
+      "confirmMessage": "Spawn an Independent Critic review for this branch.\n\nThe Critic will review the current diff against your project state, then surface findings in the session UI. This typically takes 30 seconds to 2 minutes. Findings are recorded against this branch and surfaced in the session UI. Continue?",
       "successToast": "Critic completed for {branchName} — {findingCount} finding(s)"
     }
   ],

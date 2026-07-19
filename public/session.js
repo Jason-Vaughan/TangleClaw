@@ -3120,7 +3120,7 @@ function renderWrapDrawer(pipelineResult) {
   }
 
   // Decision widget — for the blocked step OR for any ok:true step
-  // that surfaced a non-blocking warning (e.g. critic-check) OR a
+  // that surfaced a non-blocking warning (`output.warning`) OR a
   // pr-check with unresolved session-scoped PRs.
   const decisionEl = document.getElementById('wrapDrawerDecision');
   decisionEl.innerHTML = '';
@@ -3133,22 +3133,25 @@ function renderWrapDrawer(pipelineResult) {
         decisionEl.appendChild(renderDecisionWidget(widget));
         widgetRendered = true;
       }
-      // Blocker takes precedence over any later warning widgets — the
-      // user must address it before anything else matters.
+      // A blocked pr-check IS the unresolved-PR gate — its recovery
+      // affordance is the per-PR resolution list, not the single-input
+      // widget above, so it has to render here too. Without this the
+      // gate would block with no way to answer it.
+      if (row.kind === 'pr-check') {
+        const prWidget = H.prCheckResolutionWidget(row, raw.output);
+        if (prWidget) {
+          decisionEl.appendChild(renderPrResolutionWidget(prWidget));
+          widgetRendered = true;
+        }
+      }
+      // Blocker takes precedence over anything later — the user must
+      // address it before anything else matters.
       break;
     }
-    if (row.warning) {
-      const widget = H.warningWidgetForStep(row);
-      if (widget) {
-        decisionEl.appendChild(renderDecisionWidget(widget));
-        widgetRendered = true;
-        warningOnly = true;
-      }
-    }
     if (row.kind === 'pr-check') {
-      // pr-check produces a resolution widget when there are
-      // unresolved session-scoped PRs regardless of warning state —
-      // ok:true with sessionScoped > 0 still wants resolution.
+      // An unblocked pr-check can still carry unresolved PRs (e.g. only
+      // non-session-scoped ones, or a degraded probe) — offer resolution
+      // without forcing it.
       const prWidget = H.prCheckResolutionWidget(row, raw.output);
       if (prWidget) {
         decisionEl.appendChild(renderPrResolutionWidget(prWidget));
@@ -3302,7 +3305,7 @@ function renderStepRow(row) {
  * `renderPrResolutionWidget` because they need iteration.
  *
  * @param {object} widget - From `decisionWidgetForBlockedStep` or
- *   `warningWidgetForStep`.
+ *   `decisionWidgetForBlockedStep`.
  * @returns {HTMLDivElement}
  */
 function renderDecisionWidget(widget) {
@@ -3566,10 +3569,6 @@ async function retryWrap() {
     skipTests: () => {
       const el = decisionEl.querySelector('input[data-options-key="skipTests"]');
       return el ? el.checked === true : false;
-    },
-    criticSkipRationale: () => {
-      const el = decisionEl.querySelector('textarea[data-options-key="criticSkipRationale"]');
-      return el ? el.value : '';
     },
     prHandling: () => {
       const selects = decisionEl.querySelectorAll('select.wrap-decision-prselect');

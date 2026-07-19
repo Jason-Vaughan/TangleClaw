@@ -47,6 +47,46 @@ container clones without network. The first gate run filed #614, #615, #616, #61
 
 **Classification:** build
 
+## 2026-07-19: Chunk 03 — step-inventory cleanup, and open-pr-check becomes a real gate (#570)
+
+<!-- prawduct: type=feature | scope=wrap-v2 | chunks=03 | status=shipped -->
+
+**Why:** the dispatch table carried three step handlers no bundled template referenced —
+~970 lines of dead-but-maintained code. Its visible symptom was #570: the prawduct "Run
+Critic" action promised "the wrap step's critic-check will pass once findings are
+recorded" for a step that stopped running when #353 moved governance to the plugin. A
+promise with no mechanism behind it is worse than a missing feature, because it reads as
+working.
+
+`critic-check` is deleted (with its option, its drawer widget, and its commit-body
+lines); `lint`/`test` stay as opt-in primitives. Dead `promptTemplates` and the inert
+`wrap_contract` layer are gone. `open-pr-check` now acts on the resolutions it validated
+and never applied: an unresolved session-scoped PR blocks, and `merge` enqueues GitHub
+auto-merge so branch protection and checks still decide when it lands.
+
+**What the Critic caught, twice, and it was right both times:** the template edits (`blocker: true`, the
+corrected action text) would have been inert on every existing install — `store.js` only
+propagates `FRAMEWORK_OWNED_PATHS` on a `schemaRevision` bump, which the diff omitted.
+Worse than a no-op: the handler would still block and still enqueue merges while the
+runner sailed past, because the halt check reads the *live* template's `blocker`. Bumped
+to 5. The same review surfaced an ordering hazard — the gate ran first, so `--auto
+--squash --delete-branch` could land and delete the session's branch mid-wrap, and would
+have merged a PR missing the wrap commit. Moving the step last fixed that and broke two
+other things (round 2): `commit` is the only reader of the gate's staged resolutions and
+now ran first, so the PR audit trail in the commit body went unreachable; and a blocking
+step after `commit` strands the wrap, because `_completeV2Wrap` is skipped whenever the
+pipeline reports failure. The step was therefore SPLIT — `open-pr-check` gates first and
+stays read-only, a new `pr-merge` kind applies the resolutions last and never blocks. One
+step could not be both first and last, which is the thing neither round-1 position could
+have fixed. Round 3 then caught the split's own rationale being false: "runs after `commit`"
+does not mean the PR contains the wrap commit, because `commit` pushes only on the
+auto-branch path and a session-scoped PR is always on a feature branch — the one path where
+the commit stays local. `pr-merge` now pushes before enqueueing, and enqueues nothing if it
+can't. An ordering rationale is a claim about state; "runs later" is not the same as "the
+state it needs holds."
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 02 — engine-agnostic wrap sweep (#612 widened)
 
 <!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=02 | status=shipped -->

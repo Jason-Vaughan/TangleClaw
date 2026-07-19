@@ -754,7 +754,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       // the CHANGELOG migration-note can be removed at that point.
       const cachedLiveSteps = [
         { id: 'open-pr-check', kind: 'pr-check', blocker: false },
-        { id: 'critic-check', kind: 'critic-check', blocker: false },
+        { id: 'lint', kind: 'lint', blocker: false },
         { id: 'version-bump', kind: 'version-bump', blocker: false },
         { id: 'changelog-update', kind: 'ai-content', prompt: 'old' },
         { id: 'learnings-capture', kind: 'ai-content', prompt: 'old' },
@@ -764,7 +764,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       ];
       const bundledSteps = [
         { id: 'open-pr-check', kind: 'pr-check', blocker: false },
-        { id: 'critic-check', kind: 'critic-check', blocker: false },
+        { id: 'lint', kind: 'lint', blocker: false },
         { id: 'version-bump', kind: 'version-bump', blocker: false },
         { id: 'changelog-update', kind: 'ai-content', prompt: 'new' },
         { id: 'learnings-capture', kind: 'ai-content', prompt: 'new' },
@@ -783,7 +783,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
         mergedIds,
         [
           'open-pr-check',
-          'critic-check',
+          'lint',
           'version-bump',
           'changelog-update',
           'learnings-capture',

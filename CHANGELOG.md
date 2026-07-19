@@ -8,6 +8,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **The wrap now gates on your own open PR instead of quietly wrapping past it (#570).**
+  `open-pr-check` validated `merge`/`defer`/`ignore` resolutions and then applied none of
+  them, so a branch's PR could go stale for weeks while every wrap reported success. It now
+  blocks when a session-scoped open PR has no resolution, and a new final step applies what
+  you chose: the branch is pushed so the PR actually contains the wrap commit, then each
+  `merge` gets GitHub auto-merge enqueued (`gh pr merge --auto --squash --delete-branch`), so
+  branch protection and required checks still decide when it lands and a wrap can never force
+  a merge over red checks. If the push fails, nothing is enqueued — a stale PR is recoverable,
+  a PR merged and branch-deleted without the wrap commit is not. Gate and apply are separate steps because
+  they need opposite positions — blocking is only cheap before the wrap has prompted the
+  session or committed, while the merge must come after the wrap commit or it would merge a
+  PR missing it. `ignore` is the escape hatch: the gate demands a decision, not a particular
+  one. A degraded probe (no `gh`, no auth, non-GitHub remote) still skips without blocking —
+  not knowing is not the same as knowing something is wrong. Nothing after the commit can
+  block, so a wrap is never left half-finished.
+- **The "Run Critic" action no longer promises a gate that does not exist (#570).** Its
+  confirmation text told operators "the wrap step's critic-check will pass once findings
+  are recorded" — that step stopped running when #353 moved governance to the Prawduct
+  plugin. The action still runs the Critic and surfaces findings; only the false promise
+  is gone.
+
 - **The wrap path no longer requires one engine's layout or prompts (#612, widened).**
   `priming-roll` resolved plans and priming files inside `.claude/`, so a project on
   any other engine silently found no plan — the step reported "nothing to roll", a
@@ -27,6 +48,26 @@ All notable changes to TangleClaw are documented in this file.
 - **`data/global-rules.md` (and TangleClaw's own `CLAUDE.md`) prescribe
   `<project-root>/.tangleclaw/plans/`** for new plans, replacing the engine-specific
   location.
+
+- **Session rules no longer appear in generated `CLAUDE.md` / `GEMINI.md` /
+  `.codex.yaml` / `.aider.conf.yml`.** Delivery moved to the prime rather than being
+  duplicated there, so one tier has exactly one delivery path; the engine tests are
+  inverted to fail if injection is re-added. Non-governed projects see their rules move
+  from the config file into the prime — no loss, since every engine with a config file
+  also declares a prime channel.
+
+### Removed
+
+- **The `critic-check` wrap step and its handler (#570).** Dispatched but referenced by no
+  bundled template since #353 — ~600 lines of dead-but-maintained governance code whose
+  only visible trace was the stale promise above. Removed with it: the
+  `options.criticSkipRationale` option, the wrap drawer's skip-rationale textarea, and the
+  Critic skip-rationale / `Critic-override` commit-body lines. `lint` and `test` stay as
+  opt-in step primitives for templates that declare them.
+- **Dead `wrap_pipeline.promptTemplates` and the inert `wrap_contract` layer (#570).**
+  `promptTemplates` was never read (the runner consumes only `.steps`); `wrap_contract`
+  was validated and honored as a methodology default that no bundled or live template ever
+  declared. Per-project `wrapSections` remains the way to choose wrap-summary sections.
 
 ### Fixed
 
@@ -51,15 +92,6 @@ All notable changes to TangleClaw are documented in this file.
   has no prime channel at all. `GET /api/session-rules/deliveries` answers per session
   (`?sessionId=`), per project (`?projectId=`), or — with no parameters — fleet-wide:
   every project that has startup rules but has never had one delivered.
-
-### Changed
-
-- **Session rules no longer appear in generated `CLAUDE.md` / `GEMINI.md` /
-  `.codex.yaml` / `.aider.conf.yml`.** Delivery moved to the prime rather than being
-  duplicated there, so one tier has exactly one delivery path; the engine tests are
-  inverted to fail if injection is re-added. Non-governed projects see their rules move
-  from the config file into the prime — no loss, since every engine with a config file
-  also declares a prime channel.
 
 ## [4.25.2] - 2026-07-18
 

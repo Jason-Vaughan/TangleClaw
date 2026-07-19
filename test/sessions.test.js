@@ -1766,10 +1766,10 @@ describe('sessions', () => {
       // contract test; real commit-step behavior is covered in
       // `test/wrap-pipeline.test.js`. Also stub the other real Chunk
       // 4–8 handlers that hit live OS state (lint/test/ai-content/
-      // priming-roll/critic-check/pr-check) so the routing assertion
+      // priming-roll/pr-check) so the routing assertion
       // doesn't accidentally trip on a missing tmux session.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc', 'project-map', 'index-describe'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'features-toc', 'project-map', 'index-describe'];
       const dispatchOrig = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -1784,12 +1784,13 @@ describe('sessions', () => {
         assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
         // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit`; C2 (#353) stripped the L3 `critic-check` step; PIDX slice 3
-        // (#360) added `project-map` after `features-toc`; PIDX #426 added
-        // `index-describe` after `project-map`; #466 added `learnings-db-write`
-        // after `learnings-capture` — prawduct now ships 12 steps.
-        assert.equal(result.pipelineResult.results.length, 12,
-          'prawduct pipeline runs all twelve steps');
+        // `commit`; C2 (#353) stripped the L3 `critic-check` step and #570
+        // deleted its handler; PIDX slice 3 (#360) added `project-map` after
+        // `features-toc`; PIDX #426 added `index-describe` after `project-map`;
+        // #466 added `learnings-db-write` after `learnings-capture`; #570 added
+        // `apply-pr-resolutions` last — prawduct now ships 13 steps.
+        assert.equal(result.pipelineResult.results.length, 13,
+          'prawduct pipeline runs all thirteen steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         for (const kind of realKinds) {
@@ -1816,7 +1817,7 @@ describe('sessions', () => {
       // are blocker:true — if the webui skip regresses, they return `blocked`
       // (no tmux) and HALT the pipeline, failing this test.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
-      const stubbedKinds = ['lint', 'test', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
+      const stubbedKinds = ['lint', 'test', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
       const dispatchOrig = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of stubbedKinds) {
@@ -2013,7 +2014,6 @@ describe('sessions', () => {
       try {
         const opts = {
           skipTests: true,
-          criticSkipRationale: 'rationale text',
           prHandling: { '42': 'merge' }
         };
         await sessions.triggerWrap('prime-test', opts);

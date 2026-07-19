@@ -15,9 +15,9 @@
    */
   const KIND_LABELS = {
     'pr-check': 'Check open PRs',
+    'pr-merge': 'Apply PR decisions',
     'lint': 'Lint',
     'test': 'Run tests',
-    'critic-check': 'Critic verification',
     'ai-content': 'AI content',
     'priming-roll': 'Roll priming pointer',
     'version-bump': 'Version bump',
@@ -33,7 +33,8 @@
    * @type {Object<string, string>}
    */
   const KIND_DESCRIPTIONS = {
-    'pr-check': 'Checks for open GitHub PRs on this branch so you can resolve them before wrapping. Never blocks the wrap.',
+    'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
+    'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
     'test': 'Runs the full test suite. A failure here can block the wrap.',
     'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Skips when there is nothing to promote or the version is not semver.',
@@ -44,8 +45,7 @@
     'project-map': 'Refreshes the continuity Map (the feature/component index) from the files touched this session.',
     'index-describe': 'Fills in one-line descriptions for empty index stubs so the index stays readable.',
     'commit': 'Commits the wrap’s changes — and, depending on your setup, opens a wrap PR.',
-    'continuity-write': 'Writes the continuity index + a per-session wrap summary with a “Next action.” This is what the next session reads to offer “we left off at X — continue?”.',
-    'critic-check': 'Verifies an independent Critic review was recorded for this session’s code changes.'
+    'continuity-write': 'Writes the continuity index + a per-session wrap summary with a “Next action.” This is what the next session reads to offer “we left off at X — continue?”.'
   };
 
   /**
@@ -112,9 +112,9 @@
     const meta = STATUS_META[status] || { label: status, tone: 'pending', tooltip: '' };
     const blockers = Array.isArray(stepResult.blockers) ? stepResult.blockers : [];
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
-    // Warning flag is currently emitted by `critic-check` (blocker:false
-    // step that surfaces medium+ work without Critic). Other kinds may
-    // adopt the same pattern; check the field, don't hard-code the kind.
+    // `output.warning` is the kind-agnostic "ok, but you should look at
+    // this" channel in the step contract — checked as a field so any
+    // handler can adopt it without a drawer edit.
     const warning = Boolean(output && output.warning === true);
     // Optional `output.remediation` — a handler-supplied "how to fix this"
     // string for a blocked step (#223). Absent/blank falls through to the
@@ -167,17 +167,28 @@
         if (counts.otherOpen) parts.push(`${counts.otherOpen} other open`);
         return parts.length ? parts.join(', ') : 'No open PRs';
       }
+      case 'pr-merge': {
+        // This step never blocks, so `blockers` is always empty and the row's
+        // detail line is the only place a failed enqueue can surface at all.
+        const failures = Array.isArray(output.failures) ? output.failures : [];
+        const ok = output.enqueued || 0;
+        if (failures.length) {
+          const failed = failures.length === 1
+            ? failures[0]
+            : `${failures.length} PRs could not be enqueued`;
+          // A partial failure must not read as a total one — the operator has
+          // to know which PRs did land before deciding what to do by hand.
+          return ok ? `${ok} enqueued; ${failed}` : failed;
+        }
+        if (ok) return `Auto-merge enqueued for ${ok} PR${ok === 1 ? '' : 's'}`;
+        return null;
+      }
       case 'test':
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
       case 'lint':
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
-      case 'critic-check': {
-        if (output.warning) return 'Medium+ work without Critic dispatch';
-        if (output.isMediumPlus) return 'Medium+ work (Critic ran)';
-        return 'Below medium-plus threshold';
-      }
       case 'priming-roll':
         if (output.allDone) return 'All chunks done';
         if (output.current) return `→ chunk ${output.current}`;
@@ -238,7 +249,7 @@
       const reason = blocked && blocked.blockers && blocked.blockers[0] ? blocked.blockers[0] : 'See blocked step below';
       return { label: `Blocked at "${pipelineResult.blockedAt}"`, tone: 'blocked', detail: reason };
     }
-    // ok:true path — check for non-blocking warnings (e.g. critic-check warning)
+    // ok:true path — check for non-blocking warnings (`output.warning`)
     const warningSteps = (pipelineResult.results || []).filter((r) => r.output && r.output.warning === true);
     if (warningSteps.length > 0) {
       const ids = warningSteps.map((s) => s.stepId).join(', ');
@@ -280,29 +291,6 @@
           label: 'Skip this step and note it in the commit body',
           inputType: 'checkbox',
           stepId: stepRow.id
-        };
-      default:
-        return null;
-    }
-  }
-
-  /**
-   * Describe the warning widget to render for an ok:true step that
-   * surfaced `output.warning === true`. Currently only `critic-check`
-   * triggers this; the shape is open so future kinds can adopt it.
-   *
-   * @param {object} stepRow - View-model from `buildStepRow`.
-   * @returns {{kind: string, optionsKey: string, label: string, inputType: 'textarea'}|null}
-   */
-  function warningWidgetForStep(stepRow) {
-    if (!stepRow || !stepRow.warning) return null;
-    switch (stepRow.kind) {
-      case 'critic-check':
-        return {
-          kind: 'critic-check',
-          optionsKey: 'criticSkipRationale',
-          label: 'Skip rationale (recorded in commit body — required to clear the warning):',
-          inputType: 'textarea'
         };
       default:
         return null;
@@ -378,12 +366,6 @@
     const options = {};
     if (accessors.skipTests && accessors.skipTests() === true) {
       options.skipTests = true;
-    }
-    if (accessors.criticSkipRationale) {
-      const v = accessors.criticSkipRationale();
-      if (typeof v === 'string' && v.trim().length > 0) {
-        options.criticSkipRationale = v.trim();
-      }
     }
     if (accessors.prHandling) {
       const v = accessors.prHandling();
@@ -517,7 +499,6 @@
     deriveDetail,
     summarizePipelineStatus,
     decisionWidgetForBlockedStep,
-    warningWidgetForStep,
     prCheckResolutionWidget,
     planPickerWidget,
     collectOptionsFromAccessors,

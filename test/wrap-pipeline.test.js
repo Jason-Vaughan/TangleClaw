@@ -38,7 +38,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('STEP_DISPATCH', () => {
     it('covers every step kind referenced by the contract (ADR 0002 dispatch table)', () => {
       const expected = [
-        'pr-check', 'lint', 'test', 'critic-check',
+        'pr-check', 'pr-merge', 'lint', 'test',
         'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit'
       ];
       for (const kind of expected) {
@@ -68,7 +68,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('runWrapPipeline — no-op stubs', () => {
     it('runs all stubs end-to-end and returns ok:true', async () => {
       // Chunks 4+ replaced no-op stubs with real handlers (lint, test,
-      // ai-content, priming-roll, critic-check, pr-check, commit) that
+      // ai-content, priming-roll, pr-check, commit) that
       // require live OS state (a configured command, a tmux session, a
       // git repo, etc). To keep this regression test focused on the
       // *runner skeleton* — "the pipeline can iterate every step end-to-
@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -93,12 +93,11 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.error, null);
         // #207 Chunk 3 added `features-toc` between `next-session-prime`
         // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit`; C2 (#353) stripped the L3 `critic-check` step (governance
-        // moved to the V2 plugin); PIDX slice 3 (#360) added `project-map`
+        // `commit`; PIDX slice 3 (#360) added `project-map`
         // after `features-toc`; PIDX #426 added `index-describe` after
         // `project-map`; #466 added `learnings-db-write` after
         // `learnings-capture` — prawduct now ships 12 pipeline steps.
-        assert.equal(result.results.length, 12, 'prawduct has twelve pipeline steps');
+        assert.equal(result.results.length, 13, 'prawduct has thirteen pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -114,7 +113,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write']
+        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
       );
     });
 
@@ -122,7 +121,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write']);
+        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -132,11 +131,10 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // every step. We capture the live reference each stub sees and
       // assert the post-run state.
       const capturedStaged = [];
-      // C2 (#353) dropped `critic-check` from prawduct's pipeline; patch every
-      // kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
+      // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
       // `project-map`, PIDX slice 3) so the inertness check captures all ten
       // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -150,7 +148,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 12, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, 13, 'every prawduct step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {
@@ -169,7 +167,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     // #583 — `options.onStepStart` progress hook feeds the wrap-run
     // registry so `GET /wrap/status` can report where a running wrap is.
     it('#583 — invokes onStepStart before each dispatched step, in template order', async () => {
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       const dispatched = [];
       for (const kind of wrapKinds) {
@@ -186,7 +184,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         await wrapPipeline.runWrapPipeline('pipeline-test', {
           onStepStart: (stepId, kind) => started.push({ stepId, kind })
         });
-        assert.equal(started.length, 12, 'hook fires once per step');
+        assert.equal(started.length, 13, 'hook fires once per step');
         assert.deepStrictEqual(started.map((s) => s.stepId), dispatched,
           'hook order matches dispatch order');
         assert.equal(started[0].kind, 'pr-check', 'hook receives the step kind');
@@ -202,7 +200,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
 
     it('#583 — onStepStart does not fire for pending steps after a halt, and a throwing hook never alters the outcome', async () => {
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -441,8 +439,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 describe('wrap-pipeline step stubs (#139 Chunk 3) — all kinds now real', () => {
   // Stubs that returned the canonical no-op result existed only during
   // the #139 build-out: `lint` + `test` left in Chunk 4; `ai-content`
-  // in Chunk 5; `priming-roll` in Chunk 6; `critic-check` in Chunk 7;
-  // `pr-check` in Chunk 8; `commit` in Chunk 9; `version-bump` was
+  // in Chunk 5; `priming-roll` in Chunk 6; `pr-check` in Chunk 8; `commit` in Chunk 9; `version-bump` was
   // the last stub and shipped its real handler in open-queue #3
   // (post-#139). Per-handler real-behavior tests live in their own
   // describe blocks above and below.
@@ -1356,697 +1353,6 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
   });
 });
 
-// ── #139 Chunk 7: real `critic-check` step handler ──
-
-describe('wrap-step critic-check — pure helpers (#139 Chunk 7)', () => {
-  const criticCheck = require('../lib/wrap-steps/critic-check');
-
-  describe('_detectChunkTag', () => {
-    it('returns null when neither branch nor commits mention chunk', () => {
-      assert.equal(
-        criticCheck._detectChunkTag('main', ['fix typo', 'tweak readme']),
-        null
-      );
-    });
-
-    it('matches `chunk-N` in branch name', () => {
-      const r = criticCheck._detectChunkTag('feat/issue-139-chunk-7-critic', []);
-      assert.equal(r.tag, '7');
-      assert.equal(r.source, 'branch');
-      assert.equal(r.match.toLowerCase(), 'chunk-7');
-    });
-
-    it('matches `Chunk N` in commit subject when branch has no tag', () => {
-      const r = criticCheck._detectChunkTag('main', ['Real foo (#139, Chunk 5)']);
-      assert.equal(r.tag, '5');
-      assert.equal(r.source, 'commit');
-    });
-
-    it('branch wins over commit subject when both match', () => {
-      const r = criticCheck._detectChunkTag(
-        'feat/x-chunk-3',
-        ['(Chunk 5)']
-      );
-      assert.equal(r.tag, '3');
-      assert.equal(r.source, 'branch');
-    });
-
-    it('matches dotted sub-chunk ids (10c.2)', () => {
-      const r = criticCheck._detectChunkTag('feat/x-chunk-10c.2', []);
-      assert.equal(r.tag, '10c.2');
-    });
-
-    it('matches across separator variants (space / dash / underscore / none)', () => {
-      assert.equal(criticCheck._detectChunkTag('main', ['Chunk 7 done']).tag, '7');
-      assert.equal(criticCheck._detectChunkTag('main', ['chunk-7 done']).tag, '7');
-      assert.equal(criticCheck._detectChunkTag('main', ['chunk_7 done']).tag, '7');
-      assert.equal(criticCheck._detectChunkTag('main', ['chunk7 done']).tag, '7');
-    });
-
-    it('matches case-insensitively', () => {
-      assert.equal(criticCheck._detectChunkTag('main', ['CHUNK 5']).tag, '5');
-      assert.equal(criticCheck._detectChunkTag('main', ['Chunk 5']).tag, '5');
-    });
-
-    it('handles null/empty branch and empty subject list', () => {
-      assert.equal(criticCheck._detectChunkTag(null, []), null);
-      assert.equal(criticCheck._detectChunkTag('', []), null);
-    });
-  });
-
-  describe('_isMediumPlus', () => {
-    const baseThresholds = { commitThreshold: 10, lineChangeThreshold: 500 };
-
-    it('trips when commits ≥ commitThreshold (10/10 boundary)', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 10, lineChanges: 0, chunkTag: null, ...baseThresholds
-      }), true);
-    });
-
-    it('does NOT trip at commits = commitThreshold - 1 (9/10 boundary)', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 9, lineChanges: 0, chunkTag: null, ...baseThresholds
-      }), false);
-    });
-
-    it('trips when lineChanges ≥ lineChangeThreshold (500/500 boundary)', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 0, lineChanges: 500, chunkTag: null, ...baseThresholds
-      }), true);
-    });
-
-    it('does NOT trip at lineChanges = lineChangeThreshold - 1 (499/500 boundary)', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 0, lineChanges: 499, chunkTag: null, ...baseThresholds
-      }), false);
-    });
-
-    it('trips when chunkTag is truthy regardless of counts', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 0, lineChanges: 0, chunkTag: { tag: '7', source: 'branch' }, ...baseThresholds
-      }), true);
-    });
-
-    it('honors custom thresholds', () => {
-      assert.equal(criticCheck._isMediumPlus({
-        commits: 5, lineChanges: 0, chunkTag: null,
-        commitThreshold: 5, lineChangeThreshold: 500
-      }), true);
-    });
-  });
-
-  describe('_pickRange', () => {
-    it('uses <main>..HEAD when branch != main and main known', () => {
-      const r = criticCheck._pickRange('feat/x', 'main');
-      assert.equal(r.rangeSpec, 'main..HEAD');
-      assert.equal(r.degraded, false);
-      assert.equal(r.reason, null);
-    });
-
-    it('degrades to HEAD~N..HEAD when branch === main', () => {
-      const r = criticCheck._pickRange('main', 'main');
-      assert.match(r.rangeSpec, /^HEAD~\d+\.\.HEAD$/);
-      assert.equal(r.degraded, true);
-      assert.match(r.reason, /directly on main/);
-    });
-
-    it('degrades when branch is null (detached HEAD)', () => {
-      const r = criticCheck._pickRange(null, 'main');
-      assert.equal(r.degraded, true);
-      assert.match(r.reason, /detached/);
-    });
-
-    it('degrades when mainBranch is null (no origin symref)', () => {
-      const r = criticCheck._pickRange('feat/x', null);
-      assert.equal(r.degraded, true);
-      assert.match(r.reason, /origin\/HEAD symref/);
-    });
-  });
-});
-
-describe('wrap-step critic-check — handler (#139 Chunk 7)', () => {
-  const criticCheck = require('../lib/wrap-steps/critic-check');
-  let tmpDir;
-  let projectPath;
-  let originals;
-
-  before(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-critic-'));
-    originals = { ...criticCheck._internal };
-  });
-
-  after(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  beforeEach(() => {
-    Object.assign(criticCheck._internal, originals);
-    projectPath = fs.mkdtempSync(path.join(tmpDir, 'sandbox-'));
-    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
-  });
-
-  /**
-   * Build a minimal context that the handler can consume.
-   * Defaults stub every `_internal` git call to a benign "no activity"
-   * answer so each test only has to override what it cares about.
-   */
-  function buildContext(step, options) {
-    criticCheck._internal.getCurrentBranch = async () => 'feat/x';
-    criticCheck._internal.getMainBranch = async () => 'main';
-    criticCheck._internal.getCommitCount = async () => 0;
-    criticCheck._internal.getDiffStats = async () => ({ insertions: 0, deletions: 0 });
-    criticCheck._internal.getCommitSubjects = async () => [];
-    return {
-      project: { name: 'sandbox', path: projectPath, id: 1 },
-      session: null,
-      step,
-      previousResults: [],
-      staged: {},
-      options: options || {}
-    };
-  }
-
-  /** Write critic-runs.json into the sandbox. */
-  function writeCriticRuns(entries) {
-    fs.writeFileSync(
-      path.join(projectPath, '.tangleclaw', 'critic-runs.json'),
-      JSON.stringify(entries)
-    );
-  }
-
-  it('misconfigured project (missing path) returns ok:true status skipped, never blocks', async () => {
-    // Defensive: a misconfigured project should NEVER halt the wrap
-    // pipeline even after the #264 amendment. The pre-#264 contract
-    // ("always returns ok:true") was narrowed to "returns ok:true
-    // unless explicit blocking findings exist and no override is
-    // set" — but misconfiguration / probe-failure cases are still
-    // ok:true status:skipped to preserve the original ADR 0002
-    // resilience guarantee for non-finding-related failures.
-    const result = await criticCheck.run({
-      project: { name: 'no-path', id: 1 },
-      step: { id: 'critic-check' },
-      previousResults: [],
-      staged: {},
-      options: {}
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.status, 'skipped');
-    assert.match(result.output.reason, /requires context\.project\.path/);
-    assert.deepStrictEqual(result.blockers, []);
-  });
-
-  it('returns warning=false when nothing in session trips medium+', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true);
-    assert.equal(result.status, 'done');
-    assert.equal(result.output.warning, false);
-    assert.equal(result.output.isMediumPlus, false);
-    assert.equal(result.output.criticRan, false);
-    assert.deepStrictEqual(ctx.staged, {}, 'no warning → nothing staged');
-  });
-
-  it('trips medium+ on commit count threshold and warns when no critic ran', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCommitCount = async () => 12;
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.isMediumPlus, true);
-    assert.equal(result.output.warning, true);
-    assert.equal(result.output.heuristic.commits, 12);
-    assert.ok(ctx.staged['critic-check'], 'warning must stage scratch');
-    assert.equal(ctx.staged['critic-check'].warning, true);
-  });
-
-  it('trips medium+ on line-change threshold', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getDiffStats = async () => ({ insertions: 400, deletions: 200 });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.isMediumPlus, true);
-    assert.equal(result.output.heuristic.lineChanges, 600);
-    assert.equal(result.output.warning, true);
-  });
-
-  it('trips medium+ on chunk-tag in branch name', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCurrentBranch = async () => 'feat/issue-139-chunk-7-critic';
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.isMediumPlus, true);
-    assert.equal(result.output.heuristic.chunkTag, '7');
-    assert.equal(result.output.heuristic.chunkTagSource, 'branch');
-    assert.equal(result.output.warning, true);
-  });
-
-  it('trips medium+ on chunk-tag in commit subject when branch has none', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCurrentBranch = async () => 'topic/cleanup';
-    criticCheck._internal.getCommitSubjects = async () => ['Real foo (#139, Chunk 5)'];
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.heuristic.chunkTagSource, 'commit');
-    assert.equal(result.output.heuristic.chunkTag, '5');
-    assert.equal(result.output.warning, true);
-  });
-
-  it('warning=false when medium+ AND a critic-run exists for the current branch', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCommitCount = async () => 15;
-    writeCriticRuns([
-      { branchName: 'feat/x', timestamp: '2026-05-16T10:00:00Z' }
-    ]);
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.isMediumPlus, true);
-    assert.equal(result.output.criticRan, true);
-    assert.equal(result.output.warning, false,
-      'critic-run on current branch must suppress the warning');
-    assert.deepStrictEqual(ctx.staged, {},
-      'no warning → nothing staged even if heuristic tripped');
-  });
-
-  it('warning=true when critic-runs exist only on OTHER branches', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCommitCount = async () => 15;
-    writeCriticRuns([
-      { branchName: 'feat/other', timestamp: '2026-05-16T09:00:00Z' },
-      { branchName: 'main', timestamp: '2026-05-16T08:00:00Z' }
-    ]);
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.criticRan, false,
-      'entries for other branches must NOT count for this branch');
-    assert.equal(result.output.warning, true);
-  });
-
-  it('stages owedRationale when warning + options.criticSkipRationale is non-empty', async () => {
-    const ctx = buildContext(
-      { id: 'critic-check' },
-      { criticSkipRationale: 'deferred per #999 follow-up' }
-    );
-    criticCheck._internal.getCommitCount = async () => 20;
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.warning, true);
-    assert.equal(result.output.owedRationale, 'deferred per #999 follow-up');
-    assert.equal(
-      ctx.staged['critic-check'].owedRationale,
-      'deferred per #999 follow-up'
-    );
-  });
-
-  it('treats whitespace-only criticSkipRationale as no rationale', async () => {
-    const ctx = buildContext(
-      { id: 'critic-check' },
-      { criticSkipRationale: '   \n  \t  ' }
-    );
-    criticCheck._internal.getCommitCount = async () => 20;
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.warning, true);
-    assert.equal(result.output.owedRationale, null,
-      'whitespace-only rationale must be treated as absent');
-    assert.equal(ctx.staged['critic-check'].owedRationale, null);
-  });
-
-  it('honors custom step.commitThreshold and step.lineChangeThreshold', async () => {
-    const ctx = buildContext({
-      id: 'critic-check',
-      commitThreshold: 3,
-      lineChangeThreshold: 100
-    });
-    criticCheck._internal.getCommitCount = async () => 4;
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.isMediumPlus, true,
-      'custom commitThreshold=3 must trip on commits=4');
-    assert.equal(result.output.heuristic.commitThreshold, 3);
-    assert.equal(result.output.heuristic.lineChangeThreshold, 100);
-  });
-
-  it('surfaces range degradation in output when on main branch directly', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCurrentBranch = async () => 'main';
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.rangeDegraded, true);
-    assert.match(result.output.rangeDegradedReason, /directly on main/);
-    assert.match(result.output.rangeSpec, /^HEAD~\d+\.\.HEAD$/);
-  });
-
-  it('surfaces range degradation when origin/HEAD symref is missing', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getMainBranch = async () => null;
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.rangeDegraded, true);
-    assert.match(result.output.rangeDegradedReason, /origin\/HEAD symref/);
-  });
-
-  it('output.criticRunsRecent picks top 3 by timestamp (descending — most recent first)', async () => {
-    // Write entries OUT OF ORDER on purpose — the handler must sort by
-    // timestamp, not by file insertion order, so producers that trim
-    // or re-sort the file don't change the UI's "recent" list.
-    const ctx = buildContext({ id: 'critic-check' });
-    writeCriticRuns([
-      { branchName: 'c', timestamp: '2026-05-16T03:00:00Z' },
-      { branchName: 'a', timestamp: '2026-05-16T01:00:00Z' },
-      { branchName: 'e', timestamp: '2026-05-16T05:00:00Z' },
-      { branchName: 'b', timestamp: '2026-05-16T02:00:00Z' },
-      { branchName: 'd', timestamp: '2026-05-16T04:00:00Z' }
-    ]);
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.criticRunsRecent.length, 3);
-    assert.deepStrictEqual(
-      result.output.criticRunsRecent.map((e) => e.branchName),
-      ['e', 'd', 'c'],
-      'most-recent-first ordering must survive any file-write ordering'
-    );
-  });
-
-  it('returns structured skipped result when an _internal git probe throws (Critic MAJOR-1)', async () => {
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCommitCount = async () => {
-      throw new Error('git binary not found');
-    };
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true,
-      'always-ok contract MUST hold even on thrown git probes');
-    assert.equal(result.status, 'skipped');
-    assert.match(result.output.reason, /git probe failed/);
-    assert.match(result.output.error, /git binary not found/);
-    assert.deepStrictEqual(result.blockers, []);
-    assert.deepStrictEqual(ctx.staged, {},
-      'failure must not leave half-written staging behind');
-  });
-
-  it('treats commitThreshold:0 as the default (Critic MAJOR-2 — footgun protection)', async () => {
-    // Without the clamp, 0 ≥ 0 would trip medium+ on every wrap.
-    const ctx = buildContext({ id: 'critic-check', commitThreshold: 0 });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.heuristic.commitThreshold, 10,
-      'commitThreshold:0 must fall back to the default 10, not be honored as-is');
-    assert.equal(result.output.isMediumPlus, false,
-      'zero-commit session must not be medium+ even with commitThreshold:0');
-  });
-
-  it('treats negative thresholds as the default (footgun protection)', async () => {
-    const ctx = buildContext({
-      id: 'critic-check',
-      commitThreshold: -5,
-      lineChangeThreshold: -100
-    });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.output.heuristic.commitThreshold, 10);
-    assert.equal(result.output.heuristic.lineChangeThreshold, 500);
-  });
-
-  it('treats non-integer thresholds (3.7, NaN, "5", null) as the default', async () => {
-    for (const bad of [3.7, NaN, '5', null, undefined, {}]) {
-      const ctx = buildContext({ id: 'critic-check', commitThreshold: bad });
-      const result = await criticCheck.run(ctx);
-      assert.equal(
-        result.output.heuristic.commitThreshold, 10,
-        `commitThreshold=${JSON.stringify(bad)} must fall back to default`
-      );
-    }
-  });
-
-  it('treats non-string criticSkipRationale (number, array, object, true) as no rationale', async () => {
-    // typeof guard pin — a future refactor must not silently accept
-    // non-string rationale shapes.
-    for (const bad of [42, ['list'], { reason: 'obj' }, true, null]) {
-      const ctx = buildContext(
-        { id: 'critic-check' },
-        { criticSkipRationale: bad }
-      );
-      criticCheck._internal.getCommitCount = async () => 20;
-      const result = await criticCheck.run(ctx);
-      assert.equal(result.output.warning, true);
-      assert.equal(result.output.owedRationale, null,
-        `non-string rationale ${JSON.stringify(bad)} must not be staged`);
-    }
-  });
-
-  // ============================================================
-  // #264 (halt on Critic blocking): critic-check halts the pipeline
-  // when .tangleclaw/critic-runs.json contains an entry on the
-  // current branch with `ranAt:"actual"` and at least one finding
-  // of `severity:"blocking"`. Operator-override via
-  // `options.criticBlockingOverride === true` proceeds anyway but
-  // stages the override for the commit-message footer.
-  // ============================================================
-
-  it('#264 — halts (ok:false status:blocked) when a blocking finding exists on current branch', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [
-          { severity: 'blocking', summary: 'load-bearing bug not fixed' }
-        ]
-      }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.output.blockingFindingCount, 1);
-    assert.equal(result.output.blockingFindings.length, 1);
-    assert.match(result.blockers[0], /1 BLOCKING finding\(s\)/);
-    assert.match(result.blockers[1], /load-bearing bug/);
-    assert.match(result.blockers[result.blockers.length - 1], /criticBlockingOverride/);
-    // #223 — blocked output carries operator remediation for the drawer
-    // (merged into the existing output object, not clobbering it).
-    assert.equal(typeof result.output.remediation, 'string');
-    assert.match(result.output.remediation, /verify-resolutions/);
-    assert.equal(result.output.blockingFindingCount, 1, 'existing output fields preserved alongside remediation');
-  });
-
-  it('#264 — case-insensitive severity match — "BLOCKING" also halts', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [{ severity: 'BLOCKING', summary: 'uppercase shape' }]
-      }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, false);
-    assert.equal(result.output.blockingFindingCount, 1);
-  });
-
-  it('#264 — ranAt:"ack" entries (pre-#267 schema) are NEVER treated as blocking', async () => {
-    // The ack-only / legacy ack predicate path stays warning-only —
-    // only #267-era real-invocation entries can carry findings that
-    // halt. This pins backward compat for projects whose Critic was
-    // run externally / via the legacy button.
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'ack',
-        findings: [{ severity: 'blocking', summary: 'should not halt' }]
-      },
-      // pre-#267 entry (no ranAt at all) — also must not halt
-      { branchName: 'feat/x', timestamp: '2026-05-29T18:00:00.000Z' }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true, 'ranAt:"ack" / no-ranAt entries do NOT halt the pipeline');
-    assert.equal(result.output.blockingFindingCount, 0);
-    assert.equal(result.output.criticRan, true,
-      'criticRan predicate still true — these entries satisfy the warning-suppression role');
-  });
-
-  it('#264 — non-blocking findings (warning / note) do NOT halt', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [
-          { severity: 'warning', summary: 'noise' },
-          { severity: 'note', summary: 'fyi' }
-        ]
-      }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true);
-    assert.equal(result.output.blockingFindingCount, 0);
-  });
-
-  it('#264 — blocking findings on a DIFFERENT branch do NOT halt the current-branch wrap', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/other',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [{ severity: 'blocking', summary: 'on other branch' }]
-      }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true,
-      'sibling branch blockers must not bleed into current-branch wrap');
-    assert.equal(result.output.blockingFindingCount, 0);
-  });
-
-  it('#264 — operator override (criticBlockingOverride:true) bypasses halt and stages audit trail', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [
-          { severity: 'blocking', summary: 'fix-A' },
-          { severity: 'blocking', summary: 'fix-B' }
-        ]
-      }
-    ]);
-    const ctx = buildContext(
-      { id: 'critic-check' },
-      {
-        criticBlockingOverride: true,
-        criticBlockingOverrideReason: 'hotfix incident #911 — ship now, fix forward'
-      }
-    );
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true, 'override flips back to ok:true');
-    assert.equal(result.status, 'done');
-    assert.equal(result.output.blockingFindingCount, 2);
-    assert.equal(result.output.blockingOverrideApplied, true);
-    assert.equal(result.output.blockingOverrideReason, 'hotfix incident #911 — ship now, fix forward');
-    const stagedEntry = ctx.staged['critic-check-blocking-override'];
-    assert.ok(stagedEntry, 'override entry must be staged for the commit step');
-    assert.equal(stagedEntry.overrideBlockingFindings, true);
-    assert.equal(stagedEntry.findingCount, 2);
-    assert.equal(stagedEntry.reason, 'hotfix incident #911 — ship now, fix forward');
-  });
-
-  it('#264 — override without rationale still bypasses halt (stages null reason)', async () => {
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [{ severity: 'blocking', summary: 'x' }]
-      }
-    ]);
-    const ctx = buildContext(
-      { id: 'critic-check' },
-      { criticBlockingOverride: true }
-    );
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, true);
-    assert.equal(result.output.blockingOverrideReason, null,
-      'rationale is optional — but its absence is recorded so the commit body shows "(no rationale provided)"');
-    assert.equal(ctx.staged['critic-check-blocking-override'].reason, null);
-  });
-
-  it('#264 — heuristic warning + blocking finding coexist: warning is suppressed by criticRan, halt still fires', async () => {
-    // Mid-session medium+ scenario: tripping the heuristic AND having
-    // a blocking finding. The warning path checks criticRan (true →
-    // suppressed) while the halt path checks blocking findings (present
-    // → halt). Pin that the two predicates are independent.
-    writeCriticRuns([
-      {
-        branchName: 'feat/x',
-        timestamp: '2026-05-30T18:00:00.000Z',
-        ranAt: 'actual',
-        findings: [{ severity: 'blocking', summary: 'real issue' }]
-      }
-    ]);
-    const ctx = buildContext({ id: 'critic-check' });
-    criticCheck._internal.getCommitCount = async () => 20; // trip medium+
-    const result = await criticCheck.run(ctx);
-    assert.equal(result.ok, false, 'blocking finding wins — pipeline halts');
-    assert.equal(result.output.warning, false,
-      'criticRan suppresses the heuristic warning even though medium+ tripped');
-    assert.equal(result.output.isMediumPlus, true);
-    assert.equal(result.output.blockingFindingCount, 1);
-  });
-});
-
-describe('wrap-step critic-check — _selectRecentRuns (#139 Chunk 7)', () => {
-  const criticCheck = require('../lib/wrap-steps/critic-check');
-
-  it('returns [] for empty / non-array input', () => {
-    assert.deepStrictEqual(criticCheck._selectRecentRuns([], 3), []);
-    assert.deepStrictEqual(criticCheck._selectRecentRuns(null, 3), []);
-    assert.deepStrictEqual(criticCheck._selectRecentRuns(undefined, 3), []);
-  });
-
-  it('returns at most N entries (descending by timestamp)', () => {
-    const out = criticCheck._selectRecentRuns([
-      { branchName: 'old', timestamp: '2020-01-01T00:00:00Z' },
-      { branchName: 'mid', timestamp: '2022-01-01T00:00:00Z' },
-      { branchName: 'new', timestamp: '2024-01-01T00:00:00Z' }
-    ], 2);
-    assert.deepStrictEqual(out.map((e) => e.branchName), ['new', 'mid']);
-  });
-
-  it('sorts entries with missing/non-string timestamps to the bottom', () => {
-    const out = criticCheck._selectRecentRuns([
-      { branchName: 'has-ts', timestamp: '2024-01-01T00:00:00Z' },
-      { branchName: 'no-ts' },
-      { branchName: 'bad-ts', timestamp: 42 }
-    ], 3);
-    assert.equal(out[0].branchName, 'has-ts',
-      'timestamped entry must sort first');
-  });
-});
-
-describe('wrap-step critic-check — defaultLoadCriticRuns (#139 Chunk 7)', () => {
-  const criticCheck = require('../lib/wrap-steps/critic-check');
-  let tmpDir;
-
-  before(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-load-critic-runs-'));
-  });
-
-  after(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  function freshProject() {
-    const p = fs.mkdtempSync(path.join(tmpDir, 'proj-'));
-    fs.mkdirSync(path.join(p, '.tangleclaw'), { recursive: true });
-    return p;
-  }
-
-  it('returns [] when the file does not exist', () => {
-    const p = freshProject();
-    assert.deepStrictEqual(criticCheck._internal.loadCriticRuns(p), []);
-  });
-
-  it('returns [] when the file is malformed JSON (does not throw)', () => {
-    const p = freshProject();
-    fs.writeFileSync(path.join(p, '.tangleclaw', 'critic-runs.json'), '{not json');
-    assert.deepStrictEqual(criticCheck._internal.loadCriticRuns(p), []);
-  });
-
-  it('returns [] when the file is JSON but not an array', () => {
-    const p = freshProject();
-    fs.writeFileSync(
-      path.join(p, '.tangleclaw', 'critic-runs.json'),
-      JSON.stringify({ branchName: 'x', timestamp: 't' })
-    );
-    assert.deepStrictEqual(criticCheck._internal.loadCriticRuns(p), []);
-  });
-
-  it('filters out entries missing branchName (defensive against partial writes)', () => {
-    const p = freshProject();
-    fs.writeFileSync(
-      path.join(p, '.tangleclaw', 'critic-runs.json'),
-      JSON.stringify([
-        { branchName: 'good', timestamp: '2026-05-16T00:00:00Z' },
-        { timestamp: '2026-05-16T00:00:00Z' },        // missing branchName
-        { branchName: 42 },                            // non-string branchName
-        null
-      ])
-    );
-    const out = criticCheck._internal.loadCriticRuns(p);
-    assert.equal(out.length, 1);
-    assert.equal(out[0].branchName, 'good');
-  });
-});
-
-// ── #139 Chunk 8: real `pr-check` step handler ──
 
 describe('wrap-step pr-check — pure helpers (#139 Chunk 8)', () => {
   const prCheck = require('../lib/wrap-steps/pr-check');
@@ -2229,7 +1535,7 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     };
   }
 
-  it('always returns ok:true — never blocks', async () => {
+  it('returns ok:true when it cannot even identify the project', async () => {
     const result = await prCheck.run({
       project: { name: 'no-path', id: 1 },
       step: { id: 'pr-check' },
@@ -2273,7 +1579,7 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     assert.deepStrictEqual(ctx.staged, {}, 'no PRs → nothing staged');
   });
 
-  it('surfaces a session-scoped PR and stages it for Chunk 9 commit', async () => {
+  it('BLOCKS on an unresolved session-scoped PR, surfacing both buckets', async () => {
     const ctx = buildContext({ id: 'pr-check' });
     prCheck._internal.listOpenPrs = async () => ({
       ok: true,
@@ -2284,13 +1590,89 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
       reason: null
     });
     const result = await prCheck.run(ctx);
-    assert.equal(result.status, 'done');
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
     assert.equal(result.output.counts.sessionScoped, 1);
     assert.equal(result.output.counts.otherOpen, 1);
     assert.equal(result.output.sessionScoped[0].number, 42);
-    assert.equal(result.output.otherOpen[0].number, 7);
+    assert.equal(result.output.otherOpen[0].number, 7,
+      'the other-open bucket must still render on the blocked path');
+    assert.match(result.blockers[0], /PR #42 .*unresolved/);
+    assert.match(result.output.remediation, /merge, defer, or ignore/);
     assert.ok(ctx.staged['pr-check'], 'session-scoped PR must stage');
     assert.equal(ctx.staged['pr-check'].sessionScoped[0].number, 42);
+  });
+
+  it('does NOT block on someone else\'s open PR (other-open is not session scope)', async () => {
+    const ctx = buildContext({ id: 'pr-check' });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 7, title: 'other branch', headRefName: 'feat/y', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'done');
+    assert.equal(result.output.counts.otherOpen, 1);
+  });
+
+  it('stages a shape the commit step renders — round-trip pin', async () => {
+    // The gate stages; `commit` reads. They are ordered steps in one pipeline
+    // with no shared type, so the handoff is only as good as this pin — and
+    // reordering the gate past `commit` would silently break it.
+    const commitStep = require('../lib/wrap-steps/commit');
+    const ctx = buildContext({ id: 'open-pr-check' }, { prHandling: { 42: 'merge', 43: 'defer' } });
+    ctx.staged = {};
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [
+        { number: 42, title: 'foo', headRefName: 'feat/x', isDraft: false },
+        { number: 43, title: 'bar', headRefName: 'feat/x', isDraft: false }
+      ],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.deepStrictEqual(commitStep._buildBodyLines(ctx.staged), [
+      '- Open session-scoped PRs: 2',
+      '  - PR #42: merge',
+      '  - PR #43: defer'
+    ]);
+  });
+
+  it('holds no remote-mutating capability at all — that lives in pr-merge', async () => {
+    // Stronger than "does not call it": the gate's docstring promises it never
+    // touches the remote, so the ability to do so must not live in this module.
+    assert.equal(prCheck._internal.enqueueAutoMerge, undefined,
+      'pr-check must expose no merge seam');
+    assert.equal(prCheck._applyResolutions, undefined,
+      'applying resolutions belongs to pr-merge, which runs after commit');
+
+    const ctx = buildContext({ id: 'open-pr-check' }, { prHandling: { 42: 'merge' } });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(result.output.applied, undefined, 'the gate reports decisions, not outcomes');
+  });
+
+  it('blocks when part of the request is invalid, even if the rest is valid', async () => {
+    // One valid merge + one bogus PR number. A half-understood request must
+    // not half-apply, so the gate blocks the whole thing.
+    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'merge', 999: 'merge' } });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.status, 'blocked');
+    assert.equal(ctx.staged['pr-check'].applied, undefined,
+      'a blocked gate stages decisions only — nothing may be marked applied');
+    assert.match(result.blockers[0], /999 does not match/);
   });
 
   it('hides drafts by default; includeDrafts=true keeps them', async () => {
@@ -2328,21 +1710,25 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
       reason: null
     });
     const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true, 'a fully-resolved PR set clears the gate');
     assert.equal(result.output.resolutions[42], 'merge');
     assert.equal(ctx.staged['pr-check'].resolutions[42], 'merge');
   });
 
-  it('stages even when sessionScoped is empty but caller resolved something invalid (so UI can show the error)', async () => {
+  it('blocks on an invalid resolution even when no PR is session-scoped', async () => {
+    // The caller asked for something the step cannot honor. Proceeding would
+    // silently discard an operator decision, which is the defect the gate
+    // exists to close — so it blocks and stages the error for the drawer.
     const ctx = buildContext(
       { id: 'pr-check' },
       { prHandling: { 999: 'merge' } }
     );
     const result = await prCheck.run(ctx);
-    // No session-scoped PRs, so the resolution targets nothing real.
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
     assert.equal(result.output.invalidHandling.length, 1);
-    // No staging since both sessionScoped and resolutions are empty.
-    assert.deepStrictEqual(ctx.staged, {},
-      'invalid-only handling should NOT stage — nothing for commit step to do');
+    assert.match(result.blockers[0], /999 does not match/);
+    assert.ok(ctx.staged['pr-check'], 'the invalid request must stage so the drawer can show it');
   });
 
   it('skips when isGhAvailable throws (always-ok contract via outer try/catch)', async () => {
@@ -2368,6 +1754,53 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     assert.equal(result.output.counts.otherOpen, 1);
     assert.deepStrictEqual(ctx.staged, {},
       'no current branch + no session-scoped match + no resolutions → nothing staged');
+  });
+});
+
+describe('wrap-step pr-merge — defaultEnqueueAutoMerge', () => {
+  const prMerge = require('../lib/wrap-steps/pr-merge');
+  let originals;
+
+  before(() => {
+    originals = { ...prMerge._internal };
+  });
+
+  beforeEach(() => {
+    Object.assign(prMerge._internal, originals);
+  });
+
+  it('enqueues auto-merge rather than merging outright', () => {
+    // The flags ARE the contract: --auto keeps branch protection and required
+    // checks in charge of when the merge lands, so a wrap can never force a
+    // merge over red checks. --squash keeps the default branch linear.
+    let cmd = null;
+    prMerge._internal.execShell = async (c) => {
+      cmd = c;
+      return { exitCode: 0, stdout: '', stderr: '', error: null };
+    };
+    return originals.enqueueAutoMerge('/tmp/x', 42).then((r) => {
+      assert.equal(cmd, 'gh pr merge 42 --auto --squash --delete-branch');
+      assert.deepStrictEqual(r, { ok: true, reason: null });
+    });
+  });
+
+  it('reports gh\'s reason on a non-zero exit', async () => {
+    prMerge._internal.execShell = async () => ({
+      exitCode: 1, stdout: '', stderr: 'Auto-merge is not allowed for this repository\n', error: null
+    });
+    const r = await originals.enqueueAutoMerge('/tmp/x', 7);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /Auto-merge is not allowed/);
+  });
+
+  it('truncates a runaway gh error so the blocker stays readable', async () => {
+    prMerge._internal.execShell = async () => ({
+      exitCode: 1, stdout: '', stderr: 'x'.repeat(500), error: null
+    });
+    const r = await originals.enqueueAutoMerge('/tmp/x', 7);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason.length, 201, '200 chars + the ellipsis marker');
+    assert.ok(r.reason.endsWith('…'));
   });
 });
 
@@ -2526,29 +1959,6 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
       assert.deepStrictEqual(lines, ['- AI content (memory-update): skipped via user override']);
     });
 
-    it('renders critic-check skip rationale', () => {
-      const lines = commitStep._buildBodyLines({
-        'critic-check': {
-          warning: true,
-          owedRationale: 'small refactor, no Critic needed',
-          isMediumPlus: true,
-          criticRan: false
-        }
-      });
-      assert.deepStrictEqual(lines, [
-        '- Critic skip rationale: small refactor, no Critic needed'
-      ]);
-    });
-
-    it('renders critic-check warning without rationale (user did not provide one)', () => {
-      const lines = commitStep._buildBodyLines({
-        'critic-check': { warning: true, owedRationale: null }
-      });
-      assert.deepStrictEqual(lines, [
-        '- Critic warning: medium+ work without Critic dispatch (no rationale provided)'
-      ]);
-    });
-
     it('renders pr-check session-scoped count + per-PR resolutions', () => {
       const lines = commitStep._buildBodyLines({
         'pr-check': {
@@ -2627,13 +2037,13 @@ describe('wrap-step commit — pure helpers (#139 Chunk 9)', () => {
     it('assembles subject + blank line + body', () => {
       const msg = commitStep._buildMessage(
         {
-          'critic-check': { warning: true, owedRationale: 'tiny change' }
+          'memory-update': { capturedText: 'mem', parsedFields: { summary: 's' } }
         },
         'feat/chunk-9-x'
       );
       assert.equal(
         msg,
-        'Session wrap (chunk 9)\n\n- Critic skip rationale: tiny change'
+        'Session wrap (chunk 9)\n\n- AI content (memory-update): captured fields [summary]'
       );
     });
   });
@@ -2935,8 +2345,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
         primingPath, newContent: 'pri\n', changed: true,
         pointer: { current: { id: '9', title: 'Commit step', blockedOn: null }, next: null, allDone: false }
       },
-      'memory-update': { capturedText: 'mem', parsedFields: { summary: 's' } },
-      'critic-check': { warning: true, owedRationale: 'trivial change' }
+      'memory-update': { capturedText: 'mem', parsedFields: { summary: 's' } }
     });
     const result = await commitStep.run(ctx);
     assert.equal(result.ok, true);
@@ -2944,7 +2353,6 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.match(subjAndBody, /^Session wrap \(chunk 9\)/);
     assert.match(subjAndBody, /Priming rolled to Chunk 9 — Commit step/);
     assert.match(subjAndBody, /AI content \(memory-update\): captured fields \[summary\]/);
-    assert.match(subjAndBody, /Critic skip rationale: trivial change/);
   });
 
   it('uses generic subject when HEAD is detached (no branch)', async () => {
@@ -3145,32 +2553,6 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     }
   });
 
-  it('#264 — commit body line "Critic-override: …" renders when override entry is staged', () => {
-    // _buildBodyLines is pure — test directly without git involvement.
-    const lines = commitStep._buildBodyLines({
-      'critic-check-blocking-override': {
-        overrideBlockingFindings: true,
-        findingCount: 3,
-        reason: 'shipping the regression intentionally',
-        branchName: 'main'
-      }
-    });
-    assert.ok(lines.some((l) => /^- Critic-override: shipping the regression intentionally \(3 blocking finding\(s\) ignored\)$/.test(l)),
-      'Override line must render the rationale + finding count for audit trail');
-  });
-
-  it('#264 — commit body line "Critic-override (no rationale provided)" when reason absent', () => {
-    const lines = commitStep._buildBodyLines({
-      'critic-check-blocking-override': {
-        overrideBlockingFindings: true,
-        findingCount: 1,
-        reason: null,
-        branchName: 'main'
-      }
-    });
-    assert.ok(lines.some((l) => /\(no rationale provided\)/.test(l)),
-      'Missing rationale must still produce an audit-trail line');
-  });
 });
 
 describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
@@ -3198,7 +2580,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
 
   it('surfaces the commit step output.commitSha on the runner return shape', async () => {
     // Stub every other step to no-op so the runner reaches the commit step.
-    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'version-bump'];
+    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'pr-check', 'version-bump'];
     const originals = {};
     const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
     for (const kind of realKinds) {
@@ -3229,7 +2611,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
   });
 
   it('keeps commitSha null when commit step skips (clean session)', async () => {
-    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'critic-check', 'pr-check', 'version-bump'];
+    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'pr-check', 'version-bump'];
     const originals = {};
     const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
     for (const kind of realKinds) {
@@ -3327,20 +2709,45 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
     assert.equal(commitStep.blocker, true);
   });
 
-  // C2 (#353) retired the V1 platform governance from the bundled prawduct
-  // template: the L3 `critic-check` wrap step was stripped (governance moved
-  // to the V2 plugin). Pin the ABSENCE here so a future template-author can't
-  // silently re-introduce vendored governance into the cross-model native
-  // base without a CI failure. (The `critic-check` handler itself still
-  // exists as a valid step kind for any methodology that opts into it — see
-  // the "wrap-step critic-check" handler describes above; this only asserts
-  // the bundled prawduct pipeline no longer ships it.)
-  it('#353 — prawduct wrap pipeline no longer ships a critic-check step (C2 strip)', () => {
-    const t = store.templates.get('prawduct');
-    const criticStep = t.wrap_pipeline.steps.find((s) => s.kind === 'critic-check');
-    assert.equal(criticStep, undefined,
-      'C2 stripped L3/L4 governance from the bundled prawduct template; the ' +
-      'critic-check step must NOT be present (governance is delivered by the V2 plugin)');
+  // Governance moved out of the wrap and into the Prawduct plugin, so the
+  // `critic-check` step and its handler are gone. Rather than pin that one
+  // kind's absence, pin the general contract it violated: a bundled template
+  // may not declare a step kind the runner cannot dispatch. A step with no
+  // handler is silently skipped at runtime, which is exactly how a template
+  // ends up promising a gate that never runs.
+  it('#570 — the PR gate blocks and runs before commit; applying merges runs after', () => {
+    const steps = store.templates.get('prawduct').wrap_pipeline.steps;
+    const gateIdx = steps.findIndex((s) => s.kind === 'pr-check');
+    const commitIdx = steps.findIndex((s) => s.kind === 'commit');
+    const applyIdx = steps.findIndex((s) => s.kind === 'pr-merge');
+    assert.ok(gateIdx > -1 && commitIdx > -1 && applyIdx > -1, 'prawduct ships all three');
+
+    // The runner only halts on `blocker === true || "errors-only"`. Without
+    // this the handler would block while the pipeline sailed past it.
+    assert.equal(steps[gateIdx].blocker, true,
+      'the gate must be declared blocking or it cannot halt the wrap');
+
+    // Ordering is correctness, not taste. The gate goes first so a block
+    // costs nothing — no AI prompt has fired, no commit has landed. The
+    // merge goes last because it merges the PR the wrap commit belongs to,
+    // and `--delete-branch` would otherwise delete the branch mid-wrap.
+    assert.ok(gateIdx < commitIdx, 'the gate must block before any work lands');
+    assert.ok(applyIdx > commitIdx, 'merges must be enqueued only after the wrap commit');
+    assert.notEqual(steps[applyIdx].blocker, true,
+      'a step after commit must not block — a halt there strands a half-finished wrap');
+  });
+
+  it('every bundled step kind has a dispatch handler (no promised-but-unrunnable steps)', () => {
+    for (const id of ['prawduct', 'minimal']) {
+      const t = store.templates.get(id);
+      const steps = (t.wrap_pipeline && t.wrap_pipeline.steps) || [];
+      assert.ok(steps.length > 0, `${id} must declare wrap_pipeline steps`);
+      for (const step of steps) {
+        assert.ok(wrapPipeline.STEP_DISPATCH[step.kind],
+          `${id} declares step "${step.id}" of kind "${step.kind}", which has no handler ` +
+          'in STEP_DISPATCH — it would be silently skipped at wrap time');
+      }
+    }
   });
 });
 

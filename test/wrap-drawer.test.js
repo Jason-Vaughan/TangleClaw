@@ -102,17 +102,17 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.deepEqual(row.blockers, ['Test suite failed (exit 1)']);
   });
 
-  it('flags warning rows from output.warning', () => {
+  it('flags warning rows from output.warning regardless of kind', () => {
+    // `output.warning` is a kind-agnostic channel — any handler may set it.
     const row = H.buildStepRow({
-      stepId: 'critic',
-      kind: 'critic-check',
+      stepId: 'some-step',
+      kind: 'project-map',
       status: 'done',
-      output: { warning: true, isMediumPlus: true, criticRan: false },
+      output: { warning: true },
       blockers: []
     }, {});
     assert.equal(row.warning, true);
     assert.equal(row.isBlocker, false);
-    assert.equal(row.detail, 'Medium+ work without Critic dispatch');
   });
 
   it('falls back to raw kind for unknown step kinds', () => {
@@ -227,7 +227,7 @@ describe('wrap-drawer helpers — buildStepRow', () => {
   });
 
   it('derives skip detail from status for any kind, even those with no skip branch (#204)', () => {
-    // lint/critic-check/ai-content previously had no `output.skipped` branch;
+    // lint/test/ai-content previously had no `output.skipped` branch;
     // the canonical status check now surfaces their skip reason uniformly.
     const mk = (kind, output) => H.buildStepRow({ stepId: kind, kind, status: 'skipped', output, blockers: [] }, {}).detail;
     assert.equal(mk('lint', { reason: 'no lintCommand configured' }), 'no lintCommand configured');
@@ -253,7 +253,7 @@ describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
   // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
   const CANONICAL_KINDS = [
     'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll',
-    'critic-check', 'pr-check', 'commit', 'version-bump', 'features-toc',
+    'pr-check', 'commit', 'version-bump', 'features-toc',
     'project-map', 'index-describe', 'continuity-write'
   ];
 
@@ -327,7 +327,7 @@ describe('wrap-drawer helpers — summarizePipelineStatus', () => {
       ok: true,
       blockedAt: null,
       results: [
-        { stepId: 'critic', kind: 'critic-check', status: 'done', output: { warning: true }, blockers: [] },
+        { stepId: 'project-map', kind: 'project-map', status: 'done', output: { warning: true }, blockers: [] },
         { stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'abc' }, blockers: [] }
       ],
       commitSha: 'abc',
@@ -336,7 +336,7 @@ describe('wrap-drawer helpers — summarizePipelineStatus', () => {
     });
     assert.equal(s.tone, 'warning');
     assert.equal(s.label, 'Wrap completed with warnings');
-    assert.match(s.detail, /critic/);
+    assert.match(s.detail, /project-map/);
   });
 
   it('returns error when top-level error is set without blockedAt', () => {
@@ -407,30 +407,67 @@ describe('wrap-drawer helpers — decisionWidgetForBlockedStep', () => {
   });
 });
 
-describe('wrap-drawer helpers — warningWidgetForStep', () => {
+describe('wrap-drawer helpers — pr-merge detail (#570)', () => {
   const H = loadHelpers();
 
-  it('returns textarea widget for critic-check warning', () => {
-    const w = H.warningWidgetForStep({
-      warning: true,
-      kind: 'critic-check'
-    });
-    assert.equal(w.kind, 'critic-check');
-    assert.equal(w.inputType, 'textarea');
-    assert.equal(w.optionsKey, 'criticSkipRationale');
+  it('surfaces the reason a single enqueue failed', () => {
+    // pr-merge never blocks, so `blockers` is always empty — this line is the
+    // only place the failure reaches the operator.
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions',
+      kind: 'pr-merge',
+      status: 'done',
+      output: {
+        warning: true,
+        enqueued: 0,
+        failures: ['PR #42: auto-merge could not be enqueued — Auto-merge is not allowed']
+      },
+      blockers: []
+    }, {});
+    assert.match(row.detail, /PR #42: auto-merge could not be enqueued/);
   });
 
-  it('returns null when warning is false', () => {
-    assert.equal(H.warningWidgetForStep({ warning: false, kind: 'critic-check' }), null);
+  it('summarizes when several failed', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: ['a', 'b'], enqueued: 0 }, blockers: []
+    }, {});
+    assert.equal(row.detail, '2 PRs could not be enqueued');
   });
 
-  it('returns null for warning kinds without a widget', () => {
-    assert.equal(H.warningWidgetForStep({ warning: true, kind: 'unknown-kind' }), null);
+  it('does not let a partial failure read as a total one', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: ['PR #42: nope'], enqueued: 1 }, blockers: []
+    }, {});
+    assert.match(row.detail, /^1 enqueued; PR #42: nope$/);
+  });
+
+  it('reports the count on the happy path', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: [], enqueued: 1 }, blockers: []
+    }, {});
+    assert.equal(row.detail, 'Auto-merge enqueued for 1 PR');
   });
 });
 
 describe('wrap-drawer helpers — prCheckResolutionWidget', () => {
   const H = loadHelpers();
+
+  it('still offers the resolution list when the step BLOCKED on it', () => {
+    // The blocked pr-check IS the unresolved-PR gate — if the widget stopped
+    // rendering for blocked rows the operator would have no way to answer it.
+    const w = H.prCheckResolutionWidget(
+      { kind: 'pr-check', status: 'blocked', isBlocker: true },
+      {
+        sessionScoped: [{ number: 42, title: 'feat: x', url: 'https://x', headRefName: 'feat/x' }],
+        resolutions: {}
+      }
+    );
+    assert.ok(w, 'a blocked pr-check must still produce its resolution widget');
+    assert.equal(w.prs[0].number, 42);
+  });
 
   it('returns prs to resolve when session-scoped + unresolved', () => {
     const w = H.prCheckResolutionWidget(
@@ -546,7 +583,6 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
   it('collects skipTests when checkbox is checked', () => {
     const opts = H.collectOptionsFromAccessors({
       skipTests: () => true,
-      criticSkipRationale: () => '',
       prHandling: () => null
     });
     assert.deepEqual(plain(opts), { skipTests: true });
@@ -555,19 +591,9 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
   it('omits skipTests when checkbox is unchecked', () => {
     const opts = H.collectOptionsFromAccessors({
       skipTests: () => false,
-      criticSkipRationale: () => '',
       prHandling: () => null
     });
     assert.deepEqual(plain(opts), {});
-  });
-
-  it('trims and includes criticSkipRationale when non-empty', () => {
-    const opts = H.collectOptionsFromAccessors({
-      skipTests: () => false,
-      criticSkipRationale: () => '  short turn, deferring to next session  ',
-      prHandling: () => null
-    });
-    assert.equal(opts.criticSkipRationale, 'short turn, deferring to next session');
   });
 
   it('builds skipAiContent map from the blocked step id (#328)', () => {
@@ -627,19 +653,9 @@ describe('wrap-drawer helpers — accumulateAiContentSkips (#328)', () => {
     assert.deepEqual(plain(acc), { 'memory-update': true });
   });
 
-  it('omits empty/whitespace-only rationale', () => {
-    const opts = H.collectOptionsFromAccessors({
-      skipTests: () => false,
-      criticSkipRationale: () => '   ',
-      prHandling: () => null
-    });
-    assert.equal(opts.criticSkipRationale, undefined);
-  });
-
   it('collects prHandling map filtering out empty selections', () => {
     const opts = H.collectOptionsFromAccessors({
       skipTests: () => false,
-      criticSkipRationale: () => '',
       prHandling: () => ({ '42': 'merge', '43': '', '44': 'defer' })
     });
     assert.deepEqual(plain(opts.prHandling), { '42': 'merge', '44': 'defer' });
@@ -648,21 +664,18 @@ describe('wrap-drawer helpers — accumulateAiContentSkips (#328)', () => {
   it('omits prHandling key when no PRs have a resolution', () => {
     const opts = H.collectOptionsFromAccessors({
       skipTests: () => false,
-      criticSkipRationale: () => '',
       prHandling: () => ({ '42': '', '43': '' })
     });
     assert.equal(opts.prHandling, undefined);
   });
 
-  it('combines all three when all are present', () => {
+  it('combines every option when all are present', () => {
     const opts = H.collectOptionsFromAccessors({
       skipTests: () => true,
-      criticSkipRationale: () => 'reason',
       prHandling: () => ({ '99': 'ignore' })
     });
     assert.deepEqual(plain(opts), {
       skipTests: true,
-      criticSkipRationale: 'reason',
       prHandling: { '99': 'ignore' }
     });
   });

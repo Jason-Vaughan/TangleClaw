@@ -2264,7 +2264,7 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 // POST /api/sessions/:project/wrap — Trigger wrap skill
 // Body: { password?, options? } — `options` is V2-only and carries per-wrap
 // user choices the drawer collected on retry after a blocked step
-// (`{skipTests, criticSkipRationale, prHandling}`). Legacy V1 path ignores it.
+// (`{skipTests, prHandling}`). Legacy V1 path ignores it.
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
   // Operator kill switch (incident 2026-07-16: wrap content steps re-fired
   // repeatedly into the session). Checked before anything else — while set,

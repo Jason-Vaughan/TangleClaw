@@ -197,20 +197,19 @@ describe('lib/actions/invoke-critic (#139 Chunk 11b)', () => {
     assert.equal(invokeCritic._redactProjectPath(msg, null), msg);
   });
 
-  it('writes a file that critic-check.js can read end-to-end', async () => {
-    // Round-trip pin: this writer + the Chunk 7 reader must agree on shape.
-    const criticCheckMod = require('../lib/wrap-steps/critic-check');
+  it('writes a per-branch audit entry with the documented shape', async () => {
+    // `.tangleclaw/critic-runs.json` is a branch-keyed audit record of Critic
+    // dispatches — the wrap no longer gates on it, so this pins the shape the
+    // file itself promises rather than a consumer's expectations.
     const filePath = path.join(projectPath, '.tangleclaw', 'critic-runs.json');
 
     await invokeCritic.run({ path: projectPath, name: 'p' }, { branchName: 'feat/chunk-11b-test' });
 
-    // The check handler's `defaultLoadCriticRuns` isn't exported, but the
-    // module's reader is well-pinned in its own test file. Read the file
-    // raw and apply the same filter to verify shape compatibility.
     const arr = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    const filtered = arr.filter((e) => e && typeof e.branchName === 'string');
-    assert.equal(filtered.length, 1, 'reader-side filter retains our entries');
-    assert.ok(criticCheckMod, 'critic-check module is importable');
+    assert.ok(Array.isArray(arr), 'the store is a JSON array');
+    assert.equal(arr.length, 1);
+    assert.equal(arr[0].branchName, 'feat/chunk-11b-test');
+    assert.equal(typeof arr[0].timestamp, 'string');
   });
 });
 
@@ -392,10 +391,10 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
   });
 
   it('schema is backward-compatible — old entries without ranAt still read as branch-matched', async () => {
-    // Wrap pipeline's critic-check defaultLoadCriticRuns filters by
-    // `typeof entry.branchName === "string"` only. New `ranAt` field is
-    // additive. Pin that old entries (no ranAt) AND new entries
-    // (ranAt:"ack" / ranAt:"actual") coexist without breaking the filter.
+    // Readers of `.tangleclaw/critic-runs.json` identify an entry by
+    // `typeof entry.branchName === "string"`; the `ranAt` field is additive.
+    // Pin that old entries (no ranAt) AND new entries (ranAt:"ack" /
+    // ranAt:"actual") coexist without breaking that predicate.
     const filePath = path.join(projectPath, '.tangleclaw', 'critic-runs.json');
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify([
@@ -409,8 +408,8 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
     assert.equal(arr[0].ranAt, undefined, 'old entry left untouched');
     assert.equal(arr[1].ranAt, 'ack', 'new entry carries ranAt');
     assert.equal(typeof arr[0].branchName, 'string',
-      'old entry still passes critic-check.js branch-name filter');
+      'old entry still carries the branch-name key readers match on');
     assert.equal(typeof arr[1].branchName, 'string',
-      'new entry still passes critic-check.js branch-name filter');
+      'new entry still carries the branch-name key readers match on');
   });
 });
