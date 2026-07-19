@@ -78,7 +78,7 @@ describe('Web UI session lifecycle', () => {
     it('should have schema version 24', () => {
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 25);
+      assert.equal(row.version, 26);
     });
 
     it('should have default_mode column in openclaw_connections', () => {
@@ -135,6 +135,72 @@ describe('Web UI session lifecycle', () => {
   });
 
   // ── launchSession webui detection ──
+
+  describe('startup-rule delivery ledger on the web UI path (#595)', () => {
+    // The web UI has no prime channel — no tmux paste target and no
+    // SessionStart hook — so rules genuinely do not arrive here. The ledger
+    // must SAY so. Without this test the write is unverified in exactly the
+    // path #595 was filed about: _recordRuleDelivery swallows every error and
+    // sits below four early returns, so a future edit that displaces it would
+    // restore the silent severance with nothing failing.
+    const tunnel = require('../lib/tunnel');
+    let originals;
+
+    beforeEach(() => {
+      originals = {
+        detectTunnel: tunnel.detectTunnel,
+        ensureTunnel: tunnel.ensureTunnel,
+        checkHealth: tunnel.checkHealth
+      };
+      tunnel.detectTunnel = async () => ({ active: false, pid: null });
+      tunnel.ensureTunnel = async () => ({ ok: true });
+      tunnel.checkHealth = async () => ({ healthy: true });
+    });
+
+    afterEach(() => {
+      Object.assign(tunnel, originals);
+    });
+
+    it('records a skipped delivery naming the missing channel when the project has rules', async () => {
+      const project = store.projects.get(projectId);
+      const rule = store.sessionRules.create({ content: 'webui cannot receive this', projectId: project.id });
+      const conn = store.openclawConnections.get(connId);
+
+      try {
+        const result = await sessions.launchWebuiSession(
+          project.name, conn, `openclaw:${connId}`, store.engines.get('openclaw'), project
+        );
+        assert.equal(result.error, null);
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1, 'the web UI launch must leave a ledger row');
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.equal(rows[0].channel, 'none');
+        assert.equal(rows[0].delivered, false);
+        assert.match(rows[0].skipReason, /no prime channel/);
+        assert.deepEqual(rows[0].ruleIds, [rule.id], 'the row names the rules that did not arrive');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        store.sessionRules.delete(rule.id);
+      }
+    });
+
+    it('records no-rules rather than a skip when the project has none', async () => {
+      const project = store.projects.get(projectId);
+      const conn = store.openclawConnections.get(connId);
+
+      const result = await sessions.launchWebuiSession(
+        project.name, conn, `openclaw:${connId}`, store.engines.get('openclaw'), project
+      );
+      const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].outcome, 'no-rules');
+      assert.equal(rows[0].ruleCount, 0);
+
+      store.sessions.kill(result.session.id, 'test cleanup');
+    });
+  });
 
   describe('launchSession webui detection', () => {
     const enginesModule = require('../lib/engines');

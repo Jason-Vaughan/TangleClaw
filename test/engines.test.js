@@ -565,7 +565,7 @@ describe('engines', () => {
     });
   });
 
-  describe('session rules injection (#347/D1a)', () => {
+  describe('session rules NOT injected into config files (#595)', () => {
     let project;
 
     beforeEach(() => {
@@ -583,58 +583,47 @@ describe('engines', () => {
       if (project) store.projects.delete(project.id);
     });
 
-    it('_getRulesContent surfaces active session rules as sessionRulesLines', () => {
+    // These assertions are INVERTED from their original form on purpose (#595).
+    // Config-file injection was this tier's only delivery path, and it is
+    // skipped wholesale for plugin-governed projects — so it delivered nothing
+    // on all 13 of them while looking healthy. Delivery moved to the session
+    // prime (see sessions.buildStartupRulesSection, covered in sessions.test.js).
+    // Re-adding injection here would restore a second path for one tier, which
+    // is what let the broken one hide; these tests fail if that happens.
+
+    it('_getRulesContent no longer carries session rules at all', () => {
       store.sessionRules.create({ content: 'Prefer composition over inheritance', projectId: project.id });
       const rules = engines._getRulesContent({ id: project.id });
-      assert.ok(Array.isArray(rules.sessionRulesLines));
-      assert.ok(rules.sessionRulesLines.includes('Prefer composition over inheritance'));
+      assert.equal(rules.sessionRulesLines, undefined);
+      assert.doesNotMatch(JSON.stringify(rules), /Prefer composition over inheritance/);
     });
 
-    it('_getRulesContent returns ONLY the project\'s own rules (global tier retired)', () => {
-      const otherPath = path.join(tempDir, 'other-rules-proj');
-      fs.mkdirSync(otherPath, { recursive: true });
-      const other = store.projects.create({ name: 'other-rules-proj', path: otherPath, engine: 'claude', methodology: 'none' });
-      store.sessionRules.create({ content: 'other project directive', projectId: other.id });
-      store.sessionRules.create({ content: 'project directive', projectId: project.id });
-      const rules = engines._getRulesContent({ id: project.id });
-      assert.ok(!rules.sessionRulesLines.includes('other project directive'));
-      assert.ok(rules.sessionRulesLines.includes('project directive'));
-      store.projects.delete(other.id);
-    });
-
-    it('excludes disabled rules from sessionRulesLines', () => {
-      const off = store.sessionRules.create({ content: 'disabled directive', projectId: project.id });
-      store.sessionRules.update(off.id, { enabled: false });
-      const rules = engines._getRulesContent({ id: project.id });
-      assert.ok(!rules.sessionRulesLines.includes('disabled directive'));
-    });
-
-    it('renders a ## Session Rules section in CLAUDE.md', () => {
+    it('CLAUDE.md carries no Session Rules section even when rules exist', () => {
       store.sessionRules.create({ content: 'Always run lint', projectId: project.id });
       const content = engines._generateClaudeMd({ id: project.id }, null);
-      assert.match(content, /## Session Rules/);
-      assert.match(content, /- Always run lint/);
+      assert.doesNotMatch(content, /## Session Rules/);
+      assert.doesNotMatch(content, /Always run lint/);
     });
 
-    it('renders the section in GEMINI.md (cross-model)', () => {
-      store.sessionRules.create({ content: 'Gemini sees this', projectId: project.id });
+    it('GEMINI.md carries no Session Rules section even when rules exist', () => {
+      store.sessionRules.create({ content: 'Gemini must not see this', projectId: project.id });
       const content = engines._generateGeminiMd({ id: project.id }, null);
-      assert.match(content, /## Session Rules/);
-      assert.match(content, /- Gemini sees this/);
+      assert.doesNotMatch(content, /## Session Rules/);
+      assert.doesNotMatch(content, /Gemini must not see this/);
     });
 
-    it('renders the section in .codex.yaml (cross-model)', () => {
-      store.sessionRules.create({ content: 'Codex sees this', projectId: project.id });
+    it('.codex.yaml carries no Session Rules section even when rules exist', () => {
+      store.sessionRules.create({ content: 'Codex must not see this', projectId: project.id });
       const content = engines._generateCodexYaml({ id: project.id }, null);
-      assert.match(content, /## Session Rules/);
-      assert.match(content, /Codex sees this/);
+      assert.doesNotMatch(content, /## Session Rules/);
+      assert.doesNotMatch(content, /Codex must not see this/);
     });
 
-    it('renders the section as comments in .aider.conf.yml (cross-model)', () => {
-      store.sessionRules.create({ content: 'Aider sees this', projectId: project.id });
+    it('.aider.conf.yml carries no Session Rules comments even when rules exist', () => {
+      store.sessionRules.create({ content: 'Aider must not see this', projectId: project.id });
       const content = engines._generateAiderConf({ id: project.id }, null);
-      assert.match(content, /# Session Rules:/);
-      assert.match(content, /#\s+- Aider sees this/);
+      assert.doesNotMatch(content, /# Session Rules:/);
+      assert.doesNotMatch(content, /Aider must not see this/);
     });
 
     it('renders NOTHING when there are no active session rules', () => {

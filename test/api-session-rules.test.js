@@ -235,4 +235,48 @@ describe('api/session-rules (#347/D1a)', () => {
       assert.ok(!res.data.rules.some((r) => r.content === 'stray custom rule'));
     });
   });
+
+  describe('GET /api/session-rules/deliveries (#595)', () => {
+    it('returns a session\'s deliveries, including the undelivered attempts', async () => {
+      store.sessionRuleDeliveries.record({ sessionId: 9001, projectId, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'engine declares no prime channel', ruleIds: [1], digest: 'sha-x' });
+      store.sessionRuleDeliveries.record({ sessionId: 9001, projectId, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', ruleIds: [1], digest: 'sha-x' });
+
+      const res = await request('GET', '/api/session-rules/deliveries?sessionId=9001');
+      assert.equal(res.status, 200);
+      assert.equal(res.data.deliveries.length, 2);
+      // A ledger that hid failures could not distinguish "no rules" from
+      // "rules never arrived" — the whole point of #595.
+      assert.ok(res.data.deliveries.some((d) => d.delivered === false && /no prime channel/.test(d.skipReason)));
+      assert.ok(res.data.deliveries.some((d) => d.delivered === true && d.digest === 'sha-x'));
+    });
+
+    it('returns a project\'s delivery history newest-first', async () => {
+      store.sessionRuleDeliveries.record({ sessionId: 9002, projectId, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered', digest: 'newest' });
+      const res = await request('GET', `/api/session-rules/deliveries?projectId=${projectId}&limit=1`);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.deliveries.length, 1);
+      assert.equal(res.data.deliveries[0].digest, 'newest');
+    });
+
+    it('with no scope, answers the fleet question: rules configured but never delivered', async () => {
+      // A dedicated project — `rules-proj` already has a delivered row from the
+      // case above, so it is correctly NOT a finding.
+      const strandedPath = path.join(tmpDir, 'stranded-proj');
+      fs.mkdirSync(strandedPath, { recursive: true });
+      const stranded = store.projects.create({ name: 'stranded-proj', path: strandedPath, engine: 'claude', methodology: 'none' });
+      store.sessionRules.create({ content: 'configured but never delivered', projectId: stranded.id });
+      store.sessionRuleDeliveries.record({ projectId: stranded.id, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'no prime channel', ruleIds: [1] });
+
+      try {
+        const res = await request('GET', '/api/session-rules/deliveries');
+        assert.equal(res.status, 200);
+        assert.ok(Array.isArray(res.data.undelivered));
+        assert.ok(res.data.undelivered.some((r) => r.projectId === stranded.id), 'the stranded project must be flagged');
+        assert.ok(!res.data.undelivered.some((r) => r.projectId === projectId), 'a project with a delivered row must not be');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: stranded.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(stranded.id);
+      }
+    });
+  });
 });

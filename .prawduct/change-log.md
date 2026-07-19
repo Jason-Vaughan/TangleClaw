@@ -26,9 +26,71 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Phase A Chunk 08 — tc-cleanroom first-run acceptance gate (#618)
+
+<!-- prawduct: type=feature | chunks=08 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** back-filled 2026-07-19. This chunk shipped in PR #618 (merged as `db0a282`)
+but never received a change-log entry, so `regen-views` — which derives the plan's
+Status roster from these tags — un-ticked a genuinely complete chunk when next run.
+The `[x]` was correct; the bookkeeping was missing. Recorded from the merged commit
+rather than re-ticking the box by hand, so the roster stays derived rather than
+asserted.
+
+**What:** zero-egress Docker clean-room on the habitat host for exercising the
+first-time-install experience as a stranger would — `deploy/cleanroom/`
+(`compose.yaml`, `provision.sh`, `bake.sh`, `README.md`) plus lockdown-contract
+tests. Internal-only network, no published ports, pre-baked image with
+`pull_policy: never`, every compose invocation pinned to `-p tc-cleanroom` so the
+co-resident production stacks are protected; the repo ships as a git bundle so the
+container clones without network. The first gate run filed #614, #615, #616, #617.
+
+**Classification:** build
+
+## 2026-07-19: Chunk 01 — startup session-rule delivery + delivery ledger (#595)
+
+<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 -->
+
+**Why:** Phase B discovery found the channel the whole Wrap v2 design depends on was
+severed. `kind='startup'` rules were assembled only inside `engines._getRulesContent`,
+which runs during config-file generation — and `writeEngineConfig` returns early for
+plugin-governed projects, so the tier delivered nothing on all 13 of them while still
+accepting writes and rendering rows in the UI. Nothing recorded the miss, so a severed
+channel was indistinguishable from "no rules configured". This is the hard prerequisite
+for chunks 02-06.
+
+**What:** delivery moved to the session prime — `sessions.buildStartupRulesSection`
+renders a `## Project Rules` block that `generatePrimePrompt` includes, which runs
+per-engine at launch and is not gated on config-file ownership. A **move, not an add**:
+the `## Session Rules` block is removed from all four config generators and the engine
+tests are inverted to fail if injection returns, so one tier keeps exactly one delivery
+path. No coverage lost — every engine declaring `configFormat.filename` also declares
+`supportsPrimePrompt`, and the only engine with neither (openclaw) got nothing before.
+New `session_rule_deliveries` table (schema v26) records each attempt with engine,
+channel, rule ids, a sha256 digest identifying the rule *set*, and a skip reason;
+`GET /api/session-rules/deliveries` serves it per session, per project, or fleet-wide.
+
+**Verification:** unit + integration tests including mutation checks (removing the
+injection or the paste recording fails specific tests); and against a copy of the live
+store — TangleClaw is plugin-governed, its config write still skips for exactly that
+reason, and rule id 5 now reaches its prime.
+
+**Critic:** 0 blocking, 10 warnings, 8 notes across 3 reviewers. Resolved: outcome
+modelled as a three-state `outcome` enum (SoT) after two reviewers showed a `delivered`
+boolean conflated "no rules" with "rules arrived" — the very conflation the ledger
+exists to end; web-UI launch path now records its own row (found independently by all
+three reviewers — the gap was silently reproduced in a second launch path); migration
+no longer swallows a genuine CREATE failure; retention cap added; fleet-wide
+`projectsWithUndeliveredRules` accessor added; launch-branch test coverage added;
+`api-contracts.md` index entry added. Self-found before review and independently
+confirmed by two reviewers: `listActiveForProject` ordered by a second-resolution
+`created_at` with no `id` tiebreaker, leaving the digest order-unstable.
+
+**Classification:** build
+
 ## 2026-07-18: Fix — Create Project centered modal (#623)
 
-<!-- prawduct: type=bugfix | scope=ui-623 -->
+<!-- prawduct: type=bugfix | scope=ui-623 | status=shipped -->
 
 **Why:** Operator report from their primary device: *"it puts all the menus at the
 bottom of the screen at full width. I'd prefer a modal that pops up center, all options
@@ -214,7 +276,7 @@ lives locally + at the hosted link.
 
 ## 2026-07-18: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
 
-<!-- prawduct: type=bugfix | scope=wrap-620 -->
+<!-- prawduct: type=bugfix | scope=wrap-620 | status=shipped -->
 
 **Why:** The `next-session-prime` wrap step reported **Done** while priming the next
 session onto unrelated, stale work. Found by auditing the 2026-07-18 wrap (PR #619,

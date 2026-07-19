@@ -4,6 +4,39 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Startup session rules are delivered again, on every engine (#595).** `kind='startup'`
+  rules were assembled only inside engine config-file generation, which
+  `writeEngineConfig` skips wholesale for plugin-governed projects — so the tier had
+  zero working instances across all 13 governed projects while continuing to accept
+  writes and show rows in the UI. Rules now ship in the session prime
+  (`sessions.buildStartupRulesSection`), which runs per-engine at launch and is not
+  gated on config-file ownership. Verified against a copy of the live store: rule id 5
+  reaches TangleClaw's own prime, and config generation still skips for exactly the
+  documented governance reason.
+
+### Added
+
+- **Delivery ledger for session rules (`session_rule_deliveries`, schema v26).** Records
+  every delivery *attempt* — engine, channel (`prime-file` / `prime-paste` / `none`),
+  the rule ids, a sha256 digest identifying the rule set, and an `outcome` of
+  `delivered` / `no-rules` / `skipped` (with a reason). Failed attempts are recorded
+  deliberately: a success-only ledger is indistinguishable from a severed channel, which
+  is how #595 stayed invisible. Both launch paths record, including the web UI, which
+  has no prime channel at all. `GET /api/session-rules/deliveries` answers per session
+  (`?sessionId=`), per project (`?projectId=`), or — with no parameters — fleet-wide:
+  every project that has startup rules but has never had one delivered.
+
+### Changed
+
+- **Session rules no longer appear in generated `CLAUDE.md` / `GEMINI.md` /
+  `.codex.yaml` / `.aider.conf.yml`.** Delivery moved to the prime rather than being
+  duplicated there, so one tier has exactly one delivery path; the engine tests are
+  inverted to fail if injection is re-added. Non-governed projects see their rules move
+  from the config file into the prime — no loss, since every engine with a config file
+  also declares a prime channel.
+
 ## [4.25.2] - 2026-07-18
 
 ### Fixed

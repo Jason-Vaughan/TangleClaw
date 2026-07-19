@@ -77,7 +77,7 @@ describe('store', () => {
 
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 25);
+      assert.equal(row.version, 26);
     });
 
     it('should copy bundled engine profiles', () => {
@@ -2144,7 +2144,7 @@ describe('sessions v20→v21 owner migration (AUTH-3, #1)', () => {
       store.init();
 
       const db = store.getDb();
-      assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 25);
+      assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 26);
 
       // The pre-AUTH-3 row gained the column with a NULL value (unauthenticated == null).
       const old = store.sessions.get(1);

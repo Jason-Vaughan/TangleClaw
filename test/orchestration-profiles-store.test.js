@@ -129,7 +129,7 @@ describe('orchestration_profile column (schema v21→v22)', () => {
     store._setBasePath(tmpDir);
     store.init();
     const db = store.getDb();
-    assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 25);
+    assert.equal(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get().version, 26);
     assert.equal(store.projects.getByName('tb1-idem').orchestrationProfile, 'direct');
   });
 });

@@ -109,11 +109,24 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
 
 | kind | When it applies | Injected? |
 |---|---|---|
-| `startup` (default) | session start — custom priming | **yes**, at launch (`## Session Rules`) |
+| `startup` (default) | session start — custom priming | **yes**, into the session prime at launch (`## Project Rules`) |
 | `wrap` | wrap time — custom wrap behavior + the self-learning sink | **yes**, into the wrap pipeline's ai-content prompts (`## Project wrap rules`) |
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
   predating CC-6 backfill to `startup`, so injection behavior is unchanged.
+- **Both kinds are now assembled the same way (#595):** plain string concatenation into
+  the prompt at assembly time — `sessions.buildStartupRulesSection` at launch,
+  `_appendWrapRules` at wrap — rather than being written into a config file whose
+  generation can be skipped. (The *transport* still differs afterwards: the startup
+  prime reaches Claude via `.tangleclaw/session-prime.md` + the SessionStart hook, or
+  via tmux paste on other engines. What changed is that assembly no longer depends on
+  owning the engine's config file.) Startup rules previously
+  travelled inside the generated engine config file, which `writeEngineConfig` skips
+  wholesale for plugin-governed projects; the tier therefore delivered nothing on every
+  governed project while still accepting writes. Each launch now records the outcome in
+  the `session_rule_deliveries` ledger (`GET /api/session-rules/deliveries`), including
+  attempts that did **not** arrive — without those rows a severed channel is
+  indistinguishable from a project that simply has no rules.
 - `POST /api/session-rules` and `/promote` accept `kind`; `GET /api/session-rules?kind=`
   filters; `/conflicts` accepts `{kind}` so a proposed wrap rule is only compared against
   other wrap rules. An invalid kind is a 400.
