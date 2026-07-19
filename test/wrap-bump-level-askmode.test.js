@@ -112,13 +112,14 @@ describe('#540 ask-mode — the modal wiring (source pins)', () => {
     assert.match(html, /<label[^>]*for="wrapBumpLevel"/, 'label is tied to the select');
   });
 
-  it('confirmWrap captures the choice and sends it as options.bumpLevel', () => {
+  it('confirmWrap captures the choice and sends it through the shared option assembler', () => {
     const body = functionBody(session, 'async function confirmWrap()');
     assert.match(body, /getElementById\('wrapBumpLevel'\)/, 'reads the select');
-    assert.match(body, /body\.options\s*=\s*\{\s*bumpLevel/,
-      'threads the choice into the wrap POST body as options.bumpLevel');
-    assert.match(body, /if\s*\(wrapBumpLevel\)/,
-      'Auto (empty) sends no bumpLevel — an out-of-set value would make version-bump skip');
+    assert.match(body, /collectOptionsFromAccessors\(/,
+      'assembles options via the same pure helper the retry path uses, so the two cannot drift');
+    assert.match(body, /bumpLevel:\s*\(\)\s*=>\s*wrapBumpLevel/, 'supplies the bumpLevel accessor');
+    assert.match(body, /body\.options\s*=\s*initialOptions/,
+      'threads the assembled options into the wrap POST body');
   });
 
   it('openWrapModal resets the choice to Auto, so a cancelled pick cannot re-arm', () => {

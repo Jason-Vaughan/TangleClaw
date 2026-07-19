@@ -68,6 +68,75 @@ describe('wrap CHANGELOG transaction — step order is load-bearing', () => {
     assert.ok(idx('changelog-update') < idx('version-bump'));
     assert.ok(idx('version-bump') < idx('commit'));
   });
+
+  // `wrap_pipeline.steps` is a FRAMEWORK_OWNED_PATH, and the reconciler's merge
+  // is additive-by-id: a REORDER reaches an already-onboarded install only
+  // through `_reconcileFrameworkSubtrees`, which is gated on
+  // `bundledRev > liveRev`. So a step-order fix shipped without a
+  // schemaRevision bump is inert everywhere but a fresh install — the bundled
+  // JSON (and every test asserting against it) stays green while live wraps
+  // keep running the old order.
+  const STEP_ORDER_BY_REVISION = {
+    6: [
+      'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture',
+      'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map',
+      'index-describe', 'memory-update', 'commit', 'continuity-write',
+      'apply-pr-resolutions'
+    ]
+  };
+
+  it('the bundled step order matches the fingerprint recorded for its schemaRevision', () => {
+    const rev = prawductTemplate.schemaRevision;
+    const expected = STEP_ORDER_BY_REVISION[rev];
+    assert.ok(expected,
+      `no step-order fingerprint recorded for schemaRevision ${rev}. If you changed `
+      + 'wrap_pipeline.steps you MUST bump schemaRevision (or the change never reaches an '
+      + 'onboarded install) AND record the new order here.');
+    assert.deepStrictEqual(steps.map((s) => s.id), expected,
+      'bundled step order drifted from the order recorded for this schemaRevision — '
+      + 'bump schemaRevision so the change propagates, then update the fingerprint');
+  });
+});
+
+describe('wrap CHANGELOG transaction — the reorder actually reaches onboarded installs', () => {
+  let tmpDir;
+
+  beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-propagate-')); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  const writeJson = (name, obj) => {
+    const p = path.join(tmpDir, name);
+    fs.writeFileSync(p, JSON.stringify(obj, null, 2));
+    return p;
+  };
+
+  it('a live template stuck on the clobbering order is re-synced by the bundled revision', () => {
+    // The exact pre-fix live shape: version-bump ahead of changelog-update.
+    const staleLive = {
+      id: 'prawduct',
+      schemaRevision: prawductTemplate.schemaRevision - 1,
+      wrap_pipeline: {
+        steps: [
+          { id: 'open-pr-check', kind: 'pr-check', blocker: true },
+          { id: 'version-bump', kind: 'version-bump', blocker: false },
+          { id: 'changelog-update', kind: 'ai-content', blocker: true },
+          { id: 'commit', kind: 'commit', blocker: true }
+        ]
+      }
+    };
+    const bundled = writeJson('bundled.json', prawductTemplate);
+    const live = writeJson('live.json', staleLive);
+
+    store._mergeBundledTemplate(bundled, live);
+    const merged = JSON.parse(fs.readFileSync(live, 'utf8'));
+
+    const ids = merged.wrap_pipeline.steps.map((s) => s.id);
+    assert.ok(ids.indexOf('changelog-update') < ids.indexOf('version-bump'),
+      'THE PIN: the corrected order must reach an already-onboarded install, not just a '
+      + 'fresh one — otherwise every existing project keeps discarding the AI changelog entry');
+    assert.equal(merged.schemaRevision, prawductTemplate.schemaRevision,
+      'and the revision is stamped so the re-sync is one-shot');
+  });
 });
 
 describe('wrap CHANGELOG transaction — the AI edit survives into the release', () => {

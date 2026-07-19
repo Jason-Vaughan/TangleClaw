@@ -10,7 +10,7 @@
   "playbookRuleSections": {
     "independentCritic": "### Independent Critic Review"
   },
-  "schemaRevision": 5,
+  "schemaRevision": 6,
   "phases": [
     {
       "id": "discovery",

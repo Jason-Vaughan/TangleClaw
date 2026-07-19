@@ -2931,7 +2931,14 @@ async function confirmWrap() {
   wrapBumpLevel = bumpEl ? bumpEl.value : '';
   const body = {};
   if (pw) body.password = pw;
-  if (wrapBumpLevel) body.options = { bumpLevel: wrapBumpLevel };
+  // Assembled through the SAME pure helper the retry path uses, so the initial
+  // wrap and every retry can't drift on how an option is shaped (notably: Auto
+  // must send no bumpLevel at all — version-bump treats an out-of-set value as
+  // a reason to skip rather than falling back to the heuristic).
+  const initialOptions = window.tcWrapDrawerHelpers.collectOptionsFromAccessors({
+    bumpLevel: () => wrapBumpLevel
+  });
+  if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
 
   // Lock the modal into a "Wrapping…" state: disable both buttons + flip the
   // confirm label, and set the in-flight flag (which also blocks every close
