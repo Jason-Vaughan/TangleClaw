@@ -10,7 +10,7 @@
   "playbookRuleSections": {
     "independentCritic": "### Independent Critic Review"
   },
-  "schemaRevision": 4,
+  "schemaRevision": 5,
   "phases": [
     {
       "id": "discovery",
@@ -52,7 +52,6 @@
   "wrap_pipeline": {
     "schemaVersion": "1.0",
     "steps": [
-      {"id": "open-pr-check", "kind": "pr-check", "blocker": true},
       {"id": "version-bump", "kind": "version-bump", "blocker": false},
       {
         "id": "changelog-update",
@@ -87,7 +86,8 @@
         ]
       },
       {"id": "commit", "kind": "commit", "blocker": true},
-      {"id": "continuity-write", "kind": "continuity-write", "blocker": false}
+      {"id": "continuity-write", "kind": "continuity-write", "blocker": false},
+      {"id": "open-pr-check", "kind": "pr-check", "blocker": true}
     ]
   },
   "prime": {

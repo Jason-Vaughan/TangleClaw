@@ -47,6 +47,35 @@ container clones without network. The first gate run filed #614, #615, #616, #61
 
 **Classification:** build
 
+## 2026-07-19: Chunk 03 — step-inventory cleanup, and open-pr-check becomes a real gate (#570)
+
+<!-- prawduct: type=feature | scope=wrap-v2 | chunks=03 -->
+
+**Why:** the dispatch table carried three step handlers no bundled template referenced —
+~970 lines of dead-but-maintained code. Its visible symptom was #570: the prawduct "Run
+Critic" action promised "the wrap step's critic-check will pass once findings are
+recorded" for a step that stopped running when #353 moved governance to the plugin. A
+promise with no mechanism behind it is worse than a missing feature, because it reads as
+working.
+
+`critic-check` is deleted (with its option, its drawer widget, and its commit-body
+lines); `lint`/`test` stay as opt-in primitives. Dead `promptTemplates` and the inert
+`wrap_contract` layer are gone. `open-pr-check` now acts on the resolutions it validated
+and never applied: an unresolved session-scoped PR blocks, and `merge` enqueues GitHub
+auto-merge so branch protection and checks still decide when it lands.
+
+**What the Critic caught, and it was right:** the template edits (`blocker: true`, the
+corrected action text) would have been inert on every existing install — `store.js` only
+propagates `FRAMEWORK_OWNED_PATHS` on a `schemaRevision` bump, which the diff omitted.
+Worse than a no-op: the handler would still block and still enqueue merges while the
+runner sailed past, because the halt check reads the *live* template's `blocker`. Bumped
+to 5. The same review surfaced an ordering hazard — the gate ran first, so `--auto
+--squash --delete-branch` could land and delete the session's branch mid-wrap, and would
+have merged a PR missing the wrap commit. The step now runs last, which is also the
+semantically correct order: commit the wrap, then merge the PR.
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 02 — engine-agnostic wrap sweep (#612 widened)
 
 <!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=02 | status=shipped -->

@@ -34,15 +34,14 @@ A methodology template declares a `wrap_pipeline` block. The Session Wrap button
       // codex / gemini variants land via #139 Chunk 12 (or separate issues)
     },
     "steps": [
-      { "id": "open-pr-check",   "kind": "pr-check",      "blocker": false },
       { "id": "lint",            "kind": "lint",          "blocker": "errors-only", "scope": "in-session" },
       { "id": "test",            "kind": "test",          "blocker": true,          "allowOverride": true },
-      { "id": "critic-check",    "kind": "critic-check",  "blocker": false,         "warnOn": "medium-plus" },
       { "id": "memory-update",   "kind": "ai-content",    "prompt": "Update .tangleclaw/memories/MEMORY.md session block…" },
       { "id": "priming-roll",    "kind": "priming-roll" },
       { "id": "summary-derive",  "kind": "ai-content",    "prompt": "From the MEMORY block above, derive structured output…", "captureFields": ["summary", "nextSteps", "learnings"] },
       { "id": "version-bump",    "kind": "version-bump",  "blocker": false },
-      { "id": "commit",          "kind": "commit",        "messageBuilder": "session-content" }
+      { "id": "commit",          "kind": "commit",        "messageBuilder": "session-content" },
+      { "id": "open-pr-check",   "kind": "pr-check",      "blocker": true }
     ]
   }
 }
@@ -52,10 +51,9 @@ A methodology template declares a `wrap_pipeline` block. The Session Wrap button
 
 | Kind            | Owner   | Behavior |
 |---|---|---|
-| `pr-check`      | server  | `gh pr list --state open --author @me`; surface open PRs; ask user how to handle. Never blocks. |
+| `pr-check`      | server  | `gh pr list --state open --author @me`; surface open PRs; ask user how to handle. BLOCKS on a session-scoped PR with no `merge`/`defer`/`ignore` resolution, and applies `merge` by enqueueing GitHub auto-merge (2026-07-19 amendment, #570). Degraded probes still skip without blocking. |
 | `lint`          | server  | Run project's `lintCommand` on files changed since last wrap. `blocker: "errors-only"` blocks on lint errors but not warnings. `scope: "in-session"` limits findings to commits since last wrap. |
 | `test`          | server  | Run project's `testCommand`. Red → block. `allowOverride: true` lets user pass `--skip-tests` from the UI; the skip is recorded in the wrap commit body. |
-| `critic-check`  | server  | Heuristic on session history (commit count + line-change count + chunk-tag detection). Warn UI surfaces if heuristic trips and no Critic agent ran. Never blocks; logs skip rationale to MEMORY. |
 | `ai-content`    | hybrid  | Server fabricates the per-step prompt from template + session context; sends to AI; captures output; validates shape. Used by `changelog-update`, `learnings-capture`, `memory-update`. **Transport-aware (CC-7 Slice B1):** a **tmux** session sends via `tmux.sendKeys` → polls `detectIdle` → captures the pane; a **webui** session sends over the ClawBridge gateway (`clawbridge.send` → poll `getStatus` until `inputReady` → read the structured block from the step's `captureFile` via `clawbridge.getFile` consume-once, ClawBridge #18) — both parse with the same `_parseFields` `## Heading` parser. A webui step with no `captureFile`, or a session with no bridge sidecar, returns an honest `skipped` (the gateway PTY stream can't carry structured fields — Slice B1 spike). **Content steps declare `blocker: true` + `allowOverride: true` (#328):** a timeout/validation failure halts the pipeline *before* `commit` (no silent partial wrap); the operator either waits + Retries, or ticks "Skip & note" (`options.skipAiContent[stepId]`) to wrap without that step, recorded in the commit body. An empty-prompt step still `skipped`s (ok:true) and never halts. |
 | `priming-roll`  | server  | Parse `.claude/plans/<plan>.md` for current chunk pointer; roll forward in `.claude/priming/build-session.md`. Carry blocker annotations through. |
 | `version-bump`  | server  | If CHANGELOG has `[Unreleased]` entries and project has a `version.json`, bump and update CHANGELOG. Optional, never blocks. |

@@ -113,7 +113,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write']
+        ['version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'open-pr-check']
       );
     });
 
@@ -121,7 +121,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write']);
+        ['version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-check']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -187,7 +187,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(started.length, 12, 'hook fires once per step');
         assert.deepStrictEqual(started.map((s) => s.stepId), dispatched,
           'hook order matches dispatch order');
-        assert.equal(started[0].kind, 'pr-check', 'hook receives the step kind');
+        assert.equal(started[0].kind, 'version-bump', 'hook receives the step kind');
         // Interleaving contract: the hook for step N fires BEFORE step N
         // dispatches — pinned by comparing prefixes at each hook call is
         // overkill; the length equality above plus this first-element
@@ -222,7 +222,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           }
         });
         assert.equal(result.blockedAt, 'changelog-update', 'throwing hook must not change pipeline outcome');
-        assert.deepStrictEqual(started, ['open-pr-check', 'version-bump', 'changelog-update'],
+        assert.deepStrictEqual(started, ['version-bump', 'changelog-update'],
           'hook fires only for steps that actually dispatch — never for pending steps after the halt');
       } finally {
         for (const kind of wrapKinds) {
@@ -2733,6 +2733,24 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
   // may not declare a step kind the runner cannot dispatch. A step with no
   // handler is silently skipped at runtime, which is exactly how a template
   // ends up promising a gate that never runs.
+  it('#570 — open-pr-check is a blocking gate, and runs LAST', () => {
+    const steps = store.templates.get('prawduct').wrap_pipeline.steps;
+    const gate = steps.find((s) => s.id === 'open-pr-check');
+    assert.ok(gate, 'prawduct must ship the open-pr-check gate');
+    // The runner only halts on `blocker === true || "errors-only"`. Without
+    // this the handler would still block and still enqueue merges while the
+    // pipeline sailed past it.
+    assert.equal(gate.blocker, true, 'the gate must be declared blocking or it cannot halt the wrap');
+    // Ordering is correctness, not taste: a `merge` resolution enqueues
+    // auto-merge with --delete-branch, so running it before `commit` would
+    // merge a PR that is missing the wrap commit and could delete the branch
+    // mid-wrap.
+    assert.equal(steps[steps.length - 1].id, 'open-pr-check',
+      'the gate must run after commit — it merges the PR the wrap commit belongs to');
+    const commitIdx = steps.findIndex((s) => s.kind === 'commit');
+    assert.ok(commitIdx > -1 && commitIdx < steps.length - 1, 'commit must precede the gate');
+  });
+
   it('every bundled step kind has a dispatch handler (no promised-but-unrunnable steps)', () => {
     for (const id of ['prawduct', 'minimal']) {
       const t = store.templates.get(id);
