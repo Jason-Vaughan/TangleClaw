@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`next-session-prime` primed the next session onto the wrong plan and the wrong chunk** (#620). The `priming-roll` wrap step resolved the build plan from `.claude/plans/` only, so on a plugin-governed project — where the plan lives under `.prawduct/artifacts/` and is named by `active_build_plan` in `.prawduct/project-state.yaml` — it fell through to its "the only `.md` in the directory" heuristic and rolled the pointer onto an unrelated plan, reporting success. It now reads that declared pointer (ranked below `step.planPath` and the operator's `activePlan` pick, so neither is overridden); a declared-but-missing pointer skips with a reason rather than falling through to the heuristic that caused the misfire. Done-state is additionally read from a plan's `## Status` checkbox roster, which governed plans declare their cross-session tracker while leaving the `### Chunk NN:` spec anchors un-ticked — previously every such plan reported chunk 01 as active no matter how much had shipped. A roster-only plan (no anchor sections) now supplies the chunk list itself. Chunk titles written with an em-dash separator (`### Chunk 01 — Title`) no longer render a doubled separator.
+
 ## [4.25.1] - 2026-07-18
 
 ### Internal

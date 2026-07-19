@@ -26,6 +26,58 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-19: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
+
+<!-- prawduct: type=bugfix | scope=wrap-620 -->
+
+**Why:** The `next-session-prime` wrap step reported **Done** while priming the next
+session onto unrelated, stale work. Found by auditing the 2026-07-18 wrap (PR #619,
+`10a355e`), which closed Phase A Chunk 08 of the prawduct-v2-sunset plan and then wrote
+`**Active:** Chunk 01 — — One-way auto-inject` pointing at
+`.claude/plans/switchboard-v2-autoinject-loop.md`. Three defects, one family — TC's
+plan machinery encodes conventions that plugin-governed plans do not use:
+
+1. **Wrong plan.** `_resolvePlanPath` knew only `.claude/plans/`. A governed project
+   keeps its plan under `.prawduct/artifacts/` and names it via column-0
+   `active_build_plan:` in `.prawduct/project-state.yaml`. With one unrelated `.md`
+   in `.claude/plans/`, the "only file in the dir" rule matched and the step declared
+   success. Reproduces on every plugin-governed project — now the fleet default.
+2. **Wrong chunk.** Done-state was read only from `✅` on `### Chunk NN:` headings.
+   Governed plans declare their `## Status` checkbox roster the cross-session tracker
+   (this plan says so in its own header comment) and leave the heading anchors — which
+   exist for `verify-chunk-refs` — un-ticked. So a plan with all 8 chunks `[x]` parsed
+   as zero-done and pointed at chunk 01.
+3. **Doubled separator.** The title strip handled `:` but not the em-dash form the
+   plan uses, rendering `Chunk 01 — — Title`.
+
+**What:** `_readGovernedPlan` reads the column-0 pointer (line regex, not a YAML dep;
+indented keys deliberately ignored to match the framework's own reader) and slots into
+the precedence ladder BELOW `step.planPath` and the operator's `activePlan` pick, so
+neither is overridden — the multi-plan picker (#428) persists to `activePlan` and must
+keep winning. A declared-but-missing pointer SKIPS with a reason rather than falling
+through to the heuristic, since falling through is precisely what manufactured the
+confidently-wrong pointer. `_parseRoster` reads the `## Status` section (scoped
+heading → next `##`, so stray prose checkboxes can't mark chunks done); done-state is
+the UNION of roster tick and heading `✅` — both are affirmative markers, and letting
+an un-ticked source veto a ticked one would resurrect shipped chunks. A roster-only
+plan (the compact format this plan shipped with before anchors were added) supplies
+the chunk list itself. `TITLE_SEPARATOR_RE` covers em/en dash and hyphen.
+
+**Tests:** `test/wrap-step-priming-roll.test.js` +22 (65→75 in-file plus the governed
+suite): #620 repro, precedence-preservation for both hatches, dangling-pointer skip,
+traversal block, column-0 contract, roster union/scoping/roster-only, separator forms.
+Revert-verified — 13 fail against the pre-fix module, 0 after. Also fixed a
+pre-existing harness leak: the handler suite installed a throwing `readFileSync` stub
+on the shared `_internal` singleton and never restored it, so any suite declared after
+it captured the poisoned fn as its "originals" (it silently corrupted the new suite on
+first run). Full suite 4433 tests / 0 fail, exit 0.
+
+**Verified:** ran the step against this repo — resolves
+`.prawduct/artifacts/prawduct-v2-sunset-build-plan.md`, `allDone: true`, renders
+"All chunks … are marked done." Matches reality (Phase A complete). The stale priming
+block left by the bad wrap was corrected in the same commit.
+
+
 ## 2026-07-18: Feature — Master settings surface v1 (Chunk 07)
 
 <!-- prawduct: type=feature | chunks=07 | scope=prawduct-v2-sunset | status=shipped -->

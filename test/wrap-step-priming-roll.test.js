@@ -300,6 +300,12 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
   });
 
   after(() => {
+    // `_internal` is a module singleton shared with every other suite in
+    // this file. The last test here leaves a throwing `readFileSync` stub
+    // installed, so without this restore the NEXT suite's `before` captures
+    // the poisoned fn as its "originals" and every one of its tests reads
+    // through the stub.
+    Object.assign(primingRoll._internal, originals);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -717,5 +723,339 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
     assert.match(result.blockers[0], /Failed to read priming file/);
+  });
+});
+
+describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+  let tmpDir;
+  let projectPath;
+  let originals;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-priming-governed-'));
+    originals = { ...primingRoll._internal };
+  });
+
+  after(() => {
+    // Restore the shared `_internal` singleton — see the handler suite's
+    // `after` for why leaving a stub installed corrupts later suites.
+    Object.assign(primingRoll._internal, originals);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    Object.assign(primingRoll._internal, originals);
+    projectPath = fs.mkdtempSync(path.join(tmpDir, 'sandbox-'));
+  });
+
+  function buildContext(step) {
+    return {
+      project: { name: 'sandbox', path: projectPath, id: 1 },
+      session: null,
+      step,
+      previousResults: [],
+      staged: {},
+      options: {}
+    };
+  }
+
+  /** Write `.prawduct/project-state.yaml` with the given raw body. */
+  function writeState(body) {
+    const dir = path.join(projectPath, '.prawduct');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'project-state.yaml'), body);
+  }
+
+  /** Write a plan under `.prawduct/artifacts/<name>`. */
+  function writeGovernedPlan(name, body) {
+    const dir = path.join(projectPath, '.prawduct', 'artifacts');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), body);
+  }
+
+  /** Write a plan under `.claude/plans/<name>`. */
+  function writeLegacyPlan(name, body) {
+    const dir = path.join(projectPath, '.claude', 'plans');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), body);
+  }
+
+  describe('_readGovernedPlan', () => {
+    it('reads a column-0 active_build_plan value', () => {
+      writeState('classification:\n  domain: [x]\n\nactive_build_plan: artifacts/plan.md\n');
+      assert.equal(primingRoll._readGovernedPlan(projectPath), 'artifacts/plan.md');
+    });
+
+    it('returns null when project-state.yaml is absent', () => {
+      assert.equal(primingRoll._readGovernedPlan(projectPath), null);
+    });
+
+    it('returns null when the key is absent', () => {
+      writeState('classification:\n  domain: [x]\n');
+      assert.equal(primingRoll._readGovernedPlan(projectPath), null);
+    });
+
+    it('ignores an INDENTED active_build_plan (column-0 contract)', () => {
+      // The framework's own reader honours only column 0; matching an
+      // indented pointer here would take effect in TC while the framework
+      // ignored it — a silent divergence.
+      writeState('state:\n  active_build_plan: artifacts/nested.md\n');
+      assert.equal(primingRoll._readGovernedPlan(projectPath), null);
+    });
+
+    it('treats null / empty / ~ as not declared', () => {
+      for (const raw of ['active_build_plan:\n', 'active_build_plan: null\n', 'active_build_plan: ~\n']) {
+        writeState(raw);
+        assert.equal(primingRoll._readGovernedPlan(projectPath), null, `raw: ${JSON.stringify(raw)}`);
+      }
+    });
+
+    it('strips surrounding quotes and a trailing inline comment', () => {
+      writeState('active_build_plan: "artifacts/quoted.md"  # the active one\n');
+      assert.equal(primingRoll._readGovernedPlan(projectPath), 'artifacts/quoted.md');
+    });
+
+    it('returns null when the state file is unreadable', () => {
+      writeState('active_build_plan: artifacts/plan.md\n');
+      primingRoll._internal.readFileSync = () => { throw new Error('disk gone'); };
+      assert.equal(primingRoll._readGovernedPlan(projectPath), null);
+    });
+  });
+
+  describe('resolution precedence', () => {
+    it('rolls to the governed plan instead of the lone .claude/plans file (#620 repro)', async () => {
+      // The exact reported failure: an unrelated plan sits in .claude/plans/
+      // and used to win by the "only .md in the dir" rule, priming the next
+      // session onto stale work.
+      writeLegacyPlan('unrelated.md', '### Chunk 01 — One-way auto-inject\n');
+      writeGovernedPlan('active.md', '### Chunk 08: Habitat clean-room ✅\n### Chunk 09: Phase B discovery\n');
+      writeState('active_build_plan: artifacts/active.md\n');
+
+      const ctx = buildContext({ id: 'next-session-prime' });
+      const result = await primingRoll.run(ctx);
+
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /\.prawduct[/\\]artifacts[/\\]active\.md$/,
+        'must resolve the governed plan, not the .claude/plans file');
+      assert.equal(result.output.pointer.current.id, '09');
+      assert.equal(result.output.pointer.current.title, 'Phase B discovery');
+      assert.match(ctx.staged['next-session-prime'].newContent, /Chunk 09 — Phase B discovery/);
+    });
+
+    it('lets step.planPath outrank the governed pointer', async () => {
+      writeGovernedPlan('governed.md', '### Chunk 1: Governed\n');
+      writeState('active_build_plan: artifacts/governed.md\n');
+      writeLegacyPlan('explicit.md', '### Chunk 1: Explicit\n');
+
+      const result = await primingRoll.run(buildContext({
+        id: 'next-session-prime',
+        planPath: '.claude/plans/explicit.md'
+      }));
+      assert.equal(result.ok, true);
+      assert.equal(result.output.pointer.current.title, 'Explicit');
+    });
+
+    it("lets the operator's activePlan escape hatch outrank the governed pointer", async () => {
+      // The multi-plan picker (#428) persists the operator's choice to
+      // activePlan; an auto-derived pointer must not override a human pick.
+      writeGovernedPlan('governed.md', '### Chunk 1: Governed\n');
+      writeState('active_build_plan: artifacts/governed.md\n');
+      writeLegacyPlan('picked.md', '### Chunk 1: Picked\n');
+      const cfgDir = path.join(projectPath, '.tangleclaw');
+      fs.mkdirSync(cfgDir, { recursive: true });
+      fs.writeFileSync(path.join(cfgDir, 'project.json'), JSON.stringify({ activePlan: 'picked.md' }));
+
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true);
+      assert.equal(result.output.pointer.current.title, 'Picked');
+    });
+
+    it('skips (never falls through) when the governed pointer dangles', async () => {
+      // Falling back to the plans-dir heuristic here is what produced the
+      // confidently-wrong pointer in the first place.
+      writeLegacyPlan('unrelated.md', '### Chunk 1: Unrelated\n');
+      writeState('active_build_plan: artifacts/gone.md\n');
+
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true, 'a dangling pointer must not block the wrap');
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /does not exist/);
+      assert.doesNotMatch(result.output.reason, /unrelated\.md/);
+    });
+
+    it('blocks when the governed pointer escapes the project root', async () => {
+      writeState('active_build_plan: ../../../etc/passwd.md\n');
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.match(result.blockers[0], /resolves outside the project root/);
+    });
+
+    it('falls through to .claude/plans when no pointer is declared', async () => {
+      // Ungoverned projects keep today's behavior byte-for-byte.
+      writeState('classification:\n  domain: [x]\n');
+      writeLegacyPlan('only.md', '### Chunk 1: Legacy\n');
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true);
+      assert.equal(result.output.pointer.current.title, 'Legacy');
+    });
+  });
+
+  describe('chunk title separator (#620)', () => {
+    it('strips an em-dash separator so the title renders once', () => {
+      const chunks = primingRoll._parseChunks('### Chunk 01 — One-way auto-inject (+ settings scaffold)\n');
+      assert.equal(chunks[0].id, '01');
+      assert.equal(chunks[0].title, 'One-way auto-inject (+ settings scaffold)');
+    });
+
+    it('strips en-dash and hyphen separators too', () => {
+      assert.equal(primingRoll._parseChunks('### Chunk 2 – Title\n')[0].title, 'Title');
+      assert.equal(primingRoll._parseChunks('### Chunk 3 - Title\n')[0].title, 'Title');
+    });
+
+    it('preserves a colon separator and an internal dash', () => {
+      assert.equal(primingRoll._parseChunks('### Chunk 4: Auto-inject — the loop\n')[0].title,
+        'Auto-inject — the loop');
+    });
+
+    it('renders a pointer body without a doubled separator', () => {
+      const chunks = primingRoll._parseChunks('### Chunk 01 — One-way auto-inject\n');
+      const body = primingRoll._renderPointerBody(primingRoll._selectPointer(chunks), 'p.md');
+      assert.match(body, /\*\*Active:\*\* Chunk 01 — One-way auto-inject/);
+      assert.doesNotMatch(body, /— —/);
+    });
+  });
+});
+
+describe('wrap-step priming-roll — ## Status roster as done-source (#620)', () => {
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+
+  // Governed plans declare the `## Status` roster their cross-session tracker
+  // and leave the `### Chunk NN:` spec anchors un-ticked, so heading-only
+  // done-detection reports a finished plan as sitting on chunk 01.
+  const GOVERNED_PLAN = [
+    '# Build Plan — Phase A',
+    '',
+    '## Status',
+    '',
+    '- [x] Chunk 01: recordVersion require-cycle fix',
+    '- [x] Chunk 02: Stranded-config guard',
+    '- [ ] Chunk 03: Phase B discovery',
+    '',
+    '## Chunks',
+    '',
+    '### Chunk 01: recordVersion require-cycle fix (#584) — SHIPPED',
+    'Body.',
+    '',
+    '### Chunk 02: Stranded-config guard (#592) — root-cause + guard',
+    'Body.',
+    '',
+    '### Chunk 03: Phase B discovery',
+    'Body.'
+  ].join('\n');
+
+  it('marks chunks done from ticked roster boxes even with no ✅ on headings', () => {
+    const chunks = primingRoll._parseChunks(GOVERNED_PLAN);
+    assert.equal(chunks.length, 3);
+    assert.equal(chunks[0].done, true, 'roster [x] must mark chunk 01 done');
+    assert.equal(chunks[1].done, true);
+    assert.equal(chunks[2].done, false);
+  });
+
+  it('points at the first roster-unticked chunk, not chunk 01 (#620 repro)', () => {
+    const pointer = primingRoll._selectPointer(primingRoll._parseChunks(GOVERNED_PLAN));
+    assert.equal(pointer.current.id, '03');
+    assert.equal(pointer.allDone, false);
+  });
+
+  it('reports allDone when every roster box is ticked', () => {
+    const md = GOVERNED_PLAN.replace('- [ ] Chunk 03', '- [x] Chunk 03');
+    const pointer = primingRoll._selectPointer(primingRoll._parseChunks(md));
+    assert.equal(pointer.allDone, true);
+    assert.equal(pointer.current, null);
+  });
+
+  it('keeps the heading title, not the roster title, when both exist', () => {
+    const chunks = primingRoll._parseChunks(GOVERNED_PLAN);
+    assert.equal(chunks[0].title, 'recordVersion require-cycle fix (#584) — SHIPPED');
+  });
+
+  it('unions the two sources — a ✅ heading stays done with no roster entry', () => {
+    // Plans predating the roster convention must not regress.
+    const md = [
+      '## Status',
+      '- [ ] Chunk 02: Later',
+      '',
+      '## Chunks',
+      '### Chunk 01: Early ✅',
+      '### Chunk 02: Later'
+    ].join('\n');
+    const chunks = primingRoll._parseChunks(md);
+    assert.equal(chunks[0].done, true, '✅ must still count when the roster omits the chunk');
+    assert.equal(chunks[1].done, false);
+  });
+
+  it('ignores checkboxes outside the ## Status section', () => {
+    const md = [
+      '## Notes',
+      '- [x] Chunk 01: this is prose, not the tracker',
+      '',
+      '## Chunks',
+      '### Chunk 01: Real chunk'
+    ].join('\n');
+    assert.equal(primingRoll._parseChunks(md)[0].done, false,
+      'only the ## Status roster is the tracker');
+  });
+
+  it('stops reading the roster at the next ## heading', () => {
+    const md = [
+      '## Status',
+      '- [x] Chunk 01: Done',
+      '',
+      '## Appendix',
+      '- [x] Chunk 02: not part of the roster',
+      '',
+      '## Chunks',
+      '### Chunk 01: One',
+      '### Chunk 02: Two'
+    ].join('\n');
+    const chunks = primingRoll._parseChunks(md);
+    assert.equal(chunks[0].done, true);
+    assert.equal(chunks[1].done, false, 'post-Status checkbox must not leak into the roster');
+  });
+
+  it('builds the chunk list from a roster-only plan (no ### sections)', () => {
+    // The compact format this plan shipped with before spec anchors were added.
+    const md = [
+      '## Status',
+      '- [x] Chunk 01: Shipped work',
+      '- [ ] Chunk 02: Next up',
+      '',
+      '## Why',
+      'Prose.'
+    ].join('\n');
+    const chunks = primingRoll._parseChunks(md);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0].title, 'Shipped work');
+    const pointer = primingRoll._selectPointer(chunks);
+    assert.equal(pointer.current.id, '02');
+    assert.equal(pointer.current.title, 'Next up');
+  });
+
+  it('parses an em-dash roster item and treats [X] as ticked', () => {
+    const md = ['## Status', '- [X] Chunk 01 — Upper-case tick'].join('\n');
+    const chunks = primingRoll._parseChunks(md);
+    assert.equal(chunks[0].done, true);
+    assert.equal(chunks[0].title, 'Upper-case tick');
+  });
+
+  it('_parseRoster scopes to ## Status and reports tick state', () => {
+    const roster = primingRoll._parseRoster(GOVERNED_PLAN.split('\n'));
+    assert.equal(roster.size, 3);
+    assert.equal(roster.get('01').done, true);
+    assert.equal(roster.get('03').done, false);
+    assert.equal(roster.get('03').title, 'Phase B discovery');
   });
 });
