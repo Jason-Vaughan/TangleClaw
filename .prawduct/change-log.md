@@ -26,6 +26,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Phase A Chunk 08 — tc-cleanroom first-run acceptance gate (#618)
+
+<!-- prawduct: type=feature | chunks=08 | scope=prawduct-v2-sunset | status=shipped -->
+
+**Why:** back-filled 2026-07-19. This chunk shipped in PR #618 (merged as `db0a282`)
+but never received a change-log entry, so `regen-views` — which derives the plan's
+Status roster from these tags — un-ticked a genuinely complete chunk when next run.
+The `[x]` was correct; the bookkeeping was missing. Recorded from the merged commit
+rather than re-ticking the box by hand, so the roster stays derived rather than
+asserted.
+
+**What:** zero-egress Docker clean-room on the habitat host for exercising the
+first-time-install experience as a stranger would — `deploy/cleanroom/`
+(`compose.yaml`, `provision.sh`, `bake.sh`, `README.md`) plus lockdown-contract
+tests. Internal-only network, no published ports, pre-baked image with
+`pull_policy: never`, every compose invocation pinned to `-p tc-cleanroom` so the
+co-resident production stacks are protected; the repo ships as a git bundle so the
+container clones without network. The first gate run filed #614, #615, #616, #617.
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 01 — startup session-rule delivery + delivery ledger (#595)
 
 <!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 -->
@@ -69,7 +90,7 @@ confirmed by two reviewers: `listActiveForProject` ordered by a second-resolutio
 
 ## 2026-07-18: Fix — Create Project centered modal (#623)
 
-<!-- prawduct: type=bugfix | scope=ui-623 -->
+<!-- prawduct: type=bugfix | scope=ui-623 | status=shipped -->
 
 **Why:** Operator report from their primary device: *"it puts all the menus at the
 bottom of the screen at full width. I'd prefer a modal that pops up center, all options
@@ -255,7 +276,7 @@ lives locally + at the hosted link.
 
 ## 2026-07-18: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
 
-<!-- prawduct: type=bugfix | scope=wrap-620 -->
+<!-- prawduct: type=bugfix | scope=wrap-620 | status=shipped -->
 
 **Why:** The `next-session-prime` wrap step reported **Done** while priming the next
 session onto unrelated, stale work. Found by auditing the 2026-07-18 wrap (PR #619,
