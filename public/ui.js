@@ -774,7 +774,7 @@ function openSettings(name) {
           <input type="checkbox" id="settingsVersionBump" ${initialVersionBumpChecked ? 'checked' : ''}>
           <span class="toggle-switch"></span>
         </label>
-        <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path below if set, otherwise <code>version.json</code> then <code>package.json</code>. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
+        <div class="form-hint">On wrap, promote CHANGELOG <code>[Unreleased]</code> and bump the project's semver — from the Version file path setting if set, otherwise <code>version.json</code> then <code>package.json</code>. Turn off for projects that manage their own versioning (e.g. a non-semver scheme via their own tooling).</div>
       </div>
       <div class="form-group">
         <label class="form-label" for="settingsVersionFilePath">Version file path</label>
