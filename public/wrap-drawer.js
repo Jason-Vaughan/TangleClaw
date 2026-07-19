@@ -15,6 +15,7 @@
    */
   const KIND_LABELS = {
     'pr-check': 'Check open PRs',
+    'pr-merge': 'Apply PR decisions',
     'lint': 'Lint',
     'test': 'Run tests',
     'ai-content': 'AI content',
@@ -32,7 +33,8 @@
    * @type {Object<string, string>}
    */
   const KIND_DESCRIPTIONS = {
-    'pr-check': 'Checks for open GitHub PRs on this branch so you can resolve them before wrapping. Never blocks the wrap.',
+    'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
+    'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
     'test': 'Runs the full test suite. A failure here can block the wrap.',
     'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Skips when there is nothing to promote or the version is not semver.',

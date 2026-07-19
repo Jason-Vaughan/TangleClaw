@@ -64,15 +64,21 @@ lines); `lint`/`test` stay as opt-in primitives. Dead `promptTemplates` and the 
 and never applied: an unresolved session-scoped PR blocks, and `merge` enqueues GitHub
 auto-merge so branch protection and checks still decide when it lands.
 
-**What the Critic caught, and it was right:** the template edits (`blocker: true`, the
+**What the Critic caught, twice, and it was right both times:** the template edits (`blocker: true`, the
 corrected action text) would have been inert on every existing install — `store.js` only
 propagates `FRAMEWORK_OWNED_PATHS` on a `schemaRevision` bump, which the diff omitted.
 Worse than a no-op: the handler would still block and still enqueue merges while the
 runner sailed past, because the halt check reads the *live* template's `blocker`. Bumped
 to 5. The same review surfaced an ordering hazard — the gate ran first, so `--auto
 --squash --delete-branch` could land and delete the session's branch mid-wrap, and would
-have merged a PR missing the wrap commit. The step now runs last, which is also the
-semantically correct order: commit the wrap, then merge the PR.
+have merged a PR missing the wrap commit. Moving the step last fixed that and broke two
+other things (round 2): `commit` is the only reader of the gate's staged resolutions and
+now ran first, so the PR audit trail in the commit body went unreachable; and a blocking
+step after `commit` strands the wrap, because `_completeV2Wrap` is skipped whenever the
+pipeline reports failure. The step was therefore SPLIT — `open-pr-check` gates first and
+stays read-only, a new `pr-merge` kind applies the resolutions last and never blocks. One
+step could not be both first and last, which is the thing neither round-1 position could
+have fixed.
 
 **Classification:** build
 

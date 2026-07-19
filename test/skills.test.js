@@ -85,13 +85,14 @@ describe('skills', () => {
       // index the next prime reads). C2 (#353) stripped the L3 `critic-check` step
       // and #570 deleted its handler. PIDX slice 3 (#360) added `project-map` after
       // `features-toc`; PIDX #426 added `index-describe` after `project-map`.
-      // #570 moved `open-pr-check` to LAST: it enqueues auto-merge, which must not
-      // happen until the wrap commit is in the PR.
+      // #570 added `apply-pr-resolutions` (kind `pr-merge`) as the last step: the
+      // gate stays first so a block costs nothing, while the auto-merge it
+      // authorizes must not fire until the wrap commit is in the PR.
       // The shim flattens every step.id into the legacy steps array, so the
       // surface order here reflects the template-level edits.
       assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
         command: null,
-        steps: ['version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'open-pr-check'],
+        steps: ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions'],
         captureFields: ['summary', 'nextSteps', 'learnings']
       });
       assert.deepStrictEqual(skills.getWrapSkill('minimal'), {

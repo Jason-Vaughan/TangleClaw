@@ -38,7 +38,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('STEP_DISPATCH', () => {
     it('covers every step kind referenced by the contract (ADR 0002 dispatch table)', () => {
       const expected = [
-        'pr-check', 'lint', 'test',
+        'pr-check', 'pr-merge', 'lint', 'test',
         'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit'
       ];
       for (const kind of expected) {
@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -97,7 +97,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         // after `features-toc`; PIDX #426 added `index-describe` after
         // `project-map`; #466 added `learnings-db-write` after
         // `learnings-capture` — prawduct now ships 12 pipeline steps.
-        assert.equal(result.results.length, 12, 'prawduct has twelve pipeline steps');
+        assert.equal(result.results.length, 13, 'prawduct has thirteen pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -113,7 +113,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'open-pr-check']
+        ['open-pr-check', 'version-bump', 'changelog-update', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
       );
     });
 
@@ -121,7 +121,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-check']);
+        ['pr-check', 'version-bump', 'ai-content', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -134,7 +134,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
       // `project-map`, PIDX slice 3) so the inertness check captures all ten
       // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -148,7 +148,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 12, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, 13, 'every prawduct step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {
@@ -167,7 +167,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     // #583 — `options.onStepStart` progress hook feeds the wrap-run
     // registry so `GET /wrap/status` can report where a running wrap is.
     it('#583 — invokes onStepStart before each dispatched step, in template order', async () => {
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       const dispatched = [];
       for (const kind of wrapKinds) {
@@ -184,10 +184,10 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         await wrapPipeline.runWrapPipeline('pipeline-test', {
           onStepStart: (stepId, kind) => started.push({ stepId, kind })
         });
-        assert.equal(started.length, 12, 'hook fires once per step');
+        assert.equal(started.length, 13, 'hook fires once per step');
         assert.deepStrictEqual(started.map((s) => s.stepId), dispatched,
           'hook order matches dispatch order');
-        assert.equal(started[0].kind, 'version-bump', 'hook receives the step kind');
+        assert.equal(started[0].kind, 'pr-check', 'hook receives the step kind');
         // Interleaving contract: the hook for step N fires BEFORE step N
         // dispatches — pinned by comparing prefixes at each hook call is
         // overkill; the length equality above plus this first-element
@@ -200,7 +200,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
 
     it('#583 — onStepStart does not fire for pending steps after a halt, and a throwing hook never alters the outcome', async () => {
-      const wrapKinds = ['pr-check', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -222,7 +222,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           }
         });
         assert.equal(result.blockedAt, 'changelog-update', 'throwing hook must not change pipeline outcome');
-        assert.deepStrictEqual(started, ['version-bump', 'changelog-update'],
+        assert.deepStrictEqual(started, ['open-pr-check', 'version-bump', 'changelog-update'],
           'hook fires only for steps that actually dispatch — never for pending steps after the halt');
       } finally {
         for (const kind of wrapKinds) {
@@ -1619,69 +1619,49 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     assert.equal(result.output.counts.otherOpen, 1);
   });
 
-  it('enqueues auto-merge for a merge resolution and reports it applied', async () => {
-    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'merge' } });
-    const calls = [];
-    prCheck._internal.enqueueAutoMerge = async (cwd, number) => {
-      calls.push({ cwd, number });
-      return { ok: true, reason: null };
-    };
-    prCheck._internal.listOpenPrs = async () => ({
-      ok: true,
-      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
-      reason: null
-    });
-    const result = await prCheck.run(ctx);
-    assert.equal(result.ok, true);
-    assert.equal(result.status, 'done');
-    assert.deepStrictEqual(calls, [{ cwd: projectPath, number: '42' }]);
-    assert.deepStrictEqual(result.output.applied['42'], { handling: 'merge', ok: true, reason: null });
-    assert.deepStrictEqual(ctx.staged['pr-check'].applied['42'], { handling: 'merge', ok: true, reason: null });
-  });
-
-  it('BLOCKS when the auto-merge enqueue fails, surfacing gh\'s reason', async () => {
-    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'merge' } });
-    prCheck._internal.enqueueAutoMerge = async () => ({
-      ok: false, reason: 'Auto-merge is not allowed for this repository'
-    });
-    prCheck._internal.listOpenPrs = async () => ({
-      ok: true,
-      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
-      reason: null
-    });
-    const result = await prCheck.run(ctx);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /PR #42: auto-merge could not be enqueued — Auto-merge is not allowed/);
-    assert.match(result.output.remediation, /Allow auto-merge/);
-    assert.equal(result.output.applied['42'].ok, false);
-  });
-
-  it('defer and ignore are recorded without touching the remote', async () => {
-    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'defer', 43: 'ignore' } });
-    let merged = 0;
-    prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+  it('stages a shape the commit step renders — round-trip pin', async () => {
+    // The gate stages; `commit` reads. They are ordered steps in one pipeline
+    // with no shared type, so the handoff is only as good as this pin — and
+    // reordering the gate past `commit` would silently break it.
+    const commitStep = require('../lib/wrap-steps/commit');
+    const ctx = buildContext({ id: 'open-pr-check' }, { prHandling: { 42: 'merge', 43: 'defer' } });
+    ctx.staged = {};
     prCheck._internal.listOpenPrs = async () => ({
       ok: true,
       prs: [
-        { number: 42, headRefName: 'feat/x', isDraft: false },
-        { number: 43, headRefName: 'feat/x', isDraft: false }
+        { number: 42, title: 'foo', headRefName: 'feat/x', isDraft: false },
+        { number: 43, title: 'bar', headRefName: 'feat/x', isDraft: false }
       ],
       reason: null
     });
     const result = await prCheck.run(ctx);
     assert.equal(result.ok, true);
-    assert.equal(merged, 0, 'defer/ignore must never call gh pr merge');
-    assert.equal(result.output.applied['42'].handling, 'defer');
-    assert.equal(result.output.applied['43'].handling, 'ignore');
+    assert.deepStrictEqual(commitStep._buildBodyLines(ctx.staged), [
+      '- Open session-scoped PRs: 2',
+      '  - PR #42: merge',
+      '  - PR #43: defer'
+    ]);
   });
 
-  it('blocks BEFORE enqueueing anything when part of the request is invalid', async () => {
-    // One valid merge + one bogus PR number. A half-understood request must
-    // not half-apply — nothing may be enqueued.
-    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'merge', 999: 'merge' } });
+  it('never enqueues a merge itself — that is pr-merge\'s job, after commit', async () => {
     let merged = 0;
     prCheck._internal.enqueueAutoMerge = async () => { merged++; return { ok: true, reason: null }; };
+    const ctx = buildContext({ id: 'open-pr-check' }, { prHandling: { 42: 'merge' } });
+    prCheck._internal.listOpenPrs = async () => ({
+      ok: true,
+      prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
+      reason: null
+    });
+    const result = await prCheck.run(ctx);
+    assert.equal(result.ok, true);
+    assert.equal(merged, 0,
+      'the gate must not touch the remote — enqueueing before commit would merge a PR missing the wrap commit');
+  });
+
+  it('blocks when part of the request is invalid, even if the rest is valid', async () => {
+    // One valid merge + one bogus PR number. A half-understood request must
+    // not half-apply, so the gate blocks the whole thing.
+    const ctx = buildContext({ id: 'pr-check' }, { prHandling: { 42: 'merge', 999: 'merge' } });
     prCheck._internal.listOpenPrs = async () => ({
       ok: true,
       prs: [{ number: 42, headRefName: 'feat/x', isDraft: false }],
@@ -1689,7 +1669,8 @@ describe('wrap-step pr-check — handler (#139 Chunk 8)', () => {
     });
     const result = await prCheck.run(ctx);
     assert.equal(result.status, 'blocked');
-    assert.equal(merged, 0, 'no merge may be enqueued while the request is invalid');
+    assert.equal(ctx.staged['pr-check'].applied, undefined,
+      'a blocked gate stages decisions only — nothing may be marked applied');
     assert.match(result.blockers[0], /999 does not match/);
   });
 
@@ -2733,22 +2714,26 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
   // may not declare a step kind the runner cannot dispatch. A step with no
   // handler is silently skipped at runtime, which is exactly how a template
   // ends up promising a gate that never runs.
-  it('#570 — open-pr-check is a blocking gate, and runs LAST', () => {
+  it('#570 — the PR gate blocks and runs before commit; applying merges runs after', () => {
     const steps = store.templates.get('prawduct').wrap_pipeline.steps;
-    const gate = steps.find((s) => s.id === 'open-pr-check');
-    assert.ok(gate, 'prawduct must ship the open-pr-check gate');
-    // The runner only halts on `blocker === true || "errors-only"`. Without
-    // this the handler would still block and still enqueue merges while the
-    // pipeline sailed past it.
-    assert.equal(gate.blocker, true, 'the gate must be declared blocking or it cannot halt the wrap');
-    // Ordering is correctness, not taste: a `merge` resolution enqueues
-    // auto-merge with --delete-branch, so running it before `commit` would
-    // merge a PR that is missing the wrap commit and could delete the branch
-    // mid-wrap.
-    assert.equal(steps[steps.length - 1].id, 'open-pr-check',
-      'the gate must run after commit — it merges the PR the wrap commit belongs to');
+    const gateIdx = steps.findIndex((s) => s.kind === 'pr-check');
     const commitIdx = steps.findIndex((s) => s.kind === 'commit');
-    assert.ok(commitIdx > -1 && commitIdx < steps.length - 1, 'commit must precede the gate');
+    const applyIdx = steps.findIndex((s) => s.kind === 'pr-merge');
+    assert.ok(gateIdx > -1 && commitIdx > -1 && applyIdx > -1, 'prawduct ships all three');
+
+    // The runner only halts on `blocker === true || "errors-only"`. Without
+    // this the handler would block while the pipeline sailed past it.
+    assert.equal(steps[gateIdx].blocker, true,
+      'the gate must be declared blocking or it cannot halt the wrap');
+
+    // Ordering is correctness, not taste. The gate goes first so a block
+    // costs nothing — no AI prompt has fired, no commit has landed. The
+    // merge goes last because it merges the PR the wrap commit belongs to,
+    // and `--delete-branch` would otherwise delete the branch mid-wrap.
+    assert.ok(gateIdx < commitIdx, 'the gate must block before any work lands');
+    assert.ok(applyIdx > commitIdx, 'merges must be enqueued only after the wrap commit');
+    assert.notEqual(steps[applyIdx].blocker, true,
+      'a step after commit must not block — a halt there strands a half-finished wrap');
   });
 
   it('every bundled step kind has a dispatch handler (no promised-but-unrunnable steps)', () => {

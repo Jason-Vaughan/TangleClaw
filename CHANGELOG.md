@@ -9,12 +9,16 @@ All notable changes to TangleClaw are documented in this file.
 - **The wrap now gates on your own open PR instead of quietly wrapping past it (#570).**
   `open-pr-check` validated `merge`/`defer`/`ignore` resolutions and then applied none of
   them, so a branch's PR could go stale for weeks while every wrap reported success. It now
-  blocks when a session-scoped open PR has no resolution, and a `merge` resolution enqueues
-  GitHub auto-merge (`gh pr merge --auto --squash --delete-branch`) — branch protection and
-  required checks still decide when it lands, so a wrap can never force a merge over red
-  checks. `ignore` is the escape hatch: the gate demands a decision, not a particular one.
-  A degraded probe (no `gh`, no auth, non-GitHub remote) still skips without blocking —
-  not knowing is not the same as knowing something is wrong.
+  blocks when a session-scoped open PR has no resolution, and a new final step applies what
+  you chose: each `merge` gets GitHub auto-merge enqueued (`gh pr merge --auto --squash
+  --delete-branch`), so branch protection and required checks still decide when it lands and
+  a wrap can never force a merge over red checks. Gate and apply are separate steps because
+  they need opposite positions — blocking is only cheap before the wrap has prompted the
+  session or committed, while the merge must come after the wrap commit or it would merge a
+  PR missing it. `ignore` is the escape hatch: the gate demands a decision, not a particular
+  one. A degraded probe (no `gh`, no auth, non-GitHub remote) still skips without blocking —
+  not knowing is not the same as knowing something is wrong. Nothing after the commit can
+  block, so a wrap is never left half-finished.
 - **The "Run Critic" action no longer promises a gate that does not exist (#570).** Its
   confirmation text told operators "the wrap step's critic-check will pass once findings
   are recorded" — that step stopped running when #353 moved governance to the Prawduct

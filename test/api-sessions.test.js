@@ -257,14 +257,14 @@ describe('api-sessions', () => {
 
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
-          options: { skipTests: true, criticSkipRationale: 'short turn' }
+          options: { skipTests: true, prHandling: { 42: 'defer' } }
         });
         assert.equal(res.status, 200);
         assert.equal(res.body.ok, true);
         // #583 amended the threading contract: body options pass through
         // unchanged, plus the wrap-run registry's progress hook rides along.
         const { onStepStart, ...userOptions } = receivedOptions;
-        assert.deepEqual(userOptions, { skipTests: true, criticSkipRationale: 'short turn' });
+        assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
         assert.equal(typeof onStepStart, 'function', '#583 progress hook threaded to the runner');
         assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
         assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
