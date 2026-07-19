@@ -26,7 +26,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-## 2026-07-19: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
+## 2026-07-18: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
 
 <!-- prawduct: type=bugfix | scope=wrap-620 -->
 
@@ -63,14 +63,28 @@ an un-ticked source veto a ticked one would resurrect shipped chunks. A roster-o
 plan (the compact format this plan shipped with before anchors were added) supplies
 the chunk list itself. `TITLE_SEPARATOR_RE` covers em/en dash and hyphen.
 
-**Tests:** `test/wrap-step-priming-roll.test.js` +22 (65→75 in-file plus the governed
-suite): #620 repro, precedence-preservation for both hatches, dangling-pointer skip,
-traversal block, column-0 contract, roster union/scoping/roster-only, separator forms.
-Revert-verified — 13 fail against the pre-fix module, 0 after. Also fixed a
-pre-existing harness leak: the handler suite installed a throwing `readFileSync` stub
-on the shared `_internal` singleton and never restored it, so any suite declared after
-it captured the poisoned fn as its "originals" (it silently corrupted the new suite on
-first run). Full suite 4433 tests / 0 fail, exit 0.
+**Tests:** `test/wrap-step-priming-roll.test.js` +29 (53→82 in-file): #620 repro,
+precedence-preservation for both operator hatches, dangling-pointer skip, traversal
+block, column-0 contract, roster union/scoping/roster-only, separator forms, and the
+Critic-caught edges below. Revert-verified — 13 fail against the pre-fix module, 0
+after. Also fixed a pre-existing harness leak: the handler suite installed a throwing
+`readFileSync` stub on the shared `_internal` singleton and never restored it, so any
+suite declared after it captured the poisoned fn as its "originals" (it silently
+corrupted the new governed suite on its first run). Full suite exit 0 — 2291 top-level
+cases / 0 fail per the JUnit report ingested as test evidence; 4440 / 0 counting
+subtests.
+
+**Critic (cumulative `rev-20260719T022842Z-ea9618af`, 1 blocking / 3 warning / 2 note):**
+BLOCKING — asserted suite results with no recorded evidence at this tree (verbatim
+recurrence of learning WRP-9F2K); resolved by ingesting a JUnit report rather than
+hand-typed counts. W-1 future-dated entry (UTC had rolled, local had not) — corrected.
+W-2 the roster↔heading join keyed on the raw id string, so a plan writing `- [x] Chunk 1`
+against `### Chunk 01:` would miss the lookup and park the pointer on chunk 01 — the very
+failure this fix exists to kill; `_chunkIdKey` now normalizes leading zeros per dotted
+segment, with the raw id preserved for display. W-3 doc drift at 3 sites still calling
+`### Chunk N:` headings the only chunk source, including an operator-facing skip reason
+that misdirected roster-only authors — all reworded. N-1 a `.prawduct/`-prefixed pointer
+value double-prefixed and silently skipped — both spellings now honoured.
 
 **Verified:** ran the step against this repo — resolves
 `.prawduct/artifacts/prawduct-v2-sunset-build-plan.md`, `allDone: true`, renders

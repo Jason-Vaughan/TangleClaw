@@ -520,9 +520,15 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(result.status, 'skipped');
     assert.deepEqual(result.blockers, []);
     // The skip stays honest — the drawer surfaces why + the recovery hint.
-    assert.match(result.output.reason, /no `### Chunk N:` headings/i);
+    assert.match(result.output.reason, /declares no chunks/i);
+    assert.match(result.output.reason, /### Chunk N:/,
+      'reason still names the heading form as one way to chunk the plan');
     assert.match(result.output.reason, /nothing to roll/i);
-    assert.match(result.output.reason, /add chunk headings/i);
+    // Recovery hint now names BOTH chunk forms — the heading-only wording
+    // misdirected an author whose plan tracks chunks in a `## Status` roster.
+    assert.match(result.output.reason, /## Status/,
+      'reason must also point at the roster form');
+    assert.match(result.output.reason, /active build plan/i);
     // No pointer is staged — the "field" is null, nothing for commit to flush.
     assert.equal(ctx.staged['next-session-prime'], undefined,
       'a skip must not stage a priming-roll write');
@@ -1054,8 +1060,119 @@ describe('wrap-step priming-roll — ## Status roster as done-source (#620)', ()
   it('_parseRoster scopes to ## Status and reports tick state', () => {
     const roster = primingRoll._parseRoster(GOVERNED_PLAN.split('\n'));
     assert.equal(roster.size, 3);
-    assert.equal(roster.get('01').done, true);
-    assert.equal(roster.get('03').done, false);
-    assert.equal(roster.get('03').title, 'Phase B discovery');
+    // Keyed by NORMALIZED id (`01` → `1`) so a padding mismatch between the
+    // roster and the headings still joins; the entry keeps the id as written.
+    assert.equal(roster.get('1').done, true);
+    assert.equal(roster.get('3').done, false);
+    assert.equal(roster.get('3').title, 'Phase B discovery');
+    assert.equal(roster.get('3').id, '03', 'raw id preserved for display');
+  });
+});
+
+describe('wrap-step priming-roll — Critic-caught edges (#620)', () => {
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+  let tmpDir;
+  let projectPath;
+  let originals;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-priming-edges-'));
+    originals = { ...primingRoll._internal };
+  });
+
+  after(() => {
+    Object.assign(primingRoll._internal, originals);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    Object.assign(primingRoll._internal, originals);
+    projectPath = fs.mkdtempSync(path.join(tmpDir, 'sandbox-'));
+  });
+
+  describe('_chunkIdKey — zero-padding mismatch', () => {
+    it('normalizes leading zeros per dotted segment', () => {
+      assert.equal(primingRoll._chunkIdKey('01'), '1');
+      assert.equal(primingRoll._chunkIdKey('1'), '1');
+      assert.equal(primingRoll._chunkIdKey('010c.02'), '10c.2');
+      assert.equal(primingRoll._chunkIdKey('12.3a.4'), '12.3a.4');
+    });
+
+    it('does not collapse a legitimate zero id', () => {
+      assert.equal(primingRoll._chunkIdKey('0'), '0');
+    });
+
+    it('joins an unpadded roster to padded headings (and vice versa)', () => {
+      // A plan writing `- [x] Chunk 1` against `### Chunk 01:` used to miss
+      // the lookup, drop the tick, and park the pointer on chunk 01 — the
+      // exact silent failure this module exists to prevent.
+      const md = [
+        '## Status',
+        '- [x] Chunk 1: Done',
+        '- [ ] Chunk 2: Next',
+        '',
+        '## Chunks',
+        '### Chunk 01: Done',
+        '### Chunk 02: Next'
+      ].join('\n');
+      const chunks = primingRoll._parseChunks(md);
+      assert.equal(chunks[0].done, true, 'unpadded roster must tick the padded heading');
+      assert.equal(primingRoll._selectPointer(chunks).current.id, '02');
+    });
+
+    it('joins a padded roster to unpadded headings', () => {
+      const md = [
+        '## Status',
+        '- [x] Chunk 01: Done',
+        '',
+        '## Chunks',
+        '### Chunk 1: Done'
+      ].join('\n');
+      assert.equal(primingRoll._parseChunks(md)[0].done, true);
+    });
+
+    it('keeps the id as written on a roster-only plan', () => {
+      const md = ['## Status', '- [ ] Chunk 07: Seven'].join('\n');
+      assert.equal(primingRoll._parseChunks(md)[0].id, '07',
+        'the displayed id must match the plan, not the normalized key');
+    });
+  });
+
+  describe('governed pointer spelled with the .prawduct/ prefix', () => {
+    it('resolves without double-prefixing', () => {
+      // Documented as `.prawduct/`-relative, but an author may reasonably
+      // spell the dir out; double-prefixing would dangle and silently skip.
+      const dir = path.join(projectPath, '.prawduct', 'artifacts');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'p.md'), '### Chunk 1: Only\n');
+      fs.writeFileSync(
+        path.join(projectPath, '.prawduct', 'project-state.yaml'),
+        'active_build_plan: .prawduct/artifacts/p.md\n'
+      );
+      const res = primingRoll._resolvePlanPath(projectPath, { id: 'next-session-prime' });
+      assert.equal(res.ok, true, 'a .prawduct/-prefixed pointer must resolve');
+      assert.match(res.planPath, /\.prawduct[/\\]artifacts[/\\]p\.md$/);
+      assert.doesNotMatch(res.planPath, /\.prawduct[/\\]\.prawduct/);
+    });
+  });
+
+  describe('skip reason for a chunkless plan', () => {
+    it('mentions both the heading and roster forms', async () => {
+      // The old reason misdirected a roster-only author toward headings.
+      const dir = path.join(projectPath, '.claude', 'plans');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'spec.md'), '# A design doc\n\nNo chunks here.\n');
+      const result = await primingRoll.run({
+        project: { name: 'sandbox', path: projectPath, id: 1 },
+        session: null,
+        step: { id: 'next-session-prime' },
+        previousResults: [],
+        staged: {},
+        options: {}
+      });
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /### Chunk N:/);
+      assert.match(result.output.reason, /## Status/);
+    });
   });
 });
