@@ -47,6 +47,13 @@ All notable changes to TangleClaw are documented in this file.
   `<project-root>/.tangleclaw/plans/`** for new plans, replacing the engine-specific
   location.
 
+- **Session rules no longer appear in generated `CLAUDE.md` / `GEMINI.md` /
+  `.codex.yaml` / `.aider.conf.yml`.** Delivery moved to the prime rather than being
+  duplicated there, so one tier has exactly one delivery path; the engine tests are
+  inverted to fail if injection is re-added. Non-governed projects see their rules move
+  from the config file into the prime — no loss, since every engine with a config file
+  also declares a prime channel.
+
 ### Removed
 
 - **The `critic-check` wrap step and its handler (#570).** Dispatched but referenced by no
@@ -83,15 +90,6 @@ All notable changes to TangleClaw are documented in this file.
   has no prime channel at all. `GET /api/session-rules/deliveries` answers per session
   (`?sessionId=`), per project (`?projectId=`), or — with no parameters — fleet-wide:
   every project that has startup rules but has never had one delivered.
-
-### Changed
-
-- **Session rules no longer appear in generated `CLAUDE.md` / `GEMINI.md` /
-  `.codex.yaml` / `.aider.conf.yml`.** Delivery moved to the prime rather than being
-  duplicated there, so one tier has exactly one delivery path; the engine tests are
-  inverted to fail if injection is re-added. Non-governed projects see their rules move
-  from the config file into the prime — no loss, since every engine with a config file
-  also declares a prime channel.
 
 ## [4.25.2] - 2026-07-18
 

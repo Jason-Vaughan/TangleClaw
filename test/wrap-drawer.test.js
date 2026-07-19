@@ -435,6 +435,14 @@ describe('wrap-drawer helpers — pr-merge detail (#570)', () => {
     assert.equal(row.detail, '2 PRs could not be enqueued');
   });
 
+  it('does not let a partial failure read as a total one', () => {
+    const row = H.buildStepRow({
+      stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',
+      output: { failures: ['PR #42: nope'], enqueued: 1 }, blockers: []
+    }, {});
+    assert.match(row.detail, /^1 enqueued; PR #42: nope$/);
+  });
+
   it('reports the count on the happy path', () => {
     const row = H.buildStepRow({
       stepId: 'apply-pr-resolutions', kind: 'pr-merge', status: 'done',

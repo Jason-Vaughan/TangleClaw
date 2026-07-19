@@ -171,14 +171,16 @@
         // This step never blocks, so `blockers` is always empty and the row's
         // detail line is the only place a failed enqueue can surface at all.
         const failures = Array.isArray(output.failures) ? output.failures : [];
+        const ok = output.enqueued || 0;
         if (failures.length) {
-          return failures.length === 1
+          const failed = failures.length === 1
             ? failures[0]
             : `${failures.length} PRs could not be enqueued`;
+          // A partial failure must not read as a total one — the operator has
+          // to know which PRs did land before deciding what to do by hand.
+          return ok ? `${ok} enqueued; ${failed}` : failed;
         }
-        if (output.enqueued) {
-          return `Auto-merge enqueued for ${output.enqueued} PR${output.enqueued === 1 ? '' : 's'}`;
-        }
+        if (ok) return `Auto-merge enqueued for ${ok} PR${ok === 1 ? '' : 's'}`;
         return null;
       }
       case 'test':
