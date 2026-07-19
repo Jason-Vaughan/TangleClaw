@@ -49,7 +49,7 @@ container clones without network. The first gate run filed #614, #615, #616, #61
 
 ## 2026-07-19: Chunk 03 — step-inventory cleanup, and open-pr-check becomes a real gate (#570)
 
-<!-- prawduct: type=feature | scope=wrap-v2 | chunks=03 -->
+<!-- prawduct: type=feature | scope=wrap-v2 | chunks=03 | status=shipped -->
 
 **Why:** the dispatch table carried three step handlers no bundled template referenced —
 ~970 lines of dead-but-maintained code. Its visible symptom was #570: the prawduct "Run
