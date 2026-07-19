@@ -267,11 +267,16 @@ describe('api/session-rules (#347/D1a)', () => {
       store.sessionRules.create({ content: 'configured but never delivered', projectId: stranded.id });
       store.sessionRuleDeliveries.record({ projectId: stranded.id, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'no prime channel', ruleIds: [1] });
 
-      const res = await request('GET', '/api/session-rules/deliveries');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.data.undelivered));
-      assert.ok(res.data.undelivered.some((r) => r.projectId === stranded.id), 'the stranded project must be flagged');
-      assert.ok(!res.data.undelivered.some((r) => r.projectId === projectId), 'a project with a delivered row must not be');
+      try {
+        const res = await request('GET', '/api/session-rules/deliveries');
+        assert.equal(res.status, 200);
+        assert.ok(Array.isArray(res.data.undelivered));
+        assert.ok(res.data.undelivered.some((r) => r.projectId === stranded.id), 'the stranded project must be flagged');
+        assert.ok(!res.data.undelivered.some((r) => r.projectId === projectId), 'a project with a delivered row must not be');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: stranded.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(stranded.id);
+      }
     });
   });
 });

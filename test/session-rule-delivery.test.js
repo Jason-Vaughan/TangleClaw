@@ -546,6 +546,43 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('records a skip naming the engine when it declares no prime channel', () => {
+      // This is the branch D1's "openclaw's gap is reported rather than silent"
+      // claim rests on, so it needs the launch path exercised, not just the store.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const claude = store.engines.get('claude');
+      const orig = {
+        hasSession: tmux.hasSession, createSession: tmux.createSession,
+        detectEngine: enginesModule.detectEngine, get: store.engines.get
+      };
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      // A channel-less engine: config file present, no prime capability.
+      store.engines.get = (id) => (id === 'claude'
+        ? { ...claude, capabilities: { ...claude.capabilities, supportsPrimePrompt: false, supportsSilentPrime: false } }
+        : orig.get(id));
+
+      const launched = makeProject(`nochannel-${Math.floor(Math.random() * 1e9)}`);
+      store.sessionRules.create({ content: 'no channel to carry this', projectId: launched.id });
+      try {
+        const result = sessions.launchSession(launched.name);
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.equal(rows[0].channel, 'none');
+        assert.match(rows[0].skipReason, /declares no prime channel/);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
+        enginesModule.detectEngine = orig.detectEngine;
+        store.engines.get = orig.get;
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
     it('prunes to the retention cap so the ledger cannot grow without bound', () => {
       store._setSessionRuleDeliveryRetention(5);
       try {
