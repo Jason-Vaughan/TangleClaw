@@ -19,7 +19,6 @@ describe('continuity-write wrap step (CC-1)', () => {
   let origExec;
   let origToday;
   let origClaudeHome;
-  let origGetTmpl;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cwstep-'));
@@ -34,7 +33,6 @@ describe('continuity-write wrap step (CC-1)', () => {
     project = { id: 1, name: 'demo', path: projPath };
     origExec = step._internal.exec;
     origToday = step._internal.today;
-    origGetTmpl = step._internal.getMethodologyTemplate;
     // Pin the transcript resolver at an absent ~/.claude so the CC-4b cold-tier
     // snapshot is a deterministic, fast honest-skip in these warm-tier tests
     // (the transcript module has its own dedicated suite).
@@ -52,7 +50,6 @@ describe('continuity-write wrap step (CC-1)', () => {
   afterEach(() => {
     step._internal.exec = origExec;
     step._internal.today = origToday;
-    step._internal.getMethodologyTemplate = origGetTmpl;
     transcript._internal.claudeHome = origClaudeHome;
   });
 
@@ -226,62 +223,8 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.doesNotMatch(rawSummary, /## Delta/);
   });
 
-  // ── CC-8 (#386): per-methodology wrap_contract default layer ──
-
-  it('falls back to the methodology wrap_contract when no per-project override', async () => {
-    // No project.json wrapSections; methodology declares a 2-section contract.
-    project.methodology = 'lightweight';
-    step._internal.getMethodologyTemplate = (id) =>
-      id === 'lightweight' ? { wrap_contract: { sections: ['Where we are', 'Freshness'] } } : null;
-
-    const res = await step.run(ctxWithSession(
-      { id: 88, engineId: 'claude' },
-      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
-        summary: 'Methodology default applied.',
-        nextSteps: '- ship it',
-        learnings: 'should be omitted'
-      } } }]
-    ));
-    assert.equal(res.output.wrapSummaryWritten, true);
-
-    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 88), 'utf8');
-    assert.match(rawSummary, /## Where we are/);
-    assert.match(rawSummary, /## Next action/); // forced keystone
-    assert.match(rawSummary, /## Freshness/);
-    assert.doesNotMatch(rawSummary, /## Landmines/); // not in the methodology contract
-    assert.doesNotMatch(rawSummary, /## Decisions/);
-  });
-
-  it('per-project wrapSections wins over the methodology wrap_contract', async () => {
-    // Both layers present: project picks Delta, methodology picks Where we are.
-    // The per-project override must win (CC-6 > CC-8 precedence).
-    const tcDir = path.join(project.path, '.tangleclaw');
-    fs.mkdirSync(tcDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(tcDir, 'project.json'),
-      JSON.stringify({ wrapSections: ['Delta'] }, null, 2)
-    );
-    project.methodology = 'lightweight';
-    step._internal.getMethodologyTemplate = () => ({ wrap_contract: { sections: ['Where we are'] } });
-
-    const res = await step.run(ctxWithSession(
-      { id: 89, engineId: 'claude' },
-      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
-        summary: 'Override wins.', nextSteps: '- go', learnings: 'none'
-      } } }]
-    ));
-    assert.equal(res.output.wrapSummaryWritten, true);
-
-    const rawSummary = fs.readFileSync(continuity.wrapSummaryPath(project.path, 89), 'utf8');
-    assert.match(rawSummary, /## Delta/); // from the per-project override
-    assert.match(rawSummary, /## Next action/); // forced keystone
-    assert.doesNotMatch(rawSummary, /## Where we are/); // methodology layer overridden
-  });
-
-  it('renders all 8 sections when the methodology declares no wrap_contract', async () => {
-    // project.methodology set but the template has no wrap_contract ⇒ deep default.
-    project.methodology = 'prawduct';
-    step._internal.getMethodologyTemplate = () => ({ id: 'prawduct' }); // no wrap_contract
+  it('renders all 8 sections when the project selects no wrapSections', async () => {
+    // No per-project wrapSections ⇒ the deep default (all 8 sections).
 
     const res = await step.run(ctxWithSession(
       { id: 90, engineId: 'claude' },

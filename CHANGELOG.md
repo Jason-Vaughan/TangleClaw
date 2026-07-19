@@ -6,6 +6,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **The wrap now gates on your own open PR instead of quietly wrapping past it (#570).**
+  `open-pr-check` validated `merge`/`defer`/`ignore` resolutions and then applied none of
+  them, so a branch's PR could go stale for weeks while every wrap reported success. It now
+  blocks when a session-scoped open PR has no resolution, and a `merge` resolution enqueues
+  GitHub auto-merge (`gh pr merge --auto --squash --delete-branch`) — branch protection and
+  required checks still decide when it lands, so a wrap can never force a merge over red
+  checks. `ignore` is the escape hatch: the gate demands a decision, not a particular one.
+  A degraded probe (no `gh`, no auth, non-GitHub remote) still skips without blocking —
+  not knowing is not the same as knowing something is wrong.
+- **The "Run Critic" action no longer promises a gate that does not exist (#570).** Its
+  confirmation text told operators "the wrap step's critic-check will pass once findings
+  are recorded" — that step stopped running when #353 moved governance to the Prawduct
+  plugin. The action still runs the Critic and surfaces findings; only the false promise
+  is gone.
+
+### Removed
+
+- **The `critic-check` wrap step and its handler (#570).** Dispatched but referenced by no
+  bundled template since #353 — ~600 lines of dead-but-maintained governance code whose
+  only visible trace was the stale promise above. Removed with it: the
+  `options.criticSkipRationale` option, the wrap drawer's skip-rationale textarea, and the
+  Critic skip-rationale / `Critic-override` commit-body lines. `lint` and `test` stay as
+  opt-in step primitives for templates that declare them.
+- **Dead `wrap_pipeline.promptTemplates` and the inert `wrap_contract` layer (#570).**
+  `promptTemplates` was never read (the runner consumes only `.steps`); `wrap_contract`
+  was validated and honored as a methodology default that no bundled or live template ever
+  declared. Per-project `wrapSections` remains the way to choose wrap-summary sections.
+
 - **The wrap path no longer requires one engine's layout or prompts (#612, widened).**
   `priming-roll` resolved plans and priming files inside `.claude/`, so a project on
   any other engine silently found no plan — the step reported "nothing to roll", a
