@@ -172,6 +172,24 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
     });
   });
 
+  describe('1c. configured-path error branches', () => {
+    const cases = [
+      ['unparseable JSON', '{not json', /unreadable/],
+      ['not an object', '"a string"', /not an object/],
+      ['no version field', '{"name":"x"}', /no "version" field/]
+    ];
+    for (const [label, content, expected] of cases) {
+      it(`skips on ${label}`, () => {
+        vb._internal.existsSync = () => true;
+        vb._internal.readFileSync = () => content;
+        const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.json');
+        assert.ok(s.skip);
+        assert.match(s.skip, expected);
+        assert.match(s.skip, /VERSION\.json/, 'names the configured file, not version.json');
+      });
+    }
+  });
+
   describe('2. drift guard fails closed on an unparseable changelog scheme', () => {
     it('skips a 4-octet changelog instead of bumping an unrelated package.json', async () => {
       // The exact corruption path from #540: case-sensitive FS, no config set.
@@ -230,12 +248,40 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.deepEqual(c.staged, {});
     });
 
-    it('_hasReleaseHeadings distinguishes the two reasons topReleased is null', () => {
-      assert.equal(vb._hasReleaseHeadings(CHANGELOG_4OCTET), true,
-        'headings exist but do not parse → fail closed');
-      assert.equal(vb._hasReleaseHeadings(CHANGELOG_FIRST_RELEASE), false,
+    it('_hasForeignSchemeHeadings keys on the version shape, not the whole heading', () => {
+      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_4OCTET), true,
+        '4-octet version → a scheme this step cannot extend');
+      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_FIRST_RELEASE), false,
         'only [Unreleased] → legitimate first release');
-      assert.equal(vb._hasReleaseHeadings(CHANGELOG_3OCTET), true);
+      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_3OCTET), false,
+        'ordinary semver headings are recognized, not foreign');
+    });
+
+    // The guard must be narrower than "anything _topReleasedVersion rejects".
+    // That parser also demands ` - YYYY-MM-DD`, so keying the guard on it would
+    // hard-skip projects whose versions are ordinary semver but whose headings
+    // are formatted differently — and blame their "versioning scheme".
+    for (const [label, heading] of [
+      ['no date', '## [1.4.2]'],
+      ['en-dash separator', '## [1.4.2] – 2026-05-01'],
+      ['trailing annotation', '## [1.4.2] - 2026-05-01 (hotfix)'],
+      ['unreleased with trailing text', '## [Unreleased] - TBD']
+    ]) {
+      it(`does not treat a 3-octet heading with ${label} as a foreign scheme`, () => {
+        const text = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n${heading}\n\n### Fixed\n- y\n`;
+        assert.equal(vb._hasForeignSchemeHeadings(text), false);
+      });
+    }
+
+    it('still bumps a project whose headings omit the date', async () => {
+      const noDate = '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- a bug\n\n## [1.4.2]\n\n### Fixed\n- old\n';
+      vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"version":"1.4.2"}' : noDate);
+
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'done', 'a date-less heading is a formatting choice, not a foreign scheme');
+      assert.equal(c.staged['version-bump:version-json'].newVersion, '1.4.3');
     });
   });
 
@@ -280,5 +326,65 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.equal(c.staged['version-bump:version-json'].newVersion, '1.4.3');
       assert.equal(c.staged['version-bump:version-json'].bumpLevel, 'patch');
     });
+  });
+});
+
+// The reader must agree with the writer about where the version lives —
+// otherwise `versionFilePath` closes the reader/writer divergence at the wrap
+// step and reopens it one layer up, in what TC records as the project version.
+describe('project-version honors versionFilePath (#540)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const projectVersion = require('../lib/project-version');
+  const storeMod = require('../lib/store');
+
+  let dir;
+  let savedLoad;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vfp-'));
+    savedLoad = storeMod.projectConfig.load;
+  });
+  afterEach(() => {
+    storeMod.projectConfig.load = savedLoad;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads the configured file ahead of the built-in probe', () => {
+    fs.writeFileSync(path.join(dir, 'VERSION.json'), '{"version":"2.5.0"}');
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
+    storeMod.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+
+    const got = projectVersion.detectVersion(dir);
+    assert.equal(got.version, '2.5.0');
+    assert.equal(got.source, 'VERSION.json');
+  });
+
+  it('falls through to the probe when no path is configured', () => {
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
+    storeMod.projectConfig.load = () => ({});
+
+    const got = projectVersion.detectVersion(dir);
+    assert.equal(got.version, '0.1.0');
+    assert.equal(got.source, 'package.json');
+  });
+
+  it('ignores a configured path that escapes the project root', () => {
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
+    storeMod.projectConfig.load = () => ({ versionFilePath: '../../../etc/passwd.json' });
+
+    const got = projectVersion.detectVersion(dir);
+    assert.equal(got.source, 'package.json', 'falls through rather than reading outside');
+  });
+
+  it('falls through when the configured file is missing or malformed', () => {
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
+    storeMod.projectConfig.load = () => ({ versionFilePath: 'nope.json' });
+    assert.equal(projectVersion.detectVersion(dir).source, 'package.json');
+
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{not json');
+    storeMod.projectConfig.load = () => ({ versionFilePath: 'bad.json' });
+    assert.equal(projectVersion.detectVersion(dir).source, 'package.json');
   });
 });

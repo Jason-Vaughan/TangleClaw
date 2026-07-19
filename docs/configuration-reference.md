@@ -78,6 +78,17 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `quickCommands` | array | `[]` | Project-specific quick command buttons |
 | `actions` | array | `[]` | Custom action buttons |
 | `tags` | array | `[]` | Project tags for filtering |
+| `silentPrime` | boolean | `true` | Deliver the session prime silently rather than as typed input |
+| `versionBumpEnabled` | boolean | `true` | Run the wrap's `version-bump` step. Turn off for projects that manage their own versioning |
+| `versionFilePath` | string\|null | `null` | Explicit version file, relative to the project root (e.g. `VERSION.json`). `null` probes `version.json` then `package.json`. Set it when the file has a different name or case — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump `package.json` instead. Must stay inside the project; a configured path resolves or the step skips, never falls back |
+| `featureIndexEnabled` | boolean | `false` | Maintain `FEATURES.md` during wrap |
+| `projectMapEnabled` | boolean | `false` | Maintain `PROJECT-MAP.md` during wrap |
+| `wrapAutoPrEnabled` | boolean | `true` | After an auto-branched wrap commit, push and open a PR back to the original branch |
+| `wrapSections` | array\|null | `null` | Which continuity wrap-summary sections render. `null` = all of them |
+| `medusaEnabled` | boolean | `false` | Auto-start this project's sessions on the Medusa switchboard |
+| `medusaWake` | boolean | `false` | Wake an idle session on inbound switchboard messages |
+| `defaultLaunchMode` | string | `"default"` | Engine launch-mode key this project launches in by default |
+| `showLaunchModePicker` | boolean | `true` | Show the launch-mode picker instead of launching directly in the default mode |
 
 ### Core Rules (Always `true`)
 

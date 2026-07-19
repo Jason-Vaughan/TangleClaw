@@ -16,8 +16,10 @@ All notable changes to TangleClaw are documented in this file.
   would have caught this was written `if (topReleased && …)`, and its parser returns nothing
   for any changelog whose headings aren't 3-octet `## [X.Y.Z] - YYYY-MM-DD` — so on a
   4-octet scheme the guard skipped *itself* rather than firing. It now distinguishes "no
-  release headings yet" (a first release, which still bumps) from "headings I can't parse"
-  (a scheme this step can't extend safely, which stops). (3) A `bumpLevel` override outside
+  release headings yet" (a first release, which still bumps) from "a version in a scheme I
+  don't recognize" (which stops). The check keys on the version's shape alone, so headings
+  that omit the date or use an en-dash still count as ordinary semver and bump normally.
+  (3) A `bumpLevel` override outside
   `patch`/`minor`/`major` fell through to the heuristic, so asking for `patch` and typing
   `pathc` produced a minor bump with no signal; it now skips and names the bad value. Each
   skip reports why, so an inert step is distinguishable from a satisfied one.

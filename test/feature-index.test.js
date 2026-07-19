@@ -172,7 +172,9 @@ describe('feature-index (#207, chunk 1)', () => {
 
     it('rejects absolute paths and ".." escapes — this field feeds a write path', () => {
       projects.createProject({ name: 'vfp-escape', methodology: 'minimal' });
-      for (const bad of ['/etc/passwd.json', '../outside.json', 'a/../../b.json']) {
+      // '.' resolves to the project root itself: it would save cleanly and then
+      // be refused forever at the write site, silently skipping every wrap.
+      for (const bad of ['/etc/passwd.json', '../outside.json', 'a/../../b.json', '.']) {
         const update = projects.updateProject('vfp-escape', { versionFilePath: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
         assert.ok(update.errors[0].includes('versionFilePath'));
@@ -193,6 +195,26 @@ describe('feature-index (#207, chunk 1)', () => {
       assert.ok(cleared.project);
       assert.equal(store.projectConfig.load(cleared.project.path).versionFilePath, null);
       assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
+    });
+
+    it('accepts an explicit null as a clear', () => {
+      projects.createProject({ name: 'vfp-null', methodology: 'minimal' });
+      projects.updateProject('vfp-null', { versionFilePath: 'VERSION.json' });
+      assert.equal(projects.getProject('vfp-null').versionFilePath, 'VERSION.json');
+
+      const cleared = projects.updateProject('vfp-null', { versionFilePath: null });
+      assert.ok(cleared.project, 'null is a valid clear, not a type error');
+      assert.equal(cleared.errors.length, 0);
+      assert.equal(store.projectConfig.load(cleared.project.path).versionFilePath, null);
+      assert.equal(projects.getProject('vfp-null').versionFilePath, null);
+    });
+
+    it('accepts a nested relative path', () => {
+      projects.createProject({ name: 'vfp-nested', methodology: 'minimal' });
+      const update = projects.updateProject('vfp-nested', { versionFilePath: 'meta/app-version.json' });
+      assert.ok(update.project);
+      assert.equal(update.errors.length, 0);
+      assert.equal(projects.getProject('vfp-nested').versionFilePath, 'meta/app-version.json');
     });
   });
 
