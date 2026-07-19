@@ -2913,7 +2913,7 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
     });
   });
 
-  describe('_compareSemver / _topReleasedVersion (#203)', () => {
+  describe('_compareSemver / _classifyTopRelease (#203)', () => {
     it('_compareSemver orders by major, then minor, then patch', () => {
       const sv = (s) => versionBump._parseSemver(s);
       assert.equal(versionBump._compareSemver(sv('3.16.1'), sv('3.16.2')), -1);
@@ -2923,21 +2923,25 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
       assert.equal(versionBump._compareSemver(sv('2.9.9'), sv('3.0.0')), -1);
     });
 
-    it('_topReleasedVersion returns the first dated release heading', () => {
+    it('_classifyTopRelease returns the newest release heading, not a later one', () => {
       const text = [
         '# Changelog', '',
         '## [Unreleased]', '', '### Added', '- x', '',
         '## [3.16.2] - 2026-05-13', '', '### Fixed', '- y', '',
         '## [3.16.1] - 2026-05-13'
       ].join('\n');
-      assert.deepStrictEqual(versionBump._topReleasedVersion(text), { major: 3, minor: 16, patch: 2 });
+      const top = versionBump._classifyTopRelease(text);
+      assert.equal(top.kind, 'released');
+      assert.deepStrictEqual(top.version, { major: 3, minor: 16, patch: 2 });
     });
 
-    it('_topReleasedVersion is null when no dated release heading exists', () => {
-      assert.equal(versionBump._topReleasedVersion('## [Unreleased]\n### Added\n- only unreleased\n'), null);
-      assert.equal(versionBump._topReleasedVersion(''), null);
-      assert.equal(versionBump._topReleasedVersion(null), null);
-      assert.equal(versionBump._topReleasedVersion(undefined), null);
+    it('_classifyTopRelease reports no release when no release heading exists', () => {
+      // The date is deliberately NOT required to classify a heading as a
+      // release — demanding it is what mis-blamed undated changelogs on their
+      // versioning scheme — so these assert the absence of any heading at all.
+      for (const empty of ['## [Unreleased]\n### Added\n- only unreleased\n', '', null, undefined]) {
+        assert.equal(versionBump._classifyTopRelease(empty).kind, 'none');
+      }
     });
   });
 

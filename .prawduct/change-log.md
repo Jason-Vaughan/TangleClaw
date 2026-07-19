@@ -26,6 +26,64 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
+
+<!-- prawduct: type=fix | chunks=04a | scope=wrap-v2 | status=shipped -->
+
+**Why:** three paths in `version-bump` where the step silently did something other
+than what was asked — the same defect class, found by #540's re-verification from a
+TiLT v2 session. The step only probed lowercase `version.json` before falling back to
+`package.json`, so on a case-sensitive filesystem a `VERSION.json` project resolved
+nothing, fell through, and bumped an unrelated version — writing a bogus release
+heading above the real one. The drift guard that existed to catch exactly that was
+`if (topReleased && …)`, and its parser returns null for any non-3-octet changelog, so
+on the 4-octet scheme that triggers the bug the guard skipped *itself*. And an
+out-of-set `bumpLevel` override fell through to the heuristic, turning a typo into a
+different bump with no signal.
+
+**What:** `versionFilePath` project setting (API-validated, UI text field, rejected if
+absolute or `..`-escaping at both the API and the write site, since the commit step
+flushes whatever it resolves to); a configured path resolves or skips, never falls
+back. New `_classifyTopRelease` replaces the `if (topReleased && …)` guard with an
+exhaustive classification of the newest release heading — `none` (first release,
+bumps), `released` (comparable, drift-checked), `unbumpable` (semver with a
+prerelease/build suffix, ambiguous ordering, stops), `foreign` (another scheme,
+stops). Invalid `bumpLevel` skips naming the bad value.
+
+**Containment is symlink-aware** (SEC-3H8W, closed here). `resolveWithinProject`
+was resolve-lexical, so `linkdir/VERSION.json` — where `linkdir` symlinks out of
+the project — passed both the API validator and the write-site guard, and the
+commit step wrote through it. It now realpaths the deepest existing ancestor and
+re-tests, so a target that doesn't exist yet still resolves while an escape does
+not. Verified against real symlinks, not just unit stubs.
+
+**A fourth change, found by review rather than planned:** the section scanner keyed
+on `## [`, so a changelog in Keep a Changelog's plain style (`## 1.4.2 - date`) had
+no terminator — `_parseUnreleased` ran to EOF and would have swept the whole release
+history into the promoted body, and `_classifyTopRelease` read the file as having no
+releases at all and bumped past the drift guard. `NEXT_HEADING_RE` is now `/^## /`,
+and promotion matches whichever heading style the file already uses rather than
+imposing the bracketed one.
+
+**One function because two predicates kept disagreeing** — worth recording, since
+this cost two Critic rounds. The guard needs to answer "can I compare against this
+heading?" and "is this a scheme I recognize?", and every two-regex version drifted:
+first the strict parser alone (self-skipped on any other format — the original
+fail-open), then a looser companion check (hard-skipped undated headings and blamed
+their "versioning scheme"), then a widened companion (accepted `## [2.0.0-beta.1]`
+as recognized while the parser still couldn't read it, so the wrap fell through the
+first-release branch and skipped the guard — reopening the fail-open one door down,
+which would have written `## [1.0.1]` above it). A single classification can't
+disagree with itself.
+
+**Chunk 04 was split** into 04a/04b/04c; the plan carries the reasoning. 04b (spine +
+fail-closed agent verification) and 04c (per-project wrap config) turned out larger
+than the plan assumed — 04b redefines what `pipelineResult.ok` means, 04c needs a
+per-project step-override mechanism that survives `FRAMEWORK_OWNED_PATHS` template
+syncs. #540's `ask` mode is explicitly descoped to 04b, which owns the drawer.
+
+**Classification:** build
+
 ## 2026-07-18: Phase A Chunk 08 — tc-cleanroom first-run acceptance gate (#618)
 
 <!-- prawduct: type=feature | chunks=08 | scope=prawduct-v2-sunset | status=shipped -->

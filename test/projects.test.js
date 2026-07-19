@@ -1503,6 +1503,58 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [3.0.0] - 2026-05-13\n');
       assert.deepEqual(projects._detectLiveVersion(projPath), { version: '3.0.0', source: 'CHANGELOG.md' });
     });
+
+    // This ladder is separate from `lib/project-version.js`'s and feeds the
+    // #165 self-heal, which WRITES `.tangleclaw/project-version.txt` with the
+    // returned `source`. It originally had no configured-path rung, so a
+    // project with `versionFilePath` set and no released CHANGELOG heading had
+    // its cache overwritten with a false `source: package.json`.
+    it('_detectLiveVersion honors a configured versionFilePath', () => {
+      const projPath = path.join(healDir, 'live-configured-path');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.0.0' }));
+      fs.writeFileSync(path.join(projPath, 'VERSION.json'), JSON.stringify({ version: '9.9.9' }));
+
+      const savedLoad = store.projectConfig.load;
+      try {
+        store.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+
+        // Outranks both probe rungs, and labels itself with the real file.
+        assert.deepEqual(projects._detectLiveVersion(projPath),
+          { version: '9.9.9', source: 'VERSION.json' });
+
+        // But CHANGELOG.md still outranks it — detection is deliberately
+        // changelog-first, and the docs say so.
+        fs.writeFileSync(path.join(projPath, 'CHANGELOG.md'), '## [3.0.0] - 2026-05-13\n');
+        assert.deepEqual(projects._detectLiveVersion(projPath),
+          { version: '3.0.0', source: 'CHANGELOG.md' });
+      } finally {
+        store.projectConfig.load = savedLoad;
+      }
+    });
+
+    it('_detectLiveVersion falls through to the probe when the configured file is unusable', () => {
+      const projPath = path.join(healDir, 'live-configured-bad');
+      fs.mkdirSync(projPath, { recursive: true });
+      fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.0.0' }));
+
+      const savedLoad = store.projectConfig.load;
+      try {
+        // Points at a file that does not exist — detection degrades (the wrap
+        // step refuses instead; that asymmetry is deliberate and documented).
+        store.projectConfig.load = () => ({ versionFilePath: 'nope.json' });
+        assert.deepEqual(projects._detectLiveVersion(projPath),
+          { version: '2.0.0', source: 'version.json' });
+
+        // And an escaping path is ignored rather than read.
+        store.projectConfig.load = () => ({ versionFilePath: '../../etc/passwd.json' });
+        assert.deepEqual(projects._detectLiveVersion(projPath),
+          { version: '2.0.0', source: 'version.json' });
+      } finally {
+        store.projectConfig.load = savedLoad;
+      }
+    });
   });
 
   // ── #103 chunk 2: silentPrime UI toggle (enrichment + updateProject) ──

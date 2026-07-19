@@ -78,6 +78,17 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `quickCommands` | array | `[]` | Project-specific quick command buttons |
 | `actions` | array | `[]` | Custom action buttons |
 | `tags` | array | `[]` | Project tags for filtering |
+| `silentPrime` | boolean | `true` | Deliver the session prime silently rather than as typed input |
+| `versionBumpEnabled` | boolean | `true` | Run the wrap's `version-bump` step. Turn off for projects that manage their own versioning |
+| `versionFilePath` | string\|null | `null` | Explicit version file, relative to the project root (e.g. `VERSION.json`). `null` probes `version.json` then `package.json`. Set it when the file has a different name or case — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump `package.json` instead. Must stay inside the project — enforced after resolving symlinks, at both the API and the write site, since a hand-edited `project.json` never passes through the API. The wrap's version-bump **refuses** if a configured path is unusable — it never falls back to another file. Version *detection* (what the dashboard shows) is more forgiving: it prefers `CHANGELOG.md`, then this file, then the probe, warning and degrading rather than refusing. So an unusable value can show a probe-derived version while the wrap declines to bump |
+| `featureIndexEnabled` | boolean | `false` | Maintain `FEATURES.md` during wrap |
+| `projectMapEnabled` | boolean | `false` | Maintain `PROJECT-MAP.md` during wrap |
+| `wrapAutoPrEnabled` | boolean | `true` | After an auto-branched wrap commit, push and open a PR back to the original branch |
+| `wrapSections` | array\|null | `null` | Which continuity wrap-summary sections render. `null` = all of them |
+| `medusaEnabled` | boolean | `false` | Auto-start this project's sessions on the Medusa switchboard |
+| `medusaWake` | boolean | `false` | Wake an idle session on inbound switchboard messages |
+| `defaultLaunchMode` | string | `"default"` | Engine launch-mode key this project launches in by default |
+| `showLaunchModePicker` | boolean | `true` | Show the launch-mode picker instead of launching directly in the default mode |
 
 ### Core Rules (Always `true`)
 

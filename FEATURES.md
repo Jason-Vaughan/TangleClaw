@@ -91,7 +91,7 @@ fails any auto-stub section older than 14 days.
 - **Wrap step: `ai-content`** — prompts injected into the AI session for changelog / learnings / memory updates. `lib/wrap-steps/ai-content.js`.
 - **Wrap step: `test`** / **`lint`** — test + lint hooks. `lib/wrap-steps/test.js`, `lib/wrap-steps/lint.js`.
 - **Mark Critic Run action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification (label + confirm + toast) landed in #230.
-- **Project version reader** — surfaces `version.json` semver to the UI. `lib/project-version.js`.
+- **Project version reader** — surfaces the project's version to the UI, resolved in order: `CHANGELOG.md`, a configured `versionFilePath`, `version.json`, `package.json`, git tag, then a `0.0.0-dev` fallback. Degrades with a warning rather than refusing. `lib/project-version.js`.
 - **Model status monitor** — polls engine providers (Atlassian / Google status pages) for outage detection. `lib/model-status.js#_pollEngine`, `#startMonitor`.
 
 ## CLI / Tooling

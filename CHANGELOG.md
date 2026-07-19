@@ -4,6 +4,42 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A "Version file path" setting, for projects whose version file isn't `version.json` (#540).**
+  Name the file explicitly (e.g. `VERSION.json`, or a nested `meta/app-version.json`) and the
+  wrap's version bump reads and writes that file and no other. Leave it blank to keep the old
+  behavior — probe `version.json`, then `package.json`. It must be a relative path inside the
+  project, and pointing it at your `package.json` keeps that file's surgical, byte-preserving
+  write rather than reformatting it. "Inside the project" is enforced after following symlinks,
+  so a symlinked directory can't be used to point the wrap's write at a file outside the repo.
+
+### Fixed
+
+- **The wrap's version bump now stops instead of quietly bumping the wrong thing (#540, #571).**
+  Three paths where the step silently did something other than what was asked. (1) It only
+  ever probed lowercase `version.json`, then fell back to `package.json` — so on a
+  case-sensitive filesystem a project whose file is `VERSION.json` resolved nothing, fell
+  through, and bumped an unrelated `package.json` version, inserting a bogus release heading
+  above the real one. A new **Version file path** setting names the file explicitly; a
+  configured path resolves or the step skips, and never falls back. (2) The drift guard that
+  would have caught this was written `if (topReleased && …)`, and its parser returns nothing
+  for any changelog whose headings aren't 3-octet `## [X.Y.Z] - YYYY-MM-DD` — so on a
+  4-octet scheme the guard skipped *itself* rather than firing. It now distinguishes "no
+  release headings yet" (a first release, which still bumps) from "a version in a scheme I
+  don't recognize" (which stops). The check keys on the version's shape alone, so headings
+  that omit the date or use an en-dash still count as ordinary semver and bump normally.
+  (2b) Relatedly, the wrap now reads changelogs written in Keep a Changelog's plain style
+  (`## 1.4.2 - 2026-05-01`, no link-reference brackets). Previously the section scanner keyed
+  on the bracket, so such a file had no section terminator at all: the `[Unreleased]` block ran
+  to end-of-file and a bump would have swept the project's entire release history into the body
+  it promoted under one new heading. Promotion also now matches whichever heading style the
+  changelog already uses, instead of inserting a bracketed heading above bare ones.
+  (3) A `bumpLevel` override outside
+  `patch`/`minor`/`major` fell through to the heuristic, so asking for `patch` and typing
+  `pathc` produced a minor bump with no signal; it now skips and names the bad value. Each
+  skip reports why, so an inert step is distinguishable from a satisfied one.
+
 ## [4.26.0] - 2026-07-18
 
 ### Changed
