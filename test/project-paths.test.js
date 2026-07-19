@@ -12,7 +12,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { resolveWithinProject } = require('../lib/project-paths');
+const { resolveWithinProject, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
 
 const ROOT = '/tmp/proj';
 
@@ -78,5 +78,57 @@ describe('resolveWithinProject', () => {
       assert.ok(!rel.startsWith('..') && !path.isAbsolute(rel) && rel !== '',
         `accepted ${JSON.stringify(input)} but it resolved to ${got.path}`);
     }
+  });
+});
+
+describe('normalizeConfiguredPath', () => {
+  it('trims a real value', () => {
+    assert.equal(normalizeConfiguredPath('  VERSION.json  '), 'VERSION.json');
+  });
+
+  it('treats blank and non-string as "not configured", not as a value', () => {
+    // Every read site used to inline this test, and they had begun to disagree
+    // about whether "  " means configured-but-empty or not-configured.
+    for (const blank of ['', '   ', '\t\n', null, undefined, 0, false, {}, []]) {
+      assert.equal(normalizeConfiguredPath(blank), null,
+        `expected null for ${JSON.stringify(blank)}`);
+    }
+  });
+});
+
+describe('resolveConfiguredFile', () => {
+  // The three-way return is load-bearing: it is what separates "the wrap
+  // refuses to bump" from "detection degrades to its probe". Both callers
+  // branch on `configured` and `ok` independently, so both must be assertable
+  // here rather than only through their consumers.
+  it('reports not-configured when the key is absent or blank', () => {
+    for (const cfg of [null, {}, { versionFilePath: null }, { versionFilePath: '  ' }]) {
+      const got = resolveConfiguredFile(ROOT, cfg, 'versionFilePath');
+      assert.equal(got.configured, false, `expected not-configured for ${JSON.stringify(cfg)}`);
+      assert.equal(got.ok, undefined, 'not-configured carries no ok verdict to branch on');
+    }
+  });
+
+  it('reports configured + ok with the resolved absolute path', () => {
+    const got = resolveConfiguredFile(ROOT, { versionFilePath: ' meta/VERSION.json ' }, 'versionFilePath');
+    assert.equal(got.configured, true);
+    assert.equal(got.ok, true);
+    assert.equal(got.raw, 'meta/VERSION.json', 'raw is the trimmed value, for messages');
+    assert.equal(got.path, path.resolve('/tmp/proj/meta/VERSION.json'));
+  });
+
+  it('reports configured + not-ok with a composable reason, never a path', () => {
+    const got = resolveConfiguredFile(ROOT, { versionFilePath: '../escape.json' }, 'versionFilePath');
+    assert.equal(got.configured, true);
+    assert.equal(got.ok, false);
+    assert.equal(got.raw, '../escape.json', 'names what the operator actually wrote');
+    assert.match(got.reason, /resolves outside the project root/);
+    assert.equal(got.path, undefined, 'a refused value must not hand back a usable path');
+  });
+
+  it('reads whichever key it is given', () => {
+    const got = resolveConfiguredFile(ROOT, { someOtherPath: 'a.json' }, 'someOtherPath');
+    assert.equal(got.configured, true);
+    assert.equal(got.ok, true);
   });
 });
