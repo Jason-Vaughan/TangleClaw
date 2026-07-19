@@ -14,6 +14,11 @@
 //     returns null for ANY changelog whose headings aren't 3-octet
 //     `## [X.Y.Z] - YYYY-MM-DD`. So on a 4-octet scheme the guard skipped
 //     itself rather than firing — the one check that would have caught (1).
+//     Fixed twice: the first attempt used two independent predicates for
+//     "comparable?" and "foreign?", which disagreed on both undated headings
+//     (hard-skipping valid projects) and prerelease ones (falling through to
+//     the bump, reopening the fail-open). `_classifyTopRelease` is now the
+//     single source both questions are answered from.
 //  3. An out-of-set `bumpLevel` override fell through to the heuristic, so an
 //     operator who asked for patch and typo'd got a minor bump and no signal.
 
@@ -248,32 +253,73 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.deepEqual(c.staged, {});
     });
 
-    it('_hasForeignSchemeHeadings keys on the version shape, not the whole heading', () => {
-      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_4OCTET), true,
-        '4-octet version → a scheme this step cannot extend');
-      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_FIRST_RELEASE), false,
-        'only [Unreleased] → legitimate first release');
-      assert.equal(vb._hasForeignSchemeHeadings(CHANGELOG_3OCTET), false,
-        'ordinary semver headings are recognized, not foreign');
+    it('_classifyTopRelease separates every reason the top heading may not compare', () => {
+      assert.equal(vb._classifyTopRelease(CHANGELOG_4OCTET).kind, 'foreign');
+      assert.equal(vb._classifyTopRelease(CHANGELOG_FIRST_RELEASE).kind, 'none');
+      assert.equal(vb._classifyTopRelease(CHANGELOG_3OCTET).kind, 'released');
+      assert.deepEqual(vb._classifyTopRelease(CHANGELOG_3OCTET).version,
+        { major: 1, minor: 4, patch: 2 });
     });
 
-    // The guard must be narrower than "anything _topReleasedVersion rejects".
-    // That parser also demands ` - YYYY-MM-DD`, so keying the guard on it would
-    // hard-skip projects whose versions are ordinary semver but whose headings
-    // are formatted differently — and blame their "versioning scheme".
+    // Ordinary semver formatted differently is still comparable — demanding a
+    // date is what mis-blamed these projects' "versioning scheme".
     for (const [label, heading] of [
       ['no date', '## [1.4.2]'],
-      ['en-dash separator', '## [1.4.2] – 2026-05-01'],
-      ['trailing annotation', '## [1.4.2] - 2026-05-01 (hotfix)'],
-      ['unreleased with trailing text', '## [Unreleased] - TBD'],
-      ['prerelease tag', '## [1.4.2-beta.1] - 2026-05-01'],
-      ['build metadata', '## [1.4.2+build.5] - 2026-05-01']
+      ['en-dash separator', '## [1.4.2] \u2013 2026-05-01'],
+      ['trailing annotation', '## [1.4.2] - 2026-05-01 (hotfix)']
     ]) {
-      it(`does not treat a 3-octet heading with ${label} as a foreign scheme`, () => {
+      it(`treats a 3-octet heading with ${label} as comparable`, () => {
         const text = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n${heading}\n\n### Fixed\n- y\n`;
-        assert.equal(vb._hasForeignSchemeHeadings(text), false);
+        const top = vb._classifyTopRelease(text);
+        assert.equal(top.kind, 'released');
+        assert.deepEqual(top.version, { major: 1, minor: 4, patch: 2 });
       });
     }
+
+    it('does not read `## [Unreleased] - TBD` as a release heading', () => {
+      const text = '# Changelog\n\n## [Unreleased] - TBD\n\n### Fixed\n- x\n';
+      assert.equal(vb._classifyTopRelease(text).kind, 'none');
+    });
+
+    // Prerelease/build suffixes are valid semver but ordering against a plain
+    // version is ambiguous, so they are their own stop — NOT 'none', which
+    // would skip the drift guard entirely and let the bump write above them.
+    for (const [label, heading] of [
+      ['prerelease', '## [2.0.0-beta.1] - 2026-05-01'],
+      ['build metadata', '## [2.0.0+build.5] - 2026-05-01'],
+      ['both', '## [2.0.0-rc.1+build.5] - 2026-05-01']
+    ]) {
+      it(`classifies a ${label} heading as unbumpable, not none`, () => {
+        const text = `# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n${heading}\n`;
+        assert.equal(vb._classifyTopRelease(text).kind, 'unbumpable');
+      });
+    }
+
+    it('run() refuses rather than writing a lower version above a prerelease', async () => {
+      // The regression the classifier exists to prevent: a heading that is
+      // neither comparable nor foreign used to fall through to the bump,
+      // writing `## [1.0.1]` directly above `## [2.0.0-beta.1]`.
+      const text = '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n## [2.0.0-beta.1] - 2026-05-01\n';
+      vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('version.json') ? '{"version":"1.0.0"}' : text);
+
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'skipped');
+      assert.match(r.output.reason, /prerelease or build suffix/);
+      assert.match(r.output.reason, /2\.0\.0-beta\.1/, 'names the heading it stopped on');
+      assert.deepEqual(c.staged, {}, 'nothing staged above the prerelease');
+    });
+
+    it('names the offending heading when the scheme is foreign', async () => {
+      vb._internal.existsSync = (p) => p.endsWith('package.json') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? PKG_UNRELATED : CHANGELOG_4OCTET);
+
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'skipped');
+      assert.match(r.output.reason, /2\.85\.0\.41/);
+    });
 
     it('still bumps a project whose headings omit the date', async () => {
       const noDate = '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- a bug\n\n## [1.4.2]\n\n### Fixed\n- old\n';

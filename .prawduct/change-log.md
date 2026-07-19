@@ -44,13 +44,22 @@ different bump with no signal.
 **What:** `versionFilePath` project setting (API-validated, UI text field, rejected if
 absolute or `..`-escaping at both the API and the write site, since the commit step
 flushes whatever it resolves to); a configured path resolves or skips, never falls
-back. New `_hasForeignSchemeHeadings` splits the two reasons `_topReleasedVersion`
-returns null — no headings yet (first release, still bumps) vs a version in another
-scheme (stops). It keys on the version's shape alone, so a heading that omits the
-date or uses an en-dash is still recognized as ordinary semver; keying it on
-everything `_topReleasedVersion` rejects would have hard-skipped those projects and
-blamed their "versioning scheme". Invalid `bumpLevel` skips naming the bad value.
-28 test cases, 7 of which fail against the prior code.
+back. New `_classifyTopRelease` replaces the `if (topReleased && …)` guard with an
+exhaustive classification of the newest release heading — `none` (first release,
+bumps), `released` (comparable, drift-checked), `unbumpable` (semver with a
+prerelease/build suffix, ambiguous ordering, stops), `foreign` (another scheme,
+stops). Invalid `bumpLevel` skips naming the bad value.
+
+**One function because two predicates kept disagreeing** — worth recording, since
+this cost two Critic rounds. The guard needs to answer "can I compare against this
+heading?" and "is this a scheme I recognize?", and every two-regex version drifted:
+first the strict parser alone (self-skipped on any other format — the original
+fail-open), then a looser companion check (hard-skipped undated headings and blamed
+their "versioning scheme"), then a widened companion (accepted `## [2.0.0-beta.1]`
+as recognized while the parser still couldn't read it, so the wrap fell through the
+first-release branch and skipped the guard — reopening the fail-open one door down,
+which would have written `## [1.0.1]` above it). A single classification can't
+disagree with itself.
 
 **Chunk 04 was split** into 04a/04b/04c; the plan carries the reasoning. 04b (spine +
 fail-closed agent verification) and 04c (per-project wrap config) turned out larger
