@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.25.2] - 2026-07-18
+
 ### Fixed
 
 - **Create Project opened as a full-width bottom drawer, running off-screen on a phone** (#623). The dialog was the landing page's only remaining bottom sheet (`.drawer`, pinned to the bottom edge, capped at 70vh), so its fields ran past the bottom of a phone screen. It now uses the same centered `.modal-backdrop` / `.modal-content` pattern as every other dialog: centered, capped at 90% of viewport height, with the header and step dots pinned while the body scrolls internally, so Back/Next stay reachable without pinch-zoom at every step. Also removed the bottom-sheet grab handle (undraggable on a centered modal), neutralized the drawer-era horizontal padding on the header and step dots so they align with the form fields, and guarded the backdrop click — nesting the dialog inside the backdrop would otherwise have dismissed it on every click inside the form.

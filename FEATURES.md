@@ -162,3 +162,7 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `deploy/cleanroom/compose.yaml`. <!-- describe -->
 - **TBD** — touched in this session: `deploy/cleanroom/provision.sh`. <!-- describe -->
 - **TBD** — touched in this session: `test/cleanroom-compose.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-18)
+
+- **TBD** — touched in this session: `test/create-project-modal.test.js`. <!-- describe -->
