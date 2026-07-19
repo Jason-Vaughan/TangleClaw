@@ -1802,6 +1802,38 @@ body {
   transition: transform 0.2s;
 }
 .modal-backdrop.open .modal-content { transform: scale(1); }
+
+/* ── Create Project modal (#623) ──
+   Was a full-width bottom drawer (max-height 70vh, pinned to the bottom edge)
+   whose fields ran off the bottom of a phone screen. Now the same centered modal
+   every other dialog uses, with the settings-modal flex split: header + step dots
+   stay put while the body scrolls, so the fields and their Back/Next buttons are
+   reachable without page-zoom.
+   Two-class selector matches the `.settings-modal` convention and keeps the rule
+   winning on specificity if this block is ever moved above the base
+   `.modal-content` (which currently sits earlier). */
+.modal-content.create-modal {
+  /* Wider than the confirmation modals: this one carries form fields and an
+     engine/methodology list, not one line of text. */
+  max-width: 440px;
+  max-height: 90vh;
+  /* The inner body owns the scroll, so the container must not also scroll. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-content.create-modal > .create-modal-header,
+.modal-content.create-modal > .steps-row {
+  flex-shrink: 0;
+}
+.modal-content.create-modal > .create-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;   /* lets the flex child shrink below content height so it can scroll */
+  overflow-y: auto;
+  /* keep the scrollbar off the controls */
+  padding-right: 4px;
+  margin-right: -4px;
+}
 .modal-title {
   font-size: 17px;
   font-weight: 700;
@@ -1862,54 +1894,18 @@ body {
   font-style: italic;
 }
 
-/* ── Bottom-Sheet Drawer ── */
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: 290;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s;
-}
-.drawer-backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-.drawer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 300;
-  background: var(--card-bg);
-  border: 1px solid var(--elevated-bg);
-  border-radius: var(--radius-modal) var(--radius-modal) 0 0;
-  max-height: 70vh;
-  overflow-y: auto;
-  transform: translateY(100%);
-  transition: transform 0.3s ease;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-.drawer.open { transform: translateY(0); }
-.drawer-handle {
-  width: 40px;
-  height: 4px;
-  background: var(--elevated-bg);
-  border-radius: 2px;
-  margin: 12px auto 8px;
-}
-.drawer-header {
+/* ── Create Project modal chrome (header / title / body) ── */
+.create-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 12px;
+  padding-bottom: 12px;
 }
-.drawer-title {
+.create-modal-title {
   font-size: 16px;
   font-weight: 600;
 }
-.drawer-body { padding: 0 16px 16px; }
+.create-modal-body { padding-bottom: 4px; }
 
 /* ── Form Elements ── */
 .form-group {
@@ -2126,7 +2122,7 @@ body {
 .steps-row {
   display: flex;
   gap: 4px;
-  padding: 0 16px 12px;
+  padding-bottom: 12px;
 }
 .step-dot {
   width: 8px;

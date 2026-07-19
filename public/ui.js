@@ -37,7 +37,7 @@ function renderProjects() {
     grid.innerHTML = `<div class="empty-state">
       <h2>No projects yet</h2>
       <p>Create your first project to get started with AI-assisted development.</p>
-      <button class="btn btn-primary" onclick="openCreateDrawer()">+ Create Project</button>
+      <button class="btn btn-primary" onclick="openCreateModal()">+ Create Project</button>
     </div>`;
     return;
   }
@@ -1584,7 +1584,7 @@ async function saveGlobalSettings() {
 let createStep = 0;
 let createData = { name: '', engine: '', methodology: '', tags: '' };
 
-function openCreateDrawer() {
+function openCreateModal() {
   createStep = 0;
   createData = {
     name: '',
@@ -1593,13 +1593,13 @@ function openCreateDrawer() {
     tags: ''
   };
   renderCreateStep();
+  // Only the backdrop carries `.open` — the content's scale-in transition is
+  // driven by `.modal-backdrop.open .modal-content` (#623).
   document.getElementById('createBackdrop').classList.add('open');
-  document.getElementById('createDrawer').classList.add('open');
 }
 
-function closeCreateDrawer() {
+function closeCreateModal() {
   document.getElementById('createBackdrop').classList.remove('open');
-  document.getElementById('createDrawer').classList.remove('open');
 }
 
 function renderCreateStep() {
@@ -1755,7 +1755,7 @@ async function submitCreate() {
     setTimeout(() => { toast.classList.remove('visible'); }, 8000);
   }
 
-  closeCreateDrawer();
+  closeCreateModal();
   await loadProjects();
 
   // Auto-launch session so the user lands in an active terminal
@@ -3358,9 +3358,11 @@ $('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
 $('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);
 $('rulesResetModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeRulesResetModal(); });
 // filterBtn removed — filter input is always visible inline
-$('newBtn').addEventListener('click', openCreateDrawer);
-$('createClose').addEventListener('click', closeCreateDrawer);
-$('createBackdrop').addEventListener('click', closeCreateDrawer);
+$('newBtn').addEventListener('click', openCreateModal);
+$('createClose').addEventListener('click', closeCreateModal);
+// The dialog nests INSIDE the backdrop, so an unguarded handler would close on
+// every click inside the form. Same target guard the other modals use.
+$('createBackdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeCreateModal(); });
 $('deleteCancelBtn').addEventListener('click', closeDelete);
 $('deleteConfirmInput').addEventListener('input', onDeleteConfirmInput);
 $('deleteConfirmBtn').addEventListener('click', confirmDelete);
