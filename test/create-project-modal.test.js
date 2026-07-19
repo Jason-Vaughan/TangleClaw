@@ -49,13 +49,13 @@ describe('Create Project modal (#623)', () => {
     });
 
     it('gives the dialog the create-modal content class', () => {
-      assert.match(html, /class="modal-content create-modal"[^>]*id="createDrawer"/,
+      assert.match(html, /class="modal-content create-modal"[^>]*id="createModal"/,
         'the dialog must use .modal-content.create-modal');
     });
 
     it('nests the dialog INSIDE the backdrop (this is what centers it)', () => {
       const backdrop = html.indexOf('id="createBackdrop"');
-      const dialog = html.indexOf('id="createDrawer"');
+      const dialog = html.indexOf('id="createModal"');
       const closingDiv = html.indexOf('</div>', dialog);
       assert.ok(backdrop < dialog, 'dialog must come after the backdrop opening tag');
       assert.ok(dialog < closingDiv, 'dialog must be nested, not a sibling');
@@ -71,7 +71,7 @@ describe('Create Project modal (#623)', () => {
     });
 
     it('keeps the accessible dialog semantics', () => {
-      const idx = html.indexOf('id="createDrawer"');
+      const idx = html.indexOf('id="createModal"');
       const openTag = html.slice(html.lastIndexOf('<', idx), html.indexOf('>', idx) + 1);
       assert.match(openTag, /role="dialog"/);
       assert.match(openTag, /aria-modal="true"/);
@@ -105,7 +105,7 @@ describe('Create Project modal (#623)', () => {
     });
 
     it('makes the body the scrolling region', () => {
-      const start = css.indexOf('.modal-content.create-modal > .drawer-body');
+      const start = css.indexOf('.modal-content.create-modal > .create-modal-body');
       assert.notEqual(start, -1);
       const body = css.slice(start, css.indexOf('}', start));
       assert.match(body, /overflow-y:\s*auto/);
@@ -113,15 +113,33 @@ describe('Create Project modal (#623)', () => {
         'a flex child needs min-height:0 to shrink below content height and scroll');
     });
 
-    it('neutralizes the drawer-era horizontal padding on header and steps', () => {
-      // Without this the header and step dots sit 16px inside the body's
-      // left edge, because .drawer-header/.steps-row still carry `0 16px`.
-      const start = css.indexOf('.modal-content.create-modal > .drawer-header');
+    it('keeps the header and step dots from shrinking when the body scrolls', () => {
+      const start = css.indexOf('.modal-content.create-modal > .create-modal-header');
       assert.notEqual(start, -1);
       const rule = css.slice(start, css.indexOf('}', start));
-      assert.match(rule, /padding-left:\s*0/);
-      assert.match(rule, /padding-right:\s*0/);
-      assert.match(rule, /flex-shrink:\s*0/, 'header must not shrink when the body scrolls');
+      assert.match(rule, /flex-shrink:\s*0/);
+    });
+
+    it('carries no drawer-era horizontal inset on the modal children', () => {
+      // The old `.drawer-header`/`.drawer-body`/`.steps-row` rules used
+      // `padding: 0 16px` because the bottom sheet had no padding of its own.
+      // The modal container owns that inset now, so a surviving `0 16px` would
+      // push the header 16px inside the form fields' left edge.
+      for (const sel of ['.create-modal-header', '.create-modal-body', '.steps-row']) {
+        const start = css.indexOf('\n' + sel + ' {');
+        assert.notEqual(start, -1, sel + ' rule must exist');
+        const rule = css.slice(start, css.indexOf('}', start));
+        assert.doesNotMatch(rule, /padding:\s*0\s+16px/,
+          sel + ' must not keep the bottom-sheet horizontal inset');
+      }
+    });
+
+    it('removes the bottom-sheet rules that no longer have a consumer', () => {
+      // index.html no longer uses them and session.html loads session.css
+      // (which carries its own copies), so these matched nothing in style.css.
+      for (const sel of ['\n.drawer {', '\n.drawer.open', '\n.drawer-backdrop', '\n.drawer-handle']) {
+        assert.equal(css.indexOf(sel), -1, 'dead rule must be deleted: ' + sel.trim());
+      }
     });
 
     it('is declared with a two-class selector so a reorder cannot break it', () => {
@@ -134,8 +152,12 @@ describe('Create Project modal (#623)', () => {
       const createIdx = css.indexOf('.modal-content.create-modal {');
       assert.notEqual(baseIdx, -1);
       assert.notEqual(createIdx, -1);
-      assert.match(css.slice(createIdx, createIdx + 30), /^\.modal-content\.create-modal/,
-        'must be the two-class form, not a bare .create-modal');
+      // The real property: no BARE `.create-modal {` selector exists. That is
+      // what would silently start losing to the base rule after a reorder —
+      // asserting the two-class string at an index derived from that same
+      // string could not fail.
+      assert.equal(css.search(/(^|[\s,}])\.create-modal\s*\{/m), -1,
+        'must be the two-class form (.modal-content.create-modal), not a bare .create-modal');
     });
   });
 
@@ -143,9 +165,9 @@ describe('Create Project modal (#623)', () => {
     it('toggles .open on the backdrop only', () => {
       // The content's transition is driven by `.modal-backdrop.open
       // .modal-content`; adding .open to the content too would be dead state.
-      const open = ui.slice(ui.indexOf('function openCreateDrawer('), ui.indexOf('function closeCreateDrawer('));
+      const open = ui.slice(ui.indexOf('function openCreateModal('), ui.indexOf('function closeCreateModal('));
       assert.match(open, /getElementById\('createBackdrop'\)\.classList\.add\('open'\)/);
-      assert.doesNotMatch(open, /getElementById\('createDrawer'\)\.classList\.add\('open'\)/,
+      assert.doesNotMatch(open, /getElementById\('createModal'\)\.classList\.add\('open'\)/,
         'the nested content must not carry .open');
     });
 

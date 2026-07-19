@@ -45,9 +45,8 @@ header + step dots `flex-shrink: 0`, `#createBody` scrolls (`flex: 1 1 auto`,
 `min-height: 0`, `overflow-y: auto`); `openCreateDrawer`/`closeCreateDrawer` now toggle
 `.open` on the backdrop only (the content's scale-in comes from
 `.modal-backdrop.open .modal-content`); backdrop click guarded with
-`e.target === e.currentTarget`. `.drawer` and `.drawer-backdrop` are gone from
-`index.html` (still used by session.html's master/peek/wrap drawers, so the CSS is not
-orphaned).
+`e.target === e.currentTarget`. `.drawer`, `.drawer.open`, `.drawer-backdrop`, `.drawer-backdrop.open` and
+`.drawer-handle` are DELETED from `style.css`.
 
 **Two defects found while building, neither visible from the report:**
 1. `.drawer-header` and `.steps-row` carry `padding: 0 16px` from the bottom-sheet era,
@@ -65,6 +64,27 @@ against position. The test asserting it failed, which is how it surfaced. Commen
 test both rewritten to state the real reason: order-independence, so the rule keeps
 winning if the block is ever moved. Same phantom-citation class the
 verify-citations-against-diff preference exists to catch.
+
+**Critic (cumulative, 3-reviewer roster — 1 blocking / 3 warning / 4 notes):** BLOCKING was
+`verify-chunk-refs` exiting 1 on an unrelated citation in the new Phase B plan — the hook
+parses a backticked `file.js:310` as a literal path; reformatted to `` `file.js` (line 310) ``.
+W-1 the reviewers DISAGREED on whether `style.css`'s `.drawer*` rules were dead: correctness
+said yes, design said they were still shared with session.html. Resolved by checking —
+`session.html` loads ONLY `session.css`, which carries its own `.drawer-backdrop`/`.drawer-handle`,
+so correctness was right and MY change-log claim ("still used by session.html's drawers") was a
+phantom citation. Five rules deleted. The two findings then collapsed into one better outcome:
+`.drawer-header`/`.drawer-title`/`.drawer-body` had exactly ONE consumer left, so renaming them
+to `.create-modal-*` DELETED the padding-neutralization override rather than documenting it, and
+`openCreateDrawer`/`closeCreateDrawer`/`#createDrawer` became `…Modal`. W-2 the safe-area
+`padding-bottom: max(20px, env(...))` was inert (a vertically-centered 90vh-capped modal cannot
+reach the home indicator) and its comment cited landscape notches, which are left/right insets —
+removed. W-3 `interaction-design.md` §2.5 still specified the bottom sheet while its own §5.2 rule
+("focused input = modal") already predicted the new behavior — corrected. NOTE: one test was
+tautological (derived its index from the string it then asserted) — rewritten to assert the real
+property, that no bare `.create-modal {` selector exists. NOTE carried to backlog: the cache test
+is monotone (`>= 54`) so it pins this bump but cannot catch the NEXT missed one — the failure that
+has now recurred at #246, #271, #427 and here. Accessibility gaps (no Escape/focus-trap, closed
+modals still tabbable) are app-wide `.modal-backdrop` properties, not introduced here.
 
 **Cache:** `sw.js` CACHE_NAME bumped `tangleclaw-v3-53` → `v3-54`. Without it the
 operator — the only person who reported the bug — keeps being served the old UI and the

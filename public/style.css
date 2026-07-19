@@ -1804,46 +1804,34 @@ body {
 .modal-backdrop.open .modal-content { transform: scale(1); }
 
 /* ── Create Project modal (#623) ──
-   Was a full-width bottom drawer (`.drawer`, max-height 70vh) whose fields ran
-   off the bottom of a phone screen. Now the same centered modal every other
-   dialog uses, with the settings-modal flex trick: header + step dots stay put
-   while the body scrolls, so the fields and their Back/Next buttons are always
+   Was a full-width bottom drawer (max-height 70vh, pinned to the bottom edge)
+   whose fields ran off the bottom of a phone screen. Now the same centered modal
+   every other dialog uses, with the settings-modal flex split: header + step dots
+   stay put while the body scrolls, so the fields and their Back/Next buttons are
    reachable without page-zoom.
-   Two-class selector on purpose. Here it does NOT decide the cascade — this
-   block sits after the base `.modal-content { max-width: 380px; overflow-y:
-   auto }`, so a single-class `.create-modal` would already win on source order.
-   It is written this way to match `.modal-content.settings-modal` (where the
-   ordering IS load-bearing) and so the rule keeps winning if this block is ever
-   moved above the base. Don't "simplify" it to one class. */
+   Two-class selector matches the `.settings-modal` convention and keeps the rule
+   winning on specificity if this block is ever moved above the base
+   `.modal-content` (which currently sits earlier). */
 .modal-content.create-modal {
-  /* A touch wider than the confirmation modals: this one carries form fields
-     and an engine/methodology list, not one line of text. */
+  /* Wider than the confirmation modals: this one carries form fields and an
+     engine/methodology list, not one line of text. */
   max-width: 440px;
   max-height: 90vh;
-  /* The inner body owns the scroll here, so the container must not also scroll. */
+  /* The inner body owns the scroll, so the container must not also scroll. */
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* The drawer sat above the safe area; a centered modal doesn't need the
-     inset, but keep clear of notches on short landscape viewports. */
-  padding: 20px 20px max(20px, env(safe-area-inset-bottom, 0px));
 }
-.modal-content.create-modal > .drawer-header,
+.modal-content.create-modal > .create-modal-header,
 .modal-content.create-modal > .steps-row {
   flex-shrink: 0;
-  /* `.drawer-header` / `.steps-row` carry `padding: 0 16px` from the bottom-sheet
-     era, where the drawer itself had no horizontal padding. The modal container
-     now owns that inset, so keep the vertical rhythm and drop the horizontal —
-     otherwise the header and step dots sit 16px inside the body's left edge. */
-  padding-left: 0;
-  padding-right: 0;
 }
-.modal-content.create-modal > .drawer-body {
+.modal-content.create-modal > .create-modal-body {
   flex: 1 1 auto;
   min-height: 0;   /* lets the flex child shrink below content height so it can scroll */
   overflow-y: auto;
   /* keep the scrollbar off the controls */
-  padding: 0 4px 0 0;
+  padding-right: 4px;
   margin-right: -4px;
 }
 .modal-title {
@@ -1907,53 +1895,17 @@ body {
 }
 
 /* ── Bottom-Sheet Drawer ── */
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: 290;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s;
-}
-.drawer-backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-.drawer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 300;
-  background: var(--card-bg);
-  border: 1px solid var(--elevated-bg);
-  border-radius: var(--radius-modal) var(--radius-modal) 0 0;
-  max-height: 70vh;
-  overflow-y: auto;
-  transform: translateY(100%);
-  transition: transform 0.3s ease;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-.drawer.open { transform: translateY(0); }
-.drawer-handle {
-  width: 40px;
-  height: 4px;
-  background: var(--elevated-bg);
-  border-radius: 2px;
-  margin: 12px auto 8px;
-}
-.drawer-header {
+.create-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 12px;
+  padding-bottom: 12px;
 }
-.drawer-title {
+.create-modal-title {
   font-size: 16px;
   font-weight: 600;
 }
-.drawer-body { padding: 0 16px 16px; }
+.create-modal-body { padding-bottom: 4px; }
 
 /* ── Form Elements ── */
 .form-group {
@@ -2170,7 +2122,7 @@ body {
 .steps-row {
   display: flex;
   gap: 4px;
-  padding: 0 16px 12px;
+  padding-bottom: 12px;
 }
 .step-dot {
   width: 8px;

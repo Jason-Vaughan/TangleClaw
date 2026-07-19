@@ -391,9 +391,9 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <!-- Create Project Modal — centered, like every other dialog. Was a
        full-width bottom drawer whose options ran off-screen on a phone (#623). -->
   <div class="modal-backdrop" id="createBackdrop">
-    <div class="modal-content create-modal" id="createDrawer" role="dialog" aria-label="Create project" aria-modal="true">
-      <div class="drawer-header">
-        <h2 class="drawer-title" id="createTitle">New Project</h2>
+    <div class="modal-content create-modal" id="createModal" role="dialog" aria-label="Create project" aria-modal="true">
+      <div class="create-modal-header">
+        <h2 class="create-modal-title" id="createTitle">New Project</h2>
         <button class="btn btn-small btn-icon" id="createClose" aria-label="Close">&times;</button>
       </div>
       <div class="steps-row" id="createSteps">
@@ -401,7 +401,7 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <div class="step-dot"></div>
         <div class="step-dot"></div>
       </div>
-      <div class="drawer-body" id="createBody"></div>
+      <div class="create-modal-body" id="createBody"></div>
     </div>
   </div>
 
