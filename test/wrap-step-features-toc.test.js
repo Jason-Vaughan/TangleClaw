@@ -929,9 +929,11 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     let createdProject;
     let firstSha;
 
-    // Driven against a REAL git repo, not a stubbed execSync: the behavior under
-    // test IS git's `--diff-filter=d` semantics, and a stub could only prove the
-    // flag string was passed, never that it excludes what we think it excludes.
+    // Driven against a REAL git repo, not a stubbed execSync. The bug is a
+    // disagreement between what a range diff reports and what is actually on
+    // disk, so a stub that hand-writes the diff output would be asserting the
+    // very relationship under test — it could show the guard filtering a list,
+    // never that the list git really produces contains a doomed path.
     before(() => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-features-toc-deleted-'));
       store._setBasePath(path.join(tmpDir, 'tangleclaw'));
@@ -1049,6 +1051,11 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.equal(result.ok, true, 'never blocks');
       assert.equal(result.status, 'skipped');
       assert.equal(staged['features-toc:append'], undefined, 'nothing staged when there is no drift');
+      // Pin the specific reason, not just the shared prefix: reporting an
+      // all-deletions session as "already indexed" would be a false statement
+      // about why nothing happened.
+      assert.match(result.output.reason, /every touched file was deleted/,
+        'the skip reason must name deletion as the cause');
     });
   });
 });
