@@ -138,6 +138,23 @@ describe('startup session-rule delivery (#595)', () => {
       assert.notEqual(sessions.buildStartupRulesSection(project.id).digest, first);
     });
 
+    it('orders rules deterministically when they share a created_at timestamp', () => {
+      // SQLite's datetime('now') is second-resolution, so a burst of rules gets
+      // identical timestamps. Without an id tiebreaker their order — and hence
+      // the digest identifying the rule set — would rest on unspecified
+      // behavior rather than on the query.
+      const ids = [];
+      for (let i = 0; i < 6; i++) {
+        ids.push(store.sessionRules.create({ content: `burst rule ${i}`, projectId: project.id }).id);
+      }
+      const stamps = new Set(store.sessionRules.listActiveForProject(project.id).map((r) => r.createdAt));
+      assert.equal(stamps.size, 1, 'precondition: the burst must share one timestamp for this test to mean anything');
+
+      const section = sessions.buildStartupRulesSection(project.id);
+      assert.deepEqual(section.ruleIds, ids, 'ties must break by id, in creation order');
+      assert.equal(sessions.buildStartupRulesSection(project.id).digest, section.digest);
+    });
+
     it('returns an empty section rather than throwing when the rules query fails', () => {
       const original = store.sessionRules.listActiveForProject;
       store.sessionRules.listActiveForProject = () => { throw new Error('db exploded'); };
@@ -225,7 +242,7 @@ describe('startup session-rule delivery (#595)', () => {
     it('records a successful delivery with its rule ids, digest and channel', () => {
       const rec = store.sessionRuleDeliveries.record({
         sessionId: 101, projectId: project.id, engineId: 'claude',
-        channel: 'prime-file', delivered: true, ruleIds: [7, 9], digest: 'abc123'
+        channel: 'prime-file', outcome: 'delivered', ruleIds: [7, 9], digest: 'abc123'
       });
 
       assert.equal(rec.delivered, true);
@@ -240,37 +257,70 @@ describe('startup session-rule delivery (#595)', () => {
     it('records a FAILED delivery with its reason — the row that exposes a severed channel', () => {
       const rec = store.sessionRuleDeliveries.record({
         sessionId: 102, projectId: project.id, engineId: 'openclaw',
-        channel: 'none', delivered: false, skipReason: 'engine openclaw declares no prime channel',
+        channel: 'none', outcome: 'skipped', skipReason: 'engine openclaw declares no prime channel',
         ruleIds: [7], digest: 'abc123'
       });
 
+      assert.equal(rec.outcome, 'skipped');
       assert.equal(rec.delivered, false);
       assert.match(rec.skipReason, /no prime channel/);
       // The distinction that matters: rules existed, and did not arrive.
       assert.equal(rec.ruleCount, 1);
     });
 
-    it('refuses an undelivered row with no reason — it would record a failure while discarding why', () => {
+    it('distinguishes "no rules to send" from "rules did not arrive"', () => {
+      // Under a delivered boolean these two collapse into the same value, which
+      // is the conflation the outcome enum exists to prevent.
+      const empty = store.sessionRuleDeliveries.record({
+        sessionId: 103, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'no-rules'
+      });
+      const severed = store.sessionRuleDeliveries.record({
+        sessionId: 104, projectId: project.id, engineId: 'claude', channel: 'none',
+        outcome: 'skipped', skipReason: 'no channel', ruleIds: [7]
+      });
+
+      assert.equal(empty.outcome, 'no-rules');
+      assert.equal(severed.outcome, 'skipped');
+      assert.equal(empty.delivered, false);
+      assert.equal(severed.delivered, false);
+      assert.notEqual(empty.outcome, severed.outcome, 'the two states must remain distinguishable');
+    });
+
+    it('refuses a skip with no reason — it would record a failure while discarding why', () => {
       assert.throws(
-        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'claude', channel: 'none', delivered: false }),
+        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'skipped' }),
         /skipReason is required/
+      );
+    });
+
+    it('refuses an unknown outcome', () => {
+      assert.throws(
+        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'probably-fine' }),
+        /outcome must be one of/
+      );
+    });
+
+    it('refuses to store "delivered through no channel" — a state that cannot be true', () => {
+      assert.throws(
+        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'openclaw', channel: 'none', outcome: 'delivered', digest: 'x' }),
+        /cannot be delivered/
       );
     });
 
     it('refuses an unknown channel and a missing engine id', () => {
       assert.throws(
-        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'claude', channel: 'carrier-pigeon', delivered: true }),
+        () => store.sessionRuleDeliveries.record({ projectId: project.id, engineId: 'claude', channel: 'carrier-pigeon', outcome: 'delivered' }),
         /channel must be one of/
       );
       assert.throws(
-        () => store.sessionRuleDeliveries.record({ projectId: project.id, channel: 'prime-file', delivered: true }),
+        () => store.sessionRuleDeliveries.record({ projectId: project.id, channel: 'prime-file', outcome: 'delivered' }),
         /engineId is required/
       );
     });
 
     it('answers "did session X receive rule set Y" by session id, oldest first', () => {
-      store.sessionRuleDeliveries.record({ sessionId: 555, projectId: project.id, engineId: 'claude', channel: 'none', delivered: false, skipReason: 'first attempt failed', digest: 'v1' });
-      store.sessionRuleDeliveries.record({ sessionId: 555, projectId: project.id, engineId: 'claude', channel: 'prime-paste', delivered: true, digest: 'v1' });
+      store.sessionRuleDeliveries.record({ sessionId: 555, projectId: project.id, engineId: 'claude', channel: 'none', outcome: 'skipped', skipReason: 'first attempt failed', digest: 'v1' });
+      store.sessionRuleDeliveries.record({ sessionId: 555, projectId: project.id, engineId: 'claude', channel: 'prime-paste', outcome: 'delivered', digest: 'v1' });
 
       const rows = store.sessionRuleDeliveries.listForSession(555);
       assert.equal(rows.length, 2);
@@ -281,7 +331,7 @@ describe('startup session-rule delivery (#595)', () => {
 
     it('answers "is this project receiving its rules" newest-first, and honours limit', () => {
       for (let i = 0; i < 5; i++) {
-        store.sessionRuleDeliveries.record({ sessionId: 600 + i, projectId: project.id, engineId: 'claude', channel: 'prime-file', delivered: true, digest: `d${i}` });
+        store.sessionRuleDeliveries.record({ sessionId: 600 + i, projectId: project.id, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', digest: `d${i}` });
       }
 
       const rows = store.sessionRuleDeliveries.listForProject(project.id, { limit: 2 });
@@ -416,9 +466,127 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('records no-rules at launch for a project with no rules, rather than a bare success', () => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const launched = makeProject(`norules-${Math.floor(Math.random() * 1e9)}`);
+      try {
+        const result = sessions.launchSession(launched.name);
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'no-rules');
+        assert.equal(rows[0].ruleCount, 0);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
+        enginesModule.detectEngine = orig.detectEngine;
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('records a skip when the prime is disabled for the launch', () => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const launched = makeProject(`noprime-${Math.floor(Math.random() * 1e9)}`);
+      store.sessionRules.create({ content: 'will not be primed', projectId: launched.id });
+      try {
+        const result = sessions.launchSession(launched.name, { primePrompt: false });
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /prime prompt disabled/);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
+        enginesModule.detectEngine = orig.detectEngine;
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('records a skip when the prime file cannot be written', () => {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const realWrite = fs.writeFileSync;
+      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
+      tmux.hasSession = () => false;
+      tmux.createSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+
+      const launched = makeProject(`writefail-${Math.floor(Math.random() * 1e9)}`);
+      store.sessionRules.create({ content: 'undeliverable', projectId: launched.id });
+      // Fail only the prime-file write, leaving every other write intact.
+      fs.writeFileSync = (target, ...rest) => {
+        if (String(target).endsWith('session-prime.md')) throw new Error('EACCES');
+        return realWrite(target, ...rest);
+      };
+      try {
+        const result = sessions.launchSession(launched.name);
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /session-prime\.md/);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        fs.writeFileSync = realWrite;
+        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
+        enginesModule.detectEngine = orig.detectEngine;
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('prunes to the retention cap so the ledger cannot grow without bound', () => {
+      store._setSessionRuleDeliveryRetention(5);
+      try {
+        for (let i = 0; i < 12; i++) {
+          store.sessionRuleDeliveries.record({ sessionId: 800 + i, projectId: project.id, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', digest: `p${i}` });
+        }
+        const rows = store.sessionRuleDeliveries.listForProject(project.id, { limit: 100 });
+        assert.equal(rows.length, 5, 'oldest rows beyond the cap are pruned');
+        assert.equal(rows[0].digest, 'p11', 'the newest survives');
+      } finally {
+        store._setSessionRuleDeliveryRetention(100);
+      }
+    });
+
+    it('answers the fleet question: projects with rules that never had one delivered', () => {
+      const broken = makeProject(`broken-${Math.floor(Math.random() * 1e9)}`);
+      const working = makeProject(`working-${Math.floor(Math.random() * 1e9)}`);
+      const ruleless = makeProject(`ruleless-${Math.floor(Math.random() * 1e9)}`);
+      store.sessionRules.create({ content: 'never arrives', projectId: broken.id });
+      store.sessionRules.create({ content: 'arrives fine', projectId: working.id });
+      store.sessionRuleDeliveries.record({ projectId: broken.id, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'no channel', ruleIds: [1] });
+      store.sessionRuleDeliveries.record({ projectId: working.id, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', ruleIds: [2] });
+
+      try {
+        const flagged = store.sessionRuleDeliveries.projectsWithUndeliveredRules();
+        const names = flagged.map((r) => r.projectName);
+        assert.ok(names.includes(broken.name), 'a project whose rules never landed must be flagged');
+        assert.ok(!names.includes(working.name), 'a project receiving its rules must not be flagged');
+        assert.ok(!names.includes(ruleless.name), 'a project with no rules has nothing to deliver');
+        assert.match(flagged.find((r) => r.projectName === broken.name).lastSkipReason, /no channel/);
+      } finally {
+        for (const p of [broken, working, ruleless]) {
+          for (const rule of store.sessionRules.list({ projectId: p.id })) store.sessionRules.delete(rule.id);
+          store.projects.delete(p.id);
+        }
+      }
+    });
+
     it('keeps the audit row after the project it describes is deleted', () => {
       const doomed = makeProject(`doomed-${Math.floor(Math.random() * 1e9)}`);
-      store.sessionRuleDeliveries.record({ sessionId: 777, projectId: doomed.id, engineId: 'claude', channel: 'prime-file', delivered: true, digest: 'survives' });
+      store.sessionRuleDeliveries.record({ sessionId: 777, projectId: doomed.id, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', digest: 'survives' });
       store.projects.delete(doomed.id);
 
       const rows = store.sessionRuleDeliveries.listForSession(777);

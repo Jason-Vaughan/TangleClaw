@@ -114,9 +114,13 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
   predating CC-6 backfill to `startup`, so injection behavior is unchanged.
-- **Both kinds now deliver the same way (#595):** plain string concatenation into the
-  prompt at send time — `sessions.buildStartupRulesSection` at launch, `_appendWrapRules`
-  at wrap — with no file, hook, or engine capability in the path. Startup rules previously
+- **Both kinds are now assembled the same way (#595):** plain string concatenation into
+  the prompt at assembly time — `sessions.buildStartupRulesSection` at launch,
+  `_appendWrapRules` at wrap — rather than being written into a config file whose
+  generation can be skipped. (The *transport* still differs afterwards: the startup
+  prime reaches Claude via `.tangleclaw/session-prime.md` + the SessionStart hook, or
+  via tmux paste on other engines. What changed is that assembly no longer depends on
+  owning the engine's config file.) Startup rules previously
   travelled inside the generated engine config file, which `writeEngineConfig` skips
   wholesale for plugin-governed projects; the tier therefore delivered nothing on every
   governed project while still accepting writes. Each launch now records the outcome in

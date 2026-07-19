@@ -20,10 +20,13 @@ All notable changes to TangleClaw are documented in this file.
 
 - **Delivery ledger for session rules (`session_rule_deliveries`, schema v26).** Records
   every delivery *attempt* — engine, channel (`prime-file` / `prime-paste` / `none`),
-  the rule ids, a sha256 digest identifying the rule set, and a `skip_reason` when the
-  block did not arrive. Failed attempts are recorded deliberately: a success-only ledger
-  is indistinguishable from a severed channel, which is how #595 stayed invisible.
-  Queryable via `GET /api/session-rules/deliveries?sessionId=` or `?projectId=`.
+  the rule ids, a sha256 digest identifying the rule set, and an `outcome` of
+  `delivered` / `no-rules` / `skipped` (with a reason). Failed attempts are recorded
+  deliberately: a success-only ledger is indistinguishable from a severed channel, which
+  is how #595 stayed invisible. Both launch paths record, including the web UI, which
+  has no prime channel at all. `GET /api/session-rules/deliveries` answers per session
+  (`?sessionId=`), per project (`?projectId=`), or — with no parameters — fleet-wide:
+  every project that has startup rules but has never had one delivered.
 
 ### Changed
 

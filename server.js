@@ -1195,7 +1195,10 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
     if (query.limit !== undefined) options.limit = Number(query.limit);
     return jsonResponse(res, 200, { deliveries: store.sessionRuleDeliveries.listForProject(Number(query.projectId), options) });
   }
-  return errorResponse(res, 400, 'sessionId or projectId query parameter is required', 'BAD_REQUEST');
+  // No scope given → the fleet-wide health answer: every project that HAS
+  // startup rules but has never had one delivered. This is #595's original
+  // question, and it needs no argument to be worth asking.
+  return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
 });
 
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
