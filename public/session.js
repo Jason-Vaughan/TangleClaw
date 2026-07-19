@@ -2919,8 +2919,14 @@ async function confirmWrap() {
   // retries (#328) so they don't leak into this run.
   wrapSkippedAiSteps = {};
   const pw = document.getElementById('wrapPassword').value;
+  // #540 ask-mode — capture the operator's bump-level choice up front, before
+  // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
+  // `options.bumpLevel`, which version-bump honors (or skips-loudly on invalid).
+  const bumpEl = document.getElementById('wrapBumpLevel');
+  wrapBumpLevel = bumpEl ? bumpEl.value : '';
   const body = {};
   if (pw) body.password = pw;
+  if (wrapBumpLevel) body.options = { bumpLevel: wrapBumpLevel };
 
   // Lock the modal into a "Wrapping…" state: disable both buttons + flip the
   // confirm label, and set the in-flight flag (which also blocks every close
@@ -3021,6 +3027,16 @@ let currentWrapPipelineResult = null;
 let wrapSkippedAiSteps = {};
 
 /**
+ * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
+ * `major`, or `''` for the CHANGELOG heuristic), captured from the wrap modal
+ * at `confirmWrap`. Replayed on every retry because the pipeline re-runs from
+ * step 0, so version-bump must see the same choice each attempt. Reset when a
+ * fresh wrap starts.
+ * @type {string}
+ */
+let wrapBumpLevel = '';
+
+/**
  * Open the wrap drawer with a rendered pipeline result and wire its
  * action buttons for the current state (retry / done / close).
  *
@@ -3051,6 +3067,8 @@ function openWrapDrawer(pipelineResult, password) {
 function closeWrapDrawer() {
   document.getElementById('wrapDrawerBackdrop').classList.remove('open');
   document.getElementById('wrapDrawer').classList.remove('open');
+  const skipRoll = document.getElementById('wrapDrawerSkipRoll');
+  if (skipRoll) { skipRoll.innerHTML = ''; skipRoll.classList.add('hidden'); }
   currentWrapPassword = '';
   currentWrapPipelineResult = null;
   sessionState.wrapDrawerOpen = false;
@@ -3080,6 +3098,90 @@ async function copyWrapReport() {
 }
 
 /**
+ * Paint the wrap-drawer status banner from a `{label, tone, detail}` view-model
+ * — factored out so the #638 release-state resolution can repaint it in place.
+ * When a wrap PR is passed, a "Recheck release" button is appended so the
+ * operator can re-probe the merge outcome on demand (explicit action, no timer).
+ *
+ * @param {{label: string, tone: string, detail: string|null}} status
+ * @param {{prUrl: string|null}|null} [prForRecheck] - Wrap PR to offer a recheck for.
+ */
+function paintWrapStatus(status, prForRecheck) {
+  const statusEl = document.getElementById('wrapDrawerStatus');
+  statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
+  statusEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = status.label;
+  statusEl.appendChild(label);
+  if (prForRecheck && prForRecheck.prUrl) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wrap-drawer-recheck';
+    btn.textContent = 'Recheck release';
+    btn.title = 'Re-query GitHub for this wrap PR’s merge outcome.';
+    btn.addEventListener('click', () => resolveWrapPrStatus(prForRecheck, btn));
+    statusEl.appendChild(btn);
+  }
+  if (status.detail) {
+    const detail = document.createElement('span');
+    detail.className = 'wrap-drawer-status-detail';
+    detail.textContent = status.detail;
+    statusEl.appendChild(detail);
+  }
+}
+
+/**
+ * #638 — resolve the wrap PR's live merge outcome and repaint the banner so a
+ * blocked release (a red required check) never lingers as "success". Read-only;
+ * on a network/api error the provisional banner is left untouched (honest
+ * "not confirmed" beats a wrong claim). The recheck button stays available
+ * unless the release is confirmed merged.
+ *
+ * @param {{prUrl: string|null}} pr - Wrap PR handle from `wrapPrInfo`.
+ * @param {HTMLButtonElement|null} btn - The recheck button, disabled while in flight.
+ */
+async function resolveWrapPrStatus(pr, btn) {
+  if (!pr || !pr.prUrl || !window.tcWrapDrawerHelpers) return;
+  if (btn) btn.disabled = true;
+  const data = await api(
+    `/api/sessions/${encodeURIComponent(projectName)}/wrap/pr-status?url=${encodeURIComponent(pr.prUrl)}`
+  );
+  if (btn) btn.disabled = false;
+  if (!data || typeof data.outcome !== 'string') return; // leave provisional as-is
+  const banner = window.tcWrapDrawerHelpers.prOutcomeBanner(data);
+  paintWrapStatus(banner, data.outcome === 'merged' ? null : pr);
+}
+
+/**
+ * #571 item 4 — render the honest skip rollup under the status banner. Hidden
+ * when nothing was skipped; otherwise "Skipped N of M steps" with each skip's
+ * reason, so a silently-inert wrap reads as inert rather than green.
+ *
+ * @param {object} pipelineResult
+ */
+function renderSkipRoll(pipelineResult) {
+  const el = document.getElementById('wrapDrawerSkipRoll');
+  if (!el) return;
+  const H = window.tcWrapDrawerHelpers;
+  const roll = H.summarizeSkips(pipelineResult);
+  el.innerHTML = '';
+  if (roll.skipped === 0) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const head = document.createElement('div');
+  head.className = 'wrap-drawer-skiproll-head';
+  head.textContent = `Skipped ${roll.skipped} of ${roll.total} steps:`;
+  el.appendChild(head);
+  const ul = document.createElement('ul');
+  ul.className = 'wrap-drawer-skiproll-list';
+  for (const s of roll.skips) {
+    const li = document.createElement('li');
+    li.textContent = `${H.KIND_LABELS[s.kind] || s.kind} (${s.id}) — ${s.reason}`;
+    ul.appendChild(li);
+  }
+  el.appendChild(ul);
+}
+
+/**
  * Render the drawer body from a pipeline result. Pure DOM mutation;
  * all shape-to-view-model decisions live in `tcWrapDrawerHelpers`.
  *
@@ -3089,19 +3191,19 @@ function renderWrapDrawer(pipelineResult) {
   const H = window.tcWrapDrawerHelpers;
   const status = H.summarizePipelineStatus(pipelineResult);
 
-  // Status banner
-  const statusEl = document.getElementById('wrapDrawerStatus');
-  statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
-  statusEl.innerHTML = '';
-  const label = document.createElement('span');
-  label.textContent = status.label;
-  statusEl.appendChild(label);
-  if (status.detail) {
-    const detail = document.createElement('span');
-    detail.className = 'wrap-drawer-status-detail';
-    detail.textContent = status.detail;
-    statusEl.appendChild(detail);
-  }
+  // Status banner (repaintable — the #638 release resolution repaints it).
+  paintWrapStatus(status, status.pr);
+
+  // #571 item 4 — honest skip rollup under the banner.
+  renderSkipRoll(pipelineResult);
+
+  // #638 — one automatic release-state resolution when the commit opened a wrap
+  // PR. The pipeline returns before GitHub merges, so `summarizePipelineStatus`
+  // paints "release pending"; this resolves it to merged/pending/blocked. A
+  // single event-triggered fetch (not a repeating timer), with an explicit
+  // "Recheck release" button for re-polling — honoring the no-timer-driven-UI
+  // rule (#98/#268).
+  if (status.pr && status.pr.prUrl) resolveWrapPrStatus(status.pr, null);
 
   // Build all view-model rows once; both the step list and the
   // decision-widget loop consume the same array (N6 — avoid double-
@@ -3595,6 +3697,10 @@ async function retryWrap() {
   // it would re-block. The merge lives in a pure drawer helper so it's unit-
   // testable; `wrapSkippedAiSteps` is the session-level accumulator.
   H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
+
+  // #540 ask-mode — replay the operator's bump-level choice on every retry (the
+  // pipeline re-runs from step 0, so version-bump needs it each attempt).
+  if (wrapBumpLevel) options.bumpLevel = wrapBumpLevel;
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.

@@ -38,6 +38,7 @@ A methodology template declares a `wrap_pipeline` block. The Session Wrap button
       { "id": "lint",            "kind": "lint",          "blocker": "errors-only", "scope": "in-session" },
       { "id": "test",            "kind": "test",          "blocker": true,          "allowOverride": true },
       { "id": "memory-update",   "kind": "ai-content",    "prompt": "Update .tangleclaw/memories/MEMORY.md session block…" },
+      { "id": "changelog-update","kind": "ai-content",    "blocker": true, "allowOverride": true, "verifyChanged": ["CHANGELOG.md"] },
       { "id": "priming-roll",    "kind": "priming-roll" },
       { "id": "summary-derive",  "kind": "ai-content",    "prompt": "From the MEMORY block above, derive structured output…", "captureFields": ["summary", "nextSteps", "learnings"] },
       { "id": "version-bump",    "kind": "version-bump",  "blocker": false },
@@ -56,7 +57,7 @@ A methodology template declares a `wrap_pipeline` block. The Session Wrap button
 | `pr-merge`      | server  | Applies the staged resolutions after `commit`: pushes the branch so the PR contains the wrap commit, then `gh pr merge <n> --auto --squash --delete-branch` per `merge`. Never blocks — a failed push or enqueue surfaces as `output.warning` + remediation and nothing is enqueued (2026-07-19, #570). |
 | `lint`          | server  | Run project's `lintCommand` on files changed since last wrap. `blocker: "errors-only"` blocks on lint errors but not warnings. `scope: "in-session"` limits findings to commits since last wrap. |
 | `test`          | server  | Run project's `testCommand`. Red → block. `allowOverride: true` lets user pass `--skip-tests` from the UI; the skip is recorded in the wrap commit body. |
-| `ai-content`    | hybrid  | Server fabricates the per-step prompt from template + session context; sends to AI; captures output; validates shape. Used by `changelog-update`, `learnings-capture`, `memory-update`. **Transport-aware (CC-7 Slice B1):** a **tmux** session sends via `tmux.sendKeys` → polls `detectIdle` → captures the pane; a **webui** session sends over the ClawBridge gateway (`clawbridge.send` → poll `getStatus` until `inputReady` → read the structured block from the step's `captureFile` via `clawbridge.getFile` consume-once, ClawBridge #18) — both parse with the same `_parseFields` `## Heading` parser. A webui step with no `captureFile`, or a session with no bridge sidecar, returns an honest `skipped` (the gateway PTY stream can't carry structured fields — Slice B1 spike). **Content steps declare `blocker: true` + `allowOverride: true` (#328):** a timeout/validation failure halts the pipeline *before* `commit` (no silent partial wrap); the operator either waits + Retries, or ticks "Skip & note" (`options.skipAiContent[stepId]`) to wrap without that step, recorded in the commit body. An empty-prompt step still `skipped`s (ok:true) and never halts. |
+| `ai-content`    | hybrid  | Server fabricates the per-step prompt from template + session context; sends to AI; captures output; validates shape. Used by `changelog-update`, `learnings-capture`, `memory-update`. **`verifyChanged: string[]` (2026-07-19 amendment, #571/#638):** for a content step whose job is a FILE EDIT, names the project-relative paths that must actually change. The handler snapshots each path before sending the prompt and, after the AI idles, blocks unless at least one differs (created / deleted / content-changed). Without it the only success gate for a step with no `captureFields` is a ≥20-char reply, so the AI can answer "done" without touching the file and the step still reports `done` — the honor-system hole this closes. A path unreadable both before and after reads as unchanged, so an unverifiable edit blocks rather than passing. Tmux path only (the gateway path can't read the local tree and already returns an honest `skipped` for a file-edit step); the blocking steps that declare it all precede `commit`, so the halt is reachable. **Transport-aware (CC-7 Slice B1):** a **tmux** session sends via `tmux.sendKeys` → polls `detectIdle` → captures the pane; a **webui** session sends over the ClawBridge gateway (`clawbridge.send` → poll `getStatus` until `inputReady` → read the structured block from the step's `captureFile` via `clawbridge.getFile` consume-once, ClawBridge #18) — both parse with the same `_parseFields` `## Heading` parser. A webui step with no `captureFile`, or a session with no bridge sidecar, returns an honest `skipped` (the gateway PTY stream can't carry structured fields — Slice B1 spike). **Content steps declare `blocker: true` + `allowOverride: true` (#328):** a timeout/validation failure halts the pipeline *before* `commit` (no silent partial wrap); the operator either waits + Retries, or ticks "Skip & note" (`options.skipAiContent[stepId]`) to wrap without that step, recorded in the commit body. An empty-prompt step still `skipped`s (ok:true) and never halts. |
 | `priming-roll`  | server  | Parse `.claude/plans/<plan>.md` for current chunk pointer; roll forward in `.claude/priming/build-session.md`. Carry blocker annotations through. |
 | `version-bump`  | server  | If CHANGELOG has `[Unreleased]` entries and the project has a resolvable version file, bump and update CHANGELOG. Optional, never blocks — but refuses (skips, with a reason) rather than guessing when an input can't be honored. See the 2026-07-19 fail-closed amendment. |
 | `commit`        | server  | One git commit aggregating all server-side mutations + AI-produced files. Message built from `messageBuilder` strategy. Skip if truly clean. |
@@ -73,6 +74,31 @@ async function runWrapPipeline(projectName, options) {
 Each step returns `{ok: boolean, status: 'done'|'blocked'|'skipped', output: any, blockers: string[]}`. The runner halts the pipeline on `!ok` whenever `step.blocker === true` OR `step.blocker === "errors-only"` — both forms are halt-class. The handler is responsible for deciding what counts as an "error" in the enum case (e.g. lint exits non-zero → `ok: false`); the runner then halts. Any other `blocker` value (`false`, `undefined`, unrecognized strings) never halts — the step result is informational only. The runner is **single-transaction**: server-side mutations stage in memory or a per-pipeline scratch dir; only the `commit` step touches the project's git index. A failure produces no commit; success produces one commit (or zero on a clean session).
 
 The Chunk 4 broadening of the halt condition from `=== true` only to `=== true || === "errors-only"` is deliberate: the schema's `blocker: "errors-only"` form was always specified to "block on lint errors but not warnings" (see the step-kind table above), and an enum that doesn't halt the pipeline would have been misleadingly named. The Chunk 3 runner's `=== true` only check was a placeholder while no real handler returned `!ok`; Chunk 4 collapses the placeholder. Callers reading `step.blocker` for any other purpose MUST use the same disjunction (`=== true || === "errors-only"`) — per ADR 0001 (Symmetric Capability Gates), drift here re-creates the PR #125 incident class.
+
+### Release outcome is NOT a step result (2026-07-19 amendment, #638)
+
+`pipelineResult.ok` means *"nothing declared itself a blocker"* — not *"the work
+shipped."* When the `commit` step auto-branches off a protected branch it opens a
+wrap PR and **arms** GitHub auto-merge, then returns; the version bump and
+CHANGELOG promotion only reach the base branch once that PR merges server-side.
+So the release outcome resolves strictly *after* the pipeline returns and cannot
+be a step result at any position.
+
+Two consequences bind on consumers:
+
+1. **A committed wrap is not a shipped release.** A commit with an armed-but-
+   unmerged wrap PR renders `provisional` ("release pending PR merge"), never
+   plain success. On #636 a red required check left the PR blocked, `main` never
+   moved, and every step read `[Done]` — including `version-bump` reporting a
+   bump stranded on an unmerged branch.
+2. **The true outcome is a read-only, on-demand probe.**
+   `GET /api/sessions/:project/wrap/pr-status?url=<prUrl>` runs `gh pr view
+   --json state,mergeStateStatus` and maps to `merged | pending | blocked |
+   unknown` (`lib/wrap-pr-status.js`). `blocked` (`state=CLOSED`, or `OPEN` with
+   `mergeStateStatus ∈ {BLOCKED, DIRTY}`) MUST NOT render as success; `unknown`
+   (no `gh`, probe failure) stays honestly indeterminate rather than claiming
+   either result. The drawer resolves once on render and offers an explicit
+   "Recheck release" button — no polling timer, per the no-timer-driven-UI rule.
 
 ### Back-compat shim (Chunk 2)
 

@@ -253,12 +253,110 @@
     const warningSteps = (pipelineResult.results || []).filter((r) => r.output && r.output.warning === true);
     if (warningSteps.length > 0) {
       const ids = warningSteps.map((s) => s.stepId).join(', ');
-      return { label: 'Wrap completed with warnings', tone: 'warning', detail: `Warnings on: ${ids}` };
+      return { label: 'Wrap completed with warnings', tone: 'warning', detail: `Warnings on: ${ids}`, pr: wrapPrInfo(pipelineResult) };
     }
     if (pipelineResult.commitSha) {
-      return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12) };
+      // #638 — a committed wrap is NOT a shipped release. When the commit step
+      // auto-branched and opened a PR, the version bump / CHANGELOG promotion
+      // only reach the base branch once GitHub merges that PR. Reporting an
+      // armed-but-unmerged PR as plain "success" is the defect (#636: a red
+      // required check left the PR blocked and every step still read success).
+      const pr = wrapPrInfo(pipelineResult);
+      if (pr && pr.error) {
+        // The close-loop failed (push/PR-create/auto-merge-arm) — committed but
+        // the branch may dangle and nothing is armed to land it.
+        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: pr.error, pr };
+      }
+      if (pr && (pr.armed || pr.prUrl)) {
+        // Honest provisional state; the drawer resolves merged/pending/blocked
+        // via GET /wrap/pr-status after the pipeline returns.
+        return {
+          label: 'Wrap committed — release pending PR merge',
+          tone: 'provisional',
+          detail: `${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`,
+          pr
+        };
+      }
+      return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12), pr: null };
     }
-    return { label: 'Wrap completed (no changes to commit)', tone: 'success', detail: null };
+    return { label: 'Wrap completed (no changes to commit)', tone: 'success', detail: null, pr: null };
+  }
+
+  /**
+   * #638 — extract the wrap-PR the commit step opened (its auto-branch
+   * close-loop). Returns the PR handle + armed/error state the drawer needs to
+   * decide whether to probe `GET /wrap/pr-status`, or `null` when no wrap PR was
+   * opened (on-feature-branch commit, local-only repo, or a clean no-op wrap).
+   *
+   * @param {object} pipelineResult - Runner return.
+   * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null}|null}
+   */
+  function wrapPrInfo(pipelineResult) {
+    const results = pipelineResult && Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
+    for (const r of results) {
+      const ap = r && r.output && r.output.autoPr;
+      if (ap && (ap.prUrl || ap.autoMergeArmed || ap.error)) {
+        return {
+          prUrl: ap.prUrl || null,
+          armed: ap.autoMergeArmed === true,
+          error: ap.error || null,
+          skippedReason: ap.skippedReason || null
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * #638 — banner override for a resolved wrap-PR outcome from
+   * `GET /wrap/pr-status`. `blocked` (a red required check, a conflict, or a
+   * closed-unmerged PR) renders as error and NEVER as success; `unknown` (no
+   * gh, probe failure) stays provisional rather than claiming either result.
+   *
+   * @param {{outcome: string, state?: string, mergeStateStatus?: string, reason?: string}} status
+   * @returns {{label: string, tone: 'success'|'error'|'provisional', detail: string}}
+   */
+  function prOutcomeBanner(status) {
+    const outcome = status && status.outcome;
+    if (outcome === 'merged') {
+      return { label: 'Wrap shipped — PR merged', tone: 'success', detail: 'the release landed on the base branch' };
+    }
+    if (outcome === 'blocked') {
+      const why = status.state === 'CLOSED'
+        ? 'PR was closed without merging'
+        : `PR cannot merge (${status.mergeStateStatus || 'blocked'}) — a required check failed or the branch conflicts`;
+      return { label: 'Wrap committed — release BLOCKED, did not ship', tone: 'error', detail: why };
+    }
+    if (outcome === 'pending') {
+      return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'auto-merge armed; the PR merges once its checks pass' };
+    }
+    return { label: 'Wrap committed — release not confirmed', tone: 'provisional', detail: (status && status.reason) || 'could not confirm the PR state' };
+  }
+
+  /**
+   * Honest skip rollup for the drawer (#571 item 4). A wrap where half the
+   * steps quietly did nothing must read as "skipped N of M", not green — a
+   * silently-inert wrap trains operators not to press the button. Reasons reuse
+   * `deriveDetail`'s skip text so the rollup and each row's detail never
+   * diverge.
+   *
+   * @param {object} pipelineResult - Runner return.
+   * @returns {{total: number, done: number, skipped: number, blocked: number, pending: number, skips: Array<{id: string, kind: string, reason: string}>}}
+   */
+  function summarizeSkips(pipelineResult) {
+    const results = pipelineResult && Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
+    const out = { total: results.length, done: 0, skipped: 0, blocked: 0, pending: 0, skips: [] };
+    for (const r of results) {
+      const status = r.status || 'pending';
+      if (status === 'done') out.done += 1;
+      else if (status === 'blocked') out.blocked += 1;
+      else if (status === 'pending') out.pending += 1;
+      else if (status === 'skipped') {
+        out.skipped += 1;
+        out.skips.push({ id: r.stepId, kind: r.kind, reason: deriveDetail(r) || 'Skipped' });
+      }
+    }
+    return out;
   }
 
   /**
@@ -498,6 +596,9 @@
     buildStepRow,
     deriveDetail,
     summarizePipelineStatus,
+    wrapPrInfo,
+    prOutcomeBanner,
+    summarizeSkips,
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,
     planPickerWidget,

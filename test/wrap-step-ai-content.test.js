@@ -641,3 +641,110 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     }
   });
 });
+
+// D6 (#571 items 4-5, #638) — fail-closed verification for content steps whose
+// job is a FILE EDIT. `changelog-update`/`learnings-capture` carry no
+// captureFields, so before D6 the only gate was the ≥20-char no-op check: the
+// AI could answer "done" without touching CHANGELOG.md and the step reported
+// done. A `verifyChanged` step field snapshots the named paths before the AI
+// runs and blocks if none changed.
+describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...aic._internal };
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => {};
+    aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+    aic._internal.capturePane = () => ({ lines: ['## Result', 'Added an entry for the session work.'] });
+  });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const ctxWith = (overrides = {}) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session: { tmuxSession: 'sess' },
+    step: { id: 'changelog-update', kind: 'ai-content', prompt: 'edit CHANGELOG.md', verifyChanged: ['CHANGELOG.md'] },
+    previousResults: [],
+    staged: {},
+    options: {},
+    ...overrides
+  });
+
+  it('DONE when a declared verifyChanged path actually changed', async () => {
+    let call = 0;
+    // First read = before-snapshot, second = after: content differs.
+    aic._internal.readForVerify = () => (call++ === 0 ? 'old changelog' : 'new changelog entry');
+    const ctx = ctxWith();
+    const res = await aic.run(ctx);
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'done');
+    assert.ok(ctx.staged['changelog-update'], 'staged on success');
+  });
+
+  it('BLOCKS when the AI reported done but the file is byte-identical (the honor-system hole)', async () => {
+    aic._internal.readForVerify = () => 'identical content'; // before === after
+    const res = await aic.run(ctxWith());
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /no change detected in CHANGELOG\.md/);
+    assert.match(res.output.remediation, /Skip & note/);
+  });
+
+  it('counts file CREATION (null → content) as a change', async () => {
+    let call = 0;
+    aic._internal.readForVerify = () => (call++ === 0 ? null : '# Cross-Session Learnings');
+    const ctx = ctxWith({ step: { id: 'learnings-capture', kind: 'ai-content', prompt: 'write learnings', verifyChanged: ['.tangleclaw/memories/learnings.md'] } });
+    const res = await aic.run(ctx);
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'done');
+  });
+
+  it('fails closed when a path is unreadable both before and after (null === null → unchanged)', async () => {
+    aic._internal.readForVerify = () => null; // never readable → cannot confirm a change
+    const res = await aic.run(ctxWith());
+    assert.equal(res.ok, false, 'unverifiable change must block, not pass');
+    assert.equal(res.status, 'blocked');
+  });
+
+  it('is a no-op when the step declares no verifyChanged (back-compat)', async () => {
+    let reads = 0;
+    aic._internal.readForVerify = () => { reads++; return null; };
+    const ctx = ctxWith({ step: { id: 'summary-derive', kind: 'ai-content', prompt: 'say something long enough to clear the min-chars gate' } });
+    const res = await aic.run(ctx);
+    assert.equal(res.status, 'done');
+    assert.equal(reads, 0, 'no verifyChanged → never snapshots');
+  });
+
+  it('gate also applies to a captureFields step that ALSO declares verifyChanged', async () => {
+    // captureFile path: fields parse fine, but the declared file did not change.
+    aic._internal.capturePane = () => ({ lines: [] });
+    aic._internal.readCaptureFile = () => ['## Summary', 'x', '## NextSteps', '- y', '## Learnings', '- none'].join('\n');
+    aic._internal.removeCaptureFile = () => {};
+    aic._internal.readForVerify = () => 'unchanged'; // MEMORY.md never moved
+    const ctx = ctxWith({
+      step: {
+        id: 'memory-update', kind: 'ai-content', prompt: 'go',
+        captureFields: ['summary', 'nextSteps', 'learnings'],
+        captureFile: '.tangleclaw/.wrap-summary.md',
+        verifyChanged: ['.tangleclaw/memories/MEMORY.md']
+      }
+    });
+    const res = await aic.run(ctx);
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /no change detected in \.tangleclaw\/memories\/MEMORY\.md/);
+  });
+
+  describe('_verifyChangedGate (unit)', () => {
+    it('returns null when no snapshot was taken', () => {
+      assert.equal(aic._verifyChangedGate('/p', { id: 's' }, null), null);
+    });
+    it('returns a blocker fragment naming every declared path when nothing changed', () => {
+      const savedRead = aic._internal.readForVerify;
+      aic._internal.readForVerify = () => 'same';
+      try {
+        const out = aic._verifyChangedGate('/p', { id: 's' }, { 'A.md': 'same', 'B.md': 'same' });
+        assert.match(out.blocker, /A\.md, B\.md/);
+      } finally { aic._internal.readForVerify = savedRead; }
+    });
+  });
+});
