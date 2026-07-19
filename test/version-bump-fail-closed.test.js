@@ -63,7 +63,7 @@ const CHANGELOG_3OCTET = `# Changelog
 `;
 
 // A first-ever release: [Unreleased] with no released heading below it. This
-// is the OTHER reason _topReleasedVersion returns null, and it must still bump.
+// is the case that must still bump: no release heading to compare against.
 const CHANGELOG_FIRST_RELEASE = `# Changelog
 
 ## [Unreleased]
