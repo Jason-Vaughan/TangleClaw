@@ -2935,7 +2935,7 @@ describe('wrap-step version-bump — pure helpers (open-queue #3, post-#139)', (
       assert.deepStrictEqual(top.version, { major: 3, minor: 16, patch: 2 });
     });
 
-    it('_classifyTopRelease reports no release when only [Unreleased] is present', () => {
+    it('_classifyTopRelease reports no release when no release heading exists', () => {
       // The date is deliberately NOT required to classify a heading as a
       // release — demanding it is what mis-blamed undated changelogs on their
       // versioning scheme — so these assert the absence of any heading at all.
