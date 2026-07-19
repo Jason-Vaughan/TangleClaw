@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.26.0] - 2026-07-18
+
 ### Changed
 
 - **The wrap path no longer requires one engine's layout or prompts (#612, widened).**

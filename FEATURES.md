@@ -167,3 +167,8 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 ## TODO (auto-stubbed 2026-07-18)
 
 - **TBD** — touched in this session: `test/create-project-modal.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-18)
+
+- **TBD** — touched in this session: `test/prawduct-aicontent-prompts.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-engine-agnostic.test.js`. <!-- describe -->
