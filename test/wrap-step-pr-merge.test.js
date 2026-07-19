@@ -109,6 +109,39 @@ describe('wrap-step pr-merge — handler', () => {
     assert.ok(calls.includes('push -u origin feat/x'));
   });
 
+  it('measures against origin/<branch>, not the tracking ref', async () => {
+    // A branch tracking something other than origin/<branch> (fork, second
+    // remote) can be level with @{u} while origin still lacks the wrap commit.
+    const calls = [];
+    prMerge._internal.exec = async (file, args) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    await prMerge.run(ctx({ 42: 'merge' }));
+    assert.ok(calls.some((c) => c === 'rev-list --count origin/feat/x..HEAD'),
+      'the ahead-count must be taken against the ref the PR is built from');
+  });
+
+  it('pushes when origin/<branch> does not exist yet', async () => {
+    // First push of the branch: `rev-list` against a missing ref fails, which
+    // must mean "push", never "assume it is current".
+    const calls = [];
+    prMerge._internal.exec = async (file, args) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'rev-parse') return { exitCode: 0, stdout: 'feat/x\n', stderr: '' };
+      if (args[0] === 'rev-list') {
+        return { exitCode: 128, stdout: '', stderr: "fatal: ambiguous argument 'origin/feat/x..HEAD'\n" };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    const result = await prMerge.run(ctx({ 42: 'merge' }));
+    assert.equal(result.output.pushed, true);
+    assert.ok(calls.includes('push -u origin feat/x'));
+    assert.equal(result.output.enqueued, 1);
+  });
+
   it('does not push when the branch is already current', async () => {
     const calls = [];
     prMerge._internal.exec = async (file, args) => {
