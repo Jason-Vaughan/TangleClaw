@@ -177,7 +177,6 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 
 - **TBD** — touched in this session: `docs/configuration-reference.md`. <!-- describe -->
 - **TBD** — touched in this session: `lib/project-paths.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/wrap-steps/critic-check.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/actions-invoke-critic.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/feature-index.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/project-paths.test.js`. <!-- describe -->
