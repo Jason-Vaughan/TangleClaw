@@ -86,17 +86,29 @@ describe('wrap path is engine-agnostic (#612 widened)', () => {
   });
 
   describe('bundled prompts name no engine-specific file or UI', () => {
-    const TEMPLATE_PATH = path.join(__dirname, '..', 'data', 'templates', 'prawduct', 'template.json');
+    const TEMPLATES_DIR = path.join(__dirname, '..', 'data', 'templates');
 
     /**
-     * Every prompt string shipped in the bundled template, with its step id.
+     * Every prompt string shipped in ANY bundled template, tagged with its
+     * template and step. Scanning all of them rather than one keeps the guard
+     * honest when a prompt is later added to a template that has none today.
      * @returns {Array<{id: string, prompt: string}>}
      */
     function bundledPrompts() {
-      const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
-      // `wrap_pipeline` is snake_case in the template schema.
-      const steps = (template.wrap_pipeline && template.wrap_pipeline.steps) || [];
-      return steps.filter((s) => typeof s.prompt === 'string').map((s) => ({ id: s.id, prompt: s.prompt }));
+      const out = [];
+      for (const name of fs.readdirSync(TEMPLATES_DIR)) {
+        const file = path.join(TEMPLATES_DIR, name, 'template.json');
+        if (!fs.existsSync(file)) continue;
+        const template = JSON.parse(fs.readFileSync(file, 'utf8'));
+        // `wrap_pipeline` is snake_case in the template schema.
+        const steps = (template.wrap_pipeline && template.wrap_pipeline.steps) || [];
+        for (const s of steps) {
+          if (typeof s.prompt === 'string' && s.prompt.trim()) {
+            out.push({ id: `${name}/${s.id}`, prompt: s.prompt });
+          }
+        }
+      }
+      return out;
     }
 
     it('finds prompts to check (guard against a silently empty assertion)', () => {

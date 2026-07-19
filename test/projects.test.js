@@ -667,7 +667,26 @@ describe('projects', () => {
         assert.equal(cfg.activePlan, undefined, 'null must delete the key, not store null');
       });
 
-      it('rejects a filename that does not exist under .claude/plans/', () => {
+      // #612: the validator must check the SAME directory the wrap step
+      // resolves. Pinned to the legacy path it made the operator escape hatch
+      // unsettable for any project following the current layout — the drawer
+      // would offer plan candidates whose save was guaranteed to fail.
+      it('accepts a plan in the TangleClaw-owned plans directory', () => {
+        const tcPlans = path.join(projectsDir, 'new-project', '.tangleclaw', 'plans');
+        fs.mkdirSync(tcPlans, { recursive: true });
+        fs.writeFileSync(path.join(tcPlans, 'current.md'), '### Chunk 1: A\n');
+        try {
+          const result = projects.updateProject('new-project', { activePlan: 'current.md' });
+          assert.ok(result.project, `expected accept, got: ${JSON.stringify(result.errors)}`);
+          const cfg = store.projectConfig.load(result.project.path);
+          assert.equal(cfg.activePlan, 'current.md');
+          projects.updateProject('new-project', { activePlan: null });
+        } finally {
+          fs.rmSync(tcPlans, { recursive: true, force: true });
+        }
+      });
+
+      it('rejects a filename that does not exist under the resolved plans directory', () => {
         const result = projects.updateProject('new-project', { activePlan: 'ghost.md' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /activePlan .* not found/);

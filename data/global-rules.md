@@ -43,7 +43,7 @@ When reading a bridge memo at session start, run its cleanup check before trusti
 
 When a project grows a recurring "session role" (advisor, on-call review, debugging), save its priming prompt as a durable artifact, not chat memory.
 
-**Rule: Save priming prompts as git-tracked files** at `<project-root>/.claude/priming/<role>.md` — the verbatim paste block plus a short "How to use", with a dated update history at the bottom so divergence is visible.
+**Rule: Save priming prompts as git-tracked files** at `<project-root>/.tangleclaw/priming/<role>.md` — the verbatim paste block plus a short "How to use", with a dated update history at the bottom so divergence is visible.
 
 ## Cross-Session Write Boundaries
 

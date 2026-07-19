@@ -3459,7 +3459,7 @@ function renderPlanPickerWidget(widget) {
   // guessing at an unfamiliar affordance.
   const why = document.createElement('p');
   why.className = 'wrap-decision-help';
-  why.textContent = 'Why: TangleClaw found more than one in-progress build plan in .claude/plans/ and can’t tell which to roll forward, so it didn’t auto-pick (this step is non-fatal — the wrap still finished).';
+  why.textContent = 'Why: TangleClaw found more than one in-progress build plan in this project’s plans directory and can’t tell which to roll forward, so it didn’t auto-pick (this step is non-fatal — the wrap still finished).';
   wrap.appendChild(why);
 
   const sel = document.createElement('select');

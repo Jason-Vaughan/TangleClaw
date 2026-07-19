@@ -590,19 +590,21 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
 
     // Single-transaction: real fs must NOT have a priming file yet.
     assert.equal(
-      fs.existsSync(path.join(projectPath, '.tangleclaw/priming/build-session.md')),
+      fs.existsSync(path.join(projectPath, '.claude/priming/build-session.md')),
       false,
       'handler must NOT write to disk — that is the Chunk 9 commit step'
     );
 
-    // Staged shape pinned for commit-step consumption. A project with no
-    // priming file yet gets TangleClaw's own location, not the engine's —
-    // new work must not perpetuate the legacy home.
+    // Staged shape pinned for commit-step consumption. This fixture's plans
+    // live in the legacy directory, so the new priming file goes there too —
+    // a project's TangleClaw artifacts stay in ONE home rather than splitting
+    // across both. (A project with no legacy plans gets the TC-owned path;
+    // covered in the path-resolution suite.)
     const stagedEntry = ctx.staged['next-session-prime'];
     assert.ok(stagedEntry, 'must stage under step.id');
     assert.equal(
       stagedEntry.primingPath,
-      path.join(projectPath, '.tangleclaw/priming/build-session.md')
+      path.join(projectPath, '.claude/priming/build-session.md')
     );
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:BEGIN/);
     assert.match(stagedEntry.newContent, /TANGLECLAW:PRIMING-ROLL:END/);
@@ -1252,6 +1254,45 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(primingRoll._resolvePlansDir(projectPath), null);
   });
 
+  it('an EMPTY TangleClaw dir does not shadow legacy plans', () => {
+    // The quieter variant of the defect this move fixes. TangleClaw creates
+    // `.tangleclaw/` in every project, so ranking by directory existence would
+    // let an empty `.tangleclaw/plans/` hide real plans in the legacy location
+    // and report "nothing to roll" — silent success, exactly the failure the
+    // whole chunk exists to eliminate.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw/plans'), { recursive: true });
+    writePlanIn('.claude/plans', 'real.md', PLAN_BODY);
+
+    const resolved = primingRoll._resolvePlansDir(projectPath);
+    assert.equal(resolved.relative, '.claude/plans', 'must follow the plans, not the empty directory');
+
+    const plan = primingRoll._resolvePlanPath(projectPath, {});
+    assert.equal(plan.ok, true, 'the real plan must still be found');
+    assert.equal(plan.planPath, path.join(projectPath, '.claude/plans/real.md'));
+  });
+
+  it('a NON-empty TangleClaw dir still wins over legacy plans', () => {
+    writePlanIn('.tangleclaw/plans', 'current.md', PLAN_BODY);
+    writePlanIn('.claude/plans', 'old.md', PLAN_BODY);
+    assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.tangleclaw/plans');
+  });
+
+  it('reports against a real directory when one exists but holds no plans', () => {
+    // "No .md plans here" must name a directory that exists, not read as a
+    // missing-directory error.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw/plans'), { recursive: true });
+    const resolved = primingRoll._resolvePlansDir(projectPath);
+    assert.equal(resolved.relative, '.tangleclaw/plans');
+    assert.equal(resolved.legacy, false);
+  });
+
+  it('ignores a directory holding only non-markdown files', () => {
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw/plans'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw/plans/notes.txt'), 'not a plan');
+    writePlanIn('.claude/plans', 'real.md', PLAN_BODY);
+    assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.claude/plans');
+  });
+
   it('names BOTH locations when no plans directory is found', async () => {
     const result = await primingRoll.run({
       project: { path: projectPath },
@@ -1291,6 +1332,25 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(
       primingRoll._resolvePrimingPath(projectPath, {}),
       path.join(projectPath, '.claude/priming/build-session.md')
+    );
+  });
+
+  it('does not split a legacy project across both homes', () => {
+    // Plans in the legacy dir + no priming file yet: the new priming file must
+    // join the plans rather than landing in the other directory, which would
+    // leave the project straddling two homes with nothing modelling it.
+    writePlanIn('.claude/plans', 'plan.md', PLAN_BODY);
+    assert.equal(
+      primingRoll._resolvePrimingPath(projectPath, {}),
+      path.join(projectPath, '.claude/priming/build-session.md')
+    );
+  });
+
+  it('uses the TangleClaw home when the project has no legacy plans either', () => {
+    writePlanIn('.tangleclaw/plans', 'plan.md', PLAN_BODY);
+    assert.equal(
+      primingRoll._resolvePrimingPath(projectPath, {}),
+      path.join(projectPath, '.tangleclaw/priming/build-session.md')
     );
   });
 
