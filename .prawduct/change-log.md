@@ -26,6 +26,60 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Discovery — Phase B step inventory (wrap-v2)
+
+<!-- prawduct: type=discovery | scope=wrap-v2 -->
+
+**Why:** Phase A complete, so Phase B opens with the task its direction artifact
+explicitly blocked on: "fate of each current wrap step — needs the real 12-step
+inventory." Code-grounded read of all 12 handlers plus both bundled templates.
+
+**What (findings; full detail in the untracked `.prawduct/artifacts/`
+direction artifact, mirrored at the hosted review link):**
+
+1. **The lean sort was wrong on 3 of 12 steps.** `changelog-update` is AI-CONTENT that
+   BLOCKS the wrap, not a mechanical spine primitive — the mechanical changelog work
+   (`[Unreleased]`→dated promotion, `status=merged`→`shipped` ledger stamps) actually
+   lives inside `version-bump` (`version-bump.js:273-297`, `:315-330`).
+   `next-session-prime` is mechanical, not AI-content. `open-pr-check` is an inert
+   read-only probe that validates `options.prHandling` resolutions it never applies
+   (`pr-check.js:210-253`). Corrected spine/checklist sort recorded.
+2. **Three orphan handlers, ~970 lines:** `lint.js`, `test.js`, `critic-check.js` are
+   wired into `STEP_DISPATCH` (`wrap-pipeline.js:40-54`) with bespoke runner support
+   (`lint`'s `blocker:"errors-only"`, `options.skipTests`) but referenced by NO
+   template. The shipped "Run Critic" action promises a `critic-check` step that never
+   runs — root cause of #570's stale promise.
+3. **`promptTemplates` confirmed dead** — #612's claim verified rather than assumed: no
+   reader in `lib/`/`server.js`/`public/`; `wrap-pipeline.js:156-162` consumes only
+   `.steps`; not in `store.js`'s `FRAMEWORK_OWNED_PATHS`.
+4. **The `wrap_contract` layer has never fired** — `continuity-write.js:390-397` falls
+   back to `template.wrap_contract.sections`, which neither template defines.
+5. **`minimal` is effectively commit-only** — both its ai-content steps ship
+   `prompt: ""` and self-skip; its `memory-update` declares `captureFields` with no
+   `captureFile` (latent validation bug masked by the empty-prompt guard).
+6. **Engine coupling is wider than #612 as filed:** `priming-roll.js:73-74` hardcodes
+   `.claude/plans` and `.claude/priming/build-session.md` as RUNTIME path defaults, so a
+   non-Claude project silently resolves no plan — a worse failure than the
+   visibly-wrong prompt text #612 covers. Ranked 6-item remediation surface recorded.
+
+**Confirmed (no change):** the verify-after-agent split already exists in code — spine
+steps stage into `context.staged[]`, `commit.js:103-121` is the sole flush point, and
+ai-content steps let the agent write directly and ride `git add -A`. Wrap v2 formalizes
+an existing seam. The "equalizer" lean also holds: every mechanical handler runs
+server-side with no engine branch.
+
+**Open for the operator:** `open-pr-check`'s fate (real gate vs delete); the three
+orphan handlers (revive opt-in vs delete — `critic-check.js` at 598 lines is the real
+call); whether to widen #612 to cover the priming-roll path coupling or file a sibling;
+and #595 (verified rule delivery) still has no design — it is named a first-class Phase
+B requirement and needs its own discovery slice before the self-improvement loop can be
+planned.
+
+**Note:** `.prawduct/artifacts/` is gitignored fail-closed (`.gitignore:10`, only
+`change-log.md` tracked), so this entry is the git-visible record; the artifact itself
+lives locally + at the hosted link.
+
+
 ## 2026-07-18: Fix — priming-roll resolved the wrong plan and misread done-state (#620)
 
 <!-- prawduct: type=bugfix | scope=wrap-620 -->
