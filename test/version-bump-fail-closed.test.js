@@ -104,7 +104,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       vb._internal.existsSync = (p) => p.endsWith('VERSION.json')
         || p.endsWith('package.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => {
-        if (p.endsWith('VERSION.json')) return VERSION_JSON_4OCTET;
+        if (p.endsWith('VERSION.json')) return '{"version":"1.4.2"}';
         if (p.endsWith('package.json')) return PKG_UNRELATED;
         return CHANGELOG_3OCTET;
       };
@@ -112,8 +112,22 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
 
       const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.json');
       assert.equal(s.kind, 'VERSION.json');
-      assert.equal(s.currentVersion, '2.85.0.41');
+      assert.equal(s.currentVersion, '1.4.2');
       assert.equal(s.path, '/p/VERSION.json');
+    });
+
+    it('rejects a non-semver value at resolution, naming the file it came from', () => {
+      // Same pre-check the version.json and package.json branches make. Without
+      // it the failure surfaced later in run(), AFTER the CHANGELOG gates, so a
+      // project with no CHANGELOG.md was told "CHANGELOG.md not found".
+      vb._internal.existsSync = () => true;
+      vb._internal.readFileSync = () => VERSION_JSON_4OCTET;
+
+      const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.json');
+      assert.ok(s.skip);
+      assert.match(s.skip, /VERSION\.json/, 'names the configured file');
+      assert.match(s.skip, /2\.85\.0\.41/, 'names the value');
+      assert.match(s.skip, /versionBumpEnabled/, 'names the remedy');
     });
 
     it('skips rather than falling through when the configured path is missing', () => {
@@ -251,6 +265,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.match(r.output.reason, /2\.85\.0\.41/, 'names the value');
       assert.match(r.output.reason, /MAJOR\.MINOR\.PATCH/, 'names the problem');
       assert.match(r.output.reason, /versionBumpEnabled/, 'names the remedy');
+      assert.match(r.output.reason, /VERSION\.json/, 'names the file it read');
       assert.deepEqual(c.staged, {});
     });
 
@@ -545,5 +560,29 @@ describe('version-bump refusal messages read as one sentence', () => {
     const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/package.json');
     assert.ok(s.skip);
     assert.match(s.skip, /configured versionFilePath/);
+  });
+});
+
+// Promotion must not impose a heading style on a changelog that already has
+// one. The bracketed form is Keep a Changelog's link-reference style; plenty of
+// projects write the bare form, and inserting the other above theirs quietly
+// mixes two conventions in a hand-maintained file.
+describe('version-bump promotion matches the changelog heading style', () => {
+  const body = '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n';
+
+  it('writes a bare heading above bare ones', () => {
+    const out = vb._promoteUnreleased(`${body}## 1.4.2 - 2026-05-01\n`, '1.4.3', '2026-07-19');
+    assert.match(out, /^## 1\.4\.3 - 2026-07-19$/m);
+    assert.doesNotMatch(out, /## \[1\.4\.3\]/);
+  });
+
+  it('writes a bracketed heading above bracketed ones', () => {
+    const out = vb._promoteUnreleased(`${body}## [1.4.2] - 2026-05-01\n`, '1.4.3', '2026-07-19');
+    assert.match(out, /^## \[1\.4\.3\] - 2026-07-19$/m);
+  });
+
+  it('defaults to bracketed for a first release, where there is no style to match', () => {
+    const out = vb._promoteUnreleased('# Changelog\n\n## [Unreleased]\n\n### Added\n- x\n', '0.1.0', '2026-07-19');
+    assert.match(out, /^## \[0\.1\.0\] - 2026-07-19$/m);
   });
 });

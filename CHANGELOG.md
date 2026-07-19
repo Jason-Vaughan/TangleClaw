@@ -28,6 +28,12 @@ All notable changes to TangleClaw are documented in this file.
   release headings yet" (a first release, which still bumps) from "a version in a scheme I
   don't recognize" (which stops). The check keys on the version's shape alone, so headings
   that omit the date or use an en-dash still count as ordinary semver and bump normally.
+  (2b) Relatedly, the wrap now reads changelogs written in Keep a Changelog's plain style
+  (`## 1.4.2 - 2026-05-01`, no link-reference brackets). Previously the section scanner keyed
+  on the bracket, so such a file had no section terminator at all: the `[Unreleased]` block ran
+  to end-of-file and a bump would have swept the project's entire release history into the body
+  it promoted under one new heading. Promotion also now matches whichever heading style the
+  changelog already uses, instead of inserting a bracketed heading above bare ones.
   (3) A `bumpLevel` override outside
   `patch`/`minor`/`major` fell through to the heuristic, so asking for `patch` and typing
   `pathc` produced a minor bump with no signal; it now skips and names the bad value. Each

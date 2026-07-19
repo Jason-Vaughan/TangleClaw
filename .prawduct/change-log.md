@@ -50,6 +50,14 @@ bumps), `released` (comparable, drift-checked), `unbumpable` (semver with a
 prerelease/build suffix, ambiguous ordering, stops), `foreign` (another scheme,
 stops). Invalid `bumpLevel` skips naming the bad value.
 
+**A fourth change, found by review rather than planned:** the section scanner keyed
+on `## [`, so a changelog in Keep a Changelog's plain style (`## 1.4.2 - date`) had
+no terminator — `_parseUnreleased` ran to EOF and would have swept the whole release
+history into the promoted body, and `_classifyTopRelease` read the file as having no
+releases at all and bumped past the drift guard. `NEXT_HEADING_RE` is now `/^## /`,
+and promotion matches whichever heading style the file already uses rather than
+imposing the bracketed one.
+
 **One function because two predicates kept disagreeing** — worth recording, since
 this cost two Critic rounds. The guard needs to answer "can I compare against this
 heading?" and "is this a scheme I recognize?", and every two-regex version drifted:
