@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
 
-<!-- prawduct: type=fix | chunks=04a | scope=wrap-v2 -->
+<!-- prawduct: type=fix | chunks=04a | scope=wrap-v2 | status=shipped -->
 
 **Why:** three paths in `version-bump` where the step silently did something other
 than what was asked — the same defect class, found by #540's re-verification from a
