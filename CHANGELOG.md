@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A "Version file path" setting, for projects whose version file isn't `version.json` (#540).**
+  Name the file explicitly (e.g. `VERSION.json`, or a nested `meta/app-version.json`) and the
+  wrap's version bump reads and writes that file and no other. Leave it blank to keep the old
+  behavior — probe `version.json`, then `package.json`. It must be a relative path inside the
+  project, and pointing it at your `package.json` keeps that file's surgical, byte-preserving
+  write rather than reformatting it.
+
 ### Fixed
 
 - **The wrap's version bump now stops instead of quietly bumping the wrong thing (#540, #571).**

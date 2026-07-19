@@ -159,7 +159,8 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
         const c = ctx();
         const r = await vb.run(c);
         assert.equal(r.status, 'skipped');
-        assert.match(r.output.reason, /outside the project root/);
+        assert.match(r.output.reason, /outside the project root|not absolute/,
+          'reason distinguishes an escape from an absolute path');
         assert.deepEqual(c.staged, {}, 'nothing staged outside the project');
       });
     }
@@ -330,6 +331,80 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       const r = await vb.run(c);
       assert.equal(r.status, 'done', 'a date-less heading is a formatting choice, not a foreign scheme');
       assert.equal(c.staged['version-bump:version-json'].newVersion, '1.4.3');
+    });
+  });
+
+  describe('2b. unbracketed changelog styles are read, not mistaken for empty', () => {
+    // `## 1.4.2 - date` is ordinary Keep a Changelog without link references.
+    // Keying the scan on `## [` meant such a changelog had NO release headings
+    // and no section terminator: the guard read "first release" and proceeded,
+    // and `_parseUnreleased` ran to EOF, sweeping every past release into the
+    // body it was about to promote under one new heading.
+    const UNBRACKETED = [
+      '# Changelog', '', '## [Unreleased]', '', '### Fixed', '- a bug', '',
+      '## 1.4.2 - 2026-05-01', '', '### Fixed', '- old', '',
+      '## 1.4.1 - 2026-04-01', '', '### Fixed', '- older', ''
+    ].join('\n');
+
+    it('ends the [Unreleased] body at the next release heading', () => {
+      const parsed = vb._parseUnreleased(UNBRACKETED);
+      const body = parsed.bodyLines.join('\n');
+      assert.match(body, /a bug/);
+      assert.doesNotMatch(body, /1\.4\.2/, 'must not sweep the release history into the promotion');
+      assert.doesNotMatch(body, /older/);
+    });
+
+    it('classifies an unbracketed release heading as comparable', () => {
+      const top = vb._classifyTopRelease(UNBRACKETED);
+      assert.equal(top.kind, 'released');
+      assert.deepEqual(top.version, { major: 1, minor: 4, patch: 2 });
+    });
+
+    it('run() applies the drift guard to an unbracketed changelog', async () => {
+      vb._internal.existsSync = (p) => p.endsWith('version.json') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('version.json')
+        ? '{"version":"1.0.0"}' : UNBRACKETED);
+
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'skipped', 'guard must fire, not read this as a first release');
+      assert.match(r.output.reason, /strictly greater/);
+      assert.deepEqual(c.staged, {});
+    });
+
+    it('classifies an unbracketed foreign scheme as foreign', () => {
+      const text = '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n## 2.85.0.41 - 2026-05-01\n';
+      assert.equal(vb._classifyTopRelease(text).kind, 'foreign');
+    });
+
+    it('keeps a bracketed 4-octet heading foreign, not a truncated 3-octet read', () => {
+      // `## [2.85.0.41]` must not satisfy a bare `\d+\.\d+\.\d+` prefix and
+      // read as 2.85.0 — that is the original #540 bug in a new regex.
+      const top = vb._classifyTopRelease(CHANGELOG_4OCTET);
+      assert.equal(top.kind, 'foreign');
+      assert.equal(top.version, undefined);
+    });
+
+    it('ignores a prose ## section rather than treating it as a foreign scheme', () => {
+      const text = '# Changelog\n\n## [Unreleased]\n\n### Added\n- x\n\n## Migration guide\n\nprose\n';
+      assert.equal(vb._classifyTopRelease(text).kind, 'none');
+    });
+  });
+
+  describe('2c. a configured package.json keeps its surgical write', () => {
+    it('preserves formatting instead of reserializing', async () => {
+      const PKG = '{\n  "name": "demo",\n  "version": "1.4.2",\n  "scripts": { "build": "x" }\n}\n';
+      vb._internal.existsSync = (p) => p.endsWith('package.json') || p.endsWith('CHANGELOG.md');
+      vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? PKG : CHANGELOG_3OCTET);
+      store.projectConfig.load = () => ({ versionFilePath: 'package.json' });
+
+      const c = ctx();
+      const r = await vb.run(c);
+      assert.equal(r.status, 'done');
+      const staged = c.staged['version-bump:package-json'];
+      assert.ok(staged, 'uses the package.json staged key, not the version-json one');
+      assert.equal(staged.newContent, PKG.replace('"1.4.2"', '"1.4.3"'),
+        'byte-preserving: only the version value changed');
     });
   });
 
