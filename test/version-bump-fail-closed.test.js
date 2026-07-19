@@ -586,3 +586,26 @@ describe('version-bump promotion matches the changelog heading style', () => {
     assert.match(out, /^## \[0\.1\.0\] - 2026-07-19$/m);
   });
 });
+
+// A bracketed heading is not automatically a version. Keying "foreign" on the
+// bracket made the two changelog styles asymmetric: `## [Yanked]` above the real
+// releases permanently disabled the bump, while the identical bare heading was
+// skipped as prose. The presence of a digit decides, for both forms.
+describe('version-bump distinguishes prose headings from foreign schemes', () => {
+  const withHeading = (h) => `# Changelog\n\n## [Unreleased]\n\n### Fixed\n- x\n\n${h}\n\n## [1.4.2] - 2026-05-01\n`;
+
+  for (const prose of ['## [Yanked]', '## Yanked', '## [Notes]', '## Migration guide']) {
+    it(`keeps scanning past prose heading ${JSON.stringify(prose)}`, () => {
+      const top = vb._classifyTopRelease(withHeading(prose));
+      assert.equal(top.kind, 'released', 'reaches the real release below it');
+      assert.deepEqual(top.version, { major: 1, minor: 4, patch: 2 });
+    });
+  }
+
+  for (const versionish of ['## [2.85.0.41]', '## 2.85.0.41', '## [v1.2.3]', '## 2026.07-build9']) {
+    it(`stops on version-ish heading ${JSON.stringify(versionish)}`, () => {
+      // Fails closed on anything that might be a version, in either style.
+      assert.equal(vb._classifyTopRelease(withHeading(versionish)).kind, 'foreign');
+    });
+  }
+});

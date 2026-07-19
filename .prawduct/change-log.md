@@ -50,6 +50,13 @@ bumps), `released` (comparable, drift-checked), `unbumpable` (semver with a
 prerelease/build suffix, ambiguous ordering, stops), `foreign` (another scheme,
 stops). Invalid `bumpLevel` skips naming the bad value.
 
+**Containment is symlink-aware** (SEC-3H8W, closed here). `resolveWithinProject`
+was resolve-lexical, so `linkdir/VERSION.json` — where `linkdir` symlinks out of
+the project — passed both the API validator and the write-site guard, and the
+commit step wrote through it. It now realpaths the deepest existing ancestor and
+re-tests, so a target that doesn't exist yet still resolves while an escape does
+not. Verified against real symlinks, not just unit stubs.
+
 **A fourth change, found by review rather than planned:** the section scanner keyed
 on `## [`, so a changelog in Keep a Changelog's plain style (`## 1.4.2 - date`) had
 no terminator — `_parseUnreleased` ran to EOF and would have swept the whole release

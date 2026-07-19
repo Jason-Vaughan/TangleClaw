@@ -11,7 +11,8 @@ All notable changes to TangleClaw are documented in this file.
   wrap's version bump reads and writes that file and no other. Leave it blank to keep the old
   behavior — probe `version.json`, then `package.json`. It must be a relative path inside the
   project, and pointing it at your `package.json` keeps that file's surgical, byte-preserving
-  write rather than reformatting it.
+  write rather than reformatting it. "Inside the project" is enforced after following symlinks,
+  so a symlinked directory can't be used to point the wrap's write at a file outside the repo.
 
 ### Fixed
 

@@ -8,9 +8,11 @@
 // site later refuses produces a setting that saves cleanly and silently does
 // nothing.
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 const { resolveWithinProject, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
 
@@ -130,5 +132,44 @@ describe('resolveConfiguredFile', () => {
     const got = resolveConfiguredFile(ROOT, { someOtherPath: 'a.json' }, 'someOtherPath');
     assert.equal(got.configured, true);
     assert.equal(got.ok, true);
+  });
+});
+
+describe('resolveWithinProject follows symlinks', () => {
+  // Lexical resolution alone is not containment: a symlinked directory inside
+  // the project points anywhere, and the commit step writes through it. This is
+  // the difference between the docstring's claim and what the code enforces.
+  let base;
+  let root;
+
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-symlink-'));
+    root = path.join(base, 'proj');
+    fs.mkdirSync(path.join(root, 'real'), { recursive: true });
+    fs.mkdirSync(path.join(base, 'outside'), { recursive: true });
+    fs.symlinkSync(path.join(base, 'outside'), path.join(root, 'linkdir'));
+  });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('refuses a path through a symlink that escapes the project', () => {
+    const got = resolveWithinProject(root, 'linkdir/VERSION.json');
+    assert.equal(got.ok, false);
+    assert.match(got.reason, /symlinks are followed/);
+  });
+
+  it('refuses a not-yet-created file under an escaping symlink', () => {
+    const got = resolveWithinProject(root, 'linkdir/nested/new.json');
+    assert.equal(got.ok, false);
+  });
+
+  it('still accepts a real path inside the project', () => {
+    assert.equal(resolveWithinProject(root, 'real/VERSION.json').ok, true);
+  });
+
+  it('still accepts a file that does not exist yet', () => {
+    // An operator may name the version file before creating it, so a missing
+    // target must not read as an escape.
+    assert.equal(resolveWithinProject(root, 'not-created-yet.json').ok, true);
+    assert.equal(resolveWithinProject(root, 'deep/not/made/yet.json').ok, true);
   });
 });
