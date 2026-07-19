@@ -47,9 +47,50 @@ container clones without network. The first gate run filed #614, #615, #616, #61
 
 **Classification:** build
 
+## 2026-07-19: Chunk 02 — engine-agnostic wrap sweep (#612 widened)
+
+<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=02 | status=shipped -->
+
+**Why:** the wrap had two shapes of engine coupling. The severe one was runtime path
+resolution: `priming-roll` resolved plans and priming files inside `.claude/`, so a
+project on any other engine found no plan and the step reported "nothing to roll" — a
+failure indistinguishable from success. The milder one was prose: the `changelog-update`
+prompt told every engine to read `CLAUDE.md`, and the capture-file rationale attributed
+markdown rendering to a named product.
+
+**Operator steer (standing, beyond this chunk):** *"we will eventually need to support
+multiple LLMs and prime and wrap properly."* Recorded in the build plan — it constrains
+chunks 04-06 as much as this one.
+
+**What:** plans/priming default to `.tangleclaw/plans/` and `.tangleclaw/priming/`, with
+the legacy `.claude/` locations still READ where they exist (`_resolvePlansDir`,
+`_resolvePrimingPath`). TC-owned rather than engine-derived, so a project that switches
+engines keeps its plans — an engine-derived directory would relocate them on an engine
+change. A new `{engineConfigFile}` interpolation token resolves the filename from the
+project's own engine profile; `SUPPORTED_PROMPT_TOKENS` is exported so the drift guard
+checks tokens against the implementation. Operator-facing remediation strings no longer
+name a specific engine's directory. `data/global-rules.md` + TC's hand-maintained
+`CLAUDE.md` updated. `lib/transcript.js` deliberately unchanged — verified it already
+has a per-engine adapter registry with honest `null` skips, which is the correct shape
+for reading an engine's OWN files.
+
+**Verification:** 4512/0. Mutation-checked — reverting the path default fails 5 tests,
+reverting either prompt fix fails the guards. Against the live store, the real bundled
+prompt renders per engine (`CLAUDE.md` / `.codex.yaml` / `.aider.conf.yml` /
+`.antigravity.md` / generic); against the live fleet, all 13 projects with plans resolve
+through the legacy fallback — nothing moved, nothing broke.
+
+**Notable:** the pre-existing "no `{...}` tokens" drift guard fired. Its stated intent
+was preventing tokens that pass through VERBATIM, not banning tokens — so it was
+strengthened to assert membership in `SUPPORTED_PROMPT_TOKENS` rather than deleted. A
+vacuity guard in the new suite caught its own bug: the template's steps live at
+`wrap_pipeline` (snake_case), so the prompt scan was initially checking zero prompts.
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 01 — startup session-rule delivery + delivery ledger (#595)
 
-<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 -->
+<!-- prawduct: type=bugfix | scope=wrap-v2 | chunks=01 | status=shipped -->
 
 **Why:** Phase B discovery found the channel the whole Wrap v2 design depends on was
 severed. `kind='startup'` rules were assembled only inside `engines._getRulesContent`,

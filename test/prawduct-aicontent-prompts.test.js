@@ -170,20 +170,27 @@ describe('prawduct ai-content prompts — drift guards (Critic coverage gaps)', 
     }
   });
 
-  it('none of the prawduct prompts contain {...} interpolation tokens', () => {
-    // Build-plan out-of-scope decision: this PR does not expand the Chunk-5
-    // interpolation surface. Pin that decision so a future edit doesn't
-    // accidentally introduce a `{recentCommits}` token that silently passes
-    // through verbatim (per `_interpolatePrompt`'s unrecognized-braces
-    // contract).
+  it('every {...} token in a prawduct prompt is one the interpolator actually substitutes', () => {
+    // Originally "no tokens at all", pinning a scope decision. The hazard it
+    // guards is unchanged and is what matters: an UNRECOGNIZED token passes
+    // through verbatim to the AI by design (so a misnamed token is visible
+    // rather than silently blank), so shipping one in a bundled prompt is a
+    // defect. Now that the interpolation surface has grown deliberately
+    // (`{engineConfigFile}`, #612), assert membership against the
+    // implementation's own list instead of banning tokens outright — a token
+    // added to a prompt without being implemented still fails here.
+    const { SUPPORTED_PROMPT_TOKENS } = require('../lib/wrap-steps/ai-content');
+    const supported = new Set(SUPPORTED_PROMPT_TOKENS);
     const steps = prawduct.wrap_pipeline.steps.filter((s) => s.kind === 'ai-content');
     for (const step of steps) {
-      const tokens = step.prompt.match(/\{[a-zA-Z][\w]*\}/g);
-      assert.equal(
-        tokens,
-        null,
-        `step "${step.id}" prompt contains interpolation tokens ${JSON.stringify(tokens)} — Chunk 5 only recognizes {previousMemoryBlock}; out of scope for this chunk`
-      );
+      const tokens = step.prompt.match(/\{[a-zA-Z][\w]*\}/g) || [];
+      for (const raw of tokens) {
+        const name = raw.slice(1, -1);
+        assert.ok(
+          supported.has(name),
+          `step "${step.id}" prompt uses ${raw}, which _interpolatePrompt does not substitute — it would reach the AI verbatim. Implement it or remove it.`
+        );
+      }
     }
   });
 
