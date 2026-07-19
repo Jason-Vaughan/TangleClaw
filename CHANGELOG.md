@@ -28,6 +28,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap no longer throws away the CHANGELOG entry it just asked the AI to write (#571).**
+  The version-bump step ran *before* the changelog step, and it works by reading the whole of
+  `CHANGELOG.md` and holding a promoted copy in memory until the commit step writes it back.
+  Anything the AI wrote to that file in between — the entry describing your session — was
+  overwritten by that older copy and lost, on every wrap that bumped a version. The same
+  ordering meant the bump level (patch/minor/major) was decided from a CHANGELOG that didn't
+  yet contain the session's own entry, so a session that added a feature could be scored as a
+  patch. The steps now run in the order that actually works: the AI writes the entry, then the
+  version bump promotes it into the new release section and reads the level from it. If you
+  have used TangleClaw before, your project's stored wrap template is re-synced automatically
+  on the next start — no action needed.
+
 - **The wrap can no longer report a file edit that never happened (#571, #638).** The wrap asks
   the AI to update `CHANGELOG.md` and `.tangleclaw/memories/learnings.md`, but the only check on
   those steps was that the AI replied with at least 20 characters. An assistant that answered

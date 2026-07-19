@@ -58,7 +58,17 @@ missing the session's own entry. D6 made it acute by certifying the change momen
 before it was thrown away. Fixed by the reorder this chunk was chartered to do
 (agent writes, then mechanical promote), pinned by a general invariant test: any
 `ai-content` step declaring `verifyChanged` on `CHANGELOG.md` must precede
-`version-bump`. Full suite green. Plan:
+`version-bump`. **And the reorder alone was not the fix:** the Critic's
+verify-resolutions pass caught that `wrap_pipeline.steps` is a
+`FRAMEWORK_OWNED_PATH` merged additively by id, so a REORDER only reaches a
+materialized live template through `_reconcileFrameworkSubtrees`, gated on
+`bundledRev > liveRev`. Bundled and live both sat at `schemaRevision: 5`, so the
+gate never opened — verified against this machine's live template, which still
+carried the clobbering order while all three new ordering tests passed green
+against the bundled JSON. `schemaRevision` 5→6, plus two guards that close the
+class: a step-order fingerprint keyed by revision (reorder without a bump now
+FAILS, verified by reverting), and a propagation test driving a stale live
+template through the real `_mergeBundledTemplate`. Full suite green. Plan:
 `/Users/jasonvaughan/Documents/Projects/TangleClaw/.prawduct/artifacts/wrap-v2-build-plan.md`.
 
 ## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
