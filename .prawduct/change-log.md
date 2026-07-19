@@ -26,6 +26,64 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-18: Fix — Create Project centered modal (#623)
+
+<!-- prawduct: type=bugfix | scope=ui-623 -->
+
+**Why:** Operator report from their primary device: *"it puts all the menus at the
+bottom of the screen at full width. I'd prefer a modal that pops up center, all options
+showing or scrollable (maybe on a phone)."* Create Project was the landing page's last
+bottom sheet — `.drawer`, pinned bottom, full-bleed, `max-height: 70vh`. Every other
+dialog already used a centered `.modal-backdrop`/`.modal-content` capped at 90vh with
+internal scroll, and that CSS even carries a comment recording that this exact
+off-screen problem was diagnosed and fixed once for modals. So the fix was adoption,
+not design.
+
+**What:** markup moved to `.modal-backdrop > .modal-content.create-modal`
+(`public/index.html`); new CSS block mirrors the `.settings-modal` flex pattern —
+header + step dots `flex-shrink: 0`, `#createBody` scrolls (`flex: 1 1 auto`,
+`min-height: 0`, `overflow-y: auto`); `openCreateDrawer`/`closeCreateDrawer` now toggle
+`.open` on the backdrop only (the content's scale-in comes from
+`.modal-backdrop.open .modal-content`); backdrop click guarded with
+`e.target === e.currentTarget`. `.drawer` and `.drawer-backdrop` are gone from
+`index.html` (still used by session.html's master/peek/wrap drawers, so the CSS is not
+orphaned).
+
+**Two defects found while building, neither visible from the report:**
+1. `.drawer-header` and `.steps-row` carry `padding: 0 16px` from the bottom-sheet era,
+   where the drawer had no horizontal padding of its own. Inside a modal that owns
+   20px, the header would have sat 16px inside the body's left edge. Neutralized.
+2. Nesting the dialog inside the backdrop — which is what centers it — makes an
+   unguarded backdrop click handler dismiss the modal on **every click inside the
+   form**. Guarded, matching `killModal`/`deleteModal`.
+
+**Self-caught error:** the first version of the CSS comment claimed the two-class
+selector was needed because the base `.modal-content` rule "sits LATER in this file."
+That rationale is true for `.settings-modal` (line 1066 vs base at 1790) and FALSE at
+this block's insertion point (~1806, after the base) — copied without re-verifying
+against position. The test asserting it failed, which is how it surfaced. Comment and
+test both rewritten to state the real reason: order-independence, so the rule keeps
+winning if the block is ever moved. Same phantom-citation class the
+verify-citations-against-diff preference exists to catch.
+
+**Cache:** `sw.js` CACHE_NAME bumped `tangleclaw-v3-53` → `v3-54`. Without it the
+operator — the only person who reported the bug — keeps being served the old UI and the
+fix is invisible. A test pins the floor at `>= 54`.
+
+**Tests:** `test/create-project-modal.test.js` +15 source probes (markup nesting,
+dialog semantics, viewport cap, flex-scroll split, padding neutralization, backdrop
+guard, `.open` on backdrop only, no surviving grab handle, cache floor). Zero-dep
+source-probe pattern per `paste-affordance.test.js` — the documented limit of having no
+browser harness. Full suite exit 0, 2295 top-level / 0 fail (JUnit recorded as
+evidence); 4455/0 counting subtests.
+
+**Verification:** server restarted and serving the new markup + `v3-54`. Browser
+rendering is deliberately NOT claimed — the operator is remote on iOS and
+curl-on-localhost proves the server, never the view. Enqueued in
+`operator-verification.md` with a 6-point check, weighted to the phone where the drawer
+actually failed.
+
+
 ## 2026-07-18: Discovery — #595 rule delivery is severed, not merely unverified (wrap-v2)
 
 <!-- prawduct: type=discovery | scope=wrap-v2 -->

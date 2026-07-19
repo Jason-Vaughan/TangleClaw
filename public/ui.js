@@ -1593,13 +1593,13 @@ function openCreateDrawer() {
     tags: ''
   };
   renderCreateStep();
+  // Centered modal (#623): only the backdrop carries `.open` — the content's
+  // scale-in transition is driven by `.modal-backdrop.open .modal-content`.
   document.getElementById('createBackdrop').classList.add('open');
-  document.getElementById('createDrawer').classList.add('open');
 }
 
 function closeCreateDrawer() {
   document.getElementById('createBackdrop').classList.remove('open');
-  document.getElementById('createDrawer').classList.remove('open');
 }
 
 function renderCreateStep() {
@@ -3360,7 +3360,10 @@ $('rulesResetModal').addEventListener('click', (e) => { if (e.target === e.curre
 // filterBtn removed — filter input is always visible inline
 $('newBtn').addEventListener('click', openCreateDrawer);
 $('createClose').addEventListener('click', closeCreateDrawer);
-$('createBackdrop').addEventListener('click', closeCreateDrawer);
+// The dialog now nests INSIDE the backdrop (#623), so an unguarded handler
+// would close on every click inside the form. Same target guard the other
+// modals use.
+$('createBackdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeCreateDrawer(); });
 $('deleteCancelBtn').addEventListener('click', closeDelete);
 $('deleteConfirmInput').addEventListener('input', onDeleteConfirmInput);
 $('deleteConfirmBtn').addEventListener('click', confirmDelete);

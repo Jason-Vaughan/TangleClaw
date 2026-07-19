@@ -388,21 +388,22 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   </main>
   </div>
 
-  <!-- Create Project Drawer -->
-  <div class="drawer-backdrop" id="createBackdrop"></div>
-  <aside class="drawer" id="createDrawer" role="dialog" aria-label="Create project" aria-modal="true">
-    <div class="drawer-handle" aria-hidden="true"></div>
-    <div class="drawer-header">
-      <h2 class="drawer-title" id="createTitle">New Project</h2>
-      <button class="btn btn-small btn-icon" id="createClose" aria-label="Close">&times;</button>
+  <!-- Create Project Modal — centered, like every other dialog. Was a
+       full-width bottom drawer whose options ran off-screen on a phone (#623). -->
+  <div class="modal-backdrop" id="createBackdrop">
+    <div class="modal-content create-modal" id="createDrawer" role="dialog" aria-label="Create project" aria-modal="true">
+      <div class="drawer-header">
+        <h2 class="drawer-title" id="createTitle">New Project</h2>
+        <button class="btn btn-small btn-icon" id="createClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="steps-row" id="createSteps">
+        <div class="step-dot active"></div>
+        <div class="step-dot"></div>
+        <div class="step-dot"></div>
+      </div>
+      <div class="drawer-body" id="createBody"></div>
     </div>
-    <div class="steps-row" id="createSteps">
-      <div class="step-dot active"></div>
-      <div class="step-dot"></div>
-      <div class="step-dot"></div>
-    </div>
-    <div class="drawer-body" id="createBody"></div>
-  </aside>
+  </div>
 
   <!-- Delete Confirmation Modal -->
   <div class="modal-backdrop" id="deleteModal">
