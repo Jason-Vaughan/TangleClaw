@@ -63,7 +63,7 @@ an un-ticked source veto a ticked one would resurrect shipped chunks. A roster-o
 plan (the compact format this plan shipped with before anchors were added) supplies
 the chunk list itself. `TITLE_SEPARATOR_RE` covers em/en dash and hyphen.
 
-**Tests:** `test/wrap-step-priming-roll.test.js` +29 (53→82 in-file): #620 repro,
+**Tests:** `test/wrap-step-priming-roll.test.js` +34 (48→82 in-file): #620 repro,
 precedence-preservation for both operator hatches, dangling-pointer skip, traversal
 block, column-0 contract, roster union/scoping/roster-only, separator forms, and the
 Critic-caught edges below. Revert-verified — 13 fail against the pre-fix module, 0
