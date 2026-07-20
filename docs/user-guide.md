@@ -238,6 +238,21 @@ Tap **Wrap** to trigger the methodology-defined wrap skill. This:
 
 If a `deletePassword` is configured, you'll need to enter it to wrap.
 
+**Choosing the version bump.** The wrap dialog has a **Version bump** selector: *Auto*, *Patch*, *Minor*, or *Major*. Auto (the default) derives the bump from your `CHANGELOG.md` `[Unreleased]` content — `### Added`/`### Changed` mean minor, `### Fixed`-only means patch, a `BREAKING` marker means major. Pick an explicit level when the CHANGELOG can't imply what you want — for example a release train where the bump belongs at promote time rather than at session end. Your choice is reapplied if the wrap blocks and you retry, and resets to Auto the next time you open the dialog.
+
+**Did it actually ship?** A wrap that commits has not necessarily *released*. When the wrap opens a PR (see protected branches below), the version bump and CHANGELOG promotion only reach `main` once that PR merges — which happens after its checks pass, and never if a required check fails. The drawer says which of these is true:
+
+- **Wrap shipped — PR merged** — the release landed.
+- **Release pending checks** — the PR hasn't merged yet; it lands when its checks pass.
+- **Release BLOCKED, did not ship** — a required check failed, a review is missing, or the branch conflicts. **This is a failure**: the wrap's version bump is stranded on an unmerged branch. Fix the PR, then merge it.
+- **Release not confirmed** — TangleClaw couldn't reach GitHub (no `gh`, not signed in). The outcome is genuinely unknown, not assumed good.
+
+Use **Recheck release** in the drawer to re-query at any time — checks usually take longer than the wrap itself, so "pending" right after a wrap is normal.
+
+**Steps that were skipped.** If any wrap steps skipped, the drawer shows *"Skipped N of M steps"* with the reason for each, so a wrap that quietly did nothing doesn't look the same as one that did everything.
+
+**When a step insists a file changed.** The steps that write your `CHANGELOG.md` and `.tangleclaw/memories/learnings.md` now check that the file actually changed. If the AI reports done without editing it, the wrap stops and asks you to decide rather than reporting success. If there's genuinely nothing to record, tick **Skip & note** — the skip is recorded in the commit body. (Retry only helps if the AI never acted; a retry looks for a *new* change, so it will stop again on an edit that already landed — and any edit already on disk still gets committed.)
+
 **Wrap commits and protected branches.** When a wrap fires while the project is checked out on `main`/`master`, the commit step auto-branches to `wrap/<timestamp>-<project>` and commits there — and then closes the loop automatically: it pushes the wrap branch, opens a PR back to the original branch, and arms GitHub auto-merge (`--auto --squash --delete-branch`; branch protection still gates). The commit row in the wrap drawer shows the outcome (e.g. `wrap PR auto-merge armed`). If any part fails — no `origin` remote, `gh` missing, auto-merge disabled on the repo — the wrap still completes and the drawer shows what to do; the checkout stays on the wrap branch so the dangling commit is visible. Opt out per project with `wrapAutoPrEnabled: false` in `<project>/.tangleclaw/project.json` if a project must never have automated pushes or PRs.
 
 **One wrap at a time, and it survives your connection.** A wrap can run for several minutes (the AI writes changelog, learnings, and memory content mid-pipeline), and it runs entirely server-side — if your connection drops, your phone locks, or you reload the page, **the wrap keeps going**. Don't re-tap Wrap: the page automatically reattaches to the running wrap (you'll see the wrapping bar; the terminal shows the wrap happening) and opens the results drawer when it finishes. Triggering a wrap while one is already running is refused ("wrap already in progress") — that's the guard working, not an error to fight. Restarting TangleClaw while a wrap is running is likewise refused with a confirmation; forcing it kills the wrap mid-run (nothing is committed — the commit step runs last), and the session page will tell you a killed wrap is safe to retry.

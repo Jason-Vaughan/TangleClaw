@@ -2347,6 +2347,23 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
   });
 });
 
+// GET /api/sessions/:project/wrap/pr-status — Live wrap-PR outcome (#638). The
+// wrap's commit step arms auto-merge and reports "armed", but the release only
+// lands when GitHub merges the PR; this read-only probe lets the drawer report
+// merged / pending / blocked / unknown after the pipeline returns, so a blocked
+// release (a red required check, the #636 case) never renders as success. The
+// `url` query param is validated against a github.com PR URL / number shape in
+// `lib/wrap-pr-status.js` before it can reach `gh`.
+route('GET', '/api/sessions/:project/wrap/pr-status', async (req, res, params) => {
+  const query = parseQuery(reqUrl(req).search);
+  const prRef = query.url || query.pr || '';
+  if (!prRef) {
+    return errorResponse(res, 400, 'Missing required query param: url (the wrap PR URL or number)', 'BAD_REQUEST');
+  }
+  const status = await sessions.getWrapPrStatus(params.project, prRef);
+  jsonResponse(res, 200, { project: params.project, ...status });
+});
+
 // POST /api/sessions/:project/wrap/complete — Manual wrap completion
 route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) => {
   const result = sessions.completeWrap(params.project, body ? body.summary : undefined);

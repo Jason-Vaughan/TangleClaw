@@ -1953,6 +1953,9 @@ body {
 .wrap-drawer-status--blocked { color: #f59e0b; }
 .wrap-drawer-status--warning { color: #f59e0b; }
 .wrap-drawer-status--error { color: #ef4444; }
+/* #638 — a committed wrap whose PR has not yet merged: honestly not-yet-shipped,
+   distinct from both success (green) and failure (red). */
+.wrap-drawer-status--provisional { color: #38bdf8; }
 .wrap-drawer-status-detail {
   display: block;
   margin-top: 4px;
@@ -1960,6 +1963,31 @@ body {
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
 }
+/* #571 item 4 — honest skip rollup shown under the status banner. */
+.wrap-drawer-skiproll {
+  padding: 8px 16px 12px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--elevated-bg);
+}
+.wrap-drawer-skiproll-head { font-weight: 600; }
+.wrap-drawer-skiproll-list { margin: 4px 0 0; padding-left: 18px; }
+.wrap-drawer-skiproll-list li { margin: 2px 0; }
+/* #638 — explicit "recheck the release state" affordance (no auto-poll timer,
+   per the no-timer-driven-UI-lifecycle rule). */
+.wrap-drawer-recheck {
+  margin-left: 10px;
+  font-size: 0.8rem;
+  /* 44px minimum touch target — the drawer is used from a phone. */
+  min-height: 44px;
+  padding: 2px 12px;
+  cursor: pointer;
+  background: var(--elevated-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+}
+.wrap-drawer-recheck:disabled { opacity: 0.5; cursor: default; }
 .wrap-step-list {
   list-style: none;
   margin: 0;

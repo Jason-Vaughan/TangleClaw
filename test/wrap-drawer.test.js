@@ -827,3 +827,154 @@ describe('wrap-drawer helpers — remediation surfacing (#223)', () => {
     assert.equal(/How to fix:/.test(text), false);
   });
 });
+
+// #638 — a blocked wrap PR must not render as success. The commit step arms
+// auto-merge and returns; the release lands only when the PR merges, so the
+// drawer treats an armed-but-unmerged PR as provisional and resolves the true
+// outcome (merged/pending/blocked) via GET /wrap/pr-status.
+describe('wrap-drawer helpers — #638 wrap-PR reporting', () => {
+  const H = loadHelpers();
+
+  const mkResult = (autoPr) => ({
+    ok: true, blockedAt: null, commitSha: 'deadbeefcafe0001', summary: null, error: null,
+    results: [{ stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'deadbeefcafe0001', autoPr }, blockers: [] }]
+  });
+
+  describe('wrapPrInfo', () => {
+    it('returns the armed PR handle when the commit opened a wrap PR', () => {
+      const pr = H.wrapPrInfo(mkResult({ prUrl: 'https://github.com/o/r/pull/7', autoMergeArmed: true }));
+      assert.equal(pr.prUrl, 'https://github.com/o/r/pull/7');
+      assert.equal(pr.armed, true);
+    });
+    it('returns null when no wrap PR was opened (on-feature-branch or local-only)', () => {
+      assert.equal(H.wrapPrInfo(mkResult(null)), null);
+      assert.equal(H.wrapPrInfo(mkResult({ skippedReason: 'no origin remote' })), null);
+    });
+    it('surfaces a close-loop error PR (pushed but arm failed)', () => {
+      const pr = H.wrapPrInfo(mkResult({ prUrl: 'u', autoMergeArmed: false, error: 'gh pr merge --auto failed' }));
+      assert.equal(pr.error, 'gh pr merge --auto failed');
+    });
+  });
+
+  describe('summarizePipelineStatus with a wrap PR', () => {
+    it('an armed-but-unmerged wrap PR is PROVISIONAL, not success (#638 core)', () => {
+      const s = H.summarizePipelineStatus(mkResult({ prUrl: 'https://github.com/o/r/pull/7', autoMergeArmed: true }));
+      assert.equal(s.tone, 'provisional');
+      assert.match(s.label, /pending PR merge/);
+      assert.notEqual(s.tone, 'success');
+    });
+    it('a close-loop error is a warning naming the failure', () => {
+      const s = H.summarizePipelineStatus(mkResult({ prUrl: 'u', autoMergeArmed: false, error: 'arm failed' }));
+      assert.equal(s.tone, 'warning');
+      assert.match(s.detail, /arm failed/);
+    });
+    it('a commit with NO wrap PR (local-only) is still plain success', () => {
+      const s = H.summarizePipelineStatus(mkResult(null));
+      assert.equal(s.tone, 'success');
+      assert.equal(s.label, 'Wrap committed');
+    });
+  });
+
+  describe('prOutcomeBanner', () => {
+    it('merged → success', () => {
+      assert.equal(H.prOutcomeBanner({ outcome: 'merged' }).tone, 'success');
+    });
+    it('blocked → error, never success (the #636 red-check case)', () => {
+      const b = H.prOutcomeBanner({ outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'BLOCKED' });
+      assert.equal(b.tone, 'error');
+      assert.match(b.label, /BLOCKED/);
+    });
+    it('closed-unmerged → error with a closed reason', () => {
+      const b = H.prOutcomeBanner({ outcome: 'blocked', state: 'CLOSED' });
+      assert.match(b.detail, /closed without merging/);
+    });
+    it('pending → provisional', () => {
+      assert.equal(H.prOutcomeBanner({ outcome: 'pending' }).tone, 'provisional');
+    });
+    it('unknown → provisional with the probe reason', () => {
+      const b = H.prOutcomeBanner({ outcome: 'unknown', reason: 'gh not found' });
+      assert.equal(b.tone, 'provisional');
+      assert.match(b.detail, /gh not found/);
+    });
+  });
+});
+
+// #571 item 4 — honest skip rollup. A wrap that quietly skipped half its steps
+// must say so, not read green.
+describe('wrap-drawer helpers — summarizeSkips (#571 item 4)', () => {
+  const H = loadHelpers();
+
+  it('counts each status and collects skip reasons', () => {
+    const roll = H.summarizeSkips({
+      results: [
+        { stepId: 'open-pr-check', kind: 'pr-check', status: 'done', output: {}, blockers: [] },
+        { stepId: 'version-bump', kind: 'version-bump', status: 'skipped', output: { reason: 'no [Unreleased] entries' }, blockers: [] },
+        { stepId: 'features-toc', kind: 'features-toc', status: 'skipped', output: { detail: '40 undescribed stubs' }, blockers: [] },
+        { stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'x' }, blockers: [] }
+      ]
+    });
+    assert.equal(roll.total, 4);
+    assert.equal(roll.done, 2);
+    assert.equal(roll.skipped, 2);
+    assert.equal(roll.skips.length, 2);
+    assert.equal(roll.skips[0].reason, 'no [Unreleased] entries');
+    assert.equal(roll.skips[1].reason, '40 undescribed stubs');
+  });
+
+  it('empty/malformed input yields zeroed counts, never throws', () => {
+    const roll = H.summarizeSkips(null);
+    assert.equal(roll.total, 0);
+    assert.equal(roll.skipped, 0);
+    assert.equal(roll.skips.length, 0);
+  });
+});
+
+// #638 — the release probe must never erase a problem the pipeline already
+// reported. Without composition, a wrap that "completed with warnings" got
+// repainted "Wrap shipped — PR merged", re-opening the false-success class this
+// work exists to close.
+describe('wrap-drawer helpers — composeReleaseBanner precedence', () => {
+  const H = loadHelpers();
+
+  it('a BLOCKED release outranks everything, including a clean pipeline', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed', tone: 'success', detail: 'abc' },
+      { outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'BLOCKED' }
+    );
+    assert.equal(out.tone, 'error');
+    assert.match(out.label, /BLOCKED/);
+  });
+
+  it('a pipeline WARNING survives a merged release (not repainted as shipped)', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap completed with warnings', tone: 'warning', detail: 'Warnings on: project-map' },
+      { outcome: 'merged' }
+    );
+    assert.equal(out.tone, 'warning', 'the warning is not erased by a green release');
+    assert.match(out.label, /warnings/);
+    assert.match(out.detail, /release: merged/, 'but the release outcome is still reported');
+  });
+
+  it('a close-loop error survives a pending release', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: 'arm failed' },
+      { outcome: 'pending' }
+    );
+    assert.equal(out.tone, 'warning');
+    assert.match(out.detail, /release: pending/);
+  });
+
+  it('a clean pipeline takes the release banner as-is', () => {
+    const out = H.composeReleaseBanner(
+      { label: 'Wrap committed — release pending PR merge', tone: 'provisional', detail: 'sha' },
+      { outcome: 'merged' }
+    );
+    assert.equal(out.tone, 'success');
+    assert.match(out.label, /shipped/);
+  });
+
+  it('tolerates a missing base status', () => {
+    const out = H.composeReleaseBanner(null, { outcome: 'pending' });
+    assert.equal(out.tone, 'provisional');
+  });
+});

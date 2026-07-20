@@ -4,18 +4,52 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-### Internal
+### Added
 
-- **Fixed a flaky test that turned `main` red without any code being wrong.** The startup
-  session-rule ordering test built its own precondition by racing the clock: it created six
-  rules and assumed all six would land inside one tick of SQLite's second-resolution
-  `datetime('now')`, giving them the tied timestamps the ordering contract is about. On a
-  loaded CI runner the burst straddled a second boundary, the timestamps differed, and the
-  run failed on the precondition — without ever exercising the ordering it exists to check.
-  The tie is now forced directly, so the assertion runs every time. No production behavior
-  changed; the query already ordered by `created_at, id`.
+- **The wrap drawer now reports whether your release actually shipped (#638).** The wrap's
+  commit step opens a PR and *arms* auto-merge, then finishes — but the version bump and
+  CHANGELOG promotion only reach `main` when that PR merges. Until now "auto-merge armed" was
+  the last word the drawer ever said, whether the PR merged, sat pending, or went red and
+  blocked; every step read `[Done]` either way. A committed wrap whose PR hasn't merged is now
+  shown as *pending*, not success, and the drawer queries GitHub for the real outcome —
+  **merged**, **pending checks**, or **blocked** (a failed required check, a missing review, or
+  a conflict). A blocked release is shown as a failure, because that is what it is. There's a
+  "Recheck release" button to re-query on demand; if GitHub can't be reached the drawer says
+  the outcome is unconfirmed rather than guessing either way.
+
+- **An honest skip rollup in the wrap drawer (#571).** A wrap that quietly skipped half its
+  steps used to look the same as one that did everything. The drawer now says "Skipped N of M
+  steps" and lists why each one skipped, so you can tell "did its job" from "did nothing".
+
+- **Choose the version bump when you wrap (#540).** The wrap dialog now has a Version bump
+  selector — Auto (the CHANGELOG heuristic, unchanged default), Patch, Minor, or Major — for
+  the cases where the CHANGELOG can't imply what you want, such as a release train where the
+  bump belongs at promote time rather than session end. Your choice is reapplied on retries.
 
 ### Fixed
+
+- **The wrap no longer throws away the CHANGELOG entry it just asked the AI to write (#571).**
+  The version-bump step ran *before* the changelog step, and it works by reading the whole of
+  `CHANGELOG.md` and holding a promoted copy in memory until the commit step writes it back.
+  Anything the AI wrote to that file in between — the entry describing your session — was
+  overwritten by that older copy and lost, on every wrap that bumped a version. The same
+  ordering meant the bump level (patch/minor/major) was decided from a CHANGELOG that didn't
+  yet contain the session's own entry, so a session that added a feature could be scored as a
+  patch. The steps now run in the order that actually works: the AI writes the entry, then the
+  version bump promotes it into the new release section and reads the level from it. If you
+  have used TangleClaw before, your project's stored wrap template is re-synced automatically
+  on the next start — no action needed.
+
+- **The wrap can no longer report a file edit that never happened (#571, #638).** The wrap asks
+  the AI to update `CHANGELOG.md` and `.tangleclaw/memories/learnings.md`, but the only check on
+  those steps was that the AI replied with at least 20 characters. An assistant that answered
+  "done" without touching the file passed, and the wrap reported success — the file edit was
+  verified by nothing but the AI's own word, with the prompt asking it to self-verify on the
+  honor system. Those steps now declare the files they must change; the wrap snapshots each file
+  before the AI runs and blocks if none of them actually changed. If there's genuinely nothing
+  to record, "Skip & note" records that decision explicitly instead of it passing silently. A
+  file that can't be read before *and* after blocks too — an edit that can't be confirmed is not
+  treated as one that happened.
 
 - **The wrap no longer stubs Feature Index entries for files the session deleted (#637).**
   `features-toc` built its auto-stub list from `git diff --name-only` and filtered only on path
@@ -30,6 +64,17 @@ All notable changes to TangleClaw are documented in this file.
   session and deleted in the working tree still reports as *added* by any range diff, yet the
   wrap's own `git add -A` commits its deletion moments later. A wrap whose session only deleted
   files now reports that honestly rather than claiming everything was already indexed.
+
+### Internal
+
+- **Fixed a flaky test that turned `main` red without any code being wrong.** The startup
+  session-rule ordering test built its own precondition by racing the clock: it created six
+  rules and assumed all six would land inside one tick of SQLite's second-resolution
+  `datetime('now')`, giving them the tied timestamps the ordering contract is about. On a
+  loaded CI runner the burst straddled a second boundary, the timestamps differed, and the
+  run failed on the precondition — without ever exercising the ordering it exists to check.
+  The tie is now forced directly, so the assertion runs every time. No production behavior
+  changed; the query already ordered by `created_at, id`.
 
 ## [4.27.0] - 2026-07-19
 

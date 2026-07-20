@@ -26,6 +26,51 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-19: Chunk 04b — the wrap stops reporting success it never verified (#571, #638, #540)
+
+<!-- prawduct: type=feat | chunks=04b | scope=wrap-v2 | status=shipped -->
+
+**Why:** four holes of one shape — the drawer reported outcomes it had not confirmed.
+(1) **Agent file-edit steps were verified by nothing.** `changelog-update` and
+`learnings-capture` exist to edit `CHANGELOG.md` / `learnings.md` but carry no
+`captureFields`, so `ai-content`'s only success gate was a ≥20-char reply; an AI
+answering "done" without touching the file passed, with the prompt asking it to
+self-verify on the honor system. New `verifyChanged: string[]` step field: the handler
+snapshots the named paths before the AI runs and blocks unless one actually differs
+(created / deleted / edited). Unreadable both before and after also blocks — an edit
+that can't be confirmed is not one that happened. (2) **A blocked wrap PR rendered as
+success (#638).** The commit step arms auto-merge and returns, but the release only
+lands when the PR merges; on #636 a red required check left it blocked, `main` never
+moved, every step read Done. The release outcome is now formally NOT a step result
+(ADR 0002 amendment): an armed-but-unmerged PR paints `provisional`, and new
+`lib/wrap-pr-status.js` + `GET /wrap/pr-status` resolve merged/pending/blocked/unknown
+via `gh pr view`. Blocked paints as failure; unknown stays indeterminate. A pipeline
+warning/error survives a green release (`composeReleaseBanner`) so the probe can't
+repaint a problem wrap as shipped. (3) **Skips were silent (#571 item 4)** — the drawer
+now reports "Skipped N of M steps" with each reason. (4) **#540 ask-mode** — a
+bump-level selector in the wrap modal threading `options.bumpLevel`, replayed across
+retries and reset to Auto on every open.
+**The Critic caught the one that mattered:** `version-bump` ran BEFORE
+`changelog-update` while staging the whole promoted `CHANGELOG.md`, and the commit
+flush writes staged content back verbatim — so the AI's changelog entry was silently
+discarded on every wrap that bumped, and the bump level was derived from a CHANGELOG
+missing the session's own entry. D6 made it acute by certifying the change moments
+before it was thrown away. Fixed by the reorder this chunk was chartered to do
+(agent writes, then mechanical promote), pinned by a general invariant test: any
+`ai-content` step declaring `verifyChanged` on `CHANGELOG.md` must precede
+`version-bump`. **And the reorder alone was not the fix:** the Critic's
+verify-resolutions pass caught that `wrap_pipeline.steps` is a
+`FRAMEWORK_OWNED_PATH` merged additively by id, so a REORDER only reaches a
+materialized live template through `_reconcileFrameworkSubtrees`, gated on
+`bundledRev > liveRev`. Bundled and live both sat at `schemaRevision: 5`, so the
+gate never opened — verified against this machine's live template, which still
+carried the clobbering order while all three new ordering tests passed green
+against the bundled JSON. `schemaRevision` 5→6, plus two guards that close the
+class: a step-order fingerprint keyed by revision (reorder without a bump now
+FAILS, verified by reverting), and a propagation test driving a stale live
+template through the real `_mergeBundledTemplate`. Full suite green. Plan:
+`/Users/jasonvaughan/Documents/Projects/TangleClaw/.prawduct/artifacts/wrap-v2-build-plan.md`.
+
 ## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
 
 <!-- prawduct: type=fix | chunks=04a | scope=wrap-v2 | status=shipped -->

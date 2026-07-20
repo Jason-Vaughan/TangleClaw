@@ -373,6 +373,17 @@
         <label class="form-label" for="wrapPassword">Password</label>
         <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
       </div>
+      <!-- #540 ask-mode — let the operator choose the version bump up front
+           (before version-bump runs). "Auto" keeps the CHANGELOG heuristic. -->
+      <div class="form-group" id="wrapBumpGroup">
+        <label class="form-label" for="wrapBumpLevel">Version bump</label>
+        <select class="form-select" id="wrapBumpLevel">
+          <option value="">Auto (from CHANGELOG)</option>
+          <option value="patch">Patch</option>
+          <option value="minor">Minor</option>
+          <option value="major">Major</option>
+        </select>
+      </div>
       <div id="wrapError" class="form-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" id="wrapCancelBtn">Cancel</button>
@@ -392,6 +403,7 @@
       <button class="banner-btn" id="wrapDrawerCloseBtn" aria-label="Close wrap drawer">&times;</button>
     </div>
     <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
+    <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
     <ul class="wrap-step-list" id="wrapStepList" aria-label="Pipeline steps"></ul>
     <div class="wrap-drawer-decision hidden" id="wrapDrawerDecision"></div>
     <div class="wrap-drawer-actions">
