@@ -161,6 +161,177 @@ describe('deploy/install.sh', () => {
     });
   });
 
+  // These tests run the real script rather than grepping it, because the
+  // defects were failures of BEHAVIOR that a source-shape assertion would have
+  // happily matched: the script "handled" a failed download and "supported"
+  // Linux right up until you ran it.
+  //
+  // Executing an installer in a unit test needs a hard safety story, and a
+  // stubbed PATH is NOT sufficient on its own: `ensure_homebrew` probes
+  // /opt/homebrew/bin/brew and /usr/local/bin/brew by ABSOLUTE path, so on a
+  // developer's Mac a regressed guard escapes the sandbox and reaches the real
+  // Homebrew (observed while validating these tests — the unguarded script
+  // reached `brew` and began auto-updating it). So each test is interlocked:
+  // it first asserts, from the source, that the fix under test is present and
+  // positioned before anything that could shell out. If that assertion fails
+  // the test fails THERE and never executes the script. Execution therefore
+  // only ever happens against a script already known to refuse early.
+  describe('first-run failure honesty (executed, not grepped)', () => {
+    const { execFileSync } = require('node:child_process');
+    const os = require('node:os');
+
+    /**
+     * Build a sandbox: a stub bin dir on an otherwise-empty PATH, plus a
+     * throwaway HOME. `dirname` is symlinked in because install.sh resolves its
+     * own location before doing anything else.
+     * @param {Record<string, string>} stubs - stub name → script body
+     * @returns {{ bin: string, home: string }}
+     */
+    function sandbox(stubs) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-install-sh-'));
+      const bin = path.join(root, 'bin');
+      const home = path.join(root, 'home');
+      fs.mkdirSync(bin);
+      fs.mkdirSync(home);
+      for (const real of ['dirname']) {
+        const found = ['/usr/bin', '/bin'].map((d) => path.join(d, real)).find((p) => fs.existsSync(p));
+        if (found) fs.symlinkSync(found, path.join(bin, real));
+      }
+      for (const [name, body] of Object.entries(stubs)) {
+        const p = path.join(bin, name);
+        fs.writeFileSync(p, `#!/bin/sh\n${body}\n`);
+        fs.chmodSync(p, 0o755);
+      }
+      return { bin, home };
+    }
+
+    /**
+     * Run install.sh in a sandbox, returning its combined output and exit code.
+     * @param {{ bin: string, home: string }} box
+     * @returns {{ code: number, output: string }}
+     */
+    function runInstall(box) {
+      try {
+        // Spawn the interpreter by absolute path: the sandbox PATH deliberately
+        // has no bash, and resolving it through that PATH would fail to spawn
+        // (exit status null) rather than run the script under test.
+        const output = execFileSync('/bin/bash', [SCRIPT_PATH], {
+          env: { PATH: box.bin, HOME: box.home },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30000
+        });
+        return { code: 0, output };
+      } catch (err) {
+        return { code: err.status, output: `${err.stdout || ''}${err.stderr || ''}` };
+      }
+    }
+
+    it('refuses to run on a non-Darwin platform instead of bootstrapping Homebrew (#614)', () => {
+      // Without the guard the script plows past the platform check into a
+      // Linuxbrew bootstrap and on toward launchd steps that cannot work,
+      // handing a Linux user a partial install instead of the honest refusal
+      // the README already documents.
+
+      // Safety interlock (see the describe comment): the guard must exist and
+      // precede every shell-out, or we do not run the script at all.
+      const guardAt = script.search(/if \[ "\$\(uname -s\)" != "Darwin" \]/);
+      assert.notEqual(guardAt, -1, 'the platform guard must exist');
+      const firstShellOut = Math.min(
+        ...[/\bcurl\b/, /ensure_homebrew\b/, /\bbrew\b/]
+          .map((re) => script.search(re))
+          .filter((i) => i !== -1)
+      );
+      assert.ok(guardAt < firstShellOut,
+        'the platform guard must come before anything that shells out, or a regression would run the real Homebrew');
+
+      const box = sandbox({
+        uname: 'echo Linux',
+        curl: 'echo "STUB CURL SHOULD NOT RUN" >&2; exit 99'
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'must exit non-zero on a non-macOS platform');
+      assert.match(output, /requires macOS/i, 'must say plainly that macOS is required');
+      assert.doesNotMatch(output, /Homebrew|brew\.sh/i,
+        'must refuse BEFORE any Homebrew bootstrap — the refusal is the whole point');
+      assert.doesNotMatch(output, /STUB CURL SHOULD NOT RUN/,
+        'must not reach any network call');
+    });
+
+    it('reports a failed installer download as a download failure, not a PATH problem (#615)', () => {
+      // A failed `curl` inside `bash -c "$(curl …)"` yields an empty script,
+      // `bash -c ""` exits 0, and the guard never fires — so the script used to
+      // blame PATH for a Homebrew that was never installed. That advice loops
+      // forever: re-running reproduces it exactly.
+
+      // Safety interlock (see the describe comment): without the two-step
+      // download the script falls through to the real Homebrew probe, so refuse
+      // to execute unless the capture-then-run shape is present.
+      assert.match(script, /brew_installer="\$\(curl/,
+        'the installer must be captured before it is executed, or a regression would reach the real Homebrew');
+
+      const box = sandbox({
+        uname: 'echo Darwin',
+        curl: 'exit 6' // curl(6) — could not resolve host; writes nothing
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'must fail when the installer cannot be downloaded');
+      assert.match(output, /could not download the Homebrew installer/i,
+        'must name the real failure: the download');
+      assert.doesNotMatch(output, /not on PATH/i,
+        'must NOT blame PATH — Homebrew was never installed, and that advice sends the user in a circle');
+    });
+
+    it('refuses to execute an empty installer payload (#615)', () => {
+      // The subtler half of the same defect: curl exits 0 on a 200 response
+      // with an empty body (a captive portal, a proxy error page stripped to
+      // nothing), so the download guard passes and we would again run
+      // `bash -c ""` — succeeding at nothing and then blaming PATH. Success
+      // plus an empty payload must still be refused.
+      assert.match(script, /\[ -n "\$brew_installer" \]/,
+        'the empty-payload guard must exist before this test runs the script');
+
+      const box = sandbox({
+        uname: 'echo Darwin',
+        curl: 'exit 0' // succeeds, writes nothing
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'an empty installer payload must fail');
+      assert.match(output, /empty/i, 'must say the payload was empty');
+      assert.doesNotMatch(output, /not on PATH/i,
+        'must not fall through to the PATH diagnosis');
+    });
+
+    it('reports a failing installer as an installer failure (#615)', () => {
+      // The third branch: the download succeeded and the payload is non-empty,
+      // but running it fails. Distinguishing this from the two above is the
+      // whole point of splitting the steps — all three used to collapse into
+      // the same wrong PATH diagnosis.
+
+      // Safety interlock (see the describe comment): containment for THIS path
+      // rests on the execution guard exiting non-zero. Regressed to a
+      // non-exiting form, `||` suppresses `set -e`, control falls through to
+      // the absolute-path brew probe and on to a real `brew install node`.
+      assert.match(script, /\/bin\/bash -c "\$brew_installer" \\\n\s*\|\| \{[^}]*exit 1/,
+        'the installer execution must exit non-zero on failure, or a regression would reach the real Homebrew');
+
+      const box = sandbox({
+        uname: 'echo Darwin',
+        curl: 'echo "exit 1" ' // a valid, non-empty script that fails when run
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'a failing installer must fail the script');
+      assert.match(output, /Homebrew installer failed/i,
+        'must name the installer as what failed');
+      assert.doesNotMatch(output, /could not download/i,
+        'must not report a download problem — the download succeeded');
+    });
+  });
+
   describe('server plist stderr breadcrumb (#324)', () => {
     const plist = fs.readFileSync(
       path.join(__dirname, '..', 'deploy', 'com.tangleclaw.server.plist'),

@@ -4,6 +4,30 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` refuses to run on Linux instead of half-installing (#614).** The script
+  manages launchd services and bootstraps Homebrew, but never checked the platform: a Linux
+  user got a Linuxbrew bootstrap followed by launchd steps that cannot work. It now exits
+  with the same message the README's Prerequisites already carried, before writing or
+  downloading anything.
+- **A failed Homebrew download is reported as a failed download (#615).** `bash -c "$(curl …)"`
+  turns a network failure into an empty script that exits 0, so the guard never fired and the
+  script blamed PATH for a Homebrew that was never installed — advice that loops forever, since
+  re-running reproduces it. The installer is now captured, checked for emptiness, then executed,
+  and each failure mode says what actually happened.
+- **The startup banner reports the protocol the server actually speaks (#616).** On a fresh
+  install the shipped default enables HTTPS before any certificate exists, so the server falls
+  back to plain HTTP — and then logged `listening on https://*:3101 … https=true` two lines
+  after logging the fallback. The scheme now comes from the constructed server
+  (`serverProtocol()`) rather than config intent, and the line carries `httpsFallback: true`
+  when the two diverge.
+- **README notes that running `node server.js` by hand uses a different port than installing
+  (#617).** The Quick Start's `http://localhost:3102` is correct for the documented path — the
+  generated plist sets `TANGLECLAW_PORT=3102` — but a fresh clone started by hand listens on
+  the code default 3101, which is what the acceptance gate hit after `install.sh` refused to
+  run. The port itself is unchanged; the ambiguity was the defect.
+
 ### Changed
 
 - **The wrap pipeline is now code-owned — every project runs the same step list,

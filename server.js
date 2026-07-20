@@ -4449,9 +4449,23 @@ route('POST', '/api/audit/retention/run', (_req, res, _params, body) => {
 // ── Server Creation ──
 
 /**
- * Create and configure the HTTP server (does not start listening).
- * @returns {http.Server}
+ * Report the protocol a constructed server actually speaks.
+ *
+ * The distinction this exists to preserve: config `httpsEnabled` is *intent*,
+ * and `createServer` falls back to plain HTTP whenever HTTPS is asked for
+ * without usable cert/key. That is the ordinary fresh-install state, since the
+ * shipped default enables HTTPS before any certificate exists — so a startup
+ * banner derived from config announced `https://` for a plain-HTTP socket and
+ * sent new operators to debug certificates that were never in play. Ask the
+ * server, not the config.
+ *
+ * @param {http.Server|https.Server} server - The constructed server
+ * @returns {'https'|'http'} The scheme the server actually serves
  */
+function serverProtocol(server) {
+  return server instanceof https.Server ? 'https' : 'http';
+}
+
 /**
  * Create and configure the HTTP/HTTPS server (does not start listening).
  * @param {object} [options]
@@ -4645,7 +4659,9 @@ if (require.main === module) {
     }
   }, 5 * 60 * 1000);
 
-  const protocol = effectiveHttps ? 'https' : 'http';
+  // Describe the socket that exists, not the one the config asked for.
+  const protocol = serverProtocol(server);
+  const servingHttps = protocol === 'https';
   const bindHost = caddyMode ? '127.0.0.1' : null;
   const bindLabel = caddyMode ? '127.0.0.1' : '*';
 
@@ -4662,7 +4678,11 @@ if (require.main === module) {
     log.info(`TangleClaw v${_getVersion()} listening on ${protocol}://${bindLabel}:${port}${caddyMode ? ' (behind Caddy)' : ''}`, {
       node: process.version,
       pid: process.pid,
-      https: effectiveHttps,
+      https: servingHttps,
+      // Surfaced only when intent and reality diverge, so the listen line
+      // points back at the fallback WARN logged during construction rather
+      // than leaving the operator to notice the mismatch themselves.
+      ...(effectiveHttps && !servingHttps ? { httpsFallback: true } : {}),
       ingressMode: config.ingressMode || 'direct'
     });
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
@@ -4722,4 +4742,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, serverProtocol, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };

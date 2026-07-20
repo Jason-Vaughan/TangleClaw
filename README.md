@@ -161,7 +161,7 @@ The install script:
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3102**. On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
+Access the landing page at **http://localhost:3102**. (That is the port the installed launchd service uses — the plist sets `TANGLECLAW_PORT=3102`. Running `node server.js` by hand instead skips launchd and listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
 ### Prerequisites
 
@@ -240,7 +240,7 @@ Global config lives at `~/.tangleclaw/config.json` (auto-created on first run).
 
 Key settings:
 - `serverPort` — landing page server port (code default: 3101, launchd override: 3102)
-- `ttydPort` — ttyd terminal port (code default: 3100, launchd override: 3101)
+- `ttydPort` — ttyd terminal port (3100; in `caddy` ingress mode ttyd binds a Unix socket instead of a TCP port)
 - `projectsDir` — root directory for managed projects
 - `defaultEngine` — default engine for new projects
 - `deletePassword` — optional password for destructive operations
@@ -270,13 +270,13 @@ launchd (com.tangleclaw.server)
   └─ node server.js
      ├─ Landing page HTTP(S) server (:3102)
      ├─ API endpoints (/api/*)
-     ├─ Reverse proxy /terminal/* → ttyd (:3101)
+     ├─ Reverse proxy /terminal/* → ttyd (:3100)
      ├─ Reverse proxy /openclaw/* → SSH tunnel → OpenClaw gateway
      ├─ WebSocket upgrade (ttyd + OpenClaw)
      └─ Session wrapper + OpenClaw viewer HTML serving
 
 launchd (com.tangleclaw.ttyd)
-  └─ ttyd --port 3101 tmux attach (PTY-leak watchdog supervised)
+  └─ ttyd --port 3100 tmux attach (PTY-leak watchdog supervised)
      └─ WebSocket terminal access
 
 tmux sessions (spawned on demand)
