@@ -80,7 +80,7 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `projectMapEnabled` | boolean | `false` | Maintain `PROJECT-MAP.md` during wrap |
 | `wrapAutoPrEnabled` | boolean | `true` | After an auto-branched wrap commit, push and open a PR back to the original branch |
 | `wrapSections` | array\|null | `null` | Which continuity wrap-summary sections render. `null` = all of them |
-| `wrapStepOverrides` | object | `{}` | Per-step wrap overrides, keyed by step id — see [Wrap step overrides](#wrap-step-overrides) below |
+| `wrapStepOverrides` | object | `{}` | Per-step wrap overrides, keyed by step id. `{}` means no overrides, so the project runs the **full** shipped pipeline — see [Wrap step overrides](#wrap-step-overrides) below |
 | `medusaEnabled` | boolean | `false` | Auto-start this project's sessions on the Medusa switchboard |
 | `medusaWake` | boolean | `false` | Wake an idle session on inbound switchboard messages |
 | `defaultLaunchMode` | string | `"default"` | Engine launch-mode key this project launches in by default |
@@ -124,11 +124,27 @@ one shared pipeline that every project runs):
 The pipeline's step list ships in code and cannot be edited per project; overrides in
 `project.json` — a file only the project owns — are the per-project configuration surface.
 
+**The default is the full pipeline.** A project created or attached with no overrides runs
+every step in the shipped list — including the steps that block on an unsatisfied
+verification (`open-pr-check`, `changelog-update`, `learnings-capture`, `memory-update`). A
+project that should wrap more lightly says so here, per step; there is no lighter starting
+template to pick at creation time. This is a deliberate reversal of the pre-#652 default,
+where a new project began life running a commit-only wrap and had to be opted *into* the
+rest.
+
+The practical consequence worth knowing before you attach a repo: on a project with no
+`CHANGELOG.md` and no `.tangleclaw/memories/`, the steps that verify those files changed
+will stop the wrap and ask you to confirm the skip. That is the verification working as
+designed — a no-op is an operator's explicit decision, not something the wrap reports as
+done — but on a project that will never keep a changelog, disable those steps here once
+rather than ratifying the same skip every session.
+
 Projects whose wrap was commit-only before the pipeline became code-owned were migrated
 automatically: TangleClaw seeded overrides disabling every step except `commit`, plus a
 `wrapOverridesSeeded: true` marker. The marker makes the seeding one-shot — clear
 the overrides map (leave the marker) to opt the project into the full pipeline; it will
-not be re-seeded.
+not be re-seeded. That migration covered the projects that existed at the cutover only;
+it is not a default for new ones.
 
 | Field | Type | Effect |
 |-------|------|--------|

@@ -41,6 +41,16 @@ All notable changes to TangleClaw are documented in this file.
   seed sweep keys on the dropped column and has no birth-time equivalent). Known-open
   install defects #614–#617 reproduced and excluded as not-new. Result recorded in
   `.prawduct/artifacts/wrap-v2-build-plan.md`.
+- **Ratified the full wrap pipeline as the default for new projects (#652).** A project
+  created or attached after the methodology cutover carries no `wrapStepOverrides` and
+  runs every shipped step — a deliberate reversal of the old default, where a new project
+  was born `minimal` and had to be opted into the rest. Documented in
+  `docs/configuration-reference.md` (including the consequence: on a project with no
+  `CHANGELOG.md` or `.tangleclaw/memories/`, the verifying steps stop the wrap for an
+  operator-confirmed skip until they're disabled), and pinned by a test so reintroducing
+  birth-time commit-only seeding fails rather than silently re-flipping the default. The
+  20 projects migrated at the cutover keep their seeded maps as ordinary per-project
+  config.
 
 ### Removed
 
