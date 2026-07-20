@@ -183,45 +183,25 @@ async function loadProject() {
     loadModelStatus(data.engine.id);
   }
 
-  const methEl = document.getElementById('bannerMethodology');
-  if (data.methodology) {
-    methEl.textContent = data.methodology.name;
-    methEl.style.display = '';
-  } else {
-    methEl.style.display = 'none';
-  }
-
-  const phaseEl = document.getElementById('bannerPhase');
-  if (data.methodology && data.methodology.phase) {
-    phaseEl.textContent = data.methodology.phase;
-    phaseEl.className = 'banner-phase';
-    phaseEl.style.display = '';
-  } else if (data.methodology) {
-    phaseEl.textContent = 'in session';
-    phaseEl.className = 'banner-phase-unknown';
-    phaseEl.style.display = '';
-  } else {
-    phaseEl.style.display = 'none';
-  }
-
   document.title = `TangleClaw \u2014 ${data.name}`;
 
   // Render group pills in banner
   renderBannerGroups(data.groups || []);
 
-  // #139 Chunk 11b \u2014 methodology-declared action buttons (e.g. prawduct's
-  // "Run Critic"). Hidden when the methodology has no actions[].
-  renderMethodologyActions(data.methodology ? data.methodology.actions || [] : []);
+  // #139 Chunk 11b \u2014 project action buttons (e.g. "Run Critic"). The
+  // server sends only the actions this project's governance state supports,
+  // so an empty list renders nothing.
+  renderProjectActions(data.actions || []);
 }
 
 /**
- * Render methodology-declared action buttons in the banner.
- * Server validates the command against the methodology's `actions[]`,
- * so we can safely POST whatever the user clicks.
+ * Render the project's action buttons in the banner.
+ * The server gates availability on the project's governance state and
+ * re-checks it on POST, so we can safely POST whatever the user clicks.
  * @param {Array<{label: string, command: string, confirm: boolean}>} actions
  */
-function renderMethodologyActions(actions) {
-  const container = document.getElementById('methodologyActions');
+function renderProjectActions(actions) {
+  const container = document.getElementById('projectActions');
   if (!container) return;
   container.innerHTML = '';
   if (!Array.isArray(actions) || actions.length === 0) return;
@@ -229,30 +209,30 @@ function renderMethodologyActions(actions) {
   for (const action of actions) {
     if (!action || typeof action.label !== 'string' || typeof action.command !== 'string') continue;
     const btn = document.createElement('button');
-    btn.className = 'banner-btn methodology-action-btn';
+    btn.className = 'banner-btn project-action-btn';
     btn.textContent = action.label;
     btn.setAttribute('data-command', action.command);
-    btn.setAttribute('aria-label', `${action.label} (methodology action)`);
-    btn.addEventListener('click', () => invokeMethodologyAction(action));
+    btn.setAttribute('aria-label', `${action.label} (project action)`);
+    btn.addEventListener('click', () => invokeProjectAction(action));
     container.appendChild(btn);
   }
 }
 
 /**
- * Invoke a methodology action via the server. Shows a brief feedback
+ * Invoke a project action via the server. Shows a brief feedback
  * toast in the banner status area on success/failure.
  *
- * Per-action wording overrides (#230): the methodology template may
- * supply `confirmMessage` and `successToast` strings on an action
- * declaration. When present they replace the generic
+ * Per-action wording overrides (#230): an action declaration may
+ * supply `confirmMessage` and `successToast` strings. When present
+ * they replace the generic
  * `Run "<label>" for this project?` / `<label>: recorded` defaults.
  * The Critic-style "this button records, doesn't run" contract is
- * misread by operators when the generic wording stands alone, so
- * template authors can clarify the contract at the surface.
+ * misread by operators when the generic wording stands alone, so an
+ * action declares wording that clarifies the contract at the surface.
  *
  * @param {{label: string, command: string, confirm: boolean, confirmMessage?: string, successToast?: string}} action
  */
-async function invokeMethodologyAction(action) {
+async function invokeProjectAction(action) {
   if (action.confirm) {
     const confirmMessage = (typeof action.confirmMessage === 'string' && action.confirmMessage.length > 0)
       ? action.confirmMessage
@@ -260,18 +240,18 @@ async function invokeMethodologyAction(action) {
     const yes = window.confirm(confirmMessage);
     if (!yes) return;
   }
-  // `CSS.escape` defends against methodology-template-supplied command
-  // strings that contain selector-syntax characters. Today every
-  // shipped template uses `[a-z-]+` only, so this is belt-and-suspenders.
+  // `CSS.escape` defends against command strings containing
+  // selector-syntax characters. Every registered action uses `[a-z-]+`
+  // only, so this is belt-and-suspenders.
   const selectorCommand = (typeof CSS !== 'undefined' && CSS.escape)
     ? CSS.escape(action.command)
     : action.command.replace(/["\\]/g, '\\$&');
-  const btn = document.querySelector(`.methodology-action-btn[data-command="${selectorCommand}"]`);
+  const btn = document.querySelector(`.project-action-btn[data-command="${selectorCommand}"]`);
   if (btn) {
     btn.disabled = true;
     btn.textContent = `${action.label}\u2026`;
   }
-  // #267 (Critic finding on PR #269): methodology-action POSTs can be
+  // #267 (Critic finding on PR #269): action POSTs can be
   // long-running on the server side — invoke-critic's real-invocation
   // path can run up to 5 minutes while the Critic skill executes. The
   // shared `apiMutate` helper doesn't expose `signal`, so for this
@@ -301,10 +281,10 @@ async function invokeMethodologyAction(action) {
       // `AbortError` is the AbortController firing; surface a clear
       // timeout message rather than the generic "fetch failed."
       if (err && err.name === 'AbortError') {
-        showMethodologyActionToast(`${action.label}: timed out after ${Math.round(ACTION_TIMEOUT_MS / 1000)}s`, true);
+        showBannerActionToast(`${action.label}: timed out after ${Math.round(ACTION_TIMEOUT_MS / 1000)}s`, true);
         return;
       }
-      showMethodologyActionToast(`${action.label}: ${err && err.message ? err.message : 'request failed'}`, true);
+      showBannerActionToast(`${action.label}: ${err && err.message ? err.message : 'request failed'}`, true);
       return;
     } finally {
       clearTimeout(timeoutId);
@@ -341,7 +321,7 @@ async function invokeMethodologyAction(action) {
       // deliberately deferred so this PR stays scoped to "button
       // actually does what it says."
       if (result.output && Array.isArray(result.output.findings) && result.output.findings.length > 0) {
-        showMethodologyActionToast(successToast);
+        showBannerActionToast(successToast);
         renderActionFindings(action.label, result.output);
       } else if (result.output && result.output.fallbackReason) {
         // Real invocation attempted but fell back to ack-only — show
@@ -359,14 +339,14 @@ async function invokeMethodologyAction(action) {
       } else {
         // Neither findings nor fallback — show the toast as the only
         // signal (ack-mode wrap-pipeline-driven dispatch lands here).
-        showMethodologyActionToast(successToast);
+        showBannerActionToast(successToast);
       }
     } else {
       // `api.lastError` is a string set by `apiMutate` on !res.ok (see
       // public/api-helper.js). Earlier draft accessed `.message` which
       // is undefined on a string and silently hid the real server error.
       const msg = (result && result.error) || api.lastError || 'failed';
-      showMethodologyActionToast(`${action.label}: ${msg}`, true);
+      showBannerActionToast(`${action.label}: ${msg}`, true);
     }
   } finally {
     if (btn) {
@@ -377,31 +357,31 @@ async function invokeMethodologyAction(action) {
 }
 
 /**
- * Brief banner-anchored toast for methodology-action feedback. Hides
+ * Brief banner-anchored toast for action feedback. Hides
  * after 3.5s. Uses inline DOM rather than a global toast system to keep
  * the surface area of this chunk small.
  * @param {string} message
  * @param {boolean} [isError]
  */
-function showMethodologyActionToast(message, isError) {
-  let toast = document.getElementById('methodologyActionToast');
+function showBannerActionToast(message, isError) {
+  let toast = document.getElementById('bannerActionToast');
   if (!toast) {
     toast = document.createElement('div');
-    toast.id = 'methodologyActionToast';
-    toast.className = 'methodology-action-toast';
+    toast.id = 'bannerActionToast';
+    toast.className = 'banner-action-toast';
     document.body.appendChild(toast);
   }
   toast.textContent = message;
-  toast.classList.toggle('methodology-action-toast--error', !!isError);
-  toast.classList.add('methodology-action-toast--visible');
-  clearTimeout(showMethodologyActionToast._timer);
-  showMethodologyActionToast._timer = setTimeout(() => {
-    toast.classList.remove('methodology-action-toast--visible');
+  toast.classList.toggle('banner-action-toast--error', !!isError);
+  toast.classList.add('banner-action-toast--visible');
+  clearTimeout(showBannerActionToast._timer);
+  showBannerActionToast._timer = setTimeout(() => {
+    toast.classList.remove('banner-action-toast--visible');
   }, 3500);
 }
 
 /**
- * Render structured findings from a methodology action (e.g.
+ * Render structured findings from a project action (e.g.
  * invoke-critic's real-invocation result) into a panel anchored at
  * the bottom of the viewport. Stays visible until explicitly
  * dismissed — unlike toasts, finding-content must remain readable
@@ -1315,7 +1295,7 @@ async function launchMedusaLoop() {
     // durably queued, pushed live when the target is online — and its open
     // response does not report live-vs-queued, so neither do we. The toast
     // states exactly what the contract guarantees, no invented "delivered".
-    showMethodologyActionToast(`Loop opened with ${label} — the Bridge delivers the invite (live, or on their reconnect).`, false);
+    showBannerActionToast(`Loop opened with ${label} — the Bridge delivers the invite (live, or on their reconnect).`, false);
     flowMedusaOutbound(label, 'invited');
     closeMedusaLoopModal();
   } else {
@@ -1540,12 +1520,12 @@ async function forceDoneMedusaLoop(loopId) {
       loop.state = result.loopState;
       loop.closeSignal = result.closeSignal || loop.closeSignal;
     }
-    showMethodologyActionToast('Loop ended (force-done).', false);
+    showBannerActionToast('Loop ended (force-done).', false);
     const live = document.getElementById('medusaLive');
     if (live) live.textContent = 'Loop ended by force-done';
     renderMedusaControl();
   } else {
-    showMethodologyActionToast(`Couldn't end loop: ${api.lastError || 'the bridge rejected it'}`, true);
+    showBannerActionToast(`Couldn't end loop: ${api.lastError || 'the bridge rejected it'}`, true);
   }
 }
 
@@ -1562,7 +1542,7 @@ async function forceDoneMedusaLoop(loopId) {
  */
 async function continueMedusaLoop(loopId, message) {
   const text = (message || '').trim();
-  if (!text) { showMethodologyActionToast('Enter feedback before sending.', true); return; }
+  if (!text) { showBannerActionToast('Enter feedback before sending.', true); return; }
   const result = await apiMutate(
     `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/continue`,
     'POST',
@@ -1579,13 +1559,13 @@ async function continueMedusaLoop(loopId, message) {
     if (result.loopState === 'halted') {
       // The feedback landed but pushed the round to maxRounds — the Bridge
       // auto-halted the loop. Say so honestly; it did NOT continue.
-      showMethodologyActionToast('Feedback sent — loop hit its round cap and halted.', false);
+      showBannerActionToast('Feedback sent — loop hit its round cap and halted.', false);
     } else {
-      showMethodologyActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
+      showBannerActionToast(result.delivered ? 'Feedback sent — loop continued.' : 'Feedback queued — loop continued.', false);
     }
     renderMedusaControl();
   } else {
-    showMethodologyActionToast(`Couldn't send feedback: ${api.lastError || 'the bridge rejected it'}`, true);
+    showBannerActionToast(`Couldn't send feedback: ${api.lastError || 'the bridge rejected it'}`, true);
   }
 }
 
@@ -1613,12 +1593,12 @@ async function closeoutMedusaLoop(loopId) {
     }
     medusaExpandedFeedback.delete(loopId);
     medusaFeedbackDrafts.delete(loopId);
-    showMethodologyActionToast('Loop ended — marked done.', false);
+    showBannerActionToast('Loop ended — marked done.', false);
     const live = document.getElementById('medusaLive');
     if (live) live.textContent = 'Loop ended — marked done';
     renderMedusaControl();
   } else {
-    showMethodologyActionToast(`Couldn't close loop: ${api.lastError || 'the bridge rejected it'}`, true);
+    showBannerActionToast(`Couldn't close loop: ${api.lastError || 'the bridge rejected it'}`, true);
   }
 }
 
@@ -2318,15 +2298,6 @@ function openSettings() {
   const currentEngine = sessionState.project ? (sessionState.project.engine ? sessionState.project.engine.id : '') : '';
   engineSelect.innerHTML = buildEngineOptions(sessionState.engines, currentEngine);
 
-  // Methodology info
-  const methEl = document.getElementById('settingsMethodology');
-  if (sessionState.project && sessionState.project.methodology) {
-    const meth = sessionState.project.methodology;
-    methEl.textContent = `${meth.name}${meth.phase ? ' \u2014 ' + meth.phase : ''}`;
-  } else {
-    methEl.textContent = 'None';
-  }
-
   // Chime toggle
   document.getElementById('chimeToggle').checked = sessionState.chimeEnabled;
 
@@ -2618,7 +2589,7 @@ async function pasteToTerminal() {
       const text = await nav.clipboard.readText();
       if (text) {
         if (!insertPasteText(text)) {
-          showMethodologyActionToast("Couldn't paste: the terminal isn't ready yet.", true);
+          showBannerActionToast("Couldn't paste: the terminal isn't ready yet.", true);
         }
         return;
       }
@@ -2638,11 +2609,11 @@ async function pasteToTerminal() {
 function insertFromPasteCatcher() {
   const text = document.getElementById('pasteCatcherText').value;
   if (!text) {
-    showMethodologyActionToast('Nothing to insert — paste into the box first.', true);
+    showBannerActionToast('Nothing to insert — paste into the box first.', true);
     return;
   }
   if (!insertPasteText(text)) {
-    showMethodologyActionToast("Couldn't paste: the terminal isn't ready yet.", true);
+    showBannerActionToast("Couldn't paste: the terminal isn't ready yet.", true);
     return;
   }
   closePasteCatcher();

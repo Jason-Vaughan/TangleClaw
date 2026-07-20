@@ -112,22 +112,6 @@ function renderCard(project) {
       })()
     : '';
 
-  const methBadge = project.methodology
-    ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
-    : '';
-
-  let phaseBadge = '';
-  if (project.methodology) {
-    if (project.methodology.phase) {
-      phaseBadge = `<span class="badge badge-phase">${esc(project.methodology.phase)}</span>`;
-    } else {
-      const inferredState = hasSession ? 'in session'
-        : (project.git && project.git.dirty) ? 'active'
-        : 'idle';
-      phaseBadge = `<span class="badge badge-phase-unknown">${inferredState}</span>`;
-    }
-  }
-
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
     `<span class="badge badge-group" title="${esc(g.name)}: ${g.docCount || 0} shared doc${(g.docCount || 0) !== 1 ? 's' : ''}">${esc(g.name)}</span>`
@@ -144,12 +128,13 @@ function renderCard(project) {
       })()
     : '';
 
-  // Governance-drift badge (#353) — only the alarming state renders, to avoid
-  // badge noise. "drift-no-governance" = labeled prawduct + Claude but neither
-  // on the V2 plugin nor carrying a vendored hook, so the Stop-gate/Critic layer
-  // is silently off. Self-clears once the project migrates.
-  const driftBadge = project.governanceState === 'drift-no-governance'
-    ? `<span class="badge badge-drift" title="Governance drift: this project presents as Prawduct-governed but its Stop-gate/Critic layer is silently OFF (not on the V2 plugin, no vendored hook). Open Info to migrate it.">&#9888; governance drift</span>`
+  // Legacy-governance badge (#353) — only the one actionable state renders, to
+  // avoid badge noise. A vendored hook still works but predates the V2 plugin,
+  // so the project is a migration candidate. Self-clears once it migrates.
+  // `ungoverned` is deliberately silent: a project with no Prawduct governance
+  // is an ordinary project, not a fault.
+  const driftBadge = project.governanceState === 'governed-vendored'
+    ? `<span class="badge badge-drift" title="Legacy governance: this project runs a vendored Prawduct hook rather than the V2 plugin. Open Info to migrate it.">&#9888; legacy governance</span>`
     : '';
 
   const statusDot = hasSession
@@ -164,8 +149,6 @@ function renderCard(project) {
       ${versionBadge}
       ${gitBadge}
       ${engineBadge}
-      ${methBadge}
-      ${phaseBadge}
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}
@@ -189,16 +172,11 @@ function renderUnregisteredCard(project) {
     ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
     : '';
 
-  const methBadge = project.methodology
-    ? `<span class="badge badge-meth">${esc(project.methodology.name)}</span>`
-    : '';
-
   return `<article class="project-card compact unregistered" tabindex="0">
     <div class="card-row">
       <span class="status-dot unregistered"></span>
       <span class="card-name card-name-muted" title="${n}">${n}</span>
       ${gitBadge}
-      ${methBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject('${n}')">Attach</button>
       </span>
@@ -248,7 +226,6 @@ function toggleCardDetail(name) {
     detail.className = 'card-detail';
 
     const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
-    const methInfo = project.methodology ? `${esc(project.methodology.name)}${project.methodology.phase ? ' — ' + esc(project.methodology.phase) : ''}` : 'No methodology';
     const sessionInfo = project.session && project.session.active
       ? `Active since ${esc(project.session.startedAt || '')}`
       : 'No active session';
@@ -260,7 +237,6 @@ function toggleCardDetail(name) {
 
     detail.innerHTML = `
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
-      <div class="detail-row"><span class="detail-label">Methodology</span><span class="detail-value">${methInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
@@ -710,16 +686,6 @@ function openSettings(name) {
 
   const engineOpts = buildEngineOptions(state.engines, project.engine ? project.engine.id : '');
 
-  // Every project has a methodology (#151) — `minimal` is the no-workflow option,
-  // not a separate "None" sentinel. Pre-#151 the dropdown offered a None choice
-  // that POSTed `methodology: null` and crashed the backend; retired.
-  const currentMeth = project.methodology ? project.methodology.id : 'minimal';
-  // Deprecated methodologies (e.g. V1 prawduct — #536) remain selectable for
-  // already-bound projects but are labeled so the state is visible.
-  const methOpts = state.methodologies.map(m =>
-    `<option value="${esc(m.id)}" ${m.id === currentMeth ? 'selected' : ''}>${esc(m.name)}${m.deprecated ? ' (deprecated)' : ''}</option>`
-  ).join('');
-
   const hasSession = project.session && project.session.active;
 
   // Silent prime toggle (#103) — rendered into a stable container so we can
@@ -752,11 +718,6 @@ function openSettings(name) {
       <label class="form-label" for="settingsEngine">Engine</label>
       <select class="form-select" id="settingsEngine">${engineOpts}</select>
       <div class="form-hint">Takes effect on next session launch</div>
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="settingsMethodology">Methodology</label>
-      <select class="form-select" id="settingsMethodology">${methOpts}</select>
-      <div class="form-hint">Changing archives the current methodology state</div>
     </div>
     <div class="form-group">
       <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
@@ -1254,62 +1215,15 @@ function _setProjectRulesStatus(text, ok) {
 
 async function saveSettings() {
   if (!settingsTarget) return;
-  const methVal = document.getElementById('settingsMethodology').value;
-  const newMeth = methVal === 'none' ? null : methVal;
-
-  // Check if methodology is changing — show confirmation modal if so
-  const project = state.projects.find(p => p.name === settingsTarget);
-  const currentMeth = project && project.methodology ? project.methodology.id : null;
-  if (newMeth !== currentMeth) {
-    openMethSwitchModal(settingsTarget, currentMeth, newMeth);
-    return;
-  }
-
   await doSaveSettings();
 }
 
-/**
- * Show the methodology switch confirmation modal.
- * @param {string} projectName - Project being updated
- * @param {string|null} fromMeth - Current methodology id
- * @param {string|null} toMeth - New methodology id
- */
-function openMethSwitchModal(projectName, fromMeth, toMeth) {
-  // Pre-#151 the modal handled a "None" pseudo-methodology for the (broken)
-  // removal path. Every project now has a methodology — fromMeth/toMeth are
-  // always real ids — so the null-fallback copy paths are gone.
-  const fromName = (state.methodologies.find(m => m.id === fromMeth) || {}).name || fromMeth;
-  const toName = (state.methodologies.find(m => m.id === toMeth) || {}).name || toMeth;
-
-  let html = `<p style="font-size:15px;margin-bottom:12px"><strong>${esc(fromName)}</strong> &rarr; <strong>${esc(toName)}</strong></p>`;
-  html += `<p>The current <strong>${esc(fromName)}</strong> state will be archived (not deleted). Learnings, reflections, and other artifacts remain accessible.</p>`;
-  html += `<p style="margin-top:8px">The new <strong>${esc(toName)}</strong> methodology will be initialized and session hooks updated.</p>`;
-  html += `<p style="margin-top:12px;font-size:12px;color:var(--text-muted)">Archived methodology state stays in the project directory and is referenced in generated configs so AI assistants can review prior context.</p>`;
-
-  document.getElementById('methSwitchText').innerHTML = html;
-  document.getElementById('methSwitchModal').classList.add('open');
-}
-
-/** Close the methodology switch modal without saving. */
-function closeMethSwitchModal() {
-  document.getElementById('methSwitchModal').classList.remove('open');
-}
-
-/** Confirm methodology switch and proceed with settings save. */
-async function confirmMethSwitch() {
-  closeMethSwitchModal();
-  await doSaveSettings();
-}
-
-/** Execute the settings save (called directly or after methodology confirmation). */
+/** Execute the settings save. */
 async function doSaveSettings() {
   if (!settingsTarget) return;
-  const methVal = document.getElementById('settingsMethodology').value;
   const newName = document.getElementById('settingsName').value.trim();
   const body = {
     engine: document.getElementById('settingsEngine').value,
-    // Every project has a methodology (#151); methVal is always a real template id
-    methodology: methVal,
     tags: document.getElementById('settingsTags').value.split(',').map(t => t.trim()).filter(Boolean)
   };
   if (newName && newName !== settingsTarget) {
@@ -1461,10 +1375,6 @@ function openGlobalSettings() {
 
   const engineOpts = buildEngineOptions(state.engines, c.defaultEngine || '');
 
-  const methOpts = state.methodologies.map(m =>
-    `<option value="${esc(m.id)}" ${m.id === (c.defaultMethodology || '') ? 'selected' : ''}>${esc(m.name)}</option>`
-  ).join('');
-
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
@@ -1511,10 +1421,6 @@ function openGlobalSettings() {
     <div class="form-group">
       <label class="form-label" for="gsDefaultEngine">Default engine</label>
       <select class="form-select" id="gsDefaultEngine">${engineOpts}</select>
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="gsDefaultMethodology">Default methodology</label>
-      <select class="form-select" id="gsDefaultMethodology">${methOpts}</select>
     </div>
     <div class="form-group">
       <label class="form-label" for="gsProjectsDir">Projects directory</label>
@@ -1648,7 +1554,6 @@ async function saveGlobalSettings() {
     peekMode: document.getElementById('gsPeekMode').value,
     chimeMuted: document.getElementById('gsChimeMuted').checked,
     defaultEngine: document.getElementById('gsDefaultEngine').value,
-    defaultMethodology: document.getElementById('gsDefaultMethodology').value,
     projectsDir: document.getElementById('gsProjectsDir').value.trim(),
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
     portScannerIntervalMs: intervalMs,
@@ -1667,14 +1572,13 @@ async function saveGlobalSettings() {
 // ── Create Project Drawer ──
 
 let createStep = 0;
-let createData = { name: '', engine: '', methodology: '', tags: '' };
+let createData = { name: '', engine: '', tags: '' };
 
 function openCreateModal() {
   createStep = 0;
   createData = {
     name: '',
     engine: state.config ? state.config.defaultEngine || '' : '',
-    methodology: state.config ? state.config.defaultMethodology || 'minimal' : 'minimal',
     tags: ''
   };
   renderCreateStep();
@@ -1708,35 +1612,12 @@ function renderCreateStep() {
       <button class="btn btn-primary" style="width:100%" onclick="createNext()">Next</button>`;
     setTimeout(() => { const el = document.getElementById('createName'); if (el) el.focus(); }, 100);
   } else if (createStep === 1) {
-    document.getElementById('createTitle').textContent = 'Engine & Methodology';
+    document.getElementById('createTitle').textContent = 'Engine';
     const engineOpts = buildEngineOptions(state.engines, createData.engine);
-    const methPills = state.methodologies.map(m => {
-      const sel = m.id === createData.methodology ? ' selected' : '';
-      // Deprecated methodologies (e.g. V1 prawduct, superseded by the V2
-      // plugin — #536) stay pickable but carry a visible badge.
-      const dep = m.deprecated ? ' <span class="meth-deprecated">(deprecated)</span>' : '';
-      return `<div class="meth-pill${sel}" data-id="${esc(m.id)}" onclick="selectMethodology('${esc(m.id)}')">${esc(m.name)}${dep}</div>`;
-    }).join('');
-    // Every project has a methodology (#151) — `minimal` is the no-workflow
-    // choice in the methodology picker, no separate "None" pseudo-option.
-    const selMeth = createData.methodology
-      ? state.methodologies.find(m => m.id === createData.methodology) : null;
-    const detailHtml = selMeth
-      ? `<div class="meth-detail">
-           <div class="meth-detail-name">${esc(selMeth.name)}</div>
-           <div class="meth-detail-desc">${esc(selMeth.description || '')}</div>
-           ${selMeth.deprecated && selMeth.deprecationNote ? `<div class="meth-detail-deprecated">⚠ ${esc(selMeth.deprecationNote)}</div>` : ''}
-           ${selMeth.phases && selMeth.phases.length ? `<div class="meth-detail-phases">Phases: ${selMeth.phases.map(p => esc(typeof p === 'string' ? p : p.id || p.name)).join(' → ')}</div>` : ''}
-         </div>` : '';
     body.innerHTML = `
       <div class="form-group">
         <label class="form-label" for="createEngine">Engine</label>
         <select class="form-select" id="createEngine">${engineOpts}</select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Methodology</label>
-        <div class="meth-picker">${methPills}</div>
-        <div id="methDetail">${detailHtml}</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn" style="flex:1" onclick="createBack()">Back</button>
@@ -1753,7 +1634,7 @@ function renderCreateStep() {
       <div class="form-group">
         <div style="padding:12px;background:var(--elevated-bg);border-radius:6px;font-size:13px">
           <div><strong>${esc(createData.name)}</strong></div>
-          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)} &middot; Methodology: ${esc(createData.methodology)}</div>
+          <div style="color:var(--text-muted);margin-top:4px">Engine: ${esc(createData.engine)}</div>
         </div>
       </div>
       <div id="createError" class="form-error hidden" role="alert"></div>
@@ -1764,26 +1645,6 @@ function renderCreateStep() {
   }
 }
 
-function selectMethodology(id) {
-  createData.methodology = id;
-  // Re-render just the picker state without full step re-render
-  document.querySelectorAll('.meth-pill').forEach(el => {
-    el.classList.toggle('selected', el.dataset.id === id);
-  });
-  const detailEl = document.getElementById('methDetail');
-  if (id && id !== 'none') {
-    const m = state.methodologies.find(x => x.id === id);
-    if (m) {
-      detailEl.innerHTML = `<div class="meth-detail">
-        <div class="meth-detail-name">${esc(m.name)}</div>
-        <div class="meth-detail-desc">${esc(m.description || '')}</div>
-        ${m.phases && m.phases.length ? `<div class="meth-detail-phases">Phases: ${m.phases.map(p => esc(typeof p === 'string' ? p : p.id || p.name)).join(' → ')}</div>` : ''}
-      </div>`;
-    }
-  } else {
-    detailEl.innerHTML = '';
-  }
-}
 
 function createNext() {
   if (createStep === 0) {
@@ -1797,7 +1658,6 @@ function createNext() {
     createData.name = name;
   } else if (createStep === 1) {
     createData.engine = document.getElementById('createEngine').value;
-    // methodology already set via selectMethodology()
   }
   createStep++;
   renderCreateStep();
@@ -1819,7 +1679,6 @@ async function submitCreate() {
   const result = await apiMutate('/api/projects', 'POST', {
     name: createData.name,
     engine: createData.engine,
-    methodology: createData.methodology,
     tags
   });
 
@@ -1832,7 +1691,7 @@ async function submitCreate() {
     return;
   }
 
-  // Show warnings from methodology init or other partial failures
+  // Show warnings from partial failures (scaffolding, git init, hooks)
   if (result.warnings && result.warnings.length > 0) {
     const toast = document.getElementById('toast');
     toast.textContent = `Warning: ${result.warnings.join('; ')}`;
@@ -3469,9 +3328,6 @@ $('settingsBody').addEventListener('change', handleProjectRulesEvent);
 $('attachConfirmCancelBtn').addEventListener('click', closeAttachConfirm);
 $('attachConfirmBtn').addEventListener('click', confirmAttach);
 $('attachConfirmModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeAttachConfirm(); });
-$('methSwitchCancelBtn').addEventListener('click', closeMethSwitchModal);
-$('methSwitchConfirmBtn').addEventListener('click', confirmMethSwitch);
-$('methSwitchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeMethSwitchModal(); });
 $('bypassHiddenCancelBtn').addEventListener('click', closeBypassHiddenModal);
 $('bypassHiddenConfirmBtn').addEventListener('click', confirmBypassHidden);
 $('bypassHiddenModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeBypassHiddenModal(); });

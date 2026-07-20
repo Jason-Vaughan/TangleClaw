@@ -27,15 +27,13 @@
       <span class="banner-version" id="bannerVersion"></span>
       <span id="updateBadge" class="update-badge hidden"></span>
       <span class="status-dot" id="statusDot" title="Connected"></span>
-      <span class="banner-methodology" id="bannerMethodology"></span>
-      <span class="banner-phase" id="bannerPhase"></span>
       <span class="banner-engine" id="bannerEngine"></span>
       <span id="bannerGroups" class="banner-groups"></span>
     </div>
     <div class="banner-actions">
-      <!-- Methodology-declared action buttons (#139 Chunk 11b) render here.
-           Populated by `renderMethodologyActions` in session.js after loadProject. -->
-      <span id="methodologyActions" class="methodology-actions"></span>
+      <!-- Project action buttons (#139 Chunk 11b) render here. Populated by
+           `renderProjectActions` in session.js after loadProject. -->
+      <span id="projectActions" class="project-actions"></span>
 
       <!-- Medusa session-comms control (MED-2K9P). Two facing heads flank the
            MEDUSA emblem (real gold art, alpha-preserving WebP). Status is carried
@@ -216,10 +214,6 @@
           <label class="form-label" for="settingsEngine">Engine</label>
           <select class="form-select" id="settingsEngine"></select>
           <div class="form-hint">Takes effect on next session</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Methodology</label>
-          <div class="settings-info" id="settingsMethodology">--</div>
         </div>
         <div class="form-group" id="mouseGroup">
           <label class="form-label">tmux Mouse</label>

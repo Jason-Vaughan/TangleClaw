@@ -1530,16 +1530,6 @@ body {
   color: #ce93d8;
   font-size: 9px;
 }
-.badge-phase {
-  background: rgba(255, 152, 0, 0.15);
-  color: #ffb74d;
-  font-size: 9px;
-}
-.badge-phase-unknown {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
-  font-size: 9px;
-}
 .git-dirty {
   display: inline-block;
   width: 5px;
@@ -1678,7 +1668,7 @@ body {
 }
 
 /* Legacy compat — keep old classes that may be referenced */
-.engine-pill, .methodology-pill, .status-pill {
+.engine-pill, .status-pill {
   font-size: 9px;
   font-weight: 600;
   padding: 2px 6px;
@@ -1688,10 +1678,6 @@ body {
 .engine-pill {
   background: rgba(139, 195, 74, 0.15);
   color: var(--primary);
-}
-.methodology-pill {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
 }
 .status-green { background: rgba(139, 195, 74, 0.15); color: var(--primary); }
 .status-blue { background: rgba(74, 158, 255, 0.15); color: var(--root-accent); }
@@ -1830,8 +1816,8 @@ body {
    winning on specificity if this block is ever moved above the base
    `.modal-content` (which currently sits earlier). */
 .modal-content.create-modal {
-  /* Wider than the confirmation modals: this one carries form fields and an
-     engine/methodology list, not one line of text. */
+  /* Wider than the confirmation modals: this one carries form fields, not
+     one line of text. */
   max-width: 440px;
   max-height: 90vh;
   /* The inner body owns the scroll, so the container must not also scroll. */
@@ -2044,68 +2030,6 @@ body {
 }
 .history-drill-head { margin-bottom: 4px; }
 .history-drill.hidden { display: none; }
-
-/* ── Methodology Picker ── */
-.meth-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
-}
-.meth-pill {
-  padding: 8px 16px;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--elevated-bg);
-  border-radius: 6px;
-  background: var(--card-bg);
-  color: var(--text-muted);
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-}
-.meth-pill:active { background: var(--elevated-bg); }
-.meth-pill.selected {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: rgba(139, 195, 74, 0.08);
-}
-.meth-detail {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--elevated-bg);
-  border-radius: 6px;
-  font-size: 13px;
-}
-.meth-detail-name {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 2px;
-}
-.meth-detail-desc {
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-.meth-detail-phases {
-  margin-top: 6px;
-  color: var(--primary);
-  font-size: 12px;
-}
-/* Deprecated-methodology badge + note (#536) */
-.meth-deprecated {
-  color: var(--warning, #d9a406);
-  font-size: 11px;
-  font-weight: 600;
-}
-.meth-detail-deprecated {
-  margin-top: 6px;
-  color: var(--warning, #d9a406);
-  font-size: 12px;
-  line-height: 1.4;
-}
 
 /* ── Template/Step Cards in Drawer ── */
 .template-option {

@@ -8,7 +8,6 @@
 const state = {
   projects: [],
   engines: [],
-  methodologies: [],
   config: null,
   filterText: '',
   activeTag: null,
@@ -677,11 +676,6 @@ async function loadEngines() {
   if (data) state.engines = data.engines || [];
 }
 
-async function loadMethodologies() {
-  const data = await api('/api/methodologies');
-  if (data) state.methodologies = data.methodologies || [];
-}
-
 async function loadConfig() {
   const data = await api('/api/config');
   if (data) state.config = data;
@@ -716,8 +710,8 @@ async function loadProjects() {
 
 // ── Orphan Hooks Banner (#145, chunk 2) ──
 // The Stop-hook infinite-loop incident that prompted chunk 2 lives in
-// projects whose .claude/settings.json points at a methodology runtime that
-// was never installed. The banner gives users a one-click escape hatch
+// projects whose .claude/settings.json points at a hook runtime that was
+// never installed. The banner gives users a one-click escape hatch
 // without waiting for each project's next session-launch sync to self-heal.
 
 async function loadOrphanHooksInventory() {
@@ -851,7 +845,6 @@ function filterProjects() {
       const haystack = [
         p.name,
         p.engine ? p.engine.name : '',
-        p.methodology ? p.methodology.name : '',
         ...(p.tags || [])
       ].join(' ').toLowerCase();
       return haystack.includes(text);
@@ -1256,7 +1249,7 @@ async function init() {
     if (saved !== null) state.showUnregistered = JSON.parse(saved);
   } catch (e) { /* ignore */ }
 
-  await Promise.all([loadVersion(), loadConfig(), loadEngines(), loadMethodologies()]);
+  await Promise.all([loadVersion(), loadConfig(), loadEngines()]);
   applyTheme();
 
   // Check for first-run setup wizard
