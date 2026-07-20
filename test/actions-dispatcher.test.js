@@ -34,19 +34,31 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  /** Create a fresh project + git repo for a test. */
-  function makeProject(name, methodologyId) {
+  /**
+   * Create a fresh project + git repo for a test.
+   * @param {string} name - Project name.
+   * @param {boolean} [governed=true] - Whether to mark the project as governed
+   *   by the Prawduct V2 plugin, which is what makes actions available.
+   * @returns {object} The created project record.
+   */
+  function makeProject(name, governed = true) {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
     execSync('git init -q', { cwd: projPath });
     execSync('git config user.email test@example.com', { cwd: projPath });
     execSync('git config user.name test', { cwd: projPath });
     execSync('git commit --allow-empty -m init -q', { cwd: projPath });
+    if (governed) {
+      fs.mkdirSync(path.join(projPath, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }, null, 2)
+      );
+    }
     return store.projects.create({
       name,
       path: projPath,
-      engine: 'claude',
-      methodology: methodologyId
+      engine: 'claude'
     });
   }
 
@@ -64,27 +76,40 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     }
   });
 
-  it('runs invoke-critic for a prawduct project', async () => {
-    const project = makeProject('disp-prawduct', 'prawduct');
+  it('runs invoke-critic for a plugin-governed project', async () => {
+    const project = makeProject('disp-prawduct');
     const result = await actions.runAction('disp-prawduct', 'invoke-critic');
     assert.equal(result.ok, true);
     assert.equal(typeof result.output.entry.branchName, 'string');
     assert.ok(fs.existsSync(path.join(project.path, '.tangleclaw', 'critic-runs.json')));
   });
 
-  it('rejects an action not declared by the project methodology', async () => {
-    makeProject('disp-minimal', 'minimal');
-    // `minimal` template does not declare invoke-critic in `actions[]`.
+  it('rejects an action the project governance state does not support', async () => {
+    makeProject('disp-minimal', false); // no plugin reference → ungoverned
     const result = await actions.runAction('disp-minimal', 'invoke-critic');
     assert.equal(result.ok, false);
-    assert.ok(result.error.includes('does not declare action'));
+    assert.ok(result.error.includes('not available'));
   });
 
-  it('rejects an unknown command even if methodology declared something else', async () => {
-    makeProject('disp-prawduct-2', 'prawduct');
+  it('the endpoint gate matches the button gate exactly (ADR 0001)', async () => {
+    // An asymmetric gate here ships either a button that 404s or an action
+    // invocable with no button, so both sides must read one predicate.
+    for (const governed of [true, false]) {
+      const name = `disp-symmetry-${governed}`;
+      const project = makeProject(name, governed);
+      const offered = actions.availableActions(project).some((a) => a.command === 'invoke-critic');
+      assert.equal(offered, governed, `governed=${governed}: button visibility follows governance`);
+      const result = await actions.runAction(name, 'invoke-critic');
+      assert.equal(result.ok !== false, offered,
+        'the endpoint must accept exactly the actions the button offers');
+    }
+  });
+
+  it('rejects an unknown command', async () => {
+    makeProject('disp-prawduct-2');
     const result = await actions.runAction('disp-prawduct-2', 'frobnicate');
     assert.equal(result.ok, false);
-    assert.ok(result.error.includes('does not declare action'));
+    assert.ok(result.error.includes('unknown action'));
   });
 
   it('returns "Project not found" for missing project', async () => {
@@ -101,7 +126,7 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
   });
 
   it('forwards options to the handler', async () => {
-    const project = makeProject('disp-opts', 'prawduct');
+    const project = makeProject('disp-opts');
     const result = await actions.runAction('disp-opts', 'invoke-critic', {
       branchName: 'forwarded/branch',
       now: () => new Date('2026-05-19T05:00:00.000Z')
@@ -115,16 +140,16 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
   });
 
   it('catches a handler that throws and reports a structured error', async () => {
-    makeProject('disp-throw', 'prawduct');
-    const original = actions.ACTION_DISPATCH['invoke-critic'].run;
-    actions.ACTION_DISPATCH['invoke-critic'].run = () => { throw new Error('handler exploded'); };
+    makeProject('disp-throw');
+    const original = actions.ACTIONS.find((a) => a.command === 'invoke-critic').run;
+    actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = () => { throw new Error('handler exploded'); };
     try {
       const result = await actions.runAction('disp-throw', 'invoke-critic');
       assert.equal(result.ok, false);
       assert.ok(result.error.includes('threw'));
       assert.ok(result.error.includes('handler exploded'));
     } finally {
-      actions.ACTION_DISPATCH['invoke-critic'].run = original;
+      actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = original;
     }
   });
 
@@ -136,7 +161,7 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     // is looked up and injected as `options.session`, AND
     // (b) the injected record carries the production `engineId` field
     // so handlers reading the right field receive the engine identifier.
-    const project = makeProject('disp-session-inject', 'prawduct');
+    const project = makeProject('disp-session-inject');
     const session = store.sessions.start({
       projectId: project.id,
       engineId: 'claude',
@@ -145,8 +170,8 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     });
     // Capture what the handler actually received via the dispatch path.
     let receivedOptions = null;
-    const original = actions.ACTION_DISPATCH['invoke-critic'].run;
-    actions.ACTION_DISPATCH['invoke-critic'].run = (project, options) => {
+    const original = actions.ACTIONS.find((a) => a.command === 'invoke-critic').run;
+    actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = (project, options) => {
       receivedOptions = options;
       return { ok: true, output: { entry: { branchName: 'test', timestamp: 'x' } }, error: null };
     };
@@ -161,17 +186,17 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
       assert.equal(receivedOptions.session.tmuxSession, 'tc-test-session-inject',
         'session record carries the tmuxSession field that the dispatch path needs');
     } finally {
-      actions.ACTION_DISPATCH['invoke-critic'].run = original;
+      actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = original;
       store.sessions.kill(session.id, 'test cleanup');
     }
   });
 
   it('does NOT overwrite explicit options.session from the caller (test-injection seam preserved)', async () => {
-    makeProject('disp-session-seam', 'prawduct');
+    makeProject('disp-session-seam');
     const fakeSession = { id: 'caller-supplied', tmuxSession: 'fake', engineId: 'gemini' };
     let receivedOptions = null;
-    const original = actions.ACTION_DISPATCH['invoke-critic'].run;
-    actions.ACTION_DISPATCH['invoke-critic'].run = (project, options) => {
+    const original = actions.ACTIONS.find((a) => a.command === 'invoke-critic').run;
+    actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = (project, options) => {
       receivedOptions = options;
       return { ok: true, output: {}, error: null };
     };
@@ -180,7 +205,7 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
       assert.equal(receivedOptions.session, fakeSession,
         'caller-supplied session passes through unchanged — dispatcher does not stomp');
     } finally {
-      actions.ACTION_DISPATCH['invoke-critic'].run = original;
+      actions.ACTIONS.find((a) => a.command === 'invoke-critic').run = original;
     }
   });
 });

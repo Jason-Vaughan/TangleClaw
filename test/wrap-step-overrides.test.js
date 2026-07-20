@@ -55,11 +55,11 @@ describe('per-project wrap step overrides', () => {
     store.init();
     projectPath = path.join(tmpDir, 'override-test');
     fs.mkdirSync(projectPath, { recursive: true });
-    store.projects.create({ name: 'override-test', path: projectPath, methodology: 'prawduct' });
+    store.projects.create({ name: 'override-test', path: projectPath });
 
     fixturePath = path.join(tmpDir, 'fixture-test');
     fs.mkdirSync(fixturePath, { recursive: true });
-    store.projects.create({ name: 'fixture-test', path: fixturePath, methodology: 'prawduct' });
+    store.projects.create({ name: 'fixture-test', path: fixturePath });
   });
 
   after(() => {
@@ -319,51 +319,7 @@ describe('per-project wrap step overrides', () => {
     });
   });
 
-  describe('overrides survive the template sync that destroys template edits', () => {
-    it('a framework revision bump replaces the steps but leaves project overrides intact and applied', () => {
-      // This is the whole reason overrides live in project.json. The same bump
-      // that wipes a hand-edited template must leave this untouched — proven
-      // against the real reconciler, not by assertion about where the file is.
-      setOverrides({ 'project-map': { enabled: false } });
-
-      const live = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-      live.schemaRevision = 1;
-      // The edit a project used to have to make, which the sync exists to undo.
-      live.wrap_pipeline.steps = live.wrap_pipeline.steps.filter((s) => s.id !== 'project-map');
-      store.templates.save(live);
-
-      const bundled = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-      bundled.schemaRevision = 99;
-      bundled.wrap_pipeline.steps = JSON.parse(JSON.stringify(
-        store.templates.get('prawduct').wrap_pipeline.steps
-      ));
-      bundled.wrap_pipeline.steps.push({ id: 'project-map', kind: 'project-map' });
-
-      const changed = store._reconcileFrameworkSubtrees(bundled, live);
-      assert.equal(changed, true, 'precondition: the sync must have fired');
-      assert.ok(live.wrap_pipeline.steps.some((s) => s.id === 'project-map'),
-        'precondition: the sync restores the step a template edit removed');
-
-      const cfg = store.projectConfig.load(projectPath);
-      assert.deepEqual(cfg.wrapStepOverrides, { 'project-map': { enabled: false } },
-        'the project override must survive the sync that undid the template edit');
-      assert.equal(
-        overrides.resolveStep({ id: 'project-map', kind: 'project-map' }, cfg.wrapStepOverrides).enabled,
-        false,
-        'and must still take effect afterwards'
-      );
-
-      setOverrides({});
-    });
-
-    it('wrapStepOverrides is not a framework-owned path', () => {
-      for (const owned of store.FRAMEWORK_OWNED_PATHS) {
-        assert.ok(!owned.startsWith('wrapStepOverrides'),
-          `${owned} would put project overrides back under framework ownership`);
-      }
-    });
-  });
-
+  
   describe('the settings API round-trip', () => {
     it('persists a valid map and reports it back on the project', () => {
       const map = { 'project-map': { enabled: false } };
@@ -397,7 +353,7 @@ describe('per-project wrap step overrides', () => {
       // one is created here and never written to.
       const virginPath = path.join(tmpDir, 'never-configured');
       fs.mkdirSync(virginPath, { recursive: true });
-      store.projects.create({ name: 'never-configured', path: virginPath, methodology: 'prawduct' });
+      store.projects.create({ name: 'never-configured', path: virginPath });
       assert.ok(!fs.existsSync(path.join(virginPath, '.tangleclaw', 'project.json')),
         'precondition: nothing may have written this project a config');
       assert.deepEqual(projects.getProject('never-configured').wrapStepOverrides, {});

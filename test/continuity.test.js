@@ -251,12 +251,11 @@ describe('continuity warm tier (CC-2)', () => {
 
     it('round-trips through parseWrapSummary (meta + captured sections; flagged → empty)', () => {
       const doc = continuity.renderWrapSummary({
-        meta: { session: 42, methodology: 'prawduct' },
+        meta: { session: 42 },
         sections: { 'Where we are': 'here', 'Landmines': 'branch hygiene' }
       });
       const parsed = continuity.parseWrapSummary(doc);
       assert.equal(parsed.meta.session, '42');
-      assert.equal(parsed.meta.methodology, 'prawduct');
       assert.equal(parsed.sections['Where we are'], 'here');
       assert.equal(parsed.sections['Landmines'], 'branch hygiene');
       assert.equal(parsed.sections['Delta'], '', 'flagged-empty parses back to empty');

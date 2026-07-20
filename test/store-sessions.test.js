@@ -39,8 +39,7 @@ describe('store.sessions (write methods)', () => {
         projectId,
         engineId: 'claude',
         tmuxSession: 'sess-test',
-        primePrompt: '# Hello',
-        methodologyPhase: 'building'
+        primePrompt: '# Hello'
       });
 
       assert.ok(session.id);
@@ -49,7 +48,6 @@ describe('store.sessions (write methods)', () => {
       assert.equal(session.tmuxSession, 'sess-test');
       assert.equal(session.status, 'active');
       assert.equal(session.primePrompt, '# Hello');
-      assert.equal(session.methodologyPhase, 'building');
       assert.ok(session.startedAt);
       assert.equal(session.endedAt, null);
     });

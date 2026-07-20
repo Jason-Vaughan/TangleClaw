@@ -269,7 +269,7 @@ describe('API /api/audit', () => {
     const projPath = path.join(tmpDir, 'corrupt-config-proj');
     fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(projPath, '.tangleclaw', 'project.json'), '{ not json');
-    store.projects.create({ name: 'corrupt-config-proj', path: projPath, methodology: 'prawduct' });
+    store.projects.create({ name: 'corrupt-config-proj', path: projPath });
 
     const { status, data } = await request(server, 'GET', '/api/audit/corrupt-config-proj/wrap-quality');
     assert.equal(status, 200);

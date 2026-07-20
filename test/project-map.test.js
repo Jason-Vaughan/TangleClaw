@@ -118,7 +118,7 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
 
   describe('updateProject — projectMapEnabled', () => {
     function makeProject(name) {
-      const result = projects.createProject({ name, methodology: 'minimal' });
+      const result = projects.createProject({ name });
       assert.ok(result.project, 'project should be created');
       return result.project;
     }
@@ -167,7 +167,7 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
 
   describe('enrichProject — surface', () => {
     it('exposes projectMapEnabled (default false, reflects post-update true)', () => {
-      projects.createProject({ name: 'pm-surface', methodology: 'minimal' });
+      projects.createProject({ name: 'pm-surface' });
       assert.equal(projects.getProject('pm-surface').projectMapEnabled, false);
 
       projects.updateProject('pm-surface', { projectMapEnabled: true });
@@ -234,7 +234,7 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   describe('updateProject — seeds PROJECT-MAP.md with real group membership', () => {
     it('writes the project\'s shared-doc group membership on toggle-on', () => {
       const group = store.projectGroups.create({ name: 'PM Membership Group', sharedDir: '/abs/pm-shared' });
-      const project = projects.createProject({ name: 'pm-with-membership', methodology: 'minimal' }).project;
+      const project = projects.createProject({ name: 'pm-with-membership' }).project;
       store.projectGroups.addMember(group.id, project.id);
       store.sharedDocs.create({ groupId: group.id, name: 'NETWORK', filePath: '/abs/pm-shared/NETWORK.md' });
 

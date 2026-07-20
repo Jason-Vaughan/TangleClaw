@@ -626,7 +626,7 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
       store.init();
       const projPath = path2.join(tmpDir, 'order-proj');
       fs2.mkdirSync(projPath, { recursive: true });
-      const pid = store.projects.create({ name: 'order-proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
+      const pid = store.projects.create({ name: 'order-proj', path: projPath, engine: 'claude' }).id;
       store.sessionRules.create({ content: 'first rule', projectId: pid, kind: 'wrap' });
       store.sessionRules.create({ content: 'second rule', projectId: pid, kind: 'wrap' });
       const disabled = store.sessionRules.create({ content: 'disabled rule', projectId: pid, kind: 'wrap' });

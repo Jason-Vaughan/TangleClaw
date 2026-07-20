@@ -81,7 +81,7 @@ describe('wrap-step index-describe (#426)', () => {
       projectPath = path.join(projectsDir, 'idx');
       fs.mkdirSync(projectPath, { recursive: true });
       createdProject = store.projects.create({
-        name: 'idx', path: projectPath, engine: 'claude', methodology: 'minimal'
+        name: 'idx', path: projectPath, engine: 'claude'
       });
     });
 
@@ -172,7 +172,7 @@ describe('wrap-step index-describe (#426)', () => {
       projectPath = path.join(projectsDir, 'idx-hp');
       fs.mkdirSync(projectPath, { recursive: true });
       createdProject = store.projects.create({
-        name: 'idx-hp', path: projectPath, engine: 'claude', methodology: 'minimal'
+        name: 'idx-hp', path: projectPath, engine: 'claude'
       });
       store.projectConfig.save(projectPath, {
         engine: 'claude', methodology: 'minimal', projectMapEnabled: true, featureIndexEnabled: true

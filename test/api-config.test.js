@@ -128,7 +128,6 @@ describe('API endpoints', () => {
       assert.equal(typeof data.serverPort, 'number');
       assert.equal(typeof data.ttydPort, 'number');
       assert.equal(typeof data.defaultEngine, 'string');
-      assert.equal(typeof data.defaultMethodology, 'string');
       assert.ok(Array.isArray(data.quickCommands));
       assert.equal(typeof data.theme, 'string');
       assert.equal(typeof data.chimeEnabled, 'boolean');

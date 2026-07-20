@@ -331,20 +331,7 @@ describe('eval-audit: getEvalDimensions', () => {
     assert.equal(dims.schemaVersion, 'default-v1');
   });
 
-  it('returns template evalDimensions when present', () => {
-    const template = {
-      evalDimensions: {
-        schemaVersion: 'custom-v1',
-        tier1: [{ id: 'custom', check: 'pattern', patterns: ['test'] }],
-        tier2: [],
-        tier3: []
-      }
-    };
-    const dims = evalAudit.getEvalDimensions(template);
-    assert.equal(dims.schemaVersion, 'custom-v1');
-    assert.equal(dims.tier1[0].id, 'custom');
   });
-});
 
 describe('eval-audit: buildJudgePrompt', () => {
   it('builds a Tier 2 prompt with dimensions and JSON instruction', () => {

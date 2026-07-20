@@ -52,8 +52,7 @@ describe('sessions', () => {
       const project = store.projects.create({
         name: 'prime-test',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
       projectId = project.id;
     });
@@ -175,10 +174,10 @@ describe('sessions', () => {
         );
       });
 
-      it('#557 regression: directive sections survive the template cap — the contract yields, honestly', () => {
+      it('#557 regression: directive sections survive the prime cap — the contract yields, honestly', () => {
         const wrapSentinel = require('../lib/wrap-sentinel');
-        // An oversized contract: alone it exceeds the minimal template's
-        // 2000-token (8000-char) prime cap several times over. Pre-fix, the
+        // An oversized contract: alone it exceeds the prime's token cap
+        // several times over. Pre-fix, the
         // blind tail truncation cut the Resume wait-guard and the wrap
         // instructions out of the prime — the #557 live regression.
         const contractFile = path.join(projDir, 'fixture-contract.md');
@@ -218,7 +217,7 @@ describe('sessions', () => {
           prompt.includes('[Prime prompt truncated]'), false,
           'the blind tail truncation must not fire on the medusa path'
         );
-        assert.ok(prompt.length <= 2000 * 4, 'the prime respects the template cap');
+        assert.ok(prompt.length <= sessions.PRIME_MAX_TOKENS * 4, 'the prime respects the size cap');
       });
 
       it('#557: contract body is omitted (with a pointer) when the budget cannot hold a useful fragment', () => {
@@ -417,7 +416,7 @@ describe('sessions', () => {
 
       const projConfig = store.projectConfig.load(project.path);
       projConfig.methodologyArchives = [
-        { archivePath: '.tangleclaw/project.json.archived/2025-12-01', methodology: 'minimal' }
+        { archivePath: '.tangleclaw/project.json.archived/2025-12-01' }
       ];
       store.projectConfig.save(project.path, projConfig);
 
@@ -494,8 +493,7 @@ describe('sessions', () => {
         resumeProject = store.projects.create({
           name: 'resume-test',
           path: projDir,
-          engine: 'claude',
-          methodology: 'minimal'
+          engine: 'claude'
         });
       });
 
@@ -598,8 +596,7 @@ describe('sessions', () => {
         store.projects.create({
           name: 'fi-prime-test',
           path: fiProjectPath,
-          engine: 'claude',
-          methodology: 'minimal'
+          engine: 'claude'
         });
         fiProject = store.projects.getByName('fi-prime-test');
         featuresPath = path.join(fiProjectPath, 'FEATURES.md');
@@ -610,7 +607,6 @@ describe('sessions', () => {
         // from a known state. Default: both gates off, no FEATURES.md.
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: false,
           featureIndexEnabled: false
         });
@@ -620,7 +616,6 @@ describe('sessions', () => {
       it('injects FEATURES.md contents under "## Feature Index" when all three gates are true', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
@@ -637,7 +632,6 @@ describe('sessions', () => {
       it('is skipped when featureIndexEnabled is false (even with silentPrime + capability)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: false
         });
@@ -652,7 +646,6 @@ describe('sessions', () => {
       it('is skipped when silentPrime is false (symmetric gate — #125 ADR 0001)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: false,
           featureIndexEnabled: true
         });
@@ -668,7 +661,6 @@ describe('sessions', () => {
       it('is skipped when the engine lacks supportsSilentPrime capability', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
@@ -688,7 +680,6 @@ describe('sessions', () => {
       it('is skipped when engineProfile.capabilities is missing entirely (defensive gate)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
@@ -701,7 +692,6 @@ describe('sessions', () => {
       it('is skipped gracefully when FEATURES.md is missing (no throw, no section)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
@@ -718,7 +708,6 @@ describe('sessions', () => {
       it('is skipped when FEATURES.md is whitespace-only (no empty section in prime)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
@@ -731,31 +720,27 @@ describe('sessions', () => {
           'whitespace-only FEATURES.md should not produce an empty section');
       });
 
-      it('respects template.prime.maxTokens truncation when FEATURES.md pushes prompt over budget', () => {
+      it('respects the prime size cap when FEATURES.md pushes prompt over budget', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           featureIndexEnabled: true
         });
 
-        // Build a FEATURES.md large enough to exceed any reasonable maxTokens.
-        // The minimal template's prime.maxTokens is small; the existing
-        // truncation at lines 408-413 (maxChars = maxTokens * 4) should kick in.
+        // Build a FEATURES.md large enough to exceed the prime's size cap, so
+        // the tail truncation has to fire.
         const huge = '# Feature Index\n\n' + ('- entry padding word '.repeat(2000)) + '\n';
         fs.writeFileSync(featuresPath, huge);
 
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
 
-        const template = store.templates.get('minimal');
-        // Hard precondition: if the template schema ever renames or drops
-        // prime.maxTokens this test must fail loudly, not pass silently.
-        assert.ok(template, 'precondition: minimal template loadable');
-        assert.ok(template.prime, 'precondition: minimal template has prime config');
-        assert.ok(template.prime.maxTokens, 'precondition: minimal template has prime.maxTokens');
+        // Hard precondition: if the cap is ever removed this test must fail
+        // loudly, not pass silently against an unbounded prompt.
+        assert.ok(Number.isFinite(sessions.PRIME_MAX_TOKENS) && sessions.PRIME_MAX_TOKENS > 0,
+          'precondition: the prime size cap is a real number');
 
-        const maxChars = template.prime.maxTokens * 4;
+        const maxChars = sessions.PRIME_MAX_TOKENS * 4;
         assert.ok(prompt.length <= maxChars + 30,
           `prompt length ${prompt.length} should respect maxChars budget ${maxChars} (+truncation marker)`);
       });
@@ -780,8 +765,7 @@ describe('sessions', () => {
         store.projects.create({
           name: 'pm-prime-test',
           path: pmProjectPath,
-          engine: 'claude',
-          methodology: 'minimal'
+          engine: 'claude'
         });
         pmProject = store.projects.getByName('pm-prime-test');
         mapPath = path.join(pmProjectPath, 'PROJECT-MAP.md');
@@ -790,7 +774,6 @@ describe('sessions', () => {
       beforeEach(() => {
         store.projectConfig.save(pmProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: false,
           projectMapEnabled: false
         });
@@ -800,7 +783,6 @@ describe('sessions', () => {
       it('emits a REFERENCE pointer (not the map body) when all three gates are true', () => {
         store.projectConfig.save(pmProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           projectMapEnabled: true
         });
@@ -821,7 +803,6 @@ describe('sessions', () => {
       it('is skipped when projectMapEnabled is false (even with silentPrime + capability)', () => {
         store.projectConfig.save(pmProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           projectMapEnabled: false
         });
@@ -834,7 +815,6 @@ describe('sessions', () => {
       it('is skipped when silentPrime is false (symmetric gate)', () => {
         store.projectConfig.save(pmProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: false,
           projectMapEnabled: true
         });
@@ -847,7 +827,6 @@ describe('sessions', () => {
       it('is skipped gracefully when PROJECT-MAP.md is missing (no throw, no section)', () => {
         store.projectConfig.save(pmProjectPath, {
           engine: 'claude',
-          methodology: 'minimal',
           silentPrime: true,
           projectMapEnabled: true
         });
@@ -1176,8 +1155,7 @@ describe('sessions', () => {
       projectId = store.projects.create({
         name: 'inject-multi',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       }).id;
     });
 
@@ -2590,8 +2568,7 @@ describe('sessions', () => {
       const proj = store.projects.create({
         name: 'archived-proj',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
       store.projects.archive(proj.id);
 
@@ -2621,8 +2598,7 @@ describe('sessions', () => {
       store.projects.create({
         name: 'bad-engine',
         path: projDir,
-        engine: 'tc-test-unavailable',
-        methodology: 'minimal'
+        engine: 'tc-test-unavailable'
       });
 
       const result = sessions.launchSession('bad-engine');
@@ -2647,8 +2623,7 @@ describe('sessions', () => {
       store.projects.create({
         name: 'orphan-test',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
     });
 
@@ -2728,8 +2703,7 @@ describe('sessions', () => {
       store.projects.create({
         name: 'stale-wrap',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
     });
 
@@ -2920,8 +2894,7 @@ describe('sessions', () => {
       store.projects.create({
         name: 'silent-prime-test',
         path: projDir,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
     });
 
@@ -2989,7 +2962,6 @@ describe('sessions', () => {
       // Enable silentPrime via project config
       store.projectConfig.save(project.path, {
         engine: 'claude',
-        methodology: 'minimal',
         silentPrime: true
       });
 
@@ -3013,7 +2985,6 @@ describe('sessions', () => {
       // test now has to be explicit about the silent-off state it's testing.
       store.projectConfig.save(project.path, {
         engine: 'claude',
-        methodology: 'minimal',
         silentPrime: false
       });
       const result = sessions.launchSession('silent-prime-test');
@@ -3035,7 +3006,6 @@ describe('sessions', () => {
       const project = store.projects.getByName('silent-prime-test');
       store.projectConfig.save(project.path, {
         engine: 'claude',
-        methodology: 'minimal',
         silentPrime: true
       });
 
@@ -3134,7 +3104,6 @@ describe('sessions', () => {
       // silentPrime now false (the off-by-default config)
       store.projectConfig.save(project.path, {
         engine: 'claude',
-        methodology: 'minimal',
         silentPrime: false
       });
 

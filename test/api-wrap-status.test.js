@@ -88,8 +88,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
     const project = store.projects.create({
       name: 'wrap-run-test',
       path: projDir,
-      engine: 'claude',
-      methodology: 'minimal'
+      engine: 'claude'
     });
     projectId = project.id;
     // The server-side pipeline (the path #583 guards) is the only wrap

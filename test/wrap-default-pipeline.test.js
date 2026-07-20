@@ -94,121 +94,174 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   });
 });
 
-// ── One-shot commit-only seeding for `minimal`-labeled projects ──
+// ── The v27→v28 terminal seed sweep (#538) ──
+//
+// Before the methodology layer was retired, a project labeled `minimal` ran an
+// effectively commit-only wrap. The label is the only thing that could identify
+// those projects, so the migration that DROPS it must seed their overrides
+// first — otherwise they silently flip to the full pipeline. These tests run the
+// migration against a REAL pre-v28 database rather than a fresh create, because
+// a fresh DB never has the column and would prove nothing.
 
+const { DatabaseSync } = require('node:sqlite');
 const store = require('../lib/store');
-const projects = require('../lib/projects');
 
-describe('seedCommitOnlyWrapOverrides — minimal-methodology migration', () => {
+describe('v27→v28 methodology drop — terminal wrap-config seed', () => {
   let tmpDir;
-  let projectPath;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-seed-'));
-    store._setBasePath(path.join(tmpDir, 'store'));
-    store.init();
-    projectPath = path.join(tmpDir, 'seed-sandbox');
-    fs.mkdirSync(projectPath, { recursive: true });
   });
 
   after(() => {
-    store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  beforeEach(() => {
-    const cfgPath = path.join(projectPath, '.tangleclaw', 'project.json');
-    if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
-  });
+  /**
+   * Build a store dir holding a pre-v28 database: real old schema (projects
+   * carries `methodology`), stamped at v27 so the migration ladder runs.
+   * @param {Array<{name: string, methodology: string, path: string, archived?: number}>} rows
+   * @returns {string} the store base path
+   */
+  function makeV27Store(rows) {
+    const base = fs.mkdtempSync(path.join(tmpDir, 'store-'));
+    fs.mkdirSync(base, { recursive: true });
+    const db = new DatabaseSync(path.join(base, 'tangleclaw.db'));
+    db.exec(`
+      CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+      CREATE TABLE projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        path TEXT NOT NULL,
+        engine_id TEXT NOT NULL DEFAULT 'claude',
+        methodology TEXT NOT NULL DEFAULT 'minimal',
+        tags TEXT NOT NULL DEFAULT '[]',
+        ports TEXT NOT NULL DEFAULT '{}',
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_projects_methodology ON projects(methodology);
+    `);
+    db.prepare('INSERT INTO schema_version (version) VALUES (27)').run();
+    for (const r of rows) {
+      db.prepare('INSERT INTO projects (name, path, methodology, archived) VALUES (?, ?, ?, ?)')
+        .run(r.name, r.path, r.methodology, r.archived ? 1 : 0);
+    }
+    db.close();
+    return base;
+  }
 
-  /** Load the on-disk project.json (raw, no default merge). */
-  function readRawConfig() {
+  /** Make a project dir, optionally with an existing project.json. */
+  function makeProjectDir(name, config) {
+    const p = path.join(tmpDir, name);
+    fs.mkdirSync(path.join(p, '.tangleclaw'), { recursive: true });
+    if (config) {
+      fs.writeFileSync(path.join(p, '.tangleclaw', 'project.json'), JSON.stringify(config, null, 2));
+    }
+    return p;
+  }
+
+  /** Read a project's on-disk config raw (no default merge). */
+  function readRawConfig(projectPath) {
     return JSON.parse(fs.readFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), 'utf8'));
   }
 
-  it('seeds a minimal project with every step disabled except commit, and stamps the marker', () => {
-    const project = { name: 'seed-sandbox', path: projectPath, methodology: 'minimal' };
-    const projConfig = store.projectConfig.load(projectPath);
+  /** Run the migration by opening the store against a prepared base path. */
+  function migrate(base) {
+    store._setBasePath(base);
+    store.init();
+  }
 
-    const changed = projects.seedCommitOnlyWrapOverrides(project, projConfig);
-    assert.equal(changed, true);
+  it('drops the methodology column and advances the schema version', () => {
+    const base = makeV27Store([]);
+    migrate(base);
+    const cols = store.getDb().prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
+    assert.ok(!cols.includes('methodology'), 'the methodology column must be gone');
+    const version = store.getDb().prepare('SELECT MAX(version) v FROM schema_version').get().v;
+    assert.equal(version, 28);
+    store.close();
+  });
 
-    const onDisk = readRawConfig();
+  it('seeds a minimal project commit-only BEFORE the column that identifies it is dropped', () => {
+    const projectPath = makeProjectDir('seed-minimal');
+    migrate(makeV27Store([{ name: 'seed-minimal', path: projectPath, methodology: 'minimal' }]));
+
+    const onDisk = readRawConfig(projectPath);
     assert.equal(onDisk.wrapOverridesSeeded, true);
-    const disabledIds = Object.keys(onDisk.wrapStepOverrides);
     const expected = defaultPipeline.steps()
       .filter((s) => !wrapStepOverrides.UNDISABLEABLE_KINDS.has(s.kind))
       .map((s) => s.id);
-    assert.deepStrictEqual(disabledIds.sort(), expected.slice().sort());
-    for (const id of disabledIds) {
+    assert.deepStrictEqual(Object.keys(onDisk.wrapStepOverrides).sort(), expected.slice().sort());
+    for (const id of Object.keys(onDisk.wrapStepOverrides)) {
       assert.deepStrictEqual(onDisk.wrapStepOverrides[id], { enabled: false });
     }
-    assert.ok(!disabledIds.includes('commit'), 'commit is undisableable and must not be seeded off');
+    assert.deepStrictEqual(defaultPipeline.effectiveStepIds(onDisk.wrapStepOverrides), ['commit'],
+      'a migrated project must wrap exactly as before: commit only');
+    store.close();
   });
 
-  it('the seeded overrides yield a commit-only effective pipeline', () => {
-    const project = { name: 'seed-sandbox', path: projectPath, methodology: 'minimal' };
-    const projConfig = store.projectConfig.load(projectPath);
-    projects.seedCommitOnlyWrapOverrides(project, projConfig);
-    const ids = defaultPipeline.effectiveStepIds(readRawConfig().wrapStepOverrides);
-    assert.deepStrictEqual(ids, ['commit'],
-      'a migrated minimal project must wrap exactly as before: commit only');
+  it('seeds ARCHIVED minimal projects too — unarchiving must not flip the wrap shape', () => {
+    const projectPath = makeProjectDir('seed-archived');
+    migrate(makeV27Store([{ name: 'seed-archived', path: projectPath, methodology: 'minimal', archived: 1 }]));
+
+    const onDisk = readRawConfig(projectPath);
+    assert.equal(onDisk.wrapOverridesSeeded, true);
+    assert.deepStrictEqual(defaultPipeline.effectiveStepIds(onDisk.wrapStepOverrides), ['commit']);
+    store.close();
   });
 
-  it('is one-shot: a cleared overrides map is NOT re-seeded once the marker exists', () => {
-    const project = { name: 'seed-sandbox', path: projectPath, methodology: 'minimal' };
-    projects.seedCommitOnlyWrapOverrides(project, store.projectConfig.load(projectPath));
+  it('leaves a project that already carries the marker untouched', () => {
+    // The operator may have cleared the map to opt INTO the full pipeline; the
+    // migration must not undo that.
+    const projectPath = makeProjectDir('seed-marked', { wrapOverridesSeeded: true, wrapStepOverrides: {} });
+    migrate(makeV27Store([{ name: 'seed-marked', path: projectPath, methodology: 'minimal' }]));
 
-    // Operator opts into the full pipeline by clearing the map.
-    const cleared = store.projectConfig.load(projectPath);
-    cleared.wrapStepOverrides = {};
-    store.projectConfig.save(projectPath, cleared);
-
-    const changed = projects.seedCommitOnlyWrapOverrides(project, store.projectConfig.load(projectPath));
-    assert.equal(changed, false, 'marker must prevent re-seeding');
-    assert.deepStrictEqual(readRawConfig().wrapStepOverrides, {},
-      'the operator\'s cleared map must survive the next boot');
+    assert.deepStrictEqual(readRawConfig(projectPath).wrapStepOverrides, {},
+      "the operator's cleared map must survive the migration");
+    store.close();
   });
 
-  it('preserves hand-authored overrides on a minimal project — stamps the marker only', () => {
-    const authored = store.projectConfig.load(projectPath);
-    authored.wrapStepOverrides = { 'changelog-update': { enabled: false } };
-    store.projectConfig.save(projectPath, authored);
+  it('preserves hand-authored overrides — stamps the marker only', () => {
+    const projectPath = makeProjectDir('seed-authored', { wrapStepOverrides: { 'changelog-update': { enabled: false } } });
+    migrate(makeV27Store([{ name: 'seed-authored', path: projectPath, methodology: 'minimal' }]));
 
-    const project = { name: 'seed-sandbox', path: projectPath, methodology: 'minimal' };
-    const changed = projects.seedCommitOnlyWrapOverrides(project, store.projectConfig.load(projectPath));
-    assert.equal(changed, true, 'marker stamp still writes');
-
-    const onDisk = readRawConfig();
+    const onDisk = readRawConfig(projectPath);
     assert.equal(onDisk.wrapOverridesSeeded, true);
     assert.deepStrictEqual(onDisk.wrapStepOverrides, { 'changelog-update': { enabled: false } },
       'hand-authored overrides must not be replaced by the seed');
+    store.close();
   });
 
-  it('boot sync seeds ARCHIVED minimal projects too — unarchiving must not flip the wrap shape', () => {
-    const archivedPath = path.join(tmpDir, 'archived-minimal');
-    fs.mkdirSync(archivedPath, { recursive: true });
-    const created = store.projects.create({
-      name: 'archived-minimal',
-      path: archivedPath,
-      methodology: 'minimal'
-    });
-    store.projects.archive(created.id);
+  it('does not seed a non-minimal project', () => {
+    const projectPath = makeProjectDir('seed-prawduct');
+    migrate(makeV27Store([{ name: 'seed-prawduct', path: projectPath, methodology: 'prawduct' }]));
 
-    projects.syncAllProjects();
-
-    const cfgPath = path.join(archivedPath, '.tangleclaw', 'project.json');
-    assert.ok(fs.existsSync(cfgPath), 'seed must write config for the archived project');
-    const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    assert.equal(onDisk.wrapOverridesSeeded, true);
-    assert.deepStrictEqual(defaultPipeline.effectiveStepIds(onDisk.wrapStepOverrides), ['commit']);
-  });
-
-  it('does not touch prawduct projects', () => {
-    const project = { name: 'seed-sandbox', path: projectPath, methodology: 'prawduct' };
-    const changed = projects.seedCommitOnlyWrapOverrides(project, store.projectConfig.load(projectPath));
-    assert.equal(changed, false);
     assert.ok(!fs.existsSync(path.join(projectPath, '.tangleclaw', 'project.json')),
-      'no config write for a non-minimal project');
+      'no config write for a project that already ran the full pipeline');
+    store.close();
+  });
+
+  it('survives a project whose directory is gone, and still drops the column', () => {
+    // Nothing can be written for an unreachable project, so the migration must
+    // record it and carry on rather than aborting the whole ladder.
+    const base = makeV27Store([{ name: 'seed-missing', path: path.join(tmpDir, 'does-not-exist'), methodology: 'minimal' }]);
+    migrate(base);
+    const cols = store.getDb().prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
+    assert.ok(!cols.includes('methodology'));
+    store.close();
+  });
+
+  it('refuses to leave an unreadable project.json half-migrated', () => {
+    // A corrupt config reads as "not yet seeded" through the defaults-returning
+    // loader; the migration must raw-read so it never overwrites a file it
+    // could not parse.
+    const projectPath = makeProjectDir('seed-corrupt');
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{ not json');
+    migrate(makeV27Store([{ name: 'seed-corrupt', path: projectPath, methodology: 'minimal' }]));
+
+    assert.equal(fs.readFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), 'utf8'), '{ not json',
+      'the unparseable config must be left exactly as found');
+    store.close();
   });
 });

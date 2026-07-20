@@ -27,7 +27,6 @@ describe('store.projects', () => {
         name: 'test-project',
         path: '/tmp/test-project',
         engine: 'claude',
-        methodology: 'minimal',
         tags: ['node'],
         ports: { dev: 8080 }
       });
@@ -36,7 +35,6 @@ describe('store.projects', () => {
       assert.equal(project.name, 'test-project');
       assert.equal(project.path, '/tmp/test-project');
       assert.equal(project.engineId, 'claude');
-      assert.equal(project.methodology, 'minimal');
       assert.deepEqual(project.tags, ['node']);
       assert.deepEqual(project.ports, { dev: 8080 });
       assert.equal(project.archived, false);
@@ -67,13 +65,12 @@ describe('store.projects', () => {
       }, /already exists/);
     });
 
-    it('uses defaults for engine and methodology', () => {
+    it('uses defaults for engine', () => {
       const project = store.projects.create({
         name: 'defaults-test',
         path: '/tmp/defaults-test'
       });
       assert.equal(project.engineId, 'claude');
-      assert.equal(project.methodology, 'minimal');
     });
   });
 
@@ -140,12 +137,6 @@ describe('store.projects', () => {
       }
     });
 
-    it('filters by methodology', () => {
-      const list = store.projects.list({ methodology: 'minimal' });
-      for (const p of list) {
-        assert.equal(p.methodology, 'minimal');
-      }
-    });
 
     it('filters by engine', () => {
       const list = store.projects.list({ engine: 'claude' });
@@ -174,11 +165,6 @@ describe('store.projects', () => {
       assert.deepEqual(updated.tags, ['python', 'active']);
     });
 
-    it('updates methodology', () => {
-      const created = store.projects.create({ name: 'update-method', path: '/tmp/update-method' });
-      const updated = store.projects.update(created.id, { methodology: 'prawduct' });
-      assert.equal(updated.methodology, 'prawduct');
-    });
 
     it('throws for unknown id', () => {
       assert.throws(() => {

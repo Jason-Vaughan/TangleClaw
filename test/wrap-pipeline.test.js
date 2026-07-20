@@ -10,6 +10,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
+const wrapDefaultPipeline = require('../lib/wrap-default-pipeline');
 const wrapPipeline = require('../lib/wrap-pipeline');
 const defaultPipeline = require('../lib/wrap-default-pipeline');
 
@@ -45,8 +46,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
       name: 'pipeline-test',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
   });
 
@@ -453,8 +453,7 @@ describe('wrap-step test (#139 Chunk 4)', () => {
     fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
     store.projects.create({
       name: 'test-step-sandbox',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
     originalExec = testStep._internal.execShell;
   });
@@ -588,8 +587,7 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
     store.projects.create({
       name: 'lint-step-sandbox',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
     originalExec = lintStep._internal.execShell;
     originalDetect = lintStep._internal.detectChangedFiles;
@@ -745,8 +743,7 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
       name: 'errors-only-test',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
   });
 
@@ -821,8 +818,7 @@ describe('runWrapPipeline — options threading (#139 Chunk 4)', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
       name: 'options-test',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
   });
 
@@ -2537,8 +2533,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({
       name: 'commitsha-test',
-      path: projectPath,
-      methodology: 'prawduct'
+      path: projectPath
     });
   });
 
@@ -2613,14 +2608,9 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
   it('keeps commitSha null when the pipeline halts before reaching commit', async () => {
     const origAiContent = wrapPipelineMod.STEP_DISPATCH['ai-content'];
     const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
-    // Make the FIRST ai-content step block, with the prawduct template's
-    // version-bump → ai-content chain. We need to swap the template's
-    // first ai-content step to blocker:true so the runner halts.
-    const pristine = JSON.stringify(store.templates.get('prawduct'));
-    const prawduct = JSON.parse(pristine);
-    const firstAiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
-    firstAiStep.blocker = true;
-    store.templates.save(prawduct);
+    // The first ai-content step (`changelog-update`) is declared blocker:true
+    // in the code-owned pipeline, so a blocked result there halts the runner
+    // before commit — no pipeline mutation needed.
 
     wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
       run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['x'] })
@@ -2639,8 +2629,6 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = origAiContent;
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
-      // Restore pristine — `delete` would strip the bundled blocker:true (#328).
-      store.templates.save(JSON.parse(pristine));
     }
   });
 });
@@ -2663,33 +2651,25 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('prawduct commit step has blocker:true', () => {
-    const t = store.templates.get('prawduct');
-    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
-    assert.ok(commitStep, 'prawduct must have a commit step');
+  it('the commit step has blocker:true', () => {
+    const commitStep = wrapDefaultPipeline.steps().find((s) => s.kind === 'commit');
+    assert.ok(commitStep, 'the pipeline must have a commit step');
     assert.equal(commitStep.blocker, true,
       'commit step must declare blocker:true so failures halt the pipeline');
   });
 
-  it('minimal commit step has blocker:true', () => {
-    const t = store.templates.get('minimal');
-    const commitStep = t.wrap_pipeline.steps.find((s) => s.kind === 'commit');
-    assert.ok(commitStep);
-    assert.equal(commitStep.blocker, true);
-  });
-
   // Governance moved out of the wrap and into the Prawduct plugin, so the
   // `critic-check` step and its handler are gone. Rather than pin that one
-  // kind's absence, pin the general contract it violated: a bundled template
-  // may not declare a step kind the runner cannot dispatch. A step with no
-  // handler is silently skipped at runtime, which is exactly how a template
-  // ends up promising a gate that never runs.
+  // kind's absence, pin the general contract it violated: the pipeline may not
+  // declare a step kind the runner cannot dispatch. A step with no handler is
+  // silently skipped at runtime, which is exactly how a pipeline ends up
+  // promising a gate that never runs.
   it('#570 — the PR gate blocks and runs before commit; applying merges runs after', () => {
-    const steps = store.templates.get('prawduct').wrap_pipeline.steps;
+    const steps = wrapDefaultPipeline.steps();
     const gateIdx = steps.findIndex((s) => s.kind === 'pr-check');
     const commitIdx = steps.findIndex((s) => s.kind === 'commit');
     const applyIdx = steps.findIndex((s) => s.kind === 'pr-merge');
-    assert.ok(gateIdx > -1 && commitIdx > -1 && applyIdx > -1, 'prawduct ships all three');
+    assert.ok(gateIdx > -1 && commitIdx > -1 && applyIdx > -1, 'the pipeline ships all three');
 
     // The runner only halts on `blocker === true || "errors-only"`. Without
     // this the handler would block while the pipeline sailed past it.
@@ -2706,16 +2686,13 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
       'a step after commit must not block — a halt there strands a half-finished wrap');
   });
 
-  it('every bundled step kind has a dispatch handler (no promised-but-unrunnable steps)', () => {
-    for (const id of ['prawduct', 'minimal']) {
-      const t = store.templates.get(id);
-      const steps = (t.wrap_pipeline && t.wrap_pipeline.steps) || [];
-      assert.ok(steps.length > 0, `${id} must declare wrap_pipeline steps`);
-      for (const step of steps) {
-        assert.ok(wrapPipeline.STEP_DISPATCH[step.kind],
-          `${id} declares step "${step.id}" of kind "${step.kind}", which has no handler ` +
-          'in STEP_DISPATCH — it would be silently skipped at wrap time');
-      }
+  it('every step kind has a dispatch handler (no promised-but-unrunnable steps)', () => {
+    const steps = wrapDefaultPipeline.steps();
+    assert.ok(steps.length > 0, 'the pipeline must declare steps');
+    for (const step of steps) {
+      assert.ok(wrapPipeline.STEP_DISPATCH[step.kind],
+        `step "${step.id}" is of kind "${step.kind}", which has no handler in ` +
+        'STEP_DISPATCH — it would be silently skipped at wrap time');
     }
   });
 });

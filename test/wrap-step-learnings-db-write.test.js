@@ -95,7 +95,7 @@ describe('wrap-step learnings-db-write (#466)', () => {
       projectPath = path.join(projectsDir, 'learnings-db-test');
       fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'memories'), { recursive: true });
       project = store.projects.create({
-        name: 'learnings-db-test', path: projectPath, engine: 'claude', methodology: 'prawduct'
+        name: 'learnings-db-test', path: projectPath, engine: 'claude'
       });
       learningsPath = path.join(projectPath, step.LEARNINGS_RELPATH);
     });

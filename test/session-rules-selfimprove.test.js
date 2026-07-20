@@ -34,7 +34,7 @@ describe('sessionRules self-improvement (D1b)', () => {
   function mkProject(name) {
     const projPath = path.join(tmpDir, name);
     fs.mkdirSync(projPath, { recursive: true });
-    return store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'none' }).id;
+    return store.projects.create({ name, path: projPath, engine: 'claude' }).id;
   }
 
   describe('version history', () => {

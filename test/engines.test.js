@@ -312,15 +312,12 @@ describe('engines', () => {
           }
         }
       };
-      const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
-
-      const content = engines.generateConfig('claude', projectConfig, template);
+      const content = engines.generateConfig('claude', projectConfig);
       assert.ok(content);
       assert.ok(content.includes('CLAUDE.md'));
       assert.ok(content.includes('Core Rules'));
       assert.ok(content.includes('JSDoc'));
       assert.ok(content.includes('identitySentry') || content.includes('identity'));
-      assert.ok(content.includes('Prawduct'));
     });
 
     it('should return null for non-existent engine', () => {
@@ -333,21 +330,12 @@ describe('engines', () => {
         { rules: { extensions: { loggingLevel: 'debug' } } },
         { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' }
       );
-      assert.ok(content.includes('methodology: prawduct'));
       assert.ok(content.includes('logging_level: debug'));
       assert.ok(content.includes('instructions: |'), 'Should have instructions block');
       assert.ok(content.includes('Core Rules'), 'Instructions should contain core rules');
       assert.ok(content.includes('PortHub'), 'Instructions should mention PortHub');
     });
 
-    it('should include playbook content in codex instructions when methodology has a playbook', () => {
-      const content = engines._generateCodexYaml(
-        {},
-        { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' }
-      );
-      assert.ok(content.includes('Session Playbook'), 'should include playbook header in instructions');
-      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
-    });
 
     it('should produce valid YAML block scalar indentation in codex instructions', () => {
       const content = engines._generateCodexYaml(
@@ -489,10 +477,10 @@ describe('engines', () => {
     it('injects the bearer header into all four engine configs when enabled', () => {
       enableGate();
       const generated = {
-        claude: engines._generateClaudeMd(proj, null),
-        gemini: engines._generateGeminiMd(proj, null),
-        codex: engines._generateCodexYaml(proj, null),
-        aider: engines._generateAiderConf(proj, null)
+        claude: engines._generateClaudeMd(proj),
+        gemini: engines._generateGeminiMd(proj),
+        codex: engines._generateCodexYaml(proj),
+        aider: engines._generateAiderConf(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
@@ -503,7 +491,7 @@ describe('engines', () => {
       // The static PortHub/shared-docs guides mention `Authorization: Bearer
       // $TANGLECLAW_SERVICE_TOKEN` as documentation; the DYNAMIC injection is
       // distinguished by the bold marker + the real token value, both absent here.
-      const claudeOff = engines._generateClaudeMd(proj, null);
+      const claudeOff = engines._generateClaudeMd(proj);
       assert.ok(!claudeOff.includes('**TangleClaw API authentication**'), 'no injected auth block when gate off');
       assert.ok(!claudeOff.includes(TOKEN), 'no raw token value when gate off');
     });
@@ -540,7 +528,7 @@ describe('engines', () => {
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
       assert.equal(engines._getRulesContent(proj).serverProtocol, 'http');
-      const content = engines._generateClaudeMd(proj, null);
+      const content = engines._generateClaudeMd(proj);
       // Assert on the injected line itself — the static guide prose may mention
       // https://localhost:3102 as documentation, only the injected URL is live.
       assert.ok(
@@ -558,10 +546,10 @@ describe('engines', () => {
         ingressMode: 'direct', httpsEnabled: true,
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
-      assert.ok(engines._generateClaudeMd(proj, null).includes('https://localhost:3102'));
+      assert.ok(engines._generateClaudeMd(proj).includes('https://localhost:3102'));
       // httpsEnabled defaults to true — a no-cert install serves HTTP.
       patchConfig({ httpsCertPath: null, httpsKeyPath: null });
-      assert.ok(engines._generateClaudeMd(proj, null).includes('http://localhost:3102'));
+      assert.ok(engines._generateClaudeMd(proj).includes('http://localhost:3102'));
     });
   });
 
@@ -571,7 +559,7 @@ describe('engines', () => {
     beforeEach(() => {
       const projPath = path.join(tempDir, 'sr-proj');
       fs.mkdirSync(projPath, { recursive: true });
-      project = store.projects.create({ name: 'sr-proj', path: projPath, engine: 'claude', methodology: 'none' });
+      project = store.projects.create({ name: 'sr-proj', path: projPath, engine: 'claude' });
     });
 
     afterEach(() => {
@@ -600,37 +588,37 @@ describe('engines', () => {
 
     it('CLAUDE.md carries no Session Rules section even when rules exist', () => {
       store.sessionRules.create({ content: 'Always run lint', projectId: project.id });
-      const content = engines._generateClaudeMd({ id: project.id }, null);
+      const content = engines._generateClaudeMd({ id: project.id });
       assert.doesNotMatch(content, /## Session Rules/);
       assert.doesNotMatch(content, /Always run lint/);
     });
 
     it('GEMINI.md carries no Session Rules section even when rules exist', () => {
       store.sessionRules.create({ content: 'Gemini must not see this', projectId: project.id });
-      const content = engines._generateGeminiMd({ id: project.id }, null);
+      const content = engines._generateGeminiMd({ id: project.id });
       assert.doesNotMatch(content, /## Session Rules/);
       assert.doesNotMatch(content, /Gemini must not see this/);
     });
 
     it('.codex.yaml carries no Session Rules section even when rules exist', () => {
       store.sessionRules.create({ content: 'Codex must not see this', projectId: project.id });
-      const content = engines._generateCodexYaml({ id: project.id }, null);
+      const content = engines._generateCodexYaml({ id: project.id });
       assert.doesNotMatch(content, /## Session Rules/);
       assert.doesNotMatch(content, /Codex must not see this/);
     });
 
     it('.aider.conf.yml carries no Session Rules comments even when rules exist', () => {
       store.sessionRules.create({ content: 'Aider must not see this', projectId: project.id });
-      const content = engines._generateAiderConf({ id: project.id }, null);
+      const content = engines._generateAiderConf({ id: project.id });
       assert.doesNotMatch(content, /# Session Rules:/);
       assert.doesNotMatch(content, /Aider must not see this/);
     });
 
     it('renders NOTHING when there are no active session rules', () => {
-      const claude = engines._generateClaudeMd({ id: project.id }, null);
-      const gemini = engines._generateGeminiMd({ id: project.id }, null);
-      const codex = engines._generateCodexYaml({ id: project.id }, null);
-      const aider = engines._generateAiderConf({ id: project.id }, null);
+      const claude = engines._generateClaudeMd({ id: project.id });
+      const gemini = engines._generateGeminiMd({ id: project.id });
+      const codex = engines._generateCodexYaml({ id: project.id });
+      const aider = engines._generateAiderConf({ id: project.id });
       assert.doesNotMatch(claude, /## Session Rules/);
       assert.doesNotMatch(gemini, /## Session Rules/);
       assert.doesNotMatch(codex, /## Session Rules/);
@@ -650,7 +638,6 @@ describe('engines', () => {
         }
       }
     };
-    const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
 
     it('no generator with supportsConfigFile includes a Project Version Recording section anymore', () => {
       const profiles = store.engines.list().filter(p =>
@@ -659,7 +646,7 @@ describe('engines', () => {
       assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, projectConfig, template);
+        const content = engines.generateConfig(profile.id, projectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.equal(
           content.includes('Project Version Recording'),
@@ -690,7 +677,6 @@ describe('engines', () => {
         }
       }
     };
-    const template = { id: 'prawduct', name: 'Prawduct', description: 'Test methodology' };
 
     it('all generators with supportsConfigFile should include core rules', () => {
       const profiles = store.engines.list().filter(p =>
@@ -699,7 +685,7 @@ describe('engines', () => {
       assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        const content = engines.generateConfig(profile.id, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(content.includes('CHANGELOG') || content.includes('changelog'),
           `${profile.id}: missing CHANGELOG rule`);
@@ -716,7 +702,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        const content = engines.generateConfig(profile.id, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         // Claude gets full guide, Codex gets it in instructions, Aider gets comment reference
         assert.ok(
@@ -732,7 +718,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        const content = engines.generateConfig(profile.id, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Global Rules') || content.includes('global') || content.includes('Global'),
@@ -741,31 +727,7 @@ describe('engines', () => {
       }
     });
 
-    it('all generators should include methodology info when provided', () => {
-      const profiles = store.engines.list().filter(p =>
-        p.capabilities && p.capabilities.supportsConfigFile
-      );
 
-      for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
-        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
-        assert.ok(content.includes('Prawduct'),
-          `${profile.id}: missing methodology name`);
-      }
-    });
-
-    it('all generators should include playbook when methodology has one', () => {
-      const profiles = store.engines.list().filter(p =>
-        p.capabilities && p.capabilities.supportsConfigFile
-      );
-
-      for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
-        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
-        assert.ok(content.includes('Session Playbook'),
-          `${profile.id}: missing playbook content`);
-      }
-    });
 
     it('all generators should include shared docs guide', () => {
       const profiles = store.engines.list().filter(p =>
@@ -773,7 +735,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        const content = engines.generateConfig(profile.id, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Shared Documents') || content.includes('Shared Docs Guide'),
@@ -788,7 +750,7 @@ describe('engines', () => {
       );
 
       for (const profile of profiles) {
-        const content = engines.generateConfig(profile.id, fullProjectConfig, template);
+        const content = engines.generateConfig(profile.id, fullProjectConfig);
         assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
         assert.ok(
           content.includes('Session Memory') || content.includes('session memory'),
@@ -800,13 +762,13 @@ describe('engines', () => {
 
   describe('_generateGeminiMd', () => {
     it('should include GEMINI.md header', () => {
-      const content = engines._generateGeminiMd({}, null);
+      const content = engines._generateGeminiMd({});
       assert.ok(content.includes('GEMINI.md'));
       assert.ok(content.includes('Generated by TangleClaw'));
     });
 
     it('should include all core rules by default', () => {
-      const content = engines._generateGeminiMd({}, null);
+      const content = engines._generateGeminiMd({});
       assert.ok(content.includes('CHANGELOG'));
       assert.ok(content.includes('JSDoc'));
       assert.ok(content.includes('tests'));
@@ -814,22 +776,8 @@ describe('engines', () => {
       assert.ok(content.includes('PortHub'));
     });
 
-    it('should include methodology info when provided', () => {
-      const content = engines._generateGeminiMd({}, { name: 'TiLT', description: 'Identity-first' });
-      assert.ok(content.includes('TiLT'));
-      assert.ok(content.includes('Identity-first'));
-    });
 
-    it('should include playbook content when methodology has a playbook', () => {
-      const content = engines._generateGeminiMd({}, { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' });
-      assert.ok(content.includes('Session Playbook'), 'should include playbook header');
-      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
-    });
 
-    it('should omit playbook when methodology has no playbook', () => {
-      const content = engines._generateGeminiMd({}, { id: 'minimal', name: 'Minimal', description: 'Basic' });
-      assert.ok(!content.includes('Session Playbook'), 'should not include playbook content');
-    });
 
     it('should include active extension rules', () => {
       const config = {
@@ -841,7 +789,7 @@ describe('engines', () => {
           }
         }
       };
-      const content = engines._generateGeminiMd(config, null);
+      const content = engines._generateGeminiMd(config);
       assert.ok(content.includes('Extension Rules'));
       assert.ok(content.includes('identity') || content.includes('sentry'));
       assert.ok(content.includes('docs'));
@@ -851,7 +799,7 @@ describe('engines', () => {
       const config = {
         rules: { core: { porthubRegistration: true } }
       };
-      const content = engines._generateGeminiMd(config, null);
+      const content = engines._generateGeminiMd(config);
       assert.ok(content.includes('Port Management'), 'Should include PortHub guide header');
       assert.ok(content.includes('TangleClaw API'), 'Should include API base URL');
     });
@@ -860,7 +808,7 @@ describe('engines', () => {
       const config = {
         rules: { core: { porthubRegistration: false } }
       };
-      const content = engines._generateGeminiMd(config, null);
+      const content = engines._generateGeminiMd(config);
       assert.ok(!content.includes('Port Management'));
     });
 
@@ -874,7 +822,7 @@ describe('engines', () => {
     });
 
     it('should include global rules', () => {
-      const content = engines._generateGeminiMd({}, null);
+      const content = engines._generateGeminiMd({});
       assert.ok(content.includes('Global Rules'), 'GEMINI.md should include global rules');
     });
 
@@ -885,7 +833,7 @@ describe('engines', () => {
 
   describe('_generateClaudeMd', () => {
     it('should include all core rules by default', () => {
-      const content = engines._generateClaudeMd({}, null);
+      const content = engines._generateClaudeMd({});
       assert.ok(content.includes('CHANGELOG'));
       assert.ok(content.includes('JSDoc'));
       assert.ok(content.includes('tests'));
@@ -894,27 +842,12 @@ describe('engines', () => {
     });
 
     it('should include global rules', () => {
-      const content = engines._generateClaudeMd({}, null);
+      const content = engines._generateClaudeMd({});
       assert.ok(content.includes('Global Rules'), 'CLAUDE.md should include global rules');
     });
 
-    it('should include methodology info when provided', () => {
-      const content = engines._generateClaudeMd({}, { name: 'TiLT', description: 'Identity-first' });
-      assert.ok(content.includes('TiLT'));
-      assert.ok(content.includes('Identity-first'));
-    });
 
-    it('should include playbook content when methodology has a playbook', () => {
-      const content = engines._generateClaudeMd({}, { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' });
-      assert.ok(content.includes('Session Playbook'), 'should include playbook header');
-      assert.ok(content.includes('One chunk per session'), 'should include session discipline');
-      assert.ok(content.includes('Independent Critic'), 'should include Critic protocol');
-    });
 
-    it('should omit playbook when methodology has no playbook', () => {
-      const content = engines._generateClaudeMd({}, { id: 'minimal', name: 'Minimal', description: 'Basic' });
-      assert.ok(!content.includes('Session Playbook'), 'should not include playbook content');
-    });
 
     it('should include active extension rules', () => {
       const config = {
@@ -926,7 +859,7 @@ describe('engines', () => {
           }
         }
       };
-      const content = engines._generateClaudeMd(config, null);
+      const content = engines._generateClaudeMd(config);
       assert.ok(content.includes('Extension Rules'));
       assert.ok(content.includes('identity') || content.includes('sentry'));
       assert.ok(content.includes('docs'));
@@ -938,7 +871,7 @@ describe('engines', () => {
           core: { porthubRegistration: true }
         }
       };
-      const content = engines._generateClaudeMd(config, null);
+      const content = engines._generateClaudeMd(config);
       assert.ok(content.includes('Port Management'), 'Should include PortHub guide header');
       assert.ok(content.includes('Never hardcode ports'), 'Should include guide rules');
       assert.ok(content.includes('Port Ranges Convention'), 'Should include port ranges');
@@ -950,7 +883,7 @@ describe('engines', () => {
           core: { porthubRegistration: false }
         }
       };
-      const content = engines._generateClaudeMd(config, null);
+      const content = engines._generateClaudeMd(config);
       assert.ok(!content.includes('Port Management'), 'Should not include PortHub guide');
       assert.ok(!content.includes('Never hardcode ports'), 'Should not include guide rules');
     });
@@ -961,16 +894,13 @@ describe('engines', () => {
     // we can assert drift warnings fire without sprinkling spies.
     let writeDir;
     let claudeProfile;
-    let prawduct;
     const minimalProjConfig = {
-      rules: { core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true }, extensions: {} },
-      methodologyArchives: []
+      rules: { core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true }, extensions: {} }
     };
 
     before(() => {
       writeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-write-engine-config-'));
       claudeProfile = store.engines.get('claude');
-      prawduct = store.templates.get('prawduct');
       assert.ok(claudeProfile && claudeProfile.configFormat, 'claude profile must have configFormat for these tests');
     });
 
@@ -980,7 +910,7 @@ describe('engines', () => {
 
     it('writes the file when it does not exist (no drift)', () => {
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'fresh-'));
-      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(result.written, true);
       assert.equal(result.drifted, false, 'no drift when target file did not exist');
       assert.equal(result.error, null);
@@ -990,9 +920,9 @@ describe('engines', () => {
 
     it('writes the file when it exists and matches (no drift, idempotent)', () => {
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'match-'));
-      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(first.drifted, false);
-      const second = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const second = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(second.written, true);
       assert.equal(second.drifted, false, 'unchanged content must not register as drift');
     });
@@ -1003,7 +933,7 @@ describe('engines', () => {
       // regenerated output — a hand-edit a contributor might have committed.
       const configFilePath = path.join(projectPath, claudeProfile.configFormat.filename);
       fs.writeFileSync(configFilePath, '# CLAUDE.md\n\n## Manually Added Rule\n\n- This was hand-edited\n');
-      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(result.written, true, 'still writes the regenerated content (warn is informational, not blocking)');
       assert.equal(result.drifted, true, 'drift must be reported');
       assert.equal(result.error, null);
@@ -1016,13 +946,13 @@ describe('engines', () => {
 
     it('treats trailing-whitespace-only differences as non-drift (tolerant comparator)', () => {
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'whitespace-'));
-      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       // Append/prepend extra newlines to the existing file — semantically
       // identical, should not trigger a drift warning on next write.
       const configFilePath = first.configFilePath;
       const existing = fs.readFileSync(configFilePath, 'utf8');
       fs.writeFileSync(configFilePath, '\n\n' + existing + '\n\n\n');
-      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(result.drifted, false, 'pure whitespace differences must not register as drift');
     });
 
@@ -1035,7 +965,7 @@ describe('engines', () => {
       // and callers gate on `!skipped` before pushing errors.
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'noformat-'));
       const fakeProfile = { id: 'phantom' };
-      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, fakeProfile, prawduct);
+      const result = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, fakeProfile);
       assert.equal(result.written, false);
       assert.equal(result.skipped, true);
       assert.equal(result.error, null, 'skipped must NOT surface as an error');
@@ -1050,7 +980,7 @@ describe('engines', () => {
       // directly.
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'nullfilename-'));
       const openclawShape = { id: 'fake-openclaw', configFormat: { filename: null, syntax: null, generator: null } };
-      const result = engines.writeEngineConfig('fake-openclaw', projectPath, minimalProjConfig, openclawShape, prawduct);
+      const result = engines.writeEngineConfig('fake-openclaw', projectPath, minimalProjConfig, openclawShape);
       assert.equal(result.written, false);
       assert.equal(result.skipped, true);
       assert.equal(result.error, null);
@@ -1065,7 +995,7 @@ describe('engines', () => {
       // generateConfig returns null. Profile-shape is borrowed from
       // claude so the configFormat.filename check passes first.
       const fakeProfile = { id: 'no-such-engine', configFormat: claudeProfile.configFormat };
-      const result = engines.writeEngineConfig('no-such-engine', projectPath, minimalProjConfig, fakeProfile, prawduct);
+      const result = engines.writeEngineConfig('no-such-engine', projectPath, minimalProjConfig, fakeProfile);
       assert.equal(result.written, false);
       assert.equal(result.skipped, true);
       assert.equal(result.error, null);
@@ -1078,13 +1008,13 @@ describe('engines', () => {
       // file would emit a drift warning that doesn't represent a real
       // semantic change.
       const projectPath = fs.mkdtempSync(path.join(writeDir, 'crlf-'));
-      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const first = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       const configFilePath = first.configFilePath;
       // Convert the file's line endings to CRLF in-place, semantically
       // identical content.
       const lf = fs.readFileSync(configFilePath, 'utf8');
       fs.writeFileSync(configFilePath, lf.replace(/\n/g, '\r\n'));
-      const second = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile, prawduct);
+      const second = engines.writeEngineConfig('claude', projectPath, minimalProjConfig, claudeProfile);
       assert.equal(second.drifted, false, 'CRLF-vs-LF must not register as drift');
     });
   });
@@ -1092,16 +1022,13 @@ describe('engines', () => {
   describe('Prawduct V2 plugin-governed deferral (#330)', () => {
     let govDir;
     let claudeProfile;
-    let prawduct;
     const minimalProjConfig = {
-      rules: { core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true }, extensions: {} },
-      methodologyArchives: []
+      rules: { core: { changelogPerChange: true, jsdocAllFunctions: true, unitTestRequirements: true, sessionWrapProtocol: true, porthubRegistration: true }, extensions: {} }
     };
 
     before(() => {
       govDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-plugin-governed-'));
       claudeProfile = store.engines.get('claude');
-      prawduct = store.templates.get('prawduct');
     });
 
     after(() => {
@@ -1159,7 +1086,7 @@ describe('engines', () => {
     });
 
     describe('governanceState (#353)', () => {
-      const claudePrawduct = { engineId: 'claude', methodology: 'prawduct' };
+      const claudeMeta = { engineId: 'claude' };
 
       /** Drop a vendored governance hook file into a project (Cohort A shape). */
       function addVendoredHook(p) {
@@ -1169,49 +1096,54 @@ describe('engines', () => {
 
       it('is governed-plugin when the V2 plugin is enabled', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
-        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-plugin');
+        assert.equal(engines.governanceState(p, claudeMeta), 'governed-plugin');
       });
 
       it('is governed-vendored when a vendored product-hook is present (no plugin)', () => {
         const p = mkProject({});
         addVendoredHook(p);
-        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-vendored');
+        assert.equal(engines.governanceState(p, claudeMeta), 'governed-vendored');
       });
 
-      it('is drift-no-governance for Cohort B: prawduct + Claude, no plugin, no vendored hook', () => {
+      it('is ungoverned for a Claude project with neither plugin nor vendored hook', () => {
         const p = mkProject({});
-        assert.equal(engines.governanceState(p, claudePrawduct), 'drift-no-governance');
+        assert.equal(engines.governanceState(p, claudeMeta), 'ungoverned');
       });
 
       it('prefers plugin over vendored when both are present (no double-governance ambiguity)', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
         addVendoredHook(p);
-        assert.equal(engines.governanceState(p, claudePrawduct), 'governed-plugin');
+        assert.equal(engines.governanceState(p, claudeMeta), 'governed-plugin');
       });
 
       it('is not-applicable for a non-Claude engine regardless of files', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
         addVendoredHook(p);
-        assert.equal(engines.governanceState(p, { engineId: 'gemini', methodology: 'prawduct' }), 'not-applicable');
+        assert.equal(engines.governanceState(p, { engineId: 'gemini' }), 'not-applicable');
       });
 
-      it('is not-applicable for a non-prawduct methodology', () => {
-        const p = mkProject({});
-        assert.equal(engines.governanceState(p, { engineId: 'claude', methodology: 'minimal' }), 'not-applicable');
-      });
-
-      it('is not-applicable when meta is missing engine/methodology', () => {
+      it('is not-applicable when meta is missing the engine', () => {
         const p = mkProject({});
         assert.equal(engines.governanceState(p, {}), 'not-applicable');
         assert.equal(engines.governanceState(p), 'not-applicable');
       });
 
-      it('fails closed to drift-no-governance on malformed settings (no throw)', () => {
+      it('fails closed to ungoverned on malformed settings (no throw)', () => {
         const p = fs.mkdtempSync(path.join(govDir, 'gov-badjson-'));
         fs.mkdirSync(path.join(p, '.claude'), { recursive: true });
         fs.writeFileSync(path.join(p, '.claude', 'settings.json'), '{ not valid json');
-        // isPluginGoverned fails closed (false) + no vendored hook → drift, not a throw.
-        assert.equal(engines.governanceState(p, claudePrawduct), 'drift-no-governance');
+        // isPluginGoverned fails closed (false) + no vendored hook → ungoverned, not a throw.
+        assert.equal(engines.governanceState(p, claudeMeta), 'ungoverned');
+      });
+
+      it('never reports an alarming state for an ordinary un-onboarded project (#538)', () => {
+        // The vocabulary deliberately has no fault state: with the methodology
+        // label gone there is nothing for the filesystem to contradict, so a
+        // project that simply is not governed must read as neutral.
+        const p = mkProject(null);
+        const state = engines.governanceState(p, claudeMeta);
+        assert.equal(state, 'ungoverned');
+        assert.ok(!/drift/.test(state), 'ungoverned must not be reported as drift');
       });
     });
 
@@ -1222,7 +1154,7 @@ describe('engines', () => {
         const claudeMd = path.join(p, claudeProfile.configFormat.filename);
         fs.writeFileSync(claudeMd, anchor);
 
-        const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile, prawduct);
+        const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
 
         assert.equal(result.written, false);
         assert.equal(result.skipped, true);
@@ -1233,7 +1165,7 @@ describe('engines', () => {
 
       it('still writes CLAUDE.md normally when NOT plugin-governed (regression)', () => {
         const p = mkProject(null);
-        const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile, prawduct);
+        const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
         assert.equal(result.written, true);
         assert.ok(fs.readFileSync(result.configFilePath, 'utf8').includes('Generated by TangleClaw'));
       });
@@ -1249,7 +1181,7 @@ describe('engines', () => {
           hooks: staleGovHook
         }, { engine: 'claude', methodology: 'prawduct', silentPrime: false });
 
-        engines.syncEngineHooks(p, prawduct);
+        engines.syncEngineHooks(p);
 
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
         assert.equal(settings.hooks, undefined, 'no governance hook and no L1 prime → hooks block removed');
@@ -1263,7 +1195,7 @@ describe('engines', () => {
           hooks: staleGovHook
         }, { engine: 'claude', methodology: 'prawduct', silentPrime: true });
 
-        engines.syncEngineHooks(p, prawduct);
+        engines.syncEngineHooks(p);
 
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
         assert.ok(settings.hooks, 'the L1 prime hook block must remain');
@@ -1277,32 +1209,30 @@ describe('engines', () => {
 
       it('does not inject methodology/governance hooks for a governed project (no stale block)', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } }, { engine: 'claude', methodology: 'prawduct', silentPrime: false });
-        engines.syncEngineHooks(p, prawduct);
+        engines.syncEngineHooks(p);
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
         assert.equal(settings.hooks, undefined, 'governed + no L1 → no hooks block');
         assert.equal(settings.enabledPlugins['prawduct@prawduct'], true);
       });
 
-      it('uniquely exercises the guard: a requires-free methodology hook is kept ungoverned, dropped governed (#330 Critic)', () => {
-        // The bundled prawduct hooks are `requires:["tools/product-hook"]`-gated,
-        // and temp project dirs lack that file — so _filterHookEntriesByRequires
-        // strips them regardless of the pluginGoverned flag, masking the guard.
-        // A methodology hook with NO `requires` survives the filter, so the ONLY
-        // thing that can drop it is the pluginGoverned suppression — isolating it.
-        const methTemplate = { id: 'meth-no-requires', hooks: { claude: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo governance-gate' }] }] } } };
+      it('drops a pre-existing governance Stop hook whatever the governance state (#538)', () => {
+        // TC emits only its own L1 baseline now — it has no governance hooks of
+        // its own to suppress. So the contract is unconditional: a Stop hook
+        // left behind by a pre-V2 install is cleared on the next sync whether or
+        // not the plugin is enabled. Ungoverned is the case that would regress
+        // silently if this became conditional again, since that project has no
+        // plugin to own the gate in TC's place.
+        const legacy = { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo governance-gate' }] }] };
 
-        // Control — ungoverned: the requires-free methodology hook is KEPT.
-        const ungoverned = mkProject({}, { engine: 'claude', methodology: 'minimal', silentPrime: false });
-        engines.syncEngineHooks(ungoverned, methTemplate);
-        const uSettings = JSON.parse(fs.readFileSync(path.join(ungoverned, '.claude', 'settings.json'), 'utf8'));
-        assert.ok(uSettings.hooks && uSettings.hooks.Stop, 'ungoverned must keep a requires-free methodology hook');
-        assert.equal(uSettings.hooks.Stop[0].hooks[0].command, 'echo governance-gate');
-
-        // Governed: the same hook is DROPPED by the guard (would survive if reverted).
-        const governed = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } }, { engine: 'claude', methodology: 'minimal', silentPrime: false });
-        engines.syncEngineHooks(governed, methTemplate);
-        const gSettings = JSON.parse(fs.readFileSync(path.join(governed, '.claude', 'settings.json'), 'utf8'));
-        assert.equal(gSettings.hooks, undefined, 'governed must drop the requires-free methodology hook (the guard, not the requires-filter)');
+        for (const [label, settings] of [
+          ['ungoverned', {}],
+          ['governed', { enabledPlugins: { 'prawduct@prawduct': true } }]
+        ]) {
+          const p = mkProject({ ...settings, hooks: legacy }, { engine: 'claude', silentPrime: false });
+          engines.syncEngineHooks(p);
+          const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+          assert.equal(written.hooks, undefined, `${label}: the legacy governance Stop hook must be cleared`);
+        }
       });
     });
 
@@ -1322,7 +1252,7 @@ describe('engines', () => {
         );
         store.projects.create({ name: `db-hooks-${path.basename(p)}`, path: p, engine: 'codex' });
 
-        engines.syncEngineHooks(p, store.templates.get('minimal'));
+        engines.syncEngineHooks(p);
 
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
         assert.equal(settings.hooks, undefined,
@@ -1334,7 +1264,7 @@ describe('engines', () => {
           { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stale' }] }] } },
           { engine: 'codex', methodology: 'minimal', silentPrime: false }
         );
-        engines.syncEngineHooks(p, store.templates.get('minimal'));
+        engines.syncEngineHooks(p);
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
         assert.equal(settings.hooks, undefined,
           'projConfig engine=codex honored for a path the DB does not know');
@@ -1428,9 +1358,7 @@ describe('engines', () => {
           extensions: { docsParity: true, independentCritic: true }
         }
       };
-      const template = { id: 'prawduct', name: 'Prawduct', description: 'Structured governance' };
-
-      const content = engines.generateConfig('antigravity', projectConfig, template);
+      const content = engines.generateConfig('antigravity', projectConfig);
       assert.ok(content !== null, 'Antigravity config should not be null');
       assert.ok(content.includes('.antigravity.md'), 'Should have .antigravity.md header');
       assert.ok(content.includes('Core Rules'), 'Should have core rules section');
@@ -1439,8 +1367,6 @@ describe('engines', () => {
       assert.ok(content.includes('Critic') || content.includes('critic'), 'Should include independentCritic extension');
       assert.ok(content.includes('Port Management'), 'Should include PortHub guide');
       assert.ok(content.includes('TangleClaw API'), 'Should include API base URL');
-      assert.ok(content.includes('Prawduct'), 'Should include methodology name');
-      assert.ok(content.includes('Structured governance'), 'Should include methodology description');
       assert.ok(content.includes('Global Rules'), 'Should include global rules');
     });
 
@@ -1504,15 +1430,13 @@ describe('engines', () => {
           extensions: { identitySentry: true }
         }
       };
-      const template = { id: 'test', name: 'TestMethod', description: 'Test desc' };
-
       const profiles = store.engines.list().filter(p =>
         p.capabilities && p.capabilities.supportsConfigFile
       );
 
       const configs = {};
       for (const profile of profiles) {
-        configs[profile.id] = engines.generateConfig(profile.id, projectConfig, template);
+        configs[profile.id] = engines.generateConfig(profile.id, projectConfig);
         assert.ok(configs[profile.id] !== null, `${profile.id} returned null`);
       }
 
@@ -1520,7 +1444,6 @@ describe('engines', () => {
       for (const [id, content] of Object.entries(configs)) {
         assert.ok(content.includes('CHANGELOG') || content.includes('changelog'), `${id}: missing CHANGELOG`);
         assert.ok(content.includes('PortHub') || content.includes('Port Management') || content.includes('TangleClaw API'), `${id}: missing PortHub`);
-        assert.ok(content.includes('TestMethod'), `${id}: missing methodology name`);
         assert.ok(content.includes('identity') || content.includes('sentry') || content.includes('Identity'), `${id}: missing identitySentry`);
       }
     });
@@ -1542,8 +1465,7 @@ describe('engines', () => {
       const project = store.projects.create({
         name: 'test-shared-proj',
         path: projPath,
-        engineId: 'claude',
-        methodology: 'prawduct'
+        engineId: 'claude'
       });
       projectId = project.id;
 
@@ -1669,16 +1591,16 @@ describe('engines', () => {
 
       const projectConfig = { id: projectId, rules: { core: {} } };
 
-      const claude = engines._generateClaudeMd(projectConfig, null);
+      const claude = engines._generateClaudeMd(projectConfig);
       assert.ok(claude.includes('Parity Doc'), 'Claude should include shared doc');
 
-      const gemini = engines._generateGeminiMd(projectConfig, null);
+      const gemini = engines._generateGeminiMd(projectConfig);
       assert.ok(gemini.includes('Parity Doc'), 'Gemini should include shared doc');
 
-      const codex = engines._generateCodexYaml(projectConfig, null);
+      const codex = engines._generateCodexYaml(projectConfig);
       assert.ok(codex.includes('Parity Doc'), 'Codex should include shared doc');
 
-      const aider = engines._generateAiderConf(projectConfig, null);
+      const aider = engines._generateAiderConf(projectConfig);
       assert.ok(aider.includes('Parity Doc'), 'Aider should include shared doc');
 
       store.sharedDocs.delete(doc.id);
@@ -1720,24 +1642,16 @@ describe('engines', () => {
   describe('syncEngineHooks', () => {
     let projectDir;
 
-    // Critic M2: switched from before/after to beforeEach/afterEach so each
-    // test gets a fresh project dir. With baseline-hooks merging now in play
-    // (#103), shared dir state between tests would let a future contributor
-    // accidentally pollute the null-template assertion via a leftover
-    // .tangleclaw/project.json with silentPrime: true.
-    //
-    // Post-#129: silentPrime defaults to true, so these methodology-hook
-    // tests would now pick up the silentPrime baseline SessionStart entry
-    // from the new default. Write an explicit projConfig with silentPrime:
-    // false to keep the tests focused on methodology-hook behavior only.
+    // Each test gets a fresh project dir: with baseline-hook writing in play
+    // (#103), shared dir state would let a leftover .tangleclaw/project.json
+    // silently change what gets written.
     beforeEach(() => {
       projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-test-'));
       const tcDir = path.join(projectDir, '.tangleclaw');
       fs.mkdirSync(tcDir, { recursive: true });
       fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({
         engine: 'claude',
-        methodology: 'minimal',
-        silentPrime: false
+        silentPrime: true
       }));
     });
 
@@ -1753,76 +1667,25 @@ describe('engines', () => {
       return JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
     }
 
-    it('should create .claude/settings.json with hooks when methodology has hooks', () => {
-      const template = {
-        id: 'test-meth',
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: 'startup|clear|resume',
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
-            }],
-            Stop: [{
-              matcher: '',
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
-            }]
-          }
-        }
-      };
-
-      engines.syncEngineHooks(projectDir, template);
+    it('writes the baseline SessionStart hook when silentPrime is on', () => {
+      engines.syncEngineHooks(projectDir);
 
       const settings = readSettings();
       assert.ok(settings.hooks, 'hooks key should exist');
       assert.ok(settings.hooks.SessionStart, 'SessionStart hooks should exist');
-      assert.ok(settings.hooks.Stop, 'Stop hooks should exist');
       assert.equal(settings.hooks.SessionStart.length, 1);
-      assert.equal(settings.hooks.Stop.length, 1);
     });
 
-    it('should resolve {{TANGLECLAW_DIR}} placeholder', () => {
-      const template = {
-        id: 'test-meth',
-        hooks: {
-          claude: {
-            Stop: [{
-              matcher: '',
-              hooks: [{ type: 'command', command: 'python3 "{{TANGLECLAW_DIR}}/tools/some-hook" stop' }]
-            }]
-          }
-        }
-      };
+    it('resolves the {{TANGLECLAW_DIR}} placeholder in the hooks it writes', () => {
+      engines.syncEngineHooks(projectDir);
 
-      engines.syncEngineHooks(projectDir, template);
-
-      const settings = readSettings();
-      const cmd = settings.hooks.Stop[0].hooks[0].command;
+      const cmd = readSettings().hooks.SessionStart[0].hooks[0].command;
       assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved');
-      assert.ok(cmd.includes('/tools/some-hook'), 'resolved path should contain tools/some-hook');
+      assert.ok(path.isAbsolute(cmd.split(' ')[0].replace(/^"/, '')) || cmd.includes('/'),
+        'resolved command should carry a real path');
     });
 
-    it('should pass through $CLAUDE_PROJECT_DIR without modification', () => {
-      const template = {
-        id: 'test-meth',
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: 'startup|clear|resume',
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear' }]
-            }]
-          }
-        }
-      };
-
-      engines.syncEngineHooks(projectDir, template);
-
-      const settings = readSettings();
-      const cmd = settings.hooks.SessionStart[0].hooks[0].command;
-      assert.ok(cmd.includes('$CLAUDE_PROJECT_DIR'), 'should preserve $CLAUDE_PROJECT_DIR env var');
-    });
-
-    it('should preserve existing non-hook settings', () => {
-      // Pre-populate with permissions and companyAnnouncements
+    it('preserves existing non-hook settings and replaces the hooks block wholesale', () => {
       const claudeDir = path.join(projectDir, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
@@ -1831,323 +1694,50 @@ describe('engines', () => {
         hooks: { Old: [{ matcher: '', hooks: [] }] }
       }, null, 2));
 
-      const template = {
-        id: 'test-meth',
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: '',
-              hooks: [{ type: 'command', command: 'echo test' }]
-            }]
-          }
-        }
-      };
-
-      engines.syncEngineHooks(projectDir, template);
+      engines.syncEngineHooks(projectDir);
 
       const settings = readSettings();
       assert.deepStrictEqual(settings.permissions, { allow: ['Bash(git status:*)'] });
       assert.deepStrictEqual(settings.companyAnnouncements, ['Test announcement']);
-      // Old hooks should be replaced, not merged
-      assert.ok(!settings.hooks.Old, 'old hooks should be replaced');
+      assert.ok(!settings.hooks.Old, 'old hooks should be replaced, not merged');
       assert.ok(settings.hooks.SessionStart, 'new hooks should be present');
     });
 
-    it('should remove hooks when methodology has no hooks', () => {
-      // Pre-populate with hooks
+    it('removes the hooks block when there are no hooks to write', () => {
       const claudeDir = path.join(projectDir, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
         permissions: { allow: [] },
         hooks: { Stop: [{ matcher: '', hooks: [] }] }
       }, null, 2));
+      fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), JSON.stringify({
+        engine: 'claude',
+        silentPrime: false
+      }));
 
-      const template = { id: 'minimal', hooks: {} };
-      engines.syncEngineHooks(projectDir, template);
+      engines.syncEngineHooks(projectDir);
 
       const settings = readSettings();
       assert.ok(!settings.hooks, 'hooks key should be removed');
       assert.ok(settings.permissions, 'permissions should be preserved');
     });
 
-    it('should handle null template gracefully', () => {
-      // Pre-populate
-      const claudeDir = path.join(projectDir, '.claude');
-      fs.mkdirSync(claudeDir, { recursive: true });
-      fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
-        permissions: { allow: [] },
-        hooks: { Stop: [{ matcher: '', hooks: [] }] }
-      }, null, 2));
-
-      engines.syncEngineHooks(projectDir, null);
-
-      const settings = readSettings();
-      assert.ok(!settings.hooks, 'hooks should be removed for null template');
-      assert.ok(settings.permissions, 'permissions preserved');
-    });
-
     it('should create .claude directory if missing', () => {
       const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-hooks-fresh-'));
       try {
-        const template = {
-          id: 'test-meth',
-          hooks: {
-            claude: {
-              Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo hi' }] }]
-            }
-          }
-        };
+        fs.mkdirSync(path.join(freshDir, '.tangleclaw'), { recursive: true });
+        fs.writeFileSync(path.join(freshDir, '.tangleclaw', 'project.json'), JSON.stringify({
+          engine: 'claude',
+          silentPrime: true
+        }));
 
-        engines.syncEngineHooks(freshDir, template);
+        engines.syncEngineHooks(freshDir);
 
         assert.ok(fs.existsSync(path.join(freshDir, '.claude', 'settings.json')));
         const settings = JSON.parse(fs.readFileSync(path.join(freshDir, '.claude', 'settings.json'), 'utf8'));
-        assert.ok(settings.hooks.Stop);
+        assert.ok(settings.hooks.SessionStart);
       } finally {
         fs.rmSync(freshDir, { recursive: true, force: true });
-      }
-    });
-  });
-
-  describe('_filterHookEntriesByRequires (#145)', () => {
-    let projectDir;
-
-    beforeEach(() => {
-      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-requires-test-'));
-    });
-
-    afterEach(() => {
-      fs.rmSync(projectDir, { recursive: true, force: true });
-    });
-
-    function makeEntry(extra = {}) {
-      return {
-        matcher: 'startup',
-        hooks: [{ type: 'command', command: 'noop' }],
-        ...extra
-      };
-    }
-
-    it('keeps entries whose `requires` paths all exist', () => {
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '#!/bin/sh\n');
-      const hooks = { SessionStart: [makeEntry({ requires: ['tools/product-hook'] })] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.equal(filtered.SessionStart.length, 1, 'entry with satisfied requires should be kept');
-      assert.ok(!('requires' in filtered.SessionStart[0]), 'requires field should be stripped from output');
-    });
-
-    it('skips entries whose single `requires` path is missing', () => {
-      const hooks = { Stop: [makeEntry({ requires: ['tools/product-hook'] })] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.deepStrictEqual(filtered, {}, 'event key with no kept entries should be omitted');
-    });
-
-    it('skips entries when one of multiple `requires` paths is missing', () => {
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
-      const hooks = { Stop: [makeEntry({ requires: ['tools/present', 'tools/missing'] })] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.deepStrictEqual(filtered, {}, 'AND-semantics: any missing path skips the entry');
-    });
-
-    it('keeps entries without a `requires` field (backwards-compatible)', () => {
-      const hooks = { SessionStart: [makeEntry()] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.equal(filtered.SessionStart.length, 1, 'no-requires entry must inject unconditionally');
-    });
-
-    it('keeps entries with empty `requires` array (degenerate, no preconditions)', () => {
-      const hooks = { SessionStart: [makeEntry({ requires: [] })] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.equal(filtered.SessionStart.length, 1, 'empty requires array means no preconditions');
-      assert.ok(!('requires' in filtered.SessionStart[0]), 'requires field should still be stripped');
-    });
-
-    it('coerces non-empty string `requires` to a single-element array (Critic S1)', () => {
-      // Forgiving handling for the common single-precondition case where a
-      // template author writes `requires: "tools/x"` instead of an array.
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '');
-      const hooks = { Stop: [makeEntry({ requires: 'tools/product-hook' })] };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.equal(filtered.Stop.length, 1, 'string requires should be honored as single precondition');
-    });
-
-    it('skips entries whose `requires` contains an empty string or non-string entry (fail-closed)', () => {
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
-      const hooksEmpty = { Stop: [makeEntry({ requires: ['', 'tools/present'] })] };
-      const hooksNonString = { Stop: [makeEntry({ requires: [123, 'tools/present'] })] };
-
-      assert.deepStrictEqual(
-        engines._filterHookEntriesByRequires(hooksEmpty, projectDir),
-        {},
-        'empty-string entry must be treated as missing'
-      );
-      assert.deepStrictEqual(
-        engines._filterHookEntriesByRequires(hooksNonString, projectDir),
-        {},
-        'non-string entry must be treated as missing'
-      );
-    });
-
-    it('rejects path traversal and absolute paths in `requires` (Critic S2)', () => {
-      // Even if these paths resolve to a real file outside the project,
-      // `requires` is documented project-relative; anything else fails closed.
-      const traversal = { Stop: [makeEntry({ requires: ['../etc/hosts'] })] };
-      const absolute = { Stop: [makeEntry({ requires: ['/etc/hosts'] })] };
-      const nestedTraversal = { Stop: [makeEntry({ requires: ['tools/../../etc/hosts'] })] };
-
-      assert.deepStrictEqual(engines._filterHookEntriesByRequires(traversal, projectDir), {}, '../ rejected');
-      assert.deepStrictEqual(engines._filterHookEntriesByRequires(absolute, projectDir), {}, 'absolute path rejected');
-      assert.deepStrictEqual(engines._filterHookEntriesByRequires(nestedTraversal, projectDir), {}, 'nested .. segment rejected');
-    });
-
-    it('mixes kept and skipped entries within the same event', () => {
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'present'), '');
-      const hooks = {
-        SessionStart: [
-          makeEntry({ matcher: 'a', requires: ['tools/present'] }),
-          makeEntry({ matcher: 'b', requires: ['tools/missing'] }),
-          makeEntry({ matcher: 'c' })
-        ]
-      };
-
-      const filtered = engines._filterHookEntriesByRequires(hooks, projectDir);
-
-      assert.equal(filtered.SessionStart.length, 2, 'kept = present-requires + no-requires');
-      assert.deepStrictEqual(
-        filtered.SessionStart.map((e) => e.matcher),
-        ['a', 'c'],
-        'order preserved among kept entries'
-      );
-    });
-  });
-
-  describe('syncEngineHooks + requires precondition (#145)', () => {
-    let projectDir;
-
-    // Same pattern as the syncEngineHooks suite above — explicit silentPrime:false
-    // projConfig so the tests can focus on the requires-filter behavior without
-    // the post-#129 silentPrime baseline injecting a SessionStart entry.
-    beforeEach(() => {
-      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tangleclaw-sync-requires-'));
-      const tcDir = path.join(projectDir, '.tangleclaw');
-      fs.mkdirSync(tcDir, { recursive: true });
-      fs.writeFileSync(path.join(tcDir, 'project.json'), JSON.stringify({
-        engine: 'claude',
-        methodology: 'minimal',
-        silentPrime: false
-      }));
-    });
-
-    afterEach(() => {
-      fs.rmSync(projectDir, { recursive: true, force: true });
-    });
-
-    it('strips orphan hook entries from .claude/settings.json (self-heal for existing affected projects)', () => {
-      // Simulate an existing project with a stale orphan hook block already
-      // written by a pre-#145 syncEngineHooks pass — exactly the RentalClaw
-      // / prawduct-test state. The bundled template now declares requires.
-      fs.mkdirSync(path.join(projectDir, '.claude'), { recursive: true });
-      const stale = {
-        permissions: { allow: ['Bash(ls)'] },
-        hooks: {
-          Stop: [{
-            matcher: '',
-            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
-          }]
-        }
-      };
-      fs.writeFileSync(path.join(projectDir, '.claude', 'settings.json'), JSON.stringify(stale, null, 2));
-      const template = {
-        id: 'prawduct',
-        hooks: {
-          claude: {
-            Stop: [{
-              matcher: '',
-              requires: ['tools/product-hook'],
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
-            }]
-          }
-        }
-      };
-
-      engines.syncEngineHooks(projectDir, template);
-
-      const settings = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
-      assert.ok(!settings.hooks, 'orphan hook block must be removed when requires unmet');
-      assert.deepStrictEqual(settings.permissions, { allow: ['Bash(ls)'] }, 'non-hook keys preserved');
-    });
-
-    it('idempotency: orphan stays gone on re-sync; appears once requirement is installed', () => {
-      const template = {
-        id: 'prawduct',
-        hooks: {
-          claude: {
-            Stop: [{
-              matcher: '',
-              requires: ['tools/product-hook'],
-              hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }]
-            }]
-          }
-        }
-      };
-
-      // First pass: requirement missing — no hooks written.
-      engines.syncEngineHooks(projectDir, template);
-      const first = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
-      assert.ok(!first.hooks, 'no hooks written when requirement missing');
-
-      // Install the runtime, re-sync — hook should now appear.
-      fs.mkdirSync(path.join(projectDir, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projectDir, 'tools', 'product-hook'), '#!/bin/sh\n');
-      engines.syncEngineHooks(projectDir, template);
-      const second = JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
-      assert.ok(second.hooks && second.hooks.Stop, 'hook injected once requirement is satisfied');
-      assert.ok(!('requires' in second.hooks.Stop[0]), 'requires field stripped from .claude/settings.json');
-    });
-  });
-
-  describe('bundled prawduct template hook tripwire (#145)', () => {
-    it('every hook entry that calls tools/product-hook declares it in `requires`', () => {
-      // Tripwire: the entire #145 fix exists to ensure prawduct's runtime-
-      // dependent hooks declare their preconditions. If a future PR adds a
-      // hook entry referencing tools/product-hook without a `requires`
-      // annotation, this test fires before the orphan-injection regression
-      // ships.
-      const tmpl = JSON.parse(fs.readFileSync(
-        path.join(__dirname, '..', 'data', 'templates', 'prawduct', 'template.json'),
-        'utf8'
-      ));
-      const claudeHooks = tmpl.hooks && tmpl.hooks.claude;
-      assert.ok(claudeHooks, 'bundled prawduct template must declare claude hooks');
-
-      for (const [eventName, entries] of Object.entries(claudeHooks)) {
-        for (const entry of entries) {
-          const referencesProductHook = (entry.hooks || []).some((h) =>
-            typeof h.command === 'string' && h.command.includes('tools/product-hook')
-          );
-          if (!referencesProductHook) continue;
-          assert.ok(
-            Array.isArray(entry.requires) && entry.requires.includes('tools/product-hook'),
-            `${eventName} entry references tools/product-hook but does not declare it in \`requires\``
-          );
-        }
       }
     });
   });
@@ -2203,39 +1793,6 @@ describe('engines', () => {
     });
   });
 
-  describe('_mergeHookObjects (#103)', () => {
-    it('merges two non-overlapping events', () => {
-      const a = { Stop: [{ matcher: 'a', hooks: [] }] };
-      const b = { SessionStart: [{ matcher: 'b', hooks: [] }] };
-      const merged = engines._mergeHookObjects(a, b);
-      assert.equal(merged.Stop.length, 1);
-      assert.equal(merged.SessionStart.length, 1);
-    });
-
-    it('concatenates entries under the same eventName, a before b', () => {
-      const a = { SessionStart: [{ matcher: 'first' }] };
-      const b = { SessionStart: [{ matcher: 'second' }] };
-      const merged = engines._mergeHookObjects(a, b);
-      assert.equal(merged.SessionStart.length, 2);
-      assert.equal(merged.SessionStart[0].matcher, 'first');
-      assert.equal(merged.SessionStart[1].matcher, 'second');
-    });
-
-    it('handles empty inputs', () => {
-      assert.deepStrictEqual(engines._mergeHookObjects({}, {}), {});
-      assert.deepStrictEqual(engines._mergeHookObjects(null, null), {});
-      assert.deepStrictEqual(engines._mergeHookObjects(null, { Stop: [{ matcher: 'x' }] }), { Stop: [{ matcher: 'x' }] });
-    });
-
-    it('deep-clones entries so mutating the result does not leak into inputs', () => {
-      const a = { SessionStart: [{ matcher: 'orig', hooks: [{ command: 'cmd' }] }] };
-      const merged = engines._mergeHookObjects(a, {});
-      merged.SessionStart[0].matcher = 'mutated';
-      merged.SessionStart[0].hooks[0].command = 'mutated';
-      assert.equal(a.SessionStart[0].matcher, 'orig');
-      assert.equal(a.SessionStart[0].hooks[0].command, 'cmd');
-    });
-  });
 
   describe('syncEngineHooks silentPrime integration (#103)', () => {
     let projectDir;
@@ -2258,32 +1815,10 @@ describe('engines', () => {
       fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(config));
     }
 
-    it('appends baseline SessionStart entry alongside methodology hooks', () => {
-      writeProjConfig({ engine: 'claude', silentPrime: true });
-      const template = {
-        id: 'prawduct',
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: 'startup|clear|resume',
-              hooks: [{ type: 'command', command: 'python3 prawduct-hook' }]
-            }],
-            Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 stop-hook' }] }]
-          }
-        }
-      };
-      engines.syncEngineHooks(projectDir, template);
 
-      const settings = readSettings();
-      assert.equal(settings.hooks.SessionStart.length, 2, 'methodology + baseline coexist');
-      assert.equal(settings.hooks.SessionStart[0].matcher, 'startup|clear|resume', 'methodology entry first');
-      assert.equal(settings.hooks.SessionStart[1].matcher, 'startup', 'baseline entry second');
-      assert.ok(settings.hooks.Stop, 'Stop hook still present');
-    });
-
-    it('writes only the baseline entry when methodology has no hooks', () => {
+    it('writes only the baseline entry', () => {
       writeProjConfig({ engine: 'claude', silentPrime: true });
-      engines.syncEngineHooks(projectDir, { id: 'minimal', hooks: {} });
+      engines.syncEngineHooks(projectDir);
 
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 1);
@@ -2291,29 +1826,10 @@ describe('engines', () => {
       assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
     });
 
-    it('writes only methodology hooks when silentPrime is off', () => {
-      writeProjConfig({ engine: 'claude', silentPrime: false });
-      const template = {
-        id: 'prawduct',
-        hooks: {
-          claude: {
-            SessionStart: [{
-              matcher: 'startup',
-              hooks: [{ type: 'command', command: 'python3 prawduct-hook' }]
-            }]
-          }
-        }
-      };
-      engines.syncEngineHooks(projectDir, template);
-
-      const settings = readSettings();
-      assert.equal(settings.hooks.SessionStart.length, 1);
-      assert.equal(settings.hooks.SessionStart[0].hooks[0].command, 'python3 prawduct-hook');
-    });
 
     it('resolves {{TANGLECLAW_DIR}} in the baseline entry on disk', () => {
       writeProjConfig({ engine: 'claude', silentPrime: true });
-      engines.syncEngineHooks(projectDir, null);
+      engines.syncEngineHooks(projectDir);
 
       const settings = readSettings();
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;
@@ -2324,7 +1840,7 @@ describe('engines', () => {
 
     it('does not run for non-claude engines even with silentPrime enabled', () => {
       writeProjConfig({ engine: 'codex', silentPrime: true });
-      engines.syncEngineHooks(projectDir, null);
+      engines.syncEngineHooks(projectDir);
 
       assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false,
         'should not write .claude/settings.json for non-claude engine');

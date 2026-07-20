@@ -67,7 +67,7 @@ describe('startup session-rule delivery (#595)', () => {
       );
       fs.writeFileSync(path.join(projDir, 'CLAUDE.md'), '<!-- PRAWDUCT:ANCHOR -->\n');
     }
-    return store.projects.create({ name, path: projDir, engine: 'claude', methodology: 'minimal' });
+    return store.projects.create({ name, path: projDir, engine: 'claude' });
   }
 
   describe('buildStartupRulesSection', () => {

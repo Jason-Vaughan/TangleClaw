@@ -55,7 +55,7 @@ describe('api/session-rules self-improvement (D1b)', () => {
     store.init();
     const projPath = path.join(tmpDir, 'proj');
     fs.mkdirSync(projPath, { recursive: true });
-    pid = store.projects.create({ name: 'proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
+    pid = store.projects.create({ name: 'proj', path: projPath, engine: 'claude' }).id;
     learningId = store.learnings.create({ projectId: pid, content: 'Prefer dependency injection' }).id;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => {

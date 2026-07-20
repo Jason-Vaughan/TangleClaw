@@ -85,8 +85,7 @@ describe('api-sessions', () => {
     store.projects.create({
       name: 'api-sess-test',
       path: projDir,
-      engine: 'claude',
-      methodology: 'minimal'
+      engine: 'claude'
     });
 
     server = createServer();

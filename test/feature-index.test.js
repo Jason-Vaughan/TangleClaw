@@ -87,8 +87,7 @@ describe('feature-index (#207, chunk 1)', () => {
   describe('updateProject — featureIndexEnabled validation', () => {
     it('rejects non-boolean values without mutating state', () => {
       const result = projects.createProject({
-        name: 'validation-proj',
-        methodology: 'minimal'
+        name: 'validation-proj'
       });
       assert.ok(result.project, 'project should be created');
 
@@ -110,7 +109,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('accepts true and persists to project.json', () => {
-      projects.createProject({ name: 'accept-true-proj', methodology: 'minimal' });
+      projects.createProject({ name: 'accept-true-proj' });
 
       const update = projects.updateProject('accept-true-proj', { featureIndexEnabled: true });
       assert.ok(update.project);
@@ -122,7 +121,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('accepts false and persists', () => {
-      projects.createProject({ name: 'accept-false-proj', methodology: 'minimal' });
+      projects.createProject({ name: 'accept-false-proj' });
 
       // First flip to true so the false case is a real transition.
       projects.updateProject('accept-false-proj', { featureIndexEnabled: true });
@@ -138,7 +137,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
   describe('updateProject — versionBumpEnabled opt-out (#318)', () => {
     it('rejects non-boolean values', () => {
-      projects.createProject({ name: 'vb-validation', methodology: 'minimal' });
+      projects.createProject({ name: 'vb-validation' });
       for (const bad of ['true', 1, null, {}, []]) {
         const update = projects.updateProject('vb-validation', { versionBumpEnabled: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
@@ -147,7 +146,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('defaults to true and persists an explicit false', () => {
-      projects.createProject({ name: 'vb-persist', methodology: 'minimal' });
+      projects.createProject({ name: 'vb-persist' });
       // Default: getProject reports true when unset.
       assert.equal(projects.getProject('vb-persist').versionBumpEnabled, true);
 
@@ -162,7 +161,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
   describe('updateProject — versionFilePath (#540)', () => {
     it('rejects non-string values', () => {
-      projects.createProject({ name: 'vfp-type', methodology: 'minimal' });
+      projects.createProject({ name: 'vfp-type' });
       for (const bad of [1, true, {}, []]) {
         const update = projects.updateProject('vfp-type', { versionFilePath: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
@@ -171,7 +170,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('rejects absolute paths and ".." escapes — this field feeds a write path', () => {
-      projects.createProject({ name: 'vfp-escape', methodology: 'minimal' });
+      projects.createProject({ name: 'vfp-escape' });
       // '.' resolves to the project root itself: it would save cleanly and then
       // be refused forever at the write site, silently skipping every wrap.
       for (const bad of ['/etc/passwd.json', '../outside.json', 'a/../../b.json', '.']) {
@@ -182,7 +181,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('defaults to null, persists a relative path, and clears on empty string', () => {
-      projects.createProject({ name: 'vfp-persist', methodology: 'minimal' });
+      projects.createProject({ name: 'vfp-persist' });
       assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
 
       const set = projects.updateProject('vfp-persist', { versionFilePath: 'VERSION.json' });
@@ -198,7 +197,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('accepts an explicit null as a clear', () => {
-      projects.createProject({ name: 'vfp-null', methodology: 'minimal' });
+      projects.createProject({ name: 'vfp-null' });
       projects.updateProject('vfp-null', { versionFilePath: 'VERSION.json' });
       assert.equal(projects.getProject('vfp-null').versionFilePath, 'VERSION.json');
 
@@ -210,7 +209,7 @@ describe('feature-index (#207, chunk 1)', () => {
     });
 
     it('accepts a nested relative path', () => {
-      projects.createProject({ name: 'vfp-nested', methodology: 'minimal' });
+      projects.createProject({ name: 'vfp-nested' });
       const update = projects.updateProject('vfp-nested', { versionFilePath: 'meta/app-version.json' });
       assert.ok(update.project);
       assert.equal(update.errors.length, 0);
@@ -221,8 +220,7 @@ describe('feature-index (#207, chunk 1)', () => {
   describe('updateProject — seeding behavior on toggle', () => {
     it('seeds FEATURES.md on false → true transition when file absent', () => {
       const created = projects.createProject({
-        name: 'seed-on-toggle',
-        methodology: 'minimal'
+        name: 'seed-on-toggle'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
       assert.equal(fs.existsSync(featuresPath), false, 'precondition: FEATURES.md absent');
@@ -236,8 +234,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
     it('does NOT overwrite a pre-existing FEATURES.md on toggle-on', () => {
       const created = projects.createProject({
-        name: 'preserve-existing',
-        methodology: 'minimal'
+        name: 'preserve-existing'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
       const userContent = '# My own index\n\n- entry I wrote myself\n';
@@ -250,8 +247,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
     it('does NOT delete FEATURES.md on toggle-off', () => {
       const created = projects.createProject({
-        name: 'no-delete-on-off',
-        methodology: 'minimal'
+        name: 'no-delete-on-off'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
 
@@ -266,8 +262,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
     it('does not re-seed (overwrite) on idempotent true → true save', () => {
       const created = projects.createProject({
-        name: 'idempotent-true',
-        methodology: 'minimal'
+        name: 'idempotent-true'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
 
@@ -285,13 +280,13 @@ describe('feature-index (#207, chunk 1)', () => {
 
   describe('enrichProject — surface', () => {
     it('exposes featureIndexEnabled (default false)', () => {
-      projects.createProject({ name: 'enrich-default', methodology: 'minimal' });
+      projects.createProject({ name: 'enrich-default' });
       const enriched = projects.getProject('enrich-default');
       assert.equal(enriched.featureIndexEnabled, false);
     });
 
     it('reflects post-update true', () => {
-      projects.createProject({ name: 'enrich-true', methodology: 'minimal' });
+      projects.createProject({ name: 'enrich-true' });
       projects.updateProject('enrich-true', { featureIndexEnabled: true });
       const enriched = projects.getProject('enrich-true');
       assert.equal(enriched.featureIndexEnabled, true);
@@ -300,7 +295,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
   describe('independence from other PATCH fields', () => {
     it('a featureIndexEnabled update alongside tags persists both', () => {
-      projects.createProject({ name: 'combo-update', methodology: 'minimal' });
+      projects.createProject({ name: 'combo-update' });
 
       const update = projects.updateProject('combo-update', {
         featureIndexEnabled: true,
@@ -320,7 +315,6 @@ describe('feature-index (#207, chunk 1)', () => {
     it('a non-boolean featureIndexEnabled rejection does not mutate tags', () => {
       const created = projects.createProject({
         name: 'rejection-isolation',
-        methodology: 'minimal',
         tags: ['original']
       });
       assert.deepEqual(created.project.tags, ['original']);
