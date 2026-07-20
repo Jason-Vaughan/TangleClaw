@@ -189,7 +189,7 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     store._setBasePath(tempDir);
     store.init();
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-proj-'));
-    store.projects.create({ name: 'demo', path: projPath, engine: 'claude', methodology: 'none' });
+    store.projects.create({ name: 'demo', path: projPath, engine: 'claude' });
 
     server = createServer();
     await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
@@ -253,7 +253,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     store._setBasePath(tempDir);
     store.init();
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c02-proj-'));
-    project = store.projects.create({ name: 'switchboard', path: projPath, engine: 'claude', methodology: 'none' });
+    project = store.projects.create({ name: 'switchboard', path: projPath, engine: 'claude' });
     // A real active-session row so getActive resolves (no tmux needed — the row
     // is all the routes read).
     active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-c02' });
@@ -323,7 +323,7 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
   it('toggle returns 409 when the project has no active session', async () => {
     const solo = store.projects.create({
       name: 'no-session', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c02-nosess-')),
-      engine: 'claude', methodology: 'none'
+      engine: 'claude'
     });
     assert.ok(solo);
     const { status, data } = await req('/api/sessions/no-session/medusa/toggle', 'POST', {});
@@ -459,8 +459,8 @@ describe('lib/sessions — resyncMedusaListeners (TC#550, MED-2K9P v2 T4)', () =
     store.init();
     const onPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-on-'));
     const offPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-off-'));
-    onProj = store.projects.create({ name: 'resync-on', path: onPath, engine: 'claude', methodology: 'none' });
-    offProj = store.projects.create({ name: 'resync-off', path: offPath, engine: 'claude', methodology: 'none' });
+    onProj = store.projects.create({ name: 'resync-on', path: onPath, engine: 'claude' });
+    offProj = store.projects.create({ name: 'resync-off', path: offPath, engine: 'claude' });
     store.projectConfig.save(onPath, { medusaEnabled: true });
     store.projectConfig.save(offPath, { medusaEnabled: false });
     onActive = store.sessions.start({ projectId: onProj.id, engineId: 'claude', tmuxSession: 'fake-resync-on' });
@@ -503,7 +503,7 @@ describe('lib/sessions — resyncMedusaListeners (TC#550, MED-2K9P v2 T4)', () =
 
   it('a broken project record never blocks the sweep (non-throwing per project)', () => {
     const badPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-resync-bad-'));
-    const bad = store.projects.create({ name: 'resync-bad', path: badPath, engine: 'claude', methodology: 'none' });
+    const bad = store.projects.create({ name: 'resync-bad', path: badPath, engine: 'claude' });
     store.projectConfig.save(badPath, { medusaEnabled: true });
     store.sessions.start({ projectId: bad.id, engineId: 'claude', tmuxSession: 'fake-resync-bad' });
     fs.rmSync(badPath, { recursive: true, force: true }); // config load will fail
@@ -814,7 +814,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     store._setBasePath(tempDir);
     store.init();
     const projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-c03-proj-'));
-    project = store.projects.create({ name: 'sender', path: projPath, engine: 'claude', methodology: 'none' });
+    project = store.projects.create({ name: 'sender', path: projPath, engine: 'claude' });
     active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-c03' });
 
     server = createServer();
@@ -883,7 +883,7 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
   it('send returns 409 when the project has no active session', async () => {
     store.projects.create({
       name: 'no-session-c03', path: fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c03-nosess-')),
-      engine: 'claude', methodology: 'none'
+      engine: 'claude'
     });
     const { status, data } = await req('/api/sessions/no-session-c03/medusa/send', 'POST', { to: 'live-ws', message: 'hi' });
     assert.equal(status, 409);
@@ -1636,7 +1636,7 @@ describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (T
     store._setBasePath(tempDir);
     store.init();
     projDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-proj-'));
-    const project = store.projects.create({ name: 'live-flip', path: projDir, engine: 'claude', methodology: 'none' });
+    const project = store.projects.create({ name: 'live-flip', path: projDir, engine: 'claude' });
     active = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'fake-549' });
   });
 
@@ -1667,7 +1667,7 @@ describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (T
 
   it('a project with NO live session flips the pref cleanly (listener untouched)', () => {
     const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-idle-'));
-    store.projects.create({ name: 'idle-flip', path: otherDir, engine: 'claude', methodology: 'none' });
+    store.projects.create({ name: 'idle-flip', path: otherDir, engine: 'claude' });
     const result = projects.updateProject('idle-flip', { medusaEnabled: true });
     assert.equal(result.errors.length, 0);
     assert.equal(store.projectConfig.load(otherDir).medusaEnabled, true);

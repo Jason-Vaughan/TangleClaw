@@ -231,8 +231,7 @@ describe('OpenClaw engine integration', () => {
       store.projects.create({
         name: 'oc-enrich-test',
         path: projDir,
-        engine: `openclaw:${connId}`,
-        methodology: 'none'
+        engine: `openclaw:${connId}`
       });
     });
 

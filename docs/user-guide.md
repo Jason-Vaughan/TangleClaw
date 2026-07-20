@@ -38,9 +38,9 @@ Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard
 
 1. **Welcome** — overview of what TangleClaw does
 2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
-3. **Detect Projects** — scans the directory for existing projects (git repos, methodology markers) and lets you select which to attach
+3. **Detect Projects** — scans the directory for existing projects (git repos, TangleClaw or Prawduct markers) and lets you select which to attach
 4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
-5. **Preferences** — default methodology, delete protection password, idle chime toggle
+5. **Preferences** — delete protection password, idle chime toggle
 6. **Confirm** — summary of all selections, then "Complete Setup"
 
 You can **skip the wizard** at any step — it will use sensible defaults. The wizard only appears once; subsequent launches go straight to the landing page.
@@ -101,8 +101,6 @@ Projects are displayed as compact cards. Each card shows:
 - **Name** — the project directory name
 - **Version badge** — the project's current version (if available), shown as a subtle badge
 - **Engine badge** — which AI engine is selected (e.g., "Claude Code")
-- **Methodology badge** — which methodology template is active (e.g., "Prawduct")
-- **Status badge** — current methodology status (color-coded by phase)
 - **Git info** — branch, dirty state, last commit age
 - **Session indicator** — a green breathing dot when a session is active
 - **Peek icon** — an eye icon to quickly peek at session output without entering the session wrapper
@@ -119,10 +117,9 @@ Tap **+ New** to open the create project drawer:
 
 1. **Name** — enter a project name (letters, numbers, hyphens, underscores only)
 2. **Engine** — select an AI engine from the dropdown
-3. **Methodology** — choose a methodology template
-4. **Tags** — optional tags for organization
+3. **Tags** — optional tags for organization
 
-The project is created in your configured `projectsDir` (default: `~/Documents/Projects`). TangleClaw scaffolds the project directory, initializes the methodology, registers ports with PortHub (if available), and generates the engine-specific config file. See the [Engine Guide](engine-guide.md) for details on custom engines and the [Methodology Guide](methodology-guide.md) for custom methodologies.
+The project is created in your configured `projectsDir` (default: `~/Documents/Projects`). TangleClaw scaffolds the project directory, registers ports with PortHub (if available), and generates the engine-specific config file. See the [Engine Guide](engine-guide.md) for details on custom engines.
 
 ### Deleting a Project
 
@@ -133,8 +130,7 @@ Tap the delete button on a project card. If a `deletePassword` is configured, yo
 TangleClaw shows ALL directories in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
 
 Tap **Attach** to register a directory as a TangleClaw project. This:
-- Reads any existing `.tangleclaw/project.json` for engine and methodology settings
-- Detects methodology from directory markers (`.prawduct/`)
+- Reads any existing `.tangleclaw/project.json` for engine settings
 - Registers the project in the database
 - Creates a `.tangleclaw/project.json` if one doesn't exist
 
@@ -145,7 +141,7 @@ You can also attach projects in bulk during the first-run setup wizard, or via t
 During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:
 
 - A `.tangleclaw/project.json` file
-- A methodology marker directory (`.prawduct/`)
+- A Prawduct governance directory (`.prawduct/`)
 - A git repository
 
 These are offered for batch attachment during setup.
@@ -158,7 +154,7 @@ Sessions are the core of TangleClaw — they're how you interact with AI engines
 
 Tap the **Launch** button on a project card. TangleClaw:
 
-1. Generates a prime prompt from methodology state, active learnings, and last session summary
+1. Generates a prime prompt from project state, active learnings, and last session summary
 2. Creates a tmux session
 3. Launches the selected AI engine inside it
 4. Injects the prime prompt (if the engine supports it)
@@ -221,16 +217,15 @@ The settings modal lets you configure:
 - **Chime toggle** — enable/disable idle chime
 - **Poll interval** — how often to check session status (2s–30s)
 - **Engine selector** — switch engine for next session
-- **Methodology info** — current methodology and phase
 - **Mouse mode** — toggle tmux mouse mode on/off
 
 See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
 
 #### Wrapping a Session
 
-Tap **Wrap** to trigger the methodology-defined wrap skill. This:
+Tap **Wrap** to trigger the session wrap. This:
 
-1. Executes the wrap steps defined in the methodology template
+1. Executes the wrap pipeline's steps
 2. Captures session output (summary, next steps, learnings)
 3. Records the wrap in the database
 4. Ends the session

@@ -44,7 +44,7 @@ describe('self-improvement loop (#569)', () => {
   beforeEach(() => {
     const dir = path.join(tmpDir, `proj-${Math.floor(Math.random() * 1e9)}`);
     fs.mkdirSync(dir, { recursive: true });
-    project = store.projects.create({ name: path.basename(dir), path: dir, methodology: 'prawduct' });
+    project = store.projects.create({ name: path.basename(dir), path: dir });
   });
 
   describe('a proposal governs nothing until an operator approves it', () => {
@@ -210,7 +210,7 @@ describe('self-improvement loop (#569)', () => {
         assert.equal(row.project_id, 424242);
         assert.equal(row.status, 'active');
         assert.equal(
-          h.db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 27,
+          h.db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 28,
           'the upgrade must complete, not stall on the orphan');
       } finally { done(h); }
     });

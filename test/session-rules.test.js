@@ -37,7 +37,7 @@ describe('sessionRules store API (#347/D1a)', () => {
   function mkProject(name) {
     const projPath = path.join(tmpDir, name);
     fs.mkdirSync(projPath, { recursive: true });
-    return store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'none' }).id;
+    return store.projects.create({ name, path: projPath, engine: 'claude' }).id;
   }
 
   describe('create', () => {
@@ -530,7 +530,7 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       // project-scoped: a global (project_id NULL) row would be purged by the
       // v24→v25 tier retirement, which has its own migration test below.
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 27);
+      assert.equal(ver.version, 28);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();
@@ -589,7 +589,7 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       const db = store.getDb();
       // Schema advanced to current (v22→v23 op CHECK, then v23→v24 critic_gate).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 27);
+      assert.equal(ver.version, 28);
 
       // The CHECK constraint is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -721,7 +721,7 @@ describe('sessionRules v23→v24 critic_gate migration (SR-7K2P)', () => {
       const db = store.getDb();
       // Schema advanced to current (the v23→v24 rebuild is the last step).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 27);
+      assert.equal(ver.version, 28);
 
       // The critic_gate CHECK is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -816,7 +816,7 @@ describe('sessionRules v24→v25 tier-retirement purge', () => {
 
       const db = store.getDb();
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 27);
+      assert.equal(ver.version, 28);
 
       // Only the project-scoped startup rule survives.
       const rows = db.prepare('SELECT id, content FROM session_rules ORDER BY id').all();

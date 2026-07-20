@@ -75,7 +75,7 @@ Substantive work goes through a feature-branch PR (even solo) — the PR documen
 - PR titles in active voice ("Add X", "Fix Y when Z"). Body has What / Why / Test plan; link issues with `Fixes #N`. Delete branches after merge.
 
 **Rule: Pair `gh pr create` with `gh pr merge --auto --squash --delete-branch` for routine PRs** (docs, chore, version bumps, dependency updates, test-only) — GitHub then merges server-side the instant required checks pass, no session wait.
-- **Use `--auto` for:** doc-only changes (README/CHANGELOG/MEMORY/plans/comments/JSDoc); mechanical chore PRs that don't shift active methodology; test-only PRs.
+- **Use `--auto` for:** doc-only changes (README/CHANGELOG/MEMORY/plans/comments/JSDoc); mechanical chore PRs that don't shift how the project is built; test-only PRs.
 - **Don't `--auto`:** feature PRs (user-facing/behavior-changing); refactors with non-trivial code movement; anything that triggered a Critic review (wait for findings + sign-off); PRs touching CI/deploy/secrets/branch-protection; anything the user wants to review first.
 - `--squash` keeps `main` history linear and CHANGELOG-friendly.
 - Branch protection still gates: `--auto` waits for a required review, so it only removes the wait once gates clear — it never overrides protection. If auto-merge isn't enabled on the repo, `--auto` errors; enable it (Settings → Pull Requests) or fall back to `gh pr checks <PR#> --watch` + a manual merge.

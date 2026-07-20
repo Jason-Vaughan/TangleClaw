@@ -126,7 +126,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.equal(_isIndexableCandidate('public/ui.js'), true);
       assert.equal(_isIndexableCandidate('public/index.html'), true);
       assert.equal(_isIndexableCandidate('public/style.css'), true);
-      assert.equal(_isIndexableCandidate('data/templates/prawduct/template.json'), true);
+      assert.equal(_isIndexableCandidate('data/engines/claude.json'), true);
       assert.equal(_isIndexableCandidate('docs/note.md'), true);
       assert.equal(_isIndexableCandidate('hooks/run.sh'), true);
       assert.equal(_isIndexableCandidate('lib/foo.jsx'), true);
@@ -268,8 +268,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       createdProject = store.projects.create({
         name: 'features-toc-test',
         path: projectPath,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
       materialize(projectPath, 'lib/new-thing.js', 'lib/foo.js', 'lib/bar.js');
     });
@@ -283,7 +282,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       // Reset project config so each test starts from the default (toggle off).
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: false
       });
       try { fs.rmSync(path.join(projectPath, 'FEATURES.md'), { force: true }); } catch {}
@@ -315,7 +313,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       // deletion. A missing file under an enabled toggle is created, not skipped.
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       // No base branch resolves → the create path stages the bare seed.
@@ -343,7 +340,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     it('self-heals AND appends drift when FEATURES.md is missing and the session touched new files (#425)', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       const orig = featuresToc._internal.execSync;
@@ -374,7 +370,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     it('returns ok:true,skipped when neither a session SHA nor a base branch resolves', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n\n## UI\n');
@@ -399,7 +394,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     it('returns ok:true,skipped when the diff is empty (no files touched)', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n');
@@ -426,7 +420,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     it('returns ok:true,skipped when every touched file is already indexed', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       // Index already mentions both files.
@@ -455,7 +448,6 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     it('returns ok:true,skipped when every touched file is excluded by the filter', async () => {
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n');
@@ -504,12 +496,10 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       createdProject = store.projects.create({
         name: 'features-toc-happy',
         path: projectPath,
-        engine: 'claude',
-        methodology: 'minimal'
+        engine: 'claude'
       });
       store.projectConfig.save(projectPath, {
         engine: 'claude',
-        methodology: 'minimal',
         featureIndexEnabled: true
       });
       materialize(projectPath,
@@ -717,7 +707,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       projectPath = path.join(projectsDir, 'features-toc-465');
       fs.mkdirSync(projectPath, { recursive: true });
       createdProject = store.projects.create({
-        name: 'features-toc-465', path: projectPath, engine: 'claude', methodology: 'minimal'
+        name: 'features-toc-465', path: projectPath, engine: 'claude'
       });
       materialize(projectPath, 'lib/merged-a.js', 'lib/merged-b.js');
     });
@@ -764,71 +754,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
     });
   });
 
-  describe('cached-install reconciliation (CHANGELOG migration-note pin)', () => {
-    it('_reconcileMergeBy:id end-appends features-toc on a cached install missing the step (caveat regression pin)', () => {
-      // Mirrors the prawduct-aicontent-prompts test's reconciliation
-      // pin. The CHANGELOG entry for Chunk 3 explicitly warns that
-      // existing installs with a cached `~/.tangleclaw/templates/
-      // prawduct/template.json` predating this PR will receive
-      // `features-toc` at the END of the steps array (after `commit`),
-      // not in the bundled-position-correct slot between
-      // `next-session-prime` and `memory-update`. If `_reconcileMergeBy`
-      // ever changes to position-aware insert, this test fails — and
-      // the CHANGELOG migration-note can be removed at that point.
-      const cachedLiveSteps = [
-        { id: 'open-pr-check', kind: 'pr-check', blocker: false },
-        { id: 'lint', kind: 'lint', blocker: false },
-        { id: 'version-bump', kind: 'version-bump', blocker: false },
-        { id: 'changelog-update', kind: 'ai-content', prompt: 'old' },
-        { id: 'learnings-capture', kind: 'ai-content', prompt: 'old' },
-        { id: 'next-session-prime', kind: 'priming-roll' },
-        { id: 'memory-update', kind: 'ai-content', prompt: 'old' },
-        { id: 'commit', kind: 'commit', blocker: true }
-      ];
-      const bundledSteps = [
-        { id: 'open-pr-check', kind: 'pr-check', blocker: false },
-        { id: 'lint', kind: 'lint', blocker: false },
-        { id: 'version-bump', kind: 'version-bump', blocker: false },
-        { id: 'changelog-update', kind: 'ai-content', prompt: 'new' },
-        { id: 'learnings-capture', kind: 'ai-content', prompt: 'new' },
-        { id: 'next-session-prime', kind: 'priming-roll' },
-        { id: 'features-toc', kind: 'features-toc' },
-        { id: 'memory-update', kind: 'ai-content', prompt: 'new' },
-        { id: 'commit', kind: 'commit', blocker: true }
-      ];
-
-      const merged = store._reconcileMergeBy(cachedLiveSteps, bundledSteps, 'id');
-      assert.ok(Array.isArray(merged), 'merge produces a new array (bundled had a new id)');
-      assert.equal(merged.length, 9, 'one new entry appended');
-
-      const mergedIds = merged.map((s) => s.id);
-      assert.deepStrictEqual(
-        mergedIds,
-        [
-          'open-pr-check',
-          'lint',
-          'version-bump',
-          'changelog-update',
-          'learnings-capture',
-          'next-session-prime',
-          'memory-update',
-          'commit',
-          'features-toc'
-        ],
-        'features-toc lands at end-of-array; bundled-correct slot between next-session-prime and memory-update is NOT honored. '
-        + 'This is the documented caveat — cached installs must delete `~/.tangleclaw/templates/prawduct/template.json` to pick up the bundled order.'
-      );
-
-      // Specifically: features-toc lands AFTER commit on a cached install
-      // — which is what makes the stub append a silent no-op (commit is
-      // the flusher, and runs before the staging step).
-      const commitIdx = mergedIds.indexOf('commit');
-      const featuresIdx = mergedIds.indexOf('features-toc');
-      assert.ok(featuresIdx > commitIdx,
-        'features-toc must land after commit on cached installs (the silent no-op condition documented in CHANGELOG)');
-    });
-  });
-
+  
   describe('commit-step body-line emission (#207 Chunk 3 — duck-typed)', () => {
     it('emits "- Feature Index: N stub(s) appended (files…)" when staged.addedCount > 0', () => {
       const staged = {
@@ -969,7 +895,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       git('commit -q -m session');
 
       createdProject = store.projects.create({
-        name: 'features-toc-deleted', path: projectPath, engine: 'claude', methodology: 'minimal'
+        name: 'features-toc-deleted', path: projectPath, engine: 'claude'
       });
     });
 

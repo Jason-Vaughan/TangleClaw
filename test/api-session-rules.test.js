@@ -59,7 +59,7 @@ describe('api/session-rules (#347/D1a)', () => {
     store.init();
     const projPath = path.join(tmpDir, 'rules-proj');
     fs.mkdirSync(projPath, { recursive: true });
-    projectId = store.projects.create({ name: 'rules-proj', path: projPath, engine: 'claude', methodology: 'none' }).id;
+    projectId = store.projects.create({ name: 'rules-proj', path: projPath, engine: 'claude' }).id;
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -263,7 +263,7 @@ describe('api/session-rules (#347/D1a)', () => {
       // case above, so it is correctly NOT a finding.
       const strandedPath = path.join(tmpDir, 'stranded-proj');
       fs.mkdirSync(strandedPath, { recursive: true });
-      const stranded = store.projects.create({ name: 'stranded-proj', path: strandedPath, engine: 'claude', methodology: 'none' });
+      const stranded = store.projects.create({ name: 'stranded-proj', path: strandedPath, engine: 'claude' });
       store.sessionRules.create({ content: 'configured but never delivered', projectId: stranded.id });
       store.sessionRuleDeliveries.record({ projectId: stranded.id, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'no prime channel', ruleIds: [1] });
 

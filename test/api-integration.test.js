@@ -206,20 +206,7 @@ describe('Landing Page API Integration', () => {
     });
   });
 
-  describe('GET /api/methodologies', () => {
-    it('should return methodologies array with expected shape', async () => {
-      const res = await request('/api/methodologies');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.data.methodologies));
-      assert.ok(res.data.methodologies.length > 0, 'should have at least one methodology');
-
-      const meth = res.data.methodologies[0];
-      assert.ok(typeof meth.id === 'string');
-      assert.ok(typeof meth.name === 'string');
-      assert.ok(typeof meth.description === 'string');
-    });
-  });
-
+  
   describe('GET /api/projects', () => {
     it('should return projects array (may be empty)', async () => {
       const res = await request('/api/projects');
@@ -235,7 +222,6 @@ describe('Landing Page API Integration', () => {
         body: {
           name: 'integration-test-proj',
           engine: 'claude',
-          methodology: 'minimal',
           tags: ['test']
         }
       });
@@ -276,7 +262,7 @@ describe('Landing Page API Integration', () => {
     it('should return 409 for duplicate project name', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'integration-test-proj', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'integration-test-proj', engine: 'claude' }
       });
       assert.equal(res.status, 409);
       assert.ok(res.data.code === 'CONFLICT');
@@ -296,7 +282,7 @@ describe('Landing Page API Integration', () => {
       // Create a project with valid methodology — should succeed
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'meth-warn-test', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'meth-warn-test', engine: 'claude' }
       });
       assert.equal(res.status, 201);
       assert.equal(res.data.name, 'meth-warn-test');
@@ -366,7 +352,7 @@ describe('Landing Page API Integration', () => {
       // Create a project first
       await request('/api/projects', {
         method: 'POST',
-        body: { name: 'reg-field-test', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'reg-field-test', engine: 'claude' }
       });
 
       const res = await request('/api/projects');
@@ -419,7 +405,7 @@ describe('Landing Page API Integration', () => {
     it('should return 409 for already registered project', async () => {
       await request('/api/projects', {
         method: 'POST',
-        body: { name: 'already-reg', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'already-reg', engine: 'claude' }
       });
 
       const res = await request('/api/projects/attach', {
@@ -494,7 +480,7 @@ describe('Landing Page API Integration', () => {
       // Create a project to add as member
       const projRes = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'group-member-test', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'group-member-test', engine: 'claude' }
       });
       testProjectId = projRes.data.id;
 

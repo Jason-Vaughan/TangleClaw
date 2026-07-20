@@ -41,19 +41,18 @@ describe('migration — detectExistingProjects', () => {
     assert.equal(found.hasTangleclawConfig, true);
   });
 
-  it('detects project with .prawduct methodology marker', () => {
+  it('detects project with a .prawduct governance marker', () => {
     const projDir = path.join(projectsDir, 'prawduct-proj');
     fs.mkdirSync(path.join(projDir, '.prawduct'), { recursive: true });
 
     const result = projects.detectExistingProjects();
     const found = result.detected.find(d => d.name === 'prawduct-proj');
     assert.ok(found, 'should detect project with .prawduct marker');
-    assert.ok(found.methodology, 'should have detected methodology');
   });
 
   it('no longer detects a .tilt marker as a project (tilt retired)', () => {
     // TiLT was retired (operator-ratified 2026-07-17). The scan surfaces
-    // dirs with a TC config or a detectable methodology; a leftover .tilt
+    // dirs with a TC config or a governance marker; a leftover .tilt
     // dir is neither anymore, so it must not read as an existing project.
     const projDir = path.join(projectsDir, 'tilt-proj');
     fs.mkdirSync(path.join(projDir, '.tilt'), { recursive: true });
@@ -65,7 +64,7 @@ describe('migration — detectExistingProjects', () => {
 
   it('skips already registered projects', () => {
     // Create and register a project
-    projects.createProject({ name: 'registered-proj', methodology: 'minimal', gitInit: false });
+    projects.createProject({ name: 'registered-proj', gitInit: false });
 
     const result = projects.detectExistingProjects();
     assert.ok(!result.detected.some(d => d.name === 'registered-proj'),
@@ -108,7 +107,7 @@ describe('migration — detectExistingProjects', () => {
     store.config.save(config);
   });
 
-  it('detects project with both .tangleclaw and methodology markers', () => {
+  it('detects project with both .tangleclaw and governance markers', () => {
     const projDir = path.join(projectsDir, 'both-markers');
     fs.mkdirSync(path.join(projDir, '.tangleclaw'), { recursive: true });
     fs.writeFileSync(path.join(projDir, '.tangleclaw', 'project.json'), '{}');
@@ -118,6 +117,5 @@ describe('migration — detectExistingProjects', () => {
     const found = result.detected.find(d => d.name === 'both-markers');
     assert.ok(found, 'should detect project with both markers');
     assert.equal(found.hasTangleclawConfig, true);
-    assert.ok(found.methodology, 'should also detect methodology');
   });
 });

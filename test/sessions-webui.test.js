@@ -52,8 +52,7 @@ describe('Web UI session lifecycle', () => {
     const project = store.projects.create({
       name: 'webui-proj',
       path: projDir,
-      engine: `openclaw:${connId}`,
-      methodology: 'minimal'
+      engine: `openclaw:${connId}`
     });
     projectId = project.id;
   });
@@ -78,7 +77,7 @@ describe('Web UI session lifecycle', () => {
     it('should have the current schema version', () => {
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 27);
+      assert.equal(row.version, 28);
     });
 
     it('should have default_mode column in openclaw_connections', () => {
@@ -239,8 +238,7 @@ describe('Web UI session lifecycle', () => {
       store.projects.create({
         name: 'override-proj',
         path: projDir,
-        engine: `openclaw:${sshConn.id}`,
-        methodology: 'minimal'
+        engine: `openclaw:${sshConn.id}`
       });
 
       const result = sessions.launchSession('override-proj', { mode: 'webui' });
@@ -264,8 +262,7 @@ describe('Web UI session lifecycle', () => {
       store.projects.create({
         name: 'ssh-proj',
         path: projDir,
-        engine: `openclaw:${sshConn.id}`,
-        methodology: 'minimal'
+        engine: `openclaw:${sshConn.id}`
       });
 
       const result = sessions.launchSession('ssh-proj');
@@ -372,8 +369,7 @@ describe('Web UI session lifecycle', () => {
       const proj = store.projects.create({
         name: 'notoken-proj',
         path: projDir,
-        engine: `openclaw:${noTokenConn.id}`,
-        methodology: 'minimal'
+        engine: `openclaw:${noTokenConn.id}`
       });
 
       const result = await sessions.launchWebuiSession(
@@ -440,8 +436,7 @@ describe('Web UI session lifecycle', () => {
       const ntProj = store.projects.create({
         name: 'status-notoken',
         path: ntProjDir,
-        engine: `openclaw:${noTokenConn.id}`,
-        methodology: 'minimal'
+        engine: `openclaw:${noTokenConn.id}`
       });
       store.sessions.start({
         projectId: ntProj.id,
@@ -474,8 +469,7 @@ describe('Web UI session lifecycle', () => {
       const dProj = store.projects.create({
         name: 'status-deleted',
         path: dProjDir,
-        engine: `openclaw:${tempConn.id}`,
-        methodology: 'minimal'
+        engine: `openclaw:${tempConn.id}`
       });
       store.sessions.start({
         projectId: dProj.id,
@@ -646,8 +640,7 @@ describe('OpenClaw reverse proxy routing', () => {
     store.projects.create({
       name: 'proxy-proj',
       path: projDir,
-      engine: `openclaw:${conn.id}`,
-      methodology: 'minimal'
+      engine: `openclaw:${conn.id}`
     });
 
     server = createServer();
@@ -692,8 +685,7 @@ describe('OpenClaw reverse proxy routing', () => {
     store.projects.create({
       name: 'plain-proj',
       path: projDir,
-      engine: 'claude',
-      methodology: 'minimal'
+      engine: 'claude'
     });
 
     const res = await request('GET', '/openclaw/plain-proj/chat');
@@ -715,8 +707,7 @@ describe('OpenClaw reverse proxy routing', () => {
     store.projects.create({
       name: 'dead-proj',
       path: projDir,
-      engine: `openclaw:${deadConn.id}`,
-      methodology: 'minimal'
+      engine: `openclaw:${deadConn.id}`
     });
 
     const res = await request('GET', '/openclaw/dead-proj/chat');

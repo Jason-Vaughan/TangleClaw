@@ -67,7 +67,6 @@ describe('API /api/upload + /api/uploads', () => {
       name: projectName,
       path: projDir,
       engine: 'claude',
-      methodology: 'minimal',
       tags: [],
       ports: {}
     });

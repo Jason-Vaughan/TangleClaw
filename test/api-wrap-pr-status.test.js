@@ -59,7 +59,7 @@ describe('api GET /wrap/pr-status (#638)', () => {
     store.config.save(config);
     const projDir = path.join(projectsDir, 'prstatus-test');
     fs.mkdirSync(projDir, { recursive: true });
-    store.projects.create({ name: 'prstatus-test', path: projDir, engine: 'claude', methodology: 'minimal' });
+    store.projects.create({ name: 'prstatus-test', path: projDir, engine: 'claude' });
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   });

@@ -39,10 +39,9 @@ The test suite uses `node:test` (built into Node.js 22+). Tests create temporary
 ## Project Structure
 
 - `server.js` — HTTP server, API routes, reverse proxy, WebSocket upgrade
-- `lib/` — Core modules (store, engines, sessions, methodologies, etc.)
+- `lib/` — Core modules (store, engines, sessions, wrap pipeline, etc.)
 - `public/` — Frontend (HTML, CSS, JS — no build step, no framework)
 - `data/engines/` — Bundled engine profiles (JSON)
-- `data/templates/` — Bundled methodology templates (JSON)
 - `test/` — Test files matching `*.test.js`
 - `docs/` — User documentation
 - `deploy/` — launchd plists and install script
@@ -51,14 +50,8 @@ The test suite uses `node:test` (built into Node.js 22+). Tests create temporary
 
 1. Create a JSON profile at `data/engines/<id>.json` (see [Engine Guide](docs/engine-guide.md) for the schema)
 2. If the engine uses a config file that TangleClaw should generate, add a generator function in `lib/engines.js` and a `case` in `generateConfig()`
-3. Run `engines.validateParity()` to verify all engines receive core rules, PortHub references, and methodology info
+3. Run `engines.validateParity()` to verify all engines receive core rules and PortHub references
 4. Add tests in `test/engines.test.js`
-
-## Adding a New Methodology Template
-
-1. Create `data/templates/<id>/template.json` (see [Methodology Guide](docs/methodology-guide.md) for the schema)
-2. Define phases, rules, detection strategy, wrap behavior, and prime prompt sections
-3. Add tests for detection and initialization
 
 ## Areas Looking for Contributions
 
@@ -71,10 +64,6 @@ TangleClaw currently has no user authentication — anyone who can reach the ser
 ### Linux Support
 
 TangleClaw currently requires macOS (launchd for service management). Adding systemd support would open TangleClaw to Linux servers — which is a natural fit for the VPN/SSH remote dev use case.
-
-### TangleMeth — Methodology Builder
-
-Instead of hand-writing methodology template JSON, TangleMeth would interview you about your governance needs and generate a complete methodology framework: phase docs, enforcement hooks, artifact templates, and test suites. See the [Roadmap](README.md#roadmap) for context.
 
 ### Sidecar Controls
 

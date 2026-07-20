@@ -45,7 +45,7 @@ describe('launch-mode settings', () => {
   function mkProject(name) {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
-    store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'minimal' });
+    store.projects.create({ name, path: projPath, engine: 'claude' });
     return store.projects.getByName(name);
   }
 

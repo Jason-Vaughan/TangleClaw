@@ -13,7 +13,6 @@ const wizard = {
   selectedProjects: new Set(),
   engines: [],
   defaultEngine: '',
-  defaultMethodology: '',
   deletePassword: '',
   chimeEnabled: true,
   httpsCheckLoaded: false,
@@ -62,7 +61,6 @@ function checkSetupWizard() {
 function showWizard() {
   wizard.projectsDir = state.config ? state.config.projectsDir || '~/Documents/Projects' : '~/Documents/Projects';
   wizard.defaultEngine = state.config ? state.config.defaultEngine || 'claude' : 'claude';
-  wizard.defaultMethodology = state.config ? state.config.defaultMethodology || 'minimal' : 'minimal';
   wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.engines = state.engines || [];
   wizard.step = 0;
@@ -113,8 +111,6 @@ function wizardNext() {
   }
   if (wizard.step === 4) {
     // Save preferences
-    const methSel = document.getElementById('setupDefaultMethodology');
-    if (methSel) wizard.defaultMethodology = methSel.value;
     const pwInput = document.getElementById('setupDeletePassword');
     if (pwInput) wizard.deletePassword = pwInput.value;
     const chimeCheck = document.getElementById('setupChimeEnabled');
@@ -281,7 +277,6 @@ function renderDetectProjects(body) {
     let html = '';
     for (const p of items) {
       const checked = wizard.selectedProjects.has(p.name) ? 'checked' : '';
-      const methLabel = p.methodology ? p.methodology : 'No methodology';
       const gitLabel = p.git ? `${p.git.branch}${p.git.dirty ? ' (dirty)' : ''}` : '';
 
       html += `
@@ -290,7 +285,7 @@ function renderDetectProjects(body) {
                  onchange="wizardToggleProject('${esc(p.name)}', this.checked)">
           <div class="setup-project-info">
             <span class="setup-project-name">${esc(p.name)}</span>
-            <span class="setup-project-meta">${esc(methLabel)}${gitLabel ? ' &middot; ' + esc(gitLabel) : ''}</span>
+            <span class="setup-project-meta">${esc(gitLabel)}</span>
           </div>
         </label>`;
     }
@@ -378,21 +373,9 @@ function renderEngines(body) {
 }
 
 function renderPreferences(body) {
-  const methodologies = state.methodologies || [];
-  let methOpts = '';
-  for (const m of methodologies) {
-    const selected = m.id === wizard.defaultMethodology ? 'selected' : '';
-    methOpts += `<option value="${esc(m.id)}" ${selected}>${esc(m.name)} — ${esc(m.description || '')}</option>`;
-  }
-
   body.innerHTML = `
     <div class="setup-step">
       <h2 class="setup-heading">Preferences</h2>
-      <div class="form-group">
-        <label class="form-label" for="setupDefaultMethodology">Default Methodology</label>
-        <select class="form-select" id="setupDefaultMethodology">${methOpts}</select>
-        <div class="form-hint">Applied to new projects by default</div>
-      </div>
       <div class="form-group">
         <label class="form-label" for="setupDeletePassword">Delete Protection Password</label>
         <input type="password" class="form-input" id="setupDeletePassword"
@@ -779,7 +762,6 @@ function wizardAdminNext() {
 function renderConfirm(body) {
   const selectedCount = wizard.selectedProjects.size;
   const engineName = (state.engines.find(e => e.id === wizard.defaultEngine) || {}).name || wizard.defaultEngine;
-  const methName = (state.methodologies.find(m => m.id === wizard.defaultMethodology) || {}).name || wizard.defaultMethodology;
 
   body.innerHTML = `
     <div class="setup-step">
@@ -796,10 +778,6 @@ function renderConfirm(body) {
         <div class="setup-summary-row">
           <span class="setup-summary-label">Default Engine</span>
           <span class="setup-summary-value">${esc(engineName)}</span>
-        </div>
-        <div class="setup-summary-row">
-          <span class="setup-summary-label">Default Methodology</span>
-          <span class="setup-summary-value">${esc(methName)}</span>
         </div>
         <div class="setup-summary-row">
           <span class="setup-summary-label">HTTPS</span>
@@ -837,12 +815,11 @@ async function wizardComplete() {
   // Build project list from selected scanned projects
   const projectsToAttach = wizard.scannedProjects
     .filter(p => wizard.selectedProjects.has(p.name))
-    .map(p => ({ name: p.name, path: p.path, methodology: p.methodology }));
+    .map(p => ({ name: p.name, path: p.path }));
 
   const setupBody = {
     projectsDir: wizard.projectsDir,
     defaultEngine: wizard.defaultEngine,
-    defaultMethodology: wizard.defaultMethodology,
     chimeEnabled: wizard.chimeEnabled,
     projects: projectsToAttach
   };

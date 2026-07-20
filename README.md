@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>AI coding session orchestrator</strong> — persistent sessions, session continuity, multi-engine management, methodology enforcement, secure remote access
+  <strong>AI coding session orchestrator</strong> — persistent sessions, session continuity, multi-engine management, governance delegation, secure remote access
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@ You VPN into your dev machine. You SSH in. You navigate to your project director
 
 TangleClaw was built to fix that. It wraps AI coding sessions in persistent tmux processes so they survive network drops, device switches, and reconnects. Close your laptop at your desk, open your phone on the couch, and pick up the exact same session. The agent never knows you left.
 
-What started as session persistence grew into a full orchestration platform — and 4.0 closes the loop on the other half of the problem: **context that survives between sessions, not just within them**. Every session now ends with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript — all searchable from the dashboard. Add password-gated remote access behind a Caddy ingress, a persistent Project Master assistant that watches the whole fleet, per-project routing to local models, and methodology governance delegated to the live Prawduct plugin, and TangleClaw is a complete control plane for AI-assisted development — accessible from any browser or phone on your network.
+What started as session persistence grew into a full orchestration platform — and 4.0 closes the loop on the other half of the problem: **context that survives between sessions, not just within them**. Every session now ends with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript — all searchable from the dashboard. Add password-gated remote access behind a Caddy ingress, a persistent Project Master assistant that watches the whole fleet, per-project routing to local models, and governance delegated to the live Prawduct plugin, and TangleClaw is a complete control plane for AI-assisted development — accessible from any browser or phone on your network.
 
 ## Screenshots
 
@@ -36,11 +36,11 @@ What started as session persistence grew into a full orchestration platform — 
 <tr>
 <td width="50%" align="center" valign="top">
   <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" width="400" alt="TangleClaw dashboard"></a>
-  <br><sub><b>Dashboard</b> — every managed project with engine badges, methodology status, git info, and session indicators</sub>
+  <br><sub><b>Dashboard</b> — every managed project with engine badges, git info, and session indicators</sub>
 </td>
 <td width="50%" align="center" valign="top">
   <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" width="400" alt="Project detail panel"></a>
-  <br><sub><b>Project detail panel</b> — engine, methodology, active session, git state, groups, and session management</sub>
+  <br><sub><b>Project detail panel</b> — engine, active session, git state, groups, and session management</sub>
 </td>
 </tr>
 <tr>
@@ -60,7 +60,7 @@ What started as session persistence grew into a full orchestration platform — 
 </td>
 <td width="50%" align="center" valign="top">
   <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true" width="400" alt="Project settings"></a>
-  <br><sub><b>Project settings</b> — per-project engine, methodology, tags, Project Map / Feature Index, auto version bump, and the <b>Enable Medusa session comms</b> switch</sub>
+  <br><sub><b>Project settings</b> — per-project engine, tags, Project Map / Feature Index, auto version bump, and the <b>Enable Medusa session comms</b> switch</sub>
 </td>
 </tr>
 </table>
@@ -74,7 +74,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Secure remote access** *(new in 4.0)* — an optional, reversible [Caddy ingress](deploy/INGRESS.md) puts TLS and a password gate in front of everything (dashboard, terminals, APIs), with a break-glass admin reset and machine-to-machine **service tokens** so other projects' scripts can still call the PortHub and shared-docs APIs
 - **Project Master** *(new in 4.0)* — a persistent, fleet-aware assistant session (🧠 in the header) that sees cross-project status: what's running, what's idle, what shipped. Available as a landing-page pane and an in-session drawer
 - **Session Switchboard** *(beta)* — direct session-to-session messaging, so sessions coordinate with each other instead of routing everything through you. A two-head control in the session banner shows honest listener status and lights up on inbound *and* outbound messages, with a per-project auto-enable toggle. **Functionally in beta:** receiving, status, and **outbound send** (pick another session from a live roster; honest delivered-vs-queued feedback) are all live; deeper v2 automation (auto-inject, swarm stats) is still ahead
-- **Methodology enforcement** — pluggable JSON templates define phases, rules, and session behavior. Rules are structural gates, not suggestions. First-class [Prawduct](https://github.com/brookstalley/prawduct) integration — projects governed by the Prawduct V2 plugin get their governance from the plugin itself, with TangleClaw deferring automatically and surfacing drift visibly
+- **Governance delegation** — first-class [Prawduct](https://github.com/brookstalley/prawduct) integration: projects governed by the Prawduct V2 plugin get their governance from the plugin itself, with TangleClaw detecting the install, deferring automatically, and flagging projects still on the legacy vendored hook
 - **Session rules & self-improvement** *(new in 4.0)* — durable behavioral directives injected into every session, editable from a per-project Project Rules modal — and the AI can propose rule improvements at wrap time, gated by an independent Critic review with version history and rollback ([docs](docs/session-rules-self-improvement.md))
 - **Orchestration profiles** *(new in 4.0)* — bind a project to an OpenAI-compatible endpoint (e.g. a LiteLLM front door serving local models) and its engine launches against it, per project, with no engine-config edits. Key references stay hygienic: `env:`/`file:` indirection, never keys in argv
 - **[PortHub](https://github.com/Jason-Vaughan/PortHub) built in** — central port registry preventing conflicts across all projects, with permanent and TTL leases, heartbeats, system-wide conflict detection, and auto-allocation of non-colliding ports for new connections
@@ -88,8 +88,8 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Sessions
 - **Launch modes** — Interactive / Accept Edits / Plan Only / Auto / Bypass picker on session start for engines that declare `launchModes`. The selected mode is appended to the engine's launch args and recorded in the session DB; OpenClaw sessions propagate it through ClawBridge's `permissionMode`
-- **Session briefings** — auto-generated context from methodology state, active learnings, session rules, and the last session's wrap, injected on session start
-- **Structured session wrap** — a server-side pipeline (not a prompt) drives close-out: version bumps, changelog updates, learnings capture, memory updates, continuity write, and a single wrap commit. Blocked steps show "How to fix this" remediation in the wrap drawer. Wrap depth is configurable per methodology and per project. Contract: [ADR 0002](docs/adr/0002-wrap-pipeline-contract.md)
+- **Session briefings** — auto-generated context from project state, active learnings, session rules, and the last session's wrap, injected on session start
+- **Structured session wrap** — a server-side pipeline (not a prompt) drives close-out: version bumps, changelog updates, learnings capture, memory updates, continuity write, and a single wrap commit. Blocked steps show "How to fix this" remediation in the wrap drawer. Wrap depth is configurable per project. Contract: [ADR 0002](docs/adr/0002-wrap-pipeline-contract.md)
 - **Degraded-wrap tiers** — when a full AI-assisted wrap isn't possible (no AI channel, remote transport), the wrap still runs mechanically and honestly stamps what it couldn't capture
 - **Session ownership & scope guard** — each session knows which project it owns; requests that belong to another project's live session get flagged before any cross-repo damage happens
 - **Command bar** — inject commands into running sessions without touching the terminal, with quick pills for common operations
@@ -111,12 +111,10 @@ What started as session persistence grew into a full orchestration platform — 
 - **Orchestration launch-binder** — per-project binding to an orchestration profile (`~/.tangleclaw/orchestration-profiles.json`): the engine launches with the profile's base URL, model, and key injected via environment (never argv). Unbound projects launch exactly as before
 - **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Antigravity (Google) in the session banner
 
-### Methodologies & Governance
-- **[Prawduct](https://github.com/brookstalley/prawduct) V2 plugin delegation** — projects governed by the Prawduct Claude Code plugin get governance from the plugin; TangleClaw detects the install and defers (no config clobbering), keeping its own lightweight baseline for everything else. Governance drift is shown, never silent
+### Governance
+- **[Prawduct](https://github.com/brookstalley/prawduct) V2 plugin delegation** — projects governed by the Prawduct Claude Code plugin get governance from the plugin; TangleClaw detects the install and defers (no config clobbering), keeping its own lightweight baseline for everything else. Projects still on the legacy vendored hook are flagged as migration candidates
 - **Session rules** — durable per-project behavioral directives with operator editing (Project Rules modal), AI-proposed improvements at wrap, an independent Critic gate on autonomous edits, and full version history with rollback
-- **Custom methodologies** — create your own templates with custom phases, rules, actions, wrap contracts, and hooks
 - **Global rules** — markdown rules applied to every project across all engines, editable from the dashboard
-- **Methodology switching** — switch methodologies on any project with automatic state archival and rollback support
 
 ### Dashboard
 - **Project management** — create, attach, archive, filter, tag, and delete projects from a central landing page
@@ -194,7 +192,6 @@ Quick answers, with links into the full docs:
 | Share docs between related projects | [User Guide — Project Groups and Shared Documents](docs/user-guide.md#project-groups-and-shared-documents) |
 | Connect a remote OpenClaw machine | [OpenClaw Setup](docs/openclaw-setup.md) |
 | Point a project's sessions at local models (LiteLLM/Ollama) | Orchestration profiles — edit `~/.tangleclaw/orchestration-profiles.json`, then bind the project in its settings |
-| Set up or customize a methodology | [Methodology Guide](docs/methodology-guide.md) |
 | Let the AI improve its own session rules (safely) | [Session Rules & Self-Improvement](docs/session-rules-self-improvement.md) |
 | Add a custom engine | [Engine Guide](docs/engine-guide.md) |
 | Change any config setting | [Configuration Reference](docs/configuration-reference.md) |
@@ -204,7 +201,6 @@ Quick answers, with links into the full docs:
 
 - **[User Guide](docs/user-guide.md)** — getting started, full UI walkthrough, sessions, groups, mobile setup, troubleshooting
 - **[Ingress Guide](deploy/INGRESS.md)** — Caddy reverse proxy, TLS, password gate, break-glass reset, public domains
-- **[Methodology Guide](docs/methodology-guide.md)** — built-in templates, creating custom methodologies, rules
 - **[Session Rules & Self-Improvement](docs/session-rules-self-improvement.md)** — durable session directives, the Critic gate, version history
 - **[Engine Guide](docs/engine-guide.md)** — built-in engines, creating custom engine profiles
 - **[Configuration Reference](docs/configuration-reference.md)** — all config fields, JSON schemas, API overview
@@ -246,12 +242,12 @@ Key settings:
 - `serverPort` — landing page server port (code default: 3101, launchd override: 3102)
 - `ttydPort` — ttyd terminal port (code default: 3100, launchd override: 3101)
 - `projectsDir` — root directory for managed projects
-- `defaultEngine` / `defaultMethodology` — defaults for new projects
+- `defaultEngine` — default engine for new projects
 - `deletePassword` — optional password for destructive operations
 - `httpsEnabled` / `httpsCertPath` / `httpsKeyPath` — direct-mode TLS
 - `ingressMode` / `caddyHttpsPort` / `caddyHttpPort` / `publicDomain` — Caddy ingress ([guide](deploy/INGRESS.md))
 
-Engine profiles: `~/.tangleclaw/engines/*.json` · Methodology templates: `~/.tangleclaw/templates/` · Orchestration profiles: `~/.tangleclaw/orchestration-profiles.json`
+Engine profiles: `~/.tangleclaw/engines/*.json` · Orchestration profiles: `~/.tangleclaw/orchestration-profiles.json`
 
 See the [Configuration Reference](docs/configuration-reference.md) for all fields, types, and defaults.
 
@@ -331,7 +327,6 @@ Planned features and improvements — contributions and feedback welcome.
 
 - **Session Switchboard — v2 automation** — the switchboard's send + receive + banner control are in beta today (see [What TangleClaw Does](#what-tangleclaw-does)); next is opt-in auto-inject of inbound messages into the live session and hover swarm-stats, gated on an at-least-once delivery guarantee upstream
 - **Project Master actions** — today the Master assistant is read-only; next it acts (confirm-gated) on your behalf across the fleet
-- **TangleMeth** — AI-guided methodology builder: an interview generates a complete methodology framework (phase docs, enforcement hooks, artifact templates, test suites) instead of hand-written JSON
 - **Cross-model governance** — extend the deeper governance layers beyond Claude Code to the other engines
 - **Multi-engine sessions** — launch multiple engines on the same project simultaneously (e.g., Claude Code for implementation, Codex for review)
 - **Sidecar controls** — poll, refresh, dismiss, and terminate individual background processes from the detail panel

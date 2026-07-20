@@ -6,7 +6,7 @@ Eval Audit Mode is a multi-tiered AI agent evaluation system built into TangleCl
 
 ## Why It Exists
 
-AI agents running on remote OpenClaw instances operate autonomously. Eval Audit Mode provides continuous, methodology-aware quality monitoring so you can answer: *Is my agent behaving correctly? Is quality drifting? Are there patterns I should investigate?*
+AI agents running on remote OpenClaw instances operate autonomously. Eval Audit Mode provides continuous quality monitoring so you can answer: *Is my agent behaving correctly? Is quality drifting? Are there patterns I should investigate?*
 
 It runs alongside sessions — not in them. The agent sees a startup banner noting it's being evaluated, but scoring happens externally via LLM judge calls.
 
@@ -40,6 +40,25 @@ It runs alongside sessions — not in them. The agent sees a startup banner noti
 ```
 
 **Data flow**: OpenClaw sends each exchange to `POST /api/audit/ingest` via webhook. TangleClaw scores it (Tier 1 synchronously, Tier 2/2.5/3 asynchronously), stores results, and periodically checks for drift and anomaly spikes.
+
+---
+
+## One dimension set for every project
+
+Eval dimensions used to be per-workflow: a project's methodology template could declare its
+own `evalDimensions` block, and the `prawduct` template added governance-specific dimensions
+on top of the defaults — a Tier-2 `decision_framework_adherence` and a Tier-3
+`methodology_compliance`.
+
+That layer was removed in #538, and those dimensions retired with it. Every audited project is
+now scored against the same set (`DEFAULT_EVAL_DIMENSIONS` in `lib/eval-audit.js`), which makes
+a score from one project directly comparable with a score from another — previously two
+projects could carry the same number against different rubrics. No recorded scores were
+affected: the tables were empty when the change shipped.
+
+If per-project dimensions become worth having again, the replacement should be a code-owned
+named set a project opts into, not a per-project data block — the reason the old mechanism went
+away is that dimension data could drift away from the scorer reading it.
 
 ---
 
@@ -145,28 +164,6 @@ Every score record includes `costUsd` — the cost of its judge calls. `getSessi
 
 ---
 
-## Methodology Integration
-
-Eval dimensions are **methodology-aware**. Each methodology template can define custom dimensions and judge context.
-
-### Prawduct Methodology
-
-Adds governance-focused dimensions:
-- **Tier 2**: `decision_framework_adherence` — Did the agent follow structured decision-making?
-- **Tier 3**: `independent_thinking` (on disagreement), `methodology_compliance` (always)
-- **Judge context**: "You are evaluating an AI agent governed by the Prawduct methodology..."
-
-### Custom Methodologies
-
-Any methodology template can include an `evalDimensions` block with:
-- `schemaVersion` (required)
-- `tier1` checks (must be `"pattern"` type with patterns array)
-- `tier2` dimensions (id + description)
-- `tier3` dimensions (id + description + `when` filter)
-- `judgeContext` string
-
----
-
 ## Baselines & Drift Detection
 
 ### Baseline Computation
@@ -256,7 +253,7 @@ This enables comparison between human and LLM judgments over time.
 
 ## Wrap Quality Scoring
 
-Tracks whether sessions follow the wrap protocol defined by their methodology.
+Tracks whether sessions follow the wrap protocol.
 
 **Expected steps** (pattern-matched against session-end exchanges):
 - Version bump

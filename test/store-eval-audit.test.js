@@ -193,7 +193,6 @@ describe('store.evalScores', () => {
       schemaVersion: 'genesis-v1',
       judgeModel: 'structural',
       scoredAt: '2026-03-24T10:00:05Z',
-      methodology: 'genesis',
       tier1StructuralScore: 0.8,
       tier1Flags: ['constraint_disclosure'],
       tier2Skipped: true,
@@ -359,7 +358,6 @@ describe('store.evalBaselines', () => {
   it('insert and get a baseline', () => {
     const bl = store.evalBaselines.insert({
       project: 'MyProject',
-      methodology: 'genesis',
       computedAt: '2026-03-24T10:00:00Z',
       windowStart: '2026-03-10T00:00:00Z',
       windowEnd: '2026-03-24T00:00:00Z',

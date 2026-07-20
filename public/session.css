@@ -314,36 +314,6 @@ body {
   font-weight: 600;
 }
 
-.banner-methodology {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: rgba(171, 71, 188, 0.15);
-  color: #ce93d8;
-  white-space: nowrap;
-}
-
-.banner-phase {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: rgba(255, 152, 0, 0.15);
-  color: #ffb74d;
-  white-space: nowrap;
-}
-
-.banner-phase-unknown {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 /* ── Medusa Session-Comms Control (MED-2K9P) ──
    Two facing heads flank the MEDUSA emblem (real gold art). Listener status is
    carried by STATE, not a flat recolor (approach B): gold at rest (`listening`),
@@ -646,23 +616,23 @@ body {
   flex-wrap: wrap;
 }
 
-/* #139 Chunk 11b — methodology-declared action buttons (e.g. prawduct's
-   "Run Critic"). Slight accent so users can tell methodology actions
-   apart from the always-visible Wrap / Kill / Cmd / Peek controls. */
-.methodology-actions {
+/* #139 Chunk 11b — project action buttons (e.g. "Run Critic"). Slight accent
+   so users can tell them apart from the always-visible Wrap / Kill / Cmd /
+   Peek controls. */
+.project-actions {
   display: inline-flex;
   gap: 4px;
 }
-.methodology-action-btn {
+.project-action-btn {
   border-color: var(--accent, #6c63ff) !important;
   color: var(--accent, #6c63ff);
 }
-.methodology-action-btn:disabled {
+.project-action-btn:disabled {
   opacity: 0.5;
   cursor: progress;
 }
 
-.methodology-action-toast {
+.banner-action-toast {
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -679,11 +649,11 @@ body {
   transition: opacity 0.2s, transform 0.2s;
   pointer-events: none;
 }
-.methodology-action-toast--visible {
+.banner-action-toast--visible {
   opacity: 1;
   transform: translateY(0);
 }
-.methodology-action-toast--error {
+.banner-action-toast--error {
   border: 1px solid #e25555;
   color: #e25555;
 }

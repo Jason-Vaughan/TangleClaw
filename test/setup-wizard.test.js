@@ -221,23 +221,7 @@ describe('Setup Wizard', () => {
       assert.equal(goFound.detected, true, 'go.mod should trigger detection');
     });
 
-    it('should detect projects with methodology markers', async () => {
-      // Create a project with a .prawduct directory
-      const projDir = path.join(projectsDir, 'test-meth-project');
-      fs.mkdirSync(path.join(projDir, '.prawduct'), { recursive: true });
-      fs.writeFileSync(path.join(projDir, '.prawduct', 'project-state.yaml'), '# test\n');
-
-      const { status, data } = await request(server, 'POST', '/api/setup/scan', {
-        directory: projectsDir
       });
-      assert.equal(status, 200);
-
-      const found = data.projects.find(p => p.name === 'test-meth-project');
-      assert.ok(found, 'Should find the methodology project');
-      assert.equal(found.methodology, 'prawduct');
-      assert.equal(found.detected, true, 'Methodology project should be detected');
-    });
-  });
 
   describe('POST /api/setup/complete', () => {
     it('should update config and set setupComplete', async () => {
@@ -247,7 +231,6 @@ describe('Setup Wizard', () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: projectsDir,
         defaultEngine: 'claude',
-        defaultMethodology: 'minimal',
         chimeEnabled: false
       });
 
@@ -283,7 +266,7 @@ describe('Setup Wizard', () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: projectsDir,
         projects: [
-          { name: 'attach-test', path: projDir, methodology: 'minimal' }
+          { name: 'attach-test', path: projDir }
         ]
       });
 

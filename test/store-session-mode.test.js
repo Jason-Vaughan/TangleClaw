@@ -29,8 +29,7 @@ describe('schema v6: session_mode column', () => {
     const project = store.projects.create({
       name: 'mode-test',
       path: projDir,
-      engine: 'claude',
-      methodology: 'minimal'
+      engine: 'claude'
     });
     projectId = project.id;
   });
@@ -90,7 +89,7 @@ describe('schema v6: session_mode column', () => {
   it('should handle the current schema version', () => {
     const db = store.getDb();
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-    assert.equal(row.version, 27);
+    assert.equal(row.version, 28);
   });
 
   it('should have session_mode column in sessions table', () => {

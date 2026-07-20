@@ -22,7 +22,6 @@ const engines = require('./lib/engines');
 const gitHooks = require('./lib/git-hooks');
 const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
-const methodologies = require('./lib/methodologies');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
 const master = require('./lib/master');
@@ -572,7 +571,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // UI saves were triggering an N-project filesystem walk).
   const oldStripAiCoauthors = config.stripAiCoauthors;
   const allowedFields = [
-    'serverPort', 'ttydPort', 'defaultEngine', 'defaultMethodology',
+    'serverPort', 'ttydPort', 'defaultEngine',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
@@ -901,9 +900,6 @@ route('POST', '/api/setup/scan', (_req, res, _params, body) => {
 
     const dirPath = path.join(dir, entry.name);
 
-    // Detect methodology
-    const detectedMethodology = methodologies.detect(dirPath);
-
     // Check for git
     let gitInfo = null;
     try {
@@ -924,12 +920,11 @@ route('POST', '/api/setup/scan', (_req, res, _params, body) => {
     ];
     const hasProjectMarker = PROJECT_MARKERS.some(m => fs.existsSync(path.join(dirPath, m)));
 
-    const isDetected = !!(detectedMethodology || (gitInfo && gitInfo.branch) || hasTangleclawConfig || hasProjectMarker);
+    const isDetected = !!((gitInfo && gitInfo.branch) || hasTangleclawConfig || hasProjectMarker);
 
     detected.push({
       name: entry.name,
       path: dirPath,
-      methodology: detectedMethodology ? detectedMethodology.id : null,
       hasTangleclawConfig,
       git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null,
       detected: isDetected
@@ -961,9 +956,6 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   }
   if (body.defaultEngine && typeof body.defaultEngine === 'string') {
     config.defaultEngine = body.defaultEngine;
-  }
-  if (body.defaultMethodology && typeof body.defaultMethodology === 'string') {
-    config.defaultMethodology = body.defaultMethodology;
   }
   if (body.deletePassword !== undefined) {
     if (body.deletePassword && typeof body.deletePassword === 'string') {
@@ -1074,13 +1066,11 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       // Register in SQLite
       try {
         const engineId = config.defaultEngine || 'claude';
-        const methodologyId = proj.methodology || config.defaultMethodology || 'minimal';
 
         store.projects.create({
           name: proj.name,
           path: proj.path,
           engine: engineId,
-          methodology: methodologyId,
           tags: [],
           ports: {}
         });
@@ -1090,7 +1080,6 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         if (!fs.existsSync(projConfigPath)) {
           const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
           projConfig.engine = engineId;
-          projConfig.methodology = methodologyId;
           store.projectConfig.save(proj.path, projConfig);
         }
 
@@ -1613,7 +1602,6 @@ route('GET', '/api/projects', (req, res) => {
   const options = {};
   if (query.archived === 'true') options.archived = true;
   if (query.tag) options.tag = query.tag;
-  if (query.methodology) options.methodology = query.methodology;
   if (query.engine) options.engine = query.engine;
 
   const list = projects.listAllProjects(options);
@@ -1638,7 +1626,6 @@ route('POST', '/api/projects/attach', (_req, res, _params, body) => {
     name: result.project.name,
     path: result.project.path,
     engine: result.project.engine,
-    methodology: result.project.methodology,
     tags: result.project.tags,
     registered: true,
     createdAt: result.project.createdAt
@@ -1711,7 +1698,6 @@ route('POST', '/api/projects', (_req, res, _params, body) => {
     name: result.project.name,
     path: result.project.path,
     engine: result.project.engineId,
-    methodology: result.project.methodology,
     tags: result.project.tags,
     ports: result.project.ports,
     createdAt: result.project.createdAt
@@ -1760,17 +1746,13 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
       continue;
     }
 
-    const detectedMethodology = methodologies.detect(projPath);
     const engineId = config.defaultEngine || 'claude';
-    // Every project has a methodology — minimal is the no-workflow option (#151)
-    const methodologyId = detectedMethodology ? detectedMethodology.id : (config.defaultMethodology || 'minimal');
 
     try {
       store.projects.create({
         name,
         path: projPath,
         engine: engineId,
-        methodology: methodologyId,
         tags: [],
         ports: {}
       });
@@ -1780,7 +1762,6 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
       if (!fs.existsSync(projConfigPath)) {
         const projConfig = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
         projConfig.engine = engineId;
-        projConfig.methodology = methodologyId;
         store.projectConfig.save(projPath, projConfig);
       }
 
@@ -1884,7 +1865,6 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     id: result.project.id,
     name: result.project.name,
     engine: result.project.engine.id,
-    methodology: result.project.methodology.id,
     tags: result.project.tags,
     silentPrime: result.project.silentPrime,
     medusaEnabled: result.project.medusaEnabled,
@@ -1894,10 +1874,6 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
     updatedAt: result.project.updatedAt
   };
 
-  if (result.methodologySwitch) {
-    response.methodologySwitch = result.methodologySwitch;
-  }
-
   if (result.errors.length > 0) {
     response.warnings = result.errors;
   }
@@ -1905,38 +1881,24 @@ route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
   jsonResponse(res, 200, response);
 });
 
-// GET /api/methodologies
-route('GET', '/api/methodologies', (_req, res) => {
-  const list = methodologies.listTemplates();
-  jsonResponse(res, 200, { methodologies: list });
-});
-
-// GET /api/methodologies/:id
-route('GET', '/api/methodologies/:id', (_req, res, params) => {
-  const template = methodologies.getTemplate(params.id);
-  if (!template) {
-    return errorResponse(res, 404, `Methodology "${params.id}" not found`, 'NOT_FOUND');
-  }
-  jsonResponse(res, 200, template);
-});
-
-// POST /api/projects/:name/actions/:command — Run a methodology-declared action
+// POST /api/projects/:name/actions/:command — Run a project action
 // (#139 Chunk 11b). Body is the handler's `options` (forwarded verbatim;
 // undefined when absent). Returns the handler's `{ok, output, error}` result.
-// Status codes: 200 ok or handler-soft-fail; 404 project / unknown command;
-// 500 handler thrown.
+// Status codes: 200 ok or handler-soft-fail; 400 bad request; 404 project /
+// unknown or unavailable action; 500 handler thrown. Routing keys on the
+// dispatcher's `code`, never on message text.
 route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, body) => {
   const options = body && typeof body === 'object' && !Array.isArray(body) ? body : undefined;
   const result = await actions.runAction(params.name, params.command, options);
 
   if (!result.ok) {
-    if (result.error && result.error.includes('not found')) {
+    if (result.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, result.error, 'BAD_REQUEST');
+    }
+    if (result.code === 'NOT_FOUND' || result.code === 'UNKNOWN_ACTION' || result.code === 'UNAVAILABLE') {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');
     }
-    if (result.error && result.error.includes('does not declare action')) {
-      return errorResponse(res, 404, result.error, 'NOT_FOUND');
-    }
-    if (result.error && result.error.includes('threw')) {
+    if (result.code === 'HANDLER_THREW') {
       return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
     }
     // Soft fail (e.g. detached HEAD, missing project.path, fs error) —
@@ -3977,14 +3939,7 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
   // Record heartbeat for watchdog
   evalAudit.heartbeat(body.session_id);
 
-  // Load methodology eval dimensions for Tier 1 scoring
-  let evalDims = evalAudit.DEFAULT_EVAL_DIMENSIONS;
-  if (project) {
-    try {
-      const template = store.templates.get(project.methodology);
-      if (template) evalDims = evalAudit.getEvalDimensions(template);
-    } catch { /* use defaults */ }
-  }
+  const evalDims = evalAudit.getEvalDimensions();
 
   // Determine if this exchange should be scored (sampling)
   const projectConfig = project
@@ -4021,7 +3976,6 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
         schemaVersion: evalDims.schemaVersion || 'default-v1',
         judgeModel: 'structural',
         scoredAt: new Date().toISOString(),
-        methodology: project ? project.methodology : null,
         tier1StructuralScore: tier1Result.score,
         tier1Flags: tier1Result.flags,
         tier2Skipped: true,
@@ -4053,7 +4007,6 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
         schemaVersion: evalDims.schemaVersion || 'default-v1',
         judgeModel: 'structural',
         scoredAt: new Date().toISOString(),
-        methodology: project ? project.methodology : null,
         tier1StructuralScore: tier1Result.score,
         tier1Flags: tier1Result.flags,
         tier2Skipped: true,
@@ -4080,7 +4033,6 @@ route('POST', '/api/audit/ingest', (_req, res, _params, body) => {
     schemaVersion: evalDims.schemaVersion || 'default-v1',
     judgeModel: auditConfig.judgeModel || 'claude-haiku-4-5-20251001',
     scoredAt: new Date().toISOString(),
-    methodology: project ? project.methodology : null,
     tier1StructuralScore: tier1Result.score,
     tier1Flags: tier1Result.flags,
     tier2Skipped: true,
@@ -4669,8 +4621,8 @@ if (require.main === module) {
   }
 
   // Stranded-config guard (#592): governance files in unregistered ancestor
-  // dirs re-inject retired methodology into nested projects' sessions (Claude
-  // Code loads every ancestor CLAUDE.md). Detection only — see the API route.
+  // dirs re-inject stale rules into nested projects' sessions (Claude Code
+  // loads every ancestor CLAUDE.md). Detection only — see the API route.
   try {
     const strandedResult = projects.scanForStrandedConfigs();
     for (const s of strandedResult.stranded) {

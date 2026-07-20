@@ -151,8 +151,7 @@ describe('projects', () => {
   describe('createProject', () => {
     it('creates a project with directory and config', () => {
       const result = projects.createProject({
-        name: 'new-project',
-        methodology: 'minimal'
+        name: 'new-project'
       });
 
       assert.ok(result.project);
@@ -161,24 +160,10 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(projectsDir, 'new-project', '.tangleclaw', 'project.json')));
     });
 
-    it('seeds commit-only wrap overrides at birth for a minimal project', () => {
-      const result = projects.createProject({
-        name: 'seed-at-birth',
-        methodology: 'minimal'
-      });
-      assert.ok(result.project);
-      const cfg = JSON.parse(fs.readFileSync(
-        path.join(projectsDir, 'seed-at-birth', '.tangleclaw', 'project.json'), 'utf8'));
-      assert.equal(cfg.wrapOverridesSeeded, true,
-        'a minimal project must be seeded at create time, not first flip shape at the next boot');
-      assert.deepEqual(cfg.wrapStepOverrides.commit, undefined, 'commit stays enabled');
-      assert.deepEqual(cfg.wrapStepOverrides['changelog-update'], { enabled: false });
-    });
-
+  
     it('does not seed wrap overrides for a prawduct project', () => {
       const result = projects.createProject({
-        name: 'no-seed-prawduct',
-        methodology: 'prawduct'
+        name: 'no-seed-prawduct'
       });
       assert.ok(result.project);
       const cfg = JSON.parse(fs.readFileSync(
@@ -189,8 +174,7 @@ describe('projects', () => {
 
     it('creates session memory directory and seed file', () => {
       const result = projects.createProject({
-        name: 'memory-project',
-        methodology: 'minimal'
+        name: 'memory-project'
       });
       assert.ok(result.project);
       const memoriesDir = path.join(projectsDir, 'memory-project', '.tangleclaw', 'memories');
@@ -208,7 +192,7 @@ describe('projects', () => {
     });
 
     it('rejects duplicate projects', () => {
-      projects.createProject({ name: 'dupe-proj', methodology: 'minimal' });
+      projects.createProject({ name: 'dupe-proj' });
       const result = projects.createProject({ name: 'dupe-proj' });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('already exists'));
@@ -227,16 +211,10 @@ describe('projects', () => {
       assert.ok(result.errors[0].includes('not found'));
     });
 
-    it('rejects unknown methodology', () => {
-      const result = projects.createProject({ name: 'bad-method', methodology: 'nonexistent' });
-      assert.equal(result.project, null);
-      assert.ok(result.errors[0].includes('not found'));
-    });
-
+  
     it('applies methodology default rules', () => {
       const result = projects.createProject({
-        name: 'rules-project',
-        methodology: 'minimal'
+        name: 'rules-project'
       });
 
       assert.ok(result.project);
@@ -249,8 +227,7 @@ describe('projects', () => {
     it('passes tags to project', () => {
       const result = projects.createProject({
         name: 'tagged-project',
-        tags: ['node', 'active'],
-        methodology: 'minimal'
+        tags: ['node', 'active']
       });
 
       assert.ok(result.project);
@@ -260,8 +237,7 @@ describe('projects', () => {
     it('skips git init when gitInit is false', () => {
       const result = projects.createProject({
         name: 'no-git',
-        gitInit: false,
-        methodology: 'minimal'
+        gitInit: false
       });
 
       assert.ok(result.project);
@@ -270,10 +246,10 @@ describe('projects', () => {
 
     describe('case-insensitive duplicate rejection (#221, sibling to #188)', () => {
       it('rejects creating "Foo-Case" when "foo-case" already exists (lowercase first)', () => {
-        const first = projects.createProject({ name: 'foo-case', methodology: 'minimal' });
+        const first = projects.createProject({ name: 'foo-case' });
         assert.ok(first.project, 'lowercase precondition project created');
 
-        const dup = projects.createProject({ name: 'Foo-Case', methodology: 'minimal' });
+        const dup = projects.createProject({ name: 'Foo-Case' });
         assert.equal(dup.project, null, 'mixed-case dup must be rejected');
         assert.equal(dup.errors.length, 1);
         // Error message reflects the existing project's actual casing so
@@ -284,19 +260,19 @@ describe('projects', () => {
       });
 
       it('rejects creating "case-second" when "Case-Second" already exists (mixed-case first)', () => {
-        const first = projects.createProject({ name: 'Case-Second', methodology: 'minimal' });
+        const first = projects.createProject({ name: 'Case-Second' });
         assert.ok(first.project);
 
-        const dup = projects.createProject({ name: 'case-second', methodology: 'minimal' });
+        const dup = projects.createProject({ name: 'case-second' });
         assert.equal(dup.project, null);
         assert.match(dup.errors[0], /Case-Second/, 'error names the existing project');
       });
 
       it('preserves the original-casing error format when names match exactly (back-compat)', () => {
-        const first = projects.createProject({ name: 'exact-match', methodology: 'minimal' });
+        const first = projects.createProject({ name: 'exact-match' });
         assert.ok(first.project);
 
-        const dup = projects.createProject({ name: 'exact-match', methodology: 'minimal' });
+        const dup = projects.createProject({ name: 'exact-match' });
         assert.equal(dup.project, null);
         // When the case matches exactly, the legacy error format is preserved
         // — no spurious "case-insensitive match" suffix that would suggest
@@ -309,7 +285,7 @@ describe('projects', () => {
         // difference, then try to attach that directory. The attach path
         // must reject for the same reason createProject does — otherwise
         // attach is the case-collision back door.
-        projects.createProject({ name: 'attach-case', methodology: 'minimal' });
+        projects.createProject({ name: 'attach-case' });
         const otherDir = path.join(projectsDir, 'Attach-Case');
         // Skip the test if the OS already collapsed the directory name
         // (case-insensitive filesystem) — the attach path would hit the
@@ -336,10 +312,10 @@ describe('projects', () => {
       assert.ok(project);
       assert.equal(project.name, 'new-project');
       assert.ok(project.hasOwnProperty('engine'));
-      assert.ok(project.hasOwnProperty('methodology'));
+      assert.ok(project.hasOwnProperty('actions'));
       assert.ok(project.hasOwnProperty('session'));
       assert.ok(project.hasOwnProperty('git'));
-      assert.ok(project.hasOwnProperty('status'));
+      assert.ok(project.hasOwnProperty('governanceState'));
     });
 
     it('getProject returns null for unknown', () => {
@@ -387,9 +363,9 @@ describe('projects', () => {
       return projPath;
     }
 
-    it('surfaces drift-no-governance for a Cohort-B claude+prawduct project', () => {
+    it('surfaces ungoverned for a Claude project with no governance installed', () => {
       makeProject('gov-drift');
-      assert.equal(projects.getProject('gov-drift').governanceState, 'drift-no-governance');
+      assert.equal(projects.getProject('gov-drift').governanceState, 'ungoverned');
     });
 
     it('surfaces governed-plugin once the V2 plugin ref is present', () => {
@@ -453,32 +429,6 @@ describe('projects', () => {
       assert.ok(result.synced >= 0);
     });
 
-    it('regenerates from DB methodology, ignoring a stale project.json string (#320)', () => {
-      // Reproduce the TiLT v2 bug: DB says `prawduct`, but the git-tracked
-      // project.json still carries a legacy `methodology: "minimal"`. The DB is
-      // the single source of truth — sync must use it, not the stale file.
-      const { project: proj } = projects.createProject({ name: 'stale-methodology', methodology: 'prawduct' });
-      assert.equal(proj.methodology, 'prawduct');
-
-      const projPath = path.join(projectsDir, 'stale-methodology');
-      const configPath = path.join(projPath, '.tangleclaw', 'project.json');
-      const projConfig = store.projectConfig.load(projPath);
-      projConfig.methodology = 'minimal'; // legacy-schema leftover
-      store.projectConfig.save(projPath, projConfig);
-      // Sanity: the stale value is really on disk.
-      assert.match(fs.readFileSync(configPath, 'utf8'), /"methodology":\s*"minimal"/);
-
-      const claudeMd = path.join(projPath, 'CLAUDE.md');
-      if (fs.existsSync(claudeMd)) fs.unlinkSync(claudeMd);
-
-      const result = projects.syncAllProjects();
-      assert.ok(result.synced > 0);
-
-      const content = fs.readFileSync(claudeMd, 'utf8');
-      // Must reflect the DB's Prawduct, not the file's minimal.
-      assert.match(content, /Prawduct/, 'CLAUDE.md should be regenerated from the DB methodology (prawduct)');
-    });
-
     it('regenerates from the DB engine, not projConfig, when project.json lacks an engine key', () => {
       // Live-fleet bug found during the tilt retirement: codextest's DB said
       // `codex`, but its project.json had no `engine` key — boot-sync fell
@@ -517,7 +467,7 @@ describe('projects', () => {
       // previously called writeEngineConfig but not syncEngineHooks). silentPrime
       // is pinned off so this stays focused on governance-hook removal; the
       // L1-prime-preserved-on-a-governed-project case is covered in engines.test.js.
-      projects.createProject({ name: 'plugin-governed-boot', methodology: 'prawduct' });
+      projects.createProject({ name: 'plugin-governed-boot' });
       const projPath = path.join(projectsDir, 'plugin-governed-boot');
       fs.writeFileSync(path.join(projPath, '.tangleclaw', 'project.json'), JSON.stringify({
         engine: 'claude', methodology: 'prawduct', silentPrime: false
@@ -741,7 +691,7 @@ describe('projects', () => {
     describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
       it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
         // Set up a discrete project so other tests' state doesn't interfere.
-        projects.createProject({ name: 'self-rename-src', methodology: 'minimal' });
+        projects.createProject({ name: 'self-rename-src' });
 
         // Case-only directory rename only works on case-sensitive filesystems.
         // On macOS APFS-CI (the common dev environment) `fs.existsSync` collapses
@@ -765,8 +715,8 @@ describe('projects', () => {
       });
 
       it('rejects renaming to a name that case-collides with a DIFFERENT existing project', () => {
-        projects.createProject({ name: 'collision-dest', methodology: 'minimal' });
-        projects.createProject({ name: 'rename-src', methodology: 'minimal' });
+        projects.createProject({ name: 'collision-dest' });
+        projects.createProject({ name: 'rename-src' });
 
         const result = projects.updateProject('rename-src', { name: 'Collision-Dest' });
         assert.equal(result.project, null, 'cross-rename to a case-collision must be rejected');
@@ -777,8 +727,8 @@ describe('projects', () => {
       });
 
       it('preserves exact-case error format when rename target matches an existing name exactly', () => {
-        projects.createProject({ name: 'exact-rename-target', methodology: 'minimal' });
-        projects.createProject({ name: 'rename-source-2', methodology: 'minimal' });
+        projects.createProject({ name: 'exact-rename-target' });
+        projects.createProject({ name: 'rename-source-2' });
 
         const result = projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
         assert.equal(result.project, null);
@@ -913,31 +863,12 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(attachDir, '.tangleclaw', 'project.json')));
     });
 
-    it('applies the detected methodology defaultRules to a fresh config (#536)', () => {
-      // The config skeleton ships extension rules false; create/switch apply
-      // the methodology defaultRules but attach historically did not — an
-      // attached prawduct project silently carried independentCritic:false,
-      // which now strips the Critic playbook section (asymmetric-gate class).
-      const attachDir = path.join(projectsDir, 'attach-default-rules');
-      fs.mkdirSync(path.join(attachDir, '.prawduct'), { recursive: true });
-
-      const result = projects.attachProject('attach-default-rules');
-      assert.ok(result.project);
-      assert.equal(result.project.methodology.id, 'prawduct');
-
-      const cfg = JSON.parse(fs.readFileSync(
-        path.join(attachDir, '.tangleclaw', 'project.json'), 'utf8'));
-      // prawduct defaultRules declare these enabled ({enabled:true} object form)
-      assert.equal(cfg.rules.extensions.independentCritic, true);
-      assert.equal(cfg.rules.extensions.docsParity, true);
-      assert.equal(cfg.rules.extensions.decisionFramework, true);
-    });
-
+  
     it('reads existing .tangleclaw/project.json', () => {
       const attachDir = path.join(projectsDir, 'has-config');
       fs.mkdirSync(path.join(attachDir, '.tangleclaw'), { recursive: true });
       fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'),
-        JSON.stringify({ engine: 'codex', methodology: 'prawduct' }));
+        JSON.stringify({ engine: 'codex' }));
 
       const result = projects.attachProject('has-config');
       assert.ok(result.project);
@@ -1859,283 +1790,4 @@ describe('projects', () => {
     });
   });
 
-  describe('methodology flip cleanup audit (#145, chunk 3)', () => {
-    // Closes the audit gap on `PATCH methodology` — chunks 1+2 fixed the
-    // injection side (don't inject hooks whose runtime is missing; strip
-    // orphans on demand). This block locks in the cleanup side: flipping a
-    // project's methodology must rebuild `.claude/settings.json.hooks` from
-    // the new template, never carry forward the previous methodology's
-    // entries. Pattern is the symmetric-capability-gates ADR
-    // (`docs/adr/0001-symmetric-capability-gates.md`).
-    let methDir;
-    // Synthetic methodology that DECLARES governance hooks. Since C2 (#353)
-    // stripped L3/L4 from the bundled `prawduct` template, no shipped
-    // methodology carries hooks anymore — so the flip machinery (materialize /
-    // strip / preserve-non-hook-keys / silentPrime-survival) can only be
-    // exercised against a methodology that genuinely declares them. We clone
-    // the real prawduct template and restore the pre-C2 `requires`-gated
-    // product-hook block under a distinct id; this isolates the variable under
-    // test (the flip logic) from the bundled template's hook content.
-    const HOOKED_METHODOLOGY_ID = 'gov-hooked-test';
-
-    before(() => {
-      methDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-meth-flip-'));
-      const hooked = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-      hooked.id = HOOKED_METHODOLOGY_ID;
-      hooked.name = 'Gov Hooked (test)';
-      hooked.hooks = {
-        claude: {
-          SessionStart: [{
-            matcher: 'startup|clear|resume',
-            requires: ['tools/product-hook'],
-            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" clear', statusMessage: 'Preparing session...' }]
-          }],
-          Stop: [{
-            matcher: '',
-            requires: ['tools/product-hook'],
-            hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop', statusMessage: 'Checking governance gates...' }]
-          }]
-        }
-      };
-      store.templates.save(hooked);
-    });
-
-    after(() => {
-      fs.rmSync(methDir, { recursive: true, force: true });
-      try { store.templates.delete(HOOKED_METHODOLOGY_ID); } catch { /* best-effort cleanup */ }
-    });
-
-    /**
-     * Set up a registered project on the synthetic hooked methodology with the
-     * runtime materialized on disk so the chunk-1 `requires` filter ACCEPTS the
-     * governance hooks at `syncEngineHooks` time, then trigger the sync so hooks
-     * land in `.claude/settings.json`. Bypasses `projects.createProject` (which
-     * enforces a single configured `projectsDir`) and uses the same
-     * `store.projects.create({ path: ... })` pattern as the existing
-     * silentPrime engine-flip tests at line 1076.
-     */
-    function scaffoldPrawductProject(name) {
-      const projPath = path.join(methDir, name);
-      fs.mkdirSync(projPath, { recursive: true });
-      // Scaffold the runtime so chunk-1's requires filter accepts the hooks
-      fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
-
-      // Register project with methodology=prawduct in DB; sync projConfig so
-      // syncEngineHooks reads the right engine + methodology. Explicit
-      // silentPrime=false keeps the audit focused on methodology hooks only —
-      // post-#129 the default would inject the silentPrime baseline SessionStart
-      // hook and mask the methodology-strip assertion.
-      store.projects.create({ name, path: projPath, engine: 'claude', methodology: HOOKED_METHODOLOGY_ID });
-      const projConfig = store.projectConfig.load(projPath);
-      projConfig.methodology = HOOKED_METHODOLOGY_ID;
-      projConfig.silentPrime = false;
-      store.projectConfig.save(projPath, projConfig);
-
-      // Trigger syncEngineHooks to inject the methodology's governance hooks
-      const template = store.templates.get(HOOKED_METHODOLOGY_ID);
-      engines.syncEngineHooks(projPath, template);
-
-      // Sanity — chunks 1+2 land the governance hooks
-      const settingsPath = path.join(projPath, '.claude', 'settings.json');
-      assert.ok(fs.existsSync(settingsPath), 'expected .claude/settings.json after sync');
-      const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.ok(before.hooks, 'expected .claude/settings.json.hooks to be populated after sync');
-      assert.ok(JSON.stringify(before.hooks).includes('product-hook'),
-        'expected prawduct product-hook reference in hooks before flip');
-      return { projPath, settingsPath };
-    }
-
-    it('PATCH methodology: prawduct → minimal rebuilds hooks without prawduct entries', () => {
-      const { projPath, settingsPath } = scaffoldPrawductProject('flip-to-minimal');
-
-      const result = projects.updateProject('flip-to-minimal', { methodology: 'minimal' });
-      assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
-      assert.ok(result.methodologySwitch, 'expected methodologySwitch to be populated');
-      assert.equal(result.methodologySwitch.from, HOOKED_METHODOLOGY_ID);
-      assert.equal(result.methodologySwitch.to, 'minimal');
-
-      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      const afterStr = JSON.stringify(after);
-      assert.ok(!afterStr.includes('product-hook'),
-        `expected no product-hook references after flip; got: ${afterStr}`);
-      // Minimal has no hooks and silentPrime is off by default, so the hooks
-      // key should be absent entirely (matches `delete settings.hooks` branch
-      // of syncEngineHooks).
-      assert.equal(after.hooks, undefined, 'expected hooks key removed when new methodology has none');
-      // Project record reflects the new methodology
-      const reloaded = store.projects.getByName('flip-to-minimal');
-      assert.equal(reloaded.methodology, 'minimal');
-      assert(projPath);
-    });
-
-    // `PATCH methodology: null` is rejected as of #151. The chunk-3 audit
-    // surfaced two stacked bugs on what used to be the "removal" path —
-    // ReferenceError at lib/projects.js:1174 (fixed in chunk 3) layered on
-    // an SQL NOT NULL constraint. Rather than fixing both, #151 retired
-    // the null-methodology semantic: per docs/methodology-guide.md every
-    // project has a methodology, and `minimal` is the canonical no-workflow
-    // option. The API now rejects null with a 400-style error pointing the
-    // caller at `'minimal'`. See ADR 0001 §"Anti-patterns".
-    it('PATCH with combined name+null-methodology rejects without renaming on disk (#151 Critic Major)', () => {
-      // The null-rejection runs in the pre-mutation validation phase so a
-      // combined { name, methodology: null } payload doesn't rename the
-      // project on disk before the validation fires. Pre-fix, the rejection
-      // lived inside the methodology branch, after the rename branch had
-      // already mutated DB + filesystem.
-      const { projPath } = scaffoldPrawductProject('flip-combined-name-null');
-      const result = projects.updateProject('flip-combined-name-null', {
-        name: 'flip-combined-name-null-RENAMED',
-        methodology: null
-      });
-
-      assert.equal(result.project, null, 'expected null project on rejection');
-      assert.equal(result.errors.length, 1);
-      assert.match(result.errors[0], /methodology cannot be null/i);
-
-      // Name unchanged in DB
-      const oldByName = store.projects.getByName('flip-combined-name-null');
-      const newByName = store.projects.getByName('flip-combined-name-null-RENAMED');
-      assert.ok(oldByName, 'original name should still resolve');
-      assert.equal(newByName, null, 'attempted new name should not resolve');
-      // Directory unchanged on disk
-      assert.equal(fs.existsSync(projPath), true, 'original directory should remain');
-      assert.equal(fs.existsSync(projPath + '-RENAMED'), false, 'no renamed directory should appear');
-    });
-
-    it('projectConfig.load coerces on-disk methodology: null to \'minimal\' (#151 Critic Major)', () => {
-      // Pre-#151 installs may have project.json files with `methodology: null`
-      // explicitly written to disk (when DEFAULT_PROJECT_CONFIG.methodology was
-      // null). The merge loop in store.projectConfig.load propagates explicit
-      // fields from disk over the default, so without coercion an upgraded
-      // install would keep seeing null in projConfig even after this PR.
-      const projPath = path.join(methDir, 'legacy-projconfig');
-      fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
-      // Write a project.json with an explicit null methodology — what a pre-#151
-      // install left on disk
-      fs.writeFileSync(
-        path.join(projPath, '.tangleclaw', 'project.json'),
-        JSON.stringify({ engine: 'claude', methodology: null, rules: { extensions: {} } })
-      );
-      const loaded = store.projectConfig.load(projPath);
-      assert.equal(loaded.methodology, 'minimal', 'legacy null on disk should coerce to minimal on load');
-      assert.equal(loaded.engine, 'claude', 'other fields should still come through the merge');
-    });
-
-    it('store.DEFAULT_PROJECT_CONFIG.methodology is \'minimal\', not null (#151)', () => {
-      // Source-of-truth alignment with the DB schema's NOT NULL DEFAULT 'minimal'.
-      // Pre-#151, projConfig defaulted to null while the DB defaulted to 'minimal',
-      // leaving a split-brain where any reader had to know which source to trust.
-      assert.equal(store.DEFAULT_PROJECT_CONFIG.methodology, 'minimal');
-    });
-
-    it('PATCH methodology: null is rejected with a clear error pointing to \'minimal\' (#151)', () => {
-      const { settingsPath } = scaffoldPrawductProject('flip-to-null-rejected');
-      const result = projects.updateProject('flip-to-null-rejected', { methodology: null });
-
-      assert.equal(result.project, null, 'expected null project on rejection');
-      assert.equal(result.methodologySwitch, null);
-      assert.ok(
-        result.errors.some(e => /methodology cannot be null/i.test(e) && /'minimal'/.test(e)),
-        `expected an error mentioning null + 'minimal'; got: ${JSON.stringify(result.errors)}`
-      );
-
-      // Sanity: the project's state is unchanged after the rejected PATCH
-      const reloaded = store.projects.getByName('flip-to-null-rejected');
-      assert.equal(reloaded.methodology, HOOKED_METHODOLOGY_ID, 'methodology unchanged after rejection');
-      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.ok(JSON.stringify(after.hooks || {}).includes('product-hook'),
-        'governance hooks still in place after rejection — no destructive partial mutation');
-    });
-
-    it('PATCH methodology preserves non-hook keys in .claude/settings.json across the flip', () => {
-      const { projPath, settingsPath } = scaffoldPrawductProject('flip-preserves-other-keys');
-      // Inject a non-hook key the user might depend on. Chunk 2's strip path
-      // documented this same preservation contract for the bulk-repair; the
-      // flip path must honor it too.
-      const existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      existing.permissions = { allow: ['Bash(npm:*)'] };
-      existing.companyAnnouncements = ['Hello'];
-      fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2) + '\n');
-
-      const result = projects.updateProject('flip-preserves-other-keys', { methodology: 'minimal' });
-      assert.deepStrictEqual(result.errors, []);
-
-      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.deepStrictEqual(after.permissions, { allow: ['Bash(npm:*)'] }, 'permissions key must survive flip');
-      assert.deepStrictEqual(after.companyAnnouncements, ['Hello'], 'companyAnnouncements must survive flip');
-      assert.equal(after.hooks, undefined);
-      assert(projPath);
-    });
-
-    it('PATCH methodology: minimal → hooked materializes governance hooks (reverse-direction coverage)', () => {
-      // ADR 0001 anti-pattern §4: "single-direction regression test ... both
-      // directions of every paired transition need coverage." The above
-      // tests cover the strip direction (hooked → minimal); this test
-      // covers the materialize direction (minimal → hooked), confirming
-      // that switching INTO a methodology with hooks injects them the same
-      // way `createProject` would.
-      const name = 'flip-minimal-to-prawduct';
-      const projPath = path.join(methDir, name);
-      fs.mkdirSync(projPath, { recursive: true });
-      fs.mkdirSync(path.join(projPath, 'tools'), { recursive: true });
-      fs.writeFileSync(path.join(projPath, 'tools', 'product-hook'), '#!/usr/bin/env python3\n');
-
-      // Start in the minimal state — no hooks. Explicit silentPrime=false to
-      // keep the audit focused on methodology hooks only (post-#129 the
-      // default would inject the silentPrime baseline SessionStart entry).
-      store.projects.create({ name, path: projPath, engine: 'claude', methodology: 'minimal' });
-      const projConfig = store.projectConfig.load(projPath);
-      projConfig.methodology = 'minimal';
-      projConfig.silentPrime = false;
-      store.projectConfig.save(projPath, projConfig);
-      engines.syncEngineHooks(projPath, store.templates.get('minimal'));
-      const settingsPath = path.join(projPath, '.claude', 'settings.json');
-      const before = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.equal(before.hooks, undefined, 'expected no hooks in minimal pre-state');
-
-      // Flip into the hooked methodology
-      const result = projects.updateProject(name, { methodology: HOOKED_METHODOLOGY_ID });
-      assert.deepStrictEqual(result.errors, [], `update errors: ${result.errors.join(',')}`);
-      assert.ok(result.methodologySwitch, 'expected methodologySwitch on materialize-direction flip');
-      assert.equal(result.methodologySwitch.from, 'minimal');
-      assert.equal(result.methodologySwitch.to, HOOKED_METHODOLOGY_ID);
-
-      // Governance hooks should now be present
-      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.ok(after.hooks, 'expected hooks block after materialize-direction flip');
-      assert.ok(after.hooks.Stop, 'expected governance Stop hook materialized');
-      assert.ok(JSON.stringify(after.hooks).includes('product-hook'),
-        'expected product-hook reference after materialize-direction flip');
-    });
-
-    it('silentPrime baseline SessionStart hook survives methodology flip (capability-gate independent)', () => {
-      // The symmetric-capability-gates pattern: the silentPrime gate runs
-      // independently of the methodology gate. A flip that wipes methodology
-      // hooks must leave the silentPrime baseline hook alone, because that
-      // entry comes from `_buildBaselineHooks` against `projConfig.silentPrime`
-      // + the engine's `supportsSilentPrime` capability, not from the
-      // methodology template.
-      const { projPath, settingsPath } = scaffoldPrawductProject('flip-keeps-silentprime');
-
-      // Opt-in silentPrime so the baseline hook materializes
-      const enable = projects.updateProject('flip-keeps-silentprime', { silentPrime: true });
-      assert.deepStrictEqual(enable.errors, []);
-      const beforeFlip = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.ok(beforeFlip.hooks && beforeFlip.hooks.SessionStart, 'silentPrime SessionStart should be present pre-flip');
-      const hasSilentPrimeBefore = JSON.stringify(beforeFlip.hooks).includes('sessionstart-prime');
-      assert.ok(hasSilentPrimeBefore, 'expected sessionstart-prime baseline before flip');
-
-      // Now flip methodology — prawduct hooks should be stripped, baseline preserved
-      const flip = projects.updateProject('flip-keeps-silentprime', { methodology: 'minimal' });
-      assert.deepStrictEqual(flip.errors, []);
-
-      const afterFlip = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      assert.ok(afterFlip.hooks && afterFlip.hooks.SessionStart, 'silentPrime SessionStart must survive flip');
-      const afterStr = JSON.stringify(afterFlip.hooks);
-      assert.ok(afterStr.includes('sessionstart-prime'), 'expected sessionstart-prime baseline after flip');
-      assert.ok(!afterStr.includes('product-hook'), 'expected no product-hook references after flip');
-      assert(projPath);
-    });
   });
-});

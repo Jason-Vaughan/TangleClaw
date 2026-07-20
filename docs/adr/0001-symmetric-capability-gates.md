@@ -1,6 +1,13 @@
 # ADR 0001: Symmetric Capability Gates
 
 **Status:** Accepted (2026-05-11), extended (2026-05-14 with #155 — generalized template-array reconciliation), extended (2026-05-30 with #275 — framework-owned subtree sync for value-updates/reorders/renames)
+
+> **Note (2026-07-20, #538):** this ADR's worked examples are drawn from the methodology
+> layer (template reconcile, `methodology` field, the chooser), which has since been
+> deleted. The examples are kept as the historical record that produced the rule; the rule
+> itself is unchanged and still binding. Its current live instance is the project-action
+> gate: `lib/actions.js#availableActions` is the single predicate behind both the rendered
+> button and the endpoint's authorization check.
 **Source issue:** #145 chunk 3 (audit closeout)
 **Related issues:** #103, #119, #136, #137, #140, #145, #151, #155, #158, #139, #264, #266, #275
 **Related ADRs:** ADR 0002 — Wrap Pipeline Contract (the `wrapShapeFromTemplate` shim it mandates is an instance of this ADR's "one read predicate per conceptual state" rule)

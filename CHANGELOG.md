@@ -30,6 +30,67 @@ All notable changes to TangleClaw are documented in this file.
   field no longer influences the wrap; the field, chooser, templates, and registry
   are removed in the second half of #538.
 
+### Removed
+
+- **The methodology layer is gone — projects no longer carry a workflow label, and
+  governance is read from what's installed rather than from what a project claims
+  (#538).** TangleClaw used to ask every project to pick a "methodology": a JSON template
+  that declared its wrap steps, phases, status badge, action buttons, default rules, and
+  session hooks. The pipeline moved into code last release; this release deletes the rest
+  — the registry, the bundled `prawduct` / `minimal` templates and their sync-and-fork
+  machinery, the `methodology` project field and DB column, the phase concept, the
+  chooser in project-create, the settings dropdown and switch-confirmation modal, the
+  banner label and phase chip, the setup wizard's default-methodology preference, the V1
+  playbook injected into generated engine configs, and the `GET /api/methodologies`
+  endpoints. What's left is simpler to reason about: one wrap pipeline, configured per
+  project by `wrapStepOverrides`; one governance answer, derived from disk.
+
+  **Nothing about your projects' behavior changes at the cutover.** Projects whose wrap
+  was commit-only keep exactly that shape — the schema migration that drops the column
+  seeds their overrides first, in the same step, so no install can reach the new schema
+  without having been migrated (including archived projects and installs that never ran
+  the previous release). A project whose directory has since disappeared is logged by
+  name rather than silently skipped.
+
+  **The governance badge now means something narrower and more useful.** The old
+  "governance drift" warning fired when a project *labeled* prawduct had no enforcement
+  installed — it detected a contradiction between claim and reality. With no claim left,
+  a project that simply isn't Prawduct-governed is ordinary, not broken, so that state is
+  now neutral (`ungoverned`) and unbadged. The badge that remains flags the one
+  actionable case: a project still running the legacy vendored hook rather than the V2
+  plugin. The **Run Critic** button follows the same principle — it appears where the
+  plugin that ships the Critic is actually installed, and the endpoint enforces exactly
+  the same condition the button renders from, so a visible button always works and an
+  invisible one is never invocable.
+
+  **If you script against the API:** `GET /api/methodologies` and
+  `GET /api/methodologies/:id` are removed; `methodology` no longer appears on project
+  payloads or in `PATCH /api/projects/:name`; `defaultMethodology` is gone from global
+  config; and `governanceState` gained `ungoverned` while losing `drift-no-governance`.
+  Project actions are now published as a top-level `actions[]` on the project payload.
+  No other repo in the fleet consumes these, so this ships as a normal release rather
+  than a major bump — say the word if you'd rather it carry a major.
+
+### Changed
+
+- **Eval Audit scores every project against one dimension set.** Custom eval dimensions
+  were declared by methodology templates, so the prawduct-specific tier-3
+  `methodology_compliance` dimension retires with them. Scores are now comparable across
+  projects rather than only within a workflow. (Zero recorded scores were affected.)
+- **The prime prompt's size ceiling is code-owned.** It was a per-template number (2000 or
+  4000 tokens); it is now a single 4000-token constant — deliberately the larger of the
+  two, because the cap truncates the prompt's tail and a cut tail silently drops the
+  directive sections at the end of the prime (#557).
+- **New projects no longer get three extension rules switched on for them.** The prawduct
+  template used to enable `independentCritic`, `docsParity`, and `decisionFramework` at
+  create/attach; those rules render into a generated `CLAUDE.md`, which is skipped
+  wholesale for plugin-governed projects — so the seeding was already near-inert for
+  exactly the projects it targeted. Toggle them per project in Settings.
+- **The project-action endpoint reports why it refused.** `POST
+  /api/projects/:name/actions/:command` now routes on an explicit result code instead of
+  matching on error-message text, so an unavailable action returns 404 with a clear
+  reason rather than depending on the wording of a message.
+
 ## [4.29.0] - 2026-07-19
 
 ### Added

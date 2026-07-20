@@ -42,8 +42,7 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
     project = store.projects.create({
       name: 'project-map-test',
       path: projectPath,
-      engine: 'claude',
-      methodology: 'minimal'
+      engine: 'claude'
     });
   });
 
@@ -56,7 +55,6 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
     // Reset to toggle-off, no map file, only `lib/` on disk.
     store.projectConfig.save(projectPath, {
       engine: 'claude',
-      methodology: 'minimal',
       projectMapEnabled: false
     });
     try { fs.rmSync(path.join(projectPath, MAP), { force: true }); } catch {}
@@ -66,7 +64,6 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
   function enableToggle() {
     store.projectConfig.save(projectPath, {
       engine: 'claude',
-      methodology: 'minimal',
       projectMapEnabled: true
     });
   }

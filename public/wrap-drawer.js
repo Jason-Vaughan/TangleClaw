@@ -9,8 +9,8 @@
   /**
    * Human-readable label for each step kind. Kinds not in the table
    * fall back to the raw kind string — surfaces unknown kinds without
-   * breaking the render, which matters because methodologies can
-   * declare custom kinds.
+   * breaking the render, which matters if the pipeline gains a kind the
+   * drawer has not learned yet.
    * @type {Object<string, string>}
    */
   const KIND_LABELS = {
@@ -74,7 +74,7 @@
     blocked: {
       label: 'Blocked',
       tone: 'blocked',
-      tooltip: 'Step reported a problem. Whether the wrap continued depends on the step’s blocker flag in the methodology template — see the error message in this row.'
+      tooltip: 'Step reported a problem. Whether the wrap continued depends on the step’s blocker flag — see the error message in this row.'
     },
     skipped: {
       label: 'Skipped',

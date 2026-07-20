@@ -92,13 +92,11 @@ describe('api-projects', () => {
     it('creates a project', async () => {
       const { status, data } = await request('POST', '/api/projects', {
         name: 'api-test-project',
-        methodology: 'minimal',
         tags: ['test']
       });
 
       assert.equal(status, 201);
       assert.equal(data.name, 'api-test-project');
-      assert.equal(data.methodology, 'minimal');
       assert.deepEqual(data.tags, ['test']);
       assert.ok(data.id);
       assert.ok(data.path);
@@ -140,7 +138,7 @@ describe('api-projects', () => {
       const project = data.projects.find((p) => p.name === 'api-test-project');
       assert.ok(project);
       assert.ok(project.hasOwnProperty('engine'));
-      assert.ok(project.hasOwnProperty('methodology'));
+      assert.ok(project.hasOwnProperty('actions'));
       assert.ok(project.hasOwnProperty('session'));
       assert.ok(project.hasOwnProperty('git'));
     });
@@ -157,7 +155,7 @@ describe('api-projects', () => {
       assert.equal(status, 200);
       assert.equal(data.name, 'api-test-project');
       assert.ok(data.engine);
-      assert.ok(data.methodology);
+      assert.ok(Array.isArray(data.actions));
     });
 
     it('returns 404 for unknown project', async () => {
@@ -221,7 +219,7 @@ describe('api-projects', () => {
     // #137 — PATCH must sync .claude/settings.json hooks immediately, not defer to next launch
     it('PATCH silentPrime=true writes SessionStart hook to .claude/settings.json on disk', async () => {
       // Use a dedicated project so we don't entangle with the existing api-test-project assertions
-      await request('POST', '/api/projects', { name: 'sp-api-sync', methodology: 'minimal' });
+      await request('POST', '/api/projects', { name: 'sp-api-sync' });
 
       const { status } = await request('PATCH', '/api/projects/sp-api-sync', { silentPrime: true });
       assert.equal(status, 200);
@@ -256,7 +254,7 @@ describe('api-projects', () => {
 
     it('deletes with correct password', async () => {
       // Create a project for deletion
-      await request('POST', '/api/projects', { name: 'to-api-delete', methodology: 'minimal' });
+      await request('POST', '/api/projects', { name: 'to-api-delete' });
 
       const { status, data } = await request('DELETE', '/api/projects/to-api-delete', {
         password: 'deleteme'
@@ -277,7 +275,7 @@ describe('api-projects', () => {
     });
 
     it('deletes without password when not configured', async () => {
-      await request('POST', '/api/projects', { name: 'no-pass-delete', methodology: 'minimal' });
+      await request('POST', '/api/projects', { name: 'no-pass-delete' });
       const { status, data } = await request('DELETE', '/api/projects/no-pass-delete', {});
       assert.equal(status, 200);
       assert.ok(data.ok);

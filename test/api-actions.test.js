@@ -46,8 +46,14 @@ describe('api-actions (#139 Chunk 11b)', () => {
     });
   }
 
-  /** Stand up a project on disk + in the store. */
-  function makeProject(name, methodology) {
+  /**
+   * Stand up a project on disk + in the store.
+   * @param {string} name - Project name.
+   * @param {boolean} [governed=true] - Mark it governed by the Prawduct V2
+   *   plugin, which is what makes actions available.
+   * @returns {object} The created project record.
+   */
+  function makeProject(name, governed = true) {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
     execSync('git init -q', { cwd: projPath });
@@ -55,7 +61,14 @@ describe('api-actions (#139 Chunk 11b)', () => {
     execSync('git config user.name test', { cwd: projPath });
     execSync('git commit --allow-empty -m init -q', { cwd: projPath });
     execSync('git checkout -q -b feat/api-actions-test', { cwd: projPath });
-    return store.projects.create({ name, path: projPath, engine: 'claude', methodology });
+    if (governed) {
+      fs.mkdirSync(path.join(projPath, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }, null, 2)
+      );
+    }
+    return store.projects.create({ name, path: projPath, engine: 'claude' });
   }
 
   before(async () => {
@@ -82,8 +95,8 @@ describe('api-actions (#139 Chunk 11b)', () => {
   });
 
   describe('POST /api/projects/:name/actions/:command', () => {
-    it('200 ok on a valid invoke-critic for prawduct project', async () => {
-      const project = makeProject('api-prawduct-1', 'prawduct');
+    it('200 ok on a valid invoke-critic for a plugin-governed project', async () => {
+      const project = makeProject('api-prawduct-1');
       const { status, data } = await request(
         'POST',
         '/api/projects/api-prawduct-1/actions/invoke-critic',
@@ -105,20 +118,19 @@ describe('api-actions (#139 Chunk 11b)', () => {
       assert.equal(data.code, 'NOT_FOUND');
     });
 
-    it('404 when methodology does not declare the action', async () => {
-      makeProject('api-minimal-1', 'minimal');
-      // `minimal` methodology has no `actions[]` block.
+    it('404 when the project governance state does not support the action', async () => {
+      makeProject('api-minimal-1', false); // ungoverned — nothing ships a Critic
       const { status, data } = await request(
         'POST',
         '/api/projects/api-minimal-1/actions/invoke-critic',
         {}
       );
       assert.equal(status, 404);
-      assert.ok(data.error.includes('does not declare action'));
+      assert.ok(data.error.includes('not available'));
     });
 
-    it('404 when command is unknown but methodology has other actions', async () => {
-      makeProject('api-prawduct-2', 'prawduct');
+    it('404 when the command is unknown', async () => {
+      makeProject('api-prawduct-2');
       const { status } = await request(
         'POST',
         '/api/projects/api-prawduct-2/actions/no-such-command',
@@ -128,7 +140,7 @@ describe('api-actions (#139 Chunk 11b)', () => {
     });
 
     it('forwards request body as options to the handler', async () => {
-      const project = makeProject('api-prawduct-3', 'prawduct');
+      const project = makeProject('api-prawduct-3');
       const { status, data } = await request(
         'POST',
         '/api/projects/api-prawduct-3/actions/invoke-critic',
@@ -143,7 +155,7 @@ describe('api-actions (#139 Chunk 11b)', () => {
     });
 
     it('non-object body (array) is coerced to no options', async () => {
-      const project = makeProject('api-prawduct-4', 'prawduct');
+      const project = makeProject('api-prawduct-4');
       const { status, data } = await request(
         'POST',
         '/api/projects/api-prawduct-4/actions/invoke-critic',
@@ -164,12 +176,17 @@ describe('api-actions (#139 Chunk 11b)', () => {
     it('200 ok:false (soft fail) when project path is not a git repo', async () => {
       const projPath = path.join(projectsDir, 'api-not-git');
       fs.mkdirSync(projPath, { recursive: true });
-      // No git init — branch resolution will fail at the handler.
+      // Governed, so the action is available and actually reaches the handler —
+      // but with no git init, branch resolution fails there.
+      fs.mkdirSync(path.join(projPath, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(projPath, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }, null, 2)
+      );
       store.projects.create({
         name: 'api-not-git',
         path: projPath,
-        engine: 'claude',
-        methodology: 'prawduct'
+        engine: 'claude'
       });
       const { status, data } = await request(
         'POST',
@@ -184,14 +201,13 @@ describe('api-actions (#139 Chunk 11b)', () => {
     });
   });
 
-  describe('methodology.actions surfaced on GET /api/projects/:name', () => {
-    it('prawduct project response includes actions[]', async () => {
-      makeProject('api-actions-surface', 'prawduct');
+  describe('actions surfaced on GET /api/projects/:name', () => {
+    it('governed project response includes actions[]', async () => {
+      makeProject('api-actions-surface');
       const { status, data } = await request('GET', '/api/projects/api-actions-surface');
       assert.equal(status, 200);
-      assert.ok(data.methodology);
-      assert.ok(Array.isArray(data.methodology.actions));
-      const invokeCritic = data.methodology.actions.find((a) => a.command === 'invoke-critic');
+      assert.ok(Array.isArray(data.actions));
+      const invokeCritic = data.actions.find((a) => a.command === 'invoke-critic');
       assert.ok(invokeCritic, 'invoke-critic action is surfaced');
       assert.equal(invokeCritic.label, 'Run Critic',
         'label renamed (#267) — handler now actually spawns a Critic via tmux (with ack-only fallback for unsupported engines/no-session cases)');
@@ -206,11 +222,9 @@ describe('api-actions (#139 Chunk 11b)', () => {
       assert.ok(invokeCritic.successToast.includes('{branchName}'),
         'successToast carries the {branchName} placeholder (#230) so the UI interpolates the actual branch from the handler response');
       // Allow-list pin (#230): exactly these keys may appear on the wire.
-      // A future template author adding `secretKey` or similar to the
-      // action declaration must NOT have it leak through enrichProject's
-      // explicit-property allow-list. The methodology authoritatively
-      // decides what's *dispatchable* (server-side), but the wire shape
-      // is independently restrictive (frontend-side).
+      // A field added to an action declaration for server-side use must NOT
+      // leak through the explicit-property allow-list — what's dispatchable
+      // and what's published are decided separately.
       assert.deepStrictEqual(
         Object.keys(invokeCritic).sort(),
         ['command', 'confirm', 'confirmMessage', 'label', 'successToast'],
@@ -218,11 +232,11 @@ describe('api-actions (#139 Chunk 11b)', () => {
       );
     });
 
-    it('minimal project response has empty actions[]', async () => {
-      makeProject('api-actions-minimal', 'minimal');
+    it('ungoverned project response has empty actions[]', async () => {
+      makeProject('api-actions-minimal', false);
       const { status, data } = await request('GET', '/api/projects/api-actions-minimal');
       assert.equal(status, 200);
-      assert.deepEqual(data.methodology.actions, []);
+      assert.deepEqual(data.actions, []);
     });
   });
 });

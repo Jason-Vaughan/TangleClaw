@@ -207,45 +207,13 @@ describe('API Contract Validation', () => {
     });
   });
 
-  describe('GET /api/methodologies — contract shape', () => {
-    it('returns methodologies array with id, name, description', async () => {
-      const res = await request('/api/methodologies');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.data.methodologies));
-      assert.ok(res.data.methodologies.length > 0);
 
-      for (const meth of res.data.methodologies) {
-        assert.equal(typeof meth.id, 'string');
-        assert.equal(typeof meth.name, 'string');
-        assert.equal(typeof meth.description, 'string');
-      }
-    });
-  });
-
-  describe('GET /api/methodologies/:id — contract shape', () => {
-    it('returns full methodology template', async () => {
-      const listRes = await request('/api/methodologies');
-      const methId = listRes.data.methodologies[0].id;
-
-      const res = await request(`/api/methodologies/${methId}`);
-      assert.equal(res.status, 200);
-      assert.equal(typeof res.data.id, 'string');
-      assert.equal(typeof res.data.name, 'string');
-      assert.equal(typeof res.data.description, 'string');
-    });
-
-    it('returns 404 for unknown methodology', async () => {
-      const res = await request('/api/methodologies/nonexistent');
-      assert.equal(res.status, 404);
-      assert.equal(res.data.code, 'NOT_FOUND');
-    });
-  });
 
   describe('Projects CRUD — contract shapes', () => {
     it('POST /api/projects returns id, name, path, createdAt', async () => {
       const res = await request('/api/projects', {
         method: 'POST',
-        body: { name: 'contract-test', engine: 'claude', methodology: 'minimal' }
+        body: { name: 'contract-test', engine: 'claude' }
       });
       assert.equal(res.status, 201);
       assert.equal(typeof res.data.id, 'number');

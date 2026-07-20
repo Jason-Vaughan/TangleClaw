@@ -134,13 +134,7 @@ describe('E2E Smoke Tests — Happy Path Lifecycle', () => {
     assert.ok(res.data.engines.some(e => e.id === 'claude'));
   });
 
-  it('methodology list is non-empty and methodologies have expected fields', async () => {
-    const res = await request('/api/methodologies');
-    assert.equal(res.status, 200);
-    assert.ok(res.data.methodologies.length > 0);
-    assert.ok(res.data.methodologies.some(m => m.id === 'minimal'));
-  });
-
+  
   it('system stats return valid resource data', async () => {
     const res = await request('/api/system');
     assert.equal(res.status, 200);
