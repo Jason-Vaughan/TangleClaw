@@ -26,6 +26,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Chunk 05a — the self-improvement loop stops being a loop on paper (#569)
+
+<!-- prawduct: type=feat | chunks=05a | scope=wrap-v2 | status=shipped -->
+
+**Why:** both halves of #569's loop were drawn but disconnected. Every captured learning
+was written `provisional` and nothing ever advanced one, so the `## Active Learnings`
+block injected at session start was empty on every project, permanently. And nothing
+turned a learning into a rule: `promoteFromLearning` had exactly one caller, an HTTP
+route no UI invoked.
+
+**Discovery correction:** the advancer looked nearly free — `learnings-db-write` already
+dedups and `confirm()` already auto-promotes — but the dedup compares full content
+INCLUDING the entry's own `## YYYY-MM-DD` heading, so it is a same-day retry guard that
+can never see a recurrence. A date-independent normalized key was the actual missing
+piece.
+
+**Promotion bar is two sightings, owned by the step.** `confirm()`'s own threshold is 2
+confirmations (three sightings), which for exactly-matching normalized text almost never
+happens; deferring to it would have left the tier gate shut and reproduced the dead-end
+in softer form. `confirm()`'s general contract is untouched.
+
+**Proposals got `session_rules.status`** (`proposed|active|rejected`, v26→v27) rather
+than reusing `enabled`, which means "the operator switched this off" — storing proposals
+there would make a REJECTED rule indistinguishable from an unreviewed one and the wrap
+would re-propose declined rules forever. Rejection is a recorded state for that reason.
+
+**The Critic's blocking findings were one root, and it was mine.** I put the authority
+decision at the HTTP boundary and assumed reaching a route meant a human pressed a
+button. The API is on localhost and this project instructs in-session agents to call it,
+so an agent could curl a learning straight to a governing rule. Authority now comes from
+the operator-password gate, and the docs state the true ceiling instead of claiming an
+unconditional human gate. Also missed `findConflictCandidates` in the status-reader
+audit.
+
+**Deferred to 05b:** the approve/reject UI. `session_rule_versions` has no `status`
+column, so a decision is recorded as free-text `change_reason`.
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 04c — a project can turn off a wrap step without forking its methodology
 
 <!-- prawduct: type=feat | chunks=04c | scope=wrap-v2 | status=shipped -->
