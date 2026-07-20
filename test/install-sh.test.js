@@ -304,6 +304,24 @@ describe('deploy/install.sh', () => {
       assert.doesNotMatch(output, /not on PATH/i,
         'must not fall through to the PATH diagnosis');
     });
+
+    it('reports a failing installer as an installer failure (#615)', () => {
+      // The third branch: the download succeeded and the payload is non-empty,
+      // but running it fails. Distinguishing this from the two above is the
+      // whole point of splitting the steps — all three used to collapse into
+      // the same wrong PATH diagnosis.
+      const box = sandbox({
+        uname: 'echo Darwin',
+        curl: 'echo "exit 1" ' // a valid, non-empty script that fails when run
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'a failing installer must fail the script');
+      assert.match(output, /Homebrew installer failed/i,
+        'must name the installer as what failed');
+      assert.doesNotMatch(output, /could not download/i,
+        'must not report a download problem — the download succeeded');
+    });
   });
 
   describe('server plist stderr breadcrumb (#324)', () => {
