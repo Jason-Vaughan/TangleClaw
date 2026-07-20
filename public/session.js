@@ -3314,6 +3314,17 @@ function renderWrapDrawer(pipelineResult) {
         widgetRendered = true;
       }
     }
+    if (row.kind === 'rule-proposal') {
+      // #569: the wrap proposed rules from recurring learnings. Like the
+      // plan-picker this widget performs per-rule API writes (approve/reject),
+      // not a pipeline retry — so it does NOT set `warningOnly`: the step is
+      // done, the decisions are independent of the wrap, and Done just closes.
+      const rpWidget = H.ruleProposalWidget(row, raw.output);
+      if (rpWidget) {
+        decisionEl.appendChild(renderRuleProposalWidget(rpWidget));
+        widgetRendered = true;
+      }
+    }
   }
   decisionEl.classList.toggle('hidden', !widgetRendered);
 
@@ -3678,6 +3689,174 @@ async function setActivePlan(sel, btn, noteEl) {
   }
   noteEl.textContent = `Active plan set to ${filename} ✓ — the next wrap will roll its pointer. Click Done to close.`;
   btn.textContent = 'Saved';
+}
+
+/**
+ * Build the rule-proposal review widget (#569) — one row per proposed rule
+ * with editable text and Approve / Reject buttons. Each decision is an
+ * independent API write (no pipeline retry, no double-commit risk): approve
+ * saves any text edit first, then flips the rule to `active`; reject flips it
+ * to `rejected`, which is recorded so the same learning is never re-proposed.
+ *
+ * Approval is a protected operation server-side (the same operator gate as
+ * the wrap itself), so the widget replays the wrap modal's cached password
+ * and only surfaces a password input if the server actually refuses (403) —
+ * e.g. after a page reload dropped the cache.
+ *
+ * @param {object} widget - From `ruleProposalWidget` ({kind, proposals}).
+ * @returns {HTMLDivElement}
+ */
+function renderRuleProposalWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--proposals';
+  wrap.dataset.kind = 'rule-proposal';
+
+  const groupLabelId = 'wrapRuleProposalGroupLabel';
+  const label = document.createElement('div');
+  label.className = 'wrap-decision-label';
+  label.id = groupLabelId;
+  const n = widget.proposals.length;
+  label.textContent = `The wrap proposed ${n} rule${n === 1 ? '' : 's'} from recurring learnings:`;
+  wrap.appendChild(label);
+
+  const why = document.createElement('p');
+  why.className = 'wrap-decision-help';
+  why.textContent = 'Why: a learning that kept recurring across sessions is a candidate rule for future sessions. Nothing governs anything until you approve it — edit the text first if it needs sharpening. Rejections are remembered, so a rejected rule won’t be proposed again.';
+  wrap.appendChild(why);
+
+  // Hidden until the server refuses an approval (403) — normally the wrap
+  // modal's cached password covers it and this never appears. Created before
+  // the rows because each row's buttons capture it.
+  const pwGroup = document.createElement('div');
+  pwGroup.className = 'wrap-proposal-password hidden';
+  const pwLabel = document.createElement('label');
+  pwLabel.className = 'wrap-decision-label';
+  pwLabel.htmlFor = 'wrapProposalPassword';
+  pwLabel.textContent = 'Approving a rule needs the delete password:';
+  const pwInput = document.createElement('input');
+  pwInput.type = 'password';
+  pwInput.id = 'wrapProposalPassword';
+  pwInput.className = 'wrap-proposal-password-input';
+  pwInput.autocomplete = 'current-password';
+  pwGroup.appendChild(pwLabel);
+  pwGroup.appendChild(pwInput);
+
+  const list = document.createElement('div');
+  list.className = 'wrap-proposal-list';
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-labelledby', groupLabelId);
+  for (const p of widget.proposals) {
+    const row = document.createElement('div');
+    row.className = 'wrap-proposal-row';
+    row.dataset.ruleId = String(p.ruleId);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'wrap-proposal-text';
+    ta.value = p.content;
+    ta.rows = 3;
+    ta.spellcheck = false;
+    ta.setAttribute('aria-label', `Proposed rule ${p.ruleId} — edit before approving if needed`);
+    row.appendChild(ta);
+
+    const actions = document.createElement('div');
+    actions.className = 'wrap-proposal-actions';
+    const approveBtn = document.createElement('button');
+    approveBtn.type = 'button';
+    approveBtn.className = 'btn btn-small btn-primary wrap-proposal-approve';
+    approveBtn.textContent = 'Approve';
+    approveBtn.title = 'Make this a governing rule for future sessions (saves your edits first).';
+    const rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
+    rejectBtn.className = 'btn btn-small wrap-proposal-reject';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.title = 'Decline — recorded so this learning is not proposed again.';
+    actions.appendChild(approveBtn);
+    actions.appendChild(rejectBtn);
+    row.appendChild(actions);
+
+    const note = document.createElement('p');
+    note.className = 'wrap-proposal-note';
+    note.setAttribute('role', 'status');
+    row.appendChild(note);
+
+    approveBtn.addEventListener('click', () =>
+      resolveRuleProposal(p, 'active', { row, ta, approveBtn, rejectBtn, note, passwordGroup: pwGroup, passwordInput: pwInput }));
+    rejectBtn.addEventListener('click', () =>
+      resolveRuleProposal(p, 'rejected', { row, ta, approveBtn, rejectBtn, note, passwordGroup: pwGroup, passwordInput: pwInput }));
+    list.appendChild(row);
+  }
+  wrap.appendChild(list);
+  wrap.appendChild(pwGroup);
+
+  return wrap;
+}
+
+/**
+ * Resolve one proposed rule — approve into a governing rule or reject (#569).
+ * Approve saves a text edit first (PUT content), then flips status; the two
+ * writes are sequential so an edit can never be approved un-saved. Reflects
+ * the outcome inline and disables the row once decided; on a 403 (password
+ * gate) reveals the widget's password input instead of failing opaquely.
+ *
+ * @param {{ruleId: number, content: string}} proposal - The proposal as rendered.
+ * @param {'active'|'rejected'} decision - The operator's answer.
+ * @param {object} els - Row elements: {row, ta, approveBtn, rejectBtn, note, passwordGroup, passwordInput}.
+ */
+async function resolveRuleProposal(proposal, decision, els) {
+  const { ta, approveBtn, rejectBtn, note, passwordGroup, passwordInput } = els;
+  approveBtn.disabled = true;
+  rejectBtn.disabled = true;
+  ta.disabled = true;
+
+  const finishEnabled = () => {
+    approveBtn.disabled = false;
+    rejectBtn.disabled = false;
+    ta.disabled = false;
+  };
+
+  if (decision === 'active') {
+    const edited = ta.value.trim();
+    if (!edited) {
+      note.textContent = 'Rule text can’t be empty — edit it or Reject instead.';
+      finishEnabled();
+      return;
+    }
+    if (edited !== proposal.content.trim()) {
+      const saved = await apiMutate(`/api/session-rules/${proposal.ruleId}`, 'PUT', { content: edited });
+      if (!saved) {
+        note.textContent = `Couldn’t save your edit: ${api.lastError || 'unknown error'}. Nothing was approved.`;
+        finishEnabled();
+        return;
+      }
+      proposal.content = edited;
+    }
+    const body = { status: 'active' };
+    const pw = (passwordInput && passwordInput.value) || currentWrapPassword;
+    if (pw) body.password = pw;
+    const data = await apiMutate(`/api/session-rules/${proposal.ruleId}/status`, 'PUT', body);
+    if (!data) {
+      if (api.lastErrorCode === 'FORBIDDEN' && passwordGroup) {
+        passwordGroup.classList.remove('hidden');
+        note.textContent = 'The server needs the delete password to approve — enter it below and tap Approve again.';
+        if (passwordInput) passwordInput.focus();
+      } else {
+        note.textContent = `Approve failed: ${api.lastError || 'unknown error'}.`;
+      }
+      finishEnabled();
+      return;
+    }
+    note.textContent = 'Approved ✓ — this rule now governs future sessions.';
+  } else {
+    const data = await apiMutate(`/api/session-rules/${proposal.ruleId}/status`, 'PUT', { status: 'rejected' });
+    if (!data) {
+      note.textContent = `Reject failed: ${api.lastError || 'unknown error'}.`;
+      finishEnabled();
+      return;
+    }
+    note.textContent = 'Rejected — recorded, so this won’t be proposed again.';
+  }
+  // Decided: the row stays visible as a record but takes no further input.
+  els.row.classList.add('wrap-proposal-row--decided');
 }
 
 /**

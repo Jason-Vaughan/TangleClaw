@@ -26,6 +26,47 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Chunk 05b — the operator review surface for wrap-proposed rules (#569)
+
+<!-- prawduct: type=feat | chunks=05b | scope=wrap-v2 -->
+
+**Why:** 05a made the loop safe and auditable but API-only — a proposal could only be
+approved or rejected by hand-crafting a `curl`, and the operator is almost always remote,
+on a phone. The review surface is what makes the human gate usable rather than
+theoretical.
+
+**What:** the wrap drawer renders the `rule-proposal` step's output as a decision widget
+following the established descriptor→renderer pattern (`ruleProposalWidget` in
+`public/wrap-drawer.js`; `renderRuleProposalWidget` / `resolveRuleProposal` in
+`public/session.js`): per proposal, editable text + Approve / Reject. Approve saves any
+edit BEFORE flipping status (never activate text the operator didn't see), replays the
+wrap modal's cached password against the `PUT /api/session-rules/:id/status` gate, and a
+403 reveals an inline password input instead of failing opaquely. Reject is ungated and
+recorded. Decisions are per-rule API writes, not pipeline retries — no double-commit
+path. The step now also reports the provisional-learnings backlog on every exit path
+(`lib/wrap-steps/rule-proposal.js` counts `tier:'provisional'`; the drawer's detail line
+and skip reasons carry "N provisional learnings building recurrence" — #569 proposal 3).
+Pending proposals also surface in the Settings modal's Project Rules list with an amber
+`Proposed` badge and an inert enabled-toggle (`fetchProjectRules` now fetches unfiltered
+and drops only rejections client-side). Per the cumulative Critic's two warnings (one
+root), the modal is the **durable** decision surface: the drawer renders only the wrap
+that just ran, so proposed rows carry their own Approve / Reject buttons IN PLACE of
+Delete (`resolveProjectRuleProposal`) — deleting a proposed row would erase the recorded
+decision and re-arm re-proposal; approve is the same gated status route, with a hidden
+password field revealed on 403. `public/sw.js` CACHE_NAME bumped (ui.js/style.css
+are precached).
+
+**Tests:** `test/wrap-rule-proposal-widget.test.js` (new — source-level pins on the
+widget: edit-save ordering, 403 recovery, no-retry, a11y, 44px targets);
+`test/wrap-drawer.test.js` (+8: `ruleProposalWidget` edge cases, backlog detail);
+`test/self-improvement-loop.test.js` (+4: backlog counts on every step exit path);
+`test/project-rules-modal.test.js` (+6: badge, unfiltered fetch, inert toggle,
+Approve/Reject-instead-of-Delete, status-route wiring with 403 password reveal). Full
+suite 4745 pass / 0 fail / 1 skipped.
+
+**Operator verification:** queued as VRF-569-proposal-review (visual, iPhone). Closes
+#569 with 05a.
+
 ## 2026-07-20: Chunk 05a — the self-improvement loop stops being a loop on paper (#569)
 
 <!-- prawduct: type=feat | chunks=05a | scope=wrap-v2 | status=shipped -->

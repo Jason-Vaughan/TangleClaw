@@ -1028,8 +1028,27 @@ function renderProjectRulesSection(project) {
         <div class="wrap-section-grid">${sectionChecks}</div>
       </div>
       <div class="project-rules-grid">${ruleBlocks}</div>
+      <div id="projRulesPwGroup" class="form-group hidden">
+        <label class="form-label" for="projRulesPw">Delete password (required to approve a proposed rule)</label>
+        <input type="password" class="form-input" id="projRulesPw" autocomplete="current-password">
+      </div>
       <div id="projectRulesStatus" class="rules-status hidden" role="status"></div>
     </div>`;
+}
+
+/**
+ * Fetch one kind's rules for a project, ready to render: active rules plus
+ * pending proposals (#569 — a proposed rule is visible with a "Proposed"
+ * badge so the queue isn't silent), minus rejections (a rejected row is the
+ * record of a decision, not a rule — rendering it forever would read as
+ * clutter, and its whole point is that the wrap won't re-raise it).
+ * @param {number} projectId - DB project id
+ * @param {string} kind - Rule kind
+ * @returns {Promise<object[]>}
+ */
+async function fetchProjectRules(projectId, kind) {
+  const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}`);
+  return (data ? data.rules || [] : []).filter((r) => r.status !== 'rejected');
 }
 
 /**
@@ -1039,10 +1058,10 @@ function renderProjectRulesSection(project) {
 async function loadProjectRules(projectId) {
   projectRulesTargetId = projectId;
   for (const { kind } of PROJECT_RULE_KINDS) {
-    const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}&status=active`);
+    const rules = await fetchProjectRules(projectId, kind);
     // The modal may have been closed/reopened on another project while awaiting.
     if (projectRulesTargetId !== projectId) return;
-    renderProjectRulesList(kind, data ? data.rules || [] : []);
+    renderProjectRulesList(kind, rules);
   }
 }
 
@@ -1058,15 +1077,34 @@ function renderProjectRulesList(kind, rules) {
     list.innerHTML = '<p class="session-rules-empty">No rules yet.</p>';
     return;
   }
-  list.innerHTML = rules.map((rule) => `
-    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}" data-rule-id="${rule.id}">
+  list.innerHTML = rules.map((rule) => {
+    // #569: a proposed rule is in the review queue — it governs nothing yet,
+    // so its enabled-toggle is inert and disabled (checking it would read as
+    // "this is live"). The decision affordances here are Approve/Reject, NOT
+    // Delete: the drawer widget only renders the wrap that just ran, so this
+    // list is the durable decision surface — and deleting a proposed row
+    // would erase the recorded decision and re-arm re-proposal at the next
+    // wrap (the exact zombie the recorded `rejected` state exists to prevent).
+    const isProposed = rule.status === 'proposed';
+    const badges = [
+      rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : '',
+      isProposed ? '<span class="session-rule-badge session-rule-badge--proposed" title="Proposed by the wrap from a recurring learning — not governing sessions yet. Approve or reject it here, or in the wrap drawer right after the wrap that proposed it.">Proposed</span> ' : ''
+    ].join('');
+    const actions = isProposed
+      ? `<span class="session-rule-decide">
+           <button class="btn btn-small btn-primary" data-action="approve-rule" data-rule-id="${rule.id}">Approve</button>
+           <button class="btn btn-small" data-action="reject-rule" data-rule-id="${rule.id}">Reject</button>
+         </span>`
+      : `<button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>`;
+    return `
+    <div class="session-rule-item${rule.enabled ? '' : ' session-rule-disabled'}${isProposed ? ' session-rule-item--proposed' : ''}" data-rule-id="${rule.id}">
       <label class="session-rule-toggle">
-        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+        <input type="checkbox" data-action="toggle-rule" data-rule-id="${rule.id}" ${rule.enabled && !isProposed ? 'checked' : ''} ${isProposed ? 'disabled' : ''}>
       </label>
-      <span class="session-rule-content">${rule.createdBy === 'ai' ? '<span class="session-rule-badge" title="AI-authored">AI</span> ' : ''}${esc(rule.content)}</span>
-      <button class="btn btn-small btn-danger session-rule-delete" data-action="delete-rule" data-rule-id="${rule.id}" aria-label="Delete rule">&times;</button>
-    </div>
-  `).join('');
+      <span class="session-rule-content">${badges}${esc(rule.content)}</span>
+      ${actions}
+    </div>`;
+  }).join('');
 }
 
 /**
@@ -1084,8 +1122,7 @@ async function addProjectRule(kind) {
   if (data) {
     if (input) input.value = '';
     _setProjectRulesStatus('Added', true);
-    const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
-    renderProjectRulesList(kind, list ? list.rules || [] : []);
+    renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
   } else {
     _setProjectRulesStatus('Add failed', false);
   }
@@ -1100,8 +1137,7 @@ async function addProjectRule(kind) {
 async function toggleProjectRule(id, enabled, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
   if (!data) { _setProjectRulesStatus('Update failed', false); return; }
-  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
-  renderProjectRulesList(kind, list ? list.rules || [] : []);
+  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
 }
 
 /**
@@ -1113,8 +1149,42 @@ async function deleteProjectRule(id, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
   if (!data) { _setProjectRulesStatus('Delete failed', false); return; }
   _setProjectRulesStatus('Deleted', true);
-  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
-  renderProjectRulesList(kind, list ? list.rules || [] : []);
+  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
+}
+
+/**
+ * Resolve a proposed rule from the Project Rules list (#569): approve it into
+ * a governing rule or reject it. This is the durable decision surface — the
+ * wrap drawer's widget only renders the wrap that just ran, so a proposal
+ * whose drawer was dismissed is decided here. Approve is password-gated
+ * server-side; the hidden password field is revealed on a 403 rather than
+ * asked for up-front (with no delete password configured it never appears).
+ * A rejected rule leaves the list on re-render — the record lives on in the
+ * DB, which is what stops the wrap re-proposing the same learning.
+ * @param {number} id - Rule id
+ * @param {'active'|'rejected'} status - The operator's decision
+ * @param {string} kind - Rule kind (for the targeted re-render)
+ */
+async function resolveProjectRuleProposal(id, status, kind) {
+  const body = { status };
+  const pwInput = document.getElementById('projRulesPw');
+  if (status === 'active' && pwInput && pwInput.value) body.password = pwInput.value;
+  const data = await apiMutate(`/api/session-rules/${id}/status`, 'PUT', body);
+  if (!data) {
+    const pwGroup = document.getElementById('projRulesPwGroup');
+    if (api.lastErrorCode === 'FORBIDDEN' && pwGroup) {
+      pwGroup.classList.remove('hidden');
+      _setProjectRulesStatus('Approving needs the delete password — enter it above and tap Approve again', false);
+      if (pwInput) pwInput.focus();
+    } else {
+      _setProjectRulesStatus(`${status === 'active' ? 'Approve' : 'Reject'} failed`, false);
+    }
+    return;
+  }
+  _setProjectRulesStatus(status === 'active'
+    ? 'Approved — this rule now governs future sessions'
+    : 'Rejected — recorded, so it won’t be proposed again', true);
+  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
 }
 
 /**
@@ -1134,6 +1204,10 @@ function handleProjectRulesEvent(e) {
     toggleProjectRule(Number(target.getAttribute('data-rule-id')), target.checked, kind);
   } else if (action === 'delete-rule' && e.type === 'click') {
     deleteProjectRule(Number(target.getAttribute('data-rule-id')), kind);
+  } else if (action === 'approve-rule' && e.type === 'click') {
+    resolveProjectRuleProposal(Number(target.getAttribute('data-rule-id')), 'active', kind);
+  } else if (action === 'reject-rule' && e.type === 'click') {
+    resolveProjectRuleProposal(Number(target.getAttribute('data-rule-id')), 'rejected', kind);
   }
 }
 

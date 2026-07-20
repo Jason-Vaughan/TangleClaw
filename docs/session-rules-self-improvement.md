@@ -97,6 +97,23 @@ was empty on every project and rules never evolved.
    proposal is never re-proposed, which is why rejection is a recorded state rather than a
    delete.
 
+   The review surface is the **wrap drawer**: when the `rule-proposal` step proposed
+   anything, its results render as a decision widget — one row per proposal with editable
+   text plus Approve / Reject. Approve saves any edit *first*, then flips the status
+   (password-gated, replaying the password the wrap modal already collected; a 403 reveals
+   an inline password input). Reject needs no password. The step's row also reports the
+   provisional-learnings backlog ("N provisional learnings building recurrence") so a
+   young loop is distinguishable from a dead one.
+
+   The drawer widget renders only the wrap that just ran, so the **Project Rules list**
+   (Settings modal) is the *durable* decision surface: pending proposals appear there with
+   a `Proposed` badge, an inert enabled-toggle, and their own Approve / Reject buttons —
+   deliberately in place of Delete, because deleting a proposed row would erase the
+   recorded decision and re-arm re-proposal at the next wrap. Approve there is gated by
+   the same operator password (revealed inline on 403). Rejected rules don't render in
+   the list (the record lives in the DB and the rule's version history, not the working
+   list).
+
 **The gate, stated once:** AI authorship cannot produce a governing rule on its own say-so.
 `createdBy` records *authorship*, not *authority* — a rule promoted from a learning is
 genuinely AI-authored, yet an operator pressing Promote must produce a live rule. Authority

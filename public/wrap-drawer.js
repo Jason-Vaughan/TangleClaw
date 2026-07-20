@@ -21,6 +21,7 @@
     'ai-content': 'AI content',
     'priming-roll': 'Roll priming pointer',
     'version-bump': 'Version bump',
+    'rule-proposal': 'Propose rules',
     'commit': 'Commit'
   };
 
@@ -232,7 +233,17 @@
         // silent-loop problem #569 was filed about.
         const n = output.count;
         if (typeof n !== 'number' || n <= 0) return null;
-        return `${n} rule${n === 1 ? '' : 's'} proposed — awaiting your review`;
+        let text = `${n} rule${n === 1 ? '' : 's'} proposed — awaiting your review`;
+        // The provisional backlog rides along so the loop's queue is visible
+        // even in sessions that DID propose — "2 proposed, 3 more building
+        // recurrence" is the loop's whole state in one line (#569 proposal 3).
+        const prov = output.backlog && typeof output.backlog.provisional === 'number'
+          ? output.backlog.provisional
+          : 0;
+        if (prov > 0) {
+          text += ` · ${prov} provisional learning${prov === 1 ? '' : 's'} building recurrence`;
+        }
+        return text;
       }
       default:
         return null;
@@ -493,6 +504,36 @@
   }
 
   /**
+   * Descriptor for the rule-proposal review widget (#569): when the wrap
+   * proposed rules from recurring learnings, surface each proposal so the
+   * operator can approve, edit-then-approve, or reject it inline. Like the
+   * plan-picker this is a config write (PUT per rule), not a retry option —
+   * so it carries no `optionsKey` and never gates the pipeline: the step is
+   * done, the proposals simply await a decision. Returns `null` unless the
+   * step is a completed rule-proposal carrying ≥1 well-formed proposal
+   * (a `ruleId` to address and `content` to show).
+   *
+   * @param {object} stepRow - View-model from `buildStepRow`.
+   * @param {object} rawOutput - Raw `step.output` from the runner.
+   * @returns {{kind: 'rule-proposal', proposals: Array<{ruleId: number, learningId: number|null, content: string}>}|null}
+   */
+  function ruleProposalWidget(stepRow, rawOutput) {
+    if (!stepRow || stepRow.kind !== 'rule-proposal') return null;
+    if (stepRow.status !== 'done') return null;
+    if (!rawOutput || typeof rawOutput !== 'object') return null;
+    const proposed = Array.isArray(rawOutput.proposed) ? rawOutput.proposed : [];
+    const proposals = proposed
+      .filter((p) => p && typeof p.ruleId === 'number' && typeof p.content === 'string' && p.content.trim())
+      .map((p) => ({
+        ruleId: p.ruleId,
+        learningId: typeof p.learningId === 'number' ? p.learningId : null,
+        content: p.content
+      }));
+    if (proposals.length === 0) return null;
+    return { kind: 'rule-proposal', proposals };
+  }
+
+  /**
    * Read the drawer's decision-widget DOM and assemble an `options`
    * object suitable for the retry POST body. Pure aside from the DOM
    * reads, which take a document-like accessor so tests can stub.
@@ -657,6 +698,7 @@
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,
     planPickerWidget,
+    ruleProposalWidget,
     collectOptionsFromAccessors,
     accumulateAiContentSkips,
     buildReportText,
