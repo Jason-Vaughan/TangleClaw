@@ -554,6 +554,22 @@ describe('tunnel', () => {
       }
     });
 
+    // The two ensureTunnel branches register through one helper, so testing it
+    // directly covers the spawn-path call site too — that branch needs a real
+    // `ssh -f -N -L` fork to reach, which this suite deliberately avoids.
+    it('_registerTunnelPort refuses a live foreign lease and claims an expired one', () => {
+      store.portLeases.lease({ port: 19980, project: 'live-owner', service: 'dev-server' });
+      tunnel._registerTunnelPort(19980, 'tunnel-project');
+      assert.equal(store.portLeases.get(19980).project, 'live-owner',
+        'a live foreign lease is left alone');
+
+      store.portLeases.lease({ port: 19981, project: 'expired-owner', service: 'old', ttlMs: -1000 });
+      tunnel._registerTunnelPort(19981, 'tunnel-project');
+      assert.equal(store.portLeases.get(19981).project, 'tunnel-project',
+        'an expired foreign lease does not block registration');
+      assert.equal(store.portLeases.get(19981).service, 'openclaw-tunnel');
+    });
+
     it('killTunnel releases port from PortHub', () => {
       const localPort = 19997;
       // Register the port first (simulating what ensureTunnel does)
