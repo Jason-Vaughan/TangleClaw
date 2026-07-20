@@ -4348,8 +4348,15 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
     let wrapStepIds = [];
     let expectedStepsUnavailable = false;
     if (project && project.path) {
+      // Raw read rather than store.projectConfig.load: load() masks a corrupt
+      // file by returning defaults, which would silently score the project
+      // against the full pipeline as if its overrides never existed. An audit
+      // surface must report the degraded state, not paper over it.
+      const cfgPath = path.join(project.path, '.tangleclaw', 'project.json');
       try {
-        const overrides = store.projectConfig.load(project.path).wrapStepOverrides;
+        const overrides = fs.existsSync(cfgPath)
+          ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')).wrapStepOverrides
+          : null;
         wrapStepIds = wrapDefaultPipeline.effectiveStepIds(overrides);
       } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable project config must not 500 the audit surface; the degraded state is logged and flagged in the response
         // Empty expected steps scores every session 1.0 — indistinguishable
