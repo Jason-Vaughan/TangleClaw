@@ -387,7 +387,15 @@ describe('per-project wrap step overrides', () => {
     });
 
     it('reports an empty map for a project that has never configured one', () => {
-      assert.deepEqual(projects.getProject('override-test').wrapStepOverrides, {});
+      // A project a sibling test has already cleared to `{}` would pass this
+      // for the wrong reason — and only while the tests keep their order. This
+      // one is created here and never written to.
+      const virginPath = path.join(tmpDir, 'never-configured');
+      fs.mkdirSync(virginPath, { recursive: true });
+      store.projects.create({ name: 'never-configured', path: virginPath, methodology: 'prawduct' });
+      assert.ok(!fs.existsSync(path.join(virginPath, '.tangleclaw', 'project.json')),
+        'precondition: nothing may have written this project a config');
+      assert.deepEqual(projects.getProject('never-configured').wrapStepOverrides, {});
     });
   });
 
