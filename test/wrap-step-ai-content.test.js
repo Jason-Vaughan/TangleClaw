@@ -782,15 +782,19 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
       assert.doesNotMatch(res.blockers[0], /byte-identical/, 'must not report the mutation cause');
     });
 
-    it('tells the operator the EDIT clears the block, not a bare retry', async () => {
-      // What clears a coverage block is the mutation route: the predicate reads what
-      // past commits touched, which no edit made now can change. Promising that a
-      // retry re-passes the predicate would send the operator into a loop.
+    it('tells the operator that WRITING THE ENTRY clears the block', async () => {
+      // The remediation must name the action that actually clears it. Writing the
+      // entry works through either route — during the retry turn it trips the
+      // mutation check, and before the retry it leaves the file dirty, which the
+      // predicate accepts. Text that instead prescribed a bare Retry, or that told
+      // the operator not to pre-edit, would send them in a circle.
       aic._internal.readForVerify = () => 'identical content';
       aic._internal.changelogCoverage = uncovered;
       const res = await aic.run(coverageCtx());
-      assert.match(res.output.remediation, /the edit itself satisfies this step/i);
-      assert.match(res.output.remediation, /Retrying without editing will block again/i);
+      assert.match(res.output.remediation, /Write the missing entries/i);
+      assert.match(res.output.remediation, /uncommitted entry counts/i,
+        'the operator must know a pre-retry edit is honored, or they will not make one');
+      assert.match(res.output.remediation, /Skip & note/, 'the escape hatch stays named');
     });
 
     it('hands the step\'s declared paths to the predicate, so both look at the same file', async () => {

@@ -51,11 +51,26 @@ history it reported 12 of 12 correctly-logged commits as uncovered — reproduci
 better-worded costume. What a commit TOUCHED is already local and needs no convention, and it
 verified 12/12 covered on the same range. The lesson is recorded in `learnings.md`.
 
-**Verification:** both directions against real history — the current session's 12 commits
+**Critic follow-through (0 blocking, 10 warnings):** three were real defects, not polish.
+(a) `git log --name-only` emits REPOSITORY-root-relative paths regardless of cwd, so a project
+rooted in a subdirectory of its repo matched none of its own declared paths and would have
+reported every commit uncovered — fixed with `--relative`, pinned by a test that builds a real
+subdir repo (a fixture would only have restated the assumption that was wrong). (b) The
+coverage block's remediation prescribed a sequence that re-blocks; the working tree is now part
+of the predicate, so an uncommitted entry satisfies it and the text is true. (c) Uncommitted
+work at wrap time was judged by neither route — it lands in the exempt wrap commit, which the
+next session's range starts after — so it is now its own unit. Also: `_listCommits` gained a
+5MB buffer (the 1MB default would have reinstated #645 on long ranges), the `unavailable`
+abstention logs at `info` rather than `debug` so it is visible at the default level, and
+session-range resolution moved to a shared `_git-range.js` where the two copies had already
+drifted (`{7,64}` vs `{7,40}` for the same field).
+
+**Verification:** all three directions against real history — the current session's 12 commits
 report `covered`; a range containing two real commits that shipped without a changelog entry
-(`f71a299`, `02ee405`) reports `uncovered` and names them. Six mutations (dropped wrap-commit
-exclusion, dropped merge exemption, `unavailable`-as-success, three-dot range, no
-changed-file short-circuit, substring path match) were each killed by the suite.
+(`f71a299`, `02ee405`) reports `uncovered` and names them; a dirty `CHANGELOG.md` reports
+`covered`. Seven mutations (dropped wrap-commit exclusion, dropped merge exemption,
+`unavailable`-as-success, three-dot range, no changed-file short-circuit, substring path match,
+dropped `--relative`) were each killed by the suite.
 
 
 ## 2026-07-20: Phase B exit gate + the ratified new-project wrap default (#652)

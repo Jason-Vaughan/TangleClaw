@@ -86,6 +86,17 @@ describe('changelog-coverage — commit listing', () => {
     cov._internal.execSync = () => '';
     assert.deepEqual(cov._listCommits('/p', 'x..HEAD'), []);
   });
+
+  it('raises the output cap above execSync\'s 1MB default', () => {
+    // --name-only over a long-lived branch runs to megabytes; hitting the default
+    // throws, which degrades to `unavailable` — the gate would silently revert to
+    // blocking on exactly the projects with the most history.
+    let opts = null;
+    cov._internal.execSync = (_cmd, o) => { opts = o; return ''; };
+    cov._listCommits('/p', 'x..HEAD');
+    assert.ok(opts.maxBuffer > 1024 * 1024, 'expected a raised maxBuffer');
+    assert.ok(opts.timeout > 0, 'git calls must stay bounded in time too');
+  });
 });
 
 describe('changelog-coverage — wrap-commit exclusion', () => {
@@ -173,8 +184,12 @@ describe('changelog-coverage — evaluate()', () => {
    *
    * @param {Array<{sha:string, subject:string, files?:string[], parents?:string}>} records
    */
-  function scenario(records) {
-    cov._internal.execSync = (cmd) => (cmd.startsWith('git log') ? gitLog(records) : '');
+  function scenario(records, dirty = []) {
+    cov._internal.execSync = (cmd) => {
+      if (cmd.startsWith('git log')) return gitLog(records);
+      if (cmd.startsWith('git diff')) return dirty.join('\n');
+      return '';
+    };
   }
 
   it('COVERED when every commit touched a declared path', () => {
@@ -265,11 +280,56 @@ describe('changelog-coverage — evaluate()', () => {
     assert.equal(cov.evaluate('/p', undefined).verdict, cov.VERDICTS.UNAVAILABLE);
   });
 
+  // The working tree is part of the session. Committed history alone leaves two
+  // holes: an entry written but not yet committed goes unseen, and work still
+  // uncommitted at wrap time is swept into the wrap commit, which the NEXT
+  // session's range starts after — so it could never be judged at all.
+  it('COVERED when a declared path is dirty, even with an unlogged commit in range', () => {
+    // This is what makes the block's remediation honest: writing the missing
+    // entry clears it, whether the operator or the retry turn writes it.
+    scenario([{ sha: 'aaa1111', subject: 'Unlogged work (#999)', files: ['lib/a.js'] }],
+      ['CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('UNCOVERED for uncommitted work with no accompanying entry, as its own unit', () => {
+    scenario([{ sha: 'aaa1111', subject: 'Logged work (#1)', files: ['CHANGELOG.md'] }],
+      ['lib/a.js', 'lib/b.js']);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.equal(out.uncovered.length, 1);
+    assert.equal(out.uncovered[0].sha, cov.WORKING_TREE_SHA);
+    assert.match(out.uncovered[0].subject, /2 uncommitted change\(s\)/);
+    assert.equal(out.checkedCount, 2, 'pending work is a unit in the denominator too');
+  });
+
+  it('judges pending work even when the range holds no commits at all', () => {
+    scenario([], ['lib/a.js']);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.equal(out.uncovered[0].sha, cov.WORKING_TREE_SHA);
+  });
+
+  it('stays UNAVAILABLE with no commits and a clean tree', () => {
+    scenario([], []);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+  });
+
+  it('UNAVAILABLE when the working tree cannot be read, rather than passing', () => {
+    cov._internal.execSync = (cmd) => {
+      if (cmd.startsWith('git diff')) throw new Error('git exploded');
+      if (cmd.startsWith('git log')) return gitLog([{ sha: 'a1', subject: 'x (#1)', files: ['CHANGELOG.md'] }]);
+      return '';
+    };
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+  });
+
   it('survives an unreadable project config by falling back to the trunk range', () => {
     cov._internal.loadProjectConfig = () => { throw new Error('no config'); };
-    cov._internal.execSync = (cmd) => (cmd.startsWith('git log')
-      ? gitLog([{ sha: 'a1', subject: 'Fix (#5)', files: ['CHANGELOG.md'] }])
-      : '');
+    cov._internal.execSync = (cmd) => {
+      if (cmd.startsWith('git log')) return gitLog([{ sha: 'a1', subject: 'Fix (#5)', files: ['CHANGELOG.md'] }]);
+      return '';
+    };
     const out = cov.evaluate('/p', PATHS);
     assert.equal(out.verdict, cov.VERDICTS.COVERED);
     assert.equal(out.range, 'main..HEAD');
@@ -302,6 +362,43 @@ describe('changelog-coverage — against this repository\'s real history', () =>
       'every commit parsed with an empty file list — the --name-only format assumption is wrong');
     assert.ok(commits.some((c) => c.files.includes('CHANGELOG.md')),
       'expected real commits touching CHANGELOG.md — the path-matching assumption is wrong');
+  });
+
+  it('reports paths relative to the PROJECT root when it is not the repo root', () => {
+    // `git log --name-only` emits repository-root-relative paths regardless of cwd,
+    // so a project rooted in a subdirectory of its repo would match none of its own
+    // declared paths and report every commit uncovered. Only a real repo with a real
+    // subdirectory can catch this — a fixture would just restate the assumption.
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const nodePath = require('node:path');
+    const { execSync } = require('node:child_process');
+
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'tc-subdir-'));
+    try {
+      const sub = nodePath.join(root, 'sub');
+      fs.mkdirSync(sub);
+      fs.writeFileSync(nodePath.join(sub, 'CHANGELOG.md'), '# Changelog\n');
+      fs.writeFileSync(nodePath.join(root, 'root.txt'), 'x\n');
+      const git = (cmd) => execSync(`git ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+      git('init -q .');
+      git('add -A');
+      git('-c user.email=t@t -c user.name=t commit -qm "seed"');
+
+      const commits = cov._listCommits(sub, 'HEAD~0..HEAD');
+      const seeded = cov._listCommits(sub, 'HEAD');
+      const files = (commits.length ? commits : seeded).flatMap((c) => c.files);
+      assert.ok(files.includes('CHANGELOG.md'),
+        `expected a project-relative CHANGELOG.md, got ${JSON.stringify(files)}`);
+      assert.ok(!files.includes('sub/CHANGELOG.md'), 'path must not be repo-root-relative');
+      assert.ok(!files.includes('root.txt'), 'paths outside the project root are not its concern');
+
+      // And the dirty-path read must agree with the commit listing.
+      fs.appendFileSync(nodePath.join(sub, 'CHANGELOG.md'), '- entry\n');
+      assert.deepEqual(cov._dirtyPaths(sub), ['CHANGELOG.md']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('recognizes real wrap commits in real history', () => {

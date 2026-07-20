@@ -19,7 +19,22 @@ All notable changes to TangleClaw are documented in this file.
   without an entry, where the old one could only say "byte-identical". Where the
   predicate cannot judge — no commits in range, or none it can speak to — it reports
   `unavailable` and the mutation check still applies, so no honor-system hole reopens.
-  Verified against this repository's real history in both directions.
+  The working tree counts as part of the session in both directions: an uncommitted
+  entry satisfies the step (so answering a block clears it without needing a commit
+  first), while uncommitted work with no entry is its own unaccounted-for unit —
+  otherwise it would be swept into the wrap's own commit, which the next session's
+  range starts after, and could never be judged at all. Paths are resolved with
+  `--relative`, so a project rooted in a subdirectory of its repo is judged against
+  its own paths rather than reporting every commit as uncovered. Verified against
+  this repository's real history in all three directions.
+- **Session-range resolution is shared between wrap steps
+  (new `lib/wrap-steps/_git-range.js`).** `features-toc` and the new coverage
+  predicate had independent copies that had already drifted on the detail that
+  matters — the `lastWrapSha` shape regex was `{7,64}` in one and `{7,40}` in the
+  other, so one of them would have silently rejected every SHA-256 object name and
+  fallen back to the trunk range. The shared resolver also makes the two-dot /
+  three-dot distinction explicit, since three-dot means "since the merge base" to
+  `git diff` but the symmetric difference to `git log`.
 
 ## [4.30.0] - 2026-07-20
 
