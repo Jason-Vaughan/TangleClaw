@@ -42,9 +42,12 @@ All notable changes to TangleClaw are documented in this file.
   `port.takeover`. Renewing a lease your own project already holds is unchanged, so idempotent
   re-registration on every boot needs no special handling, and an expired lease blocks nobody.
   Enforcement lives in `store.portLeases.lease()` rather than the route, so no caller — including
-  in-process ones — can bypass it. `data/porthub-guide.md` (injected into every managed
-  project's engine config) documents the new failure mode, and its long-standing claim that
-  leases are "permanent by default" is corrected: over HTTP the default is `false`.
+  in-process ones — can bypass it *on the lease path*. It is not yet symmetric: `release` and
+  `heartbeat` accept no `project`, so any caller can still release another project's lease and
+  then claim the freed port (#656). `data/porthub-guide.md` (injected into every managed
+  project's engine config) documents the new failure mode and states that limit plainly, and
+  its long-standing claim that leases are "permanent by default" is corrected: over HTTP the
+  default is `false`.
 
 - **The wrap pipeline is now code-owned — every project runs the same step list,
   configured per project instead of per methodology (#538, first half).** The step
