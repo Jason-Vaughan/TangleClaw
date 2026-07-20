@@ -253,7 +253,7 @@ describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
   // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
   const CANONICAL_KINDS = [
     'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll',
-    'pr-check', 'commit', 'version-bump', 'features-toc',
+    'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc',
     'project-map', 'index-describe', 'continuity-write'
   ];
 
@@ -264,6 +264,22 @@ describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
     });
     assert.match(row.detail, /2 rules proposed/);
     assert.match(row.detail, /awaiting your review/);
+  });
+
+  it('says "1 rule" not "1 rules"', () => {
+    const row = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 1, proposed: [{}] }, blockers: []
+    });
+    assert.match(row.detail, /1 rule proposed/);
+  });
+
+  it('renders no proposal detail when the count is absent entirely', () => {
+    const row = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: {}, blockers: []
+    });
+    assert.equal(row.detail, null);
   });
 
   it('renders no proposal detail when nothing was proposed', () => {

@@ -345,6 +345,28 @@ describe('self-improvement loop (#569)', () => {
     });
   });
 
+  describe('conflict candidates only compare against governing rules', () => {
+    it('ignores proposals and rejections', () => {
+      // Existing suites seed only operator-authored rules, which resolve to
+      // active, so they stay green with the status filter removed. A proposal
+      // has to exist for this to test anything.
+      store.sessionRules.create({ content: 'migrations require postgres schema validation', projectId: project.id });
+      store.sessionRules.create({
+        content: 'migrations require postgres schema rollback', projectId: project.id, createdBy: 'ai'
+      });
+      const rejected = store.sessionRules.create({
+        content: 'migrations require postgres schema snapshots', projectId: project.id, createdBy: 'ai'
+      });
+      store.sessionRules.setStatus(rejected.id, 'rejected');
+
+      const candidates = store.sessionRules
+        .findConflictCandidates('migrations require postgres schema review', project.id);
+      const contents = candidates.map((c) => c.rule.content);
+      assert.deepEqual(contents, ['migrations require postgres schema validation'],
+        'an unreviewed proposal and a declined rule are not things to reconcile against');
+    });
+  });
+
   describe('the wrap proposal step', () => {
     it('proposes one rule per active learning, all at status proposed', async () => {
       const a = store.learnings.create({ projectId: project.id, content: 'lesson A', tier: 'active' });
