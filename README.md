@@ -161,7 +161,7 @@ The install script:
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3102**. On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
+Access the landing page at **http://localhost:3102**. (That is the port the installed launchd service uses — the plist sets `TANGLECLAW_PORT=3102`. Running `node server.js` by hand instead skips launchd and listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
 ### Prerequisites
 

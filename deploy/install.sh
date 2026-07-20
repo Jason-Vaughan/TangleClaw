@@ -19,6 +19,18 @@ red() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
 yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 
+# ── Platform guard ──
+# Everything below assumes macOS: the services are launchd agents and the
+# dependency bootstrap is Homebrew. Without this check a Linux user gets a
+# Linuxbrew bootstrap followed by launchd steps that cannot work — a partial
+# install instead of the honest refusal the README already documents. Fail
+# here, before anything is written or downloaded.
+if [ "$(uname -s)" != "Darwin" ]; then
+  red "ERROR: TangleClaw requires macOS — it manages its services with launchd."
+  red "       Linux support is not yet available (see README → Prerequisites)."
+  exit 1
+fi
+
 # ── Dependency bootstrap (single-command install) ──
 # Make `install.sh` self-sufficient: every runtime dependency is auto-installed
 # via Homebrew, and Homebrew itself is bootstrapped if absent. The privileged,
@@ -32,8 +44,21 @@ ensure_homebrew() {
   if command -v brew &>/dev/null; then BREW="$(command -v brew)"; return 0; fi
   yellow "  Homebrew not found — installing it (needed to auto-install dependencies)."
   yellow "  The Homebrew installer may prompt you for your password."
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-    || { red "ERROR: Homebrew install failed. Install it from https://brew.sh and re-run."; exit 1; }
+  # Download and execute as two steps, deliberately. Inlining the command
+  # substitution into `bash -c "$(curl …)"` makes a failed download
+  # indistinguishable from a successful one: curl writes nothing, `bash -c ""`
+  # exits 0, the `||` guard never fires, and the script proceeds to blame PATH
+  # for a Homebrew that was never installed — advice that sends the user in a
+  # loop, since re-running reproduces it. Each failure mode gets its own message.
+  local brew_installer
+  brew_installer="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    || { red "ERROR: could not download the Homebrew installer (check your network connection)."; \
+         red "       Install Homebrew manually from https://brew.sh and re-run."; exit 1; }
+  [ -n "$brew_installer" ] \
+    || { red "ERROR: the downloaded Homebrew installer was empty — refusing to run it."; \
+         red "       Install Homebrew manually from https://brew.sh and re-run."; exit 1; }
+  NONINTERACTIVE=1 /bin/bash -c "$brew_installer" \
+    || { red "ERROR: the Homebrew installer failed. Install it from https://brew.sh and re-run."; exit 1; }
   # Prime brew into this shell's PATH (Apple Silicon → /opt/homebrew, Intel → /usr/local).
   if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)";
   elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
