@@ -26,6 +26,44 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-19: Chunk 04c — a project can turn off a wrap step without forking its methodology
+
+<!-- prawduct: type=feat | chunks=04c | scope=wrap-v2 | status=shipped -->
+
+**Why:** `wrap_pipeline.steps` is framework-owned and shared by every project on a
+methodology, and the boot-time reconcile clone-replaces that whole subtree on a
+`schemaRevision` bump. So the only supported way to turn one step off was forking the
+entire pipeline into a new methodology, which then stopped receiving framework updates —
+and editing the template in place looked like it worked until the next boot silently undid
+it. Overrides now live in the project's own `.tangleclaw/project.json`, which no
+template-sync path writes; the split mirrors `rules.core` (framework-owned, force-reset)
+vs `rules.extensions` (project-owned, preserved).
+
+**Scope correction found in discovery:** the plan's premise that `versionBumpEnabled`,
+`featureIndexEnabled`, `projectMapEnabled`, `wrapSections`, and `silentPrime` still needed
+to "become the real configuration surface" was stale — all five already existed with live
+runtime gates. The only genuinely-new work was the step-override mechanism.
+
+**Ratified boundary (operator, 2026-07-19):** disable/reconfigure only. Order and
+membership stay framework-owned, because step order encodes correctness contracts between
+steps (changelog before version-bump before commit) that are guaranteed by one fingerprint
+check against the bundled list; per-project ordering would convert one checked global
+property into an unchecked per-project one — the same defect shape 04b existed to close.
+
+**Two exclusions are load-bearing, both Critic-sharpened:** `verifyChanged` is not
+overridable (emptying it would leave a verification reporting success while checking
+nothing), and a `commit`-kind step cannot be disabled (it is the sole staged-write flush
+point, so disabling it would leave every other step reporting work that never lands — the
+Critic caught this one; the first cut allowed it). `blocker` IS overridable, and the
+distinction is honesty rather than strength: a non-blocking step still runs, still
+verifies, and still reports failure in the drawer.
+
+**Also fixed from the Critic pass:** the CHANGELOG and plan both documented
+`blocker: "errors-only"` as the way to stop a step halting the wrap — it is the opposite,
+a stricter form of `true` that halts. Corrected to `false` in both.
+
+**Classification:** build
+
 ## 2026-07-19: Chunk 04b — the wrap stops reporting success it never verified (#571, #638, #540)
 
 <!-- prawduct: type=feat | chunks=04b | scope=wrap-v2 | status=shipped -->

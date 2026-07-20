@@ -23,6 +23,7 @@ setLevel('error');
 const store = require('../lib/store');
 const wrapPipeline = require('../lib/wrap-pipeline');
 const overrides = require('../lib/wrap-step-overrides');
+const projects = require('../lib/projects');
 
 const FIXTURE_METHODOLOGY = 'override-fixture';
 
@@ -195,6 +196,43 @@ describe('per-project wrap step overrides', () => {
       assert.equal(v.ok, false);
       assert.match(v.error, /commit\.enabled/);
     });
+
+    it('rejects disabling the commit step when handed the pipeline', () => {
+      const steps = [{ id: 'commit', kind: 'commit' }];
+      const v = overrides.validateOverrides({ commit: { enabled: false } }, steps);
+      assert.equal(v.ok, false);
+      assert.match(v.error, /cannot be disabled/);
+    });
+
+    it('still allows reconfiguring — not disabling — the commit step', () => {
+      const steps = [{ id: 'commit', kind: 'commit' }];
+      assert.equal(overrides.validateOverrides({ commit: { blocker: false } }, steps).ok, true);
+      assert.equal(overrides.validateOverrides({ commit: { enabled: true } }, steps).ok, true);
+    });
+  });
+
+  describe('the flush step cannot be disabled', () => {
+    it('refuses enabled:false on a commit-kind step, so staged work cannot be silently dropped', () => {
+      // Every other step stages its writes in memory; the commit step is the
+      // only thing that flushes them. Disabling it would leave version-bump and
+      // changelog-update reporting done with nothing on disk.
+      const r = overrides.resolveStep({ id: 'commit', kind: 'commit' }, { commit: { enabled: false } });
+      assert.equal(r.enabled, true, 'the flush must survive a project trying to switch it off');
+      assert.deepEqual(r.rejected, ['enabled']);
+    });
+
+    it('keys the refusal on kind, so renaming the step in a methodology does not evade it', () => {
+      const r = overrides.resolveStep({ id: 'land-it', kind: 'commit' }, { 'land-it': { enabled: false } });
+      assert.equal(r.enabled, true);
+    });
+
+    it('still permits other overrides on that step', () => {
+      const r = overrides.resolveStep({ id: 'commit', kind: 'commit', blocker: true },
+        { commit: { blocker: false } });
+      assert.equal(r.enabled, true);
+      assert.equal(r.step.blocker, false);
+      assert.deepEqual(r.rejected, []);
+    });
   });
 
   describe('the runner honors overrides', () => {
@@ -318,6 +356,38 @@ describe('per-project wrap step overrides', () => {
         assert.ok(!owned.startsWith('wrapStepOverrides'),
           `${owned} would put project overrides back under framework ownership`);
       }
+    });
+  });
+
+  describe('the settings API round-trip', () => {
+    it('persists a valid map and reports it back on the project', () => {
+      const map = { 'project-map': { enabled: false } };
+      const res = projects.updateProject('fixture-test', { wrapStepOverrides: map });
+      assert.deepEqual(res.errors || [], []);
+      assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides, map);
+      assert.deepEqual(projects.getProject('fixture-test').wrapStepOverrides, map);
+    });
+
+    it('clears every override when handed an empty map', () => {
+      projects.updateProject('fixture-test', { wrapStepOverrides: {} });
+      assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides, {});
+      assert.deepEqual(projects.getProject('fixture-test').wrapStepOverrides, {});
+    });
+
+    it('rejects a non-overridable field without writing anything', () => {
+      projects.updateProject('fixture-test', { wrapStepOverrides: { 'project-map': { enabled: false } } });
+      const res = projects.updateProject('fixture-test', {
+        wrapStepOverrides: { 'changelog-update': { verifyChanged: [] } }
+      });
+      assert.ok(res.errors && res.errors.length > 0);
+      assert.match(res.errors[0], /verifyChanged/);
+      assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides,
+        { 'project-map': { enabled: false } }, 'a rejected save must not mutate state');
+      projects.updateProject('fixture-test', { wrapStepOverrides: {} });
+    });
+
+    it('reports an empty map for a project that has never configured one', () => {
+      assert.deepEqual(projects.getProject('override-test').wrapStepOverrides, {});
     });
   });
 

@@ -85,6 +85,7 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `projectMapEnabled` | boolean | `false` | Maintain `PROJECT-MAP.md` during wrap |
 | `wrapAutoPrEnabled` | boolean | `true` | After an auto-branched wrap commit, push and open a PR back to the original branch |
 | `wrapSections` | array\|null | `null` | Which continuity wrap-summary sections render. `null` = all of them |
+| `wrapStepOverrides` | object | `{}` | Per-step wrap overrides, keyed by step id — see [Wrap step overrides](#wrap-step-overrides) below |
 | `medusaEnabled` | boolean | `false` | Auto-start this project's sessions on the Medusa switchboard |
 | `medusaWake` | boolean | `false` | Wake an idle session on inbound switchboard messages |
 | `defaultLaunchMode` | string | `"default"` | Engine launch-mode key this project launches in by default |
@@ -111,6 +112,51 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `zeroDebtProtocol` | boolean | `false` | No technical debt allowed |
 | `independentCritic` | boolean | `false` | Independent Critic review required |
 | `adversarialTesting` | boolean | `false` | Adversarial test cases required |
+
+### Wrap Step Overrides
+
+`wrapStepOverrides` turns off or reconfigures an individual wrap step for one project. It is
+keyed by the step's `id` from the methodology's `wrap_pipeline.steps`:
+
+```json
+"wrapStepOverrides": {
+  "version-bump":     { "enabled": false },
+  "changelog-update": { "blocker": false }
+}
+```
+
+Overrides live here rather than in the methodology template because the template's step list is
+framework-owned: it is replaced wholesale whenever a newer framework revision ships, so a
+template edit is silently undone at the next server start. Nothing that syncs templates writes
+`project.json`.
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `enabled` | boolean | `false` skips the step. It still appears in the wrap drawer as a skip with its reason, rather than disappearing from the run |
+| `blocker` | `true` \| `false` \| `"errors-only"` | Whether a failed step halts the rest of the wrap. `false` means the step still runs, still reports failure, and the wrap continues. **`"errors-only"` halts** (it is a stricter form of `true`, not a softer one) — use `false` to stop a step halting your wrap |
+| `prompt` | string | Replaces the instruction text for an `ai-content` step. An empty string makes the step skip itself |
+
+**What you cannot change.** Step *order and membership* are framework-owned — no adding,
+removing, or reordering. Order carries correctness contracts between steps (the changelog must
+be written before the version bump reads it to choose a level), guaranteed by one check against
+the shared pipeline; per-project ordering would turn that into a promise nothing verifies. If
+you genuinely need a different pipeline, fork a methodology instead.
+
+Fields outside the table above are ignored, and the API rejects them with the field named. Two
+are worth calling out:
+
+- **`verifyChanged` cannot be overridden.** It lists the files a step must actually have changed
+  to count as done. Blanking it would leave the check reporting success while verifying nothing.
+- **The `commit` step cannot be disabled.** Every other step stages its writes in memory; the
+  commit step is the only one that flushes them to disk. Turning it off would leave the version
+  bump and changelog update reporting success with nothing landing. You may still set its
+  `blocker`.
+
+**Relationship to the individual toggles.** `versionBumpEnabled`, `featureIndexEnabled`, and
+`projectMapEnabled` are independent of this map: each is checked by its own step at run time, so
+either switch turning a step off is enough to skip it. There is no precedence to reason about —
+they cannot contradict, only agree or disagree about which one did the skipping. Prefer the
+dedicated toggle where one exists; it is the surfaced setting.
 
 ## Project Groups
 
