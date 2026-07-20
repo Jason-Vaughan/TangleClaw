@@ -72,6 +72,23 @@ All notable changes to TangleClaw are documented in this file.
   the parser tolerates absent headings, so this is inert. The `methodology` project
   field no longer influences the wrap; the field, chooser, templates, and registry
   are removed in the second half of #538.
+- **Eval Audit scores every project against one dimension set.** Custom eval dimensions
+  were declared by methodology templates, so the prawduct-specific tier-3
+  `methodology_compliance` dimension retires with them. Scores are now comparable across
+  projects rather than only within a workflow. (Zero recorded scores were affected.)
+- **The prime prompt's size ceiling is code-owned.** It was a per-template number (2000 or
+  4000 tokens); it is now a single 4000-token constant — deliberately the larger of the
+  two, because the cap truncates the prompt's tail and a cut tail silently drops the
+  directive sections at the end of the prime (#557).
+- **New projects no longer get three extension rules switched on for them.** The prawduct
+  template used to enable `independentCritic`, `docsParity`, and `decisionFramework` at
+  create/attach; those rules render into a generated `CLAUDE.md`, which is skipped
+  wholesale for plugin-governed projects — so the seeding was already near-inert for
+  exactly the projects it targeted. Toggle them per project in Settings.
+- **The project-action endpoint reports why it refused.** `POST
+  /api/projects/:name/actions/:command` now routes on an explicit result code instead of
+  matching on error-message text, so an unavailable action returns 404 with a clear
+  reason rather than depending on the wording of a message.
 
 ### Internal
 
@@ -135,26 +152,6 @@ All notable changes to TangleClaw are documented in this file.
   Project actions are now published as a top-level `actions[]` on the project payload.
   No other repo in the fleet consumes these, so this ships as a normal release rather
   than a major bump — say the word if you'd rather it carry a major.
-
-### Changed
-
-- **Eval Audit scores every project against one dimension set.** Custom eval dimensions
-  were declared by methodology templates, so the prawduct-specific tier-3
-  `methodology_compliance` dimension retires with them. Scores are now comparable across
-  projects rather than only within a workflow. (Zero recorded scores were affected.)
-- **The prime prompt's size ceiling is code-owned.** It was a per-template number (2000 or
-  4000 tokens); it is now a single 4000-token constant — deliberately the larger of the
-  two, because the cap truncates the prompt's tail and a cut tail silently drops the
-  directive sections at the end of the prime (#557).
-- **New projects no longer get three extension rules switched on for them.** The prawduct
-  template used to enable `independentCritic`, `docsParity`, and `decisionFramework` at
-  create/attach; those rules render into a generated `CLAUDE.md`, which is skipped
-  wholesale for plugin-governed projects — so the seeding was already near-inert for
-  exactly the projects it targeted. Toggle them per project in Settings.
-- **The project-action endpoint reports why it refused.** `POST
-  /api/projects/:name/actions/:command` now routes on an explicit result code instead of
-  matching on error-message text, so an unavailable action returns 404 with a clear
-  reason rather than depending on the wording of a message.
 
 ## [4.29.0] - 2026-07-19
 
