@@ -1,6 +1,6 @@
 # Configuration Reference
 
-TangleClaw uses a layered configuration system: global config for system-wide settings, per-project config for project-specific settings, and engine/methodology profiles for behavior definitions.
+TangleClaw uses a layered configuration system: global config for system-wide settings, per-project config for project-specific settings, and engine profiles for behavior definitions.
 
 ## File Locations
 
@@ -8,7 +8,6 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 |------|---------|
 | `~/.tangleclaw/config.json` | Global configuration |
 | `~/.tangleclaw/engines/*.json` | Engine profiles |
-| `~/.tangleclaw/templates/*/template.json` | Custom methodology templates |
 | `~/.tangleclaw/global-rules.md` | Global rules (applied to all projects) |
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
@@ -22,7 +21,6 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | `serverPort` | number | `3101` | Landing page HTTP server port. The install script sets `TANGLECLAW_PORT=3102` via launchd, so the effective default after installation is **3102**. |
 | `ttydPort` | number | `3100` | ttyd terminal emulator port. The install script configures ttyd on port **3101** via launchd. |
 | `defaultEngine` | string | `"claude"` | Default engine for new projects |
-| `defaultMethodology` | string | `"minimal"` | Default methodology for new projects |
 | `projectsDir` | string | `"~/Documents/Projects"` | Root directory for managed projects |
 | `deletePassword` | string\|null | `null` | Password for destructive operations (hashed via scrypt when saved) |
 | `quickCommands` | array | see below | Global quick command buttons |
@@ -70,8 +68,6 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `engine` | string\|null | `null` | Engine ID for this project |
-| `methodology` | string\|null | `null` | Methodology template ID |
-| `methodologyPhase` | string\|null | `null` | Current methodology phase |
 | `rules.core` | object | all `true` | Core enforcement rules (not editable) |
 | `rules.extensions` | object | all `false` | Opt-in extension rules |
 | `ports` | object | `{}` | Registered port assignments |
@@ -129,9 +125,9 @@ one shared pipeline that every project runs):
 The pipeline's step list ships in code and cannot be edited per project; overrides in
 `project.json` — a file only the project owns — are the per-project configuration surface.
 
-Projects that ran the retired `minimal` methodology (whose wrap was commit-only) were
-migrated automatically: TangleClaw seeded overrides disabling every step except `commit`,
-plus a `wrapOverridesSeeded: true` marker. The marker makes the seeding one-shot — clear
+Projects whose wrap was commit-only before the pipeline became code-owned were migrated
+automatically: TangleClaw seeded overrides disabling every step except `commit`, plus a
+`wrapOverridesSeeded: true` marker. The marker makes the seeding one-shot — clear
 the overrides map (leave the marker) to opt the project into the full pipeline; it will
 not be re-seeded.
 
@@ -222,62 +218,13 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
 }
 ```
 
-## Methodology Template JSON Schema
-
-Methodology templates define project workflow. See the [Methodology Guide](methodology-guide.md) for full details on creating custom templates.
-
-```json
-{
-  "id": "string — unique identifier",
-  "name": "string — display name",
-  "description": "string — brief description",
-  "type": "string — must be 'methodology'",
-  "version": "string — semver version",
-  "phases": [
-    { "id": "string", "name": "string", "description": "string",
-      "weight": "string — 'deep'|'normal'|'focused'",
-      "offerContextReset": "boolean" }
-  ],
-  "statusContract": {
-    "command": "string|null — shell command",
-    "parse": "string|null — 'json', 'yaml-field', or null",
-    "field": "string|null — dot-notation field path",
-    "badge": "string — badge label",
-    "colorMap": { "phase-id": "color" }
-  },
-  "detection": {
-    "strategy": "string — 'directory' or 'file'",
-    "target": "string — directory or file name"
-  },
-  "wrap": {
-    "command": "string|null",
-    "steps": ["array of step ids"],
-    "captureFields": ["array of field names"]
-  },
-  "prime": {
-    "format": "string — 'markdown'",
-    "sections": ["array of section ids"],
-    "maxTokens": "number — token limit for prime prompt"
-  },
-  "defaultRules": { "extensionRuleId": "boolean" },
-  "actions": [
-    { "label": "string", "command": "string", "confirm": "boolean" }
-  ],
-  "init": {
-    "directories": ["array of dir paths"],
-    "files": { "file-path": "file-content" },
-    "postInit": "string|null — shell command"
-  }
-}
-```
-
 ## SQLite Database
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
 **Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`, `project_groups`, `group_members`, `shared_docs`, `openclaw_connections`, `eval_scores`, `eval_baselines`, `eval_incidents`
 
-Current schema version: **12**
+Current schema version: **28**
 
 ### Port Leases Table
 
@@ -316,14 +263,12 @@ TangleClaw exposes 62 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/models/status` | GET | Upstream API status for all engines |
 | `/api/update-status` | GET | Version update check |
 
-### Engines & Methodologies
+### Engines
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/engines` | GET | List engines with availability |
 | `/api/engines/:id` | GET | Engine profile details |
-| `/api/methodologies` | GET | List methodology templates |
-| `/api/methodologies/:id` | GET | Methodology template details |
 
 ### Projects
 

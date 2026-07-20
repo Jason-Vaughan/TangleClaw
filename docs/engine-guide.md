@@ -8,7 +8,7 @@ Each engine is a JSON profile that tells TangleClaw:
 
 - How to **detect** if the engine is installed
 - How to **launch** the engine in a tmux session
-- What **config file** format the engine expects (so TangleClaw can translate methodology rules)
+- What **config file** format the engine expects (so TangleClaw can translate project rules)
 - What **slash commands** the engine supports (shown as pills in the command bar)
 - What **capabilities** the engine has (prime prompt support, co-author format, etc.)
 
@@ -172,18 +172,17 @@ When a session launches, TangleClaw generates the engine-specific config file in
 - Core rules (CHANGELOG updates, JSDoc, testing, session wrap protocol, PortHub registration)
 - Extension rules (identity sentry, docs parity, decision framework, etc.)
 - PortHub guide (port management API reference, when PortHub registration is enabled)
-- Methodology template name and description
 
 All engines with `supportsConfigFile: true` receive the same rule content, translated into each engine's native format:
 
 | Engine | Config File | How Rules Are Included |
 |--------|------------|----------------------|
-| Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide, methodology info |
+| Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide |
 | Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
 | Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
 | Antigravity | `.antigravity.md` | Markdown sections (same format as CLAUDE.md), written to the project root |
 
-This translation is automatic — methodology authors write rules once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules, PortHub references, and methodology info.
+This translation is automatic — rules are written once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules and PortHub references.
 
 ## Parity Checklist for New Engines
 
@@ -195,7 +194,6 @@ When adding a new engine, verify that its generated config includes all of the f
 - [ ] **Extension rules** — active extension rules (identitySentry, docsParity, decisionFramework, etc.) translated into the engine's format
 - [ ] **PortHub guide or reference** — full Port Management guide (for markdown-based engines) or API reference comment (for YAML-based engines)
 - [ ] **Global rules** — content from `~/.tangleclaw/global-rules.md` injected into the config
-- [ ] **Methodology info** — methodology name and description when a template is provided
 - [ ] **Generator switch case** — a `case` entry in `generateConfig()` for the new generator name
 - [ ] **Profile `configFormat.generator`** — must exactly match the switch case string
 - [ ] **`_getRulesContent()` used** — the generator function must call `_getRulesContent()` to get the canonical rule set (do not duplicate rule logic)
@@ -214,7 +212,7 @@ When adding a new engine, verify that its generated config includes all of the f
 
 You can change a project's engine at any time from the project settings on the landing page or the session settings modal. The change takes effect on the next session launch — TangleClaw regenerates the config file in the new engine's format.
 
-No data is lost when switching engines. Session history, learnings, and methodology state are all engine-independent.
+No data is lost when switching engines. Session history and learnings are engine-independent.
 
 ## Model Status Monitoring
 

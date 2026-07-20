@@ -126,7 +126,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       assert.equal(_isIndexableCandidate('public/ui.js'), true);
       assert.equal(_isIndexableCandidate('public/index.html'), true);
       assert.equal(_isIndexableCandidate('public/style.css'), true);
-      assert.equal(_isIndexableCandidate('data/templates/prawduct/template.json'), true);
+      assert.equal(_isIndexableCandidate('data/engines/claude.json'), true);
       assert.equal(_isIndexableCandidate('docs/note.md'), true);
       assert.equal(_isIndexableCandidate('hooks/run.sh'), true);
       assert.equal(_isIndexableCandidate('lib/foo.jsx'), true);

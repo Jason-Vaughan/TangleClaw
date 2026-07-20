@@ -6,7 +6,7 @@ Eval Audit Mode is a multi-tiered AI agent evaluation system built into TangleCl
 
 ## Why It Exists
 
-AI agents running on remote OpenClaw instances operate autonomously. Eval Audit Mode provides continuous, methodology-aware quality monitoring so you can answer: *Is my agent behaving correctly? Is quality drifting? Are there patterns I should investigate?*
+AI agents running on remote OpenClaw instances operate autonomously. Eval Audit Mode provides continuous quality monitoring so you can answer: *Is my agent behaving correctly? Is quality drifting? Are there patterns I should investigate?*
 
 It runs alongside sessions — not in them. The agent sees a startup banner noting it's being evaluated, but scoring happens externally via LLM judge calls.
 
@@ -145,28 +145,6 @@ Every score record includes `costUsd` — the cost of its judge calls. `getSessi
 
 ---
 
-## Methodology Integration
-
-Eval dimensions are **methodology-aware**. Each methodology template can define custom dimensions and judge context.
-
-### Prawduct Methodology
-
-Adds governance-focused dimensions:
-- **Tier 2**: `decision_framework_adherence` — Did the agent follow structured decision-making?
-- **Tier 3**: `independent_thinking` (on disagreement), `methodology_compliance` (always)
-- **Judge context**: "You are evaluating an AI agent governed by the Prawduct methodology..."
-
-### Custom Methodologies
-
-Any methodology template can include an `evalDimensions` block with:
-- `schemaVersion` (required)
-- `tier1` checks (must be `"pattern"` type with patterns array)
-- `tier2` dimensions (id + description)
-- `tier3` dimensions (id + description + `when` filter)
-- `judgeContext` string
-
----
-
 ## Baselines & Drift Detection
 
 ### Baseline Computation
@@ -256,7 +234,7 @@ This enables comparison between human and LLM judgments over time.
 
 ## Wrap Quality Scoring
 
-Tracks whether sessions follow the wrap protocol defined by their methodology.
+Tracks whether sessions follow the wrap protocol.
 
 **Expected steps** (pattern-matched against session-end exchanges):
 - Version bump
