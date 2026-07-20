@@ -283,6 +283,27 @@ describe('deploy/install.sh', () => {
       assert.doesNotMatch(output, /not on PATH/i,
         'must NOT blame PATH — Homebrew was never installed, and that advice sends the user in a circle');
     });
+
+    it('refuses to execute an empty installer payload (#615)', () => {
+      // The subtler half of the same defect: curl exits 0 on a 200 response
+      // with an empty body (a captive portal, a proxy error page stripped to
+      // nothing), so the download guard passes and we would again run
+      // `bash -c ""` — succeeding at nothing and then blaming PATH. Success
+      // plus an empty payload must still be refused.
+      assert.match(script, /\[ -n "\$brew_installer" \]/,
+        'the empty-payload guard must exist before this test runs the script');
+
+      const box = sandbox({
+        uname: 'echo Darwin',
+        curl: 'exit 0' // succeeds, writes nothing
+      });
+      const { code, output } = runInstall(box);
+
+      assert.equal(code, 1, 'an empty installer payload must fail');
+      assert.match(output, /empty/i, 'must say the payload was empty');
+      assert.doesNotMatch(output, /not on PATH/i,
+        'must not fall through to the PATH diagnosis');
+    });
   });
 
   describe('server plist stderr breadcrumb (#324)', () => {

@@ -26,6 +26,43 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: First-run install honesty (#614, #615, #616, #617)
+
+<!-- prawduct: type=bugfix | scope=install-first-run | status=shipped -->
+
+**Why:** the tc-cleanroom acceptance gate reproduces these on every run, and they share one
+shape — the code handled a failure correctly and then described it wrongly. That is the
+worst kind of first-run defect: the remediation text sends a new operator somewhere the
+problem isn't, and two of these sent them in a loop.
+
+**What:** `install.sh` gained a platform guard so a Linux user gets the refusal the README
+already documented instead of a Linuxbrew bootstrap and unusable launchd steps (#614). Its
+Homebrew bootstrap now captures the installer, rejects an empty payload, and executes it as
+separate steps — `bash -c "$(curl …)"` turned a failed download into an empty script that
+exits 0, so the guard never fired and the script blamed PATH for a Homebrew that was never
+installed (#615). The startup banner takes its scheme from the constructed server via a new
+`serverProtocol()` rather than from config intent, and marks `httpsFallback: true` when the
+two diverge — on a fresh install HTTPS is enabled before any certificate exists, so the
+server falls back to HTTP and then announced `https://` two lines later (#616).
+
+**Notable:** #617 was misdiagnosed as filed. The README's 3102 is correct for the documented
+path (the generated plist sets `TANGLECLAW_PORT=3102`); the gate saw 3101 only because
+install.sh had already refused on Linux, so the server was started by hand on the code
+default. Fixing it as asked would have sent every real macOS installer to a dead port, so
+the distinction is documented instead. Reviewing that paragraph surfaced a genuine docs bug
+it would otherwise have compounded: five places documented ttyd on 3101 when it binds 3100
+in direct mode and a Unix socket under caddy — leaving 3101 meaning two different services
+in one README.
+
+**Tests:** the install.sh tests execute the script rather than grepping it, because these
+defects were behavioral and a source-shape assertion matches the broken version just as
+happily. Each is interlocked — it asserts from the source that the fix is present and
+precedes any shell-out, and only then runs the script. That interlock is load-bearing, not
+ceremony: without it a regressed guard escapes the stubbed PATH through
+`ensure_homebrew`'s absolute `/opt/homebrew` probe and reaches the developer's real
+Homebrew, which is exactly what happened while validating these tests.
+
+
 ## 2026-07-20: Chunk 06b — methodology-layer deletion (#538 second half)
 
 <!-- prawduct: type=refactor | chunks=06b | scope=wrap-v2 | status=shipped -->

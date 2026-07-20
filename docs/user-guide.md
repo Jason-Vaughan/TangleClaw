@@ -22,7 +22,7 @@ cd TangleClaw
 The install script verifies prerequisites, generates launchd plists, loads the services, and runs a health check. On success, you'll see:
 
 - **Landing page**: http://localhost:3102
-- **Terminal (ttyd)**: http://localhost:3101
+- **Terminal (ttyd)**: http://localhost:3100
 
 Both services auto-restart on crash via launchd KeepAlive.
 
@@ -352,7 +352,7 @@ launchctl list | grep ttyd
 launchctl list | grep ttyd
 
 # Test ttyd directly
-curl -s http://localhost:3101
+curl -s http://localhost:3100
 ```
 
 ### Session Won't Launch

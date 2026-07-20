@@ -93,5 +93,16 @@ describe('startup protocol reporting (#616)', () => {
       assert.doesNotMatch(serverSource, /const protocol = effectiveHttps/,
         'deriving the banner from config intent is the #616 regression');
     });
+
+    it('flags the divergence when HTTPS was requested but is not being served', () => {
+      // Reporting `http` is honest but silent about WHY, and the fallback WARN
+      // it points back at scrolls away in a busy startup. The marker is what
+      // links the two lines for an operator reading the log after the fact —
+      // which is the normal case here, since the operator is rarely at the
+      // machine. Structural for the same reason as the pins above: the banner
+      // is inside `require.main === module`.
+      assert.match(serverSource, /effectiveHttps && !servingHttps \? \{ httpsFallback: true \}/,
+        'the banner must mark the intent-vs-reality divergence');
+    });
   });
 });

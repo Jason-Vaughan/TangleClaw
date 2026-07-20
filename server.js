@@ -4449,10 +4449,6 @@ route('POST', '/api/audit/retention/run', (_req, res, _params, body) => {
 // ── Server Creation ──
 
 /**
- * Create and configure the HTTP server (does not start listening).
- * @returns {http.Server}
- */
-/**
  * Report the protocol a constructed server actually speaks.
  *
  * The distinction this exists to preserve: config `httpsEnabled` is *intent*,

@@ -240,7 +240,7 @@ Global config lives at `~/.tangleclaw/config.json` (auto-created on first run).
 
 Key settings:
 - `serverPort` — landing page server port (code default: 3101, launchd override: 3102)
-- `ttydPort` — ttyd terminal port (code default: 3100, launchd override: 3101)
+- `ttydPort` — ttyd terminal port (3100; in `caddy` ingress mode ttyd binds a Unix socket instead of a TCP port)
 - `projectsDir` — root directory for managed projects
 - `defaultEngine` — default engine for new projects
 - `deletePassword` — optional password for destructive operations
@@ -270,13 +270,13 @@ launchd (com.tangleclaw.server)
   └─ node server.js
      ├─ Landing page HTTP(S) server (:3102)
      ├─ API endpoints (/api/*)
-     ├─ Reverse proxy /terminal/* → ttyd (:3101)
+     ├─ Reverse proxy /terminal/* → ttyd (:3100)
      ├─ Reverse proxy /openclaw/* → SSH tunnel → OpenClaw gateway
      ├─ WebSocket upgrade (ttyd + OpenClaw)
      └─ Session wrapper + OpenClaw viewer HTML serving
 
 launchd (com.tangleclaw.ttyd)
-  └─ ttyd --port 3101 tmux attach (PTY-leak watchdog supervised)
+  └─ ttyd --port 3100 tmux attach (PTY-leak watchdog supervised)
      └─ WebSocket terminal access
 
 tmux sessions (spawned on demand)
