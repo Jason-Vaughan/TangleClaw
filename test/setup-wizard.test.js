@@ -231,7 +231,6 @@ describe('Setup Wizard', () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: projectsDir,
         defaultEngine: 'claude',
-        defaultMethodology: 'minimal',
         chimeEnabled: false
       });
 

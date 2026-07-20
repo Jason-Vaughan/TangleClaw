@@ -388,7 +388,6 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       ctx.wizard.httpsCertPath = '/certs/cert.pem';
       ctx.wizard.httpsKeyPath = '/certs/key.pem';
       ctx.wizard.defaultEngine = 'claude';
-      ctx.wizard.defaultMethodology = 'minimal';
       ctx.wizard.projectsDir = '/proj';
       await ctx.wizardComplete();
       const call = ctx.__apiCalls.find((c) => c.url === '/api/setup/complete');
