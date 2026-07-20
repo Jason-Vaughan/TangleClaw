@@ -72,7 +72,6 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `rules.extensions` | object | all `false` | Opt-in extension rules |
 | `ports` | object | `{}` | Registered port assignments |
 | `quickCommands` | array | `[]` | Project-specific quick command buttons |
-| `actions` | array | `[]` | Custom action buttons |
 | `tags` | array | `[]` | Project tags for filtering |
 | `silentPrime` | boolean | `true` | Deliver the session prime silently rather than as typed input |
 | `versionBumpEnabled` | boolean | `true` | Run the wrap's `version-bump` step. Turn off for projects that manage their own versioning |

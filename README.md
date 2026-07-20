@@ -112,7 +112,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Antigravity (Google) in the session banner
 
 ### Governance
-- **[Prawduct](https://github.com/brookstalley/prawduct) V2 plugin delegation** — projects governed by the Prawduct Claude Code plugin get governance from the plugin; TangleClaw detects the install and defers (no config clobbering), keeping its own lightweight baseline for everything else. Governance drift is shown, never silent
+- **[Prawduct](https://github.com/brookstalley/prawduct) V2 plugin delegation** — projects governed by the Prawduct Claude Code plugin get governance from the plugin; TangleClaw detects the install and defers (no config clobbering), keeping its own lightweight baseline for everything else. Projects still on the legacy vendored hook are flagged as migration candidates
 - **Session rules** — durable per-project behavioral directives with operator editing (Project Rules modal), AI-proposed improvements at wrap, an independent Critic gate on autonomous edits, and full version history with rollback
 - **Global rules** — markdown rules applied to every project across all engines, editable from the dashboard
 

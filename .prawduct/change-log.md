@@ -26,6 +26,43 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Chunk 06b — methodology-layer deletion (#538 second half)
+
+<!-- prawduct: type=refactor | chunks=06b | scope=wrap-v2 | status=shipped -->
+
+**Why:** 06a made the wrap code-owned, leaving the methodology layer inert but present —
+a registry, two bundled templates, a `methodology` column, and a chooser that still asked
+operators to pick a workflow that no longer decided anything. Inert-but-present is the
+worst of both: it reads as load-bearing to the next session and keeps costing review
+attention.
+
+**What:** deleted `lib/methodologies.js` (661 lines), `lib/skills.js` (zero production
+consumers), `data/templates/*`, the store's template API + reconcile/fork/tombstone
+machinery, the V1 playbook plumbing in all five engine generators, the template-hook merge
+in `syncEngineHooks`, `docs/methodology-guide.md`, and the `GET /api/methodologies`
+endpoints; removed the chooser, settings dropdown, switch modal, banner label, phase chip,
+and setup-wizard preference. Schema v27→v28 drops four columns — but seeds every
+commit-only project's `wrapStepOverrides` FIRST, in the same function, so no install can
+reach the new schema unseeded (including archived rows and installs that skipped 06a), and
+snapshots the DB (`.pre-v28-backup`) since this is TC's first destructive migration.
+`governanceState()` re-keys on plugin detection with a neutral `ungoverned` state —
+`drift-no-governance` dies because it detected a contradiction between a project's claimed
+methodology and its real enforcement, and there is no claim left to contradict. Project
+actions move to a code-owned registry gated on `governed-plugin`, with `availableActions`
+as the ONE predicate behind both the rendered button and the endpoint (ADR 0001).
+
+**Verified against production:** the migration ran on a copy of the live 38-project
+database — v28, columns gone, 685 sessions preserved, PortHub's 13 disabled wrap steps
+intact. Live fleet after cutover: 13 governed-plugin (offering Run Critic), 12 ungoverned
+(no badge, no buttons), 9 not-applicable, 0 governed-vendored.
+
+**Two live behaviors nearly lost to a too-confident read:** the prime prompt's size cap was
+sourced from the template and looked dead (it is now a code-owned 4000-token constant, the
+larger of the two retired values, because the cap truncates the prompt TAIL and a cut tail
+silently drops directive sections — #557); and the deleted ai-content prompt pins protected
+the `## Result` reply contract the handler parses, so they were ported onto the code-owned
+pipeline rather than dropped (Critic-caught, BLOCKING).
+
 ## 2026-07-20: Chunk 06a — code-owned wrap pipeline + behavior-preserving minimal migration (#538 first half)
 
 <!-- prawduct: type=refactor | chunks=06a | scope=wrap-v2 | status=shipped -->

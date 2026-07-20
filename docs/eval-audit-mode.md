@@ -43,6 +43,25 @@ It runs alongside sessions — not in them. The agent sees a startup banner noti
 
 ---
 
+## One dimension set for every project
+
+Eval dimensions used to be per-workflow: a project's methodology template could declare its
+own `evalDimensions` block, and the `prawduct` template added governance-specific dimensions
+on top of the defaults — a Tier-2 `decision_framework_adherence` and a Tier-3
+`methodology_compliance`.
+
+That layer was removed in #538, and those dimensions retired with it. Every audited project is
+now scored against the same set (`DEFAULT_EVAL_DIMENSIONS` in `lib/eval-audit.js`), which makes
+a score from one project directly comparable with a score from another — previously two
+projects could carry the same number against different rubrics. No recorded scores were
+affected: the tables were empty when the change shipped.
+
+If per-project dimensions become worth having again, the replacement should be a code-owned
+named set a project opts into, not a per-project data block — the reason the old mechanism went
+away is that dimension data could drift away from the scorer reading it.
+
+---
+
 ## The Scoring Pipeline
 
 ### Tier 1: Structural (Free, Synchronous)

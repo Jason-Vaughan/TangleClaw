@@ -242,6 +242,28 @@ describe('v27→v28 methodology drop — terminal wrap-config seed', () => {
     store.close();
   });
 
+  it('snapshots the database before dropping columns, and never overwrites an existing snapshot', () => {
+    // The drops are unrecoverable from the live file and a downgrade cannot
+    // read the result, so the one-time snapshot is the only way back.
+    const base = makeV27Store([]);
+    const backup = path.join(base, 'tangleclaw.db.pre-v28-backup');
+    migrate(base);
+    assert.ok(fs.existsSync(backup), 'a pre-v28 snapshot must exist');
+    const snapshot = new DatabaseSync(backup, { readOnly: true });
+    assert.ok(
+      snapshot.prepare('PRAGMA table_info(projects)').all().some((c) => c.name === 'methodology'),
+      'the snapshot must hold the PRE-migration schema, not a copy of the migrated file'
+    );
+    snapshot.close();
+    store.close();
+
+    // Re-running must not clobber it with a post-migration copy.
+    const before = fs.readFileSync(backup);
+    migrate(base);
+    assert.deepEqual(fs.readFileSync(backup), before, 'an existing snapshot must be left alone');
+    store.close();
+  });
+
   it('survives a project whose directory is gone, and still drops the column', () => {
     // Nothing can be written for an unreachable project, so the migration must
     // record it and carry on rather than aborting the whole ladder.
