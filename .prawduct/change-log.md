@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-20: Chunk 05b — the operator review surface for wrap-proposed rules (#569)
 
-<!-- prawduct: type=feat | chunks=05b | scope=wrap-v2 -->
+<!-- prawduct: type=feat | chunks=05b | scope=wrap-v2 | status=shipped -->
 
 **Why:** 05a made the loop safe and auditable but API-only — a proposal could only be
 approved or rejected by hand-crafting a `curl`, and the operator is almost always remote,
