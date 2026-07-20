@@ -1047,6 +1047,15 @@ body {
 .session-rule-item--proposed {
   border-left: 3px solid rgba(251, 146, 60, 0.6);
 }
+.session-rule-decide {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.session-rule-decide .btn {
+  min-height: 44px;
+}
 /* ── Project Rules section in Settings modal (CC-6, #381) ── */
 .project-rules-section {
   margin-top: 16px;

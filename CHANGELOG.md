@@ -15,8 +15,10 @@ All notable changes to TangleClaw are documented in this file.
   the drawer re-uses the password you already typed); reject is recorded so the same
   learning is never re-proposed. The step's row also reports the provisional-learnings
   backlog ("N provisional learnings building recurrence"), so the loop's queue is visible
-  instead of silent, and pending proposals appear in the Settings modal's Project Rules
-  list with a `Proposed` badge until you decide.
+  instead of silent. And because the drawer only shows the wrap that just ran, pending
+  proposals also appear in the Settings modal's Project Rules list with a `Proposed`
+  badge and their own Approve / Reject buttons — closed the drawer, changed your mind
+  later, either way the decision is always one tap away.
 
 ## [4.28.0] - 2026-07-19
 

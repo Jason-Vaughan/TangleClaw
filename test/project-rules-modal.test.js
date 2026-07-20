@@ -131,6 +131,32 @@ describe('Project Rules modal (CC-6, #381)', () => {
       assert.match(ui, /\$\{isProposed \? 'disabled' : ''\}/);
     });
 
+    it('a proposed row offers Approve/Reject INSTEAD of Delete — deleting would erase the decision record', () => {
+      // The rule-proposal step's re-proposal guard is the rule row itself
+      // (sourceLearningId): delete the row and the same learning comes back
+      // next wrap. So Delete must not be the modal's dismissal gesture.
+      assert.match(ui, /const actions = isProposed\s*\?/);
+      assert.match(ui, /data-action="approve-rule"/);
+      assert.match(ui, /data-action="reject-rule"/);
+      // Delete renders only on the non-proposed arm of the ternary.
+      const renderFn = ui.slice(ui.indexOf('function renderProjectRulesList'), ui.indexOf('async function addProjectRule'));
+      const ternary = renderFn.slice(renderFn.indexOf('const actions = isProposed'));
+      const approveArm = ternary.slice(0, ternary.indexOf(':'));
+      assert.ok(!/delete-rule/.test(approveArm), 'the proposed arm must not render a delete button');
+    });
+
+    it('approve/reject wire to the status route, with 403 revealing the password field', () => {
+      assert.match(ui, /async function resolveProjectRuleProposal\(id, status, kind\)/);
+      assert.match(ui, /apiMutate\(`\/api\/session-rules\/\$\{id\}\/status`, 'PUT', body\)/);
+      assert.match(ui, /lastErrorCode === 'FORBIDDEN'/);
+      assert.match(ui, /projRulesPwGroup/);
+      // The password group starts hidden — it only appears when the server refuses.
+      assert.match(ui, /id="projRulesPwGroup" class="form-group hidden"/);
+      // Both decisions are delegated through the section's event handler.
+      assert.match(ui, /action === 'approve-rule'/);
+      assert.match(ui, /action === 'reject-rule'/);
+    });
+
     it('style.css styles the proposed badge and row accent', () => {
       assert.match(css, /\.session-rule-badge--proposed\s*\{/);
       assert.match(css, /\.session-rule-item--proposed\s*\{/);
