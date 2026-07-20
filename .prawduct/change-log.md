@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-19: Chunk 04b — the wrap stops reporting success it never verified (#571, #638, #540)
 
-<!-- prawduct: type=feat | chunks=04b | scope=wrap-v2 -->
+<!-- prawduct: type=feat | chunks=04b | scope=wrap-v2 | status=shipped -->
 
 **Why:** four holes of one shape — the drawer reported outcomes it had not confirmed.
 (1) **Agent file-edit steps were verified by nothing.** `changelog-update` and
