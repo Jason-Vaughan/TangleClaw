@@ -137,6 +137,102 @@ describe('self-improvement loop (#569)', () => {
     });
   });
 
+  describe('the v26→v27 migration', () => {
+    const { DatabaseSync } = require('node:sqlite');
+
+    /**
+     * Seed a pre-v27 database and run it through `store.init()`.
+     * @param {string} seedSql - Rows to insert into the pre-v27 session_rules
+     * @returns {{dir: string, db: object, s: object}} Migrated handle
+     */
+    function migrateFrom(seedSql) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v27-'));
+      const dbPath = path.join(dir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (26);
+        CREATE TABLE session_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, content TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL DEFAULT 'operator',
+          kind TEXT NOT NULL DEFAULT 'startup', owner TEXT, source_learning_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+        ${seedSql}
+      `);
+      seed.close();
+
+      delete require.cache[require.resolve('../lib/store')];
+      const s = require('../lib/store');
+      s._setBasePath(dir);
+      s.init();
+      return { dir, db: s.getDb(), s };
+    }
+
+    /**
+     * Release a migrated handle and restore the suite's shared store module.
+     * @param {object} h - Handle from `migrateFrom`
+     */
+    function done(h) {
+      h.s.close();
+      fs.rmSync(h.dir, { recursive: true, force: true });
+      delete require.cache[require.resolve('../lib/store')];
+      require('../lib/store')._setBasePath(tmpDir);
+    }
+
+    it('backfills every pre-existing row to active — they already governed sessions', () => {
+      const h = migrateFrom(`
+        INSERT INTO session_rules (project_id, content, enabled, created_by, kind)
+          VALUES (NULL, 'legacy master', 1, 'operator', 'master');
+        INSERT INTO session_rules (project_id, content, enabled, created_by, kind)
+          VALUES (NULL, 'legacy disabled', 0, 'ai', 'wrap');
+      `);
+      try {
+        const rows = h.db.prepare('SELECT content, enabled, status FROM session_rules ORDER BY id').all();
+        assert.deepEqual(rows.map((r) => r.status), ['active', 'active'],
+          'back-dating live rules into review would silently switch them off on upgrade');
+        assert.deepEqual(rows.map((r) => r.enabled), [1, 0], 'enabled must survive untouched');
+      } finally { done(h); }
+    });
+
+    it('preserves a row whose foreign key is already orphaned', () => {
+      // A migration preserves what it finds. Re-inserting under FK enforcement
+      // would abort on such a row, so a pre-existing orphan would block the
+      // upgrade instead of surviving it.
+      const h = migrateFrom(
+        "INSERT INTO session_rules (project_id, content) VALUES (424242, 'orphaned rule');");
+      try {
+        const row = h.db.prepare('SELECT content, project_id, status FROM session_rules').get();
+        assert.equal(row.content, 'orphaned rule');
+        assert.equal(row.project_id, 424242);
+        assert.equal(row.status, 'active');
+        assert.equal(
+          h.db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 27,
+          'the upgrade must complete, not stall on the orphan');
+      } finally { done(h); }
+    });
+
+    it('leaves foreign-key enforcement ON afterwards', () => {
+      // The rebuild turns it off; leaving it off would silently disable FK
+      // checking for the rest of the process's life.
+      const h = migrateFrom("INSERT INTO session_rules (project_id, content) VALUES (NULL, 'x');");
+      try {
+        assert.equal(h.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
+      } finally { done(h); }
+    });
+
+    it('produces a status CHECK that actually rejects an invalid value', () => {
+      const h = migrateFrom("INSERT INTO session_rules (project_id, content) VALUES (NULL, 'y');");
+      try {
+        assert.throws(() => h.db
+          .prepare("INSERT INTO session_rules (content, status) VALUES ('bad', 'nonsense')").run());
+      } finally { done(h); }
+    });
+  });
+
   describe('recurrence advances a learning into future sessions', () => {
     const dbWrite = require('../lib/wrap-steps/learnings-db-write');
 

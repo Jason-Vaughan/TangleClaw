@@ -225,6 +225,14 @@
         if (output.from && output.to) return `${output.from} → ${output.to}`;
         if (output.to) return String(output.to);
         return null;
+      case 'rule-proposal': {
+        // Without a case here the default drops this to null, and a wrap that
+        // proposed rules would look identical to one that proposed none — the
+        // silent-loop problem #569 was filed about.
+        const n = output.count;
+        if (typeof n !== 'number' || n <= 0) return null;
+        return `${n} rule${n === 1 ? '' : 's'} proposed — awaiting your review`;
+      }
       default:
         return null;
     }

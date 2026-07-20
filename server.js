@@ -1176,6 +1176,11 @@ route('GET', '/api/session-rules', (req, res) => {
   if (query.projectId !== undefined) options.projectId = Number(query.projectId);
   // CC-6 (#381): filter the per-project modal's rule boxes by kind.
   if (query.kind !== undefined) options.kind = query.kind;
+  // #569: review state. Unfiltered by default so a future review surface can
+  // list proposals; the Project Rules modal asks for `active` only, because it
+  // renders every row it receives as an enabled, governing rule and would
+  // otherwise show proposals and rejections as live.
+  if (query.status !== undefined) options.status = query.status;
   const rules = store.sessionRules.list(options);
   jsonResponse(res, 200, { rules });
 });
@@ -1300,6 +1305,13 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
   if (!body || body.learningId === undefined) {
     return errorResponse(res, 400, 'learningId is required', 'BAD_REQUEST');
   }
+  // This route mints a LIVE rule from AI-authored text, so it carries the same
+  // operator gate as approval. It previously asserted operator authority simply
+  // because the route had been reached — but this API is on localhost and this
+  // project instructs in-session agents to call it, so "a request arrived" is
+  // not evidence a human sent it.
+  const promoteCheck = projects.checkDeletePassword(body ? body.password : undefined);
+  if (!promoteCheck.allowed) return errorResponse(res, 403, promoteCheck.error, 'FORBIDDEN');
   try {
     const rule = store.sessionRules.promoteFromLearning(Number(body.learningId), {
       content: body.content,
@@ -1309,12 +1321,11 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
       criticGate: body.criticGate,
-      // #569: reaching this route IS the operator's decision — it is the button
-      // they press to promote. Without this flag the store would (correctly)
-      // treat AI-authored content as a proposal, and the operator's own approval
-      // would land back in the review queue they just cleared. The wrap's
-      // proposal step calls the same store method WITHOUT it and gets a
-      // proposal, which is the distinction that keeps the loop safe.
+      // #569: authority comes from clearing the operator gate above, not from
+      // the request claiming it. Without this the store would treat AI-authored
+      // content as a proposal and the operator's own approval would land back
+      // in the queue they just cleared; the wrap's proposal step calls the same
+      // store method WITHOUT it and gets a proposal.
       approvedByOperator: true
     });
     jsonResponse(res, 201, rule);
@@ -1333,9 +1344,22 @@ route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
   if (!body || typeof body.status !== 'string') {
     return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
   }
+  // Approving a proposal grants it authority over every future session, so it
+  // is gated like TangleClaw's other privileged operations (project delete,
+  // session kill, wrap) rather than inferred from a caller-supplied field.
+  // `changedBy` is the caller describing itself — an agent that omits it is
+  // recorded as the operator — so it cannot be what decides this.
+  //
+  // Declining a proposal needs no gate: it grants nothing.
+  if (body.status === 'active') {
+    const check = projects.checkDeletePassword(body ? body.password : undefined);
+    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+  }
   try {
     const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
-      changedBy: body.changedBy,
+      // Passing the gate IS the operator acting; recording anything else would
+      // misattribute a decision the gate just authorised.
+      changedBy: body.status === 'active' ? 'operator' : body.changedBy,
       changeReason: body.changeReason,
       criticGate: body.criticGate
     });

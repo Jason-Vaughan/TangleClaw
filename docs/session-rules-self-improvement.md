@@ -100,9 +100,23 @@ was empty on every project and rules never evolved.
 **The gate, stated once:** AI authorship cannot produce a governing rule on its own say-so.
 `createdBy` records *authorship*, not *authority* — a rule promoted from a learning is
 genuinely AI-authored, yet an operator pressing Promote must produce a live rule. Authority
-is therefore carried separately and only set on human-initiated paths. The property is
-enforced at **both** doors into `active` — creation and status change — because a gate on
-one entrance is not a gate.
+is therefore carried separately, and the property is enforced at **both** doors into
+`active` — creation and status change — because a gate on one entrance is not a gate.
+
+**What that does and does not guarantee.** In the store the property is absolute: no code
+path reaches `status:'active'` from AI authorship without authority being passed explicitly,
+and `setStatus` refuses `changedBy:'ai'` outright. Over HTTP, the two routes that can grant
+authority — `POST /api/session-rules/promote` and `PUT /api/session-rules/:id/status` with
+`status:'active'` — are gated by the **operator password** (`checkDeletePassword`), the same
+gate as deleting a project, killing a session, or wrapping. Declining a proposal is
+ungated, because it grants nothing.
+
+That gate is only real protection **when a delete password is configured**. With none set it
+allows every caller, so on a machine where in-session agents are instructed to call the
+TangleClaw API, an agent could approve a rule — exactly as it could already delete a project.
+This is stated rather than glossed: the honest claim is that rule approval is as protected as
+every other privileged operation in TangleClaw, not that it is unconditionally
+human-gated. Set a delete password if that distinction matters to you.
 
 `findConflictCandidates` / the `/conflicts` route return active in-scope rules sharing
 significant token overlap with a proposed edit. This is a **hint of what to compare**, NOT

@@ -32,6 +32,11 @@ All notable changes to TangleClaw are documented in this file.
   learnings routes at all, so the tier deciding what a future session sees was unreachable from
   outside the process), and `PUT /api/session-rules/:id/status` to approve or reject.
 
+  Approving a rule is gated by your operator password, the same gate as deleting a project or
+  killing a session — so approval is as protected as every other privileged operation, which
+  means it is only really protected if you have set one. Declining is ungated; it grants
+  nothing.
+
   Approve/reject is API-only in this release; the one-click review surface lands next.
 
 - **Projects can now turn off or reconfigure an individual wrap step, without forking their
