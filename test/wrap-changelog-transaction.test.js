@@ -76,6 +76,12 @@ describe('wrap CHANGELOG transaction — step order is load-bearing', () => {
   // schemaRevision bump is inert everywhere but a fresh install — the bundled
   // JSON (and every test asserting against it) stays green while live wraps
   // keep running the old order.
+  //
+  // The revision is a one-way ratchet: the reconciler stamps the live template
+  // with the bundled revision once it syncs, so REVERTING a bump does not
+  // un-sync anyone — it leaves installs pinned at the higher revision, and a
+  // later edit at or below that number would silently not propagate. Roll
+  // forward (bump again) rather than reverting a revision.
   const STEP_ORDER_BY_REVISION = {
     6: [
       'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture',

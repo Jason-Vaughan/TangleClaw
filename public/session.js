@@ -3125,8 +3125,13 @@ async function copyWrapReport() {
  * When a wrap PR is passed, a "Recheck release" button is appended so the
  * operator can re-probe the merge outcome on demand (explicit action, no timer).
  *
- * @param {{label: string, tone: string, detail: string|null}} status
+ * @param {{label: string, tone: string, detail: string|null}} status - The banner to paint.
  * @param {{prUrl: string|null}|null} [prForRecheck] - Wrap PR to offer a recheck for.
+ * @param {{label: string, tone: string, detail: string|null}|null} [baseStatus] - The
+ *   PIPELINE's own verdict, carried through to the recheck handler so every
+ *   re-probe composes against it rather than against the currently-painted
+ *   banner. Without it, repeated rechecks would compound release banners and a
+ *   pipeline warning could be lost behind a green release.
  */
 function paintWrapStatus(status, prForRecheck, baseStatus) {
   const statusEl = document.getElementById('wrapDrawerStatus');
@@ -3164,6 +3169,10 @@ function paintWrapStatus(status, prForRecheck, baseStatus) {
  *
  * @param {{prUrl: string|null}} pr - Wrap PR handle from `wrapPrInfo`.
  * @param {HTMLButtonElement|null} btn - The recheck button, disabled while in flight.
+ * @param {{label: string, tone: string, detail: string|null}|null} [baseStatus] - The
+ *   pipeline's own verdict to compose the release outcome against, so a warning
+ *   or error the pipeline reported survives a green release. Falls back to
+ *   `currentWrapBaseStatus` (the rendered wrap's verdict) when omitted.
  */
 async function resolveWrapPrStatus(pr, btn, baseStatus) {
   if (!pr || !pr.prUrl || !window.tcWrapDrawerHelpers) return;
