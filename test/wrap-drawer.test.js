@@ -252,10 +252,27 @@ describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
   const H = loadHelpers();
   // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
   const CANONICAL_KINDS = [
-    'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll',
+    'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll',
     'pr-check', 'commit', 'version-bump', 'features-toc',
     'project-map', 'index-describe', 'continuity-write'
   ];
+
+  it('surfaces the proposal count, so a wrap that proposed rules does not look like one that did not', () => {
+    const row = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 2, proposed: [{}, {}] }, blockers: []
+    });
+    assert.match(row.detail, /2 rules proposed/);
+    assert.match(row.detail, /awaiting your review/);
+  });
+
+  it('renders no proposal detail when nothing was proposed', () => {
+    const row = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 0, proposed: [] }, blockers: []
+    });
+    assert.equal(row.detail, null);
+  });
 
   it('has a non-empty help description for every canonical wrap-step kind (drift guard)', () => {
     for (const k of CANONICAL_KINDS) {

@@ -3130,7 +3130,7 @@ function renderMasterSettingsBody(s, groups) {
 
 /** Fetch and render the master Hard rules list. */
 async function loadMasterRules() {
-  const data = await api('/api/session-rules?kind=master');
+  const data = await api('/api/session-rules?kind=master&status=active');
   renderMasterRulesList(data ? data.rules || [] : []);
 }
 
@@ -3167,7 +3167,7 @@ function renderMasterRulesList(rules) {
  * @returns {Promise<object|null>}
  */
 async function _getMasterRule(id) {
-  const data = await api('/api/session-rules?kind=master');
+  const data = await api('/api/session-rules?kind=master&status=active');
   return data && data.rules ? data.rules.find((r) => r.id === id) || null : null;
 }
 

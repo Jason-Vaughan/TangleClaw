@@ -40,6 +40,7 @@
     'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Skips when there is nothing to promote or the version is not semver.',
     'ai-content': 'The AI captures a piece of wrap content — a changelog line, session learnings, or session memory — into the wrap. Skips when there is nothing to capture.',
     'learnings-db-write': 'Persists the session’s captured learnings to the project’s learnings store.',
+    'rule-proposal': 'Proposes rules from recurring learnings. Proposals govern nothing until you approve them.',
     'priming-roll': 'Rolls the build-plan chunk pointer forward so the next session resumes at the current chunk. Skips when there is no chunked plan to roll; if several in-progress plans exist it asks you to pick one.',
     'features-toc': 'Refreshes FEATURES.md — stubs entries for files touched this session and prunes entries for deleted files.',
     'project-map': 'Refreshes the continuity Map (the feature/component index) from the files touched this session.',

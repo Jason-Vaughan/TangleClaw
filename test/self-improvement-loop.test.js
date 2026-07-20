@@ -303,6 +303,39 @@ describe('self-improvement loop (#569)', () => {
       assert.equal(store.learnings.list(project.id).length, 2);
     });
 
+    it('accrues confirmations to the OLDEST matching row, not the newest', async () => {
+      // Without an explicit sort this is silently wrong: `learnings.list`
+      // returns newest-first, so a first-wins map keeps the newest row and
+      // confirmations scatter instead of accumulating on one canonical
+      // learning. Two rows must share a recurrence key for the choice to be
+      // observable at all — nothing else in the suite creates that state.
+      const older = store.learnings.create({
+        projectId: project.id, content: '## 2026-07-01 — Dupe subject\n\nShared body.'
+      });
+      const newer = store.learnings.create({
+        projectId: project.id, content: '## 2026-07-02 — Dupe subject\n\nShared body.'
+      });
+      assert.ok(newer.id > older.id, 'precondition: the second row is the newer one');
+
+      // Force distinct timestamps. Both rows are created in the same second, so
+      // created_at ties and the newest-first query happens to return them in id
+      // order — under which an unsorted map picks the oldest by luck and this
+      // test cannot see the difference. Verified by reverting the sort: without
+      // these two lines it passes either way.
+      store.getDb().prepare('UPDATE learnings SET created_at = ? WHERE id = ?')
+        .run('2026-07-01 00:00:00', older.id);
+      store.getDb().prepare('UPDATE learnings SET created_at = ? WHERE id = ?')
+        .run('2026-07-02 00:00:00', newer.id);
+
+      await mirror('## 2026-07-03 — Dupe subject\n\nShared body.\n', '2026-07-03');
+
+      const rows = store.learnings.list(project.id);
+      const oldRow = rows.find((r) => r.id === older.id);
+      const newRow = rows.find((r) => r.id === newer.id);
+      assert.equal(oldRow.confirmedCount, 1, 'the oldest row must take the confirmation');
+      assert.equal(newRow.confirmedCount, 0, 'the newer duplicate must be left alone');
+    });
+
     it('matches across incidental whitespace and case, which is all normalization claims', async () => {
       await mirror('## 2026-06-01 — Normalize me\n\nSome   body text.\n', '2026-06-01');
       const next = await mirror(
