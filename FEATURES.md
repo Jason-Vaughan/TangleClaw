@@ -48,7 +48,7 @@ fails any auto-stub section older than 14 days.
 - **Server-info endpoint** (#199, #235) — `GET /api/server-info` (includes `restartMechanism`). Backend: `lib/server-info.js`.
 - **Server-restart endpoint** (#235) — `POST /api/server/restart`. 202 Accepted before exec; 501 when no mechanism; 409 `WRAP_RESTART_BLOCKED` while a wrap runs (#583). Backend: `lib/server-info.js#detectRestartMechanism`, `#buildRestartCommand`.
 - **Auth: Caddy ingress + proxy identity** (AUTH-1/AUTH-3) — `lib/caddy.js` generates the integrity-stamped Caddyfile for the auth-gated ingress; `lib/auth-identity.js` resolves proxy-authenticated request identity (`X-Auth-User` → `currentUser` on `/api/server-info`). Drift surfacing: `docs/auth-status-surfacing.md` (AUTH-2K9D).
-- **PortHub leasing** — `GET /api/ports`, `POST /api/ports/lease`, `POST /api/ports/release`, `POST /api/ports/heartbeat`, `POST /api/ports/sync`. Backend: `lib/porthub.js`. Injected operator guide: `data/porthub-guide.md`.
+- **PortHub leasing** — `GET /api/ports`, `POST /api/ports/lease`, `POST /api/ports/release`, `POST /api/ports/heartbeat`, `POST /api/ports/sync`. Backend: `lib/porthub.js`. Injected operator guide: `data/porthub-guide.md`. Leasing a port another project holds returns **409 `PORT_CONFLICT`** with the owner, unless `force` (#613); enforcement lives in `store.portLeases.lease` so no caller can bypass it. `release`/`heartbeat` take no project and remain unguarded (#656).
 - **PortHub next-free-port auto-allocation** (#352) — `porthub.nextFreePort({ range, host })` returns the first free port in a range (not lease-held, not OS-bound). The OpenClaw connection-create route auto-allocates `local_port` (and opt-in `bridge_port` via `bridgePort:"auto"`) when omitted and leases it at create-time under `oc-direct-<id>`. Backend: `lib/porthub.js#nextFreePort`, `server.js` `POST /api/openclaw/connections`.
 - **Groups family** — `GET/POST /api/groups`, `GET/PUT/DELETE /api/groups/:id`, `POST /api/groups/:id/sync`, member CRUD under `/api/groups/:id/members`.
 - **Shared-docs family** — `GET/POST /api/shared-docs`, `GET/PUT/DELETE /api/shared-docs/:id`, lock CRUD under `/api/shared-docs/:id/lock`. Injected operator guide: `data/shared-docs-guide.md`.
@@ -102,14 +102,14 @@ fails any auto-stub section older than 14 days.
 - **Path-token matcher** (CON-8H3Z) — shared path-like-token regex used by both this index's drift scan and the continuity Map, so their extension allowlists can't drift. `lib/path-tokens.js`.
 - **Tunnel** — Cloudflare tunnel lifecycle for remote access. `lib/tunnel.js`.
 - **Sidecar** — supplementary process supervisor. `lib/sidecar.js`.
-- **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`.
+- **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`. The startup banner reports the protocol actually served via `serverProtocol()` in `server.js`, not config intent — HTTPS is enabled by default before any certificate exists, so the server falls back to HTTP (#616). Tests: `test/server-listen-protocol.test.js`.
 - **Update checker** — GitHub release-tag polling. `lib/update-checker.js`.
 - **Self-update action** (#228/#229, UB) — the update pill's **Update & restart** button: `POST /api/update/apply` fetches + checks out the latest release tag with fail-closed guards (dirty-tree / no-update / wrong-ref / no-git → 409; git-error → 500; argv-form git so a tag can't shell-inject), then the client chains the existing #235 restart and polls `/api/server-info`. Does NOT restart itself; logs `fromSha` for one-line manual rollback. `lib/update-applier.js`, route `server.js` (next to `/api/update-status`), UI `public/landing.js#applyUpdateAndRestart` + `#loadUpdateStatus`, button `.update-pill-apply` (`public/style.css`).
 - **Uploads** — file-upload handling for the in-browser drop zone. `lib/uploads.js`.
 - **System stats** — CPU / mem / disk for the landing page. `lib/system.js`.
 - **Port scanner** — local-port introspection for the PortHub UI. `lib/port-scanner.js`.
 - **PID file** — single-instance guard. `lib/pidfile.js`.
-- **Installer** — bootstrap script for fresh hosts. `deploy/install.sh`.
+- **Installer** — bootstrap script for fresh hosts. `deploy/install.sh`. macOS-only by explicit guard; the Homebrew bootstrap downloads, checks, then executes as separate steps so each failure mode reports honestly (#614, #615). Tests: `test/install-sh.test.js`.
 - **Detached ttyd attach** — helper for reconnecting to the shared ttyd. `deploy/ttyd-attach.sh`.
 - **Ingress cutover** — renders launchd plist templates and cuts the server over to Caddy ingress (AUTH-1; guarded post-#463 — refuses to un-gate a hand-edited live Caddyfile). `scripts/ingress-cutover.js`.
 - **CI** (CI-9F3T) — GitHub Actions `Tests` workflow runs the full suite on PRs + push-to-main; the `test` check is required on `main` (CI-2V8Q). `.github/workflows/test.yml`, pinned by `test/ci-workflow.test.js`.
