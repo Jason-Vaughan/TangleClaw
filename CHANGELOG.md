@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.29.0] - 2026-07-19
+
 ### Added
 
 - **You can now approve, edit, or reject the wrap's rule proposals from the wrap drawer
