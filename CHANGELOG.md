@@ -65,6 +65,17 @@ All notable changes to TangleClaw are documented in this file.
   wrap's own `git add -A` commits its deletion moments later. A wrap whose session only deleted
   files now reports that honestly rather than claiming everything was already indexed.
 
+### Internal
+
+- **Fixed a flaky test that turned `main` red without any code being wrong.** The startup
+  session-rule ordering test built its own precondition by racing the clock: it created six
+  rules and assumed all six would land inside one tick of SQLite's second-resolution
+  `datetime('now')`, giving them the tied timestamps the ordering contract is about. On a
+  loaded CI runner the burst straddled a second boundary, the timestamps differed, and the
+  run failed on the precondition — without ever exercising the ordering it exists to check.
+  The tie is now forced directly, so the assertion runs every time. No production behavior
+  changed; the query already ordered by `created_at, id`.
+
 ## [4.27.0] - 2026-07-19
 
 ### Added
