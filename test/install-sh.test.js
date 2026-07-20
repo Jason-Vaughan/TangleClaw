@@ -161,10 +161,10 @@ describe('deploy/install.sh', () => {
     });
   });
 
-  // These two run the real script rather than grepping it, because both defects
-  // were failures of BEHAVIOR that a source-shape assertion would have happily
-  // matched: the script "handled" a failed download and "supported" Linux right
-  // up until you ran it.
+  // These tests run the real script rather than grepping it, because the
+  // defects were failures of BEHAVIOR that a source-shape assertion would have
+  // happily matched: the script "handled" a failed download and "supported"
+  // Linux right up until you ran it.
   //
   // Executing an installer in a unit test needs a hard safety story, and a
   // stubbed PATH is NOT sufficient on its own: `ensure_homebrew` probes
@@ -310,6 +310,14 @@ describe('deploy/install.sh', () => {
       // but running it fails. Distinguishing this from the two above is the
       // whole point of splitting the steps — all three used to collapse into
       // the same wrong PATH diagnosis.
+
+      // Safety interlock (see the describe comment): containment for THIS path
+      // rests on the execution guard exiting non-zero. Regressed to a
+      // non-exiting form, `||` suppresses `set -e`, control falls through to
+      // the absolute-path brew probe and on to a real `brew install node`.
+      assert.match(script, /\/bin\/bash -c "\$brew_installer" \\\n\s*\|\| \{[^}]*exit 1/,
+        'the installer execution must exit non-zero on failure, or a regression would reach the real Homebrew');
+
       const box = sandbox({
         uname: 'echo Darwin',
         curl: 'echo "exit 1" ' // a valid, non-empty script that fails when run
