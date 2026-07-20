@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-20: The changelog gate stops punishing compliant sessions (#645)
 
-<!-- prawduct: type=bugfix | chunks=01 | scope=wrap-changelog-gate -->
+<!-- prawduct: type=bugfix | chunks=01 | scope=wrap-changelog-gate | status=shipped -->
 
 **Why:** the `changelog-update` step verified that `CHANGELOG.md` had *changed* during the
 step. The project's first core rule is to update the changelog with every change, so a
@@ -691,7 +691,7 @@ actually failed.
 
 ## 2026-07-18: Discovery — #595 rule delivery is severed, not merely unverified (wrap-v2)
 
-<!-- prawduct: type=discovery | scope=wrap-v2 -->
+<!-- prawduct: type=discovery | scope=wrap-v2 | status=shipped -->
 
 **Why:** The operator ratified a standing design rule ("TangleClaw can't require what
 won't work on all models — Claude-native means HINT only") and asked for it to be written
@@ -744,7 +744,7 @@ only, and will not reach the next session until Chunk 01 ships.
 
 ## 2026-07-18: Discovery — Phase B step inventory (wrap-v2)
 
-<!-- prawduct: type=discovery | scope=wrap-v2 -->
+<!-- prawduct: type=discovery | scope=wrap-v2 | status=shipped -->
 
 **Why:** Phase A complete, so Phase B opens with the task its direction artifact
 explicitly blocked on: "fate of each current wrap step — needs the real 12-step
