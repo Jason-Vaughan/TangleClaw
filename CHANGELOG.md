@@ -19,11 +19,11 @@ All notable changes to TangleClaw are documented in this file.
   without an entry, where the old one could only say "byte-identical". Where the
   predicate cannot judge — no commits in range, or none it can speak to — it reports
   `unavailable` and the mutation check still applies, so no honor-system hole reopens.
-  The working tree counts as part of the session in both directions: an uncommitted
-  entry satisfies the step (so answering a block clears it without needing a commit
-  first), while uncommitted work with no entry is its own unaccounted-for unit —
-  otherwise it would be swept into the wrap's own commit, which the next session's
-  range starts after, and could never be judged at all. Paths are resolved with
+  An uncommitted entry satisfies the step, so answering a block clears it without
+  needing a commit first. Work still uncommitted at wrap time remains unjudged —
+  blocking on any dirty file was tried and reverted, because a session dirties
+  tracked bookkeeping files as a matter of course and the rule then blocked the very
+  sessions this fixes; tracked as #659. Paths are resolved with
   `--relative`, so a project rooted in a subdirectory of its repo is judged against
   its own paths rather than reporting every commit as uncovered. Verified against
   this repository's real history in all three directions.

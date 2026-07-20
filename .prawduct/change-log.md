@@ -57,9 +57,13 @@ rooted in a subdirectory of its repo matched none of its own declared paths and 
 reported every commit uncovered — fixed with `--relative`, pinned by a test that builds a real
 subdir repo (a fixture would only have restated the assumption that was wrong). (b) The
 coverage block's remediation prescribed a sequence that re-blocks; the working tree is now part
-of the predicate, so an uncommitted entry satisfies it and the text is true. (c) Uncommitted
-work at wrap time was judged by neither route — it lands in the exempt wrap commit, which the
-next session's range starts after — so it is now its own unit. Also: `_listCommits` gained a
+of the predicate, so an uncommitted entry satisfies it and the text is true. (c) an uncommitted entry
+now satisfies the predicate, which is what makes that text true. A fourth arm — treating any
+dirty tracked file as unlogged work — was implemented and REVERTED after the follow-up review:
+a session dirties tracked bookkeeping files as a matter of course (`.prawduct/change-log.md` is
+tracked here), so it blocked exactly the compliant sessions #645 is about. The residual gap
+(work uncommitted at wrap time is unjudged) is documented in the module and filed as #659
+rather than closed with a rule that misfires. Also: `_listCommits` gained a
 5MB buffer (the 1MB default would have reinstated #645 on long ranges), the `unavailable`
 abstention logs at `info` rather than `debug` so it is visible at the default level, and
 session-range resolution moved to a shared `_git-range.js` where the two copies had already
@@ -68,7 +72,8 @@ drifted (`{7,64}` vs `{7,40}` for the same field).
 **Verification:** all three directions against real history — the current session's 12 commits
 report `covered`; a range containing two real commits that shipped without a changelog entry
 (`f71a299`, `02ee405`) reports `uncovered` and names them; a dirty `CHANGELOG.md` reports
-`covered`. Seven mutations (dropped wrap-commit exclusion, dropped merge exemption,
+`covered`, and a compliant session with an otherwise-dirty tree reports `covered`. Seven
+mutations (dropped wrap-commit exclusion, dropped merge exemption,
 `unavailable`-as-success, three-dot range, no changed-file short-circuit, substring path match,
 dropped `--relative`) were each killed by the suite.
 

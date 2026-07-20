@@ -292,27 +292,34 @@ describe('changelog-coverage — evaluate()', () => {
     assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
   });
 
-  it('UNCOVERED for uncommitted work with no accompanying entry, as its own unit', () => {
+  it('does NOT demand an entry merely because other files are dirty', () => {
+    // Tried and reverted: a session dirties tracked bookkeeping files as a matter
+    // of course (`.prawduct/change-log.md` on this repo), so blocking on any dirty
+    // file blocked exactly the compliant sessions #645 is about. Uncommitted work
+    // is a documented gap, not a thing to block on.
     scenario([{ sha: 'aaa1111', subject: 'Logged work (#1)', files: ['CHANGELOG.md'] }],
-      ['lib/a.js', 'lib/b.js']);
-    const out = cov.evaluate('/p', PATHS);
-    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
-    assert.equal(out.uncovered.length, 1);
-    assert.equal(out.uncovered[0].sha, cov.WORKING_TREE_SHA);
-    assert.match(out.uncovered[0].subject, /2 uncommitted change\(s\)/);
-    assert.equal(out.checkedCount, 2, 'pending work is a unit in the denominator too');
+      ['.prawduct/change-log.md', 'lib/a.js']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
   });
 
-  it('judges pending work even when the range holds no commits at all', () => {
-    scenario([], ['lib/a.js']);
-    const out = cov.evaluate('/p', PATHS);
-    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
-    assert.equal(out.uncovered[0].sha, cov.WORKING_TREE_SHA);
-  });
-
-  it('stays UNAVAILABLE with no commits and a clean tree', () => {
+  it('stays UNAVAILABLE with no commits, dirty tree or not', () => {
     scenario([], []);
     assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+    scenario([], ['lib/a.js']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+  });
+
+  it('exempts a commit that touched nothing IN SCOPE — a subdir project\'s sibling-only commit', () => {
+    // With --relative, a commit touching only paths outside the project root parses
+    // with an empty file list. It is not the project's concern, and must not read as
+    // "touched nothing, therefore unlogged".
+    scenario([
+      { sha: 'aaa1111', subject: 'Logged (#1)', files: ['CHANGELOG.md'] },
+      { sha: 'bbb2222', subject: 'Elsewhere in the monorepo (#2)', files: [] }
+    ]);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.equal(out.checkedCount, 1);
   });
 
   it('UNAVAILABLE when the working tree cannot be read, rather than passing', () => {
