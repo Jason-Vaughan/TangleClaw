@@ -4,6 +4,23 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The wrap's changelog gate is satisfiable by being correct, not only by being
+  different (#645).** `changelog-update` verified that `CHANGELOG.md` had *changed*
+  during the step. But this project's first core rule is to update the changelog with
+  every change, so a session that complied arrived at the wrap with nothing left to
+  write — and was blocked. The more faithfully a session followed the rule, the more
+  reliably its wrap halted; the UI Wrap button was benched over it. The step now passes
+  if the file changed **or** if every non-wrap, non-merge commit in the session range
+  touched it in its own diff (`lib/wrap-steps/changelog-coverage.js`, wired into the
+  existing gate through a per-step `verifySatisfiedBy` declaration). This is a stronger
+  check than the one it replaces: a block now names the exact commits that shipped
+  without an entry, where the old one could only say "byte-identical". Where the
+  predicate cannot judge — no commits in range, or none it can speak to — it reports
+  `unavailable` and the mutation check still applies, so no honor-system hole reopens.
+  Verified against this repository's real history in both directions.
+
 ## [4.30.0] - 2026-07-20
 
 ### Fixed

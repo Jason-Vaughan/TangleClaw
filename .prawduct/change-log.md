@@ -26,6 +26,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: The changelog gate stops punishing compliant sessions (#645)
+
+<!-- prawduct: type=bugfix | chunks=01 | scope=wrap-changelog-gate -->
+
+**Why:** the `changelog-update` step verified that `CHANGELOG.md` had *changed* during the
+step. The project's first core rule is to update the changelog with every change, so a
+compliant session reached the wrap with nothing left to write and got blocked — the gate was
+right on its own terms and wrong about what it was for. The UI Wrap button was benched over it.
+
+**What:** a second satisfaction route on the same gate. `lib/wrap-steps/changelog-coverage.js`
+answers whether every non-wrap, non-merge commit in `<lastWrapSha>..HEAD` touched the step's
+declared paths in its own diff; `_verifyChangedGate` consults it only when the mutation check
+fails, so the cheap comparison still short-circuits. Opt-in per step via `verifySatisfiedBy`,
+declared on `changelog-update` in the code-owned pipeline. A three-valued verdict keeps the
+original hole closed: `unavailable` (no judgeable commits) falls back to the mutation blocker
+rather than passing on no evidence.
+
+**The design that did not survive contact with reality:** the first implementation matched
+issue references — every commit's `#N` present under `[Unreleased]`. It passed a full synthetic
+suite and was wrong. Squash-merge appends the PULL REQUEST number to the subject while
+changelog entries cite the ISSUE; they are different number spaces. Run against this repo's own
+history it reported 12 of 12 correctly-logged commits as uncovered — reproducing #645 in a
+better-worded costume. What a commit TOUCHED is already local and needs no convention, and it
+verified 12/12 covered on the same range. The lesson is recorded in `learnings.md`.
+
+**Verification:** both directions against real history — the current session's 12 commits
+report `covered`; a range containing two real commits that shipped without a changelog entry
+(`f71a299`, `02ee405`) reports `uncovered` and names them. Six mutations (dropped wrap-commit
+exclusion, dropped merge exemption, `unavailable`-as-success, three-dot range, no
+changed-file short-circuit, substring path match) were each killed by the suite.
+
+
 ## 2026-07-20: Phase B exit gate + the ratified new-project wrap default (#652)
 
 <!-- prawduct: type=chore | scope=wrap-default-ratification | status=shipped -->

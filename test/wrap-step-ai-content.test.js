@@ -734,6 +734,146 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     assert.match(res.blockers[0], /no change detected in \.tangleclaw\/memories\/MEMORY\.md/);
   });
 
+  // #645 — the mutation check asks the wrong question of a file the session was
+  // required to keep current as it worked, so a compliant session arrives with
+  // nothing left to write and gets blocked. A step may declare a second
+  // satisfaction route; the gate consults it only when the mutation check fails.
+  describe('verifySatisfiedBy — the second satisfaction route', () => {
+    const COVERED = { verdict: 'covered', uncovered: [], checkedCount: 3, range: 'abc..HEAD', reason: null };
+    const UNAVAILABLE = { verdict: 'unavailable', uncovered: [], checkedCount: 0, range: 'abc..HEAD', reason: 'no refs' };
+    const uncovered = () => ({
+      verdict: 'uncovered',
+      uncovered: [{ sha: 'bbb2222abcdef', subject: 'Unlogged work (#999)' }],
+      checkedCount: 2,
+      range: 'abc..HEAD',
+      reason: null
+    });
+
+    const coverageCtx = (overrides = {}) => ctxWith({
+      step: {
+        id: 'changelog-update',
+        kind: 'ai-content',
+        prompt: 'edit CHANGELOG.md',
+        verifyChanged: ['CHANGELOG.md'],
+        verifySatisfiedBy: 'changelog-coverage'
+      },
+      ...overrides
+    });
+
+    it('DONE on an unchanged file when the predicate says the session is covered', async () => {
+      aic._internal.readForVerify = () => 'identical content'; // the compliant-session case
+      aic._internal.changelogCoverage = () => COVERED;
+      const ctx = coverageCtx();
+      const res = await aic.run(ctx);
+      assert.equal(res.ok, true, 'a complete changelog must satisfy the step without an edit');
+      assert.equal(res.status, 'done');
+      assert.ok(ctx.staged['changelog-update'], 'staged on success like any other pass');
+    });
+
+    it('BLOCKS with the coverage message when commits are unaccounted for', async () => {
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = uncovered;
+      const res = await aic.run(coverageCtx());
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /1 of 2 commit\(s\) in this session never touched it/);
+      assert.match(res.blockers[0], /CHANGELOG\.md/);
+      assert.match(res.output.remediation, /bbb2222 Unlogged work/, 'names the offending commit');
+      assert.doesNotMatch(res.blockers[0], /byte-identical/, 'must not report the mutation cause');
+    });
+
+    it('tells the operator the EDIT clears the block, not a bare retry', async () => {
+      // What clears a coverage block is the mutation route: the predicate reads what
+      // past commits touched, which no edit made now can change. Promising that a
+      // retry re-passes the predicate would send the operator into a loop.
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = uncovered;
+      const res = await aic.run(coverageCtx());
+      assert.match(res.output.remediation, /the edit itself satisfies this step/i);
+      assert.match(res.output.remediation, /Retrying without editing will block again/i);
+    });
+
+    it('hands the step\'s declared paths to the predicate, so both look at the same file', async () => {
+      let seenPaths = null;
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = (_p, paths) => { seenPaths = paths; return COVERED; };
+      await aic.run(coverageCtx());
+      assert.deepEqual(seenPaths, ['CHANGELOG.md']);
+    });
+
+    it('falls back to the mutation block when the predicate cannot judge', async () => {
+      // The no-new-hole pin: `unavailable` must never read as success.
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = () => UNAVAILABLE;
+      const res = await aic.run(coverageCtx());
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /no change detected in CHANGELOG\.md/);
+    });
+
+    it('falls back to the mutation block when the predicate throws', async () => {
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = () => { throw new Error('git exploded'); };
+      const res = await aic.run(coverageCtx());
+      assert.equal(res.ok, false);
+      assert.match(res.blockers[0], /no change detected/);
+    });
+
+    it('falls back to the mutation block on an unrecognized predicate name', async () => {
+      aic._internal.readForVerify = () => 'identical content';
+      let consulted = false;
+      aic._internal.changelogCoverage = () => { consulted = true; return COVERED; };
+      const res = await aic.run(coverageCtx({
+        step: {
+          id: 'changelog-update', kind: 'ai-content', prompt: 'go',
+          verifyChanged: ['CHANGELOG.md'], verifySatisfiedBy: 'no-such-predicate'
+        }
+      }));
+      assert.equal(res.ok, false, 'a spec typo must not silently satisfy the gate');
+      assert.equal(consulted, false, 'the changelog predicate is not a catch-all for other names');
+    });
+
+    it('does NOT consult the predicate when the file actually changed (cheap route wins)', async () => {
+      let consulted = 0;
+      let call = 0;
+      aic._internal.readForVerify = () => (call++ === 0 ? 'old' : 'new');
+      aic._internal.changelogCoverage = () => { consulted++; return COVERED; };
+      const res = await aic.run(coverageCtx());
+      assert.equal(res.status, 'done');
+      assert.equal(consulted, 0, 'a changed file short-circuits before any git work');
+    });
+
+    it('never consults the predicate for a step that declares none (back-compat)', async () => {
+      let consulted = 0;
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = () => { consulted++; return COVERED; };
+      const res = await aic.run(ctxWith()); // no verifySatisfiedBy
+      assert.equal(res.ok, false, 'behaves byte-for-byte as before the predicate existed');
+      assert.match(res.blockers[0], /no change detected/);
+      assert.equal(consulted, 0);
+    });
+
+    it('applies on the captureFields path too', async () => {
+      aic._internal.capturePane = () => ({ lines: [] });
+      aic._internal.readCaptureFile = () => ['## Summary', 'x', '## NextSteps', '- y', '## Learnings', '- none'].join('\n');
+      aic._internal.removeCaptureFile = () => {};
+      aic._internal.readForVerify = () => 'unchanged';
+      aic._internal.changelogCoverage = () => COVERED;
+      const ctx = ctxWith({
+        step: {
+          id: 'changelog-update', kind: 'ai-content', prompt: 'go',
+          captureFields: ['summary', 'nextSteps', 'learnings'],
+          captureFile: '.tangleclaw/.wrap-summary.md',
+          verifyChanged: ['CHANGELOG.md'],
+          verifySatisfiedBy: 'changelog-coverage'
+        }
+      });
+      const res = await aic.run(ctx);
+      assert.equal(res.ok, true, 'both gate call sites honor the predicate');
+      assert.equal(res.status, 'done');
+    });
+  });
+
   describe('_verifyChangedGate (unit)', () => {
     it('returns null when no snapshot was taken', () => {
       assert.equal(aic._verifyChangedGate('/p', { id: 's' }, null), null);
