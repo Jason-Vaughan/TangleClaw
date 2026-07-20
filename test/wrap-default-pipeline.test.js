@@ -185,6 +185,25 @@ describe('seedCommitOnlyWrapOverrides — minimal-methodology migration', () => 
       'hand-authored overrides must not be replaced by the seed');
   });
 
+  it('boot sync seeds ARCHIVED minimal projects too — unarchiving must not flip the wrap shape', () => {
+    const archivedPath = path.join(tmpDir, 'archived-minimal');
+    fs.mkdirSync(archivedPath, { recursive: true });
+    const created = store.projects.create({
+      name: 'archived-minimal',
+      path: archivedPath,
+      methodology: 'minimal'
+    });
+    store.projects.archive(created.id);
+
+    projects.syncAllProjects();
+
+    const cfgPath = path.join(archivedPath, '.tangleclaw', 'project.json');
+    assert.ok(fs.existsSync(cfgPath), 'seed must write config for the archived project');
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    assert.equal(onDisk.wrapOverridesSeeded, true);
+    assert.deepStrictEqual(defaultPipeline.effectiveStepIds(onDisk.wrapStepOverrides), ['commit']);
+  });
+
   it('does not touch prawduct projects', () => {
     const project = { name: 'seed-sandbox', path: projectPath, methodology: 'prawduct' };
     const changed = projects.seedCommitOnlyWrapOverrides(project, store.projectConfig.load(projectPath));

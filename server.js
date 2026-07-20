@@ -4346,11 +4346,20 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
     const projects = store.projects.list();
     const project = projects.find(p => p.name === params.project);
     let wrapStepIds = [];
+    let expectedStepsUnavailable = false;
     if (project && project.path) {
       try {
         const overrides = store.projectConfig.load(project.path).wrapStepOverrides;
         wrapStepIds = wrapDefaultPipeline.effectiveStepIds(overrides);
-      } catch { /* unreadable config — score with no expected steps */ }
+      } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable project config must not 500 the audit surface; the degraded state is logged and flagged in the response
+        // Empty expected steps scores every session 1.0 — indistinguishable
+        // from a deliberately commit-only project unless flagged.
+        log.warn('project config unreadable — wrap-quality scored with no expected steps', {
+          project: params.project,
+          error: err.message
+        });
+        expectedStepsUnavailable = true;
+      }
     }
 
     const results = sessions.map(sess => {
@@ -4369,7 +4378,7 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
       };
     });
 
-    return jsonResponse(res, 200, { project: params.project, sessions: results });
+    return jsonResponse(res, 200, { project: params.project, sessions: results, expectedStepsUnavailable });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'INTERNAL');
   }

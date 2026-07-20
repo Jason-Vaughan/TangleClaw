@@ -20,9 +20,15 @@ All notable changes to TangleClaw are documented in this file.
   prevents re-seeding). Wrap-quality scoring (`GET /api/audit/:project/wrap-quality`)
   now scores each project against its *effective* steps (pipeline minus
   override-disabled), so a commit-only project is no longer marked down for steps it
-  deliberately turned off. The `methodology` project field no longer influences the
-  wrap; the field, chooser, templates, and registry are removed in the second half
-  of #538.
+  deliberately turned off — and an unreadable project config is logged and flagged
+  (`expectedStepsUnavailable`) instead of silently scoring 1.0. Seeding runs at
+  create/attach time and covers archived projects at boot, so a `minimal` project
+  wraps the same shape from birth and unarchiving never flips it. One deliberate
+  small deviation: minimal projects' wrap payload now advertises the full
+  captureFields set (`summary`, `nextSteps`, `learnings`) instead of `summary` only —
+  the parser tolerates absent headings, so this is inert. The `methodology` project
+  field no longer influences the wrap; the field, chooser, templates, and registry
+  are removed in the second half of #538.
 
 ## [4.29.0] - 2026-07-19
 
