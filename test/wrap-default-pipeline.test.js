@@ -274,6 +274,35 @@ describe('v27→v28 methodology drop — terminal wrap-config seed', () => {
     store.close();
   });
 
+  it('does NOT seed a project born after the cutover — the full pipeline is the ratified default (#652)', () => {
+    // The seed sweep is scoped to the migrating population and deliberately has
+    // no birth-time equivalent: it keys on a column that no longer exists.
+    // A project created after the cutover therefore starts with an empty
+    // override map and runs every shipped step. That is a REVERSAL of the
+    // pre-cutover default (a new project used to be born `minimal`, i.e.
+    // commit-only), ratified by the operator on 2026-07-20 after the
+    // tc-cleanroom Phase B exit gate surfaced the inversion.
+    //
+    // This pins the decision so reintroducing birth-time commit-only seeding
+    // fails here rather than silently re-flipping the default.
+    const base = makeV27Store([]);
+    migrate(base);
+
+    const newborn = makeProjectDir('born-after-cutover');
+    const config = store.projectConfig.load(newborn);
+
+    assert.deepStrictEqual(config.wrapStepOverrides, {},
+      'a project born after the cutover carries no overrides');
+    assert.ok(!config.wrapOverridesSeeded,
+      'the one-shot migration marker belongs to migrated projects only');
+    assert.deepStrictEqual(
+      defaultPipeline.effectiveStepIds(config.wrapStepOverrides),
+      defaultPipeline.steps().map((s) => s.id),
+      'a newborn project runs the FULL shipped pipeline, not a commit-only wrap'
+    );
+    store.close();
+  });
+
   it('refuses to leave an unreadable project.json half-migrated', () => {
     // A corrupt config reads as "not yet seeded" through the defaults-returning
     // loader; the migration must raw-read so it never overwrites a file it
