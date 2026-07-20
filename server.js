@@ -1176,6 +1176,11 @@ route('GET', '/api/session-rules', (req, res) => {
   if (query.projectId !== undefined) options.projectId = Number(query.projectId);
   // CC-6 (#381): filter the per-project modal's rule boxes by kind.
   if (query.kind !== undefined) options.kind = query.kind;
+  // #569: review state. Unfiltered by default so a future review surface can
+  // list proposals; the Project Rules modal asks for `active` only, because it
+  // renders every row it receives as an enabled, governing rule and would
+  // otherwise show proposals and rejections as live.
+  if (query.status !== undefined) options.status = query.status;
   const rules = store.sessionRules.list(options);
   jsonResponse(res, 200, { rules });
 });
@@ -1300,6 +1305,13 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
   if (!body || body.learningId === undefined) {
     return errorResponse(res, 400, 'learningId is required', 'BAD_REQUEST');
   }
+  // This route mints a LIVE rule from AI-authored text, so it carries the same
+  // operator gate as approval. It previously asserted operator authority simply
+  // because the route had been reached — but this API is on localhost and this
+  // project instructs in-session agents to call it, so "a request arrived" is
+  // not evidence a human sent it.
+  const promoteCheck = projects.checkDeletePassword(body ? body.password : undefined);
+  if (!promoteCheck.allowed) return errorResponse(res, 403, promoteCheck.error, 'FORBIDDEN');
   try {
     const rule = store.sessionRules.promoteFromLearning(Number(body.learningId), {
       content: body.content,
@@ -1308,7 +1320,13 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
       // CC-6 (#381): the wrap-time self-critique loop promotes a learning into a 'wrap' rule.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-      criticGate: body.criticGate
+      criticGate: body.criticGate,
+      // #569: authority comes from clearing the operator gate above, not from
+      // the request claiming it. Without this the store would treat AI-authored
+      // content as a proposal and the operator's own approval would land back
+      // in the queue they just cleared; the wrap's proposal step calls the same
+      // store method WITHOUT it and gets a proposal.
+      approvedByOperator: true
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -1317,6 +1335,74 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
     throw err;
   }
 }, { maxBodySize: 256 * 1024 });
+
+// PUT /api/session-rules/:id/status — resolve a proposal (#569).
+// Approve ('active') or decline ('rejected') a rule the wrap proposed. A
+// rejection is RECORDED rather than deleted: the wrap proposes from recurring
+// learnings, so a deleted decision would simply be re-proposed at the next wrap.
+route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
+  if (!body || typeof body.status !== 'string') {
+    return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
+  }
+  // Approving a proposal grants it authority over every future session, so it
+  // is gated like TangleClaw's other privileged operations (project delete,
+  // session kill, wrap) rather than inferred from a caller-supplied field.
+  // `changedBy` is the caller describing itself — an agent that omits it is
+  // recorded as the operator — so it cannot be what decides this.
+  //
+  // Declining a proposal needs no gate: it grants nothing.
+  if (body.status === 'active') {
+    const check = projects.checkDeletePassword(body ? body.password : undefined);
+    if (!check.allowed) return errorResponse(res, 403, check.error, 'FORBIDDEN');
+  }
+  try {
+    const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
+      // Passing the gate IS the operator acting; recording anything else would
+      // misattribute a decision the gate just authorised.
+      changedBy: body.status === 'active' ? 'operator' : body.changedBy,
+      changeReason: body.changeReason,
+      criticGate: body.criticGate
+    });
+    jsonResponse(res, 200, rule);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    throw err;
+  }
+}, { maxBodySize: 256 * 1024 });
+
+// ── Learnings (#569) ──
+// Until now there were no learnings routes at all, so the tier a learning sits
+// at — the thing deciding whether it reaches a future session — was reachable
+// only from inside the process. An operator could neither see the backlog nor
+// correct a wrong promotion.
+
+// GET /api/learnings?projectId=&tier=
+route('GET', '/api/learnings', (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  const projectId = url.searchParams.get('projectId');
+  if (!projectId) return errorResponse(res, 400, 'projectId is required', 'BAD_REQUEST');
+  const tier = url.searchParams.get('tier') || undefined;
+  jsonResponse(res, 200, { learnings: store.learnings.list(Number(projectId), { tier }) });
+});
+
+// PUT /api/learnings/:id/tier — correct a learning's tier by hand.
+// The loop advances tiers on its own via recurrence; this is the operator's
+// override for when it advanced something they disagree with, or held back
+// something they want live now.
+route('PUT', '/api/learnings/:id/tier', (_req, res, params, body) => {
+  if (!body || typeof body.tier !== 'string') {
+    return errorResponse(res, 400, 'tier is required', 'BAD_REQUEST');
+  }
+  try {
+    jsonResponse(res, 200, store.learnings.setTier(Number(params.id), body.tier));
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    throw err;
+  }
+}, { maxBodySize: 64 * 1024 });
 
 // POST /api/session-rules/conflicts — non-authoritative conflict-candidate signal
 route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {

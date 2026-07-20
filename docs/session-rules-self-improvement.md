@@ -27,9 +27,19 @@ here).
 - `session_rule_versions` — a full snapshot after **every** mutation (`create` / `update` /
   `delete` / `restore`). `version_no` is monotonic per rule; `rule_id` is a logical
   reference (no FK cascade) so **history survives a rule's deletion** for audit.
-- `learnings` — `id`, `project_id`, `content`, `tier` (`provisional` | `active`),
-  `source_session`, `confirmed_count`, timestamps. Rows are the raw material the promote
-  loop turns into rules.
+- `learnings` — `id`, `project_id`, `content`, `tier`, `source_session`,
+  `confirmed_count`, timestamps. Rows are the raw material the promote loop turns into
+  rules. `tier` is one of `provisional` | `active` | `reference` | `archived`
+  (`store.js`'s `setTier` validator is the authority; there is deliberately no CHECK
+  constraint, so `create` will accept any string — pass a valid tier). Only `active`
+  learnings are injected into a session prime, and only `active` ones are eligible to
+  become rule proposals.
+- `session_rules.status` — `proposed` | `active` | `rejected` (#569). **Orthogonal to
+  `enabled`**: `enabled` is the operator's on/off switch for a rule they own, `status` is
+  how far the rule has got through review. Only `active` is ever injected — by the launch
+  prime, the Project Master, or the wrap's own prompts. Keeping the two separate is what
+  makes a REJECTED rule distinguishable from an unreviewed one; collapse them and the wrap
+  re-proposes declined rules at every wrap that sees the same learning.
 
 ## Learnings ingestion (the DB writer, #466)
 
@@ -56,6 +66,57 @@ wrote to the table, so both the prime injection and the promote loop were perman
 | `POST /api/session-rules/:id/restore` `{versionNo}` | Roll back to a prior version |
 | `POST /api/session-rules/promote` `{learningId, content?, projectId?}` | Promote a learning → rule (operator-confirmed; defaults to the learning's project) |
 | `POST /api/session-rules/conflicts` `{content, projectId?}` | Non-authoritative conflict-candidate signal |
+| `PUT /api/session-rules/:id/status` `{status, changedBy?, changeReason?}` | #569 — approve (`active`) or decline (`rejected`) a proposal. An AI `changedBy` requesting `active` is refused with 403 |
+| `GET /api/learnings?projectId=&tier=` | #569 — list a project's learnings |
+| `PUT /api/learnings/:id/tier` `{tier}` | #569 — operator override of a learning's tier |
+
+## The automatic loop (#569)
+
+Before this, the loop existed on paper only: nothing advanced a learning's tier, and
+`promoteFromLearning` had a single caller — a route no UI invoked. So `## Active Learnings`
+was empty on every project and rules never evolved.
+
+1. **Capture** — `learnings-capture` writes the session's learnings to
+   `.tangleclaw/memories/learnings.md`; `learnings-db-write` mirrors today-dated entries
+   into the `learnings` table at `tier:'provisional'`.
+2. **Recur** — when a later wrap records the *same* learning, `learnings-db-write`
+   recognises it and confirms it. Recognition uses a **date-independent key** (the stored
+   entry's own `## YYYY-MM-DD` heading is stripped, then whitespace and case normalized),
+   because otherwise a repeated learning never matches its earlier self. The match is exact
+   after normalization rather than fuzzy: a confirmation puts a learning in front of every
+   future session, so a false match is worse than a missed one.
+3. **Advance** — a learning seen on two different days becomes `active` and is injected
+   into the next session's prime. Two sightings is the bar deliberately: `learnings.confirm`
+   promotes at 2 *confirmations* (three sightings), which for exactly-matching normalized
+   text almost never happens, so deferring to it would leave the gate shut.
+4. **Propose** — the `rule-proposal` wrap step turns each active learning that has no rule
+   yet into a `status:'proposed'` rule, carrying `source_learning_id` for provenance. It
+   proposes the learning's own text; it does not ask an AI to invent rule wording, so every
+   proposal traces to a specific row and needs no second unverifiable round-trip.
+5. **Decide** — the operator approves or rejects. Both are recorded as versions. A rejected
+   proposal is never re-proposed, which is why rejection is a recorded state rather than a
+   delete.
+
+**The gate, stated once:** AI authorship cannot produce a governing rule on its own say-so.
+`createdBy` records *authorship*, not *authority* — a rule promoted from a learning is
+genuinely AI-authored, yet an operator pressing Promote must produce a live rule. Authority
+is therefore carried separately, and the property is enforced at **both** doors into
+`active` — creation and status change — because a gate on one entrance is not a gate.
+
+**What that does and does not guarantee.** In the store the property is absolute: no code
+path reaches `status:'active'` from AI authorship without authority being passed explicitly,
+and `setStatus` refuses `changedBy:'ai'` outright. Over HTTP, the two routes that can grant
+authority — `POST /api/session-rules/promote` and `PUT /api/session-rules/:id/status` with
+`status:'active'` — are gated by the **operator password** (`checkDeletePassword`), the same
+gate as deleting a project, killing a session, or wrapping. Declining a proposal is
+ungated, because it grants nothing.
+
+That gate is only real protection **when a delete password is configured**. With none set it
+allows every caller, so on a machine where in-session agents are instructed to call the
+TangleClaw API, an agent could approve a rule — exactly as it could already delete a project.
+This is stated rather than glossed: the honest claim is that rule approval is as protected as
+every other privileged operation in TangleClaw, not that it is unconditionally
+human-gated. Set a delete password if that distinction matters to you.
 
 `findConflictCandidates` / the `/conflicts` route return active in-scope rules sharing
 significant token overlap with a proposed edit. This is a **hint of what to compare**, NOT

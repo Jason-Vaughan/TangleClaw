@@ -6,6 +6,39 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Wrapping now actually makes the next session smarter (#569).** Two halves of the loop were
+  drawn but never connected. Every learning a wrap captured was written as *provisional*, and
+  nothing in TangleClaw ever advanced one — so the `## Active Learnings` block injected at
+  session start was empty on every project, permanently. And nothing ever turned a learning
+  into a rule: the promote endpoint existed but had no caller and no button.
+
+  Both are connected now. A learning recorded again on a later day is recognised as recurring
+  and advances to active, so it reaches the next session's prime. Recognising it needed a
+  date-independent comparison — stored entries begin with their own `## YYYY-MM-DD` heading, so
+  the same insight written a month later never matched its earlier self by text.
+
+  Recurring learnings then become **proposed** rules. A proposal is inert: it is not injected
+  at session start, not into the Project Master, and not into the wrap's own prompts. It
+  governs nothing until you approve it. Each proposal records the learning it came from, so
+  "why is this rule here?" has an answer.
+
+  **The system cannot promote its own proposals.** That holds at both doors — an AI cannot
+  create an active rule, and it cannot approve one either. Approval is an operator decision,
+  and it is the operator pressing the button that makes a rule live, not the AI asking nicely.
+  A rule you *reject* is recorded as rejected rather than deleted, so the wrap won't quietly
+  re-propose it at the next wrap that sees the same learning.
+
+  New API: `GET /api/learnings`, `PUT /api/learnings/:id/tier` (there were previously no
+  learnings routes at all, so the tier deciding what a future session sees was unreachable from
+  outside the process), and `PUT /api/session-rules/:id/status` to approve or reject.
+
+  Approving a rule is gated by your operator password, the same gate as deleting a project or
+  killing a session — so approval is as protected as every other privileged operation, which
+  means it is only really protected if you have set one. Declining is ungated; it grants
+  nothing.
+
+  Approve/reject is API-only in this release; the one-click review surface lands next.
+
 - **Projects can now turn off or reconfigure an individual wrap step, without forking their
   methodology.** Set `wrapStepOverrides` in a project's `.tangleclaw/project.json`, keyed by
   step id — `{"version-bump": {"enabled": false}}` skips that step,

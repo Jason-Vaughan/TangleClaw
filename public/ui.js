@@ -1039,7 +1039,7 @@ function renderProjectRulesSection(project) {
 async function loadProjectRules(projectId) {
   projectRulesTargetId = projectId;
   for (const { kind } of PROJECT_RULE_KINDS) {
-    const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}`);
+    const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}&status=active`);
     // The modal may have been closed/reopened on another project while awaiting.
     if (projectRulesTargetId !== projectId) return;
     renderProjectRulesList(kind, data ? data.rules || [] : []);
@@ -1084,7 +1084,7 @@ async function addProjectRule(kind) {
   if (data) {
     if (input) input.value = '';
     _setProjectRulesStatus('Added', true);
-    const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+    const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
     renderProjectRulesList(kind, list ? list.rules || [] : []);
   } else {
     _setProjectRulesStatus('Add failed', false);
@@ -1100,7 +1100,7 @@ async function addProjectRule(kind) {
 async function toggleProjectRule(id, enabled, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
   if (!data) { _setProjectRulesStatus('Update failed', false); return; }
-  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
   renderProjectRulesList(kind, list ? list.rules || [] : []);
 }
 
@@ -1113,7 +1113,7 @@ async function deleteProjectRule(id, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
   if (!data) { _setProjectRulesStatus('Delete failed', false); return; }
   _setProjectRulesStatus('Deleted', true);
-  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}`);
+  const list = await api(`/api/session-rules?projectId=${encodeURIComponent(projectRulesTargetId)}&kind=${kind}&status=active`);
   renderProjectRulesList(kind, list ? list.rules || [] : []);
 }
 
@@ -3130,7 +3130,7 @@ function renderMasterSettingsBody(s, groups) {
 
 /** Fetch and render the master Hard rules list. */
 async function loadMasterRules() {
-  const data = await api('/api/session-rules?kind=master');
+  const data = await api('/api/session-rules?kind=master&status=active');
   renderMasterRulesList(data ? data.rules || [] : []);
 }
 
@@ -3167,7 +3167,7 @@ function renderMasterRulesList(rules) {
  * @returns {Promise<object|null>}
  */
 async function _getMasterRule(id) {
-  const data = await api('/api/session-rules?kind=master');
+  const data = await api('/api/session-rules?kind=master&status=active');
   return data && data.rules ? data.rules.find((r) => r.id === id) || null : null;
 }
 
