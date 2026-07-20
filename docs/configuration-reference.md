@@ -116,7 +116,8 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 ### Wrap Step Overrides
 
 `wrapStepOverrides` turns off or reconfigures an individual wrap step for one project. It is
-keyed by the step's `id` from the methodology's `wrap_pipeline.steps`:
+keyed by the step's `id` from the code-owned wrap pipeline (`lib/wrap-default-pipeline.js` —
+one shared pipeline that every project runs):
 
 ```json
 "wrapStepOverrides": {
@@ -125,10 +126,14 @@ keyed by the step's `id` from the methodology's `wrap_pipeline.steps`:
 }
 ```
 
-Overrides live here rather than in the methodology template because the template's step list is
-framework-owned: it is replaced wholesale whenever a newer framework revision ships, so a
-template edit is silently undone at the next server start. Nothing that syncs templates writes
-`project.json`.
+The pipeline's step list ships in code and cannot be edited per project; overrides in
+`project.json` — a file only the project owns — are the per-project configuration surface.
+
+Projects that ran the retired `minimal` methodology (whose wrap was commit-only) were
+migrated automatically: TangleClaw seeded overrides disabling every step except `commit`,
+plus a `wrapOverridesSeeded: true` marker. The marker makes the seeding one-shot — clear
+the overrides map (leave the marker) to opt the project into the full pipeline; it will
+not be re-seeded.
 
 | Field | Type | Effect |
 |-------|------|--------|
@@ -139,8 +144,9 @@ template edit is silently undone at the next server start. Nothing that syncs te
 **What you cannot change.** Step *order and membership* are framework-owned — no adding,
 removing, or reordering. Order carries correctness contracts between steps (the changelog must
 be written before the version bump reads it to choose a level), guaranteed by one check against
-the shared pipeline; per-project ordering would turn that into a promise nothing verifies. If
-you genuinely need a different pipeline, fork a methodology instead.
+the shared pipeline; per-project ordering would turn that into a promise nothing verifies.
+There is no "different pipeline": per-project variation is exactly these overrides plus the
+dedicated effect toggles below.
 
 Fields outside the table above are ignored, and the API rejects them with the field named. Two
 are worth calling out:

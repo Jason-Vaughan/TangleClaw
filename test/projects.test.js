@@ -161,6 +161,32 @@ describe('projects', () => {
       assert.ok(fs.existsSync(path.join(projectsDir, 'new-project', '.tangleclaw', 'project.json')));
     });
 
+    it('seeds commit-only wrap overrides at birth for a minimal project', () => {
+      const result = projects.createProject({
+        name: 'seed-at-birth',
+        methodology: 'minimal'
+      });
+      assert.ok(result.project);
+      const cfg = JSON.parse(fs.readFileSync(
+        path.join(projectsDir, 'seed-at-birth', '.tangleclaw', 'project.json'), 'utf8'));
+      assert.equal(cfg.wrapOverridesSeeded, true,
+        'a minimal project must be seeded at create time, not first flip shape at the next boot');
+      assert.deepEqual(cfg.wrapStepOverrides.commit, undefined, 'commit stays enabled');
+      assert.deepEqual(cfg.wrapStepOverrides['changelog-update'], { enabled: false });
+    });
+
+    it('does not seed wrap overrides for a prawduct project', () => {
+      const result = projects.createProject({
+        name: 'no-seed-prawduct',
+        methodology: 'prawduct'
+      });
+      assert.ok(result.project);
+      const cfg = JSON.parse(fs.readFileSync(
+        path.join(projectsDir, 'no-seed-prawduct', '.tangleclaw', 'project.json'), 'utf8'));
+      assert.equal(cfg.wrapOverridesSeeded, undefined);
+      assert.deepEqual(cfg.wrapStepOverrides, {});
+    });
+
     it('creates session memory directory and seed file', () => {
       const result = projects.createProject({
         name: 'memory-project',

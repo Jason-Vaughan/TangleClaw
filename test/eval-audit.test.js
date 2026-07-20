@@ -860,11 +860,7 @@ describe('eval-audit: scoreTier2_5', () => {
 });
 
 describe('eval-audit: scoreWrapQuality', () => {
-  const prawductMethodology = {
-    wrap: {
-      steps: ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit']
-    }
-  };
+  const wrapStepIds = ['version-bump', 'changelog-update', 'learnings-capture', 'next-session-prime', 'memory-update', 'commit'];
 
   it('perfect score when all steps found', () => {
     const exchanges = [
@@ -875,7 +871,7 @@ describe('eval-audit: scoreWrapQuality', () => {
       { agentResponse: 'Updated .tangleclaw/memories/MEMORY.md with this session work', userMessage: '' },
       { agentResponse: 'Created git commit with all changes', userMessage: '' }
     ];
-    const result = evalAudit.scoreWrapQuality(exchanges, prawductMethodology);
+    const result = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
     assert.equal(result.score, 1.0);
     assert.equal(result.stepsFound.length, 6);
     assert.equal(result.stepsMissing.length, 0);
@@ -886,7 +882,7 @@ describe('eval-audit: scoreWrapQuality', () => {
       { agentResponse: 'Updated CHANGELOG.md', userMessage: '' },
       { agentResponse: 'Created git commit', userMessage: '' }
     ];
-    const result = evalAudit.scoreWrapQuality(exchanges, prawductMethodology);
+    const result = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
     assert.ok(result.score > 0 && result.score < 1.0);
     assert.ok(result.stepsFound.includes('changelog-update'));
     assert.ok(result.stepsFound.includes('commit'));
@@ -898,26 +894,26 @@ describe('eval-audit: scoreWrapQuality', () => {
     const exchanges = [
       { agentResponse: 'Updated MEMORY.md with the v3.13.6 release window', userMessage: '' }
     ];
-    const result = evalAudit.scoreWrapQuality(exchanges, prawductMethodology);
+    const result = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
     assert.ok(result.stepsFound.includes('memory-update'));
   });
 
-  it('handles methodology with no wrap steps', () => {
+  it('handles an empty step-id list (nothing expected scores perfect)', () => {
     const result = evalAudit.scoreWrapQuality(
       [{ agentResponse: 'done', userMessage: '' }],
-      { wrap: { steps: [] } }
+      []
     );
     assert.equal(result.score, 1.0);
     assert.equal(result.totalSteps, 0);
   });
 
   it('handles empty exchanges array', () => {
-    const result = evalAudit.scoreWrapQuality([], prawductMethodology);
+    const result = evalAudit.scoreWrapQuality([], wrapStepIds);
     assert.equal(result.score, 0.0);
     assert.equal(result.stepsMissing.length, 6);
   });
 
-  it('handles null methodology', () => {
+  it('handles absent step-id list', () => {
     const result = evalAudit.scoreWrapQuality(
       [{ agentResponse: 'done', userMessage: '' }],
       null
@@ -926,23 +922,7 @@ describe('eval-audit: scoreWrapQuality', () => {
     assert.equal(result.totalSteps, 0);
   });
 
-  // #139 Chunk 2 — scoreWrapQuality must read wrap steps through the same
-  // shim that lib/sessions.js:triggerWrap uses, so methodology templates on
-  // the new schema (wrap_pipeline) score identically to legacy-shape ones.
-  it('reads wrap steps from wrap_pipeline schema (#139 Chunk 2 — shim parity)', () => {
-    const pipelineMethodology = {
-      wrap_pipeline: {
-        schemaVersion: '1.0',
-        steps: [
-          { id: 'version-bump',       kind: 'version-bump' },
-          { id: 'changelog-update',   kind: 'ai-content' },
-          { id: 'learnings-capture',  kind: 'ai-content' },
-          { id: 'next-session-prime', kind: 'priming-roll' },
-          { id: 'memory-update',      kind: 'ai-content' },
-          { id: 'commit',             kind: 'commit' }
-        ]
-      }
-    };
+  it('scores against the ids the caller passes (effective, override-filtered set)', () => {
     const exchanges = [
       { agentResponse: 'I bumped the version to v3.6.0 and updated version.json', userMessage: '' },
       { agentResponse: 'Updated CHANGELOG.md with the new changes', userMessage: '' },
@@ -951,7 +931,7 @@ describe('eval-audit: scoreWrapQuality', () => {
       { agentResponse: 'Updated .tangleclaw/memories/MEMORY.md with this session work', userMessage: '' },
       { agentResponse: 'Created git commit with all changes', userMessage: '' }
     ];
-    const result = evalAudit.scoreWrapQuality(exchanges, pipelineMethodology);
+    const result = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
     assert.equal(result.score, 1.0);
     assert.equal(result.totalSteps, 6);
     assert.equal(result.stepsFound.length, 6);

@@ -37,6 +37,7 @@ const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
+const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
@@ -4339,12 +4340,33 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
     const limit = query.limit ? parseInt(query.limit, 10) : 10;
     const sessions = store.evalExchanges.listSessions(params.project, { limit });
 
-    // Resolve methodology template for wrap step definitions
+    // Score against the steps this project's wrap actually runs — the
+    // code-owned pipeline minus override-disabled steps — so a commit-only
+    // project isn't marked down for steps it deliberately turned off.
     const projects = store.projects.list();
     const project = projects.find(p => p.name === params.project);
-    let methodology = null;
-    if (project) {
-      try { methodology = store.templates.get(project.methodology); } catch { /* use null */ }
+    let wrapStepIds = [];
+    let expectedStepsUnavailable = false;
+    if (project && project.path) {
+      // Raw read rather than store.projectConfig.load: load() masks a corrupt
+      // file by returning defaults, which would silently score the project
+      // against the full pipeline as if its overrides never existed. An audit
+      // surface must report the degraded state, not paper over it.
+      const cfgPath = path.join(project.path, '.tangleclaw', 'project.json');
+      try {
+        const overrides = fs.existsSync(cfgPath)
+          ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')).wrapStepOverrides
+          : null;
+        wrapStepIds = wrapDefaultPipeline.effectiveStepIds(overrides);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable project config must not 500 the audit surface; the degraded state is logged and flagged in the response
+        // Empty expected steps scores every session 1.0 — indistinguishable
+        // from a deliberately commit-only project unless flagged.
+        log.warn('project config unreadable — wrap-quality scored with no expected steps', {
+          project: params.project,
+          error: err.message
+        });
+        expectedStepsUnavailable = true;
+      }
     }
 
     const results = sessions.map(sess => {
@@ -4354,7 +4376,7 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
         sessionId: sess.sessionId
       }).slice(-5);
 
-      const quality = evalAudit.scoreWrapQuality(exchanges, methodology);
+      const quality = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
       return {
         sessionId: sess.sessionId,
         exchangeCount: sess.exchangeCount,
@@ -4363,7 +4385,7 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
       };
     });
 
-    return jsonResponse(res, 200, { project: params.project, sessions: results });
+    return jsonResponse(res, 200, { project: params.project, sessions: results, expectedStepsUnavailable });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'INTERNAL');
   }

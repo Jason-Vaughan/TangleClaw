@@ -261,6 +261,20 @@ describe('API /api/audit', () => {
     assert.equal(status, 200);
     assert.equal(data.project, 'unknown');
     assert.ok(Array.isArray(data.sessions));
+    assert.equal(data.expectedStepsUnavailable, false,
+      'a resolvable (or absent) project config must not be flagged degraded');
+  });
+
+  it('GET /api/audit/:project/wrap-quality flags an unreadable project config instead of silently scoring perfect', async () => {
+    const projPath = path.join(tmpDir, 'corrupt-config-proj');
+    fs.mkdirSync(path.join(projPath, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projPath, '.tangleclaw', 'project.json'), '{ not json');
+    store.projects.create({ name: 'corrupt-config-proj', path: projPath, methodology: 'prawduct' });
+
+    const { status, data } = await request(server, 'GET', '/api/audit/corrupt-config-proj/wrap-quality');
+    assert.equal(status, 200);
+    assert.equal(data.expectedStepsUnavailable, true,
+      'an unreadable config must be flagged so 1.0-with-no-expected-steps is distinguishable from a deliberate commit-only project');
   });
 
   // ── Baseline Recompute Endpoint ──
