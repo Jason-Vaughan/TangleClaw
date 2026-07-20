@@ -59,50 +59,6 @@ describe('skills', () => {
     });
   });
 
-  describe('getWrapSkill', () => {
-    it('returns wrap config for prawduct', () => {
-      const wrap = skills.getWrapSkill('prawduct');
-      assert.ok(wrap);
-      assert.ok(Array.isArray(wrap.steps));
-      assert.ok(Array.isArray(wrap.captureFields));
-    });
-
-    it('returns null for unknown methodology', () => {
-      const wrap = skills.getWrapSkill('nonexistent');
-      assert.equal(wrap, null);
-    });
-
-    // #139 Chunk 2 — behavior preservation. The shim must produce the same
-    // legacy `{command, steps, captureFields}` shape that `lib/sessions.js:
-    // triggerWrap` consumed before the schema migration. If this snapshot
-    // changes, the wrap NL prompt sent to the AI engine changes — that's a
-    // user-visible regression masquerading as a refactor.
-    //
-    // Pins the two bundled templates (prawduct + minimal).
-    it('synthesizes legacy shape from wrap_pipeline (post-C2 step list for prawduct)', () => {
-      // #139 Chunk 11c added `open-pr-check` to prawduct's wrap_pipeline.steps[].
-      // CC-1 appended `continuity-write` after `commit` (writes the hot continuity
-      // index the next prime reads). C2 (#353) stripped the L3 `critic-check` step
-      // and #570 deleted its handler. PIDX slice 3 (#360) added `project-map` after
-      // `features-toc`; PIDX #426 added `index-describe` after `project-map`.
-      // #570 added `apply-pr-resolutions` (kind `pr-merge`) as the last step: the
-      // gate stays first so a block costs nothing, while the auto-merge it
-      // authorizes must not fire until the wrap commit is in the PR.
-      // The shim flattens every step.id into the legacy steps array, so the
-      // surface order here reflects the template-level edits.
-      assert.deepStrictEqual(skills.getWrapSkill('prawduct'), {
-        command: null,
-        steps: ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions'],
-        captureFields: ['summary', 'nextSteps', 'learnings']
-      });
-      assert.deepStrictEqual(skills.getWrapSkill('minimal'), {
-        command: null,
-        steps: ['learnings-capture', 'memory-update', 'commit'],
-        captureFields: ['summary']
-      });
-    });
-  });
-
   describe('wrapShapeFromTemplate (#139 Chunk 2)', () => {
     it('synthesizes legacy shape from wrap_pipeline (steps map from id; captureFields flatten/union)', () => {
       const result = skills.wrapShapeFromTemplate({

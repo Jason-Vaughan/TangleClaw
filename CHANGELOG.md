@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The wrap pipeline is now code-owned — every project runs the same step list,
+  configured per project instead of per methodology (#538, first half).** The step
+  sequence used to be data in each methodology template
+  (`data/templates/*/template.json`), which meant it could drift, fork, and silently
+  diverge from the runner executing it; the runner, the settings validator, the wrap
+  payload's capture fields, and the wrap-quality scorer now all read one shipped
+  pipeline (`lib/wrap-default-pipeline.js`). Behavior is preserved for existing
+  projects: `prawduct`-labeled projects already ran exactly this pipeline, and every
+  `minimal`-labeled project gets `wrapStepOverrides` seeded once at boot
+  (`seedCommitOnlyWrapOverrides`) so its wrap stays commit-only exactly as before —
+  clearing that map is the operator's one-way opt-in to the full pipeline (a marker
+  prevents re-seeding). Wrap-quality scoring (`GET /api/audit/:project/wrap-quality`)
+  now scores each project against its *effective* steps (pipeline minus
+  override-disabled), so a commit-only project is no longer marked down for steps it
+  deliberately turned off. The `methodology` project field no longer influences the
+  wrap; the field, chooser, templates, and registry are removed in the second half
+  of #538.
+
 ## [4.29.0] - 2026-07-19
 
 ### Added

@@ -37,6 +37,7 @@ const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
+const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
@@ -4339,12 +4340,17 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
     const limit = query.limit ? parseInt(query.limit, 10) : 10;
     const sessions = store.evalExchanges.listSessions(params.project, { limit });
 
-    // Resolve methodology template for wrap step definitions
+    // Score against the steps this project's wrap actually runs — the
+    // code-owned pipeline minus override-disabled steps — so a commit-only
+    // project isn't marked down for steps it deliberately turned off.
     const projects = store.projects.list();
     const project = projects.find(p => p.name === params.project);
-    let methodology = null;
-    if (project) {
-      try { methodology = store.templates.get(project.methodology); } catch { /* use null */ }
+    let wrapStepIds = [];
+    if (project && project.path) {
+      try {
+        const overrides = store.projectConfig.load(project.path).wrapStepOverrides;
+        wrapStepIds = wrapDefaultPipeline.effectiveStepIds(overrides);
+      } catch { /* unreadable config — score with no expected steps */ }
     }
 
     const results = sessions.map(sess => {
@@ -4354,7 +4360,7 @@ route('GET', '/api/audit/:project/wrap-quality', (req, res, params) => {
         sessionId: sess.sessionId
       }).slice(-5);
 
-      const quality = evalAudit.scoreWrapQuality(exchanges, methodology);
+      const quality = evalAudit.scoreWrapQuality(exchanges, wrapStepIds);
       return {
         sessionId: sess.sessionId,
         exchangeCount: sess.exchangeCount,

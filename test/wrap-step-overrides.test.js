@@ -22,10 +22,27 @@ setLevel('error');
 
 const store = require('../lib/store');
 const wrapPipeline = require('../lib/wrap-pipeline');
+const defaultPipeline = require('../lib/wrap-default-pipeline');
 const overrides = require('../lib/wrap-step-overrides');
 const projects = require('../lib/projects');
 
-const FIXTURE_METHODOLOGY = 'override-fixture';
+/**
+ * Run `fn` with the code-owned pipeline swapped for a two-step fixture.
+ * Driving the runner tests through the real pipeline would halt on an
+ * earlier step long before reaching the step under test — the temp project
+ * is not a git repo — and the assertion would never run.
+ * @param {object[]} steps - Fixture step specs
+ * @param {() => Promise<void>} fn
+ */
+async function withFixturePipeline(steps, fn) {
+  const pristine = defaultPipeline._internal.pipeline;
+  defaultPipeline._internal.pipeline = { schemaVersion: '1.0', steps };
+  try {
+    await fn();
+  } finally {
+    defaultPipeline._internal.pipeline = pristine;
+  }
+}
 
 describe('per-project wrap step overrides', () => {
   let tmpDir;
@@ -40,25 +57,9 @@ describe('per-project wrap step overrides', () => {
     fs.mkdirSync(projectPath, { recursive: true });
     store.projects.create({ name: 'override-test', path: projectPath, methodology: 'prawduct' });
 
-    // A two-step fixture methodology for the runner tests. Driving them
-    // through the real prawduct pipeline would halt on an earlier step long
-    // before reaching the step under test — the temp project is not a git
-    // repo — and the assertion would never run.
-    const fixture = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-    fixture.id = FIXTURE_METHODOLOGY;
-    fixture.name = 'Override fixture';
-    fixture.wrap_pipeline = {
-      schemaVersion: '1.0',
-      steps: [
-        { id: 'project-map', kind: 'project-map' },
-        { id: 'index-describe', kind: 'index-describe' }
-      ]
-    };
-    store.templates.save(fixture);
-
     fixturePath = path.join(tmpDir, 'fixture-test');
     fs.mkdirSync(fixturePath, { recursive: true });
-    store.projects.create({ name: 'fixture-test', path: fixturePath, methodology: FIXTURE_METHODOLOGY });
+    store.projects.create({ name: 'fixture-test', path: fixturePath, methodology: 'prawduct' });
   });
 
   after(() => {
@@ -256,12 +257,17 @@ describe('per-project wrap step overrides', () => {
       };
       setFixtureOverrides({ 'project-map': { enabled: false } });
       try {
-        const result = await wrapPipeline.runWrapPipeline('fixture-test');
-        const entry = result.results.find((r) => r.stepId === 'project-map');
-        assert.ok(entry, 'a disabled step must still appear in the results');
-        assert.equal(entry.status, 'skipped');
-        assert.match(entry.output.reason, /disabled for this project/);
-        assert.equal(ran, false, 'the handler must not run');
+        await withFixturePipeline([
+          { id: 'project-map', kind: 'project-map' },
+          { id: 'index-describe', kind: 'index-describe' }
+        ], async () => {
+          const result = await wrapPipeline.runWrapPipeline('fixture-test');
+          const entry = result.results.find((r) => r.stepId === 'project-map');
+          assert.ok(entry, 'a disabled step must still appear in the results');
+          assert.equal(entry.status, 'skipped');
+          assert.match(entry.output.reason, /disabled for this project/);
+          assert.equal(ran, false, 'the handler must not run');
+        });
       } finally {
         wrapPipeline.STEP_DISPATCH['project-map'] = original;
         setFixtureOverrides({});
@@ -275,37 +281,36 @@ describe('per-project wrap step overrides', () => {
       wrapPipeline.STEP_DISPATCH['project-map'] = {
         run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['simulated failure'] })
       };
-      const pristine = JSON.stringify(store.templates.get(FIXTURE_METHODOLOGY));
-      const tpl = JSON.parse(pristine);
-      tpl.wrap_pipeline.steps.find((s) => s.id === 'project-map').blocker = true;
-      store.templates.save(tpl);
       try {
-        setFixtureOverrides({});
-        const halted = await wrapPipeline.runWrapPipeline('fixture-test');
-        assert.equal(halted.blockedAt, 'project-map', 'precondition: it halts without the override');
+        await withFixturePipeline([
+          { id: 'project-map', kind: 'project-map', blocker: true },
+          { id: 'index-describe', kind: 'index-describe' }
+        ], async () => {
+          setFixtureOverrides({});
+          const halted = await wrapPipeline.runWrapPipeline('fixture-test');
+          assert.equal(halted.blockedAt, 'project-map', 'precondition: it halts without the override');
 
-        setFixtureOverrides({ 'project-map': { blocker: false } });
-        const result = await wrapPipeline.runWrapPipeline('fixture-test');
-        assert.equal(result.blockedAt, null, 'the override must stop the halt');
-        const entry = result.results.find((r) => r.stepId === 'project-map');
-        assert.equal(entry.status, 'blocked', 'the failure must still be reported, not hidden');
-        assert.deepEqual(entry.blockers, ['simulated failure']);
+          setFixtureOverrides({ 'project-map': { blocker: false } });
+          const result = await wrapPipeline.runWrapPipeline('fixture-test');
+          assert.equal(result.blockedAt, null, 'the override must stop the halt');
+          const entry = result.results.find((r) => r.stepId === 'project-map');
+          assert.equal(entry.status, 'blocked', 'the failure must still be reported, not hidden');
+          assert.deepEqual(entry.blockers, ['simulated failure']);
+        });
       } finally {
         wrapPipeline.STEP_DISPATCH['project-map'] = original;
-        store.templates.save(JSON.parse(pristine));
         setFixtureOverrides({});
       }
     });
 
-    it('runs the template pipeline unmodified when the project config is unreadable', async () => {
+    it('runs the default pipeline unmodified when the project config is unreadable', async () => {
       const cfgPath = path.join(fixturePath, '.tangleclaw', 'project.json');
       const saved = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, 'utf8') : null;
       fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
       fs.writeFileSync(cfgPath, '{ not json');
       try {
         const result = await wrapPipeline.runWrapPipeline('fixture-test');
-        const template = store.templates.get(FIXTURE_METHODOLOGY);
-        assert.equal(result.results.length, template.wrap_pipeline.steps.length,
+        assert.equal(result.results.length, defaultPipeline.steps().length,
           'an unreadable config must not silently drop steps');
       } finally {
         if (saved === null) fs.rmSync(cfgPath, { force: true });

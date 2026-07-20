@@ -11,6 +11,26 @@ setLevel('error');
 
 const store = require('../lib/store');
 const wrapPipeline = require('../lib/wrap-pipeline');
+const defaultPipeline = require('../lib/wrap-default-pipeline');
+
+/**
+ * Run `fn` with the code-owned pipeline temporarily replaced by a mutated
+ * deep copy — the seam tests use to synthesize variant pipelines now that
+ * the runner no longer reads methodology templates.
+ * @param {(steps: object[]) => void} mutate - Mutates the copied steps in place
+ * @param {() => Promise<void>} fn
+ */
+async function withPipelineVariant(mutate, fn) {
+  const pristine = defaultPipeline._internal.pipeline;
+  const variant = JSON.parse(JSON.stringify(pristine));
+  mutate(variant.steps);
+  defaultPipeline._internal.pipeline = variant;
+  try {
+    await fn();
+  } finally {
+    defaultPipeline._internal.pipeline = pristine;
+  }
+}
 
 describe('wrap-pipeline (#139 Chunk 3)', () => {
   let tmpDir;
@@ -49,18 +69,14 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       }
     });
 
-    it('covers every kind referenced by bundled prawduct + minimal templates', () => {
-      // Cross-pin: anything a bundled template references must dispatch.
-      // If a future bundled change adds a new kind, this test fails until
+    it('covers every kind the code-owned pipeline references', () => {
+      // Cross-pin: anything the shipped pipeline references must dispatch.
+      // If a future pipeline change adds a new kind, this test fails until
       // the dispatch table catches up.
-      const prawduct = store.templates.get('prawduct');
-      const minimal = store.templates.get('minimal');
-      const kinds = new Set();
-      for (const step of (prawduct.wrap_pipeline.steps || [])) kinds.add(step.kind);
-      for (const step of (minimal.wrap_pipeline.steps || [])) kinds.add(step.kind);
+      const kinds = new Set(defaultPipeline.steps().map((s) => s.kind));
       for (const kind of kinds) {
         assert.ok(wrapPipeline.STEP_DISPATCH[kind],
-          `bundled template references kind="${kind}" but no handler exists`);
+          `pipeline references kind="${kind}" but no handler exists`);
       }
     });
   });
@@ -109,7 +125,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       }
     });
 
-    it('preserves step ID order from the methodology template', async () => {
+    it('preserves step ID order from the code-owned pipeline', async () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
@@ -240,97 +256,50 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       assert.match(result.error, /not found/i);
     });
 
-    it('returns ok:false when methodology has no wrap_pipeline block', async () => {
-      // Synthesize a project pointing at a methodology that lacks the
-      // new schema entirely — represents a methodology authored before
-      // #139 lands or a malformed live template.
-      const noPipelinePath = path.join(tmpDir, 'no-pipeline-test');
-      fs.mkdirSync(noPipelinePath, { recursive: true });
-      store.projects.create({
-        name: 'no-pipeline-test',
-        path: noPipelinePath,
-        methodology: 'minimal'
-      });
-      // Snapshot the original minimal so we can restore it byte-equal —
-      // any subsequent test that reads minimal must see the bundled state.
-      const minimalBackup = JSON.parse(JSON.stringify(store.templates.get('minimal')));
-      const minimalBroken = JSON.parse(JSON.stringify(minimalBackup));
-      delete minimalBroken.wrap_pipeline;
-      store.templates.save(minimalBroken);
-
-      try {
-        const result = await wrapPipeline.runWrapPipeline('no-pipeline-test');
-        assert.equal(result.ok, false);
-        assert.match(result.error, /wrap_pipeline\.steps/);
-      } finally {
-        store.templates.save(minimalBackup);
-      }
-    });
   });
 
   describe('runWrapPipeline — block semantics', () => {
     it('halts the pipeline when a blocker:true step returns ok:false', async () => {
-      // Inject a failing handler for one kind, restore afterwards.
+      // Inject a failing handler for one kind, restore afterwards. The
+      // code-owned pipeline's first ai-content step (changelog-update)
+      // ships blocker:true (#328), so no pipeline variant is needed.
       const original = wrapPipeline.STEP_DISPATCH['ai-content'];
       wrapPipeline.STEP_DISPATCH['ai-content'] = {
         run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['simulated lint failure'] })
       };
 
-      // Synthesize a project on a methodology whose ai-content step
-      // declares blocker:true. We monkey-patch the live template in place
-      // so the runner sees the elevated blocker setting on the wire.
-      // (#328: content ai-content steps already ship blocker:true; setting it
-      // here is now redundant but harmless, and we restore from the pristine
-      // snapshot so the bundled blocker:true survives for sibling tests.)
-      const pristine = JSON.stringify(store.templates.get('prawduct'));
-      const prawduct = JSON.parse(pristine);
-      const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
-      aiStep.blocker = true;
-      const blockingPath = path.join(tmpDir, 'block-test');
-      fs.mkdirSync(blockingPath, { recursive: true });
-      store.projects.create({
-        name: 'block-test',
-        path: blockingPath,
-        methodology: 'prawduct'
-      });
-      // Need to write the modified template so the runner reads it.
-      store.templates.save(prawduct);
-
       try {
-        const result = await wrapPipeline.runWrapPipeline('block-test');
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
         assert.equal(result.ok, false);
-        assert.equal(result.blockedAt, aiStep.id);
+        assert.equal(result.blockedAt, 'changelog-update');
 
-        const blockingResult = result.results.find((r) => r.stepId === aiStep.id);
+        const blockingResult = result.results.find((r) => r.stepId === 'changelog-update');
         assert.equal(blockingResult.status, 'blocked');
         assert.deepStrictEqual(blockingResult.blockers, ['simulated lint failure']);
 
         // Steps after the blocked step must be marked 'pending'.
-        const blockedIdx = result.results.findIndex((r) => r.stepId === aiStep.id);
+        const blockedIdx = result.results.findIndex((r) => r.stepId === 'changelog-update');
         for (let i = blockedIdx + 1; i < result.results.length; i++) {
           assert.equal(result.results[i].status, 'pending',
             `step ${result.results[i].stepId} after block must be pending`);
         }
       } finally {
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
-        // Restore the pristine bundled prawduct template (a `delete` would
-        // strip the now-bundled blocker:true off the first content step).
-        store.templates.save(JSON.parse(pristine));
       }
     });
 
-    it('bundled prawduct ships blocker:true + allowOverride:true on all 3 content steps (#328)', () => {
-      const prawduct = store.templates.get('prawduct');
+    it('code-owned pipeline ships blocker:true + allowOverride:true on all 3 content steps (#328)', () => {
+      const steps = defaultPipeline.steps();
       const contentIds = ['changelog-update', 'learnings-capture', 'memory-update'];
       for (const id of contentIds) {
-        const step = prawduct.wrap_pipeline.steps.find((s) => s.id === id);
-        assert.ok(step, `bundled prawduct must declare the ${id} step`);
+        const step = steps.find((s) => s.id === id);
+        assert.ok(step, `pipeline must declare the ${id} step`);
         assert.equal(step.kind, 'ai-content');
         assert.equal(step.blocker, true, `${id} must be a blocker so a failure halts before commit`);
         assert.equal(step.allowOverride, true, `${id} must allow the Skip & note override`);
       }
       // commit stays after them so a halt prevents the commit.
-      const ids = prawduct.wrap_pipeline.steps.map((s) => s.id);
+      const ids = steps.map((s) => s.id);
       assert.ok(ids.indexOf('memory-update') < ids.indexOf('commit'),
         'commit must come after the content steps for the halt to gate it');
     });
@@ -348,23 +317,21 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['commit'] = {
         run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
       };
-      // #328: the bundled prawduct ai-content content steps are now
-      // blocker:true. Force them blocker:false on a local copy so this test
-      // exercises the runner's blocker:false branch (not the new default).
-      const pristine = JSON.stringify(store.templates.get('prawduct'));
-      const prawduct = JSON.parse(pristine);
-      prawduct.wrap_pipeline.steps
-        .filter((s) => s.kind === 'ai-content')
-        .forEach((s) => { s.blocker = false; });
-      store.templates.save(prawduct);
 
       try {
-        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(result.ok, true,
-          'pipeline should complete despite a non-blocking failing step');
-        assert.equal(result.blockedAt, null);
+        // The shipped ai-content content steps are blocker:true (#328) —
+        // force them blocker:false on a pipeline variant so this test
+        // exercises the runner's blocker:false branch (not the default).
+        await withPipelineVariant(
+          (steps) => steps.filter((s) => s.kind === 'ai-content').forEach((s) => { s.blocker = false; }),
+          async () => {
+            const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+            assert.equal(result.ok, true,
+              'pipeline should complete despite a non-blocking failing step');
+            assert.equal(result.blockedAt, null);
+          }
+        );
       } finally {
-        store.templates.save(JSON.parse(pristine));
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
         wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
       }
@@ -375,7 +342,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['version-bump'] = {
         run: async () => { throw new Error('boom from version-bump'); }
       };
-      // `changelog-update` is a blocker:true ai-content step that now runs
+      // `changelog-update` is a blocker:true ai-content step that runs
       // BEFORE version-bump (it must, or the commit flush of version-bump's
       // staged CHANGELOG snapshot would discard the AI's edit). With no live
       // session the real handler blocks there and version-bump would never
@@ -385,38 +352,30 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       wrapPipeline.STEP_DISPATCH['ai-content'] = {
         run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
       };
-      // Mark version-bump as blocker:true on a local prawduct copy.
-      const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-      const step = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'version-bump');
-      step.blocker = true;
-      store.templates.save(prawduct);
 
       try {
-        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(result.ok, false);
-        assert.equal(result.blockedAt, step.id);
-        const blockingResult = result.results.find((r) => r.stepId === step.id);
-        assert.equal(blockingResult.status, 'blocked');
-        assert.ok(blockingResult.blockers[0].includes('boom from version-bump'),
-          'thrown error message must surface in blockers[]');
+        // Mark version-bump as blocker:true on a pipeline variant.
+        await withPipelineVariant(
+          (steps) => { steps.find((s) => s.kind === 'version-bump').blocker = true; },
+          async () => {
+            const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+            assert.equal(result.ok, false);
+            assert.equal(result.blockedAt, 'version-bump');
+            const blockingResult = result.results.find((r) => r.stepId === 'version-bump');
+            assert.equal(blockingResult.status, 'blocked');
+            assert.ok(blockingResult.blockers[0].includes('boom from version-bump'),
+              'thrown error message must surface in blockers[]');
+          }
+        );
       } finally {
         wrapPipeline.STEP_DISPATCH['version-bump'] = original;
         wrapPipeline.STEP_DISPATCH['ai-content'] = originalAi;
-        delete step.blocker;
-        store.templates.save(prawduct);
       }
     });
   });
 
   describe('runWrapPipeline — unknown kinds', () => {
-    it('skips unknown kinds without dispatching (forward-compat with future bundled changes)', async () => {
-      // Add an unknown-kind step to a local prawduct copy.
-      const prawduct = JSON.parse(JSON.stringify(store.templates.get('prawduct')));
-      prawduct.wrap_pipeline.steps.unshift(
-        { id: 'future-step', kind: 'not-yet-implemented' }
-      );
-      store.templates.save(prawduct);
-
+    it('skips unknown kinds without dispatching (forward-compat with future pipeline changes)', async () => {
       // Stub the real commit handler — this test's project is not a git repo.
       const origCommit = wrapPipeline.STEP_DISPATCH['commit'];
       wrapPipeline.STEP_DISPATCH['commit'] = {
@@ -431,15 +390,19 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       };
 
       try {
-        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(result.ok, true,
-          'unknown-kind skip must not block the pipeline');
-        const skipped = result.results.find((r) => r.stepId === 'future-step');
-        assert.equal(skipped.status, 'skipped');
-        assert.deepStrictEqual(skipped.blockers, []);
+        // Add an unknown-kind step to a pipeline variant.
+        await withPipelineVariant(
+          (steps) => steps.unshift({ id: 'future-step', kind: 'not-yet-implemented' }),
+          async () => {
+            const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+            assert.equal(result.ok, true,
+              'unknown-kind skip must not block the pipeline');
+            const skipped = result.results.find((r) => r.stepId === 'future-step');
+            assert.equal(skipped.status, 'skipped');
+            assert.deepStrictEqual(skipped.blockers, []);
+          }
+        );
       } finally {
-        prawduct.wrap_pipeline.steps.shift();
-        store.templates.save(prawduct);
         wrapPipeline.STEP_DISPATCH['commit'] = origCommit;
         wrapPipeline.STEP_DISPATCH['ai-content'] = origAi;
       }
@@ -797,22 +760,19 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     wrapPipelineMod.STEP_DISPATCH['ai-content'] = {
       run: async () => ({ ok: false, status: 'blocked', output: null, blockers: ['simulated error'] })
     };
-    const pristine = JSON.stringify(store.templates.get('prawduct'));
-    const prawduct = JSON.parse(pristine);
-    const aiStep = prawduct.wrap_pipeline.steps.find((s) => s.kind === 'ai-content');
-    aiStep.blocker = 'errors-only';
-    store.templates.save(prawduct);
 
     try {
-      const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
-      assert.equal(result.ok, false);
-      assert.equal(result.blockedAt, aiStep.id,
-        '"errors-only" must halt the pipeline on !ok (Chunk 4 contract)');
+      await withPipelineVariant(
+        (steps) => { steps.find((s) => s.kind === 'ai-content').blocker = 'errors-only'; },
+        async () => {
+          const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
+          assert.equal(result.ok, false);
+          assert.equal(result.blockedAt, 'changelog-update',
+            '"errors-only" must halt the pipeline on !ok');
+        }
+      );
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
-      // Restore pristine — a `delete` would strip the bundled blocker:true
-      // off the first content step (#328).
-      store.templates.save(JSON.parse(pristine));
     }
   });
 
@@ -826,26 +786,24 @@ describe('runWrapPipeline — "errors-only" blocker (#139 Chunk 4)', () => {
     wrapPipelineMod.STEP_DISPATCH['commit'] = {
       run: async () => ({ ok: true, status: 'done', output: null, blockers: [] })
     };
-    // #328: ALL ai-content content steps are blocker:true by default, and the
-    // stub above returns ok:false for every ai-content step — so a later
-    // still-blocker:true step would halt even if the first is set to a
-    // non-enum value. Set every ai-content step to the unrecognized enum.
-    const pristine = JSON.stringify(store.templates.get('prawduct'));
-    const prawduct = JSON.parse(pristine);
-    prawduct.wrap_pipeline.steps
-      .filter((s) => s.kind === 'ai-content')
-      .forEach((s) => { s.blocker = 'not-a-recognized-enum'; });
-    store.templates.save(prawduct);
 
     try {
-      const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
-      assert.equal(result.ok, true,
-        'unrecognized blocker enums must NOT halt — only "true" and "errors-only" do');
-      assert.equal(result.blockedAt, null);
+      // #328: ALL ai-content content steps are blocker:true by default, and the
+      // stub above returns ok:false for every ai-content step — so a later
+      // still-blocker:true step would halt even if the first is set to a
+      // non-enum value. Set every ai-content step to the unrecognized enum.
+      await withPipelineVariant(
+        (steps) => steps.filter((s) => s.kind === 'ai-content').forEach((s) => { s.blocker = 'not-a-recognized-enum'; }),
+        async () => {
+          const result = await wrapPipelineMod.runWrapPipeline('errors-only-test');
+          assert.equal(result.ok, true,
+            'unrecognized blocker enums must NOT halt — only "true" and "errors-only" do');
+          assert.equal(result.blockedAt, null);
+        }
+      );
     } finally {
       wrapPipelineMod.STEP_DISPATCH['ai-content'] = original;
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
-      store.templates.save(JSON.parse(pristine));
     }
   });
 });
