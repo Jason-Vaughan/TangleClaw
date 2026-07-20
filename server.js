@@ -1560,10 +1560,21 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
       permanent: body.permanent || false,
       ttlMs: body.ttl || null,
       description: body.description || null,
-      autoRenew: body.autoRenew || false
+      autoRenew: body.autoRenew || false,
+      force: body.force === true
     });
     jsonResponse(res, 201, lease);
   } catch (err) {
+    // A port already owned by another project is a conflict, not a malformed
+    // request — 409 lets a caller retry against a different port, and the owner
+    // in the body is what makes that decision possible without a second call.
+    if (err.code === 'PORT_CONFLICT') {
+      return jsonResponse(res, 409, {
+        error: err.message,
+        code: 'PORT_CONFLICT',
+        owner: err.owner || null
+      });
+    }
     return errorResponse(res, 400, err.message, 'BAD_REQUEST');
   }
 });

@@ -109,6 +109,53 @@ describe('API /api/ports', () => {
     assert.equal(status, 400);
   });
 
+  // #613 — the API used to upsert unconditionally, so a lease request for a
+  // port another project owned silently replaced the owner with a 201. The
+  // documented contract said "never overwrite another project's lease"; it was
+  // enforced only by client convention, and the convention failed live.
+  it('POST /api/ports/lease returns 409 when another project owns the port', async () => {
+    store.portLeases.lease({ port: 5100, project: 'Owner', service: 'dev-server' });
+
+    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      port: 5100,
+      project: 'Intruder',
+      service: 'api'
+    });
+
+    assert.equal(status, 409, 'a taken port is a conflict, not a bad request');
+    assert.equal(data.code, 'PORT_CONFLICT');
+    assert.equal(data.owner.project, 'Owner', 'the response names the owner so the caller can choose another port');
+    assert.equal(data.owner.service, 'dev-server');
+    assert.equal(store.portLeases.get(5100).project, 'Owner', 'the owner keeps the lease');
+  });
+
+  it('POST /api/ports/lease renews the same project\'s own lease with 201', async () => {
+    store.portLeases.lease({ port: 5101, project: 'Renewer', service: 'api' });
+
+    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      port: 5101,
+      project: 'Renewer',
+      service: 'api-v2'
+    });
+
+    assert.equal(status, 201, 'renewing your own lease is not a conflict');
+    assert.equal(data.service, 'api-v2');
+  });
+
+  it('POST /api/ports/lease takes the port over when force is set', async () => {
+    store.portLeases.lease({ port: 5102, project: 'Owner', service: 'dev-server' });
+
+    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      port: 5102,
+      project: 'Taker',
+      service: 'api',
+      force: true
+    });
+
+    assert.equal(status, 201);
+    assert.equal(data.project, 'Taker');
+  });
+
   it('POST /api/ports/release removes a lease', async () => {
     store.portLeases.lease({ port: 6000, project: 'ToRelease', service: 'temp' });
 

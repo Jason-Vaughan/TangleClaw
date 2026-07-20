@@ -149,14 +149,98 @@ describe('store.portLeases', () => {
     assert.equal(byStatus[0].port, 2000);
   });
 
-  it('upsert updates existing lease', () => {
-    store.portLeases.lease({ port: 1234, project: 'Old', service: 'svc1' });
-    store.portLeases.lease({ port: 1234, project: 'New', service: 'svc2', permanent: true });
+  // This block replaces a test named 'upsert updates existing lease', which
+  // asserted that leasing a port owned by a DIFFERENT project silently replaced
+  // the owner — it pinned the #613 defect as correct behavior. It is inverted
+  // rather than deleted because the renewal half of that upsert is real and
+  // still needs a contract; only the cross-project half was wrong.
+  describe('ownership (#613)', () => {
+    it('renews a lease the same project already holds', () => {
+      store.portLeases.lease({ port: 1234, project: 'Same', service: 'svc1' });
+      store.portLeases.lease({ port: 1234, project: 'Same', service: 'svc2', permanent: true });
 
-    const lease = store.portLeases.get(1234);
-    assert.equal(lease.project, 'New');
-    assert.equal(lease.service, 'svc2');
-    assert.equal(lease.permanent, true);
+      const lease = store.portLeases.get(1234);
+      assert.equal(lease.project, 'Same');
+      assert.equal(lease.service, 'svc2', 'a renewal still updates the lease fields');
+      assert.equal(lease.permanent, true);
+    });
+
+    it('refuses a live lease held by another project', () => {
+      store.portLeases.lease({ port: 1235, project: 'Owner', service: 'dev-server' });
+
+      assert.throws(
+        () => store.portLeases.lease({ port: 1235, project: 'Intruder', service: 'other' }),
+        (err) => err.code === 'PORT_CONFLICT' && /Owner/.test(err.message),
+        'a cross-project claim must be refused, naming the owner'
+      );
+
+      const lease = store.portLeases.get(1235);
+      assert.equal(lease.project, 'Owner', 'the original owner must survive the refusal');
+      assert.equal(lease.service, 'dev-server');
+    });
+
+    it('carries the current owner on the error so the caller can act on it', () => {
+      store.portLeases.lease({ port: 1236, project: 'Owner', service: 'dev-server' });
+
+      try {
+        store.portLeases.lease({ port: 1236, project: 'Intruder', service: 'other' });
+        assert.fail('expected a PORT_CONFLICT');
+      } catch (err) {
+        assert.equal(err.code, 'PORT_CONFLICT');
+        assert.equal(err.owner.project, 'Owner');
+        assert.equal(err.owner.service, 'dev-server');
+      }
+    });
+
+    it('allows an explicit forced takeover', () => {
+      store.portLeases.lease({ port: 1237, project: 'Owner', service: 'dev-server' });
+      store.portLeases.lease({ port: 1237, project: 'Taker', service: 'other', force: true });
+
+      const lease = store.portLeases.get(1237);
+      assert.equal(lease.project, 'Taker', 'force takes the port over');
+      assert.equal(lease.service, 'other');
+    });
+
+    it('records a forced takeover in the activity log', () => {
+      // The displaced project keeps running against a port the registry no
+      // longer says is theirs; without this entry there is no trace of who held
+      // it, which is what made the live incident so expensive to unwind.
+      store.portLeases.lease({ port: 1238, project: 'Owner', service: 'dev-server' });
+      store.portLeases.lease({ port: 1238, project: 'Taker', service: 'other', force: true });
+
+      const events = store.activity.query({ eventType: 'port.takeover', limit: 50 });
+      const entry = events.find((e) => e.detail && e.detail.port === 1238);
+      assert.ok(entry, 'a forced takeover must be logged');
+      assert.equal(entry.detail.displacedProject, 'Owner');
+      assert.equal(entry.detail.project, 'Taker');
+    });
+
+    it('lets a different project claim a port whose lease has expired', () => {
+      // An expired lease is garbage awaiting the sweep — treating it as live
+      // would strand ports behind projects that are already gone.
+      store.portLeases.lease({ port: 1239, project: 'Gone', service: 'old', ttlMs: -1000 });
+      store.portLeases.lease({ port: 1239, project: 'Fresh', service: 'new' });
+
+      assert.equal(store.portLeases.get(1239).project, 'Fresh');
+    });
+
+    it('still refuses when another project holds a permanent lease', () => {
+      store.portLeases.lease({ port: 1240, project: 'Owner', service: 'db', permanent: true });
+
+      assert.throws(
+        () => store.portLeases.lease({ port: 1240, project: 'Intruder', service: 'other' }),
+        (err) => err.code === 'PORT_CONFLICT',
+        'a permanent lease never expires, so it always blocks'
+      );
+    });
+
+    it('scopes ownership to the host — the same port on another host is free', () => {
+      store.portLeases.lease({ port: 1241, project: 'Owner', service: 'svc' });
+      store.portLeases.lease({ port: 1241, host: 'other-box', project: 'Elsewhere', service: 'svc' });
+
+      assert.equal(store.portLeases.get(1241).project, 'Owner');
+      assert.equal(store.portLeases.get(1241, 'other-box').project, 'Elsewhere');
+    });
   });
 
   it('validates required fields', () => {

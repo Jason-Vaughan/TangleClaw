@@ -26,6 +26,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Port leases enforce ownership (#613)
+
+<!-- prawduct: type=bugfix | scope=porthub-ownership | status=shipped -->
+
+**Why:** PortHub's whole purpose is conflict prevention, and the guarantee rested on every
+client choosing to check first. That is not a guarantee, and it failed live: a session leased
+a port a running project already owned, the owner's row was overwritten with a `201`, and
+recovering it meant pulling the old row out of a Time Machine snapshot. The injected guide
+said "never overwrite another project's lease" while the API cheerfully did exactly that.
+
+**What:** `store.portLeases.lease()` checks ownership before the upsert — enforcement sits in
+the store, not the route, so no caller can bypass it, including in-process ones. A
+cross-project claim on a LIVE lease throws `PORT_CONFLICT` (409 with the owner in the body);
+`force: true` takes it over and logs the displaced lease to the server log and the activity
+feed. Same-project re-lease is a renewal, and an expired lease blocks nobody.
+
+**Two things the boundary investigation changed about the design.** PortHub's bootstrap
+re-registers the infra ports on every boot under a project name derived from the CHECKOUT
+DIRECTORY name — so a clone or worktree named anything else would 409 against its own
+previous lease and fail to start. Bootstrap therefore passes `force`, which is correct on its
+own terms: the server is binding those ports regardless, so a refusal would make the registry
+lie rather than prevent anything. Separately, `lib/tunnel.js` already implemented this exact
+ownership guard in userland — evidence the rule was real and merely unenforceable where it
+mattered.
+
+**Liveness is defined as the exact inverse of `expireStale`'s predicate**, and compared inside
+SQLite rather than JS: `expires_at` is stored as UTC in `YYYY-MM-DD HH:MM:SS` form with no
+zone suffix, so `new Date()` would read it as local time and shift liveness by the machine's
+UTC offset everywhere outside UTC.
+
+**Tests:** the existing `upsert updates existing lease` asserted the defect was correct
+behavior. It is inverted rather than deleted — the renewal half of that upsert is real and
+still needs a contract; only the cross-project half was wrong. Live-verified against the real
+route on an isolated store: claim → 409 with owner → self-renew 201 → forced takeover 201 →
+takeover logged.
+
+**Filed, not absorbed:** #656 — `release` and `heartbeat` take no `project` at all, so any
+caller can delete or renew another project's lease. Release is arguably the wider hole, and
+fixing it is a breaking signature change that deserves its own decision.
 ## 2026-07-20: First-run install honesty (#614, #615, #616, #617)
 
 <!-- prawduct: type=bugfix | scope=install-first-run | status=shipped -->

@@ -30,6 +30,22 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **`POST /api/ports/lease` refuses to overwrite another project's live lease
+  (#613).** The endpoint upserted unconditionally, so claiming a port another project owned
+  replaced the owner's row and returned `201` — no error, no warning, no record of who held
+  it. The documented contract said "never overwrite another project's lease", but enforcement
+  was client convention, and the convention failed live: a session took a port belonging to a
+  running project, and recovering the previous owner meant digging the row out of a Time
+  Machine snapshot. A cross-project claim on a live lease now returns **409** with
+  `code: "PORT_CONFLICT"` and the current `owner` in the body; `"force": true` still takes the
+  port, logging the displaced lease to both the server log and the activity feed as
+  `port.takeover`. Renewing a lease your own project already holds is unchanged, so idempotent
+  re-registration on every boot needs no special handling, and an expired lease blocks nobody.
+  Enforcement lives in `store.portLeases.lease()` rather than the route, so no caller — including
+  in-process ones — can bypass it. `data/porthub-guide.md` (injected into every managed
+  project's engine config) documents the new failure mode, and its long-standing claim that
+  leases are "permanent by default" is corrected: over HTTP the default is `false`.
+
 - **The wrap pipeline is now code-owned — every project runs the same step list,
   configured per project instead of per methodology (#538, first half).** The step
   sequence used to be data in each methodology template
