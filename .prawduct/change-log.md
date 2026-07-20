@@ -26,6 +26,66 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: The changelog gate stops punishing compliant sessions (#645)
+
+<!-- prawduct: type=bugfix | chunks=01 | scope=wrap-changelog-gate | status=shipped -->
+
+**Why:** the `changelog-update` step verified that `CHANGELOG.md` had *changed* during the
+step. The project's first core rule is to update the changelog with every change, so a
+compliant session reached the wrap with nothing left to write and got blocked — the gate was
+right on its own terms and wrong about what it was for. The UI Wrap button was benched over it.
+
+**What:** a second satisfaction route on the same gate. `lib/wrap-steps/changelog-coverage.js`
+answers whether every non-wrap, non-merge commit in `<lastWrapSha>..HEAD` touched the step's
+declared paths in its own diff; `_verifyChangedGate` consults it only when the mutation check
+fails, so the cheap comparison still short-circuits. Opt-in per step via `verifySatisfiedBy`,
+declared on `changelog-update` in the code-owned pipeline. A three-valued verdict keeps the
+original hole closed: `unavailable` (no judgeable commits) falls back to the mutation blocker
+rather than passing on no evidence.
+
+**The design that did not survive contact with reality:** the first implementation matched
+issue references — every commit's `#N` present under `[Unreleased]`. It passed a full synthetic
+suite and was wrong. Squash-merge appends the PULL REQUEST number to the subject while
+changelog entries cite the ISSUE; they are different number spaces. Run against this repo's own
+history it reported 12 of 12 correctly-logged commits as uncovered — reproducing #645 in a
+better-worded costume. What a commit TOUCHED is already local and needs no convention, and it
+verified 12/12 covered on the same range. The lesson is recorded in `learnings.md`.
+
+**Critic follow-through (two review rounds).** Round one (0 blocking, 10 warnings) surfaced
+three real defects. (a) `git log --name-only` emits REPOSITORY-root-relative paths regardless of
+cwd, so a project rooted in a subdirectory of its repo matched none of its own declared paths
+and would have reported every commit uncovered — fixed with `--relative`, pinned by a test that
+builds a real subdir repo (a fixture would only have restated the assumption that was wrong).
+(b) The coverage block's remediation prescribed a sequence that re-blocks — fixed by accepting
+an uncommitted edit to a declared path, which makes the text true. (c) Work uncommitted at wrap
+time was judged by neither route.
+
+The fix for (c) did not survive round two, and the revert is the more interesting record:
+treating any dirty tracked file as unlogged work blocked exactly the compliant sessions #645 is
+about, because a session dirties tracked bookkeeping files as a matter of course
+(`.prawduct/change-log.md` is tracked here). Verified — a session whose every commit touched
+`CHANGELOG.md` still evaluated `uncovered` purely because unrelated files were dirty. A rule
+that misfires on the central case is worse than the gap it closes, so the gap is documented in
+the module and filed as #659. A
+second follow-up (#660) tracks the prompt-override divergence the review surfaced: `prompt` is
+operator-overridable while `verifySatisfiedBy` is framework-owned, so a project pinned to an
+older prompt now describes a gate it no longer has.
+
+Also: `_listCommits` gained a 5MB buffer (the 1MB default would have reinstated #645 on long
+ranges); the `unavailable` abstention logs at `info` rather than `debug` so it is visible at the
+default level; commits with no in-scope files are exempt alongside merges; and session-range
+resolution moved to a shared `_git-range.js` where the two copies had already drifted
+(`{7,64}` vs `{7,40}` for the same field).
+
+**Verification:** all three directions against real history — the current session's 12 commits
+report `covered`; a range containing two real commits that shipped without a changelog entry
+(`f71a299`, `02ee405`) reports `uncovered` and names them; a dirty `CHANGELOG.md` reports
+`covered`, and a compliant session with an otherwise-dirty tree reports `covered`. Seven
+mutations (dropped wrap-commit exclusion, dropped merge exemption,
+`unavailable`-as-success, three-dot range, no changed-file short-circuit, substring path match,
+dropped `--relative`) were each killed by the suite.
+
+
 ## 2026-07-20: Phase B exit gate + the ratified new-project wrap default (#652)
 
 <!-- prawduct: type=chore | scope=wrap-default-ratification | status=shipped -->
@@ -631,7 +691,7 @@ actually failed.
 
 ## 2026-07-18: Discovery — #595 rule delivery is severed, not merely unverified (wrap-v2)
 
-<!-- prawduct: type=discovery | scope=wrap-v2 -->
+<!-- prawduct: type=discovery | scope=wrap-v2 | status=shipped -->
 
 **Why:** The operator ratified a standing design rule ("TangleClaw can't require what
 won't work on all models — Claude-native means HINT only") and asked for it to be written
@@ -684,7 +744,7 @@ only, and will not reach the next session until Chunk 01 ships.
 
 ## 2026-07-18: Discovery — Phase B step inventory (wrap-v2)
 
-<!-- prawduct: type=discovery | scope=wrap-v2 -->
+<!-- prawduct: type=discovery | scope=wrap-v2 | status=shipped -->
 
 **Why:** Phase A complete, so Phase B opens with the task its direction artifact
 explicitly blocked on: "fate of each current wrap step — needs the real 12-step

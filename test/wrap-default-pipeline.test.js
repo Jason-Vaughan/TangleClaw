@@ -64,6 +64,35 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     }
   });
 
+  // #645 — the gate that verifies changelog-update must be satisfiable by the
+  // changelog being CORRECT, not only by it being different, or it blocks every
+  // session that followed the changelog-per-change rule. The declaration is what
+  // carries the fix to an install, so pin it here rather than only at the gate.
+  it('changelog-update declares the coverage predicate alongside its mutation check', () => {
+    const step = defaultPipeline.steps().find((s) => s.id === 'changelog-update');
+    assert.deepEqual(step.verifyChanged, ['CHANGELOG.md']);
+    assert.equal(step.verifySatisfiedBy, 'changelog-coverage');
+  });
+
+  it('every declared verifySatisfiedBy names a predicate the gate implements', () => {
+    // An unrecognized name degrades to the mutation check rather than throwing, so
+    // a typo here would be silent at runtime — this is the only thing that catches it.
+    const IMPLEMENTED = new Set(['changelog-coverage']);
+    for (const step of defaultPipeline.steps()) {
+      if (!step.verifySatisfiedBy) continue;
+      assert.ok(IMPLEMENTED.has(step.verifySatisfiedBy),
+        `${step.id} declares unimplemented predicate "${step.verifySatisfiedBy}"`);
+    }
+  });
+
+  it('a step declaring verifySatisfiedBy also declares verifyChanged (the predicate is a second route, not the only one)', () => {
+    for (const step of defaultPipeline.steps()) {
+      if (!step.verifySatisfiedBy) continue;
+      assert.ok(Array.isArray(step.verifyChanged) && step.verifyChanged.length > 0,
+        `${step.id} declares a satisfaction predicate but no verifyChanged — the gate would never run`);
+    }
+  });
+
   describe('wrapShape', () => {
     it('derives step ids in run order plus the captureFields union', () => {
       const shape = defaultPipeline.wrapShape();
