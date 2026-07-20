@@ -30,6 +30,18 @@ All notable changes to TangleClaw are documented in this file.
   field no longer influences the wrap; the field, chooser, templates, and registry
   are removed in the second half of #538.
 
+### Internal
+
+- Ran the tc-cleanroom first-run acceptance gate as the Phase B exit for the
+  methodology sunset. The cutover verified from an empty install: schema v28 created
+  directly with no `methodology` column or `templates` table, `/api/methodologies*`
+  gone, fresh projects reporting the neutral `ungoverned` governance state. The gate
+  did not pass — it filed #652 (a project created *after* the cutover defaults to the
+  full 14-step wrap where the pre-cutover default was commit-only, because the v27→v28
+  seed sweep keys on the dropped column and has no birth-time equivalent). Known-open
+  install defects #614–#617 reproduced and excluded as not-new. Result recorded in
+  `.prawduct/artifacts/wrap-v2-build-plan.md`.
+
 ### Removed
 
 - **The methodology layer is gone — projects no longer carry a workflow label, and
