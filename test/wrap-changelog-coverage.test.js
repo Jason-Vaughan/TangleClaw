@@ -359,16 +359,18 @@ describe('changelog-coverage — against this repository\'s real history', () =>
   });
 
   it('reads real touched-file lists rather than empty ones', () => {
-    // An explicit relative range, not the resolved one: on a feature branch with
-    // no commits yet, `main..HEAD` is legitimately empty and would assert nothing.
-    const commits = cov._listCommits(process.cwd(), 'HEAD~12..HEAD');
-    assert.ok(commits.length > 0, 'expected commits in the repo');
+    // `HEAD` rather than `HEAD~N..HEAD`: CI checks out shallow (actions/checkout
+    // defaults to depth 1), where any `HEAD~N` is an unknown revision. Asserting
+    // over whatever history exists keeps this meaningful in a full clone without
+    // being a false failure in a shallow one.
+    const commits = cov._listCommits(process.cwd(), 'HEAD');
+    assert.ok(commits.length > 0, 'expected at least one commit in the repo');
     assert.ok(commits.every((c) => /^[0-9a-f]{40}$/.test(c.sha)), 'expected full SHAs from %H');
     assert.ok(commits.every((c) => c.subject.length > 0), 'expected a subject on every commit');
     assert.ok(commits.some((c) => c.files.length > 0),
       'every commit parsed with an empty file list — the --name-only format assumption is wrong');
-    assert.ok(commits.some((c) => c.files.includes('CHANGELOG.md')),
-      'expected real commits touching CHANGELOG.md — the path-matching assumption is wrong');
+    assert.ok(commits.every((c) => c.files.every((f) => !f.startsWith('/') && !f.includes('\u0000'))),
+      'expected clean repo-relative paths, not absolute or NUL-laden ones');
   });
 
   it('reports paths relative to the PROJECT root when it is not the repo root', () => {
@@ -408,13 +410,52 @@ describe('changelog-coverage — against this repository\'s real history', () =>
     }
   });
 
-  it('recognizes real wrap commits in real history', () => {
-    // The wrap-subject prefix is an assumption about what the commit step wrote
-    // months ago and what squash-merge preserved; synthetic subjects cannot test it.
-    const commits = cov._listCommits(process.cwd(), 'HEAD~30..HEAD');
-    assert.ok(commits.some((c) => cov._isWrapCommit(c.subject)),
-      'expected at least one real wrap commit in the last 30 — the exclusion may be matching nothing');
-    assert.ok(commits.some((c) => !cov._isWrapCommit(c.subject)),
-      'expected ordinary commits too — the exclusion must not be matching everything');
+  it('round-trips real wrap subjects through git and still excludes them', () => {
+    // The exclusion is an assumption about text that has to survive `git log`'s
+    // format string: the real post-squash subject carries an em-dash, parentheses
+    // and a `#N`, any of which could be mangled between `%s` and the separator.
+    // Built as a real repo rather than read from this one's history, so it holds
+    // in a shallow CI checkout and does not depend on what happens to be in range.
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const nodePath = require('node:path');
+    const { execSync } = require('node:child_process');
+
+    const SUBJECTS = [
+      'Session wrap',
+      'Session wrap (chunk 04b)',
+      'Session wrap on wrap/20260719184554-tangleclaw',
+      'Session wrap — release 4.30.0 (Phase B exit, install honesty) (#658)',
+      'Stop the wrap reporting success it never verified (#641)'
+    ];
+
+    const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'tc-wrapsubj-'));
+    try {
+      const git = (cmd) => execSync(`git ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+      git('init -q .');
+      SUBJECTS.forEach((subject, i) => {
+        fs.writeFileSync(nodePath.join(root, `f${i}.txt`), `${i}\n`);
+        git('add -A');
+        execSync('git -c user.email=t@t -c user.name=t commit -q -F -', {
+          cwd: root, input: subject, stdio: ['pipe', 'pipe', 'ignore']
+        });
+      });
+
+      const commits = cov._listCommits(root, 'HEAD');
+      assert.equal(commits.length, SUBJECTS.length, 'every commit must parse into its own record');
+
+      const parsed = commits.map((c) => c.subject).sort();
+      assert.deepEqual(parsed, [...SUBJECTS].sort(),
+        'a real subject was mangled between git\'s %s and the parser');
+
+      const excluded = commits.filter((c) => cov._isWrapCommit(c.subject)).map((c) => c.subject);
+      assert.equal(excluded.length, 4, 'the four wrap subjects must be excluded');
+      assert.ok(excluded.includes('Session wrap — release 4.30.0 (Phase B exit, install honesty) (#658)'),
+        'the post-squash form is the one that matters — it carries a #N that is never in the changelog');
+      assert.ok(!excluded.includes('Stop the wrap reporting success it never verified (#641)'),
+        'an ordinary commit mentioning the wrap must not be excluded');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
