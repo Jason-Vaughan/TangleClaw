@@ -5,7 +5,9 @@ TangleClaw is the central port registry for every project on this machine — re
 ### Rules
 - **Never hardcode ports** — check and register through TangleClaw first.
 - **Register before binding** to a port (dev server, database, API, etc.).
-- **Check for conflicts** before claiming a port — another project may already own it.
+- **Check for conflicts** before claiming a port — another project may already own it. The
+  registry now enforces this: claiming a port another project holds returns **409**, it does
+  not silently take it.
 - **Release** a port once it's no longer needed (service stopped, teardown, cleanup).
 
 ### Port Ranges Convention
@@ -26,7 +28,9 @@ All calls are JSON. The API base URL is injected **below this guide**; use it as
 # Check what's taken (before picking a port)
 GET /api/ports
 
-# Register a port (permanent by default — survives restarts)
+# Register a port. Pass "permanent": true to survive restarts (the default over
+# HTTP is false — an omitted flag gives you a non-permanent lease).
+# Returns 201 on success, or 409 if another project already holds the port.
 POST /api/ports/lease
 { "port": 3200, "project": "my-project", "service": "dev-server", "permanent": true }
 
@@ -48,4 +52,30 @@ POST /api/ports/heartbeat
 - **Release** when removing a service from a project's config, permanently shutting one down (not just a temporary stop), or when the project no longer needs the port.
 
 ### Conflict Resolution
-If `GET /api/ports` shows a port is taken, pick a different one in the same range — never overwrite another project's lease.
+
+Claiming a port another project holds returns **409** with the current owner:
+
+```json
+{ "error": "Port 3200 on localhost is leased by \"other-project\" (dev-server). …",
+  "code": "PORT_CONFLICT",
+  "owner": { "project": "other-project", "service": "dev-server", "permanent": true } }
+```
+
+**Pick a different port in the same range.** That is the answer in almost every case — the
+owner in the response tells you who has it without a second call.
+
+Re-leasing a port **your own project** already holds is a renewal, not a conflict: it
+succeeds normally, so idempotent re-registration on every boot needs no special handling.
+An **expired** lease does not block anyone.
+
+Taking over a live lease requires `"force": true` in the body. It is deliberately explicit
+and it is logged with the displaced owner, because the displaced project is still running
+against a port the registry no longer says is theirs. Use it only when you know the previous
+owner is gone — otherwise release the port from the owning side first.
+
+**Scope of enforcement, precisely.** `lease` is guarded. `release` and `heartbeat` are **not** —
+they take only a port, so they cannot check ownership, and any caller can release or renew any
+lease (tracked as issue #656). So "the registry enforces this" means it will not let you
+*overwrite* someone's lease; it cannot yet stop you *releasing* it and then claiming the freed
+port. Treat release as the destructive call it is: release only ports your own project holds.
+

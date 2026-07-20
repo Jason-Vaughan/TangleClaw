@@ -111,6 +111,66 @@ describe('porthub (store-backed)', () => {
       assert.equal(server.project, expectedName);
       assert.equal(server.service, 'server');
     });
+
+    it('reclaims infra ports held under a different project name (#613)', () => {
+      // The startup-safety property behind bootstrap's `force`. The project
+      // name is derived from the CHECKOUT DIRECTORY, so a clone or worktree
+      // named anything other than the original re-registers the same ports
+      // under a different owner — and without `force` that is a cross-project
+      // claim on its own previous lease, which would 409 and leave the server
+      // unable to record the ports it is about to bind anyway.
+      store.portLeases.lease({ port: 3100, project: 'TangleClaw-worktree', service: 'ttyd', permanent: true });
+      store.portLeases.lease({ port: 3101, project: 'TangleClaw-worktree', service: 'server', permanent: true });
+
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      const expectedName = path.basename(path.resolve(__dirname, '..'));
+      assert.equal(store.portLeases.get(3100).project, expectedName,
+        'bootstrap must reclaim its own infra port regardless of the recorded owner');
+      assert.equal(store.portLeases.get(3101).project, expectedName);
+    });
+  });
+
+  // #613 — the store refuses a cross-project claim; these cover the wrapper
+  // every in-process caller actually goes through.
+  describe('registerPort ownership (#613)', () => {
+    it('fails without taking the port when another project owns it', () => {
+      store.portLeases.lease({ port: 4300, project: 'Owner', service: 'dev-server' });
+
+      const result = porthub.registerPort(4300, 'Intruder', 'api');
+
+      assert.equal(result.success, false);
+      assert.equal(store.portLeases.get(4300).project, 'Owner', 'the owner keeps the port');
+    });
+
+    it('reports the conflict distinctly from a malformed request', () => {
+      // A caller that wants to pick another port needs to tell "someone else
+      // owns this" apart from "this request was wrong", and needs to know who.
+      store.portLeases.lease({ port: 4301, project: 'Owner', service: 'dev-server' });
+
+      const result = porthub.registerPort(4301, 'Intruder', 'api');
+
+      assert.equal(result.code, 'PORT_CONFLICT');
+      assert.equal(result.owner.project, 'Owner');
+      assert.equal(result.owner.service, 'dev-server');
+    });
+
+    it('takes the port over when force is passed', () => {
+      store.portLeases.lease({ port: 4302, project: 'Owner', service: 'dev-server' });
+
+      const result = porthub.registerPort(4302, 'Taker', 'api', { force: true });
+
+      assert.equal(result.success, true);
+      assert.equal(store.portLeases.get(4302).project, 'Taker');
+    });
+
+    it('renews a port the same project already holds', () => {
+      porthub.registerPort(4303, 'Same', 'api');
+      const result = porthub.registerPort(4303, 'Same', 'api-v2');
+
+      assert.equal(result.success, true);
+      assert.equal(store.portLeases.get(4303).service, 'api-v2');
+    });
   });
 
   describe('shutdown', () => {

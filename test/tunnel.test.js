@@ -504,6 +504,72 @@ describe('tunnel', () => {
       }
     });
 
+    // #613 — the ownership check that used to sit in ensureTunnel was deleted
+    // once the store began enforcing it. These pin the two behaviors that
+    // changed, so re-adding the old guard cannot pass silently.
+    it('leaves another project\'s live lease alone and still reports the tunnel up', async () => {
+      const server = httpServer();
+      const port = await listen(server);
+      store.portLeases.lease({ port, project: 'someone-else', service: 'dev-server' });
+
+      try {
+        const result = await tunnel.ensureTunnel('test-contended', {
+          host: '198.51.100.10',
+          port: 18789,
+          localPort: port,
+          sshUser: 'test',
+          sshKeyPath: '~/.ssh/id_rsa'
+        });
+
+        assert.equal(result.ok, true, 'a lease refusal must not fail the tunnel');
+        const lease = store.portLeases.get(port);
+        assert.equal(lease.project, 'someone-else', "the owner's lease must survive");
+        assert.equal(lease.service, 'dev-server');
+      } finally {
+        server.close();
+      }
+    });
+
+    it('claims a port whose foreign lease has expired', async () => {
+      // The old guard skipped registration whenever ANY other project appeared
+      // in the table, expired or not — leaving the port bound and unrecorded.
+      const server = httpServer();
+      const port = await listen(server);
+      store.portLeases.lease({ port, project: 'long-gone', service: 'old', ttlMs: -1000 });
+
+      try {
+        await tunnel.ensureTunnel('test-expired', {
+          host: '198.51.100.10',
+          port: 18789,
+          localPort: port,
+          sshUser: 'test',
+          sshKeyPath: '~/.ssh/id_rsa'
+        });
+
+        const lease = store.portLeases.get(port);
+        assert.equal(lease.project, 'test-expired', 'an expired lease must not block registration');
+        assert.equal(lease.service, 'openclaw-tunnel');
+      } finally {
+        server.close();
+      }
+    });
+
+    // The two ensureTunnel branches register through one helper, so testing it
+    // directly covers the spawn-path call site too — that branch needs a real
+    // `ssh -f -N -L` fork to reach, which this suite deliberately avoids.
+    it('_registerTunnelPort refuses a live foreign lease and claims an expired one', () => {
+      store.portLeases.lease({ port: 19980, project: 'live-owner', service: 'dev-server' });
+      tunnel._registerTunnelPort(19980, 'tunnel-project');
+      assert.equal(store.portLeases.get(19980).project, 'live-owner',
+        'a live foreign lease is left alone');
+
+      store.portLeases.lease({ port: 19981, project: 'expired-owner', service: 'old', ttlMs: -1000 });
+      tunnel._registerTunnelPort(19981, 'tunnel-project');
+      assert.equal(store.portLeases.get(19981).project, 'tunnel-project',
+        'an expired foreign lease does not block registration');
+      assert.equal(store.portLeases.get(19981).service, 'openclaw-tunnel');
+    });
+
     it('killTunnel releases port from PortHub', () => {
       const localPort = 19997;
       // Register the port first (simulating what ensureTunnel does)
