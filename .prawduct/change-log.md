@@ -48,15 +48,21 @@ path. The step now also reports the provisional-learnings backlog on every exit 
 and skip reasons carry "N provisional learnings building recurrence" — #569 proposal 3).
 Pending proposals also surface in the Settings modal's Project Rules list with an amber
 `Proposed` badge and an inert enabled-toggle (`fetchProjectRules` now fetches unfiltered
-and drops only rejections client-side). `public/sw.js` CACHE_NAME bumped (ui.js/style.css
+and drops only rejections client-side). Per the cumulative Critic's two warnings (one
+root), the modal is the **durable** decision surface: the drawer renders only the wrap
+that just ran, so proposed rows carry their own Approve / Reject buttons IN PLACE of
+Delete (`resolveProjectRuleProposal`) — deleting a proposed row would erase the recorded
+decision and re-arm re-proposal; approve is the same gated status route, with a hidden
+password field revealed on 403. `public/sw.js` CACHE_NAME bumped (ui.js/style.css
 are precached).
 
 **Tests:** `test/wrap-rule-proposal-widget.test.js` (new — source-level pins on the
 widget: edit-save ordering, 403 recovery, no-retry, a11y, 44px targets);
 `test/wrap-drawer.test.js` (+8: `ruleProposalWidget` edge cases, backlog detail);
 `test/self-improvement-loop.test.js` (+4: backlog counts on every step exit path);
-`test/project-rules-modal.test.js` (+4: badge, unfiltered fetch, inert toggle). Full
-suite 4743 pass / 0 fail / 1 skipped.
+`test/project-rules-modal.test.js` (+6: badge, unfiltered fetch, inert toggle,
+Approve/Reject-instead-of-Delete, status-route wiring with 403 password reveal). Full
+suite 4745 pass / 0 fail / 1 skipped.
 
 **Operator verification:** queued as VRF-569-proposal-review (visual, iPhone). Closes
 #569 with 05a.
