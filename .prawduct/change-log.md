@@ -26,6 +26,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Phase B exit gate + the ratified new-project wrap default (#652)
+
+<!-- prawduct: type=chore | scope=wrap-default-ratification | status=shipped -->
+
+**Why:** the tc-cleanroom acceptance gate is the Phase B exit for the methodology sunset, and
+it found the one defect the existing fleet was structurally incapable of surfacing. Chunk 06a's
+migration seeded commit-only overrides for every project that existed at the cutover, so
+"behavior-preserving" was verified against the migrating population — and said nothing about
+the population that does not exist yet. A project created AFTER the cutover gets the full
+14-step wrap where the same project created a day earlier would have been commit-only, because
+the seed sweep keys on the dropped `methodology` column and can have no birth-time equivalent.
+
+**What:** the operator ratified the full pipeline as the new default rather than restoring
+commit-only. `docs/configuration-reference.md` now states the default, that it is a deliberate
+reversal, and its practical cost (on a project with no `CHANGELOG.md` or
+`.tangleclaw/memories/`, the verifying steps stop the wrap for an operator-confirmed skip
+until disabled). A test in `test/wrap-default-pipeline.test.js` pins it, so reintroducing
+birth-time commit-only seeding fails rather than silently re-flipping the default. The 20
+projects migrated at the cutover keep their seeded maps as ordinary per-project config.
+
+**Gate result:** the cutover verified from an empty install — schema v28 created directly with
+no `methodology` column or `templates` table, `/api/methodologies*` gone, fresh projects
+reporting the neutral `ungoverned` state. Known-open install defects #614–#617 reproduced and
+were excluded as not-new; they are fixed in the same release.
+
+
 ## 2026-07-20: Port leases enforce ownership (#613)
 
 <!-- prawduct: type=bugfix | scope=porthub-ownership | status=shipped -->

@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.30.0] - 2026-07-20
+
 ### Fixed
 
 - **`install.sh` refuses to run on Linux instead of half-installing (#614).** The script
