@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.28.0] - 2026-07-19
+
 ### Added
 
 - **Wrapping now actually makes the next session smarter (#569).** Two halves of the loop were
