@@ -144,10 +144,54 @@ The runner ships behind `projConfig.wrapV2` (default `false`, Chunk 3). Existing
 ### Out of scope (entire #139)
 
 - Auto-dispatch of Critic on missing-Critic detection (deferred; warn + log skip rationale only).
-- Tombstone-based "user-removed step X" handling — pipeline is methodology-declared; user customizations either fork the methodology or use a custom one.
+- Tombstone-based "user-removed step X" handling — pipeline is methodology-declared; user customizations either fork the methodology or use a custom one. **Superseded in part 2026-07-19 — see "Extended 2026-07-19" below: a project may now disable or reconfigure a step without forking, though it still cannot add, remove, or reorder one.**
 - Branch-protection / push-on-main flow — push step lives outside the pipeline.
 - Per-step retry with exponential backoff — failure blocks; user fixes and retries.
 - Methodology authoring UX — schema is authored by editing template JSON directly.
+
+---
+
+## Extended 2026-07-19 — per-project step overrides
+
+The pipeline is no longer read *solely* from the methodology template. The runner now resolves
+each template step against a per-project `wrapStepOverrides` map (`.tangleclaw/project.json`,
+keyed by `step.id`) before dispatch; `lib/wrap-step-overrides.js` owns the resolution and the
+rules below.
+
+**Why the overrides can't live in the template.** `wrap_pipeline.steps` is in
+`FRAMEWORK_OWNED_PATHS`, so the boot-time reconcile replaces that subtree wholesale whenever a
+bundled template ships a higher `schemaRevision` (ADR 0001). A project hand-editing its template
+to turn one step off therefore loses the edit at the next boot after a framework bump — silently,
+since the sync is a normal startup event. `project.json` is written by no template-sync path, so
+overrides stored there survive by construction rather than by convention.
+
+**What stays framework-owned, and why it isn't merely conservatism.** Order and membership are
+not overridable. Wrap step order encodes correctness contracts *between* steps — the changelog
+must be written before `version-bump` reads it to derive a level, and both before `commit`
+flushes them — and those contracts are guaranteed by a single fingerprint check against the
+bundled step list. Per-project ordering would convert one global, checked property into a
+per-project property nothing checks, which is the shape of the defect that motivated the
+verification work in the first place. Forking a methodology id via `templates.save` remains the
+escape hatch for genuinely different pipelines, unchanged.
+
+**The overridable set is an allow-list** (`enabled`, `blocker`, `prompt`), enforced at the API
+and again in the runner because a hand-edited `project.json` never passes through the API. Two
+exclusions are load-bearing rather than incidental:
+
+- `verifyChanged` is not overridable. It names the files a content step must actually have
+  changed to count as done; emptying it would leave the verification reporting success while
+  checking nothing.
+- A `commit`-kind step cannot be disabled. It is the sole `_flushStagedWrites` caller, so
+  disabling it produces a run where every staging step reports done and nothing reaches disk.
+  Keyed on `kind`, not `id`, so a renamed commit step is equally protected.
+
+`blocker` **is** overridable, and the line between it and the exclusions above is honesty rather
+than strength: a step made non-blocking still runs, still verifies, and still reports `ok:false`
+in the drawer — it only stops halting the pipeline. A visible escape valve is a configuration; a
+self-concealing one is a defect.
+
+A disabled step records `status:'skipped'` with a reason in the results array rather than being
+omitted, preserving the invariant that the result set describes the whole declared pipeline.
 
 ---
 

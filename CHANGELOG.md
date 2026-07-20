@@ -6,6 +6,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Projects can now turn off or reconfigure an individual wrap step, without forking their
+  methodology.** Set `wrapStepOverrides` in a project's `.tangleclaw/project.json`, keyed by
+  step id — `{"version-bump": {"enabled": false}}` skips that step,
+  `{"changelog-update": {"blocker": false}}` stops it halting the wrap. Previously the
+  only lever was forking the entire pipeline into a new methodology, which then stopped
+  receiving framework updates; editing the template in place looked like it worked and was
+  silently destroyed at the next boot after a framework revision bump, because that subtree is
+  replaced wholesale on sync. Overrides live in the project's own config, which nothing that
+  syncs templates writes, so they survive.
+
+  A disabled step still appears in the wrap drawer as a skip with its reason, rather than
+  vanishing from the run — a step that disappears reads as a pipeline that never had it. A step
+  made non-blocking still runs, still verifies, and still reports failure; it just stops halting
+  the wrap.
+
+  Step **order and membership stay framework-owned** — you cannot add, remove, or reorder steps.
+  Order carries correctness contracts between steps (the changelog must be written before the
+  version bump reads it to pick a level), and those are guaranteed by one check against the
+  shared pipeline; per-project ordering would quietly turn that into a promise nothing verifies.
+  Only an allow-list of fields is overridable (`enabled`, `blocker`, `prompt`). Notably
+  `verifyChanged` is not: it names the files a step must actually have changed to count as done,
+  so blanking it would leave the check reporting success while verifying nothing. The commit
+  step cannot be disabled at all — it is the only step that writes the wrap's staged changes to
+  disk, so switching it off would leave every other step reporting work that never lands.
+
 - **The wrap drawer now reports whether your release actually shipped (#638).** The wrap's
   commit step opens a PR and *arms* auto-merge, then finishes — but the version bump and
   CHANGELOG promotion only reach `main` when that PR merges. Until now "auto-merge armed" was
