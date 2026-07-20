@@ -147,6 +147,21 @@ describe('startup session-rule delivery (#595)', () => {
       for (let i = 0; i < 6; i++) {
         ids.push(store.sessionRules.create({ content: `burst rule ${i}`, projectId: project.id }).id);
       }
+      // Force the tie rather than racing the clock for it. Relying on all six
+      // inserts landing inside one tick of datetime('now') makes the test's own
+      // precondition timing-dependent: on a loaded machine the burst straddles a
+      // second boundary, the timestamps differ, and the run fails without the
+      // ordering contract ever being exercised. Pinning created_at guarantees
+      // the tie every run, so the assertion below always tests what it claims to.
+      //
+      // Scope of the guard, measured by reverting the query: flipping the sort to
+      // `id DESC` fails this test, so it does read the order. Dropping the `, id`
+      // tiebreaker entirely does NOT fail it — SQLite's unspecified scan order
+      // happens to coincide with ascending id here. Absence of unspecified
+      // behavior isn't testable; this pins the contract, not the SQL.
+      store.getDb()
+        .prepare(`UPDATE session_rules SET created_at = '2000-01-01 00:00:00' WHERE id IN (${ids.map(() => '?').join(',')})`)
+        .run(...ids);
       const stamps = new Set(store.sessionRules.listActiveForProject(project.id).map((r) => r.createdAt));
       assert.equal(stamps.size, 1, 'precondition: the burst must share one timestamp for this test to mean anything');
 
