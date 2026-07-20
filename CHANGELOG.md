@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Fixed a flaky test that turned `main` red without any code being wrong.** The startup
+  session-rule ordering test built its own precondition by racing the clock: it created six
+  rules and assumed all six would land inside one tick of SQLite's second-resolution
+  `datetime('now')`, giving them the tied timestamps the ordering contract is about. On a
+  loaded CI runner the burst straddled a second boundary, the timestamps differed, and the
+  run failed on the precondition — without ever exercising the ordering it exists to check.
+  The tie is now forced directly, so the assertion runs every time. No production behavior
+  changed; the query already ordered by `created_at, id`.
+
 ### Fixed
 
 - **The wrap no longer stubs Feature Index entries for files the session deleted (#637).**
