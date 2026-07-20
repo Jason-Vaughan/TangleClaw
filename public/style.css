@@ -1039,6 +1039,14 @@ body {
   color: var(--engine-codex);
   vertical-align: middle;
 }
+/* #569: a wrap-proposed rule awaiting operator review — visible but not live. */
+.session-rule-badge--proposed {
+  background: rgba(251, 146, 60, 0.18);
+  color: #fb923c;
+}
+.session-rule-item--proposed {
+  border-left: 3px solid rgba(251, 146, 60, 0.6);
+}
 /* ── Project Rules section in Settings modal (CC-6, #381) ── */
 .project-rules-section {
   margin-top: 16px;

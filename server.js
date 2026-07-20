@@ -1176,10 +1176,9 @@ route('GET', '/api/session-rules', (req, res) => {
   if (query.projectId !== undefined) options.projectId = Number(query.projectId);
   // CC-6 (#381): filter the per-project modal's rule boxes by kind.
   if (query.kind !== undefined) options.kind = query.kind;
-  // #569: review state. Unfiltered by default so a future review surface can
-  // list proposals; the Project Rules modal asks for `active` only, because it
-  // renders every row it receives as an enabled, governing rule and would
-  // otherwise show proposals and rejections as live.
+  // #569: review state. Unfiltered by default; the Project Rules modal fetches
+  // unfiltered and renders proposals with a "Proposed" badge (rejections it
+  // drops client-side — a rejected row is a decision record, not a rule).
   if (query.status !== undefined) options.status = query.status;
   const rules = store.sessionRules.list(options);
   jsonResponse(res, 200, { rules });

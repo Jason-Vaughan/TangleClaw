@@ -2174,6 +2174,65 @@ body {
   opacity: 0.6;
   cursor: default;
 }
+/* #569 rule-proposal review widget — one row per proposed rule with
+   editable text + Approve/Reject. Touch-first: 44px action targets. */
+.wrap-proposal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wrap-proposal-row {
+  padding: 8px;
+  background: var(--card-bg);
+  border-left: 3px solid #fb923c;
+  border-radius: 4px;
+}
+.wrap-proposal-row--decided {
+  opacity: 0.75;
+  border-left-color: var(--elevated-bg);
+}
+.wrap-proposal-row--decided .wrap-proposal-actions {
+  display: none;
+}
+.wrap-proposal-text {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 6px 8px;
+  background: var(--elevated-bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+.wrap-proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.wrap-proposal-actions .btn {
+  min-height: 44px;
+  min-width: 88px;
+}
+.wrap-proposal-note {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.wrap-proposal-password {
+  margin-top: 10px;
+}
+.wrap-proposal-password-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
 /* Per-step help glyph — tap/click to reveal inline "what this step does"
    text (works on touch; native title= is a desktop hover bonus). */
 .wrap-step-help {

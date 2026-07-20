@@ -290,6 +290,28 @@ describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
     assert.equal(row.detail, null);
   });
 
+  it('appends the provisional backlog so the queue is visible (#569 proposal 3)', () => {
+    const row = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 2, proposed: [{}, {}], backlog: { provisional: 3 } }, blockers: []
+    });
+    assert.match(row.detail, /2 rules proposed/);
+    assert.match(row.detail, /3 provisional learnings building recurrence/);
+  });
+
+  it('claims no backlog when it is empty or absent', () => {
+    const withZero = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 1, proposed: [{}], backlog: { provisional: 0 } }, blockers: []
+    });
+    assert.doesNotMatch(withZero.detail, /provisional/);
+    const without = H.buildStepRow({
+      stepId: 'rule-proposal', kind: 'rule-proposal', status: 'done',
+      output: { count: 1, proposed: [{}] }, blockers: []
+    });
+    assert.doesNotMatch(without.detail, /provisional/);
+  });
+
   it('has a non-empty help description for every canonical wrap-step kind (drift guard)', () => {
     for (const k of CANONICAL_KINDS) {
       const d = H.KIND_DESCRIPTIONS[k];
@@ -607,6 +629,68 @@ describe('wrap-drawer helpers — planPickerWidget (#428)', () => {
   it('returns null on missing/invalid rawOutput', () => {
     assert.equal(H.planPickerWidget({ kind: 'priming-roll', status: 'blocked' }, null), null);
     assert.equal(H.planPickerWidget(null, { candidates: ['x.md'] }), null);
+  });
+});
+
+describe('wrap-drawer helpers — ruleProposalWidget (#569)', () => {
+  const H = loadHelpers();
+
+  it('returns the proposals for a completed rule-proposal step', () => {
+    const w = H.ruleProposalWidget(
+      { kind: 'rule-proposal', status: 'done' },
+      { proposed: [
+        { ruleId: 7, learningId: 3, content: 'always pin timestamps in tests', status: 'proposed' },
+        { ruleId: 8, learningId: 4, content: 'restart the server after code changes', status: 'proposed' }
+      ] }
+    );
+    assert.equal(w.kind, 'rule-proposal');
+    // JSON round-trip: the helpers load in a vm sandbox, so their objects have
+    // cross-realm prototypes deepEqual would reject on identity alone.
+    assert.deepEqual(JSON.parse(JSON.stringify(w.proposals)), [
+      { ruleId: 7, learningId: 3, content: 'always pin timestamps in tests' },
+      { ruleId: 8, learningId: 4, content: 'restart the server after code changes' }
+    ]);
+  });
+
+  it('drops malformed entries — no ruleId or blank content means nothing to address', () => {
+    const w = H.ruleProposalWidget(
+      { kind: 'rule-proposal', status: 'done' },
+      { proposed: [
+        { ruleId: 7, learningId: 3, content: 'keep me' },
+        { learningId: 9, content: 'no ruleId' },
+        { ruleId: 10, content: '   ' },
+        null
+      ] }
+    );
+    assert.equal(w.proposals.length, 1);
+    assert.equal(w.proposals[0].ruleId, 7);
+  });
+
+  it('tolerates a missing learningId (null, still renderable)', () => {
+    const w = H.ruleProposalWidget(
+      { kind: 'rule-proposal', status: 'done' },
+      { proposed: [{ ruleId: 7, content: 'orphan provenance' }] }
+    );
+    assert.equal(w.proposals[0].learningId, null);
+  });
+
+  it('returns null for a skipped rule-proposal step — nothing to review', () => {
+    const w = H.ruleProposalWidget(
+      { kind: 'rule-proposal', status: 'skipped' },
+      { proposed: [{ ruleId: 7, content: 'x' }] }
+    );
+    assert.equal(w, null);
+  });
+
+  it('returns null when every entry is malformed or the list is empty', () => {
+    assert.equal(H.ruleProposalWidget({ kind: 'rule-proposal', status: 'done' }, { proposed: [] }), null);
+    assert.equal(H.ruleProposalWidget({ kind: 'rule-proposal', status: 'done' }, { proposed: [{ content: 'no id' }] }), null);
+  });
+
+  it('returns null for other kinds and invalid inputs', () => {
+    assert.equal(H.ruleProposalWidget({ kind: 'pr-check', status: 'done' }, { proposed: [{ ruleId: 1, content: 'x' }] }), null);
+    assert.equal(H.ruleProposalWidget({ kind: 'rule-proposal', status: 'done' }, null), null);
+    assert.equal(H.ruleProposalWidget(null, { proposed: [{ ruleId: 1, content: 'x' }] }), null);
   });
 });
 

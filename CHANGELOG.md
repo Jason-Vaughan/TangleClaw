@@ -4,6 +4,20 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **You can now approve, edit, or reject the wrap's rule proposals from the wrap drawer
+  (#569).** The self-improvement loop shipped safe-but-API-only: the wrap proposed rules
+  from recurring learnings, but acting on a proposal meant hand-crafting a `curl`. Now a
+  wrap that proposed rules renders each one in the drawer with its text editable in place
+  and one-tap Approve / Reject — approve saves your edit first, then makes the rule
+  govern future sessions (behind the same operator password gate as the wrap itself, and
+  the drawer re-uses the password you already typed); reject is recorded so the same
+  learning is never re-proposed. The step's row also reports the provisional-learnings
+  backlog ("N provisional learnings building recurrence"), so the loop's queue is visible
+  instead of silent, and pending proposals appear in the Settings modal's Project Rules
+  list with a `Proposed` badge until you decide.
+
 ## [4.28.0] - 2026-07-19
 
 ### Added

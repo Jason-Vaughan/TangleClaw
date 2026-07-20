@@ -417,4 +417,44 @@ describe('self-improvement loop (#569)', () => {
       assert.equal(res.status, 'skipped');
     });
   });
+
+  describe('the provisional backlog is visible, not silent (#569 proposal 3)', () => {
+    // Proposals only come from ACTIVE learnings, so without the backlog count a
+    // young-but-healthy loop ("3 learnings one recurrence away") reads exactly
+    // like a dead one ("no learnings at all"). Each exit path must carry it.
+
+    it('a skip for no active learnings names how many provisional ones are building recurrence', async () => {
+      store.learnings.create({ projectId: project.id, content: 'seen once', tier: 'provisional' });
+      store.learnings.create({ projectId: project.id, content: 'also once', tier: 'provisional' });
+      const res = await ruleProposal.run({ project });
+      assert.equal(res.status, 'skipped');
+      assert.match(res.output.reason, /2 provisional learnings building recurrence/);
+    });
+
+    it('a skip with a genuinely empty backlog does not claim one', async () => {
+      const res = await ruleProposal.run({ project });
+      assert.equal(res.status, 'skipped');
+      assert.doesNotMatch(res.output.reason, /provisional/);
+    });
+
+    it('an all-decided skip still reports the backlog', async () => {
+      store.learnings.create({ projectId: project.id, content: 'recurring', tier: 'active' });
+      store.learnings.create({ projectId: project.id, content: 'young', tier: 'provisional' });
+      await ruleProposal.run({ project });
+      const again = await ruleProposal.run({ project });
+      assert.equal(again.status, 'skipped');
+      assert.match(again.output.reason, /already have a rule or a decision/);
+      assert.match(again.output.reason, /1 provisional learning building recurrence/);
+    });
+
+    it('a done result carries the count as structured output for the drawer', async () => {
+      store.learnings.create({ projectId: project.id, content: 'recurring', tier: 'active' });
+      store.learnings.create({ projectId: project.id, content: 'young A', tier: 'provisional' });
+      store.learnings.create({ projectId: project.id, content: 'young B', tier: 'provisional' });
+      store.learnings.create({ projectId: project.id, content: 'young C', tier: 'provisional' });
+      const res = await ruleProposal.run({ project });
+      assert.equal(res.status, 'done');
+      assert.deepEqual(res.output.backlog, { provisional: 3 });
+    });
+  });
 });

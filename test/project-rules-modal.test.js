@@ -100,4 +100,40 @@ describe('Project Rules modal (CC-6, #381)', () => {
       assert.match(css, /\.project-rules-block\s*\{/);
     });
   });
+
+  describe('#569 — proposal visibility in the rules list', () => {
+    it('fetches unfiltered and drops only rejections client-side', () => {
+      // Proposals must reach the list (they get a badge); rejections must not
+      // (a rejected row is a decision record, not a rule).
+      assert.match(ui, /async function fetchProjectRules\(projectId, kind\)/);
+      assert.match(ui, /\.filter\(\(r\) => r\.status !== 'rejected'\)/);
+      // The project-rules fetch must not re-narrow to active-only, which would
+      // silently hide the proposal queue again. (The Master rules fetches stay
+      // active-only on purpose — the wrap never proposes master rules.)
+      const helperStart = ui.indexOf('async function fetchProjectRules');
+      const helperEnd = ui.indexOf('async function loadProjectRules');
+      assert.ok(helperStart !== -1 && helperEnd > helperStart);
+      assert.doesNotMatch(ui.slice(helperStart, helperEnd), /status=/);
+      // And no per-kind re-fetch elsewhere in the modal bypasses the helper.
+      assert.doesNotMatch(ui, /projectId=\$\{encodeURIComponent\(projectRulesTargetId\)\}&kind=\$\{kind\}&status=/);
+    });
+
+    it('renders a Proposed badge on proposed rules, alongside the AI badge', () => {
+      assert.match(ui, /session-rule-badge--proposed/);
+      assert.match(ui, /rule\.status === 'proposed'/);
+      // The AI-authorship badge must survive — status and authorship are
+      // different facts and both render.
+      assert.match(ui, /AI-authored/);
+    });
+
+    it('a proposed rule’s enabled-toggle is inert — it governs nothing yet', () => {
+      assert.match(ui, /rule\.enabled && !isProposed \? 'checked' : ''/);
+      assert.match(ui, /\$\{isProposed \? 'disabled' : ''\}/);
+    });
+
+    it('style.css styles the proposed badge and row accent', () => {
+      assert.match(css, /\.session-rule-badge--proposed\s*\{/);
+      assert.match(css, /\.session-rule-item--proposed\s*\{/);
+    });
+  });
 });
