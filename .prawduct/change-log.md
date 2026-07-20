@@ -26,6 +26,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Chunk 06a — code-owned wrap pipeline + behavior-preserving minimal migration (#538 first half)
+
+<!-- prawduct: type=refactor | chunks=06a | scope=wrap-v2 | status=shipped -->
+
+**Why:** the wrap step list lived in per-methodology template data, where it could
+drift, fork, and silently diverge from the runner executing it — and the methodology
+sunset (ratified 2026-07-17) requires the layer to die entirely. Discovery showed the
+fleet majority (23 projects) runs `minimal`'s commit-only wrap, so the removal had to
+be behavior-preserving, not flip-to-full-default.
+
+**What:** `wrap_pipeline.steps` moved verbatim into code (`lib/wrap-default-pipeline.js`);
+the runner, settings validator, wrap-payload capture fields, and wrap-quality scorer all
+read it. One-shot `wrapStepOverrides` seeding (boot + create/attach + archived rows,
+`wrapOverridesSeeded` marker) keeps `minimal` projects commit-only; `prawduct` projects
+already ran exactly this pipeline. Wrap-quality scores effective (override-filtered)
+steps and raw-reads project.json so a corrupt config is logged + flagged
+(`expectedStepsUnavailable`) instead of silently mis-scored. `getWrapSkill` deleted;
+ADR 0002 amended; configuration-reference.md rewritten off the dead fork-a-methodology
+hatch. Cumulative Critic: 2 blocking + 5 warnings, all fixed, final 0/0/0 across two
+verify passes.
+
 ## 2026-07-20: Chunk 05b — the operator review surface for wrap-proposed rules (#569)
 
 <!-- prawduct: type=feat | chunks=05b | scope=wrap-v2 | status=shipped -->
