@@ -1308,7 +1308,14 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
       // CC-6 (#381): the wrap-time self-critique loop promotes a learning into a 'wrap' rule.
       kind: body.kind,
       // SR-7K2P: optional Critic-gate attestation. Invalid → store throws BAD_REQUEST.
-      criticGate: body.criticGate
+      criticGate: body.criticGate,
+      // #569: reaching this route IS the operator's decision — it is the button
+      // they press to promote. Without this flag the store would (correctly)
+      // treat AI-authored content as a proposal, and the operator's own approval
+      // would land back in the review queue they just cleared. The wrap's
+      // proposal step calls the same store method WITHOUT it and gets a
+      // proposal, which is the distinction that keeps the loop safe.
+      approvedByOperator: true
     });
     jsonResponse(res, 201, rule);
   } catch (err) {
@@ -1317,6 +1324,61 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
     throw err;
   }
 }, { maxBodySize: 256 * 1024 });
+
+// PUT /api/session-rules/:id/status — resolve a proposal (#569).
+// Approve ('active') or decline ('rejected') a rule the wrap proposed. A
+// rejection is RECORDED rather than deleted: the wrap proposes from recurring
+// learnings, so a deleted decision would simply be re-proposed at the next wrap.
+route('PUT', '/api/session-rules/:id/status', (_req, res, params, body) => {
+  if (!body || typeof body.status !== 'string') {
+    return errorResponse(res, 400, 'status is required', 'BAD_REQUEST');
+  }
+  try {
+    const rule = store.sessionRules.setStatus(Number(params.id), body.status, {
+      changedBy: body.changedBy,
+      changeReason: body.changeReason,
+      criticGate: body.criticGate
+    });
+    jsonResponse(res, 200, rule);
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    if (err.code === 'FORBIDDEN') return errorResponse(res, 403, err.message, 'FORBIDDEN');
+    throw err;
+  }
+}, { maxBodySize: 256 * 1024 });
+
+// ── Learnings (#569) ──
+// Until now there were no learnings routes at all, so the tier a learning sits
+// at — the thing deciding whether it reaches a future session — was reachable
+// only from inside the process. An operator could neither see the backlog nor
+// correct a wrong promotion.
+
+// GET /api/learnings?projectId=&tier=
+route('GET', '/api/learnings', (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  const projectId = url.searchParams.get('projectId');
+  if (!projectId) return errorResponse(res, 400, 'projectId is required', 'BAD_REQUEST');
+  const tier = url.searchParams.get('tier') || undefined;
+  jsonResponse(res, 200, { learnings: store.learnings.list(Number(projectId), { tier }) });
+});
+
+// PUT /api/learnings/:id/tier — correct a learning's tier by hand.
+// The loop advances tiers on its own via recurrence; this is the operator's
+// override for when it advanced something they disagree with, or held back
+// something they want live now.
+route('PUT', '/api/learnings/:id/tier', (_req, res, params, body) => {
+  if (!body || typeof body.tier !== 'string') {
+    return errorResponse(res, 400, 'tier is required', 'BAD_REQUEST');
+  }
+  try {
+    jsonResponse(res, 200, store.learnings.setTier(Number(params.id), body.tier));
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
+    if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    throw err;
+  }
+}, { maxBodySize: 64 * 1024 });
 
 // POST /api/session-rules/conflicts — non-authoritative conflict-candidate signal
 route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {

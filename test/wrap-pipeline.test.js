@@ -76,7 +76,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -97,7 +97,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         // after `features-toc`; PIDX #426 added `index-describe` after
         // `project-map`; #466 added `learnings-db-write` after
         // `learnings-capture` — prawduct now ships 12 pipeline steps.
-        assert.equal(result.results.length, 13, 'prawduct has thirteen pipeline steps');
+        assert.equal(result.results.length, 14, 'prawduct has fourteen pipeline steps');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -113,7 +113,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+        ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
       );
     });
 
@@ -121,7 +121,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
       assert.deepStrictEqual(kinds,
-        ['pr-check', 'ai-content', 'version-bump', 'ai-content', 'learnings-db-write', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
+        ['pr-check', 'ai-content', 'version-bump', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -134,7 +134,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
       // `project-map`, PIDX slice 3) so the inertness check captures all ten
       // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -148,7 +148,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 13, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, 14, 'every prawduct step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {
@@ -167,7 +167,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     // #583 — `options.onStepStart` progress hook feeds the wrap-run
     // registry so `GET /wrap/status` can report where a running wrap is.
     it('#583 — invokes onStepStart before each dispatched step, in template order', async () => {
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       const dispatched = [];
       for (const kind of wrapKinds) {
@@ -184,7 +184,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         await wrapPipeline.runWrapPipeline('pipeline-test', {
           onStepStart: (stepId, kind) => started.push({ stepId, kind })
         });
-        assert.equal(started.length, 13, 'hook fires once per step');
+        assert.equal(started.length, 14, 'hook fires once per step');
         assert.deepStrictEqual(started.map((s) => s.stepId), dispatched,
           'hook order matches dispatch order');
         assert.equal(started[0].kind, 'pr-check', 'hook receives the step kind');
@@ -200,7 +200,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
 
     it('#583 — onStepStart does not fire for pending steps after a halt, and a throwing hook never alters the outcome', async () => {
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];

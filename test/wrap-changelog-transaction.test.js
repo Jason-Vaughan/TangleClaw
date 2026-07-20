@@ -88,6 +88,16 @@ describe('wrap CHANGELOG transaction — step order is load-bearing', () => {
       'learnings-db-write', 'next-session-prime', 'features-toc', 'project-map',
       'index-describe', 'memory-update', 'commit', 'continuity-write',
       'apply-pr-resolutions'
+    ],
+    // 7: `rule-proposal` added after `learnings-db-write` (#569). Position is
+    // not cosmetic — the proposal step reads the learnings that step has just
+    // confirmed and promoted, so running it earlier would propose from the
+    // previous wrap's state and miss this session's recurrences entirely.
+    7: [
+      'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture',
+      'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc',
+      'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write',
+      'apply-pr-resolutions'
     ]
   };
 

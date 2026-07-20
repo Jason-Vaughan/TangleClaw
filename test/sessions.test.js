@@ -1769,7 +1769,7 @@ describe('sessions', () => {
       // priming-roll/pr-check) so the routing assertion
       // doesn't accidentally trip on a missing tmux session.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'features-toc', 'project-map', 'index-describe'];
+      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'features-toc', 'project-map', 'index-describe'];
       const dispatchOrig = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -1789,8 +1789,8 @@ describe('sessions', () => {
         // `features-toc`; PIDX #426 added `index-describe` after `project-map`;
         // #466 added `learnings-db-write` after `learnings-capture`; #570 added
         // `apply-pr-resolutions` last — prawduct now ships 13 steps.
-        assert.equal(result.pipelineResult.results.length, 13,
-          'prawduct pipeline runs all thirteen steps');
+        assert.equal(result.pipelineResult.results.length, 14,
+          'prawduct pipeline runs all fourteen steps');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         for (const kind of realKinds) {
