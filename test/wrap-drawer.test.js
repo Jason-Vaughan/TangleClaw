@@ -836,6 +836,30 @@ describe('wrap-drawer helpers — buildReportText (#268)', () => {
     // No results array → header only, no step blocks.
     assert.equal(H.buildReportText({ commitSha: 'abc123def456' }).split('\n\n').length, 1);
   });
+
+  it('heads the report with the displayed banner when given, not the frozen pipeline verdict', () => {
+    // The pipeline result says "release pending"; the drawer has since resolved the
+    // PR to merged and repainted the banner. The copied report must match the screen.
+    const pipelineResult = {
+      commitSha: 'f8d107c4f96c0000',
+      results: [{ stepId: 'commit', kind: 'commit', status: 'done', output: {}, blockers: [] }]
+    };
+    const displayed = { label: 'Wrap shipped — PR merged', tone: 'success', detail: 'the release landed on the base branch' };
+    const text = H.buildReportText(pipelineResult, displayed);
+    assert.match(text, /Session Wrap — Wrap shipped — PR merged/);
+    assert.match(text, /the release landed on the base branch/);
+    assert.doesNotMatch(text, /release pending/);
+    // Step blocks still render — only the header is overridden.
+    assert.match(text, /\[Done\] Commit — commit/);
+  });
+
+  it('falls back to the pipeline verdict when the displayed banner is absent or malformed', () => {
+    const pipelineResult = { commitSha: 'abc123def456', results: [] };
+    const fromPipeline = H.buildReportText(pipelineResult);
+    // A malformed override (no string label) must not head the report.
+    assert.equal(H.buildReportText(pipelineResult, { tone: 'success' }), fromPipeline);
+    assert.equal(H.buildReportText(pipelineResult, null), fromPipeline);
+  });
 });
 
 describe('wrap-drawer helpers — shouldStartEndedCountdown (#268)', () => {

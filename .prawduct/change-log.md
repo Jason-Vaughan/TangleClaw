@@ -26,6 +26,21 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Copy report reflects the resolved release banner (#667)
+
+<!-- prawduct: type=bugfix | scope=wrap-667 | status=shipped -->
+
+**Why:** the wrap drawer's Copy report built its header from `summarizePipelineStatus` over
+the pipeline result captured at wrap time, so a report copied after the PR merged still read
+"release pending" while the on-screen banner (repainted by the #638 release resolution) read
+"Wrap shipped — PR merged". The operator had to share both the screenshot and the copied text
+to convey the full outcome.
+
+**What:** record the banner at its single paint choke point (`paintWrapStatus` in
+`public/session.js`) and pass it to `buildReportText` (`public/wrap-drawer.js`), which heads
+the report with it when present and falls back to the pipeline verdict otherwise. The report
+header now always matches the on-screen banner, including "Recheck release" repaints.
+
 ## 2026-07-20: Coverage gate credits nested/sub-package changelogs (#663)
 
 <!-- prawduct: type=bugfix | scope=wrap-663 | status=shipped -->

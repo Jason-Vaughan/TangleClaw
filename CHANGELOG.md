@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The wrap drawer's Copy report reflects the resolved release banner, not a
+  frozen "release pending" (#667).** `buildReportText` re-derived the report
+  header from the pipeline result captured at wrap time, so a report copied after
+  the PR merged still read `Wrap committed — release pending PR merge` while the
+  on-screen banner said `Wrap shipped — PR merged`. The operator had to share both
+  the screenshot and the copied text. The drawer now records the banner at its
+  single paint choke point (`paintWrapStatus`) and heads the report with it, so
+  the copied report always matches what's on screen — including manual "Recheck
+  release" repaints. Falls back to the pipeline verdict when the banner was never
+  repainted. `public/session.js`, `public/wrap-drawer.js`.
+
 ### Added
 
 - **`coveragePaths` wrap-step override — the changelog-coverage gate credits a
