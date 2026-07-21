@@ -445,6 +445,27 @@ describe('wrap-step index-describe (#426)', () => {
       }
     });
 
+    it('honest count: an entry the AI drops (not filed) is NOT billed as graduated', async () => {
+      // Conservation guard (#568): graduatedCount counts arrivals under a real
+      // category, so an entry that merely leaves the TODO block (deleted, not
+      // filed) must not read as success.
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## Server / API\n\n## TODO (auto-stubbed 2026-07-02)\n\n'
+        + '- **TBD** — `lib/a.js`. <!-- describe -->\n- **TBD** — `lib/b.js`. <!-- describe -->\n');
+      const orig = aiContent.run;
+      // Misbehaving AI: deletes the TODO block entirely, files nothing.
+      aiContent.run = async () => {
+        fs.writeFileSync(featPath(), '# Feature Index\n\n## Server / API\n');
+        return { ok: true, status: 'done', output: {}, blockers: [] };
+      };
+      try {
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged: {} });
+        assert.equal(result.output.graduatedCount, 0, 'two entries vanished but zero arrived → graduated 0');
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
     it('curation invariant: does not report entries the AI left under a real category', async () => {
       // The AI (misbehaving) touches nothing — a curated entry must never be
       // counted as graduated, and the pre-existing curated entry is preserved.

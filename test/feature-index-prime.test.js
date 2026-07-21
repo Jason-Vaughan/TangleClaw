@@ -7,7 +7,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { summarizeFeatureIndexForPrime } = require('../lib/feature-index-prime');
+const {
+  summarizeFeatureIndexForPrime,
+  countTodoEntries,
+  countCuratedEntries
+} = require('../lib/feature-index-prime');
+const featuresToc = require('../lib/wrap-steps/features-toc');
 
 const TODO = '## TODO (auto-stubbed 2026-07-02)';
 
@@ -71,6 +76,29 @@ describe('summarizeFeatureIndexForPrime (#568)', () => {
     const content = `# Feature Index\n\n${TODO}\n\n- **TBD** — \`a.js\`.\n- **TBD** — \`b.js\`.\n`;
     const { curated, backlogEntries, backlogBlocks } = summarizeFeatureIndexForPrime(content);
     assert.equal(curated, '# Feature Index');
+    assert.equal(backlogEntries, 2);
+    assert.equal(backlogBlocks, 1);
+  });
+
+  it('counts curated entries outside any TODO block', () => {
+    const content = `# Feature Index\n\n## UI / Web\n\n- **A** — \`a.js\`\n- **B** — \`b.js\`\n\n${TODO}\n\n- **TBD** — \`c.js\`.\n`;
+    assert.equal(countCuratedEntries(content), 2);
+    assert.equal(countTodoEntries(content), 1);
+  });
+
+  it('parses the ACTUAL features-toc stub format (not just hand-written fixtures)', () => {
+    // Pin the parser against the producer's real output so the shared auto-stub
+    // contract can't drift silently (#568 / R-6).
+    const seeded = featuresToc._appendTodoSection(
+      '# Feature Index\n\n## Server / API\n\n- **Existing** — desc. `lib/e.js`\n',
+      ['lib/new-a.js', 'lib/new-b.js'],
+      '2026-07-20'
+    );
+    assert.equal(countTodoEntries(seeded), 2, 'both auto-stubbed entries are counted as backlog');
+    assert.equal(countCuratedEntries(seeded), 1, 'the pre-existing curated entry is not counted as backlog');
+    const { curated, backlogEntries, backlogBlocks } = summarizeFeatureIndexForPrime(seeded);
+    assert.match(curated, /\*\*Existing\*\*/);
+    assert.doesNotMatch(curated, /new-a\.js/, 'auto-stubbed paths are stripped from the prime');
     assert.equal(backlogEntries, 2);
     assert.equal(backlogBlocks, 1);
   });
