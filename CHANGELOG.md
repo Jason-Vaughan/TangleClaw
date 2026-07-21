@@ -75,6 +75,23 @@ All notable changes to TangleClaw are documented in this file.
   gateway/ClawBridge path already keyed off the bridge's own `inputReady` signal.
   `lib/wrap-steps/ai-content.js`.
 
+### Internal
+
+- **De-flaked the `session-rule-delivery` suite (#634).** The launch tests
+  monkeypatch module globals (`tmux.*`, `engines.detectEngine`, `store.engines.get`,
+  `fs.writeFileSync`) around a real `launchSession()`, but applied those patches
+  **before** the `try`/`finally` that restored them — so a throw during fixture
+  setup (e.g. a `Math.random()` fixture-name collision hitting a unique constraint)
+  left a mocked global applied, leaking it into every later test in the file: the
+  intermittent "once in ~5 full-suite runs" failure. Two fixes, both called out in
+  the issue: fixture ids come from a deterministic counter instead of `Math.random()`
+  (no collisions, reproducible failures), and every global patch now goes through a
+  `stub()` helper whose registrations a single top-level `afterEach` restores
+  unconditionally — no code path can bypass cleanup. Behavioral coverage is
+  unchanged (31 tests, same assertions). Non-determinism can't be *proven* absent, so
+  the evidence is "removed the leak vector + 5 consecutive isolated runs and the full
+  suite green," not a reproduce-then-fix. `test/session-rule-delivery.test.js`.
+
 ## [4.31.0] - 2026-07-20
 
 ### Fixed
