@@ -26,6 +26,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Feature Index converges + prime cap (#568)
+
+<!-- prawduct: type=bugfix | scope=feature-index-convergence | status=shipped | chunks=A,B -->
+
+**Why:** the Feature Index had no path from auto-stubbed to indexed. `features-toc`
+appended `## TODO (auto-stubbed <date>)` blocks of `- **TBD** — …` entries; `index-describe`
+could fill their `<!-- describe -->` markers but was forbidden (the #426 curation invariant)
+from NAMING them or MOVING them into a real category. So curated sections stayed empty forever,
+TODO piles grew one block per wrap, and `sessions.js` inlined the entire mostly-"TBD" file into
+every session prime — paying prime budget for noise (TiLT: 13.5 KB, 106 entries all "TBD").
+
+**What:** two coordinated fixes. **(A)** a graduate mode in `index-describe.js` — for the Feature
+Index it names each TODO-block entry, describes it, and files it under the best-fit existing
+category, deleting emptied blocks. The curation invariant is re-scoped from "touch only
+`<!-- describe -->` lines" to "touch only entries inside a TODO block"; it triggers on ANY
+TODO-block entry (so pre-existing installs converge), honors the same one-wrap-lag staged-write
+gate as describe mode, and reports an honest `Feature Index: graduated N` commit line counted by
+ARRIVALS under a category (conservation — a dropped entry can't read as success; a mismatch is
+logged). Project Map keeps its fill-only describe contract. **(B)** a capped prime — new
+dependency-free `lib/feature-index-prime.js` inlines only curated categories and replaces the
+auto-stubbed backlog with a one-line count; it is also the single source of truth for the
+auto-stub block parse (both `sessions.js` and `index-describe` scan through it), staying
+`require`-free to sit off the `projects → sessions` cycle. `lib/wrap-steps/commit.js` renders the
+new graduated audit line.
+
+**Critic:** cumulative 0 blocking / 4 warning / 3 note → all code warnings fixed (shared scanner
+dedup, conservation-based honest count, test evidence, real-format parser pin); verify-resolutions
+clean. Full suite 4639/4640 (1 pre-existing skip). Closes #568 (and clears the last of #571's
+four children).
+
+
 ## 2026-07-20: AI-content wrap step survives operator interaction mid-wrap (#672)
 
 <!-- prawduct: type=bugfix | scope=wrap-672 | status=shipped -->

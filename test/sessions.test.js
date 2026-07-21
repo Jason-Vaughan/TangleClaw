@@ -629,6 +629,45 @@ describe('sessions', () => {
         assert.ok(prompt.includes('lib/pill.js:42'), 'prime should contain the file pointer');
       });
 
+      it('inlines only curated categories and caps the TODO backlog to a count (#568)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath,
+          '# Feature Index\n\n## Server / API\n\n- **Handler** — serves X. `lib/h.js`\n\n'
+          + '## TODO (auto-stubbed 2026-07-02)\n\n'
+          + '- **TBD** — touched in this session: `lib/a.js`. <!-- describe -->\n'
+          + '- **TBD** — touched in this session: `lib/b.js`. <!-- describe -->\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.ok(prompt.includes('## Feature Index'), 'section header present');
+        assert.ok(prompt.includes('**Handler**'), 'curated category entry inlined');
+        // The auto-stubbed backlog is NOT inlined — only counted.
+        assert.equal(prompt.includes('**TBD**'), false, 'TBD stubs must not reach the prime');
+        assert.equal(prompt.includes('lib/a.js'), false, 'backlog paths must not reach the prime');
+        assert.ok(prompt.includes('2 auto-stubbed entries awaiting graduation in 1 backlog block'),
+          'backlog is summarized as a count line');
+      });
+
+      it('singularizes the backlog count line for a single entry/block (#568)', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        fs.writeFileSync(featuresPath,
+          '# Feature Index\n\n## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — `lib/a.js`. <!-- describe -->\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+        assert.ok(prompt.includes('1 auto-stubbed entry awaiting graduation in 1 backlog block'),
+          'singular entry + singular block');
+      });
+
       it('is skipped when featureIndexEnabled is false (even with silentPrime + capability)', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
