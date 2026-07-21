@@ -3121,9 +3121,11 @@ async function copyWrapReport() {
  *   pipeline warning could be lost behind a green release.
  */
 function paintWrapStatus(status, prForRecheck, baseStatus) {
-  // The single choke point for the banner, so the copied report always matches
-  // the banner on screen regardless of which path painted it (initial verdict,
-  // the #638 release resolution, or a manual "Recheck release").
+  // Mirror the painted banner so the copied report matches what's on screen. This
+  // is the primary paint path (initial verdict, the #638 release resolution, a
+  // manual "Recheck release"); the error and notice paths below paint the same
+  // element directly and update this mirror themselves, so the report never lags
+  // any state the banner can show.
   currentWrapDisplayedStatus = status;
   const statusEl = document.getElementById('wrapDrawerStatus');
   statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
@@ -3859,6 +3861,10 @@ async function resolveRuleProposal(proposal, decision, els) {
  * @param {string} message - Human-readable error message.
  */
 function renderWrapDrawerError(message) {
+  // A retry can fail with the pipeline result still set, so Copy report is live in
+  // this state — mirror the "Retry failed" banner so the report doesn't carry the
+  // pre-failure header (the same divergence the release-resolution mirror closes).
+  currentWrapDisplayedStatus = { label: 'Retry failed', tone: 'error', detail: message };
   const statusEl = document.getElementById('wrapDrawerStatus');
   statusEl.className = 'wrap-drawer-status wrap-drawer-status--error';
   statusEl.innerHTML = '';
@@ -4141,6 +4147,9 @@ function openWrapDrawerNotice(label, detail) {
   renderWrapDrawerError(detail);
   const statusEl = document.getElementById('wrapDrawerStatus');
   if (statusEl.firstChild) statusEl.firstChild.textContent = label;
+  // renderWrapDrawerError mirrored a "Retry failed" label; this notice overrode it,
+  // so keep the report mirror in step with the displayed label.
+  currentWrapDisplayedStatus = { label, tone: 'error', detail };
   document.getElementById('wrapDrawerBackdrop').classList.add('open');
   document.getElementById('wrapDrawer').classList.add('open');
 }
