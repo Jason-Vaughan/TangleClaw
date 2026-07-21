@@ -151,6 +151,7 @@ it is not a default for new ones.
 | `enabled` | boolean | `false` skips the step. It still appears in the wrap drawer as a skip with its reason, rather than disappearing from the run |
 | `blocker` | `true` \| `false` \| `"errors-only"` | Whether a failed step halts the rest of the wrap. `false` means the step still runs, still reports failure, and the wrap continues. **`"errors-only"` halts** (it is a stricter form of `true`, not a softer one) — use `false` to stop a step halting your wrap |
 | `prompt` | string | Replaces the instruction text for an `ai-content` step. An empty string makes the step skip itself |
+| `coveragePaths` | `string[]` | Extra changelog paths (globs) the `changelog-update` coverage check accepts, on top of `verifyChanged`. For monorepos that keep a changelog per package — e.g. `["skills/*/CHANGELOG.md"]`. **Additive only:** it widens what counts as a logged commit, never narrows, and is inert on steps without that check. Glob syntax: `*` within one path segment, `**` across segments, a `**`-then-slash prefix also matching the repo-root file |
 
 **What you cannot change.** Step *order and membership* are framework-owned — no adding,
 removing, or reordering. Order carries correctness contracts between steps (the changelog must
@@ -164,6 +165,8 @@ are worth calling out:
 
 - **`verifyChanged` cannot be overridden.** It lists the files a step must actually have changed
   to count as done. Blanking it would leave the check reporting success while verifying nothing.
+  Its additive companion `coveragePaths` (in the table above) only *widens* what the
+  `changelog-update` coverage check accepts, so it carries no such risk.
 - **The `commit` step cannot be disabled.** Every other step stages its writes in memory; the
   commit step is the only one that flushes them to disk. Turning it off would leave the version
   bump and changelog update reporting success with nothing landing. You may still set its
