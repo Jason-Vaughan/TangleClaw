@@ -728,6 +728,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       let sawSessionDiff = false;
       featuresToc._internal.execSync = (cmd) => {
         if (cmd.includes(`${SHA}^{commit}`)) return Buffer.from(''); // SHA resolves
+        if (cmd.includes('merge-base --is-ancestor')) return Buffer.from(''); // SHA is on HEAD's history (#664)
         // The OLD (branch) range is empty — this is the wrap-on-main bug condition.
         if (cmd.includes('main...HEAD')) return Buffer.from('');
         // The NEW (session) range captures everything merged since the last wrap.

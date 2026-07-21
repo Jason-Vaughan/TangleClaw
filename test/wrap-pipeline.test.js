@@ -2225,7 +2225,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       'AI-written MEMORY.md must be included in the wrap commit');
   });
 
-  it('stamps lastWrapSha on projConfig after a successful commit', async () => {
+  it('stamps lastWrapSha with the wrap commit\'s PARENT, so it survives squash-merge (#664)', async () => {
     // projectConfig.load/save are file-based on the project's own
     // `.tangleclaw/project.json` — no store DB init needed.
     const storeMod = require('../lib/store');
@@ -2233,12 +2233,16 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     const ctx = buildContext({});
     const result = await commitStep.run(ctx);
     assert.equal(result.ok, true);
-    assert.ok(result.output.commitSha);
+    assert.ok(result.output.commitSha, 'commitSha (for the UI) is still the wrap commit');
     assert.equal(result.output.stamped, true);
 
+    const parentSha = execSync('git rev-parse HEAD~1', { cwd: projectPath }).toString().trim();
     const cfg = storeMod.projectConfig.load(projectPath);
-    assert.equal(cfg.lastWrapSha, result.output.commitSha,
-      'projConfig.lastWrapSha must equal the commit SHA');
+    assert.equal(cfg.lastWrapSha, parentSha,
+      'lastWrapSha must be the wrap commit PARENT (the pre-wrap tip that survives a '
+      + 'squash-merge as an ancestor), not the wrap commit itself');
+    assert.notEqual(cfg.lastWrapSha, result.output.commitSha,
+      'stamping the wrap commit is the #664 bug — squash-merge orphans it, ballooning the next range');
   });
 
   it('returns blocked when git commit exits non-zero (pre-commit hook rejection)', async () => {
@@ -2365,13 +2369,13 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     // surfaces commitSha:null + stamped:false on this path.
     fs.writeFileSync(path.join(projectPath, 'rev-parse-test.txt'), 'x\n');
 
-    // Replace exec so the LAST call (rev-parse HEAD) returns non-zero
-    // while the prior three (status, add, commit) hit the real git.
+    // Fail BOTH post-commit SHA captures — `rev-parse HEAD` (the wrap commit, for
+    // the UI) and `rev-parse ... HEAD~1` (its parent, the stamp base, #664) — while
+    // the prior calls (status, add, commit) hit real git. In reality a broken git
+    // fails both, and the contract under test is "no capturable SHA → no stamp".
     const realExec = commitStep._internal.exec;
-    let callIdx = 0;
     commitStep._internal.exec = async (file, args, opts) => {
-      callIdx++;
-      if (file === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      if (file === 'git' && args[0] === 'rev-parse' && (args.includes('HEAD') || args.includes('HEAD~1'))) {
         return { exitCode: 1, stdout: '', stderr: 'fake rev-parse failure' };
       }
       return realExec(file, args, opts);
