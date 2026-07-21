@@ -26,6 +26,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-21: De-flake the session-rule-delivery suite (#634)
+
+<!-- prawduct: type=bugfix | scope=session-rule-delivery-flake | status=shipped -->
+
+**Why:** `test/session-rule-delivery.test.js` failed intermittently under full-suite runs
+(~once in five). The launch tests monkeypatch module globals (`tmux.*`,
+`engines.detectEngine`, `store.engines.get`, `fs.writeFileSync`) around a real
+`launchSession()`, but applied those patches BEFORE the `try`/`finally` that restored them —
+so a throw during fixture setup (e.g. a `Math.random()` fixture-name collision hitting a
+unique constraint) left a mocked global applied, leaking it into every subsequent test in the
+file. Test-only; no product code changed.
+
+**What:** two fixes, both from the issue's own suggestions. (1) Deterministic fixture ids via
+a monotonic counter, replacing `Math.floor(Math.random() * 1e9)` — no collisions, reproducible
+failures. (2) A `stub()` helper registers every global patch; a single top-level `afterEach`
+restores all registrations unconditionally, so no code path (including a throw before a
+`try`) can leak a global. Behavioral coverage unchanged (31 tests, same assertions).
+
+**Honest confidence:** non-determinism can't be proven absent — the evidence is "removed the
+leak vector + 5 consecutive isolated runs and the full suite green," not reproduce-then-fix.
+Full suite 4640/4641 (1 pre-existing skip). Closes #634.
+
+
 ## 2026-07-21: Wrap priming-roll skips a plan-less project instead of blocking (#676)
 
 <!-- prawduct: type=bugfix | scope=priming-roll-missing-plans-skip | status=shipped -->

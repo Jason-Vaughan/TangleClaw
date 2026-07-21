@@ -70,11 +70,40 @@ describe('startup session-rule delivery (#595)', () => {
     return store.projects.create({ name, path: projDir, engine: 'claude' });
   }
 
+  // Deterministic, collision-free fixture ids. Math.random() names (the prior
+  // approach) could collide under a full-suite run and made a failure message
+  // non-reproducible — both flake vectors called out in #634.
+  let _uidCounter = 0;
+  const uid = () => (++_uidCounter);
+
+  // Leak-proof global stubbing. The launch tests monkeypatch module globals
+  // (`tmux.*`, `engines.detectEngine`, `store.engines.get`, `fs.writeFileSync`)
+  // around a real `launchSession()`. The prior pattern applied those patches
+  // BEFORE a `try`/`finally`, so a throw during fixture setup (e.g. a name
+  // collision) left them applied — leaking a mocked global into every later
+  // test in the file, the #634 flake shape. `stub()` registers each patch and
+  // the top-level `afterEach` restores it unconditionally, so no code path can
+  // bypass cleanup. (`t.mock.timers` is auto-restored by node at test end, so
+  // it never leaks; the manual globals were the real vector.)
+  const _restores = [];
+  function stub(obj, key, value) {
+    _restores.push([obj, key, Object.getOwnPropertyDescriptor(obj, key)]);
+    obj[key] = value;
+    return value;
+  }
+  afterEach(() => {
+    while (_restores.length) {
+      const [obj, key, descriptor] = _restores.pop();
+      if (descriptor) Object.defineProperty(obj, key, descriptor);
+      else delete obj[key];
+    }
+  });
+
   describe('buildStartupRulesSection', () => {
     let project;
 
     beforeEach(() => {
-      project = makeProject(`rules-${Math.floor(Math.random() * 1e9)}`);
+      project = makeProject(`rules-${uid()}`);
     });
 
     afterEach(() => {
@@ -106,7 +135,7 @@ describe('startup session-rule delivery (#595)', () => {
     });
 
     it('excludes disabled rules and rules belonging to other projects', () => {
-      const other = makeProject(`other-${Math.floor(Math.random() * 1e9)}`);
+      const other = makeProject(`other-${uid()}`);
       store.sessionRules.create({ content: 'other project directive', projectId: other.id });
       const off = store.sessionRules.create({ content: 'disabled directive', projectId: project.id });
       store.sessionRules.update(off.id, { enabled: false });
@@ -171,15 +200,10 @@ describe('startup session-rule delivery (#595)', () => {
     });
 
     it('returns an empty section rather than throwing when the rules query fails', () => {
-      const original = store.sessionRules.listActiveForProject;
-      store.sessionRules.listActiveForProject = () => { throw new Error('db exploded'); };
-      try {
-        const section = sessions.buildStartupRulesSection(project.id);
-        assert.deepEqual(section.lines, []);
-        assert.equal(section.digest, '');
-      } finally {
-        store.sessionRules.listActiveForProject = original;
-      }
+      stub(store.sessionRules, 'listActiveForProject', () => { throw new Error('db exploded'); });
+      const section = sessions.buildStartupRulesSection(project.id);
+      assert.deepEqual(section.lines, []);
+      assert.equal(section.digest, '');
     });
   });
 
@@ -247,7 +271,7 @@ describe('startup session-rule delivery (#595)', () => {
     let project;
 
     beforeEach(() => {
-      project = makeProject(`ledger-${Math.floor(Math.random() * 1e9)}`);
+      project = makeProject(`ledger-${uid()}`);
     });
 
     afterEach(() => {
@@ -365,12 +389,11 @@ describe('startup session-rule delivery (#595)', () => {
       // — the same "assumed, never verified" shape as the bug itself.
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
-      tmux.hasSession = () => false;
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
 
-      const launched = makeProject(`launch-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`launch-${uid()}`);
       store.sessionRules.create({ content: 'must be delivered at launch', projectId: launched.id });
       try {
         const result = sessions.launchSession(launched.name);
@@ -390,9 +413,6 @@ describe('startup session-rule delivery (#595)', () => {
 
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        tmux.hasSession = orig.hasSession;
-        tmux.createSession = orig.createSession;
-        enginesModule.detectEngine = orig.detectEngine;
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -404,15 +424,14 @@ describe('startup session-rule delivery (#595)', () => {
       // happened yet — so the ledger must stay empty until the timer runs.
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, sendKeys: tmux.sendKeys, detectEngine: enginesModule.detectEngine };
       let created = false;
-      tmux.hasSession = () => created;
-      tmux.createSession = () => { created = true; return true; };
-      tmux.sendKeys = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
 
-      const launched = makeProject(`paste-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`paste-${uid()}`);
       store.sessionRules.create({ content: 'pasted directive', projectId: launched.id });
       // Force the visible-paste channel instead of the silent prime file.
       const projConfig = store.projectConfig.load(launched.path);
@@ -437,9 +456,8 @@ describe('startup session-rule delivery (#595)', () => {
 
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        t.mock.timers.reset();
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession, sendKeys: orig.sendKeys });
-        enginesModule.detectEngine = orig.detectEngine;
+        // `t.mock.timers` is auto-restored by node at test end; globals via
+        // afterEach. Only DB rows are cleaned here.
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -448,15 +466,14 @@ describe('startup session-rule delivery (#595)', () => {
     it('records a failed paste with the reason instead of silently losing it', (t) => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, sendKeys: tmux.sendKeys, detectEngine: enginesModule.detectEngine };
       let created = false;
-      tmux.hasSession = () => created;
-      tmux.createSession = () => { created = true; return true; };
-      tmux.sendKeys = () => { throw new Error('pane is gone'); };
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { throw new Error('pane is gone'); });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
 
-      const launched = makeProject(`pastefail-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`pastefail-${uid()}`);
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
       const projConfig = store.projectConfig.load(launched.path);
       projConfig.silentPrime = false;
@@ -473,9 +490,6 @@ describe('startup session-rule delivery (#595)', () => {
 
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        t.mock.timers.reset();
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession, sendKeys: orig.sendKeys });
-        enginesModule.detectEngine = orig.detectEngine;
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -484,12 +498,11 @@ describe('startup session-rule delivery (#595)', () => {
     it('records no-rules at launch for a project with no rules, rather than a bare success', () => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
-      tmux.hasSession = () => false;
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
 
-      const launched = makeProject(`norules-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`norules-${uid()}`);
       try {
         const result = sessions.launchSession(launched.name);
         const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
@@ -498,8 +511,6 @@ describe('startup session-rule delivery (#595)', () => {
         assert.equal(rows[0].ruleCount, 0);
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
-        enginesModule.detectEngine = orig.detectEngine;
         store.projects.delete(launched.id);
       }
     });
@@ -507,12 +518,11 @@ describe('startup session-rule delivery (#595)', () => {
     it('records a skip when the prime is disabled for the launch', () => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
-      tmux.hasSession = () => false;
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
 
-      const launched = makeProject(`noprime-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`noprime-${uid()}`);
       store.sessionRules.create({ content: 'will not be primed', projectId: launched.id });
       try {
         const result = sessions.launchSession(launched.name, { primePrompt: false });
@@ -522,8 +532,6 @@ describe('startup session-rule delivery (#595)', () => {
         assert.match(rows[0].skipReason, /prime prompt disabled/);
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
-        enginesModule.detectEngine = orig.detectEngine;
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -533,18 +541,17 @@ describe('startup session-rule delivery (#595)', () => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
       const realWrite = fs.writeFileSync;
-      const orig = { hasSession: tmux.hasSession, createSession: tmux.createSession, detectEngine: enginesModule.detectEngine };
-      tmux.hasSession = () => false;
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
 
-      const launched = makeProject(`writefail-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`writefail-${uid()}`);
       store.sessionRules.create({ content: 'undeliverable', projectId: launched.id });
       // Fail only the prime-file write, leaving every other write intact.
-      fs.writeFileSync = (target, ...rest) => {
+      stub(fs, 'writeFileSync', (target, ...rest) => {
         if (String(target).endsWith('session-prime.md')) throw new Error('EACCES');
         return realWrite(target, ...rest);
-      };
+      });
       try {
         const result = sessions.launchSession(launched.name);
         const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
@@ -553,9 +560,6 @@ describe('startup session-rule delivery (#595)', () => {
         assert.match(rows[0].skipReason, /session-prime\.md/);
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        fs.writeFileSync = realWrite;
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
-        enginesModule.detectEngine = orig.detectEngine;
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -567,19 +571,16 @@ describe('startup session-rule delivery (#595)', () => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
       const claude = store.engines.get('claude');
-      const orig = {
-        hasSession: tmux.hasSession, createSession: tmux.createSession,
-        detectEngine: enginesModule.detectEngine, get: store.engines.get
-      };
-      tmux.hasSession = () => false;
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      const realGet = store.engines.get;
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
       // A channel-less engine: config file present, no prime capability.
-      store.engines.get = (id) => (id === 'claude'
+      stub(store.engines, 'get', (id) => (id === 'claude'
         ? { ...claude, capabilities: { ...claude.capabilities, supportsPrimePrompt: false, supportsSilentPrime: false } }
-        : orig.get(id));
+        : realGet(id)));
 
-      const launched = makeProject(`nochannel-${Math.floor(Math.random() * 1e9)}`);
+      const launched = makeProject(`nochannel-${uid()}`);
       store.sessionRules.create({ content: 'no channel to carry this', projectId: launched.id });
       try {
         const result = sessions.launchSession(launched.name);
@@ -590,9 +591,6 @@ describe('startup session-rule delivery (#595)', () => {
         assert.match(rows[0].skipReason, /declares no prime channel/);
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
-        Object.assign(tmux, { hasSession: orig.hasSession, createSession: orig.createSession });
-        enginesModule.detectEngine = orig.detectEngine;
-        store.engines.get = orig.get;
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }
@@ -613,9 +611,9 @@ describe('startup session-rule delivery (#595)', () => {
     });
 
     it('answers the fleet question: projects with rules that never had one delivered', () => {
-      const broken = makeProject(`broken-${Math.floor(Math.random() * 1e9)}`);
-      const working = makeProject(`working-${Math.floor(Math.random() * 1e9)}`);
-      const ruleless = makeProject(`ruleless-${Math.floor(Math.random() * 1e9)}`);
+      const broken = makeProject(`broken-${uid()}`);
+      const working = makeProject(`working-${uid()}`);
+      const ruleless = makeProject(`ruleless-${uid()}`);
       store.sessionRules.create({ content: 'never arrives', projectId: broken.id });
       store.sessionRules.create({ content: 'arrives fine', projectId: working.id });
       store.sessionRuleDeliveries.record({ projectId: broken.id, engineId: 'openclaw', channel: 'none', outcome: 'skipped', skipReason: 'no channel', ruleIds: [1] });
@@ -637,7 +635,7 @@ describe('startup session-rule delivery (#595)', () => {
     });
 
     it('keeps the audit row after the project it describes is deleted', () => {
-      const doomed = makeProject(`doomed-${Math.floor(Math.random() * 1e9)}`);
+      const doomed = makeProject(`doomed-${uid()}`);
       store.sessionRuleDeliveries.record({ sessionId: 777, projectId: doomed.id, engineId: 'claude', channel: 'prime-file', outcome: 'delivered', digest: 'survives' });
       store.projects.delete(doomed.id);
 
