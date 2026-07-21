@@ -974,4 +974,20 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     assert.equal(res.ok, false);
     assert.equal(res.status, 'blocked', 'a still-writing file must not be read as settled');
   });
+
+  it('skips the min-response-chars pane check on the file-settle path (pane may be short chatter)', async () => {
+    // The load-bearing half of the fix: file-settle completion must NOT be
+    // re-blocked by the ≥20-char pane check. The pane here is far under the
+    // threshold — file evidence (a changed, settled learnings.md) carries it.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += POLL; };
+    aic._internal.now = () => clock;
+    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.capturePane = () => ({ lines: ['ok'] }); // 2 chars, below MIN_RESPONSE_CHARS
+    aic._internal.readForVerify = () => (clock === 0 ? 'old' : 'new entry written');
+
+    const res = await aic.run(ctx(settleStep));
+    assert.equal(res.status, 'done', 'a short pane must not re-block a file-settled step');
+  });
 });
