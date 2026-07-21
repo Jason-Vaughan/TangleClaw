@@ -6,6 +6,20 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap stamps a squash-safe `lastWrapSha`, so a session's coverage range no
+  longer balloons across prior sessions (#664).** The commit step stamped
+  `lastWrapSha` to the wrap *branch* commit (`git rev-parse HEAD`), but the wrap PR
+  squash-merges onto the trunk — replacing that commit with a new one and orphaning
+  the stamped SHA. The next session's `<lastWrapSha>..HEAD` then widened back to the
+  last shared ancestor: PV-AI-Guidebook resolved a 22-commit, 11-day range spanning
+  two prior wraps, re-judging already-released work. The stamp is now the wrap
+  commit's **parent** (the pre-wrap tip, which squash-merge stacks onto and so stays
+  an ancestor of the trunk), and `resolveSessionRange` additionally requires the
+  recorded SHA to be an **ancestor of HEAD** — an orphaned or stale stamp (including
+  those written before this fix) falls back to the trunk range instead of
+  ballooning. Fixes the shared range for both `changelog-coverage` and
+  `features-toc`. `lib/wrap-steps/commit.js`, `lib/wrap-steps/_git-range.js`.
+
 - **The wrap drawer's Copy report reflects the resolved release banner, not a
   frozen "release pending" (#667).** `buildReportText` re-derived the report
   header from the pipeline result captured at wrap time, so a report copied after

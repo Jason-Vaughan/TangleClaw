@@ -65,6 +65,35 @@ describe('_git-range — session range resolution', () => {
     const out = gitRange.resolveSessionRange('/p', 'deadbee', { dots: 'two', exec: fakeExec(/deadbee/) });
     assert.equal(out.range, 'main..HEAD');
   });
+
+  it('falls back to the trunk range when the SHA resolves but is NOT an ancestor of HEAD (#664)', () => {
+    // A lastWrapSha orphaned by squash-merge still resolves as an object but is off
+    // HEAD's history, so `<sha>..HEAD` would balloon to the last shared ancestor —
+    // whole prior sessions of already-released work. rev-parse succeeds; only the
+    // ancestry probe (`merge-base --is-ancestor`) fails.
+    const out = gitRange.resolveSessionRange('/p', 'c1f94ac', {
+      dots: 'two',
+      exec: fakeExec(/is-ancestor/)
+    });
+    assert.equal(out.range, 'main..HEAD');
+    assert.equal(out.kind, 'branch', 'an orphaned stamp must not read as a session range');
+  });
+
+  it('takes the session range when the SHA resolves AND is an ancestor', () => {
+    const out = gitRange.resolveSessionRange('/p', 'c1f94ac', { exec: fakeExec() });
+    assert.equal(out.range, 'c1f94ac..HEAD');
+    assert.equal(out.kind, 'session');
+  });
+});
+
+describe('_git-range — isAncestorOfHead (#664)', () => {
+  it('true when git merge-base --is-ancestor exits zero', () => {
+    assert.equal(gitRange.isAncestorOfHead('/p', 'c1f94ac', fakeExec()), true);
+  });
+
+  it('false when it exits non-zero — the orphaned or off-history ref', () => {
+    assert.equal(gitRange.isAncestorOfHead('/p', 'c1f94ac', fakeExec(/is-ancestor/)), false);
+  });
 });
 
 describe('_git-range — SHA shape', () => {

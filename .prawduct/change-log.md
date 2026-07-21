@@ -26,6 +26,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Squash-safe lastWrapSha stops the session range ballooning (#664)
+
+<!-- prawduct: type=bugfix | scope=wrap-664 | status=shipped -->
+
+**Why:** the commit step stamped `lastWrapSha` to the wrap BRANCH commit
+(`git rev-parse HEAD`), but the wrap PR squash-merges onto the trunk, which replaces that
+commit with a new one and orphans the stamped SHA. The next session's `<lastWrapSha>..HEAD`
+then widened to the last shared ancestor — PV-AI-Guidebook resolved a 22-commit, 11-day range
+spanning two prior wraps, blocking the wrap on 18 already-released commits.
+
+**What:** stamp the wrap commit's PARENT (the pre-wrap tip, which squash-merge stacks onto so
+it stays an ancestor of the trunk) instead of the wrap commit itself
+(`lib/wrap-steps/commit.js`); and require `lastWrapSha` to be an ANCESTOR of HEAD before using
+`<sha>..HEAD` — an orphaned or stale stamp (including any written before this fix) falls back
+to the trunk range rather than ballooning (`lib/wrap-steps/_git-range.js`, new
+`isAncestorOfHead`). Fixes the shared session range for both `changelog-coverage` and
+`features-toc`. `commitSha` (the UI/result handle) is unchanged — it is still the wrap commit.
+
 ## 2026-07-20: Copy report reflects the resolved release banner (#667)
 
 <!-- prawduct: type=bugfix | scope=wrap-667 | status=shipped -->
