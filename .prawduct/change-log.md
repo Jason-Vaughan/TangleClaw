@@ -26,6 +26,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: AI-content wrap step survives operator interaction mid-wrap (#672)
+
+<!-- prawduct: type=bugfix | scope=wrap-672 | status=shipped -->
+
+**Why:** `ai-content` wrap steps detected AI completion via `detectIdle` (>=10s of unchanged
+tmux pane, capped at MAX_WAIT_MS=5min). That keys off the last few pane lines, so an operator
+interacting with the session mid-wrap — and the AI answering — reset the idle timer; the step
+never captured and timed out, halting the wrap with a silent, hung-looking drawer. It halted
+this project's own 4.31.0 wrap (finished manually).
+
+**What:** a second, independent completion signal (`lib/wrap-steps/ai-content.js`). The step
+watches the files it is expected to produce (`_watchedOutputPaths` = verifyChanged + captureFile)
+and completes once one has changed from its pre-prompt content AND held still for STABILITY_MS
+(4s) — the actual work product, immune to pane chatter. Pane-idle stays as the fallback for a
+step that legitimately writes nothing (changelog-update satisfied by coverage). tmux path only;
+the gateway/ClawBridge path already keyed off the bridge's own inputReady. MIN_RESPONSE_CHARS is
+skipped on the file-settle path (file evidence is stronger than pane length).
+
 ## 2026-07-20: Squash-safe lastWrapSha stops the session range ballooning (#664)
 
 <!-- prawduct: type=bugfix | scope=wrap-664 | status=shipped -->

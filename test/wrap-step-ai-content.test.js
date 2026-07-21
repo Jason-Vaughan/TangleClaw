@@ -906,3 +906,88 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     });
   });
 });
+
+describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot starve the step)', () => {
+  let saved;
+  beforeEach(() => { saved = { ...aic._internal }; });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const POLL = 2000;
+  const settleStep = {
+    id: 'learnings-capture', kind: 'ai-content', prompt: 'go',
+    verifyChanged: ['.tangleclaw/memories/learnings.md']
+  };
+  const ctx = (step) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session: { tmuxSession: 'sess' },
+    step, previousResults: [], staged: {}, options: {}
+  });
+
+  it('_watchedOutputPaths merges verifyChanged and captureFile, deduped', () => {
+    assert.deepEqual(aic._watchedOutputPaths({ verifyChanged: ['a.md'], captureFile: 'b.md' }), ['a.md', 'b.md']);
+    assert.deepEqual(aic._watchedOutputPaths({ verifyChanged: ['a.md', 'a.md'] }), ['a.md']);
+    assert.deepEqual(aic._watchedOutputPaths({ captureFile: 'b.md' }), ['b.md']);
+    assert.deepEqual(aic._watchedOutputPaths({}), []);
+  });
+
+  it('completes when a watched file changes and settles, even though the pane NEVER idles', async () => {
+    // The #672 scenario: the operator interacts with the session mid-wrap, so the
+    // pane never goes idle — but the AI wrote its learnings entry and stopped.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += POLL; };
+    aic._internal.now = () => clock;
+    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.capturePane = () => ({ lines: ['operator chatter in the pane, unrelated to the wrap answer'] });
+    aic._internal.readForVerify = () => (clock === 0 ? 'old learnings' : 'new learnings entry');
+
+    const res = await aic.run(ctx(settleStep));
+    assert.equal(res.ok, true);
+    assert.equal(res.status, 'done', 'file changed + held still → done despite a never-idle pane');
+  });
+
+  it('does NOT complete via files when no watched file ever changes — falls through to the timeout', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += 6 * 60 * 1000; }; // jump past MAX_WAIT
+    aic._internal.now = () => clock;
+    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.readForVerify = () => 'unchanged';
+
+    const res = await aic.run(ctx(settleStep));
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /no idle detected/);
+  });
+
+  it('does NOT settle while the file keeps changing (AI still writing) — only after it holds', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += 30000; };
+    aic._internal.now = () => clock;
+    aic._internal.detectIdle = () => ({ idle: false });
+    // Content differs every poll (keyed on the ever-advancing clock) → the
+    // stability window never elapses → the step times out instead of settling.
+    aic._internal.readForVerify = () => (clock === 0 ? 'v0' : 'v' + clock);
+
+    const res = await aic.run(ctx(settleStep));
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked', 'a still-writing file must not be read as settled');
+  });
+
+  it('skips the min-response-chars pane check on the file-settle path (pane may be short chatter)', async () => {
+    // The load-bearing half of the fix: file-settle completion must NOT be
+    // re-blocked by the ≥20-char pane check. The pane here is far under the
+    // threshold — file evidence (a changed, settled learnings.md) carries it.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => { clock += POLL; };
+    aic._internal.now = () => clock;
+    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.capturePane = () => ({ lines: ['ok'] }); // 2 chars, below MIN_RESPONSE_CHARS
+    aic._internal.readForVerify = () => (clock === 0 ? 'old' : 'new entry written');
+
+    const res = await aic.run(ctx(settleStep));
+    assert.equal(res.status, 'done', 'a short pane must not re-block a file-settled step');
+  });
+});

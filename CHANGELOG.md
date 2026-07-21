@@ -4,6 +4,25 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An AI-content wrap step no longer times out when the operator interacts with
+  the session mid-wrap (#672).** `changelog-update` / `learnings-capture` /
+  `memory-update` detected the AI's completion via `detectIdle` — ≥10s of unchanged
+  tmux pane, bounded at `MAX_WAIT_MS` (5 min). Because that keys off the last few
+  pane lines, any unrelated output — the operator asking the session a question
+  mid-wrap, and the AI answering — resets the idle timer, so the step could never
+  capture and timed out, halting the wrap with a silent, hung-looking drawer (it
+  bit this project's own 4.31.0 wrap, which had to be finished by hand). The step
+  now also completes on a **file-settle** signal: it watches the files the step is
+  expected to produce (its `verifyChanged` edits plus any `captureFile`) and treats
+  the step as done once one has changed from its pre-prompt content **and** nothing
+  has changed for `STABILITY_MS` — the actual work product, immune to pane chatter.
+  Pane-idle is retained as the fallback for a step that legitimately writes nothing
+  (e.g. `changelog-update` satisfied by coverage). The tmux path only; the
+  gateway/ClawBridge path already keyed off the bridge's own `inputReady` signal.
+  `lib/wrap-steps/ai-content.js`.
+
 ## [4.31.0] - 2026-07-20
 
 ### Fixed
