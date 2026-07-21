@@ -3029,6 +3029,17 @@ let wrapBumpLevel = '';
 let currentWrapBaseStatus = null;
 
 /**
+ * The status banner currently PAINTED in the drawer — the pipeline's own verdict
+ * until the #638 release resolution (or a "Recheck release") repaints it to the
+ * merged/pending/blocked outcome. Held so the copied report reflects what the
+ * operator is looking at: without it, `buildReportText` re-derives the header from
+ * the frozen pipeline result and reports "release pending" even after the PR merged
+ * on screen, forcing the operator to share both the screenshot and the text.
+ * @type {{label: string, tone: string, detail: string|null}|null}
+ */
+let currentWrapDisplayedStatus = null;
+
+/**
  * Open the wrap drawer with a rendered pipeline result and wire its
  * action buttons for the current state (retry / done / close).
  *
@@ -3064,6 +3075,7 @@ function closeWrapDrawer() {
   currentWrapPassword = '';
   currentWrapPipelineResult = null;
   currentWrapBaseStatus = null;
+  currentWrapDisplayedStatus = null;
   sessionState.wrapDrawerOpen = false;
 }
 
@@ -3075,7 +3087,11 @@ function closeWrapDrawer() {
  */
 async function copyWrapReport() {
   if (!currentWrapPipelineResult || !window.tcWrapDrawerHelpers) return;
-  const text = window.tcWrapDrawerHelpers.buildReportText(currentWrapPipelineResult);
+  // Pass the currently-painted banner so the report header reflects the resolved
+  // release outcome (PR merged / pending / blocked), not the frozen pipeline verdict.
+  const text = window.tcWrapDrawerHelpers.buildReportText(
+    currentWrapPipelineResult, currentWrapDisplayedStatus
+  );
   const toast = document.getElementById('toast');
   const flash = (msg, cls) => {
     if (!toast) return;
@@ -3105,6 +3121,10 @@ async function copyWrapReport() {
  *   pipeline warning could be lost behind a green release.
  */
 function paintWrapStatus(status, prForRecheck, baseStatus) {
+  // The single choke point for the banner, so the copied report always matches
+  // the banner on screen regardless of which path painted it (initial verdict,
+  // the #638 release resolution, or a manual "Recheck release").
+  currentWrapDisplayedStatus = status;
   const statusEl = document.getElementById('wrapDrawerStatus');
   statusEl.className = `wrap-drawer-status wrap-drawer-status--${status.tone}`;
   statusEl.innerHTML = '';

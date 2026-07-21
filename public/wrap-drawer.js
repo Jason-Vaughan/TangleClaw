@@ -615,10 +615,18 @@
    * copied text is the same source of truth as the on-screen report (#268).
    *
    * @param {object} pipelineResult - Runner return (`POST /wrap` body).
+   * @param {{label: string, detail: (string|null)}} [displayedStatus] - The banner
+   *   currently shown in the drawer. When present it heads the report instead of
+   *   the pipeline's own verdict, so a report copied after the release resolves
+   *   reads "Wrap shipped — PR merged" rather than the frozen "release pending".
+   *   Omitted (or malformed) falls back to the pipeline verdict, preserving the
+   *   report for a wrap whose banner was never repainted.
    * @returns {string} Multi-line report. Never throws on a malformed shape.
    */
-  function buildReportText(pipelineResult) {
-    const status = summarizePipelineStatus(pipelineResult);
+  function buildReportText(pipelineResult, displayedStatus) {
+    const status = (displayedStatus && typeof displayedStatus.label === 'string')
+      ? displayedStatus
+      : summarizePipelineStatus(pipelineResult);
     const lines = [`Session Wrap — ${status.label}`];
     if (status.detail) lines.push(status.detail);
 
