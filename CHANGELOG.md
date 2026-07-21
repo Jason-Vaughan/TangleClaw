@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.31.0] - 2026-07-20
+
 ### Fixed
 
 - **The wrap stamps a squash-safe `lastWrapSha`, so a session's coverage range no
