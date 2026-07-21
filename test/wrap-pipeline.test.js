@@ -2245,6 +2245,25 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       'stamping the wrap commit is the #664 bug — squash-merge orphans it, ballooning the next range');
   });
 
+  it('falls back to the wrap commit itself when it is a parentless root commit (#664)', async () => {
+    const storeMod = require('../lib/store');
+    // A repo whose very first commit is the wrap commit — HEAD~1 does not resolve,
+    // so there is no pre-wrap base and the stamp falls back to the wrap commit.
+    const rootRepo = fs.mkdtempSync(path.join(tmpDir, 'rootrepo-'));
+    execSync('git init --quiet', { cwd: rootRepo });
+    execSync('git config user.email t@example.com && git config user.name Test',
+      { cwd: rootRepo, shell: '/bin/sh' });
+    fs.writeFileSync(path.join(rootRepo, 'first.txt'), 'hi\n');
+    const ctx = buildContext({}, { name: 'rootrepo', path: rootRepo, id: 2 });
+    const result = await commitStep.run(ctx);
+    assert.equal(result.ok, true);
+    assert.ok(result.output.commitSha);
+    assert.equal(result.output.stamped, true, 'a root-commit wrap still stamps a base');
+    const cfg = storeMod.projectConfig.load(rootRepo);
+    assert.equal(cfg.lastWrapSha, result.output.commitSha,
+      'with no parent, the stamp falls back to the wrap commit itself');
+  });
+
   it('returns blocked when git commit exits non-zero (pre-commit hook rejection)', async () => {
     // Install a pre-commit hook that rejects everything.
     const hookDir = path.join(projectPath, '.git/hooks');
