@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.30.1] - 2026-07-20
+
 ### Fixed
 
 - **The wrap's changelog gate is satisfiable by being correct, not only by being
