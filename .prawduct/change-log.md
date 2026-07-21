@@ -26,6 +26,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-20: Coverage gate credits nested/sub-package changelogs (#663)
+
+<!-- prawduct: type=bugfix | scope=wrap-663 | status=shipped -->
+
+**Why:** the `changelog-update` coverage predicate matched a commit's touched files against
+the step's exact `verifyChanged` paths (the repo-root `CHANGELOG.md`). A monorepo keeping a
+changelog per package — RentalClaw's `skills/airbnb-gateway/CHANGELOG.md`, on its own version
+track — logged its work faithfully to the nested file and the wrap still blocked, reporting 9
+correctly-logged commits as uncovered. The #645 failure mode in a new costume: over-blocking a
+session that complied.
+
+**What:** an additive `coveragePaths` wrap-step override (`lib/wrap-step-overrides.js`) —
+globs the coverage predicate accepts in addition to the exact `verifyChanged` paths. A commit
+is covered if it touched a declared path OR a coverage glob; an uncommitted edit to a nested
+changelog clears a block the same way a root edit does. Coverage only ever widens: with none
+declared, matching stays exact, so an undeclared nested changelog still does not count, and the
+gate cannot be made to pass (via the default configuration) on a commit that touched no
+changelog at all — an over-broad declared glob waives only as visibly as `blocker: false`.
+`_globToRegExp` compiles the small grammar (`*` within a segment, `**` across segments, a
+`**`-then-slash prefix also matching the root file), escaping regex metacharacters and
+anchoring. Threaded through `lib/wrap-steps/ai-content.js`; documented in
+`docs/configuration-reference.md` and `FEATURES.md`. Surfaced two deeper wrap bugs filed
+separately: #664 (lastWrapSha squash-orphaning inflates the session range) and #665 (per-commit
+coverage penalizes backfill-in-one-commit).
+
 ## 2026-07-20: The changelog gate stops punishing compliant sessions (#645)
 
 <!-- prawduct: type=bugfix | chunks=01 | scope=wrap-changelog-gate | status=shipped -->
