@@ -346,11 +346,27 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.match(result.blockers[0], /requires context\.project\.path/);
   });
 
-  it('blocks when no .claude/plans directory exists and no step.planPath', async () => {
+  it('skips (not blocks) when no plans directory exists and no step.planPath (#676)', async () => {
+    // A project that simply doesn't keep TC build plans is at least as benign
+    // as one with an empty plans dir (which already skips, #302). Blocking it
+    // rendered a red BLOCKED under a green "Wrap committed" banner on every
+    // plan-less project's wrap. Must skip cleanly.
     const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true, 'a plan-less project must not block the wrap');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /No plans directory/);
+    assert.match(result.output.reason, /nothing to roll/i);
+    assert.deepEqual(result.blockers, []);
+  });
+
+  it('still BLOCKS when an explicit step.planPath cannot be resolved (#676 boundary)', async () => {
+    // The skip above is only for the no-pointer-configured case. An operator
+    // who explicitly pointed at a plan that does not exist gets a real error —
+    // a configured-but-broken pointer is a mistake worth surfacing.
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: 'plans/does-not-exist.md' }));
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /No plans directory/);
+    assert.match(result.blockers[0], /planPath does not exist/i);
   });
 
   it('skips (not blocks) when .claude/plans is empty (#302)', async () => {
@@ -399,14 +415,14 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.deepStrictEqual(result.output.candidates.slice().sort(), ['one.md', 'two.md']);
   });
 
-  it('does NOT emit output.candidates for a single-plan/skip block (#428)', async () => {
-    // The candidates array is specific to the multi-in-progress case. A
-    // chunk-less single plan skips (no block, no candidates); the
-    // no-plans-dir case blocks WITHOUT candidates.
+  it('does NOT emit output.candidates outside the multi-in-progress case (#428)', async () => {
+    // The candidates array is specific to the multi-in-progress block. The
+    // no-plans-dir case now skips (#676) and, like any non-multi outcome,
+    // carries no candidates array.
     const skip = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
-    assert.equal(skip.status, 'blocked'); // no .claude/plans dir → blocked
+    assert.equal(skip.status, 'skipped'); // no plans dir → skip (#676)
     assert.equal(skip.output.candidates, undefined,
-      'a non-multi-plan block must not carry a candidates array');
+      'a non-multi-plan outcome must not carry a candidates array');
   });
 
   it('auto-picks the single in-progress plan when others are complete (#226)', async () => {
@@ -1293,15 +1309,17 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     assert.equal(primingRoll._resolvePlansDir(projectPath).relative, '.claude/plans');
   });
 
-  it('names BOTH locations when no plans directory is found', async () => {
+  it('names BOTH locations in the skip reason when no plans directory is found (#676)', async () => {
     const result = await primingRoll.run({
       project: { path: projectPath },
       step: { id: 'next-session-prime' },
       staged: {}
     });
-    // An error naming only one home sends the operator to the wrong place.
-    assert.match(result.blockers.join(' '), /\.tangleclaw\/plans/);
-    assert.match(result.blockers.join(' '), /\.claude\/plans/);
+    // The no-plans-dir case skips (#676), not blocks; the reason still names
+    // both homes so a reader who DID expect a plan knows where it should live.
+    assert.equal(result.status, 'skipped');
+    assert.match(result.output.reason, /\.tangleclaw\/plans/);
+    assert.match(result.output.reason, /\.claude\/plans/);
   });
 
   it('resolves a bare activePlan filename against the LEGACY dir when that is where plans live', () => {
