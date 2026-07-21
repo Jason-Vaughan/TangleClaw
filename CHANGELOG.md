@@ -6,6 +6,21 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap's priming-roll step skips a plan-less project instead of blocking it
+  (#676).** `next-session-prime` (`lib/wrap-steps/priming-roll.js`) handled "no
+  plans" two inconsistent ways: an **empty** `.tangleclaw/plans/` dir skipped
+  gracefully (`#302` — *"Blocking that state failed every clean wrap"*), but a
+  **missing** plans dir returned an error → rendered a red **BLOCKED** step under
+  the green "Wrap committed" banner on every project that simply doesn't keep TC
+  build plans (seen on a WheresMy wrap). A plan-less project is at least as benign
+  as one with an empty dir, so the missing-dir case now returns the same
+  `skip:true` outcome ("no plans directory … nothing to roll") and reports
+  `skipped`, not `blocked`. The boundary is preserved: an explicit but unresolvable
+  `step.planPath` still errors — a configured-but-broken pointer is a real mistake
+  worth surfacing. Regression tests: missing-dir skips + names both plan homes in
+  the reason, the explicit-planPath error still blocks, and the `#428` no-candidates
+  contract holds on the skip path. `lib/wrap-steps/priming-roll.js`.
+
 - **The Feature Index now converges instead of piling up "TBD" stubs, and the
   session prime stops paying for the pile (#568).** `features-toc` appended
   `## TODO (auto-stubbed <date>)` blocks of `- **TBD** — … ` entries, and

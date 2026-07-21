@@ -26,6 +26,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-21: Wrap priming-roll skips a plan-less project instead of blocking (#676)
+
+<!-- prawduct: type=bugfix | scope=priming-roll-missing-plans-skip | status=shipped -->
+
+**Why:** `next-session-prime` (`lib/wrap-steps/priming-roll.js`) handled "no plans" two
+inconsistent ways. An EMPTY `.tangleclaw/plans/` dir skipped gracefully (#302 — "Blocking
+that state failed every clean wrap"), but a MISSING plans dir returned an error → rendered a
+red BLOCKED step under the green "Wrap committed" banner on every project that doesn't keep TC
+build plans (observed on a WheresMy wrap). The #302 fix stopped at the empty-dir case.
+
+**What:** the missing-dir path now returns the same `{ok:false, skip:true, reason}` shape as
+the empty-dir path, so `run()` reports `skipped`, not `blocked`. The reason still names both
+plan homes. Boundary preserved: an explicit-but-unresolvable `step.planPath` still errors.
+Regression tests updated/added (missing-dir skip, explicit-planPath still blocks, #428
+no-candidates on skip). Full suite 4640/4641 (1 pre-existing skip). Closes #676.
+
+
 ## 2026-07-20: Feature Index converges + prime cap (#568)
 
 <!-- prawduct: type=bugfix | scope=feature-index-convergence | status=shipped | chunks=A,B -->
