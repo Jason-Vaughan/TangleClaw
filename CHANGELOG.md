@@ -4,6 +4,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The changelog-coverage gate credits a commit that logged to a declared nested
+  changelog, not only the repo-root one (#663).** The `changelog-update` gate's
+  coverage predicate matched a commit's touched files against the step's exact
+  `verifyChanged` paths (the root `CHANGELOG.md`). A monorepo that keeps a changelog
+  per package — RentalClaw's `skills/airbnb-gateway/CHANGELOG.md`, on its own version
+  track — logged its work faithfully to the nested file and the wrap still blocked,
+  reporting 9 correctly-logged commits as uncovered. This is the #645 failure mode
+  in a new costume: over-blocking a session that complied. A project now declares
+  the nested paths through a new additive `coveragePaths` wrap-step override (glob
+  syntax: `*` within a segment, `**` across segments, a `**` + slash prefix also
+  matching the root file); a commit is covered if it touched a declared path **or**
+  a coverage glob, and an uncommitted edit to a nested changelog clears a block the
+  same way a root edit does. It only ever widens coverage — with none declared,
+  matching stays exact, so an undeclared nested changelog still does not count and
+  the gate cannot be made to pass on a commit that touched no changelog at all. The
+  glob compiler (`lib/wrap-steps/changelog-coverage.js` `_globToRegExp`) escapes
+  regex metacharacters and anchors, so a declared `CHANGELOG.md` matches neither
+  `docs/CHANGELOG.md` nor `CHANGELOG.md.bak`.
+
 ## [4.30.1] - 2026-07-20
 
 ### Fixed

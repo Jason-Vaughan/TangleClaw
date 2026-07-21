@@ -343,6 +343,104 @@ describe('changelog-coverage — evaluate()', () => {
   });
 });
 
+describe('changelog-coverage — glob compilation', () => {
+  it('matches a single segment with * but not across a slash', () => {
+    const re = cov._globToRegExp('skills/*/CHANGELOG.md');
+    assert.ok(re.test('skills/airbnb-gateway/CHANGELOG.md'));
+    assert.ok(!re.test('skills/a/b/CHANGELOG.md'), '* must not cross a path separator');
+    assert.ok(!re.test('skills/CHANGELOG.md'), '* requires a segment to be present');
+  });
+
+  it('matches any depth with ** and matches the root file via **/', () => {
+    const re = cov._globToRegExp('**/CHANGELOG.md');
+    assert.ok(re.test('CHANGELOG.md'), '**/ must match zero leading segments');
+    assert.ok(re.test('skills/airbnb-gateway/CHANGELOG.md'));
+    assert.ok(re.test('a/b/c/CHANGELOG.md'));
+  });
+
+  it('escapes regex metacharacters so the dot cannot match more than itself', () => {
+    const re = cov._globToRegExp('CHANGELOG.md');
+    assert.ok(re.test('CHANGELOG.md'));
+    assert.ok(!re.test('CHANGELOGxmd'), 'the . is a literal dot, not "any character"');
+  });
+
+  it('anchors — a declared glob does not match a longer path that merely contains it', () => {
+    const re = cov._globToRegExp('CHANGELOG.md');
+    assert.ok(!re.test('docs/CHANGELOG.md'));
+    assert.ok(!re.test('CHANGELOG.md.bak'));
+  });
+});
+
+describe('changelog-coverage — coverage globs (nested changelogs)', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...cov._internal };
+    cov._internal.loadProjectConfig = () => ({ lastWrapSha: 'c1f94ac' });
+    cov._internal.execSync = () => '';
+  });
+  afterEach(() => { Object.assign(cov._internal, saved); });
+
+  function scenario(records, dirty = []) {
+    cov._internal.execSync = (cmd) => {
+      if (cmd.startsWith('git log')) return gitLog(records);
+      if (cmd.startsWith('git diff')) return dirty.join('\n');
+      return '';
+    };
+  }
+
+  it('COVERED when a commit logged to a declared nested changelog (the #663 regression)', () => {
+    // RentalClaw's airbnb-gateway commits logged to skills/airbnb-gateway/CHANGELOG.md.
+    // With that path declared, they satisfy coverage instead of blocking the wrap.
+    scenario([
+      { sha: 'aaa1111', subject: 'airbnb-gateway v0.1.0', files: ['skills/airbnb-gateway/CHANGELOG.md', 'skills/airbnb-gateway/SKILL.md'] },
+      { sha: 'bbb2222', subject: 'airbnb-gateway v0.2.1', files: ['skills/airbnb-gateway/CHANGELOG.md'] }
+    ]);
+    const out = cov.evaluate('/p', PATHS, ['skills/*/CHANGELOG.md']);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.equal(out.checkedCount, 2);
+  });
+
+  it('still UNCOVERED for a nested changelog that was NOT declared — a glob only widens', () => {
+    scenario([
+      { sha: 'aaa1111', subject: 'nested-only (#1)', files: ['skills/airbnb-gateway/CHANGELOG.md'] }
+    ]);
+    // No coveragePaths: exact-match behavior is unchanged, so the nested file does
+    // not count — this is the property the existing docs/CHANGELOG.md test pins.
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNCOVERED);
+    // A different glob that doesn't match this file also leaves it uncovered.
+    assert.equal(cov.evaluate('/p', PATHS, ['packages/*/CHANGELOG.md']).verdict, cov.VERDICTS.UNCOVERED);
+  });
+
+  it('separates covered-by-glob commits from genuinely-unlogged ones', () => {
+    // The full RentalClaw shape: skill commits log to the nested file (covered),
+    // a chore/docs commit logs nowhere (uncovered and named).
+    scenario([
+      { sha: 'aaa1111', subject: 'airbnb-gateway v0.1.0', files: ['skills/airbnb-gateway/CHANGELOG.md'] },
+      { sha: 'ccc3333', subject: 'Remove vendored hook remnants', files: ['tools/lib/core.py'] }
+    ]);
+    const out = cov.evaluate('/p', PATHS, ['skills/*/CHANGELOG.md']);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.equal(out.uncovered.length, 1);
+    assert.equal(out.uncovered[0].sha, 'ccc3333');
+    assert.equal(out.checkedCount, 2);
+  });
+
+  it('COVERED when an uncommitted edit to a declared nested changelog is present', () => {
+    // The dirty-path route honors globs too: writing the nested entry (uncommitted)
+    // clears a block just as editing the root would.
+    scenario([{ sha: 'aaa1111', subject: 'Unlogged (#1)', files: ['lib/a.js'] }],
+      ['skills/airbnb-gateway/CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', PATHS, ['skills/*/CHANGELOG.md']).verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('ignores a malformed coveragePaths value rather than throwing', () => {
+    scenario([{ sha: 'aaa1111', subject: 'Logged (#1)', files: ['CHANGELOG.md'] }]);
+    // Non-array, and array with blank/non-string entries: all filtered, exact-match holds.
+    assert.equal(cov.evaluate('/p', PATHS, 'skills/*/CHANGELOG.md').verdict, cov.VERDICTS.COVERED);
+    assert.equal(cov.evaluate('/p', PATHS, ['', 42, null]).verdict, cov.VERDICTS.COVERED);
+  });
+});
+
 describe('changelog-coverage — against this repository\'s real history', () => {
   // The unit tests above run on synthetic payloads, and synthetic payloads are
   // exactly what let the first version of this predicate pass its whole suite
@@ -353,8 +451,17 @@ describe('changelog-coverage — against this repository\'s real history', () =>
     const out = cov.evaluate(process.cwd(), PATHS);
     assert.ok(Object.values(cov.VERDICTS).includes(out.verdict));
     if (out.verdict !== cov.VERDICTS.UNAVAILABLE) {
-      assert.ok(out.checkedCount > 0, 'a judgeable verdict must have judged something');
       assert.match(out.range, /\.\.HEAD$/);
+      // A COVERED verdict can legitimately judge zero commits: an uncommitted edit
+      // to a declared path (a dirty CHANGELOG.md during active development, which is
+      // exactly when this suite runs) short-circuits to COVERED before any commit is
+      // counted. Demand a judged commit only when the verdict came from committed
+      // history. The real-git-parsing guarantee this suite exists for is pinned
+      // independently by the next test, over `_listCommits` directly.
+      const fromDirtyShortCircuit = out.verdict === cov.VERDICTS.COVERED && out.checkedCount === 0;
+      if (!fromDirtyShortCircuit) {
+        assert.ok(out.checkedCount > 0, 'a committed-history verdict must have judged something');
+      }
     }
   });
 

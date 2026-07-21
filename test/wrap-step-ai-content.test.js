@@ -805,6 +805,20 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
       assert.deepEqual(seenPaths, ['CHANGELOG.md']);
     });
 
+    it('hands the step\'s coveragePaths to the predicate so a monorepo can widen coverage', async () => {
+      let seenCoverage;
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = (_p, _paths, coveragePaths) => { seenCoverage = coveragePaths; return COVERED; };
+      await aic.run(coverageCtx({
+        step: {
+          id: 'changelog-update', kind: 'ai-content', prompt: 'edit CHANGELOG.md',
+          verifyChanged: ['CHANGELOG.md'], verifySatisfiedBy: 'changelog-coverage',
+          coveragePaths: ['skills/*/CHANGELOG.md']
+        }
+      }));
+      assert.deepEqual(seenCoverage, ['skills/*/CHANGELOG.md']);
+    });
+
     it('falls back to the mutation block when the predicate cannot judge', async () => {
       // The no-new-hole pin: `unavailable` must never read as success.
       aic._internal.readForVerify = () => 'identical content';

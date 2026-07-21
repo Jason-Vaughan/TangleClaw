@@ -212,6 +212,33 @@ describe('per-project wrap step overrides', () => {
     });
   });
 
+  describe('coveragePaths — the additive changelog-coverage widener', () => {
+    it('accepts a well-formed array of non-empty strings', () => {
+      const v = overrides.validateOverrides({
+        'changelog-update': { coveragePaths: ['skills/*/CHANGELOG.md', '**/CHANGELOG.md'] }
+      });
+      assert.equal(v.ok, true);
+    });
+
+    it('rejects a non-array or an array with a blank/non-string entry', () => {
+      for (const bad of ['skills/*/CHANGELOG.md', ['ok', ''], ['ok', 7], [null]]) {
+        const v = overrides.validateOverrides({ 'changelog-update': { coveragePaths: bad } });
+        assert.equal(v.ok, false, `expected ${JSON.stringify(bad)} to be rejected`);
+        assert.match(v.error, /coveragePaths/);
+      }
+    });
+
+    it('resolveStep copies coveragePaths onto the resolved step for the predicate to read', () => {
+      const r = overrides.resolveStep(
+        { id: 'changelog-update', kind: 'ai-content', verifyChanged: ['CHANGELOG.md'] },
+        { 'changelog-update': { coveragePaths: ['skills/*/CHANGELOG.md'] } }
+      );
+      assert.deepEqual(r.step.coveragePaths, ['skills/*/CHANGELOG.md']);
+      assert.deepEqual(r.step.verifyChanged, ['CHANGELOG.md'], 'the literal obligation is untouched');
+      assert.ok(r.applied.includes('coveragePaths'));
+    });
+  });
+
   describe('the flush step cannot be disabled', () => {
     it('refuses enabled:false on a commit-kind step, so staged work cannot be silently dropped', () => {
       // Every other step stages its writes in memory; the commit step is the
