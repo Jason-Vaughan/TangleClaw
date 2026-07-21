@@ -6,6 +6,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The Feature Index now converges instead of piling up "TBD" stubs, and the
+  session prime stops paying for the pile (#568).** `features-toc` appended
+  `## TODO (auto-stubbed <date>)` blocks of `- **TBD** — … ` entries, and
+  `index-describe` could fill their `<!-- describe -->` markers but was forbidden
+  (the #426 curation invariant) from **naming** them or **moving** them into a real
+  category — so the curated sections stayed empty forever, the TODO blocks grew one
+  per wrap, and `sessions.js` inlined the entire file (mostly literal "TBD") into
+  every prime. Two coordinated fixes: **(1) a graduation mode in `index-describe`**
+  — for the Feature Index it now names each TODO-block entry, describes it, and
+  files it under the best-fit existing category, deleting the block once empty. The
+  curation invariant is re-scoped from "touch only `<!-- describe -->` lines" to
+  "touch only entries **inside** a `## TODO (auto-stubbed …)` block", so curated
+  entries under real categories stay untouchable while the one restructure the design
+  needs is allowed. It triggers on **any** TODO-block entry (not only ones still
+  carrying a marker), so pre-existing installs with described-but-un-graduated stubs
+  converge too; it honors the same one-wrap-lag staged-write gate as describe mode
+  (a pending `features-toc` append defers graduation to the next wrap to avoid the
+  commit-flush clobber); and the commit body reports an honest
+  `Feature Index: graduated N entr(y/ies)` line. The Project Map keeps its
+  fill-only describe contract unchanged. **(2) a capped prime** — new pure
+  `lib/feature-index-prime.js:summarizeFeatureIndexForPrime` inlines only the curated
+  categories and replaces the auto-stubbed backlog with a one-line count (`_(N
+  auto-stubbed entries awaiting graduation in M backlog block(s) — omitted here …)_`),
+  so the prime cost tracks converged content, not the raw pile. Kept dependency-free
+  to stay off the `projects → sessions` require cycle. **Tests.** New
+  `_countTodoEntries` unit tests; graduate-mode handler tests (graduation + honest
+  count, any-TODO-entry trigger, no-TODO-block skip, staged-write defer, curated
+  content preserved); `feature-index-prime` unit tests; and prime-cap integration
+  tests (backlog capped to a count, TBD stubs absent from the prime, singular/plural).
+  `lib/wrap-steps/index-describe.js`, `lib/wrap-steps/commit.js`, `lib/sessions.js`,
+  `lib/feature-index-prime.js`.
+
 - **An AI-content wrap step no longer times out when the operator interacts with
   the session mid-wrap (#672).** `changelog-update` / `learnings-capture` /
   `memory-update` detected the AI's completion via `detectIdle` — ≥10s of unchanged

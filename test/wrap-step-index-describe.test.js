@@ -48,19 +48,86 @@ describe('wrap-step index-describe (#426)', () => {
   });
 
   describe('_buildPrompt (contract)', () => {
-    it('names the target files and pins the fill-only-empty-stubs rules', () => {
+    it('describe-mode: names the file and pins the fill-only-empty-stubs rules', () => {
       const prompt = indexDescribe._buildPrompt([
-        { filename: 'PROJECT-MAP.md', label: 'Project Map', stubsBefore: 2 },
-        { filename: 'FEATURES.md', label: 'Feature Index', stubsBefore: 1 }
+        { filename: 'PROJECT-MAP.md', label: 'Project Map', mode: 'describe', stubsBefore: 2 }
       ]);
       assert.match(prompt, /PROJECT-MAP\.md/);
-      assert.match(prompt, /FEATURES\.md/);
       assert.match(prompt, /2 empty stubs/);
-      assert.match(prompt, /1 empty stub\b/);
       assert.match(prompt, /<!-- describe -->/);
       assert.match(prompt, /preserve curation/i);
-      assert.match(prompt, /Do NOT add new entries/);
+      assert.match(prompt, /Do NOT add, remove, reorder, or restructure/);
       assert.match(prompt, /## Result/);
+      // No graduate section when there are no graduate targets.
+      assert.doesNotMatch(prompt, /graduate the auto-stubbed backlog/i);
+    });
+
+    it('a missing mode defaults to describe (fill-only), never graduate', () => {
+      const prompt = indexDescribe._buildPrompt([
+        { filename: 'PROJECT-MAP.md', label: 'Project Map', stubsBefore: 1 }
+      ]);
+      assert.match(prompt, /1 empty stub\b/);
+      assert.match(prompt, /Only fill empty stubs in place/);
+      assert.doesNotMatch(prompt, /CURATE the auto-stubbed backlog/);
+    });
+
+    it('graduate-mode: names the file and pins the TODO-block-only curation rules', () => {
+      const prompt = indexDescribe._buildPrompt([
+        { filename: 'FEATURES.md', label: 'Feature Index', mode: 'graduate', entriesBefore: 3 }
+      ]);
+      assert.match(prompt, /FEATURES\.md/);
+      assert.match(prompt, /3 entries awaiting graduation/);
+      assert.match(prompt, /## TODO \(auto-stubbed/);
+      assert.match(prompt, /best-fit EXISTING category/);
+      assert.match(prompt, /Only ever touch entries currently inside a/);
+      assert.match(prompt, /NEVER modify, reorder, or delete an entry already under a real category/);
+      assert.match(prompt, /never delete it/);
+      assert.match(prompt, /## Result/);
+      // No describe/fill section when there are no describe targets.
+      assert.doesNotMatch(prompt, /FILL empty description stubs/);
+    });
+
+    it('both modes: emits both sections when a describe and a graduate target are present', () => {
+      const prompt = indexDescribe._buildPrompt([
+        { filename: 'PROJECT-MAP.md', label: 'Project Map', mode: 'describe', stubsBefore: 1 },
+        { filename: 'FEATURES.md', label: 'Feature Index', mode: 'graduate', entriesBefore: 2 }
+      ]);
+      assert.match(prompt, /FILL empty description stubs/);
+      assert.match(prompt, /CURATE the auto-stubbed backlog/);
+      assert.match(prompt, /PROJECT-MAP\.md/);
+      assert.match(prompt, /FEATURES\.md/);
+    });
+  });
+
+  describe('_countTodoEntries (pure)', () => {
+    const H = '## TODO (auto-stubbed 2026-07-02)';
+    it('counts list entries inside a TODO block', () => {
+      const c = `# Feature Index\n\n${H}\n\n- **TBD** — \`a.js\`. <!-- describe -->\n- **TBD** — \`b.js\`. <!-- describe -->\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 2);
+    });
+    it('counts a described-but-un-graduated entry (no marker left)', () => {
+      const c = `# Feature Index\n\n${H}\n\n- **TBD** — the a feature. \`a.js\`\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 1);
+    });
+    it('does not count entries under a real category heading', () => {
+      const c = `# Feature Index\n\n## Server / API\n\n- **Real** — desc. \`r.js\`\n\n${H}\n\n- **TBD** — \`a.js\`. <!-- describe -->\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 1);
+    });
+    it('a real heading ends the TODO block', () => {
+      const c = `${H}\n\n- **TBD** — \`a.js\`.\n\n## CLI / Tooling\n\n- **After** — \`b.js\`\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 1);
+    });
+    it('handles multiple TODO blocks', () => {
+      const c = `${H}\n\n- **TBD** — \`a.js\`.\n\n## TODO (auto-stubbed 2026-07-03)\n\n- **TBD** — \`b.js\`.\n- **TBD** — \`c.js\`.\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 3);
+    });
+    it('does not count indented sub-bullets', () => {
+      const c = `${H}\n\n- **TBD** — \`a.js\`.\n  - a nested note\n`;
+      assert.equal(indexDescribe._countTodoEntries(c), 1);
+    });
+    it('is null/non-string safe and 0 when no TODO block', () => {
+      assert.equal(indexDescribe._countTodoEntries(null), 0);
+      assert.equal(indexDescribe._countTodoEntries('# Feature Index\n\n## UI / Web\n\n- x\n'), 0);
     });
   });
 
@@ -132,7 +199,7 @@ describe('wrap-step index-describe (#426)', () => {
         '# Project Map\n\n## Structure\n\n- `lib/` — already described.\n');
       const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged: {} });
       assert.equal(result.status, 'skipped');
-      assert.match(result.output.reason, /describable empty stubs/);
+      assert.match(result.output.reason, /stubs to describe or entries to graduate/);
     });
 
     it('skips a file that has a pending staged write this wrap (clobber-avoidance)', async () => {
@@ -187,30 +254,29 @@ describe('wrap-step index-describe (#426)', () => {
     it('describes empty stubs and reports the honest filled count from a post-scan', async () => {
       const mapPath = path.join(projectPath, 'PROJECT-MAP.md');
       const featPath = path.join(projectPath, 'FEATURES.md');
+      // Project Map (describe mode) has the stubs; keep FEATURES out of this case
+      // so the count is unambiguously the describe path.
       fs.writeFileSync(mapPath,
         '# Project Map\n\n## Structure\n\n- `lib/` — <!-- describe -->\n- `test/` — <!-- describe -->\n');
-      fs.writeFileSync(featPath,
-        '# Feature Index\n\n- **TBD** — `lib/x.js`. <!-- describe -->\n');
+      if (fs.existsSync(featPath)) fs.unlinkSync(featPath);
 
       const orig = aiContent.run;
-      // Simulate the AI editing the files on disk: fill ALL stubs in the map,
-      // and the one in FEATURES.md.
-      aiContent.run = async (ctx) => {
+      // Simulate the AI editing the files on disk: fill ALL stubs in the map.
+      aiContent.run = async () => {
         fs.writeFileSync(mapPath,
           '# Project Map\n\n## Structure\n\n- `lib/` — core library.\n- `test/` — the test suite.\n');
-        fs.writeFileSync(featPath,
-          '# Feature Index\n\n- **TBD** — `lib/x.js`. the x feature.\n');
-        return { ok: true, status: 'done', output: { capturedText: '## Result\nDescribed 3 stubs.' }, blockers: [] };
+        return { ok: true, status: 'done', output: { capturedText: '## Result\nDescribed 2 stubs.' }, blockers: [] };
       };
       try {
         const staged = {};
         const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged });
         assert.equal(result.ok, true);
         assert.equal(result.status, 'done');
-        assert.equal(result.output.describedCount, 3, '2 in the map + 1 in FEATURES.md');
+        assert.equal(result.output.describedCount, 2, 'both map stubs filled');
+        assert.equal(result.output.graduatedCount, 0, 'no graduate target this case');
         // Staged shape drives the commit body line — NOT ai-content's generic marker.
         assert.deepEqual(staged['index-describe'], {
-          indexDescribe: true, describedCount: 3, stepId: 'index-describe'
+          indexDescribe: true, describedCount: 2, graduatedCount: 0, stepId: 'index-describe'
         });
       } finally {
         aiContent.run = orig;
@@ -264,19 +330,184 @@ describe('wrap-step index-describe (#426)', () => {
     });
   });
 
-  describe('commit-step body-line emission (#426)', () => {
+  describe('handler — graduate mode (Feature Index convergence, #568)', () => {
+    let tmpDir;
+    let projectPath;
+    let createdProject;
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-index-graduate-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const cfg = store.config.load();
+      cfg.projectsDir = projectsDir;
+      store.config.save(cfg);
+      projectPath = path.join(projectsDir, 'idx-grad');
+      fs.mkdirSync(projectPath, { recursive: true });
+      createdProject = store.projects.create({ name: 'idx-grad', path: projectPath, engine: 'claude' });
+      // Feature Index on, Project Map off — isolate the graduate path.
+      store.projectConfig.save(projectPath, {
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, projectMapEnabled: false
+      });
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    const featPath = () => path.join(projectPath, 'FEATURES.md');
+
+    it('graduates TODO-block entries into a category and reports the honest count', async () => {
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## Server / API\n\n## TODO (auto-stubbed 2026-07-02)\n\n'
+        + '- **TBD** — touched in this session: `lib/a.js`. <!-- describe -->\n'
+        + '- **TBD** — touched in this session: `lib/b.js`. <!-- describe -->\n');
+
+      const orig = aiContent.run;
+      // Simulate the AI graduating both entries under the category and deleting
+      // the now-empty TODO block.
+      aiContent.run = async () => {
+        fs.writeFileSync(featPath(),
+          '# Feature Index\n\n## Server / API\n\n'
+          + '- **A handler** — does A. `lib/a.js`\n'
+          + '- **B handler** — does B. `lib/b.js`\n');
+        return { ok: true, status: 'done', output: {}, blockers: [] };
+      };
+      try {
+        const staged = {};
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged });
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.graduatedCount, 2, 'both TODO entries left the backlog');
+        assert.equal(result.output.describedCount, 0, 'no describe-mode target');
+        assert.deepEqual(staged['index-describe'], {
+          indexDescribe: true, describedCount: 0, graduatedCount: 2, stepId: 'index-describe'
+        });
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
+    it('triggers on a described-but-un-graduated TODO entry (no marker left)', async () => {
+      // The pre-existing-install case: entry has a description but still says
+      // **TBD** and sits in a TODO block, with no `<!-- describe -->` marker.
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## CLI / Tooling\n\n## TODO (auto-stubbed 2026-07-01)\n\n'
+        + '- **TBD** — already has a description. `lib/c.js`\n');
+
+      const orig = aiContent.run;
+      let called = false;
+      aiContent.run = async () => {
+        called = true;
+        fs.writeFileSync(featPath(),
+          '# Feature Index\n\n## CLI / Tooling\n\n- **C tool** — already has a description. `lib/c.js`\n');
+        return { ok: true, status: 'done', output: {}, blockers: [] };
+      };
+      try {
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged: {} });
+        assert.equal(called, true, 'must drive the AI even with no <!-- describe --> marker');
+        assert.equal(result.output.graduatedCount, 1);
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
+    it('skips when FEATURES.md has no TODO block (nothing to graduate)', async () => {
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## Server / API\n\n- **Real** — desc. `lib/r.js`\n');
+      const orig = aiContent.run;
+      let called = false;
+      aiContent.run = async () => { called = true; return { ok: true, status: 'done', output: {}, blockers: [] }; };
+      try {
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged: {} });
+        assert.equal(result.status, 'skipped');
+        assert.equal(called, false, 'a fully-graduated index needs no AI turn');
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
+    it('defers FEATURES.md when features-toc staged an append this wrap (clobber-avoidance)', async () => {
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — `lib/a.js`. <!-- describe -->\n');
+      const orig = aiContent.run;
+      let called = false;
+      aiContent.run = async () => { called = true; return { ok: true, status: 'done', output: {}, blockers: [] }; };
+      try {
+        const staged = { 'features-toc:append': { featuresToc: true, addedCount: 1 } };
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged });
+        assert.equal(result.status, 'skipped');
+        assert.equal(called, false, 'must not graduate a file with a pending staged append');
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+
+    it('curation invariant: does not report entries the AI left under a real category', async () => {
+      // The AI (misbehaving) touches nothing — a curated entry must never be
+      // counted as graduated, and the pre-existing curated entry is preserved.
+      fs.writeFileSync(featPath(),
+        '# Feature Index\n\n## UI / Web\n\n- **Kept** — a curated entry. `public/x.js`\n\n'
+        + '## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — `lib/a.js`. <!-- describe -->\n');
+      const orig = aiContent.run;
+      aiContent.run = async () => ({ ok: true, status: 'done', output: {}, blockers: [] }); // no edit
+      try {
+        const result = await indexDescribe.run({ project: createdProject, session: SESSION, staged: {} });
+        assert.equal(result.output.graduatedCount, 0, 'nothing moved → nothing graduated');
+        // The curated entry is untouched on disk.
+        const after = fs.readFileSync(featPath(), 'utf8');
+        assert.match(after, /- \*\*Kept\*\* — a curated entry\. `public\/x\.js`/);
+      } finally {
+        aiContent.run = orig;
+      }
+    });
+  });
+
+  describe('commit-step body-line emission (#426/#568)', () => {
     it('emits "- Index: described N stub(s)" when describedCount > 0', () => {
       const lines = commitStep._buildBodyLines({
-        'index-describe': { indexDescribe: true, describedCount: 4, stepId: 'index-describe' }
+        'index-describe': { indexDescribe: true, describedCount: 4, graduatedCount: 0, stepId: 'index-describe' }
       });
       assert.ok(lines.includes('- Index: described 4 stub(s)'));
     });
 
-    it('emits nothing when describedCount is 0 (AI filled nothing)', () => {
+    it('emits "- Feature Index: graduated N entries" when graduatedCount > 0', () => {
       const lines = commitStep._buildBodyLines({
-        'index-describe': { indexDescribe: true, describedCount: 0, stepId: 'index-describe' }
+        'index-describe': { indexDescribe: true, describedCount: 0, graduatedCount: 3, stepId: 'index-describe' }
       });
+      assert.ok(lines.includes('- Feature Index: graduated 3 entries'));
       assert.equal(lines.find((l) => l.startsWith('- Index:')), undefined);
+    });
+
+    it('singularizes a single graduated entry', () => {
+      const lines = commitStep._buildBodyLines({
+        'index-describe': { indexDescribe: true, describedCount: 0, graduatedCount: 1, stepId: 'index-describe' }
+      });
+      assert.ok(lines.includes('- Feature Index: graduated 1 entry'));
+    });
+
+    it('emits both lines when the AI both graduated and described', () => {
+      const lines = commitStep._buildBodyLines({
+        'index-describe': { indexDescribe: true, describedCount: 2, graduatedCount: 5, stepId: 'index-describe' }
+      });
+      assert.ok(lines.includes('- Feature Index: graduated 5 entries'));
+      assert.ok(lines.includes('- Index: described 2 stub(s)'));
+    });
+
+    it('emits nothing when both counts are 0', () => {
+      const lines = commitStep._buildBodyLines({
+        'index-describe': { indexDescribe: true, describedCount: 0, graduatedCount: 0, stepId: 'index-describe' }
+      });
+      assert.equal(lines.find((l) => l.startsWith('- Index:') || l.startsWith('- Feature Index:')), undefined);
+    });
+
+    it('still renders the legacy shape (describedCount only, no graduatedCount)', () => {
+      const lines = commitStep._buildBodyLines({
+        'index-describe': { indexDescribe: true, describedCount: 4, stepId: 'index-describe' }
+      });
+      assert.ok(lines.includes('- Index: described 4 stub(s)'));
     });
   });
 });
