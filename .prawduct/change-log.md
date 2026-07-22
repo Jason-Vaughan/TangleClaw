@@ -26,6 +26,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Verify lease ownership on ports release/heartbeat (#656)
+
+<!-- prawduct: type=bugfix | scope=wrap-656 | status=shipped -->
+
+**Why:** `POST /api/ports/release` and `/api/ports/heartbeat` took only `{port}` — no project — so
+any caller could delete or renew another project's lease. A stray release is a silent DELETION
+(the owner keeps running on a port the registry no longer records; the next claimant gets a clean
+201 and a real collision follows), the wider hole than the lease-overwrite case #613 closed. The
+injected guide told agents to "release a port once no longer needed" without saying whose.
+
+**What (operator-ratified: optional-but-verified, non-breaking):** `store.portLeases.release` and
+`heartbeat` gained an `options` arg. When `options.project` is present, a LIVE lease held by a
+different project is refused with `PORT_CONFLICT` carrying the owner — mirroring the lease path
+(#613); `release` honors `options.force` (logged) for a legitimate cross-project release, heartbeat
+has no force (renewing another project's lease is never legitimate). Omitting `project` preserves
+the prior unverified behavior, so trusted internal teardown paths and in-flight callers on the old
+guide keep working. The HTTP routes map `PORT_CONFLICT` → 409 with the owner. Expired leases stay
+releasable by anyone (garbage awaiting the sweep). `data/porthub-guide.md` updated to instruct
+sending `project` and to correct the old "release/heartbeat are not guarded" note. Deliberately NOT
+authentication — nothing binds a caller to the project name it sends; this closes the ACCIDENTAL
+cross-project release, which is the filed threat. Out of scope (deferred): `_cleanupOrphanLeases`
+displaced-lease logging (the issue's secondary item). Tests: +9 store-level, +5 API-level
+(409/force/backward-compat). Full suite green, 0 fail.
+
 ## 2026-07-22: Wrap changelog gate catches uncommitted work that would ship unlogged (#659)
 
 <!-- prawduct: type=bugfix | scope=wrap-659 | status=shipped -->
