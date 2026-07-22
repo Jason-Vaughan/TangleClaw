@@ -26,6 +26,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-21: Close launch-mode guard write-path holes (#622, #682 trigger)
+
+<!-- prawduct: type=bugfix | scope=launch-mode-guard-622 | status=shipped -->
+
+**Why:** `updateProject` changed a project's engine but never re-validated the stored
+`defaultLaunchMode`, so a claude project set to `bypassPermissions`, switched to codex
+(which defines no such mode), kept `bypassPermissions` on disk — a posture the engine
+can't run, and the exact stale configuration that preceded #682's project launch dying
+before its prime could paste. Compounding it, the eyes-open bypass-hidden guard fired only
+when the mode resolved to a `launchModes` entry carrying a `warning`; a stranded
+(unresolvable) mode left `modeConfig` falsy and the guard was skipped, so a
+`{showLaunchModePicker: false}` PATCH could persist a hidden picker over that stale mode.
+
+**What:** a new `reconcileLaunchMode(mode, engineProfile)` helper returns the mode the
+engine will actually keep — a mode it can't honor reconciles to `default` (the
+universally-valid, warning-free interactive mode). The engine-change block applies it to
+reset a stranded stored mode on switch (logged); the guard judges the *reconciled* effective
+mode, so it still blocks a genuine warning-mode + hidden picker without `confirmBypassHidden`
+yet no longer false-blocks a switch whose reconciliation makes it safe. This makes #682's
+`bypassPermissions`-on-codex configuration unreachable through the API.
+
+**Evidence note:** #622 hypothesised the *create* path persisted the dangerous combination,
+but a repo-wide grep proved the only server-side writers of these two fields are
+`DEFAULT_PROJECT_CONFIG` (safe defaults) and the guarded PATCH — `create`/`attach` deep-copy
+the safe defaults and write neither field. The fix builds on that code evidence, not the
+issue's unreproduced writer claim, and a write-path regression test pins the invariant.
+
+**Honest confidence:** high for the API-reachability fix — 5 regression tests (reset-stranded,
+preserve-honored, switch-and-hide-safe, create-safe, still-blocks-bypass+hidden); full suite
+0 failed; Critic clean (0/0/0). #682's launch-death *mechanism* (why codex exits pre-prime)
+needs a live reproduction and remains an open scoped follow-up — descoped, not dropped.
+
+
 ## 2026-07-21: Self-identifying wrap ai-content prompt headers (#627)
 
 <!-- prawduct: type=bugfix | scope=wrap-627-prompt-headers | status=shipped -->

@@ -169,6 +169,77 @@ describe('launch-mode settings', () => {
     });
   });
 
+  describe('engine-switch reconciliation (#682 trigger, #622)', () => {
+    it('resets a stored mode the new engine cannot honor to default', () => {
+      mkProject('lm-switch');
+      // Claude honors bypassPermissions; codex does not.
+      const set = projects.updateProject('lm-switch', {
+        defaultLaunchMode: 'bypassPermissions',
+        showLaunchModePicker: false,
+        confirmBypassHidden: true
+      });
+      assert.deepEqual(set.errors, []);
+      assert.equal(set.project.defaultLaunchMode, 'bypassPermissions');
+
+      const switched = projects.updateProject('lm-switch', { engine: 'codex' });
+      assert.deepEqual(switched.errors.filter(e => /defaultLaunchMode|launch mode/i.test(e)), []);
+      // The stranded mode is reconciled to the universally-valid default.
+      const cfg = store.projectConfig.load(switched.project.path);
+      assert.equal(cfg.defaultLaunchMode, 'default');
+      assert.equal(switched.project.defaultLaunchMode, 'default');
+    });
+
+    it('preserves a stored mode the new engine still honors', () => {
+      mkProject('lm-switch-keep');
+      // 'default' is valid for every engine — a switch must not disturb it.
+      const switched = projects.updateProject('lm-switch-keep', { engine: 'codex' });
+      assert.deepEqual(switched.errors, []);
+      assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default');
+    });
+
+    it('allows switching engine AND hiding the picker together when reconciliation makes it safe', () => {
+      mkProject('lm-switch-hide');
+      projects.updateProject('lm-switch-hide', {
+        defaultLaunchMode: 'bypassPermissions',
+        showLaunchModePicker: false,
+        confirmBypassHidden: true
+      });
+      // Switching to codex reconciles bypassPermissions -> default, so the
+      // hidden picker no longer sits over a warning mode: the guard must not
+      // block this switch-to-safe, and no re-confirm should be demanded.
+      const result = projects.updateProject('lm-switch-hide', {
+        engine: 'codex',
+        showLaunchModePicker: false
+      });
+      assert.deepEqual(result.errors.filter(e => /confirmBypassHidden/.test(e)), []);
+      const cfg = store.projectConfig.load(result.project.path);
+      assert.equal(cfg.defaultLaunchMode, 'default');
+      assert.equal(cfg.showLaunchModePicker, false);
+    });
+  });
+
+  describe('write-path invariant — no path persists an unconfirmed dangerous posture', () => {
+    it('create writes the safe defaults, never a hidden bypass posture', () => {
+      const name = 'lm-create-safe';
+      const projPath = path.join(projectsDir, name);
+      fs.mkdirSync(projPath, { recursive: true });
+      store.projects.create({ name, path: projPath, engine: 'claude' });
+      const cfg = store.projectConfig.load(projPath);
+      assert.equal(cfg.defaultLaunchMode, 'default');
+      assert.notEqual(cfg.showLaunchModePicker, false);
+    });
+
+    it('the guard still blocks claude bypass + hidden without confirm after hardening', () => {
+      mkProject('lm-still-guarded');
+      const blocked = projects.updateProject('lm-still-guarded', {
+        defaultLaunchMode: 'bypassPermissions',
+        showLaunchModePicker: false
+      });
+      assert.equal(blocked.project, null);
+      assert.match(blocked.errors[0], /confirmBypassHidden/);
+    });
+  });
+
   describe('launch resolution (lib/sessions.js)', () => {
     const tmux = require('../lib/tmux');
     const enginesModule = require('../lib/engines');
