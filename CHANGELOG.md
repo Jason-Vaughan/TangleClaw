@@ -16,6 +16,17 @@ All notable changes to TangleClaw are documented in this file.
   the version bump stranded on an unmerged branch. Commit body gains a
   `- Feature Index: pruned N dead stub(s)` audit line. (`lib/wrap-steps/features-toc.js`,
   `lib/wrap-steps/commit.js`)
+- Wrap changelog gate now catches uncommitted **work** that would ship unlogged (#659). The
+  coverage predicate previously judged only committed history and the changelog's own dirty
+  state, so a source file left uncommitted at wrap — which `git add -A` sweeps into the wrap's
+  own commit — shipped with no entry and the gate stayed quiet. It now classifies the dirty tree
+  with a shared source-file signal (`lib/wrap-steps/_source-paths.js`, extracted from
+  `features-toc` so the two can't drift): a dirty **source** file with a clean changelog →
+  `uncovered` (blocks, naming the files), while routine **bookkeeping** churn (`.prawduct/`,
+  `.tangleclaw/`, build output) is excluded — so the compliant sessions #645 unblocked stay
+  unblocked. An uncommitted changelog edit still short-circuits to covered.
+  (`lib/wrap-steps/changelog-coverage.js`, `lib/wrap-steps/ai-content.js`,
+  `lib/wrap-steps/_source-paths.js`, `lib/wrap-steps/features-toc.js`)
 
 ## [4.31.4] - 2026-07-22
 

@@ -26,6 +26,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Wrap changelog gate catches uncommitted work that would ship unlogged (#659)
+
+<!-- prawduct: type=bugfix | scope=wrap-659 | status=shipped -->
+
+**Why:** `changelog-coverage.evaluate()` judged committed history + the changelog's own dirty
+state, but never the rest of the dirty tree. A source file left uncommitted at wrap is swept
+into the wrap's own commit by `git add -A`, and the next session's range starts after that
+commit — so unlogged uncommitted work could never be judged and shipped silently (verdict
+`covered`). The naive "any dirty file → unlogged" rule was tried and reverted (#645): sessions
+dirty tracked bookkeeping (`.prawduct/change-log.md`) routinely, so it blocked the compliant
+sessions the predicate exists to unblock.
+
+**What:** Tell work from bookkeeping with a shared classifier. Extracted `features-toc`'s
+source-file signal (`_isIndexableCandidate` + its extension/basename/prefix constants) into a new
+`lib/wrap-steps/_source-paths.js` (`isSourceFile`), re-exported from `features-toc` so its surface
+is unchanged — one source of truth, no drift. `changelog-coverage` now filters the dirty set
+through `isSourceFile`: a dirty **source** file with a clean changelog → `uncovered` carrying a new
+`uncommittedWork` field (the offending paths), fired BEFORE the committed-history check (an entry
+for committed work doesn't cover new uncommitted work — the #659 repro). Bookkeeping churn is
+excluded via the leading-dot-segment rule, and an uncommitted changelog edit still short-circuits
+to `covered`. `ai-content` renders the uncommitted-work block with its own message (the commit
+renderer's `sha.slice()` would throw on the null-sha rows). Boundary: changelog-coverage →
+ai-content contract, single consumer updated + tested. Full suite 4702 pass / 0 fail. Two
+pre-#659 tests that encoded the reverted-gap contract were updated to the new (ratified) contract,
+preserving their bookkeeping-exclusion assertions.
+
 ## 2026-07-22: Heal aged dangling FEATURES.md citations at wrap instead of stranding (#640)
 
 <!-- prawduct: type=bugfix | scope=wrap-640 | status=shipped -->

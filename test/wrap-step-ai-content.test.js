@@ -871,6 +871,29 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
       assert.doesNotMatch(res.blockers[0], /byte-identical/, 'must not report the mutation cause');
     });
 
+    it('BLOCKS with the uncommitted-work message when dirty work will ship unlogged (#659)', async () => {
+      // The uncovered verdict here carries `uncommittedWork` (paths), not commits.
+      // The rows have no sha, so the commit renderer's `c.sha.slice(0,7)` would
+      // throw — a clean blocker string proves the dedicated branch handled it.
+      aic._internal.readForVerify = () => 'identical content';
+      aic._internal.changelogCoverage = () => ({
+        verdict: 'uncovered',
+        uncovered: [],
+        uncommittedWork: ['lib/foo.js', 'test/foo.test.js'],
+        checkedCount: 0,
+        range: 'abc..HEAD',
+        reason: null
+      });
+      const res = await aic.run(coverageCtx());
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /2 uncommitted work file\(s\) will ship in this wrap's commit with no entry/);
+      assert.match(res.blockers[0], /CHANGELOG\.md/);
+      assert.match(res.output.remediation, /lib\/foo\.js/, 'names the offending files');
+      assert.match(res.output.remediation, /test\/foo\.test\.js/);
+      assert.doesNotMatch(res.blockers[0], /undefined/, 'the null-sha commit renderer never ran');
+    });
+
     it('tells the operator that WRITING THE ENTRY clears the block', async () => {
       // The remediation must name the action that actually clears it. Writing the
       // entry works through either route — during the retry turn it trips the
