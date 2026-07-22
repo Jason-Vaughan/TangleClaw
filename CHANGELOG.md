@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Wrap no longer silently strands on an aged dangling `FEATURES.md` citation (#640).
+  `features-toc` now heals citations whose target was deleted in an **earlier** session,
+  independent of this session's drift: a dead **auto-stub** it wrote itself (the `- **TBD** …`
+  line under a `## TODO (auto-stubbed …)` section) is **pruned** — self-healing our own output,
+  emptied sections and their separator removed — while a dead **hand-written / already-described**
+  citation is **reported** as a named, non-blocking finding and left untouched, so operator prose
+  is never rewritten to make a required check pass. Previously such a citation reddened the
+  `DOC-3K7Q` contract test on the wrap's own PR while every step still reported `[Done]`, leaving
+  the version bump stranded on an unmerged branch. Commit body gains a
+  `- Feature Index: pruned N dead stub(s)` audit line. (`lib/wrap-steps/features-toc.js`,
+  `lib/wrap-steps/commit.js`)
+
 ## [4.31.4] - 2026-07-22
 
 ### Fixed

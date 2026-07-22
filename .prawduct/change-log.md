@@ -26,6 +26,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Heal aged dangling FEATURES.md citations at wrap instead of stranding (#640)
+
+<!-- prawduct: type=bugfix | scope=wrap-640 | status=shipped -->
+
+**Why:** #637 stopped `features-toc` from *creating* stubs for files deleted in the current
+session, but nothing re-checked citations already in `FEATURES.md` whose target was deleted in
+an EARLIER session. TC's own `DOC-3K7Q` contract test (`test/features-index.test.js`) asserts
+every cited committed path exists on disk, so an aged dangling citation reddened the required
+`test` check on the wrap's own PR while every wrap step still reported `[Done]` — stranding the
+version bump on an unmerged branch (silent symptom, same shape as #637's fresh-stub case).
+
+**What:** `features-toc` now scans the existing index on every run (except a fresh create) and
+heals two ways (operator-ratified Hybrid): a dead **auto-stub** it wrote itself (the
+`- **TBD** …` line under a `## TODO (auto-stubbed …)` section) is **pruned** — self-healing our
+own output, emptied sections + separator removed — while a dead **hand-written / already-described**
+citation is **reported** as a named, non-blocking finding and left untouched, so operator prose
+is never rewritten to make a required check pass. The scan runs independent of drift/range (a
+citation dangles even when the session touched nothing indexable), so a prune with no drift still
+stages a healed write. The reporter accepts any file-extension token or `#symbol` anchor (a
+dangling `data/schema.sql` reds the same check) while excluding URLs and extensionless prose;
+this also fixed a pre-existing URL false-positive. `commit.js` gains a
+`- Feature Index: pruned N dead stub(s)` audit line. Critic cumulative + verify-resolutions clean.
+
 ## 2026-07-22: Wrap release status — stop crying "BLOCKED, did not ship" while checks run (#686)
 
 <!-- prawduct: type=bugfix | scope=wrap-686 | status=shipped -->
