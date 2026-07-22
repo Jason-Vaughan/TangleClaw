@@ -4,6 +4,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An engine switch can no longer strand a launch mode the new engine can't
+  honor, and the eyes-open bypass-hidden guard no longer has a hole a stranded
+  mode slips through (#622; closes #682's trigger).** `updateProject` changed a
+  project's engine but never re-validated the stored `defaultLaunchMode`, so a
+  claude project set to `bypassPermissions`, switched to codex (which defines no
+  such mode), kept `bypassPermissions` on disk — a posture the engine can't run.
+  Compounding it, the eyes-open guard only fired when the mode resolved to a
+  `launchModes` entry carrying a `warning`; a stranded (unresolvable) mode left
+  `modeConfig` falsy and the guard was skipped, so a `{showLaunchModePicker:
+  false}` PATCH could persist a hidden picker over that stale mode. An engine
+  switch now reconciles a mode the new engine can't honor down to `default` (the
+  universally-valid, warning-free interactive mode — never a dangerous posture),
+  logged; and the guard judges the *reconciled* effective mode via a shared
+  `reconcileLaunchMode` helper, so it still blocks a genuine warning-mode +
+  hidden picker without `confirmBypassHidden` yet doesn't false-block a
+  switch-to-safe. This makes #682's `bypassPermissions`-on-codex configuration
+  unreachable through the API — the config that preceded that project's launch
+  dying before its prime could paste. `create`/`attach` were confirmed to write
+  only the safe `DEFAULT_PROJECT_CONFIG` defaults (not the dangerous combination
+  #622 hypothesised the create path persisted — a writer never reproducible in
+  the current code), and a write-path regression test now pins that invariant.
+  #682's launch-death *mechanism* itself (why codex exits pre-prime) needs a live
+  reproduction and remains open as a scoped follow-up.
+
 ## [4.31.2] - 2026-07-21
 
 ### Fixed
