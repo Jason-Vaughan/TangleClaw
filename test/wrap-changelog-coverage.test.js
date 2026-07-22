@@ -184,10 +184,11 @@ describe('changelog-coverage — evaluate()', () => {
    *
    * @param {Array<{sha:string, subject:string, files?:string[], parents?:string}>} records
    */
-  function scenario(records, dirty = []) {
+  function scenario(records, dirty = [], untracked = []) {
     cov._internal.execSync = (cmd) => {
       if (cmd.startsWith('git log')) return gitLog(records);
       if (cmd.startsWith('git diff')) return dirty.join('\n');
+      if (cmd.startsWith('git ls-files')) return untracked.join('\n');
       return '';
     };
   }
@@ -328,21 +329,64 @@ describe('changelog-coverage — evaluate()', () => {
     assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
   });
 
-  it('does NOT demand an entry merely because other files are dirty', () => {
-    // Tried and reverted: a session dirties tracked bookkeeping files as a matter
-    // of course (`.prawduct/change-log.md` on this repo), so blocking on any dirty
-    // file blocked exactly the compliant sessions #645 is about. Uncommitted work
-    // is a documented gap, not a thing to block on.
+  it('does NOT demand an entry when only bookkeeping files are dirty (#645 stays fixed)', () => {
+    // A wrap dirties tracked bookkeeping (`.prawduct/change-log.md`) as a matter of
+    // course; classifying it as work would re-block exactly the compliant sessions
+    // #645 is about. Only source files count as unlogged work (#659).
     scenario([{ sha: 'aaa1111', subject: 'Logged work (#1)', files: ['CHANGELOG.md'] }],
-      ['.prawduct/change-log.md', 'lib/a.js']);
+      ['.prawduct/change-log.md']);
     assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
   });
 
-  it('stays UNAVAILABLE with no commits, dirty tree or not', () => {
+  it('DOES demand an entry when uncommitted source work is dirty and the changelog is clean (#659)', () => {
+    // The work will be swept into the wrap's own commit; an entry logged for the
+    // session's COMMITTED work does not cover it, so this blocks even though a
+    // committed commit touched the changelog. Bookkeeping dirt is excluded.
+    scenario([{ sha: 'aaa1111', subject: 'Logged work (#1)', files: ['CHANGELOG.md'] }],
+      ['.prawduct/change-log.md', 'lib/a.js']);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncommittedWork, ['lib/a.js'], 'names the work, excludes the bookkeeping');
+    assert.deepEqual(out.uncovered, [], 'an uncommitted-work verdict does not populate the commit list');
+  });
+
+  it('with no commits: UNAVAILABLE when the tree is clean or only bookkeeping is dirty', () => {
     scenario([], []);
     assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+    scenario([], ['.prawduct/change-log.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE,
+      'bookkeeping-only dirt is not unlogged work');
+  });
+
+  it('with no commits but dirty source work: UNCOVERED — the work ships unlogged (#659)', () => {
     scenario([], ['lib/a.js']);
-    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncommittedWork, ['lib/a.js']);
+  });
+
+  it('catches an UNTRACKED new source file that git add -A will commit unlogged (#659)', () => {
+    // `git diff HEAD` never lists an untracked file, but the wrap's `git add -A`
+    // commits it. A brand-new file is the most common form of new work — the
+    // modified-only view missed exactly this class.
+    scenario([], [], ['lib/brand-new.js']);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncommittedWork, ['lib/brand-new.js']);
+  });
+
+  it('does not count an untracked bookkeeping file as work', () => {
+    scenario([{ sha: 'aaa1111', subject: 'Logged (#1)', files: ['CHANGELOG.md'] }],
+      [], ['.prawduct/scratch.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED,
+      'untracked bookkeeping is excluded by the leading-dot rule');
+  });
+
+  it('an untracked (brand-new) CHANGELOG satisfies coverage via the dirty route', () => {
+    scenario([{ sha: 'aaa1111', subject: 'work (#1)', files: ['lib/a.js'] }],
+      [], ['CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED,
+      'a brand-new dirty changelog is the changelog being maintained');
   });
 
   it('exempts a commit that touched nothing IN SCOPE — a subdir project\'s sibling-only commit', () => {
@@ -416,10 +460,11 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   });
   afterEach(() => { Object.assign(cov._internal, saved); });
 
-  function scenario(records, dirty = []) {
+  function scenario(records, dirty = [], untracked = []) {
     cov._internal.execSync = (cmd) => {
       if (cmd.startsWith('git log')) return gitLog(records);
       if (cmd.startsWith('git diff')) return dirty.join('\n');
+      if (cmd.startsWith('git ls-files')) return untracked.join('\n');
       return '';
     };
   }
@@ -494,8 +539,14 @@ describe('changelog-coverage — against this repository\'s real history', () =>
       // counted. Demand a judged commit only when the verdict came from committed
       // history. The real-git-parsing guarantee this suite exists for is pinned
       // independently by the next test, over `_listCommits` directly.
-      const fromDirtyShortCircuit = out.verdict === cov.VERDICTS.COVERED && out.checkedCount === 0;
-      if (!fromDirtyShortCircuit) {
+      // Two working-tree short-circuits legitimately judge zero commits: a dirty
+      // declared path → COVERED, and dirty uncommitted source work → UNCOVERED
+      // (#659, which is exactly the state this suite runs in during active
+      // development). Demand a judged commit only for a committed-history verdict.
+      const fromWorkingTreeShortCircuit =
+        (out.verdict === cov.VERDICTS.COVERED && out.checkedCount === 0) ||
+        (out.verdict === cov.VERDICTS.UNCOVERED && out.uncommittedWork.length > 0);
+      if (!fromWorkingTreeShortCircuit) {
         assert.ok(out.checkedCount > 0, 'a committed-history verdict must have judged something');
       }
     }
