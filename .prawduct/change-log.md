@@ -26,6 +26,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-21: Self-identifying wrap ai-content prompt headers (#627)
+
+<!-- prawduct: type=bugfix | scope=wrap-627-prompt-headers | status=shipped -->
+
+**Why:** the wrap sends up to three near-identical instruction prompts into the session,
+and none named itself — the operator could not tell "the pipeline is working through its
+steps" from "the wrap re-fired" (reported twice; a false alarm both times, but a wrap that
+*looks* broken trains the operator to stop pressing it — the #571 failure).
+
+**What:** each dispatched `ai-content` prompt is prefixed with a self-identifying first line —
+`[TangleClaw wrap — step N of M: <id>]` for the fixed content steps,
+`[TangleClaw wrap — <id>]` where a position can't be known. Built in prompt fabrication
+(`_wrapStepHeader`, `lib/wrap-steps/ai-content.js`), applied on both the tmux and
+ClawBridge-gateway send paths, plain text so a markdown-rendering TUI can't restyle the marker
+away (#287 class). The "N of M" denominator counts only the prompts a wrap will actually
+send: a runner pre-pass (`_planAiContentPrompts`, `lib/wrap-pipeline.js`) excludes steps
+disabled by `wrapStepOverrides`, opted out via `skipAiContent`, or (on a webui session)
+un-carriable over the gateway.
+
+**Refinement of the issue's proposal:** #627 assumed `index-describe` was a self-skipping
+fourth `ai-content` step (from the since-deleted `template.json`). It now emits its pane
+prompt by *delegating* to the handler and decides to only at its own pipeline position — after
+the earlier prompts have already gone out under a fixed denominator — so it can't join an
+accurate count and gets the numberless header. That is why a normal wrap reads "of 3", never
+"of 4", matching #627's own acceptance assertion.
+
+**Honest confidence:** high — regression tests pin the header on both send paths (numbered +
+numberless), the numberless fallback, the malformed-progress guard, and the denominator under
+overrides / `skipAiContent` / a webui session. Full suite 4652/4653 (1 pre-existing skip).
+Closes #627. Operator-visible in the pane; the live pane render is verifiable at the next wrap.
+
+
 ## 2026-07-21: De-flake the session-rule-delivery suite (#634)
 
 <!-- prawduct: type=bugfix | scope=session-rule-delivery-flake | status=shipped -->
