@@ -6,7 +6,7 @@
 // (base-branch resolution, diff parsing), happy-path stage shape, and
 // the commit body line emitted from `lib/wrap-steps/commit.js`.
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -983,6 +983,303 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       // about why nothing happened.
       assert.match(result.output.reason, /every touched file was deleted/,
         'the skip reason must name deletion as the cause');
+    });
+  });
+
+  // #640: aged dangling citations (target deleted in an EARLIER session) must be
+  // healed — a dead auto-stub this step wrote is pruned; a hand-written / already-
+  // described one is reported, never silently rewritten. Otherwise the DOC-3K7Q
+  // citation contract reds the wrap PR while every step still reports success.
+  describe('_pruneDeadAutoStubs (#640)', () => {
+    const PROJ = '/proj';
+    let origExists;
+    beforeEach(() => { origExists = featuresToc._internal.existsSync; });
+    afterEach(() => { featuresToc._internal.existsSync = origExists; });
+
+    function withExisting(relPaths) {
+      const set = new Set(relPaths.map((r) => path.join(PROJ, r)));
+      featuresToc._internal.existsSync = (abs) => set.has(abs);
+    }
+
+    it('removes a dead auto-stub entry and drops the emptied TODO section + its separator blank', () => {
+      withExisting(['lib/widget.js']); // the hand-written entry survives; the stub target does not
+      const content = [
+        '# Feature Index',
+        '',
+        '## UI / Web',
+        '- **Widget** — `lib/widget.js`.',
+        '',
+        '## TODO (auto-stubbed 2026-07-01)',
+        '',
+        '- **TBD** — touched in this session: `lib/gone.js`. <!-- describe -->',
+        ''
+      ].join('\n');
+      const { content: out, prunedPaths } = featuresToc._pruneDeadAutoStubs(content, PROJ);
+      assert.deepEqual(prunedPaths, ['lib/gone.js']);
+      assert.ok(!out.includes('lib/gone.js'), 'dead stub line removed');
+      assert.ok(!out.includes('## TODO (auto-stubbed 2026-07-01)'), 'emptied TODO heading removed');
+      assert.ok(out.includes('## UI / Web'), 'unrelated section preserved');
+      assert.ok(out.includes('- **Widget** — `lib/widget.js`.'), 'hand-written entry untouched');
+      assert.ok(out.endsWith('\n'), 'trailing newline preserved');
+    });
+
+    it('prunes only the dead stub when a live stub shares the section — heading kept', () => {
+      withExisting(['lib/live.js']);
+      const content = [
+        '# Feature Index',
+        '',
+        '## TODO (auto-stubbed 2026-07-01)',
+        '',
+        '- **TBD** — touched in this session: `lib/live.js`. <!-- describe -->',
+        '- **TBD** — touched in this session: `lib/dead.js`. <!-- describe -->',
+        ''
+      ].join('\n');
+      const { content: out, prunedPaths } = featuresToc._pruneDeadAutoStubs(content, PROJ);
+      assert.deepEqual(prunedPaths, ['lib/dead.js']);
+      assert.ok(out.includes('lib/live.js'), 'live stub kept');
+      assert.ok(!out.includes('lib/dead.js'), 'dead stub removed');
+      assert.ok(out.includes('## TODO (auto-stubbed 2026-07-01)'), 'heading kept — section still has a live stub');
+    });
+
+    it('keeps a section (and its dead stub) when operator prose shares it — prose is not ours to delete', () => {
+      withExisting([]); // stub target absent
+      const content = [
+        '# Feature Index',
+        '',
+        '## TODO (auto-stubbed 2026-07-01)',
+        '',
+        '- **TBD** — touched in this session: `lib/dead.js`. <!-- describe -->',
+        'Operator note: revisit this batch after the refactor.',
+        ''
+      ].join('\n');
+      const { content: out, prunedPaths } = featuresToc._pruneDeadAutoStubs(content, PROJ);
+      assert.deepEqual(prunedPaths, ['lib/dead.js'], 'the dead stub line itself is still pruned');
+      assert.ok(out.includes('## TODO (auto-stubbed 2026-07-01)'), 'heading kept — operator prose present');
+      assert.ok(out.includes('Operator note: revisit'), 'operator prose preserved');
+    });
+
+    it('does not touch a described/graduated entry pointing at a deleted file (reported, not pruned)', () => {
+      withExisting([]); // lib/graduated.js is gone
+      const content = [
+        '# Feature Index',
+        '',
+        '## Server / API',
+        '- **Graduated** — `lib/graduated.js` does the thing.',
+        ''
+      ].join('\n');
+      const { content: out, prunedPaths } = featuresToc._pruneDeadAutoStubs(content, PROJ);
+      assert.deepEqual(prunedPaths, [], 'a graduated entry is not the auto-stub format — pruning leaves it');
+      assert.ok(out.includes('lib/graduated.js'), 'entry preserved for the report path to surface');
+    });
+
+    it('returns content unchanged when there are no auto-stub sections', () => {
+      withExisting([]);
+      const content = '# Feature Index\n\n## UI\n- **A** — `lib/a.js`.\n';
+      const { content: out, prunedPaths } = featuresToc._pruneDeadAutoStubs(content, PROJ);
+      assert.equal(out, content, 'byte-identical when nothing to prune');
+      assert.deepEqual(prunedPaths, []);
+    });
+  });
+
+  describe('_findDanglingCitations (#640)', () => {
+    const PROJ = '/proj';
+    let origExists;
+    beforeEach(() => { origExists = featuresToc._internal.existsSync; });
+    afterEach(() => { featuresToc._internal.existsSync = origExists; });
+
+    function withExisting(relPaths) {
+      const set = new Set(relPaths.map((r) => path.join(PROJ, r)));
+      featuresToc._internal.existsSync = (abs) => set.has(abs);
+    }
+
+    it('reports a hand-written citation whose file is gone, and not one that exists', () => {
+      withExisting(['lib/here.js']);
+      const content = '- **Here** — `lib/here.js`.\n- **Gone** — `lib/gone.js`.\n';
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['lib/gone.js']);
+    });
+
+    it('reports a dangling `path#symbol` anchor as its full token', () => {
+      withExisting([]);
+      const content = '- **X** — `lib/gone.js#doThing`.\n';
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['lib/gone.js#doThing']);
+    });
+
+    it('skips globs, placeholders, non-path tokens, and vendored prefixes', () => {
+      withExisting([]);
+      const content = [
+        '`lib/*.js`',          // glob
+        '`<lib/foo.js>`',      // placeholder
+        '`file.js`',           // no slash → not a repo path
+        '`node_modules/x.js`', // excluded prefix
+        '`and/or`'             // has slash but no indexable ext / symbol
+      ].join(' ');
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), []);
+    });
+
+    it('dedupes a repeated dangling token', () => {
+      withExisting([]);
+      const content = '`lib/gone.js` … `lib/gone.js`';
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['lib/gone.js']);
+    });
+  });
+
+  describe('commit-step body-line — pruned dead stubs (#640)', () => {
+    it('emits "- Feature Index: pruned N dead stub(s)" when prunedCount > 0', () => {
+      const staged = {
+        'features-toc:append': {
+          primingPath: '/p/FEATURES.md',
+          newContent: '# Feature Index\n',
+          changed: true,
+          featuresToc: true,
+          addedCount: 0,
+          addedFiles: [],
+          prunedCount: 2,
+          prunedFiles: ['lib/a.js', 'lib/b.js'],
+          todoDate: null
+        }
+      };
+      const lines = commitStep._buildBodyLines(staged);
+      assert.ok(lines.includes('- Feature Index: pruned 2 dead stub(s)'),
+        'the prune count gets its own audit line');
+    });
+
+    it('emits BOTH the append and the prune line when a wrap did both', () => {
+      const staged = {
+        'features-toc:append': {
+          primingPath: '/p/FEATURES.md',
+          newContent: '...',
+          changed: true,
+          featuresToc: true,
+          addedCount: 1,
+          addedFiles: ['lib/fresh.js'],
+          prunedCount: 1,
+          prunedFiles: ['lib/dead.js'],
+          todoDate: '2026-07-22'
+        }
+      };
+      const lines = commitStep._buildBodyLines(staged);
+      assert.ok(lines.some((l) => l.includes('1 stub(s) appended')), 'append line present');
+      assert.ok(lines.includes('- Feature Index: pruned 1 dead stub(s)'), 'prune line present');
+    });
+  });
+
+  describe('handler — dangling-citation heal (#640)', () => {
+    let tmpDir;
+    let projectPath;
+    let createdProject;
+
+    before(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-features-toc-640-'));
+      store._setBasePath(path.join(tmpDir, 'tangleclaw'));
+      store.init();
+      const projectsDir = path.join(tmpDir, 'projects');
+      fs.mkdirSync(projectsDir, { recursive: true });
+      const cfg = store.config.load();
+      cfg.projectsDir = projectsDir;
+      store.config.save(cfg);
+      projectPath = path.join(projectsDir, 'features-toc-640');
+      fs.mkdirSync(projectPath, { recursive: true });
+      createdProject = store.projects.create({ name: 'features-toc-640', path: projectPath, engine: 'claude' });
+      store.projectConfig.save(projectPath, { engine: 'claude', featureIndexEnabled: true });
+      // lib/fresh.js is the only file that exists on disk; every cited-but-absent
+      // path below is a genuine dangling citation.
+      materialize(projectPath, 'lib/fresh.js');
+    });
+
+    after(() => {
+      store.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /** Stub execSync so the range resolves and `git diff` returns `diffOut`. */
+    function stubDiff(diffOut) {
+      featuresToc._internal.execSync = (cmd) => {
+        if (cmd.startsWith('git rev-parse')) return Buffer.from('');
+        if (cmd.startsWith('git diff')) return Buffer.from(diffOut);
+        throw new Error(`unexpected command: ${cmd}`);
+      };
+    }
+
+    it('prunes a dead auto-stub and stages the healed content even with no drift', async () => {
+      fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), [
+        '# Feature Index',
+        '',
+        '## TODO (auto-stubbed 2026-06-01)',
+        '',
+        '- **TBD** — touched in this session: `lib/deleted.js`. <!-- describe -->',
+        ''
+      ].join('\n'));
+      const origExec = featuresToc._internal.execSync;
+      stubDiff(''); // empty diff → no drift; the prune alone must produce a staged write
+      const staged = {};
+      try {
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.prunedCount, 1);
+        assert.deepEqual(result.output.prunedFiles, ['lib/deleted.js']);
+        assert.match(result.output.detail, /pruned 1 dead auto-stub/);
+        const entry = staged['features-toc:append'];
+        assert.ok(entry, 'a prune with no drift still stages the healed content');
+        assert.ok(!entry.newContent.includes('lib/deleted.js'), 'dead stub gone from staged content');
+        assert.ok(!entry.newContent.includes('auto-stubbed 2026-06-01'), 'emptied TODO section gone');
+      } finally {
+        featuresToc._internal.execSync = origExec;
+      }
+    });
+
+    it('reports a dangling hand-written citation without editing the file (non-blocking)', async () => {
+      const featuresPath = path.join(projectPath, 'FEATURES.md');
+      const original = [
+        '# Feature Index',
+        '',
+        '## Server / API',
+        '- **Old thing** — `lib/handgone.js` used to live here.',
+        ''
+      ].join('\n');
+      fs.writeFileSync(featuresPath, original);
+      const origExec = featuresToc._internal.execSync;
+      stubDiff('');
+      const staged = {};
+      try {
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.equal(result.ok, true, 'never blocks');
+        assert.equal(result.status, 'done', 'surfaced as a visible finding, not a silent skip');
+        assert.deepEqual(result.output.danglingHandwritten, ['lib/handgone.js']);
+        assert.match(result.output.detail, /dangling hand-written citation/);
+        assert.equal(staged['features-toc:append'], undefined, 'operator prose is not rewritten');
+        assert.equal(fs.readFileSync(featuresPath, 'utf8'), original, 'file on disk untouched');
+      } finally {
+        featuresToc._internal.execSync = origExec;
+      }
+    });
+
+    it('composes a prune with a drift append in one wrap', async () => {
+      fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), [
+        '# Feature Index',
+        '',
+        '## TODO (auto-stubbed 2026-06-01)',
+        '',
+        '- **TBD** — touched in this session: `lib/deleted.js`. <!-- describe -->',
+        ''
+      ].join('\n'));
+      const origExec = featuresToc._internal.execSync;
+      const origToday = featuresToc._internal.todayIso;
+      stubDiff('lib/fresh.js\n'); // lib/fresh.js exists → drift to append
+      featuresToc._internal.todayIso = () => '2026-07-22';
+      const staged = {};
+      try {
+        const result = await featuresToc.run({ project: createdProject, staged });
+        assert.equal(result.status, 'done');
+        assert.equal(result.output.prunedCount, 1);
+        assert.equal(result.output.addedCount, 1);
+        assert.deepEqual(result.output.addedFiles, ['lib/fresh.js']);
+        const entry = staged['features-toc:append'];
+        assert.ok(!entry.newContent.includes('lib/deleted.js'), 'dead stub pruned');
+        assert.ok(entry.newContent.includes('- **TBD** — touched in this session: `lib/fresh.js`.'), 'fresh drift appended');
+      } finally {
+        featuresToc._internal.execSync = origExec;
+        featuresToc._internal.todayIso = origToday;
+      }
     });
   });
 });
