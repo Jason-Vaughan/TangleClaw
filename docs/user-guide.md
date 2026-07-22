@@ -238,11 +238,11 @@ If a `deletePassword` is configured, you'll need to enter it to wrap.
 **Did it actually ship?** A wrap that commits has not necessarily *released*. When the wrap opens a PR (see protected branches below), the version bump and CHANGELOG promotion only reach `main` once that PR merges — which happens after its checks pass, and never if a required check fails. The drawer says which of these is true:
 
 - **Wrap shipped — PR merged** — the release landed.
-- **Release pending checks** — the PR hasn't merged yet; it lands when its checks pass.
-- **Release BLOCKED, did not ship** — a required check failed, a review is missing, or the branch conflicts. **This is a failure**: the wrap's version bump is stranded on an unmerged branch. Fix the PR, then merge it.
+- **Release pending checks** — the PR hasn't merged yet; it lands when its checks pass. A PR whose required check is still *running* shows this, not "blocked" — armed auto-merge will land it once the check goes green.
+- **Release BLOCKED, did not ship** — a required check actually *failed*, or the branch has merge conflicts. **This is a failure**: the wrap's version bump is stranded on an unmerged branch. Fix the PR, then merge it.
 - **Release not confirmed** — TangleClaw couldn't reach GitHub (no `gh`, not signed in). The outcome is genuinely unknown, not assumed good.
 
-Use **Recheck release** in the drawer to re-query at any time — checks usually take longer than the wrap itself, so "pending" right after a wrap is normal.
+Use **Recheck release** in the drawer to re-query at any time — checks usually take longer than the wrap itself, so "pending" right after a wrap is normal, and Recheck flips it to "shipped" once the check passes and auto-merge lands.
 
 **Steps that were skipped.** If any wrap steps skipped, the drawer shows *"Skipped N of M steps"* with the reason for each, so a wrap that quietly did nothing doesn't look the same as one that did everything.
 
