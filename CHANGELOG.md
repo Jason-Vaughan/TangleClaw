@@ -4,6 +4,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wrap `ai-content` prompts now identify themselves, so consecutive prompts
+  read as pipeline progress rather than a re-fire (#627).** The wrap sends up to
+  three near-identical instruction prompts into the session, and none named
+  itself — the operator could not tell "the wrap is working through its steps"
+  from "the wrap fired twice" (reported twice; a false alarm both times, but the
+  surface, not the reader, was the problem, and a wrap that *looks* broken trains
+  the operator to stop pressing it). Each dispatched prompt is now prefixed with
+  a single self-identifying line: `[TangleClaw wrap — step N of M: <step-id>]`
+  for the fixed content steps, or a numberless `[TangleClaw wrap — <step-id>]`
+  where a position can't be known. The header is built in prompt fabrication
+  (`_wrapStepHeader` in `lib/wrap-steps/ai-content.js`), applied on both the tmux
+  and ClawBridge-gateway send paths, and is plain text with no markdown — so it
+  renders identically in any engine's terminal and a markdown-rendering TUI can't
+  restyle the marker away (the #287 class). The "N of M" denominator counts only
+  the content prompts a wrap will actually send: a new runner pre-pass
+  (`_planAiContentPrompts` in `lib/wrap-pipeline.js`) excludes steps disabled by
+  `wrapStepOverrides`, opted out via `skipAiContent`, or — on a webui session —
+  steps the gateway can't carry, so the number matches what the operator sees.
+  **Refinement of the issue's literal proposal:** `index-describe` (which the
+  issue assumed was a self-skipping fourth `ai-content` step) now emits its pane
+  prompt by *delegating* to the handler, and only decides to at its own pipeline
+  position — after the earlier prompts have already gone out under a fixed
+  denominator. It therefore can't join an accurate count and gets the numberless
+  header, which is why a normal wrap reads "of 3", never "of 4" — matching the
+  issue's own acceptance assertion. Regression tests pin the header on both send
+  paths (numbered and numberless), the numberless fallback, and the denominator
+  under overrides / `skipAiContent` / a webui session.
+  `lib/wrap-steps/ai-content.js`, `lib/wrap-pipeline.js`,
+  `test/wrap-step-ai-content.test.js`, `test/wrap-pipeline.test.js`.
+
 ## [4.31.1] - 2026-07-21
 
 ### Fixed

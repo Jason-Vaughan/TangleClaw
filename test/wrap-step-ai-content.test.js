@@ -137,6 +137,91 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
   });
 });
 
+// #627 — every ai-content prompt sent to a session is prefixed with a
+// self-identifying header, so three near-identical wrap prompts read as
+// distinct pipeline steps rather than a re-fire.
+describe('wrap-step ai-content — #627 self-identifying prompt header', () => {
+  describe('_wrapStepHeader', () => {
+    it('numbers a fixed content step from its runner-supplied position', () => {
+      const h = aic._wrapStepHeader(
+        { id: 'learnings-capture' },
+        { aiContentProgress: { ordinal: 2, total: 3 } }
+      );
+      assert.equal(h, '[TangleClaw wrap — step 2 of 3: learnings-capture]');
+    });
+
+    it('falls back to a numberless header when no progress is supplied (index-describe delegation)', () => {
+      assert.equal(aic._wrapStepHeader({ id: 'index-describe' }, {}), '[TangleClaw wrap — index-describe]');
+      assert.equal(aic._wrapStepHeader({ id: 'index-describe' }, undefined), '[TangleClaw wrap — index-describe]');
+    });
+
+    it('is plain text — no markdown heading that a rich TUI would restyle away (#287 class)', () => {
+      const h = aic._wrapStepHeader({ id: 'changelog-update' }, { aiContentProgress: { ordinal: 1, total: 3 } });
+      assert.ok(!h.includes('#'), 'header must not contain a markdown hash');
+    });
+
+    it('ignores a malformed progress object rather than printing NaN', () => {
+      assert.equal(
+        aic._wrapStepHeader({ id: 'x' }, { aiContentProgress: { ordinal: 'a', total: 3 } }),
+        '[TangleClaw wrap — x]'
+      );
+    });
+  });
+
+  describe('run() prepends the header to the sent prompt', () => {
+    let saved;
+    let sentPrompt;
+
+    beforeEach(() => {
+      saved = { ...aic._internal };
+      sentPrompt = null;
+      aic._internal.sendKeys = (_sess, prompt) => { sentPrompt = prompt; };
+      aic._internal.sleep = async () => {};
+      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      // ≥20 chars so the no-captureFields step clears the min-response gate.
+      aic._internal.capturePane = () => ({ lines: ['the AI did the work and replied here'] });
+      // No wrap rules — keep the header at the very front of the string.
+      aic._internal.listWrapRules = () => [];
+    });
+
+    afterEach(() => { Object.assign(aic._internal, saved); });
+
+    it('numbers a fixed content step (step 2 of 3: learnings-capture)', async () => {
+      const ctx = {
+        project: { name: 'proj', path: '/tmp/proj' },
+        session: { tmuxSession: 'sess' },
+        step: { id: 'learnings-capture', kind: 'ai-content', prompt: 'capture the learnings' },
+        previousResults: [],
+        staged: {},
+        aiContentProgress: { ordinal: 2, total: 3 }
+      };
+      const res = await aic.run(ctx);
+      assert.equal(res.status, 'done');
+      assert.ok(
+        sentPrompt.startsWith('[TangleClaw wrap — step 2 of 3: learnings-capture]\n\n'),
+        `sent prompt should open with the numbered header, got: ${JSON.stringify(sentPrompt.slice(0, 60))}`
+      );
+      assert.ok(sentPrompt.includes('capture the learnings'), 'the original prompt body is preserved after the header');
+    });
+
+    it('uses a numberless header when the step carries no progress (index-describe delegation shape)', async () => {
+      const ctx = {
+        project: { name: 'proj', path: '/tmp/proj' },
+        session: { tmuxSession: 'sess' },
+        step: { id: 'index-describe', kind: 'ai-content', prompt: 'describe the stubs' },
+        previousResults: [],
+        staged: {}
+      };
+      const res = await aic.run(ctx);
+      assert.equal(res.status, 'done');
+      assert.ok(
+        sentPrompt.startsWith('[TangleClaw wrap — index-describe]\n\n'),
+        `sent prompt should open with the numberless header, got: ${JSON.stringify(sentPrompt.slice(0, 60))}`
+      );
+    });
+  });
+});
+
 // #328 — content ai-content steps (changelog-update / learnings-capture /
 // memory-update) became blockers; the handler gained a per-step Skip & note
 // override, and the timeout message stopped hardcoding "wrap pipeline blocked".
@@ -325,7 +410,9 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     // Staged for the commit step, same shape the tmux path produces.
     assert.deepEqual(context.staged['summary-derive'].parsedFields, res.output.parsedFields);
     // Sent the interpolated prompt over the bridge addressed by project name.
-    assert.equal(calls.sent.message, 'wrap please');
+    // #627 — prefixed with the self-identifying header (numberless: a direct
+    // _runGatewayCapture call carries no aiContentProgress).
+    assert.equal(calls.sent.message, '[TangleClaw wrap — summary-derive]\n\nwrap please');
     assert.equal(calls.sent.project, 'proj');
     assert.equal(calls.sent.localPort, 4567);
     // Read consume-once from the SAME captureFile path the tmux path uses.
@@ -555,7 +642,8 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
       });
 
       assert.equal(res.status, 'done');
-      assert.match(sentPrompt, /^write the block\n\n## Project wrap rules\n/);
+      // #627 — the self-identifying header leads, then the body, then the rules.
+      assert.match(sentPrompt, /^\[TangleClaw wrap — memory-update\]\n\nwrite the block\n\n## Project wrap rules\n/);
       assert.match(sentPrompt, /- Close every open loop/);
     });
 
@@ -611,7 +699,8 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     });
 
     assert.equal(res.status, 'done');
-    assert.match(sentMessage, /^wrap please\n\n## Project wrap rules\n/);
+    // #627 — header leads on the gateway path too, matching the tmux path.
+    assert.match(sentMessage, /^\[TangleClaw wrap — summary-derive\]\n\nwrap please\n\n## Project wrap rules\n/);
     assert.match(sentMessage, /- Close every open loop/);
   });
 
