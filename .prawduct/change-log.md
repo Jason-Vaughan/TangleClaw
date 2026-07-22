@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-22: Verify lease ownership on ports release/heartbeat (#656)
 
-<!-- prawduct: type=bugfix | scope=wrap-656 | status=shipped -->
+<!-- prawduct: type=bugfix | scope=porthub-ownership | status=shipped -->
 
 **Why:** `POST /api/ports/release` and `/api/ports/heartbeat` took only `{port}` — no project — so
 any caller could delete or renew another project's lease. A stray release is a silent DELETION
