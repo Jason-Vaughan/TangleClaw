@@ -56,7 +56,7 @@ fails any auto-stub section older than 14 days.
 - **Medusa switchboard** (MED-2K9P) — inter-session agent messaging. `lib/medusa.js` (service layer: listener lifecycle, send, roster, session-end teardown), `lib/medusa-listener.js` (per-session Bridge WebSocket listener + state machine), `lib/medusa-registry.js` (session→workspace-id mint/persist/forget), `lib/medusa-wake.js` (v2 T2: boot-time idle-gated wake monitor — nudges an opted-in `medusaWake` session's pane about fresh mail only when provably idle: busy-marker absent + bare-`❯` prompt + 2-tick debounce). Routes under `/medusa/*` (status/toggle/messages/read/send/roster).
 - **Session rules + self-improvement loop** (#347) — per-project session rules store (`store.sessionRules`; startup rules render into the session prime via `lib/sessions.js#buildStartupRulesSection`, wrap rules inject into the wrap prompt via `lib/wrap-steps/ai-content.js#_appendWrapRules`), the Project Rules section of the Settings modal, and the wrap-time self-improvement loop. The standalone global-tier panel was retired. Docs: `docs/session-rules-self-improvement.md`.
 - **Session-rule delivery ledger** (#595) — every launch records whether the startup-rule block actually reached the engine, on which channel, and why not when it did not (`store.sessionRuleDeliveries`, `session_rule_deliveries` table, `GET /api/session-rules/deliveries`). Exists because startup rules were structurally undeliverable on all 13 plugin-governed projects with nothing recording the miss. Tests: `test/session-rule-delivery.test.js`.
-- **Eval Audit ingest** — `POST /api/audit/ingest`, `POST /api/audit/heartbeat`. Backend: `lib/eval-audit.js#runTier1`, `#watchSession`.
+- **Eval Audit ingest** — `POST /api/audit/ingest`, `POST /api/audit/heartbeat`. Backend: `lib/eval-audit.js#runTier1`, `#watchSession`. Operator doc: `docs/eval-audit-mode.md`.
 - **Activity feed** — `GET /api/activity`.
 - **Uploads** — per-project file uploader (modal in `public/session.js`/`session.html`). **Any file type** (#338, no extension allowlist); referenced by local path; filename sanitized (no traversal). **Session-linked store (CC-4):** an active-session upload lands under `<project>/.tangleclaw/continuity/sessions/<sid>/uploads/` (the legacy flat `<project>/.uploads/` is now only the no-active-session fallback); `listUploads` merges both, tagging each entry's `session` (or `null` for legacy). Recent-uploads history items are **click-to-copy-path** (#338). `POST /api/upload`, `GET /api/uploads`. Backend: `lib/uploads.js`.
 - **Secret badge** (#343, CC-4) — flag-only secret detection on text uploads (`lib/secret-scan.js`: AWS/Slack/GitHub/Google keys, PEM private keys, generic long-value secret assignments). A hit is recorded in a per-uploads-dir `_scan.json` sidecar (**pattern types only, never the value**) and surfaced as an amber `.badge-secret` in the upload history. **Never scrubs or blocks** — the operator remediates manually. (Transcript-snapshot scan deferred → CC-4b/#376.)
@@ -95,6 +95,11 @@ fails any auto-stub section older than 14 days.
 - **Mark Critic Run action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification (label + confirm + toast) landed in #230.
 - **Project version reader** — surfaces the project's version to the UI, resolved in order: `CHANGELOG.md`, a configured `versionFilePath`, `version.json`, `package.json`, git tag, then a `0.0.0-dev` fallback. Degrades with a warning rather than refusing. `lib/project-version.js`.
 - **Model status monitor** — polls engine providers (Atlassian / Google status pages) for outage detection. `lib/model-status.js#_pollEngine`, `#startMonitor`.
+- **Wrap step: `learnings-db-write`** — persists the session's captured learnings into the learnings store after the ai-content capture step. `lib/wrap-steps/learnings-db-write.js`.
+- **ADR: symmetric capability gates** — decision record for the paired-flag gate pattern (two files coordinating one conceptual flag must check the same conjunction, #103). `docs/adr/0001-symmetric-capability-gates.md`.
+- **ADR: wrap-pipeline contract** — decision record for the code-owned wrap pipeline shape (one pipeline for every project, #538). `docs/adr/0002-wrap-pipeline-contract.md`.
+- **ADR: project-master session model** — decision record for the Project Master session + access model (#331). `docs/adr/0008-project-master-session-model.md`.
+- **Engine guide** — operator doc on engine profiles, detection, and per-engine config parity. `docs/engine-guide.md`.
 
 ## CLI / Tooling
 
@@ -116,6 +121,10 @@ fails any auto-stub section older than 14 days.
 - **Detached ttyd attach** — helper for reconnecting to the shared ttyd. `deploy/ttyd-attach.sh`.
 - **Ingress cutover** — renders launchd plist templates and cuts the server over to Caddy ingress (AUTH-1; guarded post-#463 — refuses to un-gate a hand-edited live Caddyfile). `scripts/ingress-cutover.js`.
 - **CI** (CI-9F3T) — GitHub Actions `Tests` workflow runs the full suite on PRs + push-to-main; the `test` check is required on `main` (CI-2V8Q). `.github/workflows/test.yml`, pinned by `test/ci-workflow.test.js`.
+- **Project path resolver** — canonical resolution of a project's plans / continuity / config paths, shared by the wrap steps and store so path conventions can't drift. `lib/project-paths.js`.
+- **Cleanroom acceptance harness** — Docker-based fresh-install gate that proves the methodology-sunset cutover from an empty schema (bakes an image, provisions, runs a real first launch). `deploy/cleanroom/bake.sh`, `deploy/cleanroom/compose.yaml`, `deploy/cleanroom/provision.sh`. Test: `test/cleanroom-compose.test.js`.
+- **Configuration reference** — operator doc enumerating every project + global config field. `docs/configuration-reference.md`.
+- **Contributor guide** — dev setup, branch/PR conventions, test requirements, where to file issues. `CONTRIBUTING.md`.
 
 ## Tests
 
@@ -140,90 +149,9 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/wrap-pipeline.test.js` — server-side wrap pipeline runner (#139); `test/wrap-drawer.test.js` — wrap-drawer `buildStepRow` helpers; `test/wrap-step-priming-roll.test.js` — priming-roll wrap step helpers; `test/landing-wrap-single-flight.test.js` — single-flight dashboard wrap trigger (UI-3B8N); `test/wrap-drawer-select-a11y.test.js` — a11y labels on wrap-drawer decision selects (UI-7H4K).
 - `test/api-medusa.test.js` — Medusa service + `/medusa/*` routes; `test/medusa-listener.test.js` — MedusaListener WS client (reconnect, de-dup, socket-identity guard); `test/medusa-wake.test.js` — wake monitor (pane idle-policy pinned byte-for-byte against live spike captures, debounce/watermark/burst/retry, per-gate blocking); `test/medusa-control.test.js` — banner Medusa control frontend.
 - `test/settings-modal-silentprime.test.js` — Project Settings modal silentPrime toggle (#103); `test/projects.test.js` — projects store/enrichment + preferences (incl. `medusaEnabled`); `test/engines.test.js` — engine detection + per-engine config generation; `test/https-setup.test.js` — HTTPS/mkcert setup helpers; `test/server.test.js` — HTTP server / route table; `test/api-globalrules.test.js` — the `/api/rules/global` route.
-
-## TODO (auto-stubbed 2026-07-18)
-
-- **TBD** — touched in this session: `docs/adr/0002-wrap-pipeline-contract.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0008-project-master-session-model.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/eval-audit-mode.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-config.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-session-rules.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/migration.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-rules-modal.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-version-require-cycle.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-rules-selfimprove.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-projects.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/stranded-configs.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-ai-content.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-18)
-
-- **TBD** — touched in this session: `deploy/cleanroom/bake.sh`. <!-- describe -->
-- **TBD** — touched in this session: `deploy/cleanroom/compose.yaml`. <!-- describe -->
-- **TBD** — touched in this session: `deploy/cleanroom/provision.sh`. <!-- describe -->
-- **TBD** — touched in this session: `test/cleanroom-compose.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-18)
-
-- **TBD** — touched in this session: `test/create-project-modal.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-18)
-
-- **TBD** — touched in this session: `test/wrap-engine-agnostic.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-19)
-
-- **TBD** — touched in this session: `docs/configuration-reference.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/project-paths.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/actions-invoke-critic.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/feature-index.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-paths.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/version-bump-fail-closed.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-continuity-write.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-features-toc.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-pr-merge.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-20)
-
-- **TBD** — touched in this session: `CONTRIBUTING.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0001-symmetric-capability-gates.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/engine-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/wrap-steps/learnings-db-write.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/actions-dispatcher.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/antigravity-engine.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-actions.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-audit.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-groups.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-integration.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-ports.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-projects.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-self-improvement.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-uploads.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/api-wrap-pr-status.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/c1-plugin-migration.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/continuity.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/contracts.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/e2e-smoke.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/eval-audit.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/governance-drift-badge.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/openclaw-engine.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/porthub.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-map.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/self-improvement-loop.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard-https.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-eval-audit.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-sessions.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/tunnel.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-bump-level-askmode.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-changelog-coverage.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-changelog-transaction.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-default-pipeline.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-git-range.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-pipeline-prompts.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-pr-status.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-rule-proposal-widget.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-index-describe.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-learnings-db-write.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-overrides.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-project-map.test.js`. <!-- describe -->
+- API route families: `test/api-config.test.js` — `/api/config`; `test/api-session-rules.test.js` — session-rules routes; `test/api-actions.test.js` — project-action routes; `test/api-audit.test.js` — eval-audit ingest; `test/api-groups.test.js` — groups; `test/api-ports.test.js` — PortHub; `test/api-projects.test.js` — projects; `test/api-uploads.test.js` — uploads; `test/api-self-improvement.test.js` — self-improvement; `test/api-wrap-pr-status.test.js` — wrap PR-status route; `test/api-integration.test.js` — cross-route integration.
+- Wrap-step handlers (each pairs with the same-named `lib/wrap-steps/*.js`): `test/wrap-step-ai-content.test.js`, `test/wrap-step-continuity-write.test.js`, `test/wrap-step-features-toc.test.js`, `test/wrap-step-pr-merge.test.js`, `test/wrap-step-index-describe.test.js`, `test/wrap-step-learnings-db-write.test.js`, `test/wrap-step-overrides.test.js`, `test/wrap-step-project-map.test.js`.
+- Wrap pipeline + predicates: `test/wrap-changelog-coverage.test.js` — session-level changelog coverage (#665); `test/wrap-changelog-transaction.test.js` — changelog write atomicity; `test/wrap-default-pipeline.test.js` — code-owned pipeline shape; `test/wrap-git-range.test.js` — session-range resolver; `test/wrap-pipeline-prompts.test.js` — ai-content prompt planning; `test/wrap-pr-status.test.js` — wrap PR release-status resolver; `test/wrap-rule-proposal-widget.test.js` — rule-proposal drawer widget; `test/wrap-bump-level-askmode.test.js` — version-bump ask-mode (#540); `test/wrap-engine-agnostic.test.js` — engine-agnostic wrap prompts (#612); `test/version-bump-fail-closed.test.js` — version-bump fail-closed guard (#540/#571).
+- Store slices: `test/store-projects.test.js` — projects; `test/store-sessions.test.js` — sessions; `test/store-eval-audit.test.js` — eval-audit.
+- Governance / engines / actions: `test/antigravity-engine.test.js` + `test/openclaw-engine.test.js` — per-engine profile behavior; `test/governance-drift-badge.test.js` — governance-state badge; `test/c1-plugin-migration.test.js` — plugin-governed migration; `test/self-improvement-loop.test.js` + `test/session-rules-selfimprove.test.js` — the rule self-improvement loop; `test/eval-audit.test.js` — eval-audit engine; `test/actions-dispatcher.test.js` + `test/actions-invoke-critic.test.js` — project-action dispatch + the mark-Critic handler.
+- Store/project/setup + infra: `test/migration.test.js` — schema migrations; `test/stranded-configs.test.js` — stranded-config guard (#592); `test/create-project-modal.test.js` + `test/project-rules-modal.test.js` — those modal frontends; `test/project-version-require-cycle.test.js` — project-version require-cycle guard; `test/project-paths.test.js` — path resolver; `test/feature-index.test.js` — Feature Index maintenance; `test/continuity.test.js` — continuity store; `test/contracts.test.js` — cross-module contracts; `test/e2e-smoke.test.js` — end-to-end smoke; `test/porthub.test.js` — PortHub leasing; `test/project-map.test.js` — PROJECT-MAP refresh; `test/setup-wizard.test.js` + `test/setup-wizard-https.test.js` — first-run wizard; `test/tunnel.test.js` — Cloudflare tunnel lifecycle.
