@@ -342,9 +342,15 @@
       return { label: 'Wrap shipped — PR merged', tone: 'success', detail: 'the release landed on the base branch' };
     }
     if (outcome === 'blocked') {
+      // #686: `blocked` now means a genuine dead-end — closed-unmerged, a
+      // conflict (DIRTY), or a required check that actually FAILED. Checks that
+      // are merely still running classify as `pending`, not here, so this copy
+      // no longer has to hedge "failed or still running".
       const why = status.state === 'CLOSED'
         ? 'PR was closed without merging'
-        : `PR cannot merge (${status.mergeStateStatus || 'blocked'}) — a required check failed or the branch conflicts`;
+        : status.mergeStateStatus === 'DIRTY'
+          ? 'the branch has merge conflicts'
+          : 'a required check failed';
       return { label: 'Wrap committed — release BLOCKED, did not ship', tone: 'error', detail: why };
     }
     if (outcome === 'pending') {
