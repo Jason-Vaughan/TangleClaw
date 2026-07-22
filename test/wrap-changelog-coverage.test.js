@@ -223,17 +223,53 @@ describe('changelog-coverage — evaluate()', () => {
     assert.equal(out.checkedCount, 1);
   });
 
-  it('UNCOVERED when a commit shipped without touching a declared path, and names it', () => {
+  it('COVERED when one commit maintained the changelog and another shipped no entry (session-level)', () => {
+    // The changelog need not ride every commit — one entry covering the session's
+    // work satisfies the obligation, so a sibling code commit without its own
+    // entry no longer blocks (#665).
     scenario([
       { sha: 'aaa1111', subject: 'Fix a thing (#657)', files: ['CHANGELOG.md'] },
-      { sha: 'bbb2222', subject: 'Unlogged work (#999)', files: ['lib/b.js'] }
+      { sha: 'bbb2222', subject: 'More work, logged in aaa1111 (#999)', files: ['lib/b.js'] }
+    ]);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.deepEqual(out.uncovered, []);
+    assert.equal(out.checkedCount, 2, 'checkedCount is the denominator regardless of verdict');
+  });
+
+  it('COVERED when a later backfill commit logs work earlier commits shipped unlogged (#665)', () => {
+    scenario([
+      { sha: 'aaa1111', subject: 'feat: a (#70)', files: ['lib/a.js'] },
+      { sha: 'bbb2222', subject: 'fix: b (#71)', files: ['lib/b.js'] },
+      { sha: 'ccc3333', subject: 'docs: backfill CHANGELOG for the session', files: ['CHANGELOG.md'] }
+    ]);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.equal(out.checkedCount, 3);
+  });
+
+  it('COVERED when a doc-only bookkeeping commit ships no entry beside a logged code commit', () => {
+    // The launch-mode-guard session: code + CHANGELOG.md in one commit, a separate
+    // commit touching only the other changelog. The bookkeeping commit carries no
+    // CHANGELOG.md obligation, and the session's changelog was maintained.
+    scenario([
+      { sha: 'aaa1111', subject: 'Close guard holes (#622)', files: ['lib/projects.js', 'CHANGELOG.md'] },
+      { sha: 'bbb2222', subject: 'Change-log: guard holes (#622)', files: ['.prawduct/change-log.md'] }
+    ]);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+  });
+
+  it('UNCOVERED only when NO commit in the range maintained the changelog, naming them all', () => {
+    scenario([
+      { sha: 'aaa1111', subject: 'Unlogged work (#998)', files: ['lib/a.js'] },
+      { sha: 'bbb2222', subject: 'More unlogged work (#999)', files: ['lib/b.js'] }
     ]);
     const out = cov.evaluate('/p', PATHS);
     assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
-    assert.equal(out.uncovered.length, 1);
-    assert.equal(out.uncovered[0].sha, 'bbb2222');
-    assert.equal(out.uncovered[0].subject, 'Unlogged work (#999)');
-    assert.equal(out.checkedCount, 2, 'checkedCount is the denominator, not the failure count');
+    assert.equal(out.checkedCount, 2);
+    assert.deepEqual(out.uncovered.map((c) => c.sha), ['aaa1111', 'bbb2222'],
+      'every judged commit is named when none maintained the changelog');
   });
 
   it('matches a declared path exactly — a lookalike elsewhere in the tree does not count', () => {
@@ -411,17 +447,17 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
     assert.equal(cov.evaluate('/p', PATHS, ['packages/*/CHANGELOG.md']).verdict, cov.VERDICTS.UNCOVERED);
   });
 
-  it('separates covered-by-glob commits from genuinely-unlogged ones', () => {
-    // The full RentalClaw shape: skill commits log to the nested file (covered),
-    // a chore/docs commit logs nowhere (uncovered and named).
+  it('COVERED via a glob-matched commit even when a sibling commit logs nowhere (session-level)', () => {
+    // The full RentalClaw shape: a skill commit logs to the nested file (covered
+    // by the glob), a chore/docs commit logs nowhere. Session-level coverage: the
+    // changelog was maintained for the session, so the sibling does not block.
     scenario([
       { sha: 'aaa1111', subject: 'airbnb-gateway v0.1.0', files: ['skills/airbnb-gateway/CHANGELOG.md'] },
       { sha: 'ccc3333', subject: 'Remove vendored hook remnants', files: ['tools/lib/core.py'] }
     ]);
     const out = cov.evaluate('/p', PATHS, ['skills/*/CHANGELOG.md']);
-    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
-    assert.equal(out.uncovered.length, 1);
-    assert.equal(out.uncovered[0].sha, 'ccc3333');
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
+    assert.deepEqual(out.uncovered, []);
     assert.equal(out.checkedCount, 2);
   });
 

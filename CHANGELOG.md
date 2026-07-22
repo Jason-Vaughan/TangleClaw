@@ -6,6 +6,23 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap's `changelog-update` gate now judges changelog coverage per session,
+  not per commit, so a disciplined session no longer false-blocks the wrap
+  (#665).** The coverage predicate required *every* non-merge, non-wrap commit in
+  the session range to touch `CHANGELOG.md` in its own diff. That is stricter than
+  the rule it enforces — "the changelog was maintained for this session's work" —
+  and it blocked exactly the sessions that complied a common way: a session that
+  logs all its work in one entry, backfills several commits' entries in a single
+  commit, or lands a doc-only/bookkeeping commit (e.g. one touching only
+  `.prawduct/change-log.md`) beside its logged code. `lib/wrap-steps/changelog-coverage.js`
+  now returns `covered` when **any** judged commit in the range touched a declared
+  path or coverage glob (the uncommitted-edit and merge/wrap-exclusion routes are
+  unchanged); it blocks only when *no* commit maintained the changelog, and then
+  names every judged commit. The per-commit guarantee bought little here — the
+  `changelog-update` step is what drives a *complete* entry; this predicate only
+  confirms the changelog was maintained at all. Trade-off: an incomplete entry can
+  now pass the gate, which the entry-writing step is responsible for preventing.
+
 - **An engine switch can no longer strand a launch mode the new engine can't
   honor, and the eyes-open bypass-hidden guard no longer has a hole a stranded
   mode slips through (#622; closes #682's trigger).** `updateProject` changed a
