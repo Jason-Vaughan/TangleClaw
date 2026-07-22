@@ -32,7 +32,14 @@ describe('wrap-pr-status.classify', () => {
 
   // #686 — mergeStateStatus BLOCKED is overloaded: it covers a required check
   // that FAILED and one that is merely still RUNNING. The rollup, not the
-  // BLOCKED string, is the discriminator.
+  // BLOCKED string, is the discriminator. The CheckRun rollup shape below
+  // (`__typename`/`status`/`conclusion`) was verified against a real
+  // `gh pr view 685 --json statusCheckRollup` on this repo (a COMPLETED/SUCCESS
+  // `test` CheckRun), so these fixtures track gh's actual output, not a guess.
+  it('#686: real gh CheckRun shape — COMPLETED/SUCCESS → pending (CLEAN would follow)', () => {
+    const rollup = [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', workflowName: 'Tests' }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
+  });
   it('#686: OPEN + BLOCKED with a still-running required check → pending (not blocked)', () => {
     const rollup = [{ __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: null }];
     assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
