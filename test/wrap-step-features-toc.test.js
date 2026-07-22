@@ -1121,6 +1121,21 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       const content = '`lib/gone.js` … `lib/gone.js`';
       assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), ['lib/gone.js']);
     });
+
+    it('reports a dangling non-indexable-extension citation (it reds the same required check)', () => {
+      withExisting([]);
+      const content = '- **Schema** — `data/schema.sql`.\n- **Logo** — `docs/logo.png`.\n';
+      assert.deepEqual(
+        featuresToc._findDanglingCitations(content, PROJ),
+        ['data/schema.sql', 'docs/logo.png']
+      );
+    });
+
+    it('does not misreport a URL as a dangling repo path', () => {
+      withExisting([]);
+      const content = '- **Docs** — see `https://example.com/guide.html`.\n';
+      assert.deepEqual(featuresToc._findDanglingCitations(content, PROJ), []);
+    });
   });
 
   describe('commit-step body-line — pruned dead stubs (#640)', () => {
