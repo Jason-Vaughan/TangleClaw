@@ -184,10 +184,11 @@ describe('changelog-coverage — evaluate()', () => {
    *
    * @param {Array<{sha:string, subject:string, files?:string[], parents?:string}>} records
    */
-  function scenario(records, dirty = []) {
+  function scenario(records, dirty = [], untracked = []) {
     cov._internal.execSync = (cmd) => {
       if (cmd.startsWith('git log')) return gitLog(records);
       if (cmd.startsWith('git diff')) return dirty.join('\n');
+      if (cmd.startsWith('git ls-files')) return untracked.join('\n');
       return '';
     };
   }
@@ -364,6 +365,30 @@ describe('changelog-coverage — evaluate()', () => {
     assert.deepEqual(out.uncommittedWork, ['lib/a.js']);
   });
 
+  it('catches an UNTRACKED new source file that git add -A will commit unlogged (#659)', () => {
+    // `git diff HEAD` never lists an untracked file, but the wrap's `git add -A`
+    // commits it. A brand-new file is the most common form of new work — the
+    // modified-only view missed exactly this class.
+    scenario([], [], ['lib/brand-new.js']);
+    const out = cov.evaluate('/p', PATHS);
+    assert.equal(out.verdict, cov.VERDICTS.UNCOVERED);
+    assert.deepEqual(out.uncommittedWork, ['lib/brand-new.js']);
+  });
+
+  it('does not count an untracked bookkeeping file as work', () => {
+    scenario([{ sha: 'aaa1111', subject: 'Logged (#1)', files: ['CHANGELOG.md'] }],
+      [], ['.prawduct/scratch.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED,
+      'untracked bookkeeping is excluded by the leading-dot rule');
+  });
+
+  it('an untracked (brand-new) CHANGELOG satisfies coverage via the dirty route', () => {
+    scenario([{ sha: 'aaa1111', subject: 'work (#1)', files: ['lib/a.js'] }],
+      [], ['CHANGELOG.md']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED,
+      'a brand-new dirty changelog is the changelog being maintained');
+  });
+
   it('exempts a commit that touched nothing IN SCOPE — a subdir project\'s sibling-only commit', () => {
     // With --relative, a commit touching only paths outside the project root parses
     // with an empty file list. It is not the project's concern, and must not read as
@@ -435,10 +460,11 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   });
   afterEach(() => { Object.assign(cov._internal, saved); });
 
-  function scenario(records, dirty = []) {
+  function scenario(records, dirty = [], untracked = []) {
     cov._internal.execSync = (cmd) => {
       if (cmd.startsWith('git log')) return gitLog(records);
       if (cmd.startsWith('git diff')) return dirty.join('\n');
+      if (cmd.startsWith('git ls-files')) return untracked.join('\n');
       return '';
     };
   }

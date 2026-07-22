@@ -48,8 +48,12 @@ for committed work doesn't cover new uncommitted work — the #659 repro). Bookk
 excluded via the leading-dot-segment rule, and an uncommitted changelog edit still short-circuits
 to `covered`. `ai-content` renders the uncommitted-work block with its own message (the commit
 renderer's `sha.slice()` would throw on the null-sha rows). Boundary: changelog-coverage →
-ai-content contract, single consumer updated + tested. Full suite 4702 pass / 0 fail. Two
-pre-#659 tests that encoded the reverted-gap contract were updated to the new (ratified) contract,
+ai-content contract, single consumer updated + tested. Also catches an UNTRACKED new source file
+(Critic-caught): `_dirtyPaths` now unions `git ls-files --others --exclude-standard` with the
+modified-tracked set, since `git add -A` sweeps untracked files too and `git diff HEAD` never
+lists them — a brand-new source file is the most common new work. Full suite green, 0 fail
+(4705 TAP subtests / 2462 JUnit cases — reporter semantics, not deleted tests). Two pre-#659
+tests that encoded the reverted-gap contract were updated to the new (ratified) contract,
 preserving their bookkeeping-exclusion assertions.
 
 ## 2026-07-22: Heal aged dangling FEATURES.md citations at wrap instead of stranding (#640)
