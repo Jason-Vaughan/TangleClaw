@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.31.2] - 2026-07-21
+
 ### Fixed
 
 - **Wrap `ai-content` prompts now identify themselves, so consecutive prompts
