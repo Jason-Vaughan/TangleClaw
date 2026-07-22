@@ -26,6 +26,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-21: Session-level changelog coverage — stop the wrap false-blocking disciplined sessions (#665)
+
+<!-- prawduct: type=bugfix | scope=session-level-changelog-coverage | status=shipped -->
+
+**Why:** the wrap's `changelog-update` coverage predicate required EVERY non-merge,
+non-wrap commit in the session range to touch `CHANGELOG.md` in its own diff. That is
+stricter than the rule it enforces ("the changelog was maintained for this session's
+work") and it blocked exactly the sessions that complied a common way. Hit live this
+session: the launch-mode-guard work logged its entry in the code commit but a separate
+commit touched only `.prawduct/change-log.md` (a changelog, just not `CHANGELOG.md`, and
+no user-visible code) — "1 of 2 commits never touched it" blocked the wrap. Same failure
+class as #665's reported PV-AI backfill (all feature PRs logged in one backfill commit).
+
+**What:** `lib/wrap-steps/changelog-coverage.js` `evaluate()` now returns `covered` when
+ANY judged commit in the range touched a declared path or coverage glob, instead of
+requiring all of them to. The uncommitted-edit route and the merge/wrap-commit exclusions
+are unchanged; the gate blocks only when NO commit maintained the changelog, and then
+names every judged commit in the remediation. Module header, `@returns`, and the affected
+tests updated to the session-level contract (per-commit "separates covered from unlogged"
+cases became "covered via a sibling that maintained the changelog"); new tests pin the
+backfill-in-one-commit and doc-only-bookkeeping-commit scenarios and the all-unlogged block.
+
+**Decision (operator-ratified):** #665 left the direction open (per-commit-exempt vs
+session-level vs status-quo). Chose session-level: for TC the per-commit atomicity guarantee
+is never cashed in (PRs squash-merge to main), and entry COMPLETENESS is driven by the
+`changelog-update` step, not this backstop. Trade-off accepted: an incomplete entry can now
+pass the gate — the entry-writing step is responsible for preventing that.
+
+**Honest confidence:** high — full suite 0 failed (coverage suite 51/51); the fix is a
+pure predicate change with the mutation-check fallback untouched. Closes #665.
+
+
 ## 2026-07-21: Close launch-mode guard write-path holes (#622, #682 trigger)
 
 <!-- prawduct: type=bugfix | scope=launch-mode-guard-622 | status=shipped -->
