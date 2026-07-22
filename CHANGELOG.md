@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.31.4] - 2026-07-22
+
 ### Fixed
 
 - Wrap release status no longer reports "release BLOCKED, did not ship" (and the
