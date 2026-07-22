@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.31.1] - 2026-07-21
+
 ### Fixed
 
 - **The wrap's priming-roll step skips a plan-less project instead of blocking it
