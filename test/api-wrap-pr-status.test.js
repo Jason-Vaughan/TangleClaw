@@ -89,11 +89,20 @@ describe('api GET /wrap/pr-status (#638)', () => {
     assert.equal(res.body.project, 'prstatus-test');
   });
 
-  it('resolves an OPEN+BLOCKED PR to outcome blocked (the #636 case)', async () => {
-    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED' }), stderr: '' });
+  it('resolves an OPEN+BLOCKED PR with a FAILED check to outcome blocked (the #636 case)', async () => {
+    const rollup = [{ status: 'COMPLETED', conclusion: 'FAILURE' }];
+    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), stderr: '' });
     const res = await request(server, 'GET', '/api/sessions/prstatus-test/wrap/pr-status?url=7');
     assert.equal(res.status, 200);
     assert.equal(res.body.outcome, 'blocked');
+  });
+
+  it('#686: resolves an OPEN+BLOCKED PR whose check is still RUNNING to outcome pending', async () => {
+    const rollup = [{ status: 'IN_PROGRESS', conclusion: null }];
+    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), stderr: '' });
+    const res = await request(server, 'GET', '/api/sessions/prstatus-test/wrap/pr-status?url=7');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.outcome, 'pending');
   });
 
   it('an invalid PR ref resolves to unknown WITHOUT invoking gh', async () => {

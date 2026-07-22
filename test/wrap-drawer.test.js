@@ -1029,6 +1029,16 @@ describe('wrap-drawer helpers — #638 wrap-PR reporting', () => {
       const b = H.prOutcomeBanner({ outcome: 'blocked', state: 'CLOSED' });
       assert.match(b.detail, /closed without merging/);
     });
+    it('DIRTY → error with a merge-conflict reason', () => {
+      const b = H.prOutcomeBanner({ outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'DIRTY' });
+      assert.equal(b.tone, 'error');
+      assert.match(b.detail, /merge conflicts/);
+    });
+    it('a failed-check block (OPEN, not DIRTY) → error with a failed-check reason', () => {
+      const b = H.prOutcomeBanner({ outcome: 'blocked', state: 'OPEN', mergeStateStatus: 'BLOCKED' });
+      assert.equal(b.tone, 'error');
+      assert.match(b.detail, /required check failed/);
+    });
     it('pending → provisional', () => {
       assert.equal(H.prOutcomeBanner({ outcome: 'pending' }).tone, 'provisional');
     });

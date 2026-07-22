@@ -26,6 +26,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Wrap release status — stop crying "BLOCKED, did not ship" while checks run (#686)
+
+<!-- prawduct: type=bugfix | scope=wrap-686 | status=shipped -->
+
+**Why:** GitHub reports `mergeStateStatus: BLOCKED` for ANY unmet branch-protection
+condition, including a required check that is merely still running. The wrap release
+probe (`lib/wrap-pr-status.js` `classify()`) read a bare `BLOCKED` as a definite failure,
+so a wrap PR whose CI was mid-flight showed "Wrap committed — release BLOCKED, did not
+ship" and the Recheck button repeated it — then auto-merge shipped the PR seconds later
+once the check passed. Hit live on wrap PR #685 (2026-07-21): panel said BLOCKED at
+22:54:53; GitHub merged at 22:55:54.
+
+**What:** `classify()` now discriminates on the actual `statusCheckRollup` (new
+`hasFailingCheck()`), not the overloaded `BLOCKED` string — `blocked` only for a
+closed-unmerged PR, a `DIRTY` conflict, or a check with a terminally failing conclusion;
+a QUEUED/IN_PROGRESS check reads `pending`. Preserves the #636 red-check guard via the
+check's own conclusion. Drawer blocked-detail copy split (closed / conflict / failed
+check); api-contracts.md doc parity; the CheckRun fixture shape verified against a real
+`gh pr view 685 --json statusCheckRollup`.
+
 ## 2026-07-21: Session-level changelog coverage — stop the wrap false-blocking disciplined sessions (#665)
 
 <!-- prawduct: type=bugfix | scope=session-level-changelog-coverage | status=shipped -->

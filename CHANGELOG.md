@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Wrap release status no longer reports "release BLOCKED, did not ship" (and the
+  Recheck button no longer repeats it) while a wrap PR's required checks are
+  still running. `lib/wrap-pr-status.js` now classifies on the actual
+  `statusCheckRollup` — `blocked` only for a closed-unmerged PR, a `DIRTY`
+  conflict, or a check that terminally **failed**; a check still QUEUED/
+  IN_PROGRESS classifies as `pending`, so an armed auto-merge that ships seconds
+  later reads honestly. Preserves the #636 red-check guard (now via the check's
+  own conclusion, not the overloaded `BLOCKED` merge-state string). (#686)
+
 ## [4.31.3] - 2026-07-21
 
 ### Fixed

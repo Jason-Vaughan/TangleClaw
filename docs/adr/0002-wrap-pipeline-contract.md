@@ -93,12 +93,29 @@ Two consequences bind on consumers:
    bump stranded on an unmerged branch.
 2. **The true outcome is a read-only, on-demand probe.**
    `GET /api/sessions/:project/wrap/pr-status?url=<prUrl>` runs `gh pr view
-   --json state,mergeStateStatus` and maps to `merged | pending | blocked |
-   unknown` (`lib/wrap-pr-status.js`). `blocked` (`state=CLOSED`, or `OPEN` with
-   `mergeStateStatus ∈ {BLOCKED, DIRTY}`) MUST NOT render as success; `unknown`
-   (no `gh`, probe failure) stays honestly indeterminate rather than claiming
-   either result. The drawer resolves once on render and offers an explicit
-   "Recheck release" button — no polling timer, per the no-timer-driven-UI rule.
+   --json state,mergeStateStatus,statusCheckRollup` and maps to `merged | pending
+   | blocked | unknown` (`lib/wrap-pr-status.js`). `blocked` MUST NOT render as
+   success; `unknown` (no `gh`, probe failure) stays honestly indeterminate
+   rather than claiming either result. The drawer resolves once on render and
+   offers an explicit "Recheck release" button — no polling timer, per the
+   no-timer-driven-UI rule.
+
+   **Extended 2026-07-22 (#686 — `blocked` discriminates on the check rollup,
+   not the `BLOCKED` string):** GitHub reports `mergeStateStatus: BLOCKED` for
+   *any* unmet branch-protection condition — including a required check that is
+   merely still **running** — so reading bare `BLOCKED` as failure mislabeled an
+   armed wrap PR whose CI was mid-flight ("release BLOCKED, did not ship", the
+   Recheck button repeating it) seconds before auto-merge shipped it. `classify`
+   now reserves `blocked` for a genuine dead-end: `state=CLOSED` (closed
+   unmerged), `OPEN`+`DIRTY` (branch conflicts), or an `OPEN` PR with a
+   `statusCheckRollup` entry whose conclusion is terminally failing
+   (`FAILURE`/`ERROR`/`TIMED_OUT`/`CANCELLED`/`ACTION_REQUIRED`/`STARTUP_FAILURE`/
+   `STALE`). Everything else open-and-not-failed — checks pending, `CLEAN`/
+   `UNSTABLE`/`BEHIND`, or a bare `BLOCKED` with no failing check (e.g. a
+   missing required review) — is `pending`. This preserves the #636 red-check
+   guard through the check's own conclusion instead of the ambiguous merge-state
+   string. If required reviews are ever enabled on wrap PRs, a review-only block
+   reads `pending` rather than surfacing as review-needed — revisit then.
 
 ### Back-compat shim (Chunk 2)
 

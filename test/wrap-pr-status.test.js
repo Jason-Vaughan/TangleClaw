@@ -20,9 +20,6 @@ describe('wrap-pr-status.classify', () => {
   it('CLOSED (unmerged) → blocked', () => {
     assert.equal(prStatus.classify({ state: 'CLOSED' }), 'blocked');
   });
-  it('OPEN + BLOCKED merge state → blocked (the #636 red-check case)', () => {
-    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED' }), 'blocked');
-  });
   it('OPEN + DIRTY (conflicts) → blocked', () => {
     assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'DIRTY' }), 'blocked');
   });
@@ -32,8 +29,73 @@ describe('wrap-pr-status.classify', () => {
   it('OPEN + UNSTABLE → pending (non-required check failing, not blocking)', () => {
     assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'UNSTABLE' }), 'pending');
   });
+
+  // #686 — mergeStateStatus BLOCKED is overloaded: it covers a required check
+  // that FAILED and one that is merely still RUNNING. The rollup, not the
+  // BLOCKED string, is the discriminator. The CheckRun rollup shape below
+  // (`__typename`/`status`/`conclusion`) was verified against a real
+  // `gh pr view 685 --json statusCheckRollup` on this repo (a COMPLETED/SUCCESS
+  // `test` CheckRun), so these fixtures track gh's actual output, not a guess.
+  it('#686: real gh CheckRun shape — COMPLETED/SUCCESS → pending (CLEAN would follow)', () => {
+    const rollup = [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', workflowName: 'Tests' }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
+  });
+  it('#686: OPEN + BLOCKED with a still-running required check → pending (not blocked)', () => {
+    const rollup = [{ __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: null }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
+  });
+  it('#686: OPEN + BLOCKED with a QUEUED required check → pending', () => {
+    const rollup = [{ __typename: 'CheckRun', name: 'ci', status: 'QUEUED', conclusion: null }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
+  });
+  it('#636 preserved: OPEN + BLOCKED with a FAILED required check → blocked', () => {
+    const rollup = [{ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion: 'FAILURE' }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'blocked');
+  });
+  it('OPEN + BLOCKED with a passed check but one running → pending (still settling)', () => {
+    const rollup = [
+      { __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: null }
+    ];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'pending');
+  });
+  it('bare OPEN + BLOCKED with no rollup → pending (no observed failure)', () => {
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED' }), 'pending');
+  });
+  it('legacy StatusContext FAILURE state → blocked', () => {
+    const rollup = [{ __typename: 'StatusContext', context: 'ci/build', state: 'FAILURE' }];
+    assert.equal(prStatus.classify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), 'blocked');
+  });
   it('case-insensitive on state and mergeStateStatus', () => {
-    assert.equal(prStatus.classify({ state: 'open', mergeStateStatus: 'blocked' }), 'blocked');
+    assert.equal(prStatus.classify({ state: 'open', mergeStateStatus: 'dirty' }), 'blocked');
+  });
+});
+
+describe('wrap-pr-status.hasFailingCheck', () => {
+  it('false for a non-array / empty rollup', () => {
+    assert.equal(prStatus.hasFailingCheck(undefined), false);
+    assert.equal(prStatus.hasFailingCheck(null), false);
+    assert.equal(prStatus.hasFailingCheck([]), false);
+  });
+  it('false when every check succeeded or is still running', () => {
+    assert.equal(prStatus.hasFailingCheck([
+      { status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { status: 'COMPLETED', conclusion: 'NEUTRAL' },
+      { status: 'COMPLETED', conclusion: 'SKIPPED' },
+      { status: 'IN_PROGRESS', conclusion: null },
+      { state: 'PENDING' }
+    ]), false);
+  });
+  it('true for each terminal failing conclusion', () => {
+    for (const c of ['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE']) {
+      assert.equal(prStatus.hasFailingCheck([{ status: 'COMPLETED', conclusion: c }]), true, `${c} should count as failing`);
+    }
+  });
+  it('does NOT treat a null conclusion on an in-progress run as failing', () => {
+    assert.equal(prStatus.hasFailingCheck([{ status: 'IN_PROGRESS', conclusion: null }]), false);
+  });
+  it('tolerates junk entries without throwing', () => {
+    assert.equal(prStatus.hasFailingCheck([null, 42, 'x', {}, { status: 'COMPLETED', conclusion: 'FAILURE' }]), true);
   });
 });
 
@@ -65,10 +127,19 @@ describe('wrap-pr-status.resolve', () => {
     assert.equal(out.reason, null);
   });
 
-  it('maps an OPEN+BLOCKED PR to outcome blocked', async () => {
-    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED' }), stderr: '' });
+  it('#636: maps an OPEN+BLOCKED PR with a FAILED check to outcome blocked', async () => {
+    const rollup = [{ status: 'COMPLETED', conclusion: 'FAILURE' }];
+    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), stderr: '' });
     const out = await prStatus.resolve('/tmp/p', '5');
     assert.equal(out.outcome, 'blocked');
+    assert.equal(out.mergeStateStatus, 'BLOCKED');
+  });
+
+  it('#686: maps an OPEN+BLOCKED PR whose check is still RUNNING to outcome pending', async () => {
+    const rollup = [{ status: 'IN_PROGRESS', conclusion: null }];
+    prStatus._internal.exec = async () => ({ exitCode: 0, stdout: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', statusCheckRollup: rollup }), stderr: '' });
+    const out = await prStatus.resolve('/tmp/p', '5');
+    assert.equal(out.outcome, 'pending');
     assert.equal(out.mergeStateStatus, 'BLOCKED');
   });
 
