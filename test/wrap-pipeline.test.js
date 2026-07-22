@@ -1122,7 +1122,9 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.status, 'done');
-    assert.equal(sentText, 'Update MEMORY.md');
+    // #627 — sent prompt carries the self-identifying header (numberless: this
+    // direct run() call sets no aiContentProgress).
+    assert.equal(sentText, '[TangleClaw wrap — memory-update]\n\nUpdate MEMORY.md');
     assert.equal(result.output.parsedFields, null);
     assert.ok(staged['memory-update'], 'must stage captured output for the commit step');
     assert.match(staged['memory-update'].capturedText, /meaningful response/);
@@ -3719,5 +3721,50 @@ describe('wrap-step version-bump — handler (open-queue #3, post-#139)', () => 
       assert.equal(result.ok, true, `scenario must return ok:true; got ${JSON.stringify(result)}`);
       assert.deepStrictEqual(result.blockers, [], `scenario must have empty blockers`);
     }
+  });
+});
+
+// #627 — the "step N of M" denominator counts only the content prompts a wrap
+// will actually send, so the number the operator sees matches the prompts they
+// see. `index-describe` is excluded (it delegates conditionally at its own
+// position, after the denominator is fixed) — so a normal wrap reads "of 3".
+describe('_planAiContentPrompts — the content-prompt denominator (#627)', () => {
+  const baseSteps = () => defaultPipeline.steps();
+
+  it('default pipeline on a tmux session → the three fixed content steps, in order', () => {
+    const plan = wrapPipeline._planAiContentPrompts(baseSteps(), null, {}, { tmuxSession: 'sess' });
+    assert.deepEqual(plan, ['changelog-update', 'learnings-capture', 'memory-update']);
+  });
+
+  it('excludes index-describe — a normal wrap reads "of 3", not "of 4"', () => {
+    const plan = wrapPipeline._planAiContentPrompts(baseSteps(), null, {}, { tmuxSession: 'sess' });
+    assert.ok(!plan.includes('index-describe'), 'index-describe must not be counted');
+    assert.equal(plan.length, 3);
+  });
+
+  it('a content step disabled by wrapStepOverrides drops out of the count', () => {
+    const plan = wrapPipeline._planAiContentPrompts(
+      baseSteps(), { 'learnings-capture': { enabled: false } }, {}, { tmuxSession: 'sess' }
+    );
+    assert.deepEqual(plan, ['changelog-update', 'memory-update']);
+  });
+
+  it('a content step opted out for this run via skipAiContent drops out', () => {
+    const plan = wrapPipeline._planAiContentPrompts(
+      baseSteps(), null, { skipAiContent: { 'changelog-update': true } }, { tmuxSession: 'sess' }
+    );
+    assert.deepEqual(plan, ['learnings-capture', 'memory-update']);
+  });
+
+  it('a webui session counts only steps the gateway can carry (captureFields + captureFile)', () => {
+    const plan = wrapPipeline._planAiContentPrompts(baseSteps(), null, {}, { sessionMode: 'webui' });
+    // changelog-update / learnings-capture have no captureFile → they honestly
+    // skip over the bridge, so only memory-update prompts.
+    assert.deepEqual(plan, ['memory-update']);
+  });
+
+  it('no session behaves like the tmux path (all three)', () => {
+    const plan = wrapPipeline._planAiContentPrompts(baseSteps(), null, {}, null);
+    assert.deepEqual(plan, ['changelog-update', 'learnings-capture', 'memory-update']);
   });
 });
