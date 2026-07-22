@@ -38,13 +38,16 @@ POST /api/ports/lease
 POST /api/ports/lease
 { "port": 4000, "project": "my-project", "service": "test-runner", "ttl": 7200000 }
 
-# Release a port when done
+# Release a port when done. Always send your own "project": ownership is verified
+# when present — releasing a port a DIFFERENT project still holds returns 409
+# (add "force": true to override). Omitting "project" skips the check.
 POST /api/ports/release
-{ "port": 3200 }
+{ "port": 3200, "project": "my-project" }
 
-# Heartbeat to keep a TTL lease alive
+# Heartbeat to keep a TTL lease alive. Send "project" too: renewing another
+# project's lease returns 409.
 POST /api/ports/heartbeat
-{ "port": 4000 }
+{ "port": 4000, "project": "my-project" }
 ```
 
 ### When to Register / Release
@@ -73,9 +76,13 @@ and it is logged with the displaced owner, because the displaced project is stil
 against a port the registry no longer says is theirs. Use it only when you know the previous
 owner is gone — otherwise release the port from the owning side first.
 
-**Scope of enforcement, precisely.** `lease` is guarded. `release` and `heartbeat` are **not** —
-they take only a port, so they cannot check ownership, and any caller can release or renew any
-lease (tracked as issue #656). So "the registry enforces this" means it will not let you
-*overwrite* someone's lease; it cannot yet stop you *releasing* it and then claiming the freed
-port. Treat release as the destructive call it is: release only ports your own project holds.
+**Scope of enforcement, precisely.** `lease` is guarded. `release` and `heartbeat` are guarded
+**when you name your project** (#656): a mismatch returns 409 with the current owner, just like
+`lease`. The check is opt-in because these calls historically took only a port — a request that
+omits `project` still releases or renews unverified, so the guarantee holds only for callers that
+send their own project (always do). This closes the accidental case — an agent cleaning up after
+itself no longer silently releases a neighbor's live port — but it is not authentication: nothing
+binds the caller to the project name it sends, so a caller that supplies someone else's project
+can still act on their lease. Treat release as the destructive call it is: send your `project`,
+and release only ports your own project holds.
 

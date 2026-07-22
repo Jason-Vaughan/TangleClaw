@@ -180,4 +180,64 @@ describe('API /api/ports', () => {
     const { status } = await request(server, 'POST', '/api/ports/heartbeat', { port: 99999 });
     assert.equal(status, 404);
   });
+
+  // #656 — release and heartbeat took only a port, so any caller could delete or
+  // renew another project's lease. They now verify ownership when a project is named
+  // (opt-in, so old {port}-only callers still work). A stray release is a silent
+  // deletion, the wider hole than the lease overwrite #613 closed.
+  it('POST /api/ports/release returns 409 when another project owns the live port', async () => {
+    store.portLeases.lease({ port: 6100, project: 'Owner', service: 'dev-server' });
+
+    const { status, data } = await request(server, 'POST', '/api/ports/release', {
+      port: 6100,
+      project: 'Intruder'
+    });
+
+    assert.equal(status, 409, 'releasing another project\'s live port is a conflict');
+    assert.equal(data.code, 'PORT_CONFLICT');
+    assert.equal(data.owner.project, 'Owner', 'the response names the owner');
+    assert.ok(store.portLeases.get(6100), 'the owner keeps the lease after a refused release');
+  });
+
+  it('POST /api/ports/release with force removes another project\'s lease', async () => {
+    store.portLeases.lease({ port: 6101, project: 'Owner', service: 'dev-server' });
+
+    const { status } = await request(server, 'POST', '/api/ports/release', {
+      port: 6101, project: 'Taker', force: true
+    });
+
+    assert.equal(status, 200);
+    assert.equal(store.portLeases.get(6101), null);
+  });
+
+  it('POST /api/ports/release with the owning project succeeds', async () => {
+    store.portLeases.lease({ port: 6102, project: 'Mine', service: 'temp' });
+
+    const { status } = await request(server, 'POST', '/api/ports/release', {
+      port: 6102, project: 'Mine'
+    });
+
+    assert.equal(status, 200);
+    assert.equal(store.portLeases.get(6102), null);
+  });
+
+  it('POST /api/ports/release with no project still deletes (backward compat)', async () => {
+    store.portLeases.lease({ port: 6103, project: 'Whoever', service: 'temp' });
+
+    const { status } = await request(server, 'POST', '/api/ports/release', { port: 6103 });
+    assert.equal(status, 200);
+    assert.equal(store.portLeases.get(6103), null);
+  });
+
+  it('POST /api/ports/heartbeat returns 409 when another project owns the lease', async () => {
+    store.portLeases.lease({ port: 7100, project: 'Owner', service: 'dev', ttlMs: 60000 });
+
+    const { status, data } = await request(server, 'POST', '/api/ports/heartbeat', {
+      port: 7100, project: 'Intruder'
+    });
+
+    assert.equal(status, 409);
+    assert.equal(data.code, 'PORT_CONFLICT');
+    assert.equal(data.owner.project, 'Owner');
+  });
 });

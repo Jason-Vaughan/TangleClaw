@@ -243,6 +243,68 @@ describe('store.portLeases', () => {
     });
   });
 
+  describe('release & heartbeat ownership (#656)', () => {
+    it('release with no project deletes unconditionally (backward compat)', () => {
+      store.portLeases.lease({ port: 1300, project: 'Owner', service: 'svc' });
+      store.portLeases.release(1300);
+      assert.equal(store.portLeases.get(1300), null);
+    });
+
+    it('release with the owning project succeeds', () => {
+      store.portLeases.lease({ port: 1301, project: 'Owner', service: 'svc' });
+      store.portLeases.release(1301, 'localhost', { project: 'Owner' });
+      assert.equal(store.portLeases.get(1301), null);
+    });
+
+    it('refuses to release another project\'s live lease, carrying the owner, leaving it intact', () => {
+      store.portLeases.lease({ port: 1302, project: 'Owner', service: 'dev-server' });
+      try {
+        store.portLeases.release(1302, 'localhost', { project: 'Intruder' });
+        assert.fail('expected a PORT_CONFLICT');
+      } catch (err) {
+        assert.equal(err.code, 'PORT_CONFLICT');
+        assert.equal(err.owner.project, 'Owner');
+      }
+      assert.ok(store.portLeases.get(1302), 'the lease must survive a refused release');
+    });
+
+    it('force releases another project\'s live lease', () => {
+      store.portLeases.lease({ port: 1303, project: 'Owner', service: 'svc' });
+      store.portLeases.release(1303, 'localhost', { project: 'Intruder', force: true });
+      assert.equal(store.portLeases.get(1303), null);
+    });
+
+    it('releasing an EXPIRED lease of another project is never a conflict', () => {
+      store.portLeases.lease({ port: 1304, project: 'Gone', service: 'old', ttlMs: -1000 });
+      store.portLeases.release(1304, 'localhost', { project: 'Someone' });
+      assert.equal(store.portLeases.get(1304), null, 'expired garbage is releasable by anyone');
+    });
+
+    it('heartbeat with the owning project renews', () => {
+      store.portLeases.lease({ port: 1305, project: 'Owner', service: 'svc', ttlMs: 60000 });
+      const out = store.portLeases.heartbeat(1305, 'localhost', { project: 'Owner' });
+      assert.ok(out, 'the owner can renew');
+      assert.equal(out.project, 'Owner');
+    });
+
+    it('refuses to heartbeat another project\'s lease (no force — never legitimate)', () => {
+      store.portLeases.lease({ port: 1306, project: 'Owner', service: 'svc', ttlMs: 60000 });
+      assert.throws(
+        () => store.portLeases.heartbeat(1306, 'localhost', { project: 'Intruder' }),
+        (err) => err.code === 'PORT_CONFLICT' && err.owner.project === 'Owner'
+      );
+    });
+
+    it('heartbeat with no project renews unconditionally (backward compat)', () => {
+      store.portLeases.lease({ port: 1307, project: 'Owner', service: 'svc', ttlMs: 60000 });
+      assert.ok(store.portLeases.heartbeat(1307), 'a bare 2-arg call still renews');
+    });
+
+    it('heartbeat on a missing lease returns null even with a project', () => {
+      assert.equal(store.portLeases.heartbeat(1308, 'localhost', { project: 'Anyone' }), null);
+    });
+  });
+
   it('validates required fields', () => {
     assert.throws(() => store.portLeases.lease({ port: 1 }), /required/);
     assert.throws(() => store.portLeases.lease({ project: 'X', service: 'Y' }), /required/);

@@ -1590,7 +1590,24 @@ route('POST', '/api/ports/release', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
   }
-  store.portLeases.release(body.port, body.host || 'localhost');
+  try {
+    // `project` is optional but verified when present (#656): a release names
+    // whose lease it is, and releasing another live project's port is refused with
+    // 409 unless `force` is set. Omitting `project` keeps the prior behavior.
+    store.portLeases.release(body.port, body.host || 'localhost', {
+      project: body.project || null,
+      force: body.force === true
+    });
+  } catch (err) {
+    if (err.code === 'PORT_CONFLICT') {
+      return jsonResponse(res, 409, {
+        error: err.message,
+        code: 'PORT_CONFLICT',
+        owner: err.owner || null
+      });
+    }
+    return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+  }
   jsonResponse(res, 200, { ok: true, host: body.host || 'localhost', port: body.port });
 });
 
@@ -1599,7 +1616,23 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
   if (!body || !body.port) {
     return errorResponse(res, 400, 'port is required', 'BAD_REQUEST');
   }
-  const lease = store.portLeases.heartbeat(body.port, body.host || 'localhost');
+  let lease;
+  try {
+    // `project` is optional but verified when present (#656): renewing another
+    // project's lease keeps a port nobody-you-own alive, so a mismatch is a 409.
+    lease = store.portLeases.heartbeat(body.port, body.host || 'localhost', {
+      project: body.project || null
+    });
+  } catch (err) {
+    if (err.code === 'PORT_CONFLICT') {
+      return jsonResponse(res, 409, {
+        error: err.message,
+        code: 'PORT_CONFLICT',
+        owner: err.owner || null
+      });
+    }
+    return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+  }
   if (!lease) {
     return errorResponse(res, 404, `No lease found for port ${body.port}`, 'NOT_FOUND');
   }

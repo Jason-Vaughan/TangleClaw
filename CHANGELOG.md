@@ -28,6 +28,20 @@ All notable changes to TangleClaw are documented in this file.
   (`lib/wrap-steps/changelog-coverage.js`, `lib/wrap-steps/ai-content.js`,
   `lib/wrap-steps/_source-paths.js`, `lib/wrap-steps/features-toc.js`)
 
+### Security
+- `POST /api/ports/release` and `/api/ports/heartbeat` now verify lease ownership when the caller
+  names its `project` (#656). Both endpoints previously took only a `port`, so any caller could
+  delete or renew another project's lease — a stray release is a silent **deletion** (the owner
+  keeps running on a port the registry no longer records, and the next claimant collides), the
+  wider hole than the lease overwrite #613 closed. With `project` present, releasing or renewing a
+  live lease held by a **different** project returns `409 PORT_CONFLICT` with the owner (mirroring
+  `lease`); `release` accepts `"force": true` to override (logged), `heartbeat` does not. The check
+  is **opt-in and non-breaking** — a request that omits `project` keeps the prior behavior, so
+  in-flight callers on the old guide still work; the injected PortHub guide now instructs sending
+  your own `project`. Not authentication (nothing binds a caller to the project name it sends), but
+  it closes the accidental cross-project release. Expired leases stay releasable by anyone.
+  (`lib/store.js`, `server.js`, `data/porthub-guide.md`)
+
 ## [4.31.4] - 2026-07-22
 
 ### Fixed
