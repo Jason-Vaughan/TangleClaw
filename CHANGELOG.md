@@ -40,6 +40,12 @@ All notable changes to TangleClaw are documented in this file.
   ran") and forced a manual "Skip & note." It now returns `covered` (nothing shipped → nothing to
   log) for the no-commits case. Scoped so the "a glob only widens" nested-changelog contract (#663)
   and the uncommitted-source-work block (#659) are unchanged. (`lib/wrap-steps/changelog-coverage.js`)
+- Wrap drawer: a blocked step's action button now reads **"Skip & continue"** when its
+  "Skip this step" box is ticked, instead of the static **"Retry"** (#696). Ticking the box and
+  clicking the button already skipped-and-continued (`retryWrap` re-runs the pipeline past the
+  skipped step), but the "Retry" label gave no signal it would proceed rather than re-attempt the
+  step. `syncRetryLabel` relabels live on toggle and resets on each render; covers the ai-content
+  "Skip & note" and the test-skip boxes. Label only — no behavior change. (`public/session.js`)
 
 ### Security
 - `POST /api/ports/release` and `/api/ports/heartbeat` now verify lease ownership when the caller

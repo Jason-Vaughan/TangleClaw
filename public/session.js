@@ -3350,6 +3350,29 @@ function renderWrapDrawer(pipelineResult) {
     doneBtn.classList.remove('hidden');
     cancelBtn.textContent = 'Close';
   }
+
+  // #696: name the action honestly. When a "skip this step" box is ticked, Retry
+  // re-runs the pipeline PAST the skipped step (skip-and-continue), so the button
+  // must not keep reading "Retry" — which reads as re-attempting the step. Called
+  // on every render so a fresh (unticked) drawer resets to "Retry".
+  syncRetryLabel();
+}
+
+/**
+ * Set the wrap drawer's action button to "Skip & continue" when a blocked-step
+ * "skip this step" box is ticked, else "Retry" (#696). Retry-with-skip re-runs the
+ * pipeline past the skipped step (`retryWrap` threads the skip through), so the
+ * label has to say so. Covers the ai-content "Skip & note" box and the test-skip
+ * box — both mean skip-and-proceed. No behavior change; label only.
+ */
+function syncRetryLabel() {
+  const retryBtn = document.getElementById('wrapDrawerRetryBtn');
+  if (!retryBtn) return;
+  const decisionEl = document.getElementById('wrapDrawerDecision');
+  const skipChecked = decisionEl && decisionEl.querySelector(
+    'input[data-options-key="skipAiContent"]:checked, input[data-options-key="skipTests"]:checked'
+  );
+  retryBtn.textContent = skipChecked ? 'Skip & continue' : 'Retry';
 }
 
 /**
@@ -3470,6 +3493,9 @@ function renderDecisionWidget(widget) {
     // #328: step-scoped overrides (ai-content Skip & note) carry the blocked
     // step id so retryWrap can thread `{[stepId]: true}` to the server.
     if (widget.stepId) input.dataset.stepId = widget.stepId;
+    // #696: ticking a "skip this step" box makes Retry skip-and-continue, so keep
+    // the action button's label honest as the box toggles.
+    input.addEventListener('change', syncRetryLabel);
     row.appendChild(input);
     const text = document.createElement('span');
     text.textContent = widget.label;
