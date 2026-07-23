@@ -283,16 +283,16 @@ describe('changelog-coverage — evaluate()', () => {
     assert.equal(cov.evaluate('/p', ['CHANGELOG.md', 'NOTES.md']).verdict, cov.VERDICTS.COVERED);
   });
 
-  it('UNAVAILABLE when the range contains only wrap commits', () => {
+  it('COVERED when the range contains only wrap commits — nothing shipped to log (#695)', () => {
     scenario([{ sha: 'aaa1111', subject: 'Session wrap on wrap/2026-x', files: ['version.json'] }]);
     const out = cov.evaluate('/p', PATHS);
-    assert.equal(out.verdict, cov.VERDICTS.UNAVAILABLE);
+    assert.equal(out.verdict, cov.VERDICTS.COVERED);
     assert.equal(out.checkedCount, 0);
   });
 
-  it('UNAVAILABLE when the session made no commits at all', () => {
+  it('COVERED when the session made no commits at all — nothing to log (#695)', () => {
     scenario([]);
-    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
   });
 
   it('UNAVAILABLE when no range resolves', () => {
@@ -350,12 +350,16 @@ describe('changelog-coverage — evaluate()', () => {
     assert.deepEqual(out.uncovered, [], 'an uncommitted-work verdict does not populate the commit list');
   });
 
-  it('with no commits: UNAVAILABLE when the tree is clean or only bookkeeping is dirty', () => {
+  it('with no commits: COVERED when the tree is clean or only bookkeeping is dirty — nothing to log (#695)', () => {
+    // The RentalClaw shape: a session that ran the last wrap and only churned
+    // framework state. Nothing shipped that needs a changelog entry, so the gate
+    // must not false-block it into a manual "Skip & note" (the #645 false-block in
+    // its no-commits form).
     scenario([], []);
-    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE);
-    scenario([], ['.prawduct/change-log.md']);
-    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.UNAVAILABLE,
-      'bookkeeping-only dirt is not unlogged work');
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED);
+    scenario([], ['.prawduct/change-log.md', '.tangleclaw/project.json']);
+    assert.equal(cov.evaluate('/p', PATHS).verdict, cov.VERDICTS.COVERED,
+      'bookkeeping-only dirt with no commits is nothing to log');
   });
 
   it('with no commits but dirty source work: UNCOVERED — the work ships unlogged (#659)', () => {
@@ -533,16 +537,13 @@ describe('changelog-coverage — against this repository\'s real history', () =>
     assert.ok(Object.values(cov.VERDICTS).includes(out.verdict));
     if (out.verdict !== cov.VERDICTS.UNAVAILABLE) {
       assert.match(out.range, /\.\.HEAD$/);
-      // A COVERED verdict can legitimately judge zero commits: an uncommitted edit
-      // to a declared path (a dirty CHANGELOG.md during active development, which is
-      // exactly when this suite runs) short-circuits to COVERED before any commit is
-      // counted. Demand a judged commit only when the verdict came from committed
-      // history. The real-git-parsing guarantee this suite exists for is pinned
-      // independently by the next test, over `_listCommits` directly.
-      // Two working-tree short-circuits legitimately judge zero commits: a dirty
-      // declared path → COVERED, and dirty uncommitted source work → UNCOVERED
-      // (#659, which is exactly the state this suite runs in during active
-      // development). Demand a judged commit only for a committed-history verdict.
+      // Several verdicts legitimately judge zero commits, so demand a judged commit
+      // only for a committed-history verdict. Zero-commit short-circuits: a dirty
+      // declared path → COVERED; dirty uncommitted source work → UNCOVERED (#659,
+      // the state this suite runs in during active development); and no commits at
+      // all with nothing to log → COVERED (#695). The real-git-parsing guarantee
+      // this suite exists for is pinned independently by the next test, over
+      // `_listCommits` directly.
       const fromWorkingTreeShortCircuit =
         (out.verdict === cov.VERDICTS.COVERED && out.checkedCount === 0) ||
         (out.verdict === cov.VERDICTS.UNCOVERED && out.uncommittedWork.length > 0);
