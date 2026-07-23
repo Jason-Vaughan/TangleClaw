@@ -45,8 +45,9 @@ returned for any uncommitted source work, that means nothing shipped that could 
 changelog still flows to the uncovered path, so the "a glob only widens" contract (#663) is
 untouched, and a source-work-without-entry commit still blocks (#659). Three #659-era tests that
 asserted "no commits → UNAVAILABLE" updated to the ratified "nothing to log → covered" contract;
-the real-history guard's zero-commit-short-circuit note extended. Same-family scope as #659 (the
-wrap changelog gate). Full suite 4721 pass / 0 fail.
+the real-history guard's zero-commit-short-circuit note extended. Sibling of #659 (the wrap
+changelog gate). Full suite green, 0 fail (4721 TAP subtests / 2473 JUnit cases — reporter
+semantics, not deleted tests).
 
 ## 2026-07-22: Copy report includes the "Skipped N of M steps" rollup (#693)
 
