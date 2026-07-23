@@ -334,9 +334,15 @@
    * gh, probe failure) stays provisional rather than claiming either result.
    *
    * @param {{outcome: string, state?: string, mergeStateStatus?: string, reason?: string}} status
+   * @param {boolean} [armed] - Whether the commit step armed GitHub auto-merge
+   *   for this wrap PR (known from the pipeline's own `pr.armed`, not the probe).
+   *   When true, a `pending` release is a done deal — GitHub lands it server-side
+   *   the instant checks pass, no operator action — so the copy says so rather
+   *   than implying a manual step (#700). When false/unknown, the honest hedge
+   *   stands: arming is not something the read-only probe can see on its own.
    * @returns {{label: string, tone: 'success'|'error'|'provisional', detail: string}}
    */
-  function prOutcomeBanner(status) {
+  function prOutcomeBanner(status, armed) {
     const outcome = status && status.outcome;
     if (outcome === 'merged') {
       return { label: 'Wrap shipped — PR merged', tone: 'success', detail: 'the release landed on the base branch' };
@@ -354,8 +360,16 @@
       return { label: 'Wrap committed — release BLOCKED, did not ship', tone: 'error', detail: why };
     }
     if (outcome === 'pending') {
-      // Deliberately does NOT claim auto-merge is armed: the probe reads
-      // `state`/`mergeStateStatus` only, so arming is not something this knows.
+      // #700 — when auto-merge is armed, a pending release needs NO operator
+      // action: GitHub merges the PR the instant its checks pass. Say so, so the
+      // provisional banner reads as "done, just waiting" instead of "a manual
+      // step remains" (the false-alarm the imperative "Recheck release" button
+      // trained). Arming comes from the pipeline (`pr.armed`), threaded in by
+      // `composeReleaseBanner` — the read-only probe can't see it on its own, so
+      // an unknown/unarmed pending keeps the honest hedge.
+      if (armed) {
+        return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'auto-merge is armed — the PR lands on its own when its checks pass. Nothing more to do; you can close this.' };
+      }
       return { label: 'Wrap committed — release pending checks', tone: 'provisional', detail: 'the PR has not merged yet; it lands when its checks pass' };
     }
     return { label: 'Wrap committed — release not confirmed', tone: 'provisional', detail: (status && status.reason) || 'could not confirm the PR state' };
@@ -379,8 +393,12 @@
    * @returns {{label: string, tone: string, detail: string|null}}
    */
   function composeReleaseBanner(baseStatus, prStatus) {
-    const release = prOutcomeBanner(prStatus);
     const base = baseStatus || {};
+    // #700 — a pending release with auto-merge armed needs no operator action;
+    // pass the pipeline's own arming knowledge (the probe can't see it) so the
+    // banner can say "lands on its own" instead of implying a manual step.
+    const armed = !!(base.pr && base.pr.armed);
+    const release = prOutcomeBanner(prStatus, armed);
     if (release.tone === 'error') return release;
     if (base.tone === 'warning' || base.tone === 'error') {
       const outcome = (prStatus && prStatus.outcome) || 'unknown';

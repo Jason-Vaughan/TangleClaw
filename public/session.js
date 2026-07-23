@@ -3030,7 +3030,7 @@ let currentWrapBaseStatus = null;
 
 /**
  * The status banner currently PAINTED in the drawer — the pipeline's own verdict
- * until the #638 release resolution (or a "Recheck release") repaints it to the
+ * until the #638 release resolution (or a manual "Refresh status") repaints it to the
  * merged/pending/blocked outcome. Held so the copied report reflects what the
  * operator is looking at: without it, `buildReportText` re-derives the header from
  * the frozen pipeline result and reports "release pending" even after the PR merged
@@ -3109,8 +3109,10 @@ async function copyWrapReport() {
 /**
  * Paint the wrap-drawer status banner from a `{label, tone, detail}` view-model
  * — factored out so the #638 release-state resolution can repaint it in place.
- * When a wrap PR is passed, a "Recheck release" button is appended so the
- * operator can re-probe the merge outcome on demand (explicit action, no timer).
+ * When a wrap PR is passed, an optional "Refresh status" button is appended so
+ * the operator can re-probe the merge outcome on demand (explicit action, no
+ * timer). It is a read-only poll, never what ships the release — armed
+ * auto-merge lands the PR server-side with no click (#700).
  *
  * @param {{label: string, tone: string, detail: string|null}} status - The banner to paint.
  * @param {{prUrl: string|null}|null} [prForRecheck] - Wrap PR to offer a recheck for.
@@ -3123,7 +3125,7 @@ async function copyWrapReport() {
 function paintWrapStatus(status, prForRecheck, baseStatus) {
   // Mirror the painted banner so the copied report matches what's on screen. This
   // is the primary paint path (initial verdict, the #638 release resolution, a
-  // manual "Recheck release"); the error and notice paths below paint the same
+  // manual "Refresh status"); the error and notice paths below paint the same
   // element directly and update this mirror themselves, so the report never lags
   // any state the banner can show.
   currentWrapDisplayedStatus = status;
@@ -3137,8 +3139,13 @@ function paintWrapStatus(status, prForRecheck, baseStatus) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'wrap-drawer-recheck';
-    btn.textContent = 'Recheck release';
-    btn.title = 'Re-query GitHub for this wrap PR’s merge outcome.';
+    // #700 — "Refresh status", not "Recheck release": this is a read-only re-poll
+    // of the merge outcome, never the thing that ships the release. Armed
+    // auto-merge lands the PR server-side with no click, so an imperative
+    // "Recheck release" label wrongly trained operators that a manual step
+    // remained (they closed the drawer thinking they'd skipped shipping).
+    btn.textContent = 'Refresh status';
+    btn.title = 'Optional — re-query GitHub for this wrap PR’s merge outcome. The release lands on its own when checks pass; you don’t need to click this.';
     // Pass the ORIGINAL pipeline status, not the currently-painted one, so
     // repeated rechecks compose against the pipeline's own verdict rather than
     // compounding a previous release banner.
@@ -3233,8 +3240,8 @@ function renderWrapDrawer(pipelineResult) {
   // #638 — one automatic release-state resolution when the commit opened a wrap
   // PR. The pipeline returns before GitHub merges, so `summarizePipelineStatus`
   // paints "release pending"; this resolves it to merged/pending/blocked. A
-  // single event-triggered fetch (not a repeating timer), with an explicit
-  // "Recheck release" button for re-polling — honoring the no-timer-driven-UI
+  // single event-triggered fetch (not a repeating timer), with an optional
+  // "Refresh status" button for re-polling — honoring the no-timer-driven-UI
   // rule (#98/#268).
   if (status.pr && status.pr.prUrl) resolveWrapPrStatus(status.pr, null, status);
 
