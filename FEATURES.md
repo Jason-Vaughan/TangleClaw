@@ -155,3 +155,9 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Store slices: `test/store-projects.test.js` — projects; `test/store-sessions.test.js` — sessions; `test/store-eval-audit.test.js` — eval-audit.
 - Governance / engines / actions: `test/antigravity-engine.test.js` + `test/openclaw-engine.test.js` — per-engine profile behavior; `test/governance-drift-badge.test.js` — governance-state badge; `test/c1-plugin-migration.test.js` — plugin-governed migration; `test/self-improvement-loop.test.js` + `test/session-rules-selfimprove.test.js` — the rule self-improvement loop; `test/eval-audit.test.js` — eval-audit engine; `test/actions-dispatcher.test.js` + `test/actions-invoke-critic.test.js` — project-action dispatch + the mark-Critic handler.
 - Store/project/setup + infra: `test/migration.test.js` — schema migrations; `test/stranded-configs.test.js` — stranded-config guard (#592); `test/create-project-modal.test.js` + `test/project-rules-modal.test.js` — those modal frontends; `test/project-version-require-cycle.test.js` — project-version require-cycle guard; `test/project-paths.test.js` — path resolver; `test/feature-index.test.js` — Feature Index maintenance; `test/continuity.test.js` — continuity store; `test/contracts.test.js` — cross-module contracts; `test/e2e-smoke.test.js` — end-to-end smoke; `test/porthub.test.js` — PortHub leasing; `test/project-map.test.js` — PROJECT-MAP refresh; `test/setup-wizard.test.js` + `test/setup-wizard-https.test.js` — first-run wizard; `test/tunnel.test.js` — Cloudflare tunnel lifecycle.
+
+## TODO (auto-stubbed 2026-07-22)
+
+- **TBD** — touched in this session: `lib/wrap-steps/_source-paths.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-skip-continue-label.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-source-paths.test.js`. <!-- describe -->
