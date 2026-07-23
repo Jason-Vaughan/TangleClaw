@@ -52,10 +52,11 @@ All notable changes to TangleClaw are documented in this file.
   **"Recheck release"** button beside "release pending checks" with the copy *"it lands when its
   checks pass"*, reading as *a click is required to finish shipping*. (One operator closed the
   drawer believing they'd skipped a step; the PR had already auto-merged.) The button is renamed
-  **"Refresh status"** and retitled as an optional read-only re-poll, and the pending banner now
-  threads the pipeline's own `pr.armed` knowledge (the read-only probe can't see arming) so an
-  armed pending reads *"auto-merge is armed … Nothing more to do; you can close this."* An
-  unknown/unarmed pending keeps the honest hedge — that path can genuinely need action.
+  **"Refresh status"** and retitled as an optional read-only re-poll. Both the pending banner and
+  the button's tooltip now thread the pipeline's own `pr.armed` knowledge (the read-only probe
+  can't see arming) so an armed pending reads *"auto-merge is armed … Nothing more to do; you can
+  close this"* while an unknown/unarmed pending keeps the honest hedge — that path can genuinely
+  need a manual merge, and promising "it lands on its own" there would be #700 inverted.
   (`public/wrap-drawer.js`, `public/session.js`)
 
 ### Security
