@@ -26,6 +26,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Wrap drawer — "Skip & continue" relabel on the blocked-step skip box (#696)
+
+<!-- prawduct: type=bugfix | scope=wrap-696 | status=shipped -->
+
+**Why:** When a wrap step blocks and offers a "Skip this step and note it in the commit body"
+checkbox, ticking it and clicking the action button skips-and-continues (`retryWrap` threads the
+skip through `skipAiContent`/accumulates it and re-runs the pipeline past the step). But the button
+is a static "Retry" (`session.html`), so the operator has no signal it will proceed rather than
+re-attempt the step. Surfaced live on a RentalClaw wrap — operator ticked Skip and saw only
+"Retry," unsure it would advance.
+
+**What:** New `syncRetryLabel()` in `session.js` sets the action button to "Skip & continue" when a
+"skip this step" box (`skipAiContent` or `skipTests`) is ticked, else "Retry". Wired to the skip
+checkbox's `change` event (live relabel on toggle) and called at the end of `renderWrapDrawer` (so a
+fresh re-render with unticked boxes resets to "Retry"). No behavior change — label only; the HTML
+default stays "Retry". Tests: +4 source-level pins (session.js DOM functions aren't require()-able,
+per the `wrap-rule-proposal-widget.test.js` convention). Sibling of #693 (both wrap-drawer UX). Full
+suite green, 0 fail (4725 TAP subtests).
+
 ## 2026-07-22: changelog-update no longer false-blocks a no-work session (#695)
 
 <!-- prawduct: type=bugfix | scope=wrap-695 | status=shipped -->
