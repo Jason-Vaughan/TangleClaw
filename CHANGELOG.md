@@ -27,6 +27,12 @@ All notable changes to TangleClaw are documented in this file.
   unblocked. An uncommitted changelog edit still short-circuits to covered.
   (`lib/wrap-steps/changelog-coverage.js`, `lib/wrap-steps/ai-content.js`,
   `lib/wrap-steps/_source-paths.js`, `lib/wrap-steps/features-toc.js`)
+- Wrap drawer's **Copy report** now includes the "Skipped N of M steps:" summary block (#693).
+  It previously serialized the status banner + per-step lines but dropped the honest skip rollup
+  (`renderSkipRoll`, #571) the drawer paints under the banner, so a copied report was a subset of
+  what's on screen. `buildReportText` now emits the rollup between the banner and the step list,
+  reusing the same `summarizeSkips` helper the drawer renders from, so copy and render can't
+  diverge — an operator can paste the report instead of screenshotting. (`public/wrap-drawer.js`)
 
 ### Security
 - `POST /api/ports/release` and `/api/ports/heartbeat` now verify lease ownership when the caller

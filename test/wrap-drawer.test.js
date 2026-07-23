@@ -860,6 +860,36 @@ describe('wrap-drawer helpers — buildReportText (#268)', () => {
     assert.equal(H.buildReportText(pipelineResult, { tone: 'success' }), fromPipeline);
     assert.equal(H.buildReportText(pipelineResult, null), fromPipeline);
   });
+
+  it('includes the "Skipped N of M steps" rollup so the copy matches the render (#693)', () => {
+    const text = H.buildReportText({
+      commitSha: 'aa11bb22cc33',
+      results: [
+        { stepId: 'open-pr-check', kind: 'pr-check', status: 'done', output: {}, blockers: [] },
+        { stepId: 'changelog-update', kind: 'ai-content', status: 'skipped', output: { reason: 'user opted to skip changelog-update (recorded in commit body)' }, blockers: [] },
+        { stepId: 'version-bump', kind: 'version-bump', status: 'skipped', output: { reason: '[Unreleased] has no entries to promote (already released or empty)' }, blockers: [] },
+        { stepId: 'commit', kind: 'commit', status: 'done', output: {}, blockers: [] }
+      ]
+    });
+    // The rollup head names the honest count, mirroring renderSkipRoll.
+    assert.match(text, /Skipped 2 of 4 steps:/);
+    // Each skip is listed with its kind label, id, and reason.
+    assert.match(text, /- AI content \(changelog-update\) — user opted to skip changelog-update/);
+    assert.match(text, /- Version bump \(version-bump\) — \[Unreleased\] has no entries to promote/);
+    // The rollup sits above the per-step list, not instead of it.
+    assert.ok(text.indexOf('Skipped 2 of 4 steps:') < text.indexOf('[Done] Commit — commit'),
+      'the rollup heads the report, before the step blocks');
+  });
+
+  it('omits the skip rollup entirely when nothing was skipped', () => {
+    const text = H.buildReportText({
+      commitSha: 'dd44ee55ff66',
+      results: [
+        { stepId: 'commit', kind: 'commit', status: 'done', output: {}, blockers: [] }
+      ]
+    });
+    assert.doesNotMatch(text, /Skipped \d+ of \d+ steps/);
+  });
 });
 
 describe('wrap-drawer helpers — shouldStartEndedCountdown (#268)', () => {

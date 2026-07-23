@@ -26,6 +26,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Copy report includes the "Skipped N of M steps" rollup (#693)
+
+<!-- prawduct: type=bugfix | scope=wrap-copy-report | status=shipped -->
+
+**Why:** The wrap drawer's "Copy report" (`buildReportText`, `public/wrap-drawer.js`) serialized the
+status banner + per-step lines but omitted the "Skipped N of M steps:" summary block that
+`renderSkipRoll` (#571) paints under the banner — so a copied report was a subset of the on-screen
+report. The operator wants Copy report to be a faithful text twin they can paste instead of
+screenshotting each wrap. Surfaced live comparing a RentalClaw wrap's screenshot to its copied text.
+
+**What:** `buildReportText` now emits the skip rollup between the banner and the step list, reusing
+the same `summarizeSkips` helper `renderSkipRoll` renders from (one source of truth — copy and
+render can't diverge). Rendered only when something was skipped. Tests: +2 (rollup present with
+head + per-skip `kind (id) — reason` lines, positioned above the step blocks; absent when nothing
+skipped). Frontend-only; full suite 4721 pass / 0 fail. Sibling wrap-drawer finding filed
+separately: the blocked-step "Skip & note" action button is labeled "Retry" with no
+"Skip & continue" relabel.
+
 ## 2026-07-22: Verify lease ownership on ports release/heartbeat (#656)
 
 <!-- prawduct: type=bugfix | scope=porthub-ownership | status=shipped -->
