@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.31.5] - 2026-07-22
+
 ### Fixed
 - Wrap no longer silently strands on an aged dangling `FEATURES.md` citation (#640).
   `features-toc` now heals citations whose target was deleted in an **earlier** session,
