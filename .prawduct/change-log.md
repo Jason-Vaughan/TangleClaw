@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-22: changelog-update no longer false-blocks a no-work session (#695)
 
-<!-- prawduct: type=bugfix | scope=wrap-659 | status=shipped -->
+<!-- prawduct: type=bugfix | scope=wrap-695 | status=shipped -->
 
 **Why:** A session that shipped no loggable work — no commits since the last wrap, only
 `.prawduct/`/`.tangleclaw/` bookkeeping dirty, CHANGELOG.md correctly unchanged — false-blocked at
