@@ -3115,7 +3115,8 @@ async function copyWrapReport() {
  * auto-merge lands the PR server-side with no click (#700).
  *
  * @param {{label: string, tone: string, detail: string|null}} status - The banner to paint.
- * @param {{prUrl: string|null}|null} [prForRecheck] - Wrap PR to offer a recheck for.
+ * @param {{prUrl: string|null, armed?: boolean}|null} [prForRecheck] - Wrap PR to
+ *   offer a status refresh for; `armed` gates the tooltip's "no action needed" copy.
  * @param {{label: string, tone: string, detail: string|null}|null} [baseStatus] - The
  *   PIPELINE's own verdict, carried through to the recheck handler so every
  *   re-probe composes against it rather than against the currently-painted
@@ -3145,7 +3146,14 @@ function paintWrapStatus(status, prForRecheck, baseStatus) {
     // "Recheck release" label wrongly trained operators that a manual step
     // remained (they closed the drawer thinking they'd skipped shipping).
     btn.textContent = 'Refresh status';
-    btn.title = 'Optional — re-query GitHub for this wrap PR’s merge outcome. The release lands on its own when checks pass; you don’t need to click this.';
+    // The tooltip's "no action needed" claim is arming-dependent, exactly like
+    // the banner copy: an UNARMED wrap PR (release-not-armed, or an unarmed
+    // pending) can still need a manual merge, so promising "it lands on its own"
+    // there would re-create #700 inverted. Thread `pr.armed` so the reassurance
+    // only appears when it is true; otherwise the neutral pre-#700 wording.
+    btn.title = prForRecheck.armed
+      ? 'Optional — re-query GitHub for this wrap PR’s merge outcome. The release lands on its own when checks pass; you don’t need to click this.'
+      : 'Re-query GitHub for this wrap PR’s merge outcome.';
     // Pass the ORIGINAL pipeline status, not the currently-painted one, so
     // repeated rechecks compose against the pipeline's own verdict rather than
     // compounding a previous release banner.
