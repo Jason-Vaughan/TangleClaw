@@ -33,6 +33,13 @@ All notable changes to TangleClaw are documented in this file.
   what's on screen. `buildReportText` now emits the rollup between the banner and the step list,
   reusing the same `summarizeSkips` helper the drawer renders from, so copy and render can't
   diverge — an operator can paste the report instead of screenshotting. (`public/wrap-drawer.js`)
+- Wrap `changelog-update` no longer false-blocks a session with nothing to log (#695). When a
+  session made no commits and has no dirty source work — e.g. it only ran the last wrap and churned
+  `.prawduct/`/`.tangleclaw/` bookkeeping — the coverage predicate returned `unavailable`, falling
+  back to the mutation check, which blocked the compliant session ("byte-identical to before the AI
+  ran") and forced a manual "Skip & note." It now returns `covered` (nothing shipped → nothing to
+  log) for the no-commits case. Scoped so the "a glob only widens" nested-changelog contract (#663)
+  and the uncommitted-source-work block (#659) are unchanged. (`lib/wrap-steps/changelog-coverage.js`)
 
 ### Security
 - `POST /api/ports/release` and `/api/ports/heartbeat` now verify lease ownership when the caller

@@ -26,6 +26,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: changelog-update no longer false-blocks a no-work session (#695)
+
+<!-- prawduct: type=bugfix | scope=wrap-695 | status=shipped -->
+
+**Why:** A session that shipped no loggable work — no commits since the last wrap, only
+`.prawduct/`/`.tangleclaw/` bookkeeping dirty, CHANGELOG.md correctly unchanged — false-blocked at
+`changelog-update`. The coverage predicate (#645) can't judge with no commits → returned
+`unavailable` → the mutation-check fallback blocked the compliant session ("byte-identical to
+before the AI ran") and forced a manual "Skip & note." This is the #645 false-block in its
+no-commits form, and the mirror of #659 (uncommitted source work → should block, and does).
+Surfaced live on a RentalClaw wrap.
+
+**What:** `changelog-coverage.evaluate()` returns `covered` when `checkable` is empty (no non-wrap,
+non-merge, file-touching commits) — combined with the existing dirtyWork check having already
+returned for any uncommitted source work, that means nothing shipped that could need logging.
+**Deliberately scoped to the empty-commit case**: a commit that touched only an undeclared nested
+changelog still flows to the uncovered path, so the "a glob only widens" contract (#663) is
+untouched, and a source-work-without-entry commit still blocks (#659). Three #659-era tests that
+asserted "no commits → UNAVAILABLE" updated to the ratified "nothing to log → covered" contract;
+the real-history guard's zero-commit-short-circuit note extended. Sibling of #659 (the wrap
+changelog gate). Full suite green, 0 fail (4721 TAP subtests / 2473 JUnit cases — reporter
+semantics, not deleted tests).
+
 ## 2026-07-22: Copy report includes the "Skipped N of M steps" rollup (#693)
 
 <!-- prawduct: type=bugfix | scope=wrap-copy-report | status=shipped -->
