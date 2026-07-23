@@ -616,9 +616,12 @@
   /**
    * Serialize a pipeline result into a plain-text report the operator can
    * copy to the clipboard (paste into an issue, share with a collaborator).
-   * Mirrors what the drawer renders — the status banner plus one block per
-   * step (status, label, detail, and the full blocker output) — so the
-   * copied text is the same source of truth as the on-screen report (#268).
+   * Mirrors what the drawer renders — the status banner, the honest skip
+   * rollup, and one block per step (status, label, detail, and the full
+   * blocker output) — so the copied text is the same source of truth as the
+   * on-screen report (#268, #693). The skip rollup reuses `summarizeSkips`,
+   * the same helper `renderSkipRoll` paints from, so copy and render can't
+   * diverge.
    *
    * @param {object} pipelineResult - Runner return (`POST /wrap` body).
    * @param {{label: string, detail: (string|null)}} [displayedStatus] - The banner
@@ -635,6 +638,18 @@
       : summarizePipelineStatus(pipelineResult);
     const lines = [`Session Wrap — ${status.label}`];
     if (status.detail) lines.push(status.detail);
+
+    // #693 — mirror the drawer's skip rollup (`renderSkipRoll`) so the copied
+    // report is a faithful text twin, not a subset that drops the "N of M
+    // skipped, and why" digest a pasting operator relies on.
+    const skips = summarizeSkips(pipelineResult);
+    if (skips.skipped > 0) {
+      lines.push('');
+      lines.push(`Skipped ${skips.skipped} of ${skips.total} steps:`);
+      for (const s of skips.skips) {
+        lines.push(`- ${KIND_LABELS[s.kind] || s.kind} (${s.id}) — ${s.reason}`);
+      }
+    }
 
     const results = pipelineResult && Array.isArray(pipelineResult.results)
       ? pipelineResult.results
