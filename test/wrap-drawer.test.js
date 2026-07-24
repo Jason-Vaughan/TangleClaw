@@ -1072,6 +1072,18 @@ describe('wrap-drawer helpers — #638 wrap-PR reporting', () => {
     it('pending → provisional', () => {
       assert.equal(H.prOutcomeBanner({ outcome: 'pending' }).tone, 'provisional');
     });
+    it('pending + armed → says it lands on its own with nothing to do (#700)', () => {
+      const b = H.prOutcomeBanner({ outcome: 'pending' }, true);
+      assert.equal(b.tone, 'provisional');
+      assert.match(b.detail, /auto-merge is armed/);
+      assert.match(b.detail, /Nothing more to do/i);
+    });
+    it('pending + NOT armed keeps the honest hedge — no false "nothing to do" (#700)', () => {
+      const b = H.prOutcomeBanner({ outcome: 'pending' }, false);
+      assert.equal(b.tone, 'provisional');
+      assert.doesNotMatch(b.detail, /Nothing more to do/i);
+      assert.match(b.detail, /lands when its checks pass/);
+    });
     it('unknown → provisional with the probe reason', () => {
       const b = H.prOutcomeBanner({ outcome: 'unknown', reason: 'gh not found' });
       assert.equal(b.tone, 'provisional');
@@ -1157,5 +1169,19 @@ describe('wrap-drawer helpers — composeReleaseBanner precedence', () => {
   it('tolerates a missing base status', () => {
     const out = H.composeReleaseBanner(null, { outcome: 'pending' });
     assert.equal(out.tone, 'provisional');
+  });
+
+  it('threads the pipeline arming into a pending banner (#700)', () => {
+    const armed = H.composeReleaseBanner(
+      { label: 'Wrap committed — release pending PR merge', tone: 'provisional', detail: 'sha', pr: { armed: true, prUrl: 'u' } },
+      { outcome: 'pending' }
+    );
+    assert.match(armed.detail, /auto-merge is armed/, 'armed pending says it lands on its own');
+
+    const unarmed = H.composeReleaseBanner(
+      { label: 'Wrap committed — release pending PR merge', tone: 'provisional', detail: 'sha', pr: { armed: false, prUrl: 'u' } },
+      { outcome: 'pending' }
+    );
+    assert.doesNotMatch(unarmed.detail, /Nothing more to do/i, 'unarmed pending keeps the hedge');
   });
 });

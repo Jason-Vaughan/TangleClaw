@@ -48,6 +48,18 @@ All notable changes to TangleClaw are documented in this file.
   skipped step), but the "Retry" label gave no signal it would proceed rather than re-attempt the
   step. `syncRetryLabel` relabels live on toggle and resets on each render; covers the ai-content
   "Skip & note" and the test-skip boxes. Label only — no behavior change. (`public/session.js`)
+- Wrap drawer no longer implies a manual step is needed to ship an auto-merging release (#700).
+  When a wrap commit opens a PR with GitHub **auto-merge armed**, the release lands server-side the
+  instant checks pass — no operator action — but the drawer painted a prominent, action-styled
+  **"Recheck release"** button beside "release pending checks" with the copy *"it lands when its
+  checks pass"*, reading as *a click is required to finish shipping*. (One operator closed the
+  drawer believing they'd skipped a step; the PR had already auto-merged.) The button is renamed
+  **"Refresh status"** and retitled as an optional read-only re-poll. Both the pending banner and
+  the button's tooltip now thread the pipeline's own `pr.armed` knowledge (the read-only probe
+  can't see arming) so an armed pending reads *"auto-merge is armed … Nothing more to do; you can
+  close this"* while an unknown/unarmed pending keeps the honest hedge — that path can genuinely
+  need a manual merge, and promising "it lands on its own" there would be #700 inverted.
+  (`public/wrap-drawer.js`, `public/session.js`)
 
 ### Security
 - `POST /api/ports/release` and `/api/ports/heartbeat` now verify lease ownership when the caller

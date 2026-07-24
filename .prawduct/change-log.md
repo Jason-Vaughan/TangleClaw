@@ -26,6 +26,30 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-22: Wrap drawer — don't imply a manual step ships an armed auto-merge (#700)
+
+<!-- prawduct: type=bugfix | scope=wrap-700 | status=shipped -->
+
+**Why:** When a wrap commit opens a PR with GitHub **auto-merge armed**, the release lands
+server-side the instant checks pass — no operator action. But the drawer painted a prominent,
+action-styled **"Recheck release"** button beside "release pending checks" with copy *"it lands
+when its checks pass,"* reading as though a click was required to finish shipping. Surfaced live:
+an operator closed the drawer believing they'd skipped a step; the wrap PR (#699) had already
+auto-merged one minute after the commit. The "Recheck release" button is in fact a **read-only**
+status poll (`resolveWrapPrStatus` → `GET /wrap/pr-status`) that never ships anything.
+
+**What:** Rename the button **"Refresh status"** and retitle it as an optional read-only re-poll
+(`public/session.js`). Thread the pipeline's own `pr.armed` into **both** the pending banner
+(`prOutcomeBanner`/`composeReleaseBanner`, `public/wrap-drawer.js`) and the button tooltip: an
+armed pending now reads *"auto-merge is armed … Nothing more to do; you can close this,"* while an
+unknown/unarmed pending keeps the honest hedge — that path can genuinely need a manual merge, and
+promising "it lands on its own" there would be #700 inverted (the arming gate on the tooltip was a
+Critic-caught asymmetry, resolved before merge). The read-only probe can't see arming; only the
+pipeline knows it. Tests: +3 require()-able unit tests (armed/unarmed banner + the arming thread
+through `composeReleaseBanner`); `session.js` label/tooltip is source-level per the zero-dep/no-jsdom
+convention. Sibling of the wrap-drawer honesty family #636/#638/#686/#693/#695/#696. Full suite
+green (4728 pass / 1 skipped).
+
 ## 2026-07-22: Wrap drawer — "Skip & continue" relabel on the blocked-step skip box (#696)
 
 <!-- prawduct: type=bugfix | scope=wrap-696 | status=shipped -->
