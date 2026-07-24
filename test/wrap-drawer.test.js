@@ -102,6 +102,30 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.deepEqual(row.blockers, ['Test suite failed (exit 1)']);
   });
 
+  it('agentResolvable: true only for a BLOCKED ai-content step (#702)', () => {
+    const row = H.buildStepRow({
+      stepId: 'changelog-update', kind: 'ai-content', status: 'blocked',
+      output: { remediation: 'Write the entry.' }, blockers: ['no entry']
+    }, { blockedAt: 'changelog-update' });
+    assert.equal(row.agentResolvable, true);
+  });
+
+  it('agentResolvable: false for a blocked NON-ai-content step — a session can\'t fix a failed test by writing (#702)', () => {
+    const row = H.buildStepRow({
+      stepId: 'test', kind: 'test', status: 'blocked',
+      output: { exitCode: 1 }, blockers: ['Test suite failed']
+    }, { blockedAt: 'test' });
+    assert.equal(row.agentResolvable, false);
+  });
+
+  it('agentResolvable: false for an ai-content step that is NOT the active blocker (#702)', () => {
+    const row = H.buildStepRow({
+      stepId: 'memory-update', kind: 'ai-content', status: 'done',
+      output: {}, blockers: []
+    }, { blockedAt: 'changelog-update' });
+    assert.equal(row.agentResolvable, false);
+  });
+
   it('flags warning rows from output.warning regardless of kind', () => {
     // `output.warning` is a kind-agnostic channel — any handler may set it.
     const row = H.buildStepRow({
@@ -1089,6 +1113,52 @@ describe('wrap-drawer helpers — #638 wrap-PR reporting', () => {
       assert.equal(b.tone, 'provisional');
       assert.match(b.detail, /gh not found/);
     });
+  });
+});
+
+// #702 — the prompt handed to the owning session must be a single tmux-safe
+// line, carry the fix, and never coach gate-gaming.
+describe('wrap-drawer helpers — composeHandbackPrompt (#702)', () => {
+  const H = loadHelpers();
+
+  it('flattens all newlines/whitespace to a single line (tmux send-keys splits on newline)', () => {
+    const p = H.composeHandbackPrompt({
+      id: 'changelog-update', kindLabel: 'AI content — changelog-update',
+      remediation: 'Line one.\nLine two.\n\n  Indented three.'
+    });
+    assert.ok(!/\n/.test(p), 'no newlines survive');
+    assert.ok(!/\s{2,}/.test(p), 'no runs of whitespace survive');
+  });
+
+  it('includes the step label and the remediation text', () => {
+    const p = H.composeHandbackPrompt({
+      id: 'changelog-update', kindLabel: 'AI content — changelog-update',
+      remediation: 'Write the entry into CHANGELOG.md.'
+    });
+    assert.match(p, /changelog-update/);
+    assert.match(p, /Write the entry into CHANGELOG\.md/);
+  });
+
+  it('instructs a genuine fix, not a placeholder to pass the gate', () => {
+    const p = H.composeHandbackPrompt({ id: 'x', kindLabel: 'x', remediation: 'do it' });
+    assert.match(p, /genuine|not a placeholder|never a placeholder/i);
+  });
+
+  it('tells the session not to trigger the wrap itself (v1 = operator retries)', () => {
+    const p = H.composeHandbackPrompt({ id: 'x', kindLabel: 'x', remediation: 'do it' });
+    assert.match(p, /do NOT trigger the wrap|Retry/i);
+  });
+
+  it('caps length below the injectCommand 4096 limit', () => {
+    const p = H.composeHandbackPrompt({ id: 'x', kindLabel: 'x', remediation: 'z'.repeat(9000) });
+    assert.ok(p.length <= 3800, `length ${p.length} within cap`);
+    assert.match(p, /\.\.\.$/);
+  });
+
+  it('tolerates a missing/blank remediation without throwing', () => {
+    const p = H.composeHandbackPrompt({ id: 'memory-update', kindLabel: 'AI content — memory-update', remediation: null });
+    assert.ok(!/\n/.test(p));
+    assert.match(p, /memory-update/);
   });
 });
 
