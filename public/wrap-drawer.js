@@ -105,6 +105,7 @@
    *   detail: string|null,
    *   remediation: string|null,
    *   isBlocker: boolean,
+   *   agentResolvable: boolean,
    *   warning: boolean
    * }}
    */
@@ -138,8 +139,49 @@
       detail: deriveDetail(stepResult),
       remediation,
       isBlocker: blockedAt !== null && stepResult.stepId === blockedAt,
+      // #702 — is THIS block one the owning session can resolve by writing
+      // content (a changelog/learnings/memory entry)? Only the `ai-content`
+      // kind authors content; a block on a structural step (a failed test, a
+      // merge conflict, a PortHub clash) is NOT something a retry-prompt to the
+      // session can fix, so the "Ask the session to fix this" affordance stays
+      // scoped to ai-content blocks. Requires `isBlocker` so it never shows on a
+      // historical/non-active row.
+      agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt && stepResult.kind === 'ai-content',
       warning
     };
+  }
+
+  /**
+   * #702 — compose the single-line prompt the "Ask the session to fix this"
+   * button injects into the owning Claude session. Built from the blocked
+   * step's own remediation so the session gets the exact fix instructions the
+   * drawer shows the operator, plus a genuine-fix guard so the session writes a
+   * real entry rather than a placeholder to make the gate pass (Tests Are
+   * Contracts — the injected fix must not weaken the gate it satisfies).
+   *
+   * The result is deliberately ONE line: `injectCommand` sends it via tmux
+   * send-keys, where an embedded newline is an Enter that would submit the
+   * prompt half-typed — so every newline in the remediation is flattened to a
+   * space. Capped to stay well under injectCommand's 4096-char limit.
+   *
+   * @param {{id: string, kindLabel: string, remediation: string|null}} stepRow
+   *   A row view-model from `buildStepRow` (expected `agentResolvable`).
+   * @returns {string} A single-line prompt (no newlines), length-capped.
+   */
+  function composeHandbackPrompt(stepRow) {
+    const flatten = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    const step = flatten(stepRow && (stepRow.kindLabel || stepRow.id) ? (stepRow.kindLabel || stepRow.id) : 'a wrap step');
+    const stepId = flatten(stepRow && stepRow.id ? stepRow.id : '');
+    const fix = flatten(stepRow && stepRow.remediation ? stepRow.remediation : '');
+    const parts = [
+      `Your session wrap is blocked at the ${step}${stepId && stepId !== step ? ` (${stepId})` : ''} step.`,
+      fix ? `How to fix it: ${fix}` : '',
+      'Please resolve it properly — write a genuine entry, never a placeholder just to pass the gate; if the work truly warrants no entry, that is a decision to note, not to fake.',
+      'Then stop — do NOT trigger the wrap yourself; the operator will hit Retry.'
+    ].filter(Boolean);
+    const prompt = parts.join(' ');
+    // Hard cap below injectCommand's 4096 limit, leaving headroom.
+    return prompt.length > 3800 ? `${prompt.slice(0, 3797)}...` : prompt;
   }
 
   /**
@@ -736,6 +778,7 @@
     KIND_DESCRIPTIONS,
     STATUS_META,
     buildStepRow,
+    composeHandbackPrompt,
     deriveDetail,
     summarizePipelineStatus,
     wrapPrInfo,

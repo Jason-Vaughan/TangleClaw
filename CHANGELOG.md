@@ -4,6 +4,20 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Wrap drawer: **"Ask the session to fix this"** button on content-authoring blocks (#702). When a
+  wrap blocks on an `ai-content` step (changelog-update / learnings-capture / memory-update), the
+  blocked step's "How to fix this" panel now offers a button that injects the remediation into the
+  owning session via the existing command-injection endpoint — so the operator no longer has to
+  leave the drawer and hand-type the fix (painful on mobile). Scoped to `agentResolvable`
+  (`isBlocker && kind === 'ai-content'`) so it never appears on a structural block a retry-prompt
+  can't fix (a failed test, a merge conflict). The injected prompt is a single tmux-safe line
+  (newlines flattened, length-capped under the 4096 limit) and instructs a **genuine** entry, never
+  a placeholder to pass the gate. Liveness is enforced server-side by `injectCommand`; a
+  dead/absent session surfaces as a warn toast. v1 injects the fix only — the operator still taps
+  Retry (auto-retry deferred to v2 with a loop guard). (`public/wrap-drawer.js`, `public/session.js`,
+  `public/session.css`)
+
 ## [4.31.5] - 2026-07-22
 
 ### Fixed

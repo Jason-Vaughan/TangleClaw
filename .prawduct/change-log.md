@@ -26,6 +26,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-24: Wrap drawer — "Ask the session to fix this" button on content-authoring blocks (#702)
+
+<!-- prawduct: type=feature | scope=wrap-702 | status=shipped -->
+
+**Why:** When a wrap blocks on a content-authoring step (`ai-content`: changelog-update /
+learnings-capture / memory-update), the operator had to leave the drawer, switch to the session
+pane, and hand-type the fix. Painful on mobile (the operator is almost never local). Lived
+2026-07-24: a TiLT wrap blocked at changelog-update and the fix had to be relayed to the session
+by hand — exactly what this button automates.
+
+**What:** Frontend-only, reusing the existing `POST /api/sessions/:project/command` injection path
+(`injectCommand` already enforces liveness: active session + live tmux). `buildStepRow` gains an
+`agentResolvable` flag (`isBlocker && kind === 'ai-content'`) so the affordance is scoped to blocks
+a session can resolve by writing content — never a structural block (failed test, merge conflict) a
+retry-prompt can't fix. New `composeHandbackPrompt(row)` builds the injected prompt from the
+blocked step's own remediation, flattened to a **single line** (tmux send-keys splits on newline)
+and length-capped under 4096, with a genuine-fix guard (write a real entry, never a placeholder to
+pass the gate — Tests Are Contracts applied to the wrap gate). `session.js` renders an "Ask the
+session to fix this" button inside the "How to fix this" panel; on click it POSTs the prompt, shows
+"Sent — resolve it in the session, then Retry", and surfaces a dead/absent session as a warn toast.
+v1 injects only — the operator still taps Retry (auto-retry deferred to v2 with a block→fix→block
+loop guard). Tests: +9 require()-able (agentResolvable matrix + composeHandbackPrompt line-flatten /
+cap / genuine-fix / no-self-trigger / blank-remediation). Full suite green (4737 pass / 1 skipped).
+Closes #702; the manual TiLT relay this session was the motivating case study.
+
 ## 2026-07-22: Wrap drawer — don't imply a manual step ships an armed auto-merge (#700)
 
 <!-- prawduct: type=bugfix | scope=wrap-700 | status=shipped -->
