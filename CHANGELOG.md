@@ -18,6 +18,17 @@ All notable changes to TangleClaw are documented in this file.
   Retry (auto-retry deferred to v2 with a loop guard). (`public/wrap-drawer.js`, `public/session.js`,
   `public/session.css`)
 
+### Fixed
+- Mobile: opening a session no longer fails with a `network-unreachable` service-worker error when
+  the phone holds a stale service worker. Bumped `CACHE_NAME` (`tangleclaw-v3-56` → `-57`) so an
+  existing worker installs the current one on next load (`skipWaiting` + `clients.claim` already
+  make it take over live). Diagnosed 2026-07-26: the project list loaded (served from the SW cache)
+  while `/session/<project>` failed because the stale worker's `fetch()` rejected — the same symptom
+  as #380 but with a **healthy** ttyd PTY pool (36 ttys vs #380's 230), so the cause was the stale
+  worker, not PTY exhaustion. A Safari Private tab (no worker) loaded sessions fine, confirming it.
+  The recurring-stale-worker class still wants a durable auto-bump/update-nag (follow-up); this is
+  the one-time unblock. (`public/sw.js`) (refs #380)
+
 ## [4.31.5] - 2026-07-22
 
 ### Fixed
