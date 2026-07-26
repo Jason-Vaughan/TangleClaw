@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.32.0] - 2026-07-26
+
 ### Added
 - Wrap drawer: **"Ask the session to fix this"** button on content-authoring blocks (#702). When a
   wrap blocks on an `ai-content` step (changelog-update / learnings-capture / memory-update), the
