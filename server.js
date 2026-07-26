@@ -1065,7 +1065,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
 
       // Register in SQLite
       try {
-        const engineId = config.defaultEngine || 'claude';
+        // Resolve against installed engines — the wizard's own engine step shows
+        // what's available, so attaching against an uninstalled default would
+        // contradict the screen the operator just used.
+        const engineId = engines.resolveDefaultEngine(config);
+        if (!engineId) {
+          warnings.push(`Skipped "${proj.name}": no AI engine is installed — install one, then attach it from the dashboard`);
+          continue;
+        }
 
         store.projects.create({
           name: proj.name,
@@ -1790,7 +1797,11 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
       continue;
     }
 
-    const engineId = config.defaultEngine || 'claude';
+    const engineId = engines.resolveDefaultEngine(config);
+    if (!engineId) {
+      warnings.push(`Skipped "${name}": no AI engine is installed — install one, then import again`);
+      continue;
+    }
 
     try {
       store.projects.create({

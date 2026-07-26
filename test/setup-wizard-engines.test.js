@@ -1,0 +1,205 @@
+'use strict';
+
+/*
+ * Frontend tests for the wizard's engine step (#707).
+ *
+ * The defect these pin: the availability list rendered "✓ Codex / ✗ Claude —
+ * Not found" while the Default Engine dropdown immediately below it offered
+ * every engine and pre-selected Claude, because `renderEngines` built its
+ * options from the full list and `showWizard` seeded `defaultEngine` to the
+ * shipped 'claude' unconditionally. A Codex-only operator finished setup with a
+ * default naming a binary they did not have, and only found out later when the
+ * Project Master refused to launch.
+ *
+ * Same vm-plus-DOM-stub approach as setup-wizard-https.test.js — setup.js is a
+ * plain <script> file, not a module.
+ */
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const SETUP_JS_PATH = path.join(__dirname, '..', 'public', 'setup.js');
+const RAW_SRC = fs.readFileSync(SETUP_JS_PATH, 'utf8');
+const SETUP_JS_SRC = RAW_SRC.replace(/^const wizard = /m, 'var wizard = ')
+  + '\n;globalThis.wizard = wizard;\n';
+
+const CLAUDE = { id: 'claude', name: 'Claude Code' };
+const CODEX = { id: 'codex', name: 'Codex CLI' };
+const GEMINI = { id: 'gemini', name: 'Gemini CLI' };
+
+/** Minimal element stub covering what the engine step touches. */
+function makeElement(id) {
+  const classSet = new Set();
+  return {
+    id,
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    checked: false,
+    disabled: false,
+    style: {},
+    className: '',
+    classList: {
+      add: (c) => classSet.add(c),
+      remove: (c) => classSet.delete(c),
+      contains: (c) => classSet.has(c)
+    },
+    focus() {},
+    addEventListener() {},
+    dispatchEvent() {}
+  };
+}
+
+/**
+ * Load setup.js with a given engine roster and config.
+ * @param {object[]} engines - `[{id, name, available}]`
+ * @param {object} [config] - Partial global config (e.g. `{defaultEngine: 'claude'}`)
+ * @returns {object} sandbox
+ */
+function loadSetup(engines, config) {
+  const elements = new Map();
+  const sandbox = {
+    console, setTimeout: (fn) => { fn(); return 0; }, clearTimeout() {},
+    Promise, Date, Math, JSON, Object, Array, Set, Map, String, Number, Boolean, Error,
+    esc: (str) => (typeof str !== 'string' ? '' : str
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;')),
+    apiMutate: async () => null,
+    api: Object.assign(async () => null, { lastError: null }),
+    loadConfig: async () => {}, loadProjects: async () => {}, loadStats: async () => {},
+    loadPorts: async () => {}, maybeShowFilter: () => {}, startPolling: () => {},
+    state: {
+      engines: engines || [],
+      config: Object.assign({ setupComplete: false }, config || {})
+    },
+    fetch: async () => ({ ok: true })
+  };
+  sandbox.document = {
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, makeElement(id));
+      return elements.get(id);
+    },
+    querySelectorAll() { return []; },
+    body: { classList: { add() {}, remove() {} } }
+  };
+  sandbox.window = sandbox;
+  sandbox.location = { href: null };
+
+  vm.createContext(sandbox);
+  vm.runInContext(SETUP_JS_SRC, sandbox);
+  sandbox.__elements = elements;
+  return sandbox;
+}
+
+/** Render the engine step and return its HTML. */
+function renderEngineStep(ctx) {
+  const body = ctx.document.getElementById('setupBody');
+  ctx.renderEngines(body);
+  return body.innerHTML;
+}
+
+describe('Setup wizard — engine step (#707)', () => {
+  describe('the Codex-only machine: config default is an uninstalled engine', () => {
+    const roster = [
+      { ...CLAUDE, available: false },
+      { ...CODEX, available: true }
+    ];
+
+    it('does not seed the default from an uninstalled config value', () => {
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      assert.equal(ctx.wizard.defaultEngine, 'codex',
+        'the shipped claude default must not survive on a machine without claude');
+    });
+
+    it('pre-selects the installed engine in the dropdown, not the missing one', () => {
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /<option value="codex"[^>]*\sselected/,
+        'the installed engine must be the selected option');
+      assert.doesNotMatch(html, /<option value="claude"[^>]*\sselected/,
+        'an uninstalled engine must never be pre-selected');
+    });
+
+    it('keeps uninstalled engines listed but labelled and unselectable', () => {
+      // Listed so an operator who installs one later can find it; disabled so
+      // the value cannot be chosen in the meantime.
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /<option value="claude"[^>]*disabled[^>]*>Claude Code \(not installed\)</,
+        'uninstalled engines stay listed, labelled, and disabled');
+      assert.doesNotMatch(html, /<option value="codex"[^>]*disabled/,
+        'an installed engine must remain selectable');
+    });
+
+    it('corrects an unavailable selection on re-render, not just on first seed', () => {
+      // Guards the path where wizard state is mutated between renders (Back,
+      // then forward again) — the correction has to be per-render, not one-shot.
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      ctx.wizard.defaultEngine = 'claude';
+      renderEngineStep(ctx);
+      assert.equal(ctx.wizard.defaultEngine, 'codex');
+    });
+  });
+
+  describe('an installed config default is respected', () => {
+    it('keeps the operator\'s choice when that engine is present', () => {
+      const ctx = loadSetup(
+        [{ ...CLAUDE, available: true }, { ...CODEX, available: true }],
+        { defaultEngine: 'codex' }
+      );
+      ctx.showWizard();
+      assert.equal(ctx.wizard.defaultEngine, 'codex',
+        'availability resolution must not override a valid explicit choice');
+    });
+
+    it('falls to the first installed engine when config names nothing', () => {
+      const ctx = loadSetup([{ ...CLAUDE, available: false }, { ...GEMINI, available: true }], {});
+      ctx.showWizard();
+      assert.equal(ctx.wizard.defaultEngine, 'gemini');
+    });
+  });
+
+  describe('no engine installed at all', () => {
+    const roster = [{ ...CLAUDE, available: false }, { ...CODEX, available: false }];
+
+    it('resolves the default to null rather than inventing one', () => {
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      assert.equal(ctx.wizard.defaultEngine, null);
+    });
+
+    it('replaces the picker with a warning instead of offering only refused options', () => {
+      const ctx = loadSetup(roster, { defaultEngine: 'claude' });
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /No AI engine detected on this machine/);
+      assert.doesNotMatch(html, /<select[^>]*id="setupDefaultEngine"/,
+        'a dropdown whose every option is disabled is worse than saying so');
+    });
+
+    it('still lists what was looked for, so the operator knows their options', () => {
+      const ctx = loadSetup(roster, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /Claude Code/);
+      assert.match(html, /Codex CLI/);
+      assert.match(html, /Not found/);
+    });
+
+    it('reports "None installed" in the confirm summary, never a literal null', () => {
+      const ctx = loadSetup(roster, {});
+      ctx.showWizard();
+      const body = ctx.document.getElementById('setupBody');
+      ctx.renderConfirm(body);
+      assert.match(body.innerHTML, /None installed/);
+      assert.doesNotMatch(body.innerHTML, /null/);
+    });
+  });
+});

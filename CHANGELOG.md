@@ -5,6 +5,27 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **TangleClaw no longer defaults to an AI engine that isn't installed (#707).** The shipped config
+  default is `claude`, and every fallback hardcoded the same literal — so on a machine without Claude
+  Code the setup wizard's own availability list said "✗ Claude Code — Not found" while the Default
+  Engine dropdown directly below it offered every engine and pre-selected Claude. The consequences
+  surfaced far from that screen: the Project Master refused to launch (`Engine "claude" not available
+  (binary not found)`), new and attached projects were registered against the missing engine, and
+  boot regenerated a `CLAUDE.md` for it. New `engines.resolveDefaultEngine(config)` is the single
+  answer behind every default-engine fallback — the configured engine when installed, otherwise the
+  first installed one, and `null` when the machine has none, which callers now report as itself
+  (`No AI engine is installed — install one …`) rather than substituting a guess whose failure
+  surfaces later. An id matching no known profile is deliberately passed through unchanged so a typo
+  in `config.json` is still reported by name instead of being silently replaced. Wired at every
+  fallback: the Project Master (`lib/master.js`), project create and attach and the boot config sync
+  (`lib/projects.js`), and wizard attach plus bulk import (`server.js`). Found on a first-time
+  install where Codex was the only engine present.
+- **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
+  engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
+  labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list
+  above it. The default seeds from config only when that engine is installed, is re-checked on every
+  render rather than once, and when nothing is installed the picker is replaced by a plain statement
+  of that with the confirm summary reading "None installed" instead of a literal `null`.
 - **What TangleClaw reports as its port now matches what it binds (#654).** The installed launchd
   plist sets `TANGLECLAW_PORT=3102` and never touches `config.serverPort`, which stays at the shipped
   `3101` default. The listen call in `server.js` main already honored the env var — the bug was that

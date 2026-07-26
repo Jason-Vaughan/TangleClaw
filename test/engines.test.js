@@ -173,6 +173,69 @@ describe('engines', () => {
     });
   });
 
+  describe('resolveDefaultEngine (#707)', () => {
+    // The engine list is injected so these don't depend on which CLIs happen to
+    // be installed on the machine running the suite — the resolution rule is
+    // what's under test, not this machine's roster.
+    const CODEX_ONLY = [
+      { id: 'claude', name: 'Claude Code', available: false },
+      { id: 'codex', name: 'Codex CLI', available: true },
+      { id: 'gemini', name: 'Gemini CLI', available: false }
+    ];
+
+    it('honors config.defaultEngine when that engine is installed', () => {
+      assert.equal(engines.resolveDefaultEngine({ defaultEngine: 'codex' }, CODEX_ONLY), 'codex');
+    });
+
+    it('ignores config.defaultEngine when that engine is NOT installed', () => {
+      // The exact first-install case: shipped default is 'claude', the machine
+      // has only Codex. Honoring config here is what made the Project Master
+      // refuse to launch with "binary not found".
+      assert.equal(engines.resolveDefaultEngine({ defaultEngine: 'claude' }, CODEX_ONLY), 'codex');
+    });
+
+    it('falls to the first installed engine when config names nothing', () => {
+      assert.equal(engines.resolveDefaultEngine({}, CODEX_ONLY), 'codex');
+      assert.equal(engines.resolveDefaultEngine(null, CODEX_ONLY), 'codex');
+    });
+
+    it('returns null when nothing is installed — never a guess', () => {
+      // A guess moves the failure away from its cause; callers surface the null.
+      const none = CODEX_ONLY.map((e) => ({ ...e, available: false }));
+      assert.equal(engines.resolveDefaultEngine({ defaultEngine: 'claude' }, none), null);
+      assert.equal(engines.resolveDefaultEngine({}, none), null);
+      assert.equal(engines.resolveDefaultEngine({}, []), null);
+    });
+
+    it('passes an unrecognized engine id straight through, so callers can name it', () => {
+      // An id matching no profile is a misconfiguration (a typo in config.json),
+      // not an availability problem. Substituting an installed engine here would
+      // silently paper over it; the caller reports `"<id>" not found` instead.
+      assert.equal(
+        engines.resolveDefaultEngine({ defaultEngine: 'ghost-engine' }, CODEX_ONLY),
+        'ghost-engine'
+      );
+    });
+
+    it('tolerates a degenerate list without throwing', () => {
+      assert.equal(engines.resolveDefaultEngine({}, [null, undefined]), null);
+    });
+
+    it('resolves against live detection when no list is passed', () => {
+      // Contract check for the call shape the production sites use. With no
+      // configured engine there is no pass-through case, so the result must be
+      // an id live detection reports as available — or null on a bare machine.
+      const live = engines.listWithAvailability();
+      const resolved = engines.resolveDefaultEngine({});
+      if (live.some((e) => e.available)) {
+        assert.ok(live.find((e) => e.id === resolved && e.available),
+          'must resolve to an engine detection reports as available');
+      } else {
+        assert.equal(resolved, null);
+      }
+    });
+  });
+
   describe('listWithAvailability', () => {
     it('should return profiles with availability info', () => {
       const list = engines.listWithAvailability();

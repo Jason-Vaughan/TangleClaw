@@ -159,6 +159,27 @@ describe('ensureMasterSession', () => {
     assert.equal(t.calls.length, 0);
   });
 
+  it('names the real problem when NO engine is installed, not a phantom engine id (#707)', () => {
+    // The bare-machine case. Before the resolver, config's shipped 'claude'
+    // default meant the master reported `Engine "claude" not available (binary
+    // not found)` — pointing the operator at a config value when the machine
+    // simply had no engine. The resolver returns null here; reporting
+    // `Engine "null" not found` would be no better, so the guard says it plainly.
+    const eng = require('../lib/engines');
+    const savedResolve = eng.resolveDefaultEngine;
+    try {
+      eng.resolveDefaultEngine = () => null;
+      const t = fakeTmux({ alive: false });
+      const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+      assert.equal(r.created, false);
+      assert.match(r.error, /No AI engine is installed/);
+      assert.doesNotMatch(r.error, /null/, 'must not leak the null through to the operator');
+      assert.equal(t.calls.length, 0, 'must not create a tmux session with no engine to run');
+    } finally {
+      eng.resolveDefaultEngine = savedResolve;
+    }
+  });
+
   it('refuses with an error when the configured default engine has no profile', () => {
     const config = store.config.load();
     const saved = config.defaultEngine;
