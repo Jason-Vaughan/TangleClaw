@@ -4,7 +4,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-### Documentation
+### Internal
 - Documented the apparent dashboard refresh loop caused by opening
   `http://localhost:3102` after direct HTTPS has been enabled. The quick start
   now states that port 3102 serves one protocol at a time, and the troubleshooting
