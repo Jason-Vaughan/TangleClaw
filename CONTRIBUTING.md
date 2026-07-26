@@ -73,13 +73,40 @@ The sidecar currently shows read-only process status from [ClawBridge](https://g
 
 The current touch scroll shim for xterm.js works but has edge cases on iOS and Android. Better touch scroll handling or an alternative approach would improve the mobile experience significantly.
 
+## Issues Are Preferred Over Pull Requests
+
+**If you found a problem, please open an issue rather than a fix.** This is the opposite of the usual open-source advice, so here is the reasoning:
+
+- **A fix from an environment we can't reproduce is hard to trust.** TangleClaw drives launchd services, tmux, and real sockets, so much of the suite needs a machine configured the way a real install is. A patch written where the suite can't fully run — a container, a sandboxed agent, a machine mid-install — can't be validated against the contract the tests define, and we'd have to re-derive it anyway.
+- **Local fixes make your install diverge from what we ship.** The moment your checkout carries changes, it stops being a clean install, which is exactly what made your report valuable. A modified tree also blocks the in-product self-update, which refuses to run rather than clobber local work — so patching around a bug can strand you on the version that has it.
+- **The diagnosis is the scarce part, not the patch.** Once a problem is described precisely, fixing it here is usually quick. Working out *what* is wrong on a machine we've never seen is the expensive step, and only you can do it.
+
+**First-run and install problems are the most valuable reports of all** — we cannot reproduce first-boot state on a machine that is already installed.
+
+Pull requests are still welcome, especially for documentation, typos, and small self-contained changes. Two things to know if you send one:
+
+- **Open an issue first for anything non-trivial**, so we can agree on the approach before you invest the time.
+- **Prefer describing a workaround in the issue over documenting it in the repo.** A documented workaround has to be removed again once the underlying bug is fixed, and it can outlive the bug.
+
 ## Making Changes
 
 1. Create a branch from `main`
 2. Make your changes
 3. Run the full test suite: `node --test 'test/*.test.js'`
-4. Update `CHANGELOG.md` with a description of your changes
+4. Update `CHANGELOG.md` with a description of your changes — see the subsection convention below
 5. Submit a pull request
+
+### CHANGELOG Subsections
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) with one addition, and the subsection you choose is load-bearing: the release tooling derives the version bump from it.
+
+| Subsection | Use for | Bump |
+|---|---|---|
+| `### Added` / `### Changed` / `### Removed` / `### Deprecated` | user-visible behavior | minor |
+| `### Fixed` / `### Security` | bug and security fixes | patch |
+| `### Internal` | refactors, test-only changes, tooling, CI, **documentation** | patch |
+
+Pick by **user-visible impact**, not by how many files changed: a one-line behavior change is `### Changed`, a large refactor nobody notices is `### Internal`. Documentation-only edits go under `### Internal` — still logged for history, but patch-tier so doc churn doesn't inflate the minor version. Any other heading (`### Documentation`, `### Docs`) matches no bump rule and leaves the release tooling unable to derive a level.
 
 ### Commit Messages
 
@@ -102,6 +129,26 @@ Open an issue on GitHub with:
 - Steps to reproduce
 - TangleClaw version (`curl localhost:3102/api/version`)
 - Node.js version (`node --version`)
+
+### For Install, First-Run, and "It Won't Load" Problems
+
+These are the reports we most want and least able to reproduce, so raw output beats description. Paste whatever of this you can:
+
+```bash
+launchctl list | grep tangleclaw          # services: middle column is exit status, '-' PID means not running
+cat ~/.tangleclaw/logs/server.err.log     # startup crashes land here
+tail -50 ~/.tangleclaw/logs/tangleclaw.log
+cat ~/.tangleclaw/config.json             # redact any tokens before pasting
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3102/api/health
+pwd                                       # where you cloned — matters on macOS, see below
+```
+
+Also worth mentioning:
+
+- **Where the repo is cloned.** On macOS, a clone under `~/Documents` or `~/Desktop` sits behind a privacy boundary the launchd-spawned server may not be able to read, which can make the server fail on startup with nothing obvious on screen.
+- **Whether the dashboard shows a banner**, and which one — "newer code on disk" (your checkout moved ahead of the running server) is a different problem from an update-available notification.
+- **Which URL you opened**, including `http://` vs `https://`. Port 3102 serves one protocol at a time.
+- **A screenshot** of anything visually wrong. It's often faster than describing it.
 
 ## License
 
