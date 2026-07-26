@@ -5,6 +5,16 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
+- `CONTRIBUTING.md` now states that **issues are preferred over pull requests**, with the reasoning:
+  a fix authored where the suite can't fully run isn't verifiable against the contract the tests
+  define; a modified checkout stops being the clean install that made the report valuable, and also
+  blocks the in-product self-update (which refuses rather than clobber local work); and the
+  diagnosis, not the patch, is the scarce part. Adds an install/first-run reporting section with the
+  exact commands whose output we actually need (`launchctl list`, `server.err.log`, config, health
+  probe, clone location) plus the macOS `~/Documents` privacy-boundary hazard and the
+  stale-code-vs-update banner distinction. Also documents the `CHANGELOG.md` subsection→bump table,
+  including that doc-only edits belong under `### Internal` and that an invented heading leaves the
+  release tooling unable to derive a bump level.
 - Documented the apparent dashboard refresh loop caused by opening
   `http://localhost:3102` after direct HTTPS has been enabled. The quick start
   now states that port 3102 serves one protocol at a time, and the troubleshooting
