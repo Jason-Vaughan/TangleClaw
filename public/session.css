@@ -2026,6 +2026,22 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* "Ask the session to fix this" — hand a content-authoring block back to the
+   owning session instead of hand-typing the fix (#702). */
+.wrap-step-handback {
+  display: inline-block;
+  margin: 8px 0 2px;
+  font-size: 0.8rem;
+  /* 44px minimum touch target — the drawer is used from a phone. */
+  min-height: 44px;
+  padding: 2px 12px;
+  cursor: pointer;
+  background: var(--elevated-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--primary, #3b82f6);
+  border-radius: 4px;
+}
+.wrap-step-handback:disabled { opacity: 0.6; cursor: default; }
 /* Status badges carry a `title` tooltip (#222) — hint it's hoverable. */
 .wrap-step-status[title] { cursor: help; }
 .wrap-step-status {

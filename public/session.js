@@ -3468,6 +3468,12 @@ function renderStepRow(row) {
     body.className = 'wrap-step-remediation-body';
     body.textContent = row.remediation;
     fix.appendChild(body);
+    // #702 — for a content-authoring block (changelog/learnings/memory), offer
+    // to hand the fix to the owning session instead of making the operator
+    // leave the drawer and hand-type it (painful on mobile). Scoped to
+    // `agentResolvable` so it never appears on a structural block a retry-prompt
+    // can't fix. v1: it injects the fix; the operator still hits Retry.
+    if (row.agentResolvable) fix.appendChild(buildHandbackButton(row));
     main.appendChild(fix);
   }
 
@@ -3481,6 +3487,58 @@ function renderStepRow(row) {
   li.appendChild(main);
   li.appendChild(status);
   return li;
+}
+
+/**
+ * #702 — build the "Ask the session to fix this" button for a content-authoring
+ * block (`row.agentResolvable`). Injects the blocked step's remediation into the
+ * owning session via command injection so the operator doesn't have to leave the
+ * drawer and hand-type it — the pain point that recurs on mobile. v1 only
+ * *injects* the fix; the operator still taps Retry (no auto-retry — that's a v2
+ * concern needing a block→fix→block loop guard). Liveness is enforced server-side
+ * by `injectCommand` (active session + live tmux); a dead/absent session surfaces
+ * as a warn toast rather than a silent no-op.
+ *
+ * @param {{id: string, kindLabel: string, remediation: string|null, agentResolvable: boolean}} row
+ * @returns {HTMLButtonElement}
+ */
+function buildHandbackButton(row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'wrap-step-handback';
+  btn.textContent = 'Ask the session to fix this';
+  btn.title = 'Send the fix to the session that ran the wrap. It writes the entry; you then hit Retry.';
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    const prompt = window.tcWrapDrawerHelpers.composeHandbackPrompt(row);
+    const result = await apiMutate(
+      `/api/sessions/${encodeURIComponent(projectName)}/command`,
+      'POST',
+      { command: prompt }
+    );
+    const toast = document.getElementById('toast');
+    if (result && result.ok) {
+      // Stay disabled: the fix is in flight in the session. The operator's next
+      // action is Retry, not a second injection.
+      btn.textContent = 'Sent — resolve it in the session, then Retry';
+      if (toast) {
+        toast.textContent = 'Fix sent to the session — resolve it there, then Retry';
+        toast.className = 'toast toast-ok visible';
+        setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+      }
+    } else {
+      // Re-enable so the operator can retry the injection once the session is live.
+      btn.disabled = false;
+      btn.textContent = 'Ask the session to fix this';
+      if (toast) {
+        toast.textContent = 'Could not reach the session — is it still active?';
+        toast.className = 'toast toast-warn visible';
+        setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+      }
+    }
+  });
+  return btn;
 }
 
 /**
