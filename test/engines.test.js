@@ -10,6 +10,12 @@ const engines = require('../lib/engines');
 const portScanner = require('../lib/port-scanner');
 const porthub = require('../lib/porthub');
 
+// See the note in test/master.test.js: the injected base URL derives its port
+// from TANGLECLAW_PORT before config (#654), and a TangleClaw-launched dev
+// session inherits that variable, so the ambient value has to go or config-driven
+// assertions depend on how the runner was started.
+delete process.env.TANGLECLAW_PORT;
+
 describe('engines', () => {
   let tempDir;
   let tempRulesPath;
@@ -539,6 +545,34 @@ describe('engines', () => {
         !content.includes('**TangleClaw API base URL**: `https://'),
         'must not inject an https base URL nothing serves'
       );
+    });
+
+    it('injects the port the server actually binds, not config.serverPort (#654)', () => {
+      // The standard install: plist binds TANGLECLAW_PORT=3102 while config keeps
+      // the shipped 3101 default. Injecting the config port told every agent on
+      // the machine that PortHub lived on a port nothing was listening on, so
+      // every lease/heartbeat call failed with no error surfaced anywhere.
+      patchConfig({
+        ingressMode: 'direct', httpsEnabled: false,
+        httpsCertPath: null, httpsKeyPath: null, serverPort: 3101
+      });
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+      const prev = process.env.TANGLECLAW_PORT;
+      try {
+        process.env.TANGLECLAW_PORT = '3102';
+        const content = engines._generateClaudeMd(proj);
+        assert.ok(
+          content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
+          'injected base URL must name the bound port'
+        );
+        assert.ok(
+          !content.includes('localhost:3101'),
+          'must not inject the config port when the environment overrides it'
+        );
+      } finally {
+        if (had) process.env.TANGLECLAW_PORT = prev;
+        else delete process.env.TANGLECLAW_PORT;
+      }
     });
 
     it('injects https:// in direct mode only with the full willServeHttps conjunction', () => {

@@ -1102,7 +1102,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   if (shouldRestart) {
     const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
     const hostname = hostHeader.split(':')[0] || 'localhost';
-    const port = config.serverPort || 3101;
+    const port = httpsSetup.effectiveServerPort(config);
     const protocol = willServeHttps ? 'https' : 'http';
     redirectUrl = `${protocol}://${hostname}:${port}`;
     _scheduleRestart();
@@ -4511,6 +4511,41 @@ function serverProtocol(server) {
 }
 
 /**
+ * Say once, loudly, when `TANGLECLAW_PORT` is set to something unbindable.
+ *
+ * `httpsSetup.effectiveServerPort` falls back silently by design — it also runs
+ * on every config regeneration, so it must not log. That leaves boot responsible
+ * for the noise, and boot is where it matters: a silent fallback here would
+ * replace the hard `ERR_SOCKET_BAD_PORT` that `server.listen('<typo>')` used to
+ * raise with a server quietly listening on a port the plist, `install.sh`'s
+ * health check, and any Caddy upstream all disagree with. Same posture as the
+ * `httpsFallback` WARN on the listen line (#616): report the fallback, don't
+ * hide it.
+ *
+ * An unset OR empty value is "no override" — not a misconfiguration — so it says
+ * nothing. Only a non-empty value the server could never bind is worth an error.
+ *
+ * Extracted from `main` so the branch is testable (the #616 seam pattern).
+ *
+ * @param {number} portInUse - The port actually resolved for binding.
+ * @param {object} [env] - Environment to read; defaults to `process.env`.
+ * @param {object} [logger] - Logger to use; defaults to the module logger.
+ * @returns {boolean} Whether a warning was emitted.
+ */
+function warnUnbindablePortEnv(portInUse, env, logger) {
+  const raw = (env || process.env).TANGLECLAW_PORT;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return false;
+  if (httpsSetup.isBindableServerPort(raw)) return false;
+  (logger || log).error(
+    'TANGLECLAW_PORT is not a bindable port — ignoring it and using the configured port instead. '
+    + 'Fix the value in ~/Library/LaunchAgents/com.tangleclaw.server.plist; until then anything that '
+    + 'expects the plist port (health checks, Caddy upstream) will not reach this server.',
+    { tangleclawPortEnv: String(raw), portInUse }
+  );
+  return true;
+}
+
+/**
  * Create and configure the HTTP/HTTPS server (does not start listening).
  * @param {object} [options]
  * @param {boolean} [options.httpsEnabled] - Use HTTPS
@@ -4599,8 +4634,12 @@ if (require.main === module) {
   // the ensuing restart. Idempotent + non-throwing.
   ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
 
-  // Bootstrap port management — resolve actual port (env var takes precedence)
-  const port = process.env.TANGLECLAW_PORT || config.serverPort || 3101;
+  // Bootstrap port management — resolve actual port (env var takes precedence).
+  // Shares the one derivation with every consumer that reports or injects this
+  // port, so what we bind and what we tell operators/agents cannot diverge.
+  const port = httpsSetup.effectiveServerPort(config);
+
+  warnUnbindablePortEnv(port);
   // AUTH-1 (#395): the ttydPort lease is kept even in caddy mode, where ttyd is
   // socket-bound and nothing listens on :3100. This is deliberate — reserving the
   // port keeps it free so a rollback to direct mode rebinds cleanly, rather than
@@ -4786,4 +4825,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };

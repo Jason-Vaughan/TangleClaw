@@ -32,6 +32,7 @@ const { execFileSync } = require('node:child_process');
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
+const store = require(path.join(REPO_DIR, 'lib', 'store'));
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -238,7 +239,14 @@ function resolveUpstreamPort(serverPlistPath, config) {
     const m = xml.match(/<key>TANGLECLAW_PORT<\/key>\s*<string>(\d+)<\/string>/);
     if (m) return Number(m[1]);
   } catch { /* not installed yet — fall through */ }
-  return config.serverPort || 3101;
+  // Config, then the shipped default — deliberately NOT `effectiveServerPort`.
+  // This script runs out-of-process, so a TANGLECLAW_PORT in its environment
+  // describes whoever launched the shell (a TangleClaw-spawned session inherits
+  // it from the server), not the installed service Caddy must proxy to. The
+  // plist above is that authority; config is the better second guess than an
+  // ambient variable. Pinned by a test that sets the variable and asserts it is
+  // ignored, so a later "unification" onto the helper fails loudly.
+  return config.serverPort || store.DEFAULT_CONFIG.serverPort;
 }
 
 function which(bin) {
@@ -253,7 +261,6 @@ function main() {
     process.exit(2);
   }
 
-  const store = require(path.join(REPO_DIR, 'lib', 'store'));
   store.init();
   const config = store.config.load();
   const home = require('node:os').homedir();

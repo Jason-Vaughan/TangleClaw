@@ -153,6 +153,81 @@ describe('https-setup', () => {
     });
   });
 
+  describe('effectiveServerPort (#654)', () => {
+    it('lets TANGLECLAW_PORT win over config — the standard-install case', () => {
+      // The installed launchd plist sets TANGLECLAW_PORT=3102 and never touches
+      // config.serverPort, which stays at the shipped 3101 default. Deriving from
+      // config alone is what pointed the post-setup redirect and every injected
+      // project config at a dead port.
+      assert.equal(
+        httpsSetup.effectiveServerPort({ serverPort: 3101 }, { TANGLECLAW_PORT: '3102' }),
+        3102
+      );
+    });
+
+    it('returns a number, not the raw env string', () => {
+      const port = httpsSetup.effectiveServerPort({}, { TANGLECLAW_PORT: '3102' });
+      assert.equal(typeof port, 'number');
+      assert.equal(port, 3102);
+    });
+
+    it('falls back to config.serverPort when the environment names no port', () => {
+      assert.equal(httpsSetup.effectiveServerPort({ serverPort: 3200 }, {}), 3200);
+    });
+
+    it('falls back to the 3101 code default when neither names a port', () => {
+      assert.equal(httpsSetup.effectiveServerPort({}, {}), 3101);
+      assert.equal(httpsSetup.effectiveServerPort({ serverPort: null }, {}), 3101);
+    });
+
+    it('never throws on a degenerate config', () => {
+      assert.equal(httpsSetup.effectiveServerPort(null, {}), 3101);
+      assert.equal(httpsSetup.effectiveServerPort(undefined, {}), 3101);
+    });
+
+    it('ignores a TANGLECLAW_PORT that is not a bindable port, rather than propagating it', () => {
+      // A value the server could never have bound cannot be the live port, so
+      // config is the better guess — propagating it would yield localhost:NaN.
+      // '0x10' and '1e3' are why the guard is a digits-only test rather than a
+      // bare Number(): both parse to plausible integers no plist would mean.
+      for (const bad of ['', '   ', 'abc', '0', '-1', '65536', '3102.5', '3102abc', '0x10', '1e3', '+3102', ' -3102 ']) {
+        assert.equal(
+          httpsSetup.effectiveServerPort({ serverPort: 3200 }, { TANGLECLAW_PORT: bad }),
+          3200,
+          `TANGLECLAW_PORT=${JSON.stringify(bad)} must not survive`
+        );
+      }
+    });
+
+    it('exposes the same predicate boot uses to warn about an unbindable plist value', () => {
+      // server.js main logs on !isBindableServerPort before binding; if the two
+      // ever disagreed, boot would either warn about a port it then used or bind
+      // a fallback with no warning at all.
+      for (const good of ['3102', ' 3102 ', '1', '65535']) {
+        assert.equal(httpsSetup.isBindableServerPort(good), true, `${JSON.stringify(good)} is bindable`);
+      }
+      for (const bad of ['', 'abc', '0', '-1', '65536', '3102.5', '0x10', '1e3', undefined, null]) {
+        assert.equal(httpsSetup.isBindableServerPort(bad), false, `${JSON.stringify(bad)} is not bindable`);
+        // The predicate and the resolver must agree on every rejected value.
+        assert.equal(httpsSetup.effectiveServerPort({ serverPort: 3200 }, { TANGLECLAW_PORT: bad }), 3200);
+      }
+    });
+
+    it('reads process.env when no env is injected', () => {
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+      const prev = process.env.TANGLECLAW_PORT;
+      try {
+        process.env.TANGLECLAW_PORT = '3405';
+        assert.equal(httpsSetup.effectiveServerPort({ serverPort: 3101 }), 3405);
+        delete process.env.TANGLECLAW_PORT;
+        assert.equal(httpsSetup.effectiveServerPort({ serverPort: 3101 }), 3101);
+      } finally {
+        if (had) process.env.TANGLECLAW_PORT = prev;
+        else delete process.env.TANGLECLAW_PORT;
+      }
+    });
+  });
+
   describe('detectMkcert', () => {
     it('reports available: true when mkcert stub is on PATH', (t) => {
       if (!hasOpenssl) return t.skip('openssl not available');

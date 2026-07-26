@@ -105,4 +105,62 @@ describe('startup protocol reporting (#616)', () => {
         'the banner must mark the intent-vs-reality divergence');
     });
   });
+
+  // Same principle on the port axis (#654): the shared port derivation falls back
+  // silently on an unbindable TANGLECLAW_PORT because it also runs on every config
+  // regeneration. That silence would otherwise swallow the hard
+  // ERR_SOCKET_BAD_PORT the old raw-string `listen()` raised, leaving the server
+  // bound where the plist, install.sh's health check, and any Caddy upstream would
+  // not find it. Boot is where the noise belongs, so boot is what these pin.
+  describe('warnUnbindablePortEnv (#654)', () => {
+    const { warnUnbindablePortEnv } = require('../server');
+
+    /** Collect log.error calls instead of emitting them. */
+    function spyLogger() {
+      const calls = [];
+      return { calls, error: (msg, meta) => calls.push({ msg, meta }) };
+    }
+
+    it('errors on a non-empty TANGLECLAW_PORT the server could never bind', () => {
+      for (const bad of ['abc', '0', '-1', '65536', '3102.5', '0x10', '1e3']) {
+        const spy = spyLogger();
+        assert.equal(warnUnbindablePortEnv(3101, { TANGLECLAW_PORT: bad }, spy), true,
+          `${JSON.stringify(bad)} must be reported`);
+        assert.equal(spy.calls.length, 1);
+        assert.equal(spy.calls[0].meta.tangleclawPortEnv, bad);
+        assert.equal(spy.calls[0].meta.portInUse, 3101,
+          'the operator needs the port actually in use, not just the bad value');
+        assert.match(spy.calls[0].msg, /com\.tangleclaw\.server\.plist/,
+          'must name the file to edit — the plist is where this value comes from');
+      }
+    });
+
+    it('stays silent when TANGLECLAW_PORT names a bindable port', () => {
+      const spy = spyLogger();
+      assert.equal(warnUnbindablePortEnv(3102, { TANGLECLAW_PORT: '3102' }, spy), false);
+      assert.equal(spy.calls.length, 0);
+    });
+
+    it('treats unset or empty as no override, not as a misconfiguration', () => {
+      // An empty value is what an unset plist key looks like; warning about it
+      // would point the operator at a plist line that is fine.
+      for (const env of [{}, { TANGLECLAW_PORT: '' }, { TANGLECLAW_PORT: '   ' }]) {
+        const spy = spyLogger();
+        assert.equal(warnUnbindablePortEnv(3101, env, spy), false, JSON.stringify(env));
+        assert.equal(spy.calls.length, 0);
+      }
+    });
+
+    it('is wired into boot before the port is used', () => {
+      // Structural: the call sits inside `require.main === module`, so it cannot
+      // be exercised directly. Pin that it is called with the resolved port and
+      // that it precedes the PortHub bootstrap which consumes that port.
+      const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      const callIdx = src.indexOf('warnUnbindablePortEnv(port)');
+      const bootstrapIdx = src.indexOf('porthub.bootstrap(');
+      assert.ok(callIdx > 0, 'boot must call warnUnbindablePortEnv with the resolved port');
+      assert.ok(callIdx < bootstrapIdx,
+        'the warning must precede the bootstrap that consumes the port');
+    });
+  });
 });

@@ -82,6 +82,34 @@ describe('ingress-cutover', () => {
     it('falls back to 3101 when neither is available', () => {
       assert.equal(cutover.resolveUpstreamPort(path.join(tmpDir, 'nope.plist'), {}), 3101);
     });
+    it('ignores TANGLECLAW_PORT — out-of-process, so the env describes the shell, not the service (#654)', () => {
+      // This script is run by an operator, often from a TangleClaw-spawned shell
+      // that inherited TANGLECLAW_PORT from the server. Caddy must proxy to the
+      // *installed service*, whose port only the plist (or config) can attest.
+      // Pins the deliberate abstention from httpsSetup.effectiveServerPort so a
+      // later unification onto the shared helper fails here instead of in
+      // production, where it would only misfire for some operators' shells.
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+      const prev = process.env.TANGLECLAW_PORT;
+      try {
+        process.env.TANGLECLAW_PORT = '3999';
+        assert.equal(
+          cutover.resolveUpstreamPort(path.join(tmpDir, 'nope.plist'), { serverPort: 3201 }),
+          3201,
+          'config must win over an ambient TANGLECLAW_PORT'
+        );
+        const p = path.join(tmpDir, 'server-env.plist');
+        fs.writeFileSync(p, '<dict><key>TANGLECLAW_PORT</key>\n<string>3102</string></dict>');
+        assert.equal(
+          cutover.resolveUpstreamPort(p, { serverPort: 3201 }),
+          3102,
+          'the plist must win over an ambient TANGLECLAW_PORT'
+        );
+      } finally {
+        if (had) process.env.TANGLECLAW_PORT = prev;
+        else delete process.env.TANGLECLAW_PORT;
+      }
+    });
   });
 
   describe('caddyfileIsHandEdited (#397 clobber-guard, shared by dry-run + executor)', () => {
