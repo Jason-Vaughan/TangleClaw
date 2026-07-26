@@ -12,6 +12,12 @@ const store = require('../lib/store');
 
 setLevel('error');
 
+// See the note in test/master.test.js: the redirect URL derives its port from
+// TANGLECLAW_PORT before config (#654), and a TangleClaw-launched dev session
+// inherits that variable, so the ambient value has to go or config-driven
+// assertions depend on how the runner was started.
+delete process.env.TANGLECLAW_PORT;
+
 function request(server, method, urlPath, body) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
@@ -242,6 +248,42 @@ describe('HTTPS Setup API', () => {
       assert.equal(cfg.httpsEnabled, true);
       assert.equal(cfg.httpsCertPath, fixture.certPath);
       assert.equal(cfg.httpsKeyPath, fixture.keyPath);
+    });
+
+    it('builds redirectUrl from the bound port, not config.serverPort (#654)', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+
+      // The standard install: config keeps the shipped 3101 default while the
+      // launchd plist binds 3102. Deriving the redirect from config sent the
+      // operator to a connection-refused page immediately after a *successful*
+      // HTTPS configuration — the failure looked like the restart, not the URL.
+      await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false, httpsCertPath: '', httpsKeyPath: ''
+      });
+      store.config.save(Object.assign(store.config.load(), { serverPort: 3101 }));
+      restartCalls = 0;
+
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+      const prev = process.env.TANGLECLAW_PORT;
+      try {
+        process.env.TANGLECLAW_PORT = '3102';
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+          httpsEnabled: true,
+          httpsCertPath: fixture.certPath,
+          httpsKeyPath: fixture.keyPath
+        });
+
+        assert.equal(status, 200);
+        assert.equal(data.restart, true);
+        assert.match(data.redirectUrl, /^https:\/\/[^:/]+:3102$/);
+        assert.ok(
+          !data.redirectUrl.endsWith(':3101'),
+          'must not redirect to the config port when the environment overrides it'
+        );
+      } finally {
+        if (had) process.env.TANGLECLAW_PORT = prev;
+        else delete process.env.TANGLECLAW_PORT;
+      }
     });
 
     it('returns 400 when cert files are invalid', async () => {

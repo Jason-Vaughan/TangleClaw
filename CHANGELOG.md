@@ -4,6 +4,49 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **What TangleClaw reports as its port now matches what it binds (#654).** The installed launchd
+  plist sets `TANGLECLAW_PORT=3102` and never touches `config.serverPort`, which stays at the shipped
+  `3101` default. The listen call in `server.js` main already honored the env var — the bug was that
+  three *reporting* sites did not, so they named a port nothing was listening on: the post-HTTPS-
+  restart `redirectUrl`, the API base URL injected into managed projects' `CLAUDE.md`
+  (`lib/engines.js`), and the Project Master identity file (`lib/master.js`). New
+  `httpsSetup.effectiveServerPort(config)` is now the one derivation all four share (the sibling of
+  `effectiveServerProtocol` from #497 / ENG-5R2W, same report-reality-not-intent shape). Field-
+  confirmed on a first-time install: choosing HTTPS in the setup wizard restarted the server and
+  redirected the operator to a dead `:3101`, which read as "HTTPS setup is broken" rather than a
+  wrong URL. The injected-config sites were the quieter half — affected projects told their agent
+  PortHub lived on `:3101`, so lease and heartbeat calls failed with nothing surfaced anywhere.
+  Note this reaches only projects TangleClaw generates configs for: plugin-governed projects are
+  skipped wholesale by `writeEngineConfig` (#330), so their `CLAUDE.md` is the plugin's to fix.
+  `scripts/ingress-cutover.js` deliberately keeps its own plist-then-config precedence and does
+  *not* consult the environment — it runs out-of-process, where `TANGLECLAW_PORT` describes whoever
+  launched the shell rather than the installed service Caddy proxies to — now pinned by a test so a
+  later unification onto the shared helper fails loudly. **Already-generated configs heal on the next
+  server start**: boot runs `projects.syncAllProjects()`, which regenerates every managed project's
+  config, so operators need no manual step beyond the restart this ships with.
+- An unbindable `TANGLECLAW_PORT` no longer silently changes which port the server binds (#654).
+  The shared derivation falls back to the configured port instead of propagating a malformed
+  `localhost:NaN` into generated content, but a silent fallback at the *bind* site would have
+  replaced the hard `ERR_SOCKET_BAD_PORT` that `server.listen('<typo>')` used to raise with a server
+  quietly listening where the plist, `install.sh`'s health check, and any Caddy upstream would not
+  find it. Boot now logs an error naming the bad value and the port actually in use, while the
+  helper stays pure and silent for the config-regeneration path that runs it constantly.
+
+### Internal
+- The resolved server port is now a number rather than sometimes a string (#654). Under launchd the
+  port came from `process.env.TANGLECLAW_PORT` as a string, which made
+  `portScanner.isPortInUseBySystem`'s strict `e.port === port` comparison permanently false for
+  TangleClaw's own port — so PortHub's "port is in use by a system process, registering anyway" warn
+  could never fire for it. It can now. The lease itself is unaffected (SQLite integer affinity stored
+  the string as an integer either way).
+- Port-derivation tests no longer depend on how the test runner was started (#654). A dev session
+  launched *by* TangleClaw inherits `TANGLECLAW_PORT` from the server process, which silently
+  overrode config-driven assertions in `master.test.js`, `engines.test.js`, and
+  `api-setup-https.test.js` — invisible in CI, which has no such parent. Those files now neutralize
+  the ambient value, and every test that means to exercise the override sets and restores it
+  explicitly.
+
 ## [4.32.0] - 2026-07-26
 
 ### Added

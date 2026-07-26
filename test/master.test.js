@@ -16,6 +16,14 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+// The generated base URL derives its port from TANGLECLAW_PORT before config
+// (#654), and a dev session launched *by* TangleClaw inherits that variable from
+// the server process — which would silently override every config-driven port
+// assertion below and make results depend on how the test runner was started.
+// Neutralize the ambient value; tests that mean to exercise the override set it
+// explicitly and restore it.
+delete process.env.TANGLECLAW_PORT;
+
 const store = require('../lib/store');
 const master = require('../lib/master');
 
@@ -67,6 +75,23 @@ describe('buildMasterClaudeMd', () => {
     // HTTP (createServer fallback), so the base URL must say http.
     const md3 = master.buildMasterClaudeMd({ serverPort: 3102, httpsEnabled: true });
     assert.match(md3, /http:\/\/localhost:3102/);
+  });
+
+  it('renders the port the server actually binds, not config.serverPort (#654)', () => {
+    // Same drift as the injected project configs: the plist binds 3102 while
+    // config keeps the 3101 default, so the master identity file handed the
+    // Project Master session a base URL nothing was serving.
+    const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+    const prev = process.env.TANGLECLAW_PORT;
+    try {
+      process.env.TANGLECLAW_PORT = '3102';
+      const md = master.buildMasterClaudeMd({ serverPort: 3101 });
+      assert.match(md, /http:\/\/localhost:3102/);
+      assert.doesNotMatch(md, /localhost:3101/);
+    } finally {
+      if (had) process.env.TANGLECLAW_PORT = prev;
+      else delete process.env.TANGLECLAW_PORT;
+    }
   });
 
   it('renders an http base URL in caddy ingress mode even with full HTTPS config (ENG-5R2W)', () => {
