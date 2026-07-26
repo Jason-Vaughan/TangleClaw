@@ -26,6 +26,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-26: Mobile session-open — bump service-worker CACHE_NAME to evict a stale worker (refs #380)
+
+<!-- prawduct: type=bugfix | scope=mobile-stale-sw | status=shipped -->
+
+**Why:** On mobile, the project list loaded but opening a session failed with the service worker's
+`{"error":"network-unreachable","detail":"Load failed"}` — the stale worker served the cached
+landing page while its `fetch()` for `/session/<project>` rejected. Same symptom as #380 (mobile
+session-open returns null via the SW) but the ttyd PTY pool was **healthy** (36 ttys / 14 procs / 0
+leaked, vs #380's 230/153 exhaustion baseline), so the cause was a stale service worker, not PTY
+exhaustion. Confirmed by a Safari Private tab (no worker) loading sessions fine.
+
+**What:** Bumped `public/sw.js` `CACHE_NAME` `tangleclaw-v3-56` → `-57`. The install/activate
+lifecycle already calls `skipWaiting()` + `clients.claim()`, so a byte change to `sw.js` makes an
+existing worker install and take over the current one on the next navigation — the standing
+stale-worker remedy (#411 family). The three CACHE_NAME monotone-floor guards
+(`bridge-port-input`, `master-drawer-frontend`, `openclaw-cache`) all pass unchanged (57 > their
+floors). This is a one-time unblock; a durable fix for the recurring-stale-worker class (an
+automatic version-derived bump or an update nag) remains a follow-up. Refs #380.
+
 ## 2026-07-22: Wrap drawer — don't imply a manual step ships an armed auto-merge (#700)
 
 <!-- prawduct: type=bugfix | scope=wrap-700 | status=shipped -->
