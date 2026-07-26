@@ -21,7 +21,8 @@ cd TangleClaw
 
 The install script verifies prerequisites, generates launchd plists, loads the services, and runs a health check. On success, you'll see:
 
-- **Landing page**: http://localhost:3102
+- **Landing page**: http://localhost:3102 on a new or HTTP-only install, or
+  https://localhost:3102 when HTTPS is configured
 - **Terminal (ttyd)**: http://localhost:3100
 
 Both services auto-restart on crash via launchd KeepAlive.
@@ -34,14 +35,15 @@ On first launch, TangleClaw creates `~/.tangleclaw/` with:
 - `engines/` — engine profile JSON files
 - `tangleclaw.db` — SQLite database for runtime state
 
-Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration:
+Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration. If you enable HTTPS in the wizard, use https://localhost:3102 after setup completes:
 
 1. **Welcome** — overview of what TangleClaw does
 2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
 3. **Detect Projects** — scans the directory for existing projects (git repos, TangleClaw or Prawduct markers) and lets you select which to attach
 4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
 5. **Preferences** — delete protection password, idle chime toggle
-6. **Confirm** — summary of all selections, then "Complete Setup"
+6. **HTTPS** — generate or select a certificate, or keep local HTTP
+7. **Confirm** — summary of all selections, then "Complete Setup"
 
 You can **skip the wizard** at any step — it will use sensible defaults. The wizard only appears once; subsequent launches go straight to the landing page.
 
@@ -325,6 +327,36 @@ Locks expire after 30 minutes and are auto-released when sessions wrap or are ki
 - **Long press** — not used (avoids conflicts with browser gestures)
 
 ## Troubleshooting
+
+### Dashboard Constantly Refreshes After Enabling HTTPS
+
+Port 3102 serves either HTTP or HTTPS, not both. If HTTPS is enabled but the
+browser opens `http://localhost:3102`, the server receives plain HTTP on its TLS
+socket and returns an empty response. The dashboard can look as though it is
+constantly refreshing while its requests retry.
+
+First, open https://localhost:3102. If the browser warns about the certificate,
+install/trust the mkcert root CA or accept the local certificate as appropriate.
+
+To return a localhost-only installation to HTTP instead:
+
+1. Set `"httpsEnabled": false` in `~/.tangleclaw/config.json`.
+2. Restart the service:
+
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
+   ```
+
+3. Verify the configured protocol in `~/.tangleclaw/logs/tangleclaw.log`, then
+   open http://localhost:3102:
+
+   ```bash
+   tail -20 ~/.tangleclaw/logs/tangleclaw.log
+   curl -s http://localhost:3102/api/health | python3 -m json.tool
+   ```
+
+Do not disable HTTPS for access from another machine; use HTTPS or the Caddy
+ingress for non-localhost traffic.
 
 ### Server Won't Start
 

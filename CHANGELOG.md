@@ -46,6 +46,11 @@ All notable changes to TangleClaw are documented in this file.
   `api-setup-https.test.js` — invisible in CI, which has no such parent. Those files now neutralize
   the ambient value, and every test that means to exercise the override sets and restores it
   explicitly.
+- Documented the apparent dashboard refresh loop caused by opening
+  `http://localhost:3102` after direct HTTPS has been enabled. The quick start
+  now states that port 3102 serves one protocol at a time, and the troubleshooting
+  guide gives recovery steps for switching a localhost-only installation back to
+  HTTP and restarting the launchd service.
 
 ## [4.32.0] - 2026-07-26
 
