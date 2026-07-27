@@ -417,3 +417,98 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     });
   });
 });
+
+describe('version-based staleness (independent of git)', () => {
+  let origInternal;
+
+  beforeEach(() => {
+    origInternal = { ...serverInfo._internal };
+    serverInfo.__unsafeResetForTest();
+  });
+
+  function restore() {
+    Object.assign(serverInfo._internal, origInternal);
+  }
+
+  function stubVersion(v) {
+    serverInfo._internal.readFileSync = () => JSON.stringify({ version: v });
+  }
+
+  it('reports stale when version.json moved even though git detection fails', () => {
+    // The case that matters: a self-update rewrote version.json, the restart
+    // did not take, and git is unavailable — so the SHA check cannot fire.
+    serverInfo._internal.execSync = () => { throw new Error('git unavailable'); };
+    stubVersion('4.32.0');
+    try {
+      serverInfo.captureStartup();
+      stubVersion('4.32.1');
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, true, 'disk moved but no banner would show');
+      assert.equal(info.runningVersion, '4.32.0');
+      assert.equal(info.diskVersion, '4.32.1');
+      assert.equal(info.commitsAhead, 0, 'no git means no commit count to claim');
+    } finally {
+      restore();
+    }
+  });
+
+  it('is not stale when the version is unchanged and git agrees', () => {
+    serverInfo._internal.execSync = () => 'samesha\n';
+    stubVersion('4.32.1');
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, false);
+      assert.equal(info.runningVersion, '4.32.1');
+      assert.equal(info.diskVersion, '4.32.1');
+    } finally {
+      restore();
+    }
+  });
+
+  it('still reports stale from the SHA check when the version is unchanged', () => {
+    // A merge that does not bump the version must keep the original signal.
+    let n = 0;
+    serverInfo._internal.execSync = (cmd) => {
+      if (String(cmd).includes('rev-list')) return '3\n';
+      n += 1;
+      return n === 1 ? 'oldsha\n' : 'newsha\n';
+    };
+    stubVersion('4.32.1');
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, true);
+      assert.equal(info.commitsAhead, 3);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not claim staleness when the version cannot be read at all', () => {
+    serverInfo._internal.execSync = () => { throw new Error('no git'); };
+    serverInfo._internal.readFileSync = () => { throw new Error('no version.json'); };
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, false, 'unknown state must not render as stale');
+      assert.equal(info.runningVersion, null);
+      assert.equal(info.diskVersion, null);
+    } finally {
+      restore();
+    }
+  });
+
+  it('tolerates malformed version.json without throwing', () => {
+    serverInfo._internal.execSync = () => { throw new Error('no git'); };
+    serverInfo._internal.readFileSync = () => '{ not json';
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.diskVersion, null);
+      assert.equal(info.isStale, false);
+    } finally {
+      restore();
+    }
+  });
+});
