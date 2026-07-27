@@ -5,6 +5,26 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **A downloaded update that hasn't restarted yet now says so, instead of looking like nothing
+  happened.** Staleness was detected only by comparing the process's boot git SHA against the
+  on-disk SHA (`lib/server-info.js`, #199). That check is entirely git-dependent, and it fails
+  *silently in the safe-looking direction*: if `git rev-parse` errors or times out,
+  `currentDiskSha` is `null`, `bothPresent` is false, and `isStale` reduces to `false` — no banner,
+  while the disk has in fact moved. The result is indistinguishable from a healthy server, and it is
+  exactly what a self-update whose restart didn't take looks like from the dashboard: the version
+  number appears unchanged, with nothing explaining why. Field-reported on a first-time install that
+  clicked **Update & restart**, saw the server restart, refreshed, and still read the old version.
+  `getServerInfo()` now carries a second, independent signal — `runningVersion` (captured at boot)
+  versus `diskVersion` (re-read on every call, never cached, because the updater rewrites
+  `version.json` under a live process). `isStale` is the OR of the two, so the banner still appears
+  when git detection is unavailable. The version comparison is coarser — it only moves on a release —
+  which is precisely the case the self-updater produces, so the two signals cover each other rather
+  than overlap. Unknown state is still never rendered as stale: when neither version can be read,
+  `isStale` stays false rather than guessing.
+  The banner now leads with what the operator can act on — "v4.32.2 is downloaded — restart to
+  finish. This server is still running v4.32.1." — rather than two abbreviated SHAs, which named the
+  right condition in a form nobody could act on. The SHA wording is retained for the
+  merged-commits-without-a-version-bump case that #199 originally targeted.
 - **Releases now tag themselves, so a merged fix actually reaches installed copies (#713).** The wrap
   bumps `version.json` and promotes the `[Unreleased]` CHANGELOG section, then stopped — nothing
   created a tag. Both halves of the update path (`lib/update-checker.js`, `lib/update-applier.js`)
