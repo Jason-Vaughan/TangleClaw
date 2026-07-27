@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.33.0] - 2026-07-26
+
 ### Changed
 - **A running server now checks for a release every 4 hours instead of every 24 (#720).** 24h was
   chosen for a quieter release cadence than this project has: a long-running server could sit through
@@ -36,6 +38,25 @@ All notable changes to TangleClaw are documented in this file.
   server start ... operators need no manual step beyond the restart this ships with." That was true
   for managed projects and false for the master identity file, which the same entry listed as one of
   the three sites #654 fixed.
+
+### Internal
+- **ADR 0009 records a ratified change of security posture: TangleClaw ships protected out of the
+  box, opt-out rather than opt-in (#710).** Authentication was built at the Caddy ingress and treated
+  as optional, justified by a VPN-as-perimeter assumption that was reasonable for a personal tool and
+  expired the moment there was an outside installer. Three defaults, none wrong alone, combine badly
+  on a standard install: `ingressMode: 'direct'` and `authEnabled: false` (`lib/store.js`), an
+  admin-credential wizard step appended only in caddy mode (`public/setup.js`), and a bind of all
+  interfaces whenever caddy is off (`server.js`) — an unauthenticated dashboard that can launch shell
+  sessions, reachable across the installer's network. The ADR settles #710's standing design fork in
+  favor of making the ingress part of the install, and records that there is never a default
+  credential (this repository is public, so a default would be readable by anyone and every install
+  pre-compromised until the operator acted), that a settings surface may change the credential but
+  never blank it, that recovery proves physical control and lives outside the gate, and that internet
+  exposure is unsupported rather than merely discouraged.
+  Written as a tracked ADR deliberately: the superseded posture lived in `.prawduct/artifacts/`,
+  which is gitignored, so it never reached a fresh clone, a contributor, or review — which is how it
+  went stale unnoticed. No behavior changes here; implementation is planned separately and its first
+  chunk is breaking.
 
 ## [4.32.2] - 2026-07-26
 

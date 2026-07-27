@@ -161,3 +161,9 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 ## TODO (auto-stubbed 2026-07-26)
 
 - **TBD** — touched in this session: `test/api-setup-https.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-26)
+
+- **TBD** — touched in this session: `docs/adr/0009-secure-by-default.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/server-info.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/update-checker.test.js`. <!-- describe -->
