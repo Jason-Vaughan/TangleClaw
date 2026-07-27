@@ -222,10 +222,25 @@ function renderStaleServerBanner(info) {
     ? ` Running for ${esc(formatUptime(info.uptimeSeconds))}.`
     : '';
 
-  textEl.innerHTML =
-    '⚠ <strong>TC server is out of date.</strong> ' +
-    `Running <code>${shortStartup}</code>; <code>${shortDisk}</code> on disk ` +
-    `(${aheadStr}).${uptimeStr} Restart TC to load the latest code.`;
+  // When the on-disk version differs from the running one, lead with that
+  // rather than SHAs. It is the form an operator can act on — it names the
+  // release they were trying to install and says plainly that the download
+  // succeeded and only the restart is outstanding, instead of leaving them
+  // to infer it from a version number that appears not to have changed.
+  const runningVer = typeof info.runningVersion === 'string' ? info.runningVersion : null;
+  const diskVer = typeof info.diskVersion === 'string' ? info.diskVersion : null;
+
+  if (runningVer && diskVer && runningVer !== diskVer) {
+    textEl.innerHTML =
+      `⚠ <strong>v${esc(diskVer)} is downloaded — restart to finish.</strong> ` +
+      `This server is still running v${esc(runningVer)}.${uptimeStr} ` +
+      'The update is already on disk; restarting is the last step.';
+  } else {
+    textEl.innerHTML =
+      '⚠ <strong>TC server is out of date.</strong> ' +
+      `Running <code>${shortStartup}</code>; <code>${shortDisk}</code> on disk ` +
+      `(${aheadStr}).${uptimeStr} Restart TC to load the latest code.`;
+  }
   banner.classList.remove('hidden');
 
   // #235 — toggle the restart button visibility based on the

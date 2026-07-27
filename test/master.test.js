@@ -607,3 +607,50 @@ describe('master API routes over HTTP', () => {
     }
   });
 });
+
+describe('refreshMasterIdentity (#726)', () => {
+  const os = require('node:os');
+  const fsx = require('node:fs');
+  const pathx = require('node:path');
+
+  function tmpHome() {
+    return fsx.mkdtempSync(pathx.join(os.tmpdir(), 'tc-master-'));
+  }
+
+  it('rewrites a stale API base URL without starting a session', () => {
+    const home = tmpHome();
+    // Simulate an identity generated when the port was wrong — the #726 state.
+    fsx.writeFileSync(pathx.join(home, 'CLAUDE.md'),
+      '# CLAUDE.md — TangleClaw Project Master\n**TangleClaw API base URL**: `http://localhost:3101`\n');
+
+    const result = master.refreshMasterIdentity({ home });
+    assert.equal(result.refreshed, true);
+
+    const after = fsx.readFileSync(pathx.join(home, 'CLAUDE.md'), 'utf8');
+    // Assert the API base URL LINE specifically — the file also embeds guide
+    // prose that legitimately mentions other ports, so a whole-file search for
+    // the stale value reports a false failure.
+    const urlLine = (after.match(/\*\*TangleClaw API base URL\*\*: `[^`]+`/) || [])[0];
+    assert.ok(urlLine, 'refreshed identity must carry an API base URL line');
+
+    const expectedPort = require('../lib/https-setup').effectiveServerPort(require('../lib/store').config.load());
+    assert.match(urlLine, new RegExp(`localhost:${expectedPort}\``),
+      `identity should name the effective port ${expectedPort}, got: ${urlLine}`);
+  });
+
+  it('does nothing when skipIfAbsent is set and no master home exists', () => {
+    const home = pathx.join(os.tmpdir(), `tc-master-absent-${process.pid}`);
+    if (fsx.existsSync(home)) fsx.rmSync(home, { recursive: true });
+
+    const result = master.refreshMasterIdentity({ home, skipIfAbsent: true });
+    assert.equal(result.refreshed, false, 'must not create master state as a boot side effect');
+    assert.equal(fsx.existsSync(home), false, 'the home directory must not be created');
+  });
+
+  it('creates the identity when the home exists but the file does not', () => {
+    const home = tmpHome();
+    const result = master.refreshMasterIdentity({ home, skipIfAbsent: true });
+    assert.equal(result.refreshed, true);
+    assert.ok(fsx.existsSync(pathx.join(home, 'CLAUDE.md')));
+  });
+});

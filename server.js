@@ -4674,8 +4674,14 @@ if (require.main === module) {
   // Start model status monitor
   modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
 
-  // Start update checker (first check 60s after startup, then every 24h)
-  updateChecker.startChecker(config.updateCheckIntervalMs || 24 * 60 * 60 * 1000);
+  // Start update checker (first check 60s after startup, then on an interval).
+  // A rejected `updateCheckIntervalMs` is logged rather than silently swallowed —
+  // an operator who set it deserves to know it didn't take.
+  const checkInterval = updateChecker.resolveCheckInterval(config.updateCheckIntervalMs);
+  if (checkInterval.warning) {
+    log.warn(`Ignoring updateCheckIntervalMs: ${checkInterval.warning}`, { usingMs: checkInterval.intervalMs });
+  }
+  updateChecker.startChecker(checkInterval.intervalMs);
 
   // Start eval audit heartbeat watchdog
   evalAudit.startWatchdog((level, sessionId, project, message) => {
@@ -4684,6 +4690,20 @@ if (require.main === module) {
 
   // Start sidecar polling for active OpenClaw sessions
   sidecar.syncPolling();
+
+  // Refresh the master's identity file on every boot, regardless of autoStart.
+  // It embeds the TangleClaw API base URL, and only ensureMasterSession used to
+  // rewrite it — so with autoStart off, an install whose effective port changed
+  // kept telling the master to call a dead port until someone opened the master
+  // (#726). Managed projects already heal below via syncAllProjects(); this is
+  // the master's equivalent. skipIfAbsent so starting the server never creates
+  // master state for an operator who has not used it.
+  try {
+    const refreshed = master.refreshMasterIdentity({ skipIfAbsent: true });
+    if (refreshed.refreshed) log.debug('Master identity refreshed', { home: refreshed.home });
+  } catch (err) {
+    log.warn('Master identity refresh failed', { error: err.message });
+  }
 
   // Project Master auto-start: launch the reserved master session at boot
   // when the operator opted in (master.autoStart). Failure is logged, never

@@ -114,6 +114,7 @@ fails any auto-stub section older than 14 days.
 - **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`. The startup banner reports the protocol actually served via `serverProtocol()` in `server.js`, not config intent — HTTPS is enabled by default before any certificate exists, so the server falls back to HTTP (#616). Tests: `test/server-listen-protocol.test.js`.
 - **Update checker** — GitHub release-tag polling. `lib/update-checker.js`.
 - **Self-update action** (#228/#229, UB) — the update pill's **Update & restart** button: `POST /api/update/apply` fetches + checks out the latest release tag with fail-closed guards (dirty-tree / no-update / wrong-ref / no-git → 409; git-error → 500; argv-form git so a tag can't shell-inject), then the client chains the existing #235 restart and polls `/api/server-info`. Does NOT restart itself; logs `fromSha` for one-line manual rollback. `lib/update-applier.js`, route `server.js` (next to `/api/update-status`), UI `public/landing.js#applyUpdateAndRestart` + `#loadUpdateStatus`, button `.update-pill-apply` (`public/style.css`).
+- **Release automation** (#713) — the producer side of the update chain: `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`, then tags and publishes so installs have something to detect. Tag and Release are checked as two independent conditions, so a failure after the tag push is recoverable by re-running instead of permanently reporting green while publishing nothing. Release notes come from `lib/changelog-notes.js#extractReleaseNotes` (reads both `## [X.Y.Z]` and bare `## X.Y.Z` headings, fence-aware; CLI shim exits 1 when a version has no CHANGELOG section so a bump can never publish an empty release). Deliberately not a wrap-pipeline step — the wrap cannot know whether or when its bump reaches `main`. Docs: `docs/release-process.md`. Tests: `test/changelog-notes.test.js`.
 - **Uploads** — file-upload handling for the in-browser drop zone. `lib/uploads.js`.
 - **System stats** — CPU / mem / disk for the landing page. `lib/system.js`.
 - **Port scanner** — local-port introspection for the PortHub UI. `lib/port-scanner.js`.
@@ -156,3 +157,13 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Store slices: `test/store-projects.test.js` — projects; `test/store-sessions.test.js` — sessions; `test/store-eval-audit.test.js` — eval-audit.
 - Governance / engines / actions: `test/antigravity-engine.test.js` + `test/openclaw-engine.test.js` — per-engine profile behavior; `test/governance-drift-badge.test.js` — governance-state badge; `test/c1-plugin-migration.test.js` — plugin-governed migration; `test/self-improvement-loop.test.js` + `test/session-rules-selfimprove.test.js` — the rule self-improvement loop; `test/eval-audit.test.js` — eval-audit engine; `test/actions-dispatcher.test.js` + `test/actions-invoke-critic.test.js` — project-action dispatch + the mark-Critic handler.
 - Store/project/setup + infra: `test/migration.test.js` — schema migrations; `test/stranded-configs.test.js` — stranded-config guard (#592); `test/create-project-modal.test.js` + `test/project-rules-modal.test.js` — those modal frontends; `test/project-version-require-cycle.test.js` — project-version require-cycle guard; `test/project-paths.test.js` — path resolver; `test/feature-index.test.js` — Feature Index maintenance; `test/continuity.test.js` — continuity store; `test/contracts.test.js` — cross-module contracts; `test/e2e-smoke.test.js` — end-to-end smoke; `test/porthub.test.js` — PortHub leasing; `test/project-map.test.js` — PROJECT-MAP refresh; `test/setup-wizard.test.js` + `test/setup-wizard-https.test.js` — first-run wizard; `test/tunnel.test.js` — Cloudflare tunnel lifecycle.
+
+## TODO (auto-stubbed 2026-07-26)
+
+- **TBD** — touched in this session: `test/api-setup-https.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-26)
+
+- **TBD** — touched in this session: `docs/adr/0009-secure-by-default.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/server-info.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/update-checker.test.js`. <!-- describe -->

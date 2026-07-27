@@ -194,6 +194,7 @@ Quick answers, with links into the full docs:
 | Point a project's sessions at local models (LiteLLM/Ollama) | Orchestration profiles — edit `~/.tangleclaw/orchestration-profiles.json`, then bind the project in its settings |
 | Let the AI improve its own session rules (safely) | [Session Rules & Self-Improvement](docs/session-rules-self-improvement.md) |
 | Add a custom engine | [Engine Guide](docs/engine-guide.md) |
+| Cut a release, or work out why one never reached installs | [Release Process](docs/release-process.md) |
 | Change any config setting | [Configuration Reference](docs/configuration-reference.md) |
 | Fix something that's broken | [User Guide — Troubleshooting](docs/user-guide.md#troubleshooting), or [Service Management](#service-management) below |
 

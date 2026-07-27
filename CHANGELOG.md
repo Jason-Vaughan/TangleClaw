@@ -32,6 +32,121 @@ All notable changes to TangleClaw are documented in this file.
   above it. The default seeds from config only when that engine is installed, is re-checked on every
   render rather than once, and when nothing is installed the picker is replaced by a plain statement
   of that with the confirm summary reading "None installed" instead of a literal `null`.
+
+## [4.33.0] - 2026-07-26
+
+### Changed
+- **A running server now checks for a release every 4 hours instead of every 24 (#720).** 24h was
+  chosen for a quieter release cadence than this project has: a long-running server could sit through
+  most of a release's life without noticing it, and there is still no manual "check now" (#716), so
+  the interval was the only lever. One check is a single `git ls-remote`, so six a day instead of one
+  costs nothing measurable. The first check still runs 60s after boot.
+  `updateCheckIntervalMs` was already read by `server.js` but was undocumented, unvalidated, and had
+  no surfaced default; it is now documented in the configuration reference and resolved through
+  `updateChecker.resolveCheckInterval`. A non-number, `NaN`/`Infinity`, or a value under the
+  60-second floor falls back to the default **with a logged warning** rather than reaching
+  `setInterval` — an operator who set it deserves to know it did not take, and a units typo must not
+  become a tight poll against origin.
+
+### Fixed
+- **The Project Master's identity file no longer keeps a dead API base URL (#726).** The master's
+  generated `CLAUDE.md` embeds the TangleClaw API base URL, and the only production writer was
+  `ensureMasterSession()` — which at boot ran *only* when `master.autoStart` was enabled. Managed
+  projects heal unconditionally via `projects.syncAllProjects()`; the master had no equivalent, so on
+  an install whose effective port differs from `config.serverPort` (the launchd plist sets
+  `TANGLECLAW_PORT`, which the config does not know about) the master kept being told to call a port
+  nothing was listening on — and every PortHub and shared-docs call it made failed silently. It
+  survived restarts and the #654 upgrade indefinitely unless the operator happened to open the master.
+  Field-confirmed on a first-time install still reading `http://localhost:3101` after updating.
+  The identity regeneration is now `master.refreshMasterIdentity()`, split out of
+  `ensureMasterSession()` so it can run without starting or touching a tmux session, and boot calls it
+  on every start. It is `skipIfAbsent`, so starting the server never creates master state for an
+  operator who has never opened the master, and it preserves the "never touches an already-running
+  master" contract because it does file writes only.
+  **Correction to the 4.32.1 notes:** that entry claimed already-generated configs "heal on the next
+  server start ... operators need no manual step beyond the restart this ships with." That was true
+  for managed projects and false for the master identity file, which the same entry listed as one of
+  the three sites #654 fixed.
+
+### Internal
+- **ADR 0009 records a ratified change of security posture: TangleClaw ships protected out of the
+  box, opt-out rather than opt-in (#710).** Authentication was built at the Caddy ingress and treated
+  as optional, justified by a VPN-as-perimeter assumption that was reasonable for a personal tool and
+  expired the moment there was an outside installer. Three defaults, none wrong alone, combine badly
+  on a standard install: `ingressMode: 'direct'` and `authEnabled: false` (`lib/store.js`), an
+  admin-credential wizard step appended only in caddy mode (`public/setup.js`), and a bind of all
+  interfaces whenever caddy is off (`server.js`) — an unauthenticated dashboard that can launch shell
+  sessions, reachable across the installer's network. The ADR settles #710's standing design fork in
+  favor of making the ingress part of the install, and records that there is never a default
+  credential (this repository is public, so a default would be readable by anyone and every install
+  pre-compromised until the operator acted), that a settings surface may change the credential but
+  never blank it, that recovery proves physical control and lives outside the gate, and that internet
+  exposure is unsupported rather than merely discouraged.
+  Written as a tracked ADR deliberately: the superseded posture lived in `.prawduct/artifacts/`,
+  which is gitignored, so it never reached a fresh clone, a contributor, or review — which is how it
+  went stale unnoticed. No behavior changes here; implementation is planned separately and its first
+  chunk is breaking.
+
+## [4.32.2] - 2026-07-26
+
+### Fixed
+- **A downloaded update that hasn't restarted yet now says so, instead of looking like nothing
+  happened.** Staleness was detected only by comparing the process's boot git SHA against the
+  on-disk SHA (`lib/server-info.js`, #199). That check is entirely git-dependent, and it fails
+  *silently in the safe-looking direction*: if `git rev-parse` errors or times out,
+  `currentDiskSha` is `null`, `bothPresent` is false, and `isStale` reduces to `false` — no banner,
+  while the disk has in fact moved. The result is indistinguishable from a healthy server, and it is
+  exactly what a self-update whose restart didn't take looks like from the dashboard: the version
+  number appears unchanged, with nothing explaining why. Field-reported on a first-time install that
+  clicked **Update & restart**, saw the server restart, refreshed, and still read the old version.
+  `getServerInfo()` now carries a second, independent signal — `runningVersion` (captured at boot)
+  versus `diskVersion` (re-read on every call, never cached, because the updater rewrites
+  `version.json` under a live process). `isStale` is the OR of the two, so the banner still appears
+  when git detection is unavailable. The version comparison is coarser — it only moves on a release —
+  which is precisely the case the self-updater produces, so the two signals cover each other rather
+  than overlap. Unknown state is still never rendered as stale: when neither version can be read,
+  `isStale` stays false rather than guessing.
+  The banner now leads with what the operator can act on — "v4.32.2 is downloaded — restart to
+  finish. This server is still running v4.32.1." — rather than two abbreviated SHAs, which named the
+  right condition in a form nobody could act on. The SHA wording is retained for the
+  merged-commits-without-a-version-bump case that #199 originally targeted.
+- **Releases now tag themselves, so a merged fix actually reaches installed copies (#713).** The wrap
+  bumps `version.json` and promotes the `[Unreleased]` CHANGELOG section, then stopped — nothing
+  created a tag. Both halves of the update path (`lib/update-checker.js`, `lib/update-applier.js`)
+  take the newest origin tag as their only input, so an untagged release is invisible everywhere:
+  4.31.2 through 4.32.0 all shipped untagged while every install was told it was up to date, and the
+  live `GET /api/update-status` reported `latestVersion: 4.31.1` with five releases sitting on `main`.
+  New `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`; it
+  reads the version from the commit that landed, extracts the matching CHANGELOG section via the new
+  `lib/changelog-notes.js`, pushes an annotated tag, confirms the tag is visible on origin, and
+  publishes a GitHub Release.
+  **Tag and Release are tracked as two independent conditions, never one "already done" flag.** A run
+  that pushed the tag and then failed before publishing would otherwise be permanently unrecoverable:
+  every re-run would see the tag, report success, and publish nothing. This is not hypothetical — 21
+  tags currently on origin have no Release. It also defuses `hooks/post-commit`, a second tagger that
+  predates this and went unnoticed: it tags `version.json` on `main` but creates a *lightweight,
+  local* tag and never pushes, so it could never deliver a release on its own — part of why tagging
+  looked like it was happening while five releases shipped undelivered. It is a template for managed
+  projects and is not installed here; if it were, its tag is now simply superseded.
+  The trigger is deliberately "`version.json` changed on `main`", **not** a wrap pipeline step as the
+  issue originally proposed. The wrap cannot know whether or when its bump reaches `main`: it returns
+  before its own PR merges, that PR is squash-merged so the wrap commit is replaced by a different
+  SHA (the hazard already documented at `lib/wrap-steps/commit.js:745-752`, which is why
+  `lastWrapSha` stamps `HEAD~1`), its base may be a feature branch, and it may never merge at all —
+  a pipeline-side tag could therefore point at a deleted branch's SHA, or release a version that
+  never shipped. Keying on `main` also covers every non-wrap path, including the cherry-pick that
+  recovered the stranded 4.32.1 bump (#719).
+  A version bump with no matching CHANGELOG section fails the workflow loudly instead of publishing
+  an empty release, and the tag push is verified against origin rather than trusted — the whole bug
+  class here is "assumed a step happened". Because the workflow reads the version from the commit it
+  tags, tag and `version.json` cannot drift; tagging a tree whose version is older would make every
+  install see a permanent "update available" it could never satisfy. Release process documented at
+  `docs/release-process.md`; this repo no longer follows the global rules' manual-tag suggestion,
+  which still applies to other managed projects.
+
+## [4.32.1] - 2026-07-26
+
+### Fixed
 - **What TangleClaw reports as its port now matches what it binds (#654).** The installed launchd
   plist sets `TANGLECLAW_PORT=3102` and never touches `config.serverPort`, which stays at the shipped
   `3101` default. The listen call in `server.js` main already honored the env var — the bug was that
@@ -61,6 +176,16 @@ All notable changes to TangleClaw are documented in this file.
   helper stays pure and silent for the config-regeneration path that runs it constantly.
 
 ### Internal
+- Generated engine configs are gitignored so TangleClaw can't dirty its own checkout (#708).
+  `.codex.yaml`, `.aider.conf.yml`, and `.antigravity.md` are written by `writeEngineConfig` into a
+  managed project's directory — and when TangleClaw's own clone is attached as a managed project
+  (which the first-run scan does by default, since the clone has both a git branch and a
+  `package.json`), that directory is this repo. The result isn't cosmetic: an untracked generated
+  file makes the tree dirty, which trips `lib/update-applier.js`'s `dirty-tree` guard and blocks the
+  self-updater entirely. Field-confirmed on a first-time install, where TangleClaw generated
+  `.codex.yaml` into its own clone and the resulting dirty tree stranded the operator on the version
+  containing the bug they were working around. `CLAUDE.md` is deliberately NOT ignored — this repo is
+  plugin-governed, so its `CLAUDE.md` is hand-authored and tracked.
 - The resolved server port is now a number rather than sometimes a string (#654). Under launchd the
   port came from `process.env.TANGLECLAW_PORT` as a string, which made
   `portScanner.isPortInUseBySystem`'s strict `e.port === port` comparison permanently false for
