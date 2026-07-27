@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.32.2] - 2026-07-26
+
 ### Fixed
 - **A downloaded update that hasn't restarted yet now says so, instead of looking like nothing
   happened.** Staleness was detected only by comparing the process's boot git SHA against the
