@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.32.1] - 2026-07-26
+
 ### Fixed
 - **What TangleClaw reports as its port now matches what it binds (#654).** The installed launchd
   plist sets `TANGLECLAW_PORT=3102` and never touches `config.serverPort`, which stays at the shipped
