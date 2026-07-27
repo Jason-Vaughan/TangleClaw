@@ -156,6 +156,14 @@ describe('injected update prompt (#730)', () => {
     assert.match(prompt, /drops the dashboard/);
   });
 
+  it('names the half-applied window so a failed test run is not reported as "no change"', () => {
+    // Between a successful apply and the restart the checkout is on the new
+    // release while the server still runs the old code — and version.json on
+    // disk already reads the new version, so an agent inferring state from it
+    // would report the update as complete.
+    assert.match(prompt, /still running the previous version/);
+  });
+
   it('no public script hands an agent a bare git mutation of the install', () => {
     const publicDir = path.join(__dirname, '..', 'public');
     for (const file of fs.readdirSync(publicDir)) {

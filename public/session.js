@@ -636,7 +636,10 @@ function buildUpdatePrompt(data) {
     '6. If tests pass, restart TangleClaw: launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server',
     '   The restart briefly drops the dashboard and API for anyone connected; the',
     '   browser reconnects on its own, and terminal sessions are unaffected.',
-    'If the updater refuses or tests fail, report it before restarting.'
+    'If the updater refuses or tests fail, report it before restarting. Note that once',
+    'step 2 succeeds the checkout is already on the new release, so until the restart',
+    'happens the server is still running the previous version — say so plainly rather',
+    'than reporting the update as either done or not started.'
   ].join('\n');
 }
 
