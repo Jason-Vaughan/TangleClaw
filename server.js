@@ -4680,6 +4680,20 @@ if (require.main === module) {
   // Start sidecar polling for active OpenClaw sessions
   sidecar.syncPolling();
 
+  // Refresh the master's identity file on every boot, regardless of autoStart.
+  // It embeds the TangleClaw API base URL, and only ensureMasterSession used to
+  // rewrite it — so with autoStart off, an install whose effective port changed
+  // kept telling the master to call a dead port until someone opened the master
+  // (#726). Managed projects already heal below via syncAllProjects(); this is
+  // the master's equivalent. skipIfAbsent so starting the server never creates
+  // master state for an operator who has not used it.
+  try {
+    const refreshed = master.refreshMasterIdentity({ skipIfAbsent: true });
+    if (refreshed.refreshed) log.debug('Master identity refreshed', { home: refreshed.home });
+  } catch (err) {
+    log.warn('Master identity refresh failed', { error: err.message });
+  }
+
   // Project Master auto-start: launch the reserved master session at boot
   // when the operator opted in (master.autoStart). Failure is logged, never
   // fatal — the brain icon's on-demand ensure remains the fallback path.
