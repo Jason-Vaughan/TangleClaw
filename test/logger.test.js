@@ -236,11 +236,11 @@ describe('logger', () => {
       log.info('after rotation');
       closeFileLogging();
 
-      // Old file should be rotated
+      // Old file should be rotated. This test is also what keeps its sibling
+      // (`rotate:false`) honest: both build an 11MB fixture, so if the size
+      // threshold ever moved above it, this one goes red rather than the
+      // sibling passing vacuously.
       assert.ok(fs.existsSync(`${logFile}.1`), 'Rotated file should exist');
-      // Sanity: the fixture really is over the threshold, so the rotate:false
-      // test below is proving the flag rather than an undersized file.
-      assert.ok(largeContent.length > 10 * 1024 * 1024);
 
       // New log file should have the new message
       const newContent = fs.readFileSync(logFile, 'utf8');
