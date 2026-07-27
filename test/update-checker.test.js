@@ -200,3 +200,39 @@ describe('update-checker', () => {
     });
   });
 });
+
+describe('resolveCheckInterval (#720)', () => {
+  const uc = require('../lib/update-checker');
+
+  it('defaults to 4 hours, not the 24 it shipped with', () => {
+    assert.equal(uc.DEFAULT_CHECK_INTERVAL_MS, 4 * 60 * 60 * 1000);
+    assert.deepEqual(uc.resolveCheckInterval(undefined), { intervalMs: 4 * 60 * 60 * 1000, warning: null });
+    assert.deepEqual(uc.resolveCheckInterval(null), { intervalMs: 4 * 60 * 60 * 1000, warning: null });
+  });
+
+  it('honors a valid configured interval', () => {
+    assert.deepEqual(uc.resolveCheckInterval(7200000), { intervalMs: 7200000, warning: null });
+  });
+
+  it('rejects a non-number rather than feeding it to setInterval', () => {
+    const r = uc.resolveCheckInterval('4h');
+    assert.equal(r.intervalMs, uc.DEFAULT_CHECK_INTERVAL_MS);
+    assert.match(r.warning, /must be a number/);
+  });
+
+  it('rejects NaN and Infinity', () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const r = uc.resolveCheckInterval(bad);
+      assert.equal(r.intervalMs, uc.DEFAULT_CHECK_INTERVAL_MS, `${bad} should fall back`);
+      assert.ok(r.warning);
+    }
+  });
+
+  it('rejects a value below the floor — a typo must not become a tight poll on origin', () => {
+    const r = uc.resolveCheckInterval(1000);
+    assert.equal(r.intervalMs, uc.DEFAULT_CHECK_INTERVAL_MS);
+    assert.match(r.warning, /below the .* floor/);
+    assert.deepEqual(uc.resolveCheckInterval(uc.MIN_CHECK_INTERVAL_MS),
+      { intervalMs: uc.MIN_CHECK_INTERVAL_MS, warning: null }, 'the floor itself is allowed');
+  });
+});
