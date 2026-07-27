@@ -27,7 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { main } = require('../scripts/apply-update');
+const { main, configureProcessLogging } = require('../scripts/apply-update');
 const logger = require('../lib/logger');
 
 /** Collect stdout writes for assertion. */
@@ -81,11 +81,22 @@ function stripComments(src) {
  */
 function applierCodes() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'update-applier.js'), 'utf8');
-  const codes = [...src.matchAll(/_fail\('([a-z-]+)'/g)].map((m) => m[1]);
-  // The catch-all path builds its result literal directly rather than via _fail.
-  codes.push('git-error');
-  assert.ok(codes.length >= 5, 'no refusal codes found — the extraction regex has drifted');
-  return [...new Set(codes)];
+  // Guard paths call _fail('<code>', …); the catch-all builds its result literal
+  // directly, as `code: 'git-error'`. Both forms are read — hand-copying either
+  // one back in would reintroduce the drift this function exists to stop.
+  const codes = [
+    ...[...src.matchAll(/_fail\('([a-z-]+)'/g)].map((m) => m[1]),
+    ...[...src.matchAll(/\bcode: '([a-z-]+)'/g)].map((m) => m[1])
+  ];
+  const unique = [...new Set(codes)];
+  // Floor asserted on what was actually extracted. An earlier version counted
+  // after appending a hand-written code, so the guard passed while `no-tag` was
+  // missing — the exact drift it was supposed to catch.
+  assert.ok(
+    unique.length >= 6,
+    `expected at least 6 refusal codes in update-applier.js, extracted ${unique.length} (${unique}) — the regexes have drifted`
+  );
+  return unique;
 }
 
 describe('apply-update CLI (#730)', () => {
@@ -153,17 +164,47 @@ describe('apply-update CLI (#730)', () => {
     }
   });
 
-  it('pins console output to stderr and does not exit before stdout flushes', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8');
-    assert.match(src, /setConsoleStream\(process\.stderr\)/);
-    assert.match(src, /process\.exitCode = main\(\)/);
-    // process.exit() truncates an async (piped) stdout mid-write.
-    assert.doesNotMatch(stripComments(src), /process\.exit\(/);
+  it('pins console output to stderr and initializes the server-side log', () => {
+    const calls = { stream: undefined, dir: undefined, opts: undefined };
+    const err = capture();
+    const ok = configureProcessLogging({
+      loggerLib: {
+        setConsoleStream: (s) => { calls.stream = s; },
+        initFileLogging: (dir, opts) => { calls.dir = dir; calls.opts = opts; }
+      },
+      storeLib: { _getBasePath: () => '/base' },
+      stderr: err
+    });
+
+    assert.equal(ok, true);
+    assert.equal(calls.stream, err, 'diagnostics must leave stdout free for the payload');
+    assert.equal(calls.dir, path.join('/base', 'logs'));
+    // The server holds an open fd on this file; rotating from a short-lived
+    // process renames it out from under that fd.
+    assert.equal(calls.opts.rotate, false);
   });
 
-  it('records the refusal in the server log, not only the caller terminal', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8');
-    assert.match(src, /initFileLogging/);
+  it('still applies the update when the log directory is unwritable', () => {
+    const err = capture();
+    const ok = configureProcessLogging({
+      loggerLib: {
+        setConsoleStream: () => {},
+        initFileLogging: () => { throw new Error('EACCES'); }
+      },
+      storeLib: { _getBasePath: () => '/base' },
+      stderr: err
+    });
+
+    assert.equal(ok, false, 'a logging failure must not abort the update');
+    assert.match(err.text(), /file logging unavailable: EACCES/);
+  });
+
+  it('does not exit before stdout flushes', () => {
+    const src = stripComments(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8'));
+    assert.match(src, /process\.exitCode = main\(\)/);
+    // process.exit() truncates an async (piped) stdout mid-write — and piped is
+    // exactly how a caller parsing this JSON invokes it.
+    assert.doesNotMatch(src, /process\.exit\(/);
   });
 
   it('does not restart the server — staging and restarting stay separate acts', () => {

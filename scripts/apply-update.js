@@ -64,19 +64,48 @@ function main(applier = updateApplier, out = process.stdout) {
   return result.ok ? 0 : 1;
 }
 
-if (require.main === module) {
-  logger.setConsoleStream(process.stderr);
+/**
+ * Point the logger at this process's outputs before any update runs.
+ *
+ * Extracted from the `require.main` block so it is *executed* by a test rather
+ * than pattern-matched in source. It is not spawn-tested deliberately: running
+ * the real script would call `applyUpdate()` for real, and on a clean checkout
+ * of `main` with a newer release available that performs an actual update —
+ * a test suite that can silently move the developer's checkout is precisely
+ * the accident this script exists to prevent.
+ *
+ * @param {object} [deps]
+ * @param {object} [deps.loggerLib] - Logger module (tests)
+ * @param {object} [deps.storeLib] - Store module, for the base path (tests)
+ * @param {{write: function}} [deps.stderr] - Diagnostics stream (tests)
+ * @returns {boolean} Whether file logging was initialized.
+ */
+function configureProcessLogging(deps = {}) {
+  const loggerLib = deps.loggerLib || logger;
+  const storeLib = deps.storeLib || store;
+  const stderr = deps.stderr || process.stderr;
+
+  loggerLib.setConsoleStream(stderr);
   try {
-    logger.initFileLogging(path.join(store._getBasePath(), 'logs'));
+    // rotate: false — the server holds an open fd on this same file, and
+    // rotating from a short-lived process would rename the log out from under
+    // it, leaving it writing to `.log.1` unnoticed until its next restart.
+    loggerLib.initFileLogging(path.join(storeLib._getBasePath(), 'logs'), { rotate: false });
+    return true;
   } catch (err) {
     // An unwritable log directory must not stop an update — the result still
     // reaches stdout and stderr. Say so rather than failing silently.
-    process.stderr.write(`[apply-update] file logging unavailable: ${err.message}\n`);
+    stderr.write(`[apply-update] file logging unavailable: ${err.message}\n`);
+    return false;
   }
+}
+
+if (require.main === module) {
+  configureProcessLogging();
   // Not process.exit(): stdout is asynchronous when piped — which is exactly
   // how a caller parsing this JSON invokes it — and exiting can truncate the
   // payload mid-write. Setting the code lets node flush and exit on its own.
   process.exitCode = main();
 }
 
-module.exports = { main };
+module.exports = { main, configureProcessLogging };

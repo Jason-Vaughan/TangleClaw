@@ -12,6 +12,10 @@ All notable changes to TangleClaw are documented in this file.
   so the applier's refusal log stays visible without corrupting the JSON — it was corrupting it, in
   exactly the refusal case the prompt tells an agent to parse. Level filtering and file logging are
   untouched, so the audit trail survives. Default behavior is unchanged.
+  `initFileLogging` also takes `{ rotate: false }` for the same caller. Rotation renames the log
+  file, and the long-running server holds an open descriptor on the old inode — a short-lived
+  process rotating the shared log would leave the server writing to `tangleclaw.log.1`, unnoticed,
+  until its next restart. The owner of a log owns its rotation.
 
 ### Fixed
 - **The update prompt injected into an AI session no longer hands the agent unguarded git (#730).**

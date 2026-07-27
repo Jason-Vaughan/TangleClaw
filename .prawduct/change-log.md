@@ -26,6 +26,55 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
+
+<!-- prawduct: type=bugfix | scope=730-update-pill-guards -->
+
+**Why:** Two update mechanisms reached the same repository and only one was guarded. The dashboard
+button called `lib/update-applier.js` (fails closed on: not a git checkout, no newer release, dirty
+tree, HEAD that is neither `main` nor a release tag; moves by `git checkout <tag>`). The session-page
+badge injected a fixed script whose third step was `git pull origin main` — no guards, different ref.
+It merged `main` into whatever branch was checked out (hit live against this repo's own session,
+mid-merge, on a feature branch) and shipped unreleased commits to someone who clicked a versioned
+control. The sharp failure: a successful apply leaves the checkout detached at the release tag, so
+running the prompt on an updated install moved HEAD to a non-tag commit, `_headState()` returned
+`updatable: false`, and every later **Update & restart** refused with `wrong-ref` — one prompt-driven
+update permanently stranded the install off the in-product path, which is the failure #711 exists to
+prevent, produced by the feature meant to avoid it.
+
+**What:** `scripts/apply-update.js` — a CLI over the same applier, printing its verbatim result JSON
+on stdout and exiting 1 on refusal. `buildUpdatePrompt` drives it, names every refusal code, forbids
+git outright, and states that a refused guard is a stop (an agent told only to "report the error"
+tends to *satisfy* the guard by stashing or switching branches — destroying what it protected).
+`lib/logger.js` gains `setConsoleStream()` and `initFileLogging(dir, {rotate})`. README's manual path
+had the same defect (`git pull --ff-only`, which fails outright on a tag-detached checkout).
+
+**Decision:** an update has exactly one implementation, and any surface that starts one calls it.
+Recorded as **ADR 0010** — tracked, because the superseded note lived in `.prawduct/artifacts/`,
+which is gitignored, so its reasoning reached no clone and no reviewer. Second time that has cost
+this project a decision nobody could read.
+
+**Critic findings, and one carried disposition.** Cumulative: 0 blocking, 11 warnings — all fixed,
+verified by `verify-resolutions` (fact `rev-20260727T050157Z-5a47cedc`). The highest-value one I
+could not have found myself: the "prints JSON on stdout" contract was false on *every real
+invocation*, because the logger routes anything below ERROR to stdout and the applier logs on all
+terminal paths — so a log line preceded the payload precisely in the refusal case the prompt tells an
+agent to parse. The tests could not catch it (a stubbed applier never logs), and I had run the script
+live and read past the log line in its own output. Carried forward deliberately: **the restart stays
+unconditional** (R-7). Clicking the pill authorizes the update, and the restart is what makes it take
+effect; gating it behind a second confirm would leave installs routinely half-updated — checkout
+moved, server still on the old code — which is strictly worse than a brief dashboard drop. The prompt
+now discloses the cost and names that window instead.
+
+**Deliberately not spawn-tested.** Running the real script in the suite would call `applyUpdate()`
+for real; on a clean checkout of `main` with a newer release available that performs an actual
+update. A test suite that can silently move the developer's checkout is the exact accident this
+script exists to prevent, so the process wiring is extracted into `configureProcessLogging()` and
+executed with fakes instead.
+
+**Tests:** `+16` `test/update-prompt-guards.test.js`, `+4` `test/logger.test.js`. Full suite
+**4807 tests / 0 fail / 1 skip**; evidence 2519 JUnit cases.
+
 ## 2026-07-27: Releases tag and publish themselves from CI, not from the wrap pipeline (#713)
 
 <!-- prawduct: type=bugfix | scope=release-713 -->
