@@ -4,6 +4,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The update prompt injected into an AI session no longer hands the agent unguarded git (#730).**
+  Tapping the session-page update badge sent a fixed six-step script whose third step was
+  `git pull origin main` — while the "Update & restart" button beside it on the dashboard went
+  through `lib/update-applier.js`, which refuses a dirty tree, refuses any HEAD that is not `main`
+  or a release tag, and moves by `git checkout <release tag>`. One operation, two mechanisms, guards
+  on only one of them. The consequences were not theoretical: the prompt would merge `main` into
+  whatever feature branch happened to be checked out (observed live against this repo's own session,
+  mid-merge, on a branch), and it shipped unreleased commits to an operator who had clicked a button
+  labelled with a version number. Worse, a successful update leaves the checkout **detached at the
+  release tag** — so running the prompt on an already-updated install fast-forwarded HEAD to a
+  non-tag commit, `git describe --exact-match` then failed, `_headState` returned `updatable: false`,
+  and every later **Update & restart** refused with `wrong-ref`. A single prompt-driven update
+  disabled the in-product updater for good, which is the stranding #711 exists to prevent, caused by
+  the feature meant to avoid it.
+  The prompt now runs `scripts/apply-update.js`, a new CLI over the same applier the button calls, so
+  an agent-driven update is bound by the same rules as a clicked one. It reports the applier's
+  verbatim JSON and exits non-zero on a refusal. Because an agent told merely to "report the error"
+  will often try to *satisfy* a guard by stashing or switching branches — destroying precisely what
+  the guard was protecting — the prompt states outright that a refusal is a stop, names the codes
+  (`dirty-tree`, `wrong-ref`, `no-update`, `no-git`, `git-error`), and forbids git entirely. The
+  restart step now says what it costs instead of issuing it silently.
+  The script deliberately does not restart: staging the new code and dropping everyone's dashboard
+  are separate decisions, which is why the HTTP route leaves the restart to its client too.
+
+### Internal
+- README's upgrade section no longer documents the same defect it warns about: the manual path was
+  `git pull --ff-only`, which fails outright on the tag-detached checkout a successful update
+  produces, and strands the install when run from `main`. It now points at `scripts/apply-update.js`
+  and explains why the detached-at-a-tag state is correct rather than something to "fix". The
+  automatic-check cadence also still read "every 24 hours" after #720 changed it to four.
+
 ## [4.33.0] - 2026-07-26
 
 ### Changed
