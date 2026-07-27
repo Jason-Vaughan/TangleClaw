@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The Project Master's identity file no longer keeps a dead API base URL (#726).** The master's
+  generated `CLAUDE.md` embeds the TangleClaw API base URL, and the only production writer was
+  `ensureMasterSession()` — which at boot ran *only* when `master.autoStart` was enabled. Managed
+  projects heal unconditionally via `projects.syncAllProjects()`; the master had no equivalent, so on
+  an install whose effective port differs from `config.serverPort` (the launchd plist sets
+  `TANGLECLAW_PORT`, which the config does not know about) the master kept being told to call a port
+  nothing was listening on — and every PortHub and shared-docs call it made failed silently. It
+  survived restarts and the #654 upgrade indefinitely unless the operator happened to open the master.
+  Field-confirmed on a first-time install still reading `http://localhost:3101` after updating.
+  The identity regeneration is now `master.refreshMasterIdentity()`, split out of
+  `ensureMasterSession()` so it can run without starting or touching a tmux session, and boot calls it
+  on every start. It is `skipIfAbsent`, so starting the server never creates master state for an
+  operator who has never opened the master, and it preserves the "never touches an already-running
+  master" contract because it does file writes only.
+  **Correction to the 4.32.1 notes:** that entry claimed already-generated configs "heal on the next
+  server start ... operators need no manual step beyond the restart this ships with." That was true
+  for managed projects and false for the master identity file, which the same entry listed as one of
+  the three sites #654 fixed.
+
 ## [4.32.2] - 2026-07-26
 
 ### Fixed
