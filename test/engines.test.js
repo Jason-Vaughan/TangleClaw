@@ -180,7 +180,7 @@ describe('engines', () => {
     const CODEX_ONLY = [
       { id: 'claude', name: 'Claude Code', available: false },
       { id: 'codex', name: 'Codex CLI', available: true },
-      { id: 'gemini', name: 'Gemini CLI', available: false }
+      { id: 'aider', name: 'Aider', available: false }
     ];
 
     it('honors config.defaultEngine when that engine is installed', () => {

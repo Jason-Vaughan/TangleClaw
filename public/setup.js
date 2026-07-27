@@ -400,7 +400,7 @@ function renderEngines(body) {
         <div class="setup-https-warn-icon" aria-hidden="true">!</div>
         <div>
           <div class="setup-https-warn-title">No AI engine detected on this machine.</div>
-          <p class="setup-text-muted">TangleClaw drives an engine's CLI, so sessions can't launch until one is installed. Install Claude Code, Codex, or Gemini CLI, then set the default from Settings — the rest of setup still applies.</p>
+          <p class="setup-text-muted">TangleClaw drives an engine's CLI, so sessions can't launch until one is installed. Install Claude Code, Codex, Antigravity, or Aider, then pick a default from Settings — the rest of setup still applies.</p>
         </div>
       </div>`
     : `<div class="form-group">

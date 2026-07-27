@@ -28,7 +28,7 @@ const SETUP_JS_SRC = RAW_SRC.replace(/^const wizard = /m, 'var wizard = ')
 
 const CLAUDE = { id: 'claude', name: 'Claude Code' };
 const CODEX = { id: 'codex', name: 'Codex CLI' };
-const GEMINI = { id: 'gemini', name: 'Gemini CLI' };
+const AIDER = { id: 'aider', name: 'Aider' };
 
 /** Minimal element stub covering what the engine step touches. */
 function makeElement(id) {
@@ -160,9 +160,9 @@ describe('Setup wizard — engine step (#707)', () => {
     });
 
     it('falls to the first installed engine when config names nothing', () => {
-      const ctx = loadSetup([{ ...CLAUDE, available: false }, { ...GEMINI, available: true }], {});
+      const ctx = loadSetup([{ ...CLAUDE, available: false }, { ...AIDER, available: true }], {});
       ctx.showWizard();
-      assert.equal(ctx.wizard.defaultEngine, 'gemini');
+      assert.equal(ctx.wizard.defaultEngine, 'aider');
     });
   });
 

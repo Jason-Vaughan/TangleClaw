@@ -1067,12 +1067,12 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       try {
         // Resolve against installed engines — the wizard's own engine step shows
         // what's available, so attaching against an uninstalled default would
-        // contradict the screen the operator just used.
-        const engineId = engines.resolveDefaultEngine(config);
-        if (!engineId) {
-          warnings.push(`Skipped "${proj.name}": no AI engine is installed — install one, then attach it from the dashboard`);
-          continue;
-        }
+        // contradict the screen the operator just used. Falls back to the
+        // configured intent when nothing is installed (attaching is bookkeeping;
+        // it doesn't run an engine).
+        const engineId = engines.resolveDefaultEngine(config)
+          || config.defaultEngine
+          || store.DEFAULT_CONFIG.defaultEngine;
 
         store.projects.create({
           name: proj.name,
@@ -1797,11 +1797,11 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
       continue;
     }
 
-    const engineId = engines.resolveDefaultEngine(config);
-    if (!engineId) {
-      warnings.push(`Skipped "${name}": no AI engine is installed — install one, then import again`);
-      continue;
-    }
+    // Prefer an installed engine over the configured default; fall back to that
+    // default when nothing is installed (import is bookkeeping, not a launch).
+    const engineId = engines.resolveDefaultEngine(config)
+      || config.defaultEngine
+      || store.DEFAULT_CONFIG.defaultEngine;
 
     try {
       store.projects.create({

@@ -11,15 +11,21 @@ All notable changes to TangleClaw are documented in this file.
   Engine dropdown directly below it offered every engine and pre-selected Claude. The consequences
   surfaced far from that screen: the Project Master refused to launch (`Engine "claude" not available
   (binary not found)`), new and attached projects were registered against the missing engine, and
-  boot regenerated a `CLAUDE.md` for it. New `engines.resolveDefaultEngine(config)` is the single
-  answer behind every default-engine fallback — the configured engine when installed, otherwise the
-  first installed one, and `null` when the machine has none, which callers now report as itself
-  (`No AI engine is installed — install one …`) rather than substituting a guess whose failure
-  surfaces later. An id matching no known profile is deliberately passed through unchanged so a typo
-  in `config.json` is still reported by name instead of being silently replaced. Wired at every
-  fallback: the Project Master (`lib/master.js`), project create and attach and the boot config sync
-  (`lib/projects.js`), and wizard attach plus bulk import (`server.js`). Found on a first-time
-  install where Codex was the only engine present.
+  boot regenerated a `CLAUDE.md` for it. New `engines.resolveDefaultEngine(config)` prefers the
+  configured engine when it is installed, otherwise the first installed one, and returns `null` when
+  the machine has none. An id matching no known profile is deliberately passed through unchanged, so
+  a typo in `config.json` is still reported by name instead of being silently replaced. Wired at the
+  Project Master (`lib/master.js`), project create and attach and the boot config sync
+  (`lib/projects.js`), and wizard attach plus bulk import (`server.js`). The Project Master **refuses
+  to launch** on the `null` case and says so (`No AI engine is installed — install one …`) because it
+  runs an engine immediately; create / attach / import instead record the configured intent, since
+  registering a project is bookkeeping and must not require an engine binary to be present.
+  Deliberately still literal, each for a reason: `lib/store.js`'s row default (the store layer cannot
+  depend on `engines` without a require cycle, and callers resolve before reaching it), the
+  `projConfig` fallback in `lib/engines.js` (it answers "which engine owns this path", not "what is
+  the default"), and the DB column default (changing it is a migration). The Settings, Create-project,
+  and Master engine pickers are also still ungated — the wizard is gated here and the rest is
+  tracked separately. Found on a first-time install where Codex was the only engine present.
 - **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
   engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
   labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list

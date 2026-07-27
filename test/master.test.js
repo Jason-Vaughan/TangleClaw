@@ -50,7 +50,13 @@ function fakeTmux({ alive = false } = {}) {
   };
 }
 
-const availableEngines = { detectEngine: () => ({ available: true }) };
+const availableEngines = {
+  detectEngine: () => ({ available: true }),
+  // _masterRuntime resolves through the injected lib (#707), so the stub must
+  // answer resolution too — otherwise these tests silently fall back to the real
+  // detector and their result depends on the host's installed CLIs.
+  resolveDefaultEngine: (config) => (config && config.defaultEngine) || 'claude'
+};
 
 describe('buildMasterClaudeMd', () => {
   it('carries the generated marker, the role, and the read-only rules', () => {
@@ -152,7 +158,11 @@ describe('ensureMasterSession', () => {
   it('refuses with an error when the engine binary is unavailable — and does not create tmux', () => {
     const t = fakeTmux({ alive: false });
     const r = master.ensureMasterSession({
-      home, tmuxLib: t, enginesLib: { detectEngine: () => ({ available: false }) }
+      home,
+      tmuxLib: t,
+      // Resolution is pinned so this test is about DETECTION only — without it the
+      // real resolver runs and the assertion depends on the host's installed CLIs.
+      enginesLib: { detectEngine: () => ({ available: false }), resolveDefaultEngine: () => 'claude' }
     });
     assert.equal(r.created, false);
     assert.match(r.error, /not available/);
@@ -165,19 +175,15 @@ describe('ensureMasterSession', () => {
     // not found)` — pointing the operator at a config value when the machine
     // simply had no engine. The resolver returns null here; reporting
     // `Engine "null" not found` would be no better, so the guard says it plainly.
-    const eng = require('../lib/engines');
-    const savedResolve = eng.resolveDefaultEngine;
-    try {
-      eng.resolveDefaultEngine = () => null;
-      const t = fakeTmux({ alive: false });
-      const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
-      assert.equal(r.created, false);
-      assert.match(r.error, /No AI engine is installed/);
-      assert.doesNotMatch(r.error, /null/, 'must not leak the null through to the operator');
-      assert.equal(t.calls.length, 0, 'must not create a tmux session with no engine to run');
-    } finally {
-      eng.resolveDefaultEngine = savedResolve;
-    }
+    // Injected through the same seam the caller uses for detection, so this
+    // doesn't depend on which CLIs the host machine has installed.
+    const noEngines = { detectEngine: () => ({ available: false }), resolveDefaultEngine: () => null };
+    const t = fakeTmux({ alive: false });
+    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: noEngines });
+    assert.equal(r.created, false);
+    assert.match(r.error, /No AI engine is installed/);
+    assert.doesNotMatch(r.error, /null/, 'must not leak the null through to the operator');
+    assert.equal(t.calls.length, 0, 'must not create a tmux session with no engine to run');
   });
 
   it('refuses with an error when the configured default engine has no profile', () => {
@@ -258,7 +264,11 @@ describe('getMasterStatus', () => {
   });
 
   it('carries the effective settings for the panel/settings UI', () => {
-    const s = master.getMasterStatus({ tmuxLib: fakeTmux() }).settings;
+    // enginesLib is injected because `resolvedEngine` now comes from availability
+    // resolution (#707); without it this asserts against whichever CLIs the host
+    // happens to have installed, and fails on a machine with none — which is the
+    // machine class the resolver exists for.
+    const s = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: availableEngines }).settings;
     assert.equal(s.accessLevel, 'read-only');
     assert.deepEqual(s.accessLevels, ['read-only', 'suggest', 'write']);
     assert.deepEqual(s.enabledAccessLevels, ['read-only']);
