@@ -5,6 +5,14 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Switching a project to Codex no longer silently downgrades a confirmed bypass posture — and the
+  picker guard now covers that case (#731).** Reconciliation resets only modes the target engine cannot
+  honor, so Codex gaining `bypassPermissions` turns a Claude→Codex switch from "reset to default" into
+  "keep bypass", matching Claude→Antigravity. Where the same update also hides the launch-mode picker,
+  the #622 guard now correctly demands `confirmBypassHidden` instead of being defused by a reconciliation
+  that no longer happens. Worth knowing when reviewing a carried posture: Codex's bypass also removes the
+  sandbox, where Claude's `--dangerously-skip-permissions` does not, so a posture confirmed on Claude is
+  not identical in blast radius once carried to Codex.
 - **`logger.setConsoleStream()` can pin all console output to one stream (`lib/logger.js`).** The
   default routing sends anything below ERROR to stdout, which is right for a long-lived server and
   wrong for any CLI whose stdout is a parsed contract: a single INFO line lands in front of the
@@ -18,6 +26,29 @@ All notable changes to TangleClaw are documented in this file.
   until its next restart. The owner of a log owns its rotation.
 
 ### Fixed
+- **Codex's "Full Auto" launch mode could not start a session at all (#731).** `data/engines/codex.json`
+  declared `--full-auto`, and current `codex-cli` rejects it outright — `codex --full-auto` exits 2 with
+  `error: unexpected argument '--full-auto' found`. The tmux session was created and the launch command
+  sent, so TangleClaw reported a launch while Codex died immediately; the operator saw a session that
+  never came up. Verified against `codex-cli 0.145.0`, where the flag is absent from `--help` entirely.
+  Full Auto now maps to `--ask-for-approval never --sandbox workspace-write`, which is what the mode
+  always meant: no approval prompts, sandbox retained.
+  The flag came from #211, taken verbatim from #209's probe target — which said "`--full-auto` or
+  `--auto-edit` (verify per installed version)". The guess shipped and the verification did not. Found by
+  a first-time Codex-only installer, i.e. the first person for whom Codex was not a secondary engine.
+- **Codex gains the Bypass launch mode it never had (#731, closes the Codex half of #209).**
+  `--dangerously-bypass-approvals-and-sandbox` — skips every approval *and* the sandbox, where Full Auto
+  keeps the sandbox. It uses the same `bypassPermissions` key as the `claude`, `antigravity`, and
+  `openclaw` profiles, so a project's stored `defaultLaunchMode` survives an engine change instead of
+  silently degrading. Codex and Aider were the only profiles without a bypass mode; Aider genuinely has
+  no equivalent flag, so it stays as-is.
+- **An unknown launch mode is no longer swallowed (#731).** `_buildLaunchCommand` appended mode args only
+  when the engine defined that mode, and otherwise fell through in silence — so a session launched with
+  engine defaults while reporting the mode the caller asked for, and an operator who selected Bypass got
+  an interactive agent with nothing said. Modes are engine-specific and a stored `defaultLaunchMode`
+  outlives a project's engine change, so the mismatch is reachable in ordinary use. Launching with
+  defaults is still the right fallback — refusing would strand a project over a cosmetic setting — but it
+  now logs the engine, the unknown mode, and the modes that do exist.
 - **The update prompt injected into an AI session no longer hands the agent unguarded git (#730).**
   Tapping the session-page update badge sent a fixed six-step script whose third step was
   `git pull origin main` — while the "Update & restart" button beside it on the dashboard went
@@ -52,6 +83,16 @@ All notable changes to TangleClaw are documented in this file.
   its reasoning never reached a clone or a reviewer — the second time that has cost this project.
 
 ### Internal
+- **Engine launch flags are now probed against the installed binary (#731).** Every existing engine test
+  asserted a profile's args against a literal copy of itself — self-referential, so it pinned the JSON
+  against an accidental edit but could never notice a CLI *removing* a flag. That is exactly how
+  `--full-auto` stayed green for months. `test/engine-launch-flags.test.js` runs each declared mode's args
+  past the real parser (args plus `--help`, which short-circuits before anything executes) and fails with
+  the CLI's own error text. Engines absent from the host are skipped, so CI — which has no engines —
+  cannot be the only guard; the point is that the rot surfaces on any machine that has the engine rather
+  than on a stranger's first install. Searching `--help` *text* was tried first and rejected: Claude Code
+  accepts `--enable-auto-mode` without listing it, so a text search reports a false failure on a valid
+  profile. This is the check #209's success criteria asked for and #211 did not deliver.
 - README's upgrade section no longer documents the same defect it warns about: the manual path was
   `git pull --ff-only`, which fails outright on the tag-detached checkout a successful update
   produces, and strands the install when run from `main`. It now points at `scripts/apply-update.js`

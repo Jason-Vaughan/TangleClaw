@@ -26,6 +26,57 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-27: Codex Full Auto was launching a flag codex-cli had removed (#731)
+
+<!-- prawduct: type=bugfix | scope=731-codex-launch-modes -->
+
+**Why:** `data/engines/codex.json` declared `--full-auto`. Current `codex-cli` rejects it —
+`codex --full-auto` exits 2, "unexpected argument". TC created the tmux session, sent the command,
+and reported a launch; codex died instantly. The one non-interactive Codex mode could not start a
+session at all. Verified on codex-cli 0.145.0, where the flag is gone from `--help` entirely.
+
+**Provenance:** the flag came from #211, lifted from #209's probe target ("`--full-auto` or
+`--auto-edit` (verify per installed version)"). The guess shipped, the verification did not. It
+surfaced only when a first-time, Codex-only installer tried a non-interactive launch — the first
+person for whom Codex was the primary engine rather than a spare.
+
+**What:** Full Auto → `--ask-for-approval never --sandbox workspace-write` (its actual meaning: no
+approvals, sandbox kept). Added `bypassPermissions` → `--dangerously-bypass-approvals-and-sandbox`,
+closing the Codex half of #209 and using the key the other profiles already share so a stored
+`defaultLaunchMode` stays portable. `_buildLaunchCommand` now logs an unknown mode instead of
+launching engine defaults while reporting the requested mode.
+
+**The finding that outlives this bug.** Every engine test asserted a profile's args against a literal
+copy of itself — `assert.deepEqual(profile.launchModes.sandbox.args, ['--sandbox'])`. Both sides are
+this repo's own JSON, so no such test can ever notice the CLI removing a flag; one even names a
+version in its `describe` string ("pinned to the real agy v1.0.10 flag surface") with nothing
+enforcing it. `test/engine-launch-flags.test.js` probes the real parser instead. Two design notes
+worth keeping: (1) searching `--help` text was the obvious oracle and is **wrong** — Claude Code
+accepts `--enable-auto-mode` without documenting it, so text search fails a valid profile; only the
+parser knows what the parser takes. (2) The probe keys on `detection.target`, not
+`launch.shellCommand`, because OpenClaw dispatches over `ssh` and would otherwise be probed against
+the ssh binary.
+
+**A safety consequence, recorded rather than discovered later.** Giving Codex a bypass mode changes
+engine-switch reconciliation: it downgrades only modes the target cannot honor, so Claude→Codex now
+*keeps* a confirmed bypass posture instead of resetting it — the same behavior Claude→Antigravity has
+always had. Where the update also hides the launch-mode picker, the #622 guard correctly demands
+`confirmBypassHidden` rather than being defused by a reconciliation that no longer happens. Both
+cases are now pinned. Note the asymmetry when reviewing a carried posture: Codex's bypass also drops
+the sandbox, where Claude's `--dangerously-skip-permissions` does not, so the carried posture is not
+identical in blast radius to the one that was confirmed.
+
+**Test changes that are corrections, not weakenings.** Two existing assertions encoded facts about the
+outside world that are false: `engines.test.js` asserted `--full-auto`, and
+`launch-mode-settings.test.js` used codex as its example of "an engine that cannot honor bypass". The
+first now asserts the working flags; the second moved to `aider`, which genuinely has no bypass mode,
+so the invariant it tests is unchanged and still covered. Nothing was relaxed — both files gained
+assertions.
+
+**Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
+codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
+accepted by invoking the real binary. Full suite **4830 tests / 0 fail / 1 skip**.
+
 ## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
 
 <!-- prawduct: type=bugfix | scope=730-update-pill-guards -->
