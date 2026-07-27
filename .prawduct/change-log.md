@@ -26,6 +26,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-27: Releases tag and publish themselves from CI, not from the wrap pipeline (#713)
+
+<!-- prawduct: type=bugfix | scope=release-713 -->
+
+**Why:** The wrap bumps `version.json` and promotes the `[Unreleased]` CHANGELOG section, then
+stopped — nothing created a tag. Both halves of the update path (`lib/update-checker.js`,
+`lib/update-applier.js`) take the newest origin tag as their only input, so an untagged release is
+invisible everywhere. Measured: 4.31.2 through 4.32.0 all shipped untagged while a live
+`GET /api/update-status` reported `latestVersion: 4.31.1`. Surfaced by a friend's first-ever install
+asking the obvious question — how does anyone who installs this get the fixes?
+
+**Decision — rejected the fix the issue proposed.** #713 specified a `release-tag` step after
+`commit` in the wrap pipeline. That cannot work, and the repo already documented why:
+`lib/wrap-steps/commit.js:485` arms `gh pr merge --auto --squash --delete-branch`, and
+`commit.js:745-752` states squash-merge "replaces the wrap commit with a brand-new commit and orphans
+the one made here" (the reason `lastWrapSha` stamps `HEAD~1`). A pipeline-side tag would point at an
+orphaned SHA on a deleted branch. Compounding it: the wrap PR's base is `originalBranch`, which may
+be a feature branch, and the pipeline returns before its own PR merges — so it could release a
+version that never ships. Root cause: **the wrap cannot know whether or when its bump reaches
+`main`.** Alternatives weighed were (a) the pipeline step as specified, (b) a pipeline step
+restricted to the direct-to-main path — safe but nearly never fires, since this repo discourages
+direct-to-main, and (c) CI keyed on `main`. Operator ratified (c), scoped to TangleClaw's own repo;
+managed-project scaffolding is a deliberate non-goal, filed as #721.
+
+**What:** `.github/workflows/release.yml` on `push` to `main` filtered to `paths: ['version.json']`,
+plus `lib/changelog-notes.js` (pure `extractReleaseNotes` + CLI shim) reading both heading
+conventions `version-bump` emits. Keying on `main` also covers non-wrap paths, including the
+cherry-pick that recovered the stranded 4.32.1 bump (#719).
+
+**Design property worth preserving:** tag and Release are tracked as two *independent* conditions,
+never one "already done" flag. A run that pushes the tag then fails before publishing would
+otherwise be permanently unrecoverable — every re-run sees the tag, reports green, publishes
+nothing. Not hypothetical: 21 tags on origin currently have no Release. This also defuses
+`hooks/post-commit`, a second tagger found during Critic review that predates this work — it tags
+`version.json` on `main` but creates a *lightweight, local* tag and never pushes, so it could never
+deliver a release. Part of why tagging looked like it was happening while five releases shipped
+undelivered.
+
+**Because the workflow reads the version from the commit it tags, tag and `version.json` cannot
+drift.** Preserve that in any hand-recovery: tagging a tree whose version is older makes every
+install see an "update available" it can never satisfy.
+
 ## 2026-07-24: Wrap drawer — "Ask the session to fix this" button on content-authoring blocks (#702)
 
 <!-- prawduct: type=feature | scope=wrap-702 | status=shipped -->
