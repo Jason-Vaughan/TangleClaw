@@ -238,10 +238,33 @@ describe('logger', () => {
 
       // Old file should be rotated
       assert.ok(fs.existsSync(`${logFile}.1`), 'Rotated file should exist');
+      // Sanity: the fixture really is over the threshold, so the rotate:false
+      // test below is proving the flag rather than an undersized file.
+      assert.ok(largeContent.length > 10 * 1024 * 1024);
 
       // New log file should have the new message
       const newContent = fs.readFileSync(logFile, 'utf8');
       assert.ok(newContent.includes('after rotation'), 'New file should have new content');
+    });
+
+    it('should NOT rotate on open when rotate:false', () => {
+      // A short-lived process sharing the server's log dir must not rename the
+      // file: the server holds an open fd on the old inode and would go on
+      // writing to tangleclaw.log.1, unnoticed, until its next restart.
+      const logDir = path.join(tmpDir, 'logs');
+      initFileLogging(logDir);
+      const logFile = path.join(logDir, 'tangleclaw.log');
+      closeFileLogging();
+
+      fs.writeFileSync(logFile, 'x'.repeat(11 * 1024 * 1024));
+
+      initFileLogging(logDir, { rotate: false });
+      createLogger('test').info('appended without rotating');
+      closeFileLogging();
+
+      assert.ok(!fs.existsSync(`${logFile}.1`), 'oversized log must be left in place');
+      const content = fs.readFileSync(logFile, 'utf8');
+      assert.ok(content.includes('appended without rotating'), 'writes still land in the same file');
     });
   });
 });

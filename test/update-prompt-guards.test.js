@@ -199,8 +199,12 @@ describe('apply-update CLI (#730)', () => {
     assert.match(err.text(), /file logging unavailable: EACCES/);
   });
 
-  it('does not exit before stdout flushes', () => {
+  it('actually calls the wiring from the entry point, and does not exit before stdout flushes', () => {
     const src = stripComments(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8'));
+    // Extracting the wiring made it testable but left the call site unasserted:
+    // dropping this one line passes every other test in the suite while stdout
+    // goes back to carrying a log line ahead of the JSON — the original defect.
+    assert.match(src, /configureProcessLogging\(\)/);
     assert.match(src, /process\.exitCode = main\(\)/);
     // process.exit() truncates an async (piped) stdout mid-write — and piped is
     // exactly how a caller parsing this JSON invokes it.

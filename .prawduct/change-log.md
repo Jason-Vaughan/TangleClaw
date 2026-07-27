@@ -72,8 +72,8 @@ update. A test suite that can silently move the developer's checkout is the exac
 script exists to prevent, so the process wiring is extracted into `configureProcessLogging()` and
 executed with fakes instead.
 
-**Tests:** `+16` `test/update-prompt-guards.test.js`, `+4` `test/logger.test.js`. Full suite
-**4807 tests / 0 fail / 1 skip**; evidence 2519 JUnit cases.
+**Tests:** `+16` `test/update-prompt-guards.test.js`, `+5` `test/logger.test.js`. Full suite
+**4808 tests / 0 fail / 1 skip**; evidence 2520 JUnit cases.
 
 ## 2026-07-27: Releases tag and publish themselves from CI, not from the wrap pipeline (#713)
 
