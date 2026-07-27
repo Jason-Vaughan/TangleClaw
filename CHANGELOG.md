@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **A running server now checks for a release every 4 hours instead of every 24 (#720).** 24h was
+  chosen for a quieter release cadence than this project has: a long-running server could sit through
+  most of a release's life without noticing it, and there is still no manual "check now" (#716), so
+  the interval was the only lever. One check is a single `git ls-remote`, so six a day instead of one
+  costs nothing measurable. The first check still runs 60s after boot.
+  `updateCheckIntervalMs` was already read by `server.js` but was undocumented, unvalidated, and had
+  no surfaced default; it is now documented in the configuration reference and resolved through
+  `updateChecker.resolveCheckInterval`. A non-number, `NaN`/`Infinity`, or a value under the
+  60-second floor falls back to the default **with a logged warning** rather than reaching
+  `setInterval` — an operator who set it deserves to know it did not take, and a units typo must not
+  become a tight poll against origin.
+
 ### Fixed
 - **The Project Master's identity file no longer keeps a dead API base URL (#726).** The master's
   generated `CLAUDE.md` embeds the TangleClaw API base URL, and the only production writer was

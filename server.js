@@ -4663,8 +4663,14 @@ if (require.main === module) {
   // Start model status monitor
   modelStatus.startMonitor(store.engines.list(), config.modelStatusIntervalMs || 120000);
 
-  // Start update checker (first check 60s after startup, then every 24h)
-  updateChecker.startChecker(config.updateCheckIntervalMs || 24 * 60 * 60 * 1000);
+  // Start update checker (first check 60s after startup, then on an interval).
+  // A rejected `updateCheckIntervalMs` is logged rather than silently swallowed —
+  // an operator who set it deserves to know it didn't take.
+  const checkInterval = updateChecker.resolveCheckInterval(config.updateCheckIntervalMs);
+  if (checkInterval.warning) {
+    log.warn(`Ignoring updateCheckIntervalMs: ${checkInterval.warning}`, { usingMs: checkInterval.intervalMs });
+  }
+  updateChecker.startChecker(checkInterval.intervalMs);
 
   // Start eval audit heartbeat watchdog
   evalAudit.startWatchdog((level, sessionId, project, message) => {
