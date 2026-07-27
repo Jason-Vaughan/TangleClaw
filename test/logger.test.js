@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { createLogger, setLevel, getLevel, initFileLogging, closeFileLogging } = require('../lib/logger');
+const { createLogger, setLevel, getLevel, setConsoleStream, initFileLogging, closeFileLogging } = require('../lib/logger');
 
 describe('logger', () => {
   let tmpDir;
@@ -87,6 +87,68 @@ describe('logger', () => {
       assert.ok(!content.includes('info msg'), 'Info should be filtered');
       assert.ok(content.includes('warn msg'), 'Warn should be shown');
       assert.ok(content.includes('error msg'), 'Error should be shown');
+    });
+  });
+
+  describe('setConsoleStream', () => {
+    /** Collect stream writes. */
+    function capture() {
+      const lines = [];
+      return { write: (s) => lines.push(s), text: () => lines.join('') };
+    }
+
+    afterEach(() => setConsoleStream(null));
+
+    it('routes every level to the pinned stream, not the stdout/stderr split', () => {
+      // A CLI whose stdout is a parsed contract cannot tolerate an INFO line
+      // landing in front of its payload — the default split would put one there.
+      const pinned = capture();
+      setConsoleStream(pinned);
+      setLevel('debug');
+
+      const log = createLogger('test');
+      log.info('info msg');
+      log.error('error msg');
+
+      assert.match(pinned.text(), /info msg/);
+      assert.match(pinned.text(), /error msg/, 'ERROR must follow the pin too, not stay on stderr');
+    });
+
+    it('leaves level filtering alone', () => {
+      const pinned = capture();
+      setConsoleStream(pinned);
+      setLevel('warn');
+
+      const log = createLogger('test');
+      log.info('filtered msg');
+      log.warn('kept msg');
+
+      assert.doesNotMatch(pinned.text(), /filtered msg/);
+      assert.match(pinned.text(), /kept msg/);
+    });
+
+    it('leaves file logging alone — an audit trail survives the pin', () => {
+      const logDir = path.join(tmpDir, 'logs');
+      initFileLogging(logDir);
+      setConsoleStream(capture());
+      setLevel('info');
+
+      createLogger('test').info('audited msg');
+      closeFileLogging();
+
+      const content = fs.readFileSync(path.join(logDir, 'tangleclaw.log'), 'utf8');
+      assert.ok(content.includes('audited msg'), 'pinning the console must not silence the file');
+    });
+
+    it('restores the default split when passed null', () => {
+      const pinned = capture();
+      setConsoleStream(pinned);
+      setConsoleStream(null);
+      setLevel('info');
+
+      createLogger('test').info('unpinned msg');
+
+      assert.equal(pinned.text(), '', 'no writes should reach the released stream');
     });
   });
 

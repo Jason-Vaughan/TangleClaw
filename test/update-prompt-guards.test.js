@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { main } = require('../scripts/apply-update');
+const logger = require('../lib/logger');
 
 /** Collect stdout writes for assertion. */
 function capture() {
@@ -68,6 +69,25 @@ function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * Every stable refusal code the applier can return, read from its source.
+ *
+ * Reading them rather than listing them is the point: the prompt tells an agent
+ * these are the codes it may have to report, so a code added to the applier and
+ * not to the prompt is a contract break the test must fail on, not one a
+ * hand-maintained list would quietly track.
+ *
+ * @returns {string[]}
+ */
+function applierCodes() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'update-applier.js'), 'utf8');
+  const codes = [...src.matchAll(/_fail\('([a-z-]+)'/g)].map((m) => m[1]);
+  // The catch-all path builds its result literal directly rather than via _fail.
+  codes.push('git-error');
+  assert.ok(codes.length >= 5, 'no refusal codes found — the extraction regex has drifted');
+  return [...new Set(codes)];
+}
+
 describe('apply-update CLI (#730)', () => {
   it('exits 0 and prints the applier result when the update applied', () => {
     const out = capture();
@@ -104,6 +124,46 @@ describe('apply-update CLI (#730)', () => {
 
     assert.equal(code, 1);
     assert.equal(JSON.parse(out.text()).fromSha, 'abc1234');
+  });
+
+  it('keeps stdout parseable when the applier logs — the refusal case', () => {
+    // The regression this exists for: the applier logs on EVERY terminal path,
+    // and the logger's default routing puts anything below ERROR on stdout. A
+    // stubbed applier returning a plain object never logs, so the original
+    // tests passed while a real invocation emitted a log line ahead of the
+    // payload — breaking exactly the refusal case a caller is told to parse.
+    const err = capture();
+    logger.setConsoleStream(err);
+    try {
+      const out = capture();
+      const log = logger.createLogger('update-applier');
+      const code = main({
+        applyUpdate: () => {
+          log.info('Update apply refused', { code: 'dirty-tree' });
+          return { ok: false, code: 'dirty-tree', error: 'local changes present', fromSha: 'abc', toRef: null, toSha: null };
+        }
+      }, out);
+
+      assert.equal(code, 1);
+      // The whole of stdout must parse — not "the last line of it".
+      assert.deepEqual(JSON.parse(out.text()).code, 'dirty-tree');
+      assert.match(err.text(), /Update apply refused/);
+    } finally {
+      logger.setConsoleStream(null);
+    }
+  });
+
+  it('pins console output to stderr and does not exit before stdout flushes', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8');
+    assert.match(src, /setConsoleStream\(process\.stderr\)/);
+    assert.match(src, /process\.exitCode = main\(\)/);
+    // process.exit() truncates an async (piped) stdout mid-write.
+    assert.doesNotMatch(stripComments(src), /process\.exit\(/);
+  });
+
+  it('records the refusal in the server log, not only the caller terminal', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'apply-update.js'), 'utf8');
+    assert.match(src, /initFileLogging/);
   });
 
   it('does not restart the server — staging and restarting stay separate acts', () => {
@@ -146,8 +206,12 @@ describe('injected update prompt (#730)', () => {
     assert.match(prompt, /STOP/);
   });
 
-  it('names the applier codes the agent will have to report', () => {
-    for (const code of ['dirty-tree', 'wrong-ref', 'no-update', 'no-git', 'git-error']) {
+  it('names every applier code the agent could have to report', () => {
+    // Derived from the applier's own source, not a hand-copied list — the first
+    // version of this test pinned five codes and silently blessed the omission
+    // of `no-tag`, so an agent hitting it would hold a code the instructions
+    // said did not exist.
+    for (const code of applierCodes()) {
       assert.match(prompt, new RegExp(code), `prompt omits the "${code}" refusal code`);
     }
   });

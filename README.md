@@ -229,10 +229,12 @@ Manual upgrade path:
 
 ```bash
 cd <your-TangleClaw-clone>
-node scripts/apply-update.js    # same guarded applier as the button; prints JSON, exits 1 if refused
-./deploy/install.sh             # picks up plist changes if any; idempotent
+node scripts/apply-update.js   # same guarded applier as the button
+                               # result JSON on stdout, logs on stderr, exit 1 if refused
 launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
 ```
+
+Run `./deploy/install.sh` **only** when a release changed a launchd plist or another deploy asset — it reloads both agents itself, so it replaces the `kickstart` above rather than following it.
 
 Use the script rather than `git pull`. A successful update leaves the checkout **detached at the release tag**, which is the intended state — pulling a branch on top of that moves you to an unreleased commit, and the updater then refuses to run again because HEAD no longer sits on a tag. The script fetches and checks out the release tag itself, and fails closed on a dirty tree or a branch that isn't meant to be updated.
 
