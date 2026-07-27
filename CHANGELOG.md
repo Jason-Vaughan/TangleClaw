@@ -34,6 +34,16 @@ All notable changes to TangleClaw are documented in this file.
   helper stays pure and silent for the config-regeneration path that runs it constantly.
 
 ### Internal
+- Generated engine configs are gitignored so TangleClaw can't dirty its own checkout (#708).
+  `.codex.yaml`, `.aider.conf.yml`, and `.antigravity.md` are written by `writeEngineConfig` into a
+  managed project's directory — and when TangleClaw's own clone is attached as a managed project
+  (which the first-run scan does by default, since the clone has both a git branch and a
+  `package.json`), that directory is this repo. The result isn't cosmetic: an untracked generated
+  file makes the tree dirty, which trips `lib/update-applier.js`'s `dirty-tree` guard and blocks the
+  self-updater entirely. Field-confirmed on a first-time install, where TangleClaw generated
+  `.codex.yaml` into its own clone and the resulting dirty tree stranded the operator on the version
+  containing the bug they were working around. `CLAUDE.md` is deliberately NOT ignored — this repo is
+  plugin-governed, so its `CLAUDE.md` is hand-authored and tracked.
 - The resolved server port is now a number rather than sometimes a string (#654). Under launchd the
   port came from `process.env.TANGLECLAW_PORT` as a string, which made
   `portScanner.isPortInUseBySystem`'s strict `e.port === port` comparison permanently false for
