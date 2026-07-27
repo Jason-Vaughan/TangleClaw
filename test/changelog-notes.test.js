@@ -110,6 +110,54 @@ test('handles a release that is the last section in the file', () => {
   assert.ok(!notes.endsWith('\n\n'), 'trailing blank lines should be trimmed');
 });
 
+test('a fenced code block containing a "## " line does not truncate the notes', () => {
+  const text = `# Changelog
+
+## [2.0.0] - 2026-03-03
+
+### Changed
+- Reworked the changelog format. Entries now look like:
+
+\`\`\`markdown
+## [1.0.0] - 2025-01-01
+### Added
+- example
+\`\`\`
+
+- A second bullet that must survive the fence.
+
+## [1.9.0] - 2026-02-02
+
+### Added
+- Older.
+`;
+  const notes = extractReleaseNotes(text, '2.0.0');
+  assert.match(notes, /A second bullet that must survive the fence/,
+    'notes were truncated at a "## " line inside a fenced block');
+  assert.ok(!notes.includes('Older.'), 'notes bled past the next real heading');
+});
+
+test('a release heading inside a fenced block is not mistaken for the section', () => {
+  const text = `# Changelog
+
+## [2.0.0] - 2026-03-03
+
+### Changed
+- Example of the old format:
+
+\`\`\`
+## [1.0.0] - 2025-01-01
+\`\`\`
+
+## [1.9.0] - 2026-02-02
+
+### Added
+- Real older entry.
+`;
+  assert.equal(extractReleaseNotes(text, '1.0.0'), null,
+    'matched a heading that only appears inside a code fence');
+});
+
 test('returns null for an empty section rather than an empty string', () => {
   const text = `# Changelog
 
@@ -138,6 +186,55 @@ test("this repo's own CHANGELOG yields notes for the shipped version", () => {
   const notes = extractReleaseNotes(changelog, version);
   assert.ok(notes && notes.length > 0,
     `no CHANGELOG section for the current version ${version} — the release workflow would fail`);
+});
+
+// The CLI shim is the entire interface the release workflow consumes: it reads
+// stdout for the notes and keys on the exit code to decide whether to publish.
+// Exercised as a real subprocess, because that is how the workflow calls it.
+const { execFileSync, spawnSync } = require('node:child_process');
+const os = require('node:os');
+
+const CLI = path.resolve(__dirname, '..', 'lib', 'changelog-notes.js');
+
+function writeTempChangelog(contents) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-changelog-'));
+  const file = path.join(dir, 'CHANGELOG.md');
+  fs.writeFileSync(file, contents);
+  return file;
+}
+
+test('CLI prints the notes to stdout and exits 0', () => {
+  const file = writeTempChangelog(BRACKETED);
+  const out = execFileSync('node', [CLI, '4.32.1', file], { encoding: 'utf8' });
+  assert.match(out, /### Fixed/);
+  assert.match(out, /#654/);
+  assert.ok(!out.includes('Something older'), 'CLI output bled into the previous release');
+});
+
+test('CLI accepts a leading v on the version', () => {
+  const file = writeTempChangelog(BRACKETED);
+  const out = execFileSync('node', [CLI, 'v4.32.1', file], { encoding: 'utf8' });
+  assert.match(out, /#654/);
+});
+
+test('CLI exits 1 with a diagnostic when the section is missing', () => {
+  const file = writeTempChangelog(BRACKETED);
+  const res = spawnSync('node', [CLI, '9.9.9', file], { encoding: 'utf8' });
+  assert.equal(res.status, 1, 'a missing section must fail the release, not publish empty notes');
+  assert.match(res.stderr, /No CHANGELOG section found for version 9\.9\.9/);
+  assert.equal(res.stdout, '', 'nothing may reach stdout when there are no notes');
+});
+
+test('CLI exits 2 when called with no version', () => {
+  const res = spawnSync('node', [CLI], { encoding: 'utf8' });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /usage:/);
+});
+
+test('CLI exits 2 when the changelog file is unreadable', () => {
+  const res = spawnSync('node', [CLI, '1.0.0', '/nonexistent/CHANGELOG.md'], { encoding: 'utf8' });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /cannot read changelog/);
 });
 
 test('the release workflow references an extractor path that exists', () => {

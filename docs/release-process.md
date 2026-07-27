@@ -22,13 +22,28 @@ was told it was up to date (#713).
 ## What is automatic
 
 `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`. It reads the
-version from the commit that just landed, skips cleanly if that tag already exists, extracts the
-matching `CHANGELOG.md` section, creates and pushes an annotated `vX.Y.Z` tag, confirms the tag is
-visible on origin, and publishes a GitHub Release with those notes.
+version from the commit that just landed, extracts the matching `CHANGELOG.md` section, creates and
+pushes an annotated `vX.Y.Z` tag, confirms the tag is visible on origin, and publishes a GitHub
+Release with those notes.
 
-**Do not tag by hand.** The repo-wide global rules still describe manual tagging as a follow-up step
-after a substantive merge; that guidance applies to other projects TangleClaw manages, not to this
-repo. Tagging here manually races the workflow and can produce a release the workflow then skips.
+**Tag and Release are checked independently, never as one "already done" flag.** A run that pushed
+the tag and then failed before publishing would otherwise be unrecoverable — every re-run would see
+the tag, report success, and publish nothing. Because the two are separate, re-running heals a
+partial release, and a tag that arrived from anywhere else still gets its Release.
+
+**Do not tag by hand.** The repo-wide global rules describe manual tagging as a follow-up step after
+a substantive merge; that guidance applies to other projects TangleClaw manages, not to this repo
+(`CLAUDE.md` carries the same exception). A hand-made tag races the workflow, and can pin a commit
+whose `version.json` disagrees with the tag — see "Tag and version must agree" below.
+
+### The post-commit hook is not the tagger
+
+`hooks/post-commit` also tags from `version.json` on `main`. It is a template TangleClaw installs
+into *managed* projects (README "Git hooks"), it is opt-in here, and it is **not installed in this
+repo**. It creates a *lightweight, local* tag and never pushes, so it can never deliver a release on
+its own — which is part of why tagging looked like it was happening while five releases shipped
+undelivered. The workflow is the tagger for this repo; if the hook were installed, its local tag
+would simply be superseded, and the Release still published.
 
 The trigger is deliberately "`version.json` changed on `main`" rather than "a wrap ran". The wrap
 cannot know whether or when its bump reaches `main`: it returns before its own PR merges, that PR is
@@ -66,6 +81,14 @@ Check in this order:
 
 To re-run after fixing the cause, use the workflow's manual trigger (`workflow_dispatch`); it is
 idempotent and will skip if the tag already exists.
+
+## Versions 4.31.2 – 4.31.5 are deliberately untagged
+
+Those four shipped before tagging was automated and were never backfilled. That is a decision, not an
+oversight: anyone on a 4.31.x install already sees the newest release and can update to it, because
+the checker compares against the *newest* tag rather than walking the sequence. Backfilling would
+make the tag history tidier and change nothing functionally, and it would mint GitHub Releases dated
+long after the work. Leave them.
 
 ## Tag and version must agree
 

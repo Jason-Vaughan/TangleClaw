@@ -110,6 +110,8 @@ Substantive milestones become tagged GitHub Releases — permanent citeable URLs
 - After a substantive merge, suggest `git tag -a vX.Y.Z -m "..." && git push --tags`, then `gh release create vX.Y.Z --notes-from-tag` (or `-F <notes-file>` for curated CHANGELOG notes).
 - Keep `CHANGELOG.md` in Keep a Changelog format: each merged PR adds to `[Unreleased]`; releases promote those entries to a dated section.
 
+**Exception — in THIS repo, never tag by hand.** The manual-tag step above applies to the projects TangleClaw manages, not to TangleClaw itself. Here, `.github/workflows/release.yml` tags and publishes automatically on any push to `main` that changes `version.json`. A hand-made tag races that workflow and can pin a commit whose `version.json` disagrees with the tag — which makes every install see an "update available" it can never satisfy. See `docs/release-process.md`.
+
 **Rule: TC's `version-bump` wrap step picks the bump level from `[Unreleased]` content — author entries under the subsection that produces the intended bump.**
 
 | `[Unreleased]` content | Bump |

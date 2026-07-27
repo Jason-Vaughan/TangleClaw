@@ -12,9 +12,17 @@ All notable changes to TangleClaw are documented in this file.
   4.31.2 through 4.32.0 all shipped untagged while every install was told it was up to date, and the
   live `GET /api/update-status` reported `latestVersion: 4.31.1` with five releases sitting on `main`.
   New `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`; it
-  reads the version from the commit that landed, skips cleanly when that tag already exists, extracts
-  the matching CHANGELOG section via the new `lib/changelog-notes.js`, pushes an annotated tag,
-  confirms the tag is visible on origin, and publishes a GitHub Release.
+  reads the version from the commit that landed, extracts the matching CHANGELOG section via the new
+  `lib/changelog-notes.js`, pushes an annotated tag, confirms the tag is visible on origin, and
+  publishes a GitHub Release.
+  **Tag and Release are tracked as two independent conditions, never one "already done" flag.** A run
+  that pushed the tag and then failed before publishing would otherwise be permanently unrecoverable:
+  every re-run would see the tag, report success, and publish nothing. This is not hypothetical — 21
+  tags currently on origin have no Release. It also defuses `hooks/post-commit`, a second tagger that
+  predates this and went unnoticed: it tags `version.json` on `main` but creates a *lightweight,
+  local* tag and never pushes, so it could never deliver a release on its own — part of why tagging
+  looked like it was happening while five releases shipped undelivered. It is a template for managed
+  projects and is not installed here; if it were, its tag is now simply superseded.
   The trigger is deliberately "`version.json` changed on `main`", **not** a wrap pipeline step as the
   issue originally proposed. The wrap cannot know whether or when its bump reaches `main`: it returns
   before its own PR merges, that PR is squash-merged so the wrap commit is replaced by a different
