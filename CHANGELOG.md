@@ -4,6 +4,70 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **`logger.setConsoleStream()` can pin all console output to one stream (`lib/logger.js`).** The
+  default routing sends anything below ERROR to stdout, which is right for a long-lived server and
+  wrong for any CLI whose stdout is a parsed contract: a single INFO line lands in front of the
+  payload and breaks every caller reading stdout as data. `scripts/apply-update.js` pins to stderr,
+  so the applier's refusal log stays visible without corrupting the JSON — it was corrupting it, in
+  exactly the refusal case the prompt tells an agent to parse. Level filtering and file logging are
+  untouched, so the audit trail survives. Default behavior is unchanged.
+  `initFileLogging` also takes `{ rotate: false }` for the same caller. Rotation renames the log
+  file, and the long-running server holds an open descriptor on the old inode — a short-lived
+  process rotating the shared log would leave the server writing to `tangleclaw.log.1`, unnoticed,
+  until its next restart. The owner of a log owns its rotation.
+
+### Fixed
+- **The update prompt injected into an AI session no longer hands the agent unguarded git (#730).**
+  Tapping the session-page update badge sent a fixed six-step script whose third step was
+  `git pull origin main` — while the "Update & restart" button beside it on the dashboard went
+  through `lib/update-applier.js`, which refuses a dirty tree, refuses any HEAD that is not `main`
+  or a release tag, and moves by `git checkout <release tag>`. One operation, two mechanisms, guards
+  on only one of them. The consequences were not theoretical: the prompt would merge `main` into
+  whatever feature branch happened to be checked out (observed live against this repo's own session,
+  mid-merge, on a branch), and it shipped unreleased commits to an operator who had clicked a button
+  labelled with a version number. Worse, a successful update leaves the checkout **detached at the
+  release tag** — so running the prompt on an already-updated install fast-forwarded HEAD to a
+  non-tag commit, `git describe --exact-match` then failed, `_headState` returned `updatable: false`,
+  and every later **Update & restart** refused with `wrong-ref`. A single prompt-driven update
+  disabled the in-product updater for good, which is the stranding #711 exists to prevent, caused by
+  the feature meant to avoid it.
+  The prompt now runs `scripts/apply-update.js`, a new CLI over the same applier the button calls, so
+  an agent-driven update is bound by the same rules as a clicked one. It reports the applier's
+  verbatim JSON and exits non-zero on a refusal. Because an agent told merely to "report the error"
+  will often try to *satisfy* a guard by stashing or switching branches — destroying precisely what
+  the guard was protecting — the prompt states outright that a refusal is a stop, names every code
+  the applier can return (`dirty-tree`, `wrong-ref`, `no-update`, `no-tag`, `no-git`, `git-error`),
+  and forbids git entirely. It also names the window between a successful apply and the restart: the
+  checkout is on the new release while the server still runs the old code, and `version.json` on disk
+  already reads the new version, so an agent inferring state from it would report the update as
+  finished. The restart step says what it costs instead of issuing it silently.
+  The script deliberately does not restart: staging the new code and dropping everyone's dashboard
+  are separate decisions, which is why the HTTP route leaves the restart to its client too.
+  `no-tag` had been missing from every human-facing enumeration since the applier shipped — including
+  `FEATURES.md` — so a caller was told a code it could actually receive did not exist. The test now
+  derives the list from `lib/update-applier.js` rather than restating it.
+  Decision recorded as **ADR 0010**: an update has exactly one implementation, and any surface that
+  starts one calls it. The superseded note lived in `.prawduct/artifacts/`, which is gitignored, so
+  its reasoning never reached a clone or a reviewer — the second time that has cost this project.
+
+### Internal
+- README's upgrade section no longer documents the same defect it warns about: the manual path was
+  `git pull --ff-only`, which fails outright on the tag-detached checkout a successful update
+  produces, and strands the install when run from `main`. It now points at `scripts/apply-update.js`
+  and explains why the detached-at-a-tag state is correct rather than something to "fix". The
+  automatic-check cadence also still read "every 24 hours" after #720 changed it to four, and the
+  manual path issued two restarts — `deploy/install.sh` already unloads and loads both launchd
+  agents, so it replaces the `kickstart` rather than following it, and is only needed when a release
+  changed a deploy asset.
+- An agent-driven update now leaves the same server-side trail as a button-driven one. The applier
+  logs every refusal deliberately, but those lines only reach `~/.tangleclaw/logs/` because the
+  server initializes file logging; a separate CLI process did not, so the record existed solely in
+  the agent's terminal pane. `scripts/apply-update.js` initializes it too, and degrades to a stderr
+  note rather than failing the update if the log directory is unwritable.
+- The applier's result object is recorded as a two-consumer contract in `boundary-patterns.md`. It
+  became a published shape the moment a second surface parsed it, and it had already drifted.
+
 ## [4.33.0] - 2026-07-26
 
 ### Changed
