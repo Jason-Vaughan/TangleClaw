@@ -4,6 +4,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Releases now tag themselves, so a merged fix actually reaches installed copies (#713).** The wrap
+  bumps `version.json` and promotes the `[Unreleased]` CHANGELOG section, then stopped — nothing
+  created a tag. Both halves of the update path (`lib/update-checker.js`, `lib/update-applier.js`)
+  take the newest origin tag as their only input, so an untagged release is invisible everywhere:
+  4.31.2 through 4.32.0 all shipped untagged while every install was told it was up to date, and the
+  live `GET /api/update-status` reported `latestVersion: 4.31.1` with five releases sitting on `main`.
+  New `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`; it
+  reads the version from the commit that landed, skips cleanly when that tag already exists, extracts
+  the matching CHANGELOG section via the new `lib/changelog-notes.js`, pushes an annotated tag,
+  confirms the tag is visible on origin, and publishes a GitHub Release.
+  The trigger is deliberately "`version.json` changed on `main`", **not** a wrap pipeline step as the
+  issue originally proposed. The wrap cannot know whether or when its bump reaches `main`: it returns
+  before its own PR merges, that PR is squash-merged so the wrap commit is replaced by a different
+  SHA (the hazard already documented at `lib/wrap-steps/commit.js:745-752`, which is why
+  `lastWrapSha` stamps `HEAD~1`), its base may be a feature branch, and it may never merge at all —
+  a pipeline-side tag could therefore point at a deleted branch's SHA, or release a version that
+  never shipped. Keying on `main` also covers every non-wrap path, including the cherry-pick that
+  recovered the stranded 4.32.1 bump (#719).
+  A version bump with no matching CHANGELOG section fails the workflow loudly instead of publishing
+  an empty release, and the tag push is verified against origin rather than trusted — the whole bug
+  class here is "assumed a step happened". Because the workflow reads the version from the commit it
+  tags, tag and `version.json` cannot drift; tagging a tree whose version is older would make every
+  install see a permanent "update available" it could never satisfy. Release process documented at
+  `docs/release-process.md`; this repo no longer follows the global rules' manual-tag suggestion,
+  which still applies to other managed projects.
+
 ## [4.32.1] - 2026-07-26
 
 ### Fixed

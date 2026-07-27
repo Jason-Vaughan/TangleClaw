@@ -1,0 +1,116 @@
+name: Release
+
+# Tag and publish a release when a version bump lands on main.
+#
+# The update path (lib/update-checker.js, lib/update-applier.js) treats the newest
+# tag on origin as its only input, so an untagged release reaches no installed
+# copy. Tagging used to be a manual step suggested in prose, and it was skipped
+# for five consecutive releases with no signal (#713).
+#
+# The trigger is deliberately "version.json changed on main", not "a wrap ran".
+# The wrap cannot know whether or when its bump reaches main: it returns before
+# its own PR merges, that PR is squash-merged (so the wrap commit is replaced),
+# its base may be a feature branch, and it may never merge at all. Keying on main
+# means every path that lands a bump gets tagged — wrap, cherry-pick, or a hand
+# edit — and the tag always points at the commit that actually carries the
+# version.
+
+on:
+  push:
+    branches: [main]
+    paths: ['version.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Serialize releases; two pushes in quick succession must not race on the same tag.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the production runtime and the test workflow.
+          node-version: 22
+
+      - name: Read the version being released
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./version.json').version")"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::version.json holds '$VERSION', which is not a semver version."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION from $GITHUB_SHA"
+
+      - name: Skip if this version is already tagged
+        id: existing
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG already exists on origin — nothing to do."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Fails the workflow when the version moved but the CHANGELOG section was
+      # never promoted. Publishing an empty release would repeat the exact
+      # failure this automation exists to prevent: a release that looks complete
+      # and delivers nothing.
+      - name: Extract release notes from CHANGELOG
+        if: steps.existing.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          node lib/changelog-notes.js "${{ steps.version.outputs.version }}" > release-notes.md
+          echo "Release notes ($(wc -l < release-notes.md) lines):"
+          cat release-notes.md
+
+      - name: Create and push the tag
+        if: steps.existing.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Annotated, matching the existing hand-made tags. parseTagsOutput in
+          # lib/update-checker.js dereferences the ^{} entries these produce.
+          git tag -a "$TAG" -m "TangleClaw $TAG"
+          git push origin "$TAG"
+
+      # The whole bug class here is "assumed a step happened". Confirm the tag is
+      # visible on origin — which is what update-checker actually polls — rather
+      # than trusting the push's exit code.
+      - name: Verify the tag is visible on origin
+        if: steps.existing.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          if [ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            echo "::error::$TAG is not visible on origin after push — installs would not see this release."
+            exit 1
+          fi
+          echo "$TAG confirmed on origin."
+
+      - name: Publish the GitHub Release
+        if: steps.existing.outputs.already == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+          echo "Published $TAG"
