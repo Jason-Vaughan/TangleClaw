@@ -53,13 +53,17 @@ jobs:
 
       - name: Read the version being released
         id: version
+        shell: bash
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./version.json').version")"
-          # Fully anchored: this value is interpolated into later run: bodies in a
-          # contents: write job, so a trailing shell metacharacter must not survive.
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*$'; then
-            echo "::error::version.json holds '$VERSION', which is not a semver version."
+          # Bash =~ matches the WHOLE string. `grep -Eq` would not: it is
+          # line-oriented and succeeds on any matching line, so a multi-line value
+          # would pass on its first line and carry the rest into $GITHUB_OUTPUT.
+          # That matters because this value reaches later steps in a
+          # contents: write job.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*$ ]]; then
+            echo "::error::version.json holds an invalid semver version."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -68,11 +72,14 @@ jobs:
 
       - name: Check what already exists
         id: existing
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed through env rather than interpolated into the script body, so
+          # the value is data to bash instead of text spliced into the program.
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
 
           # Capture ls-remote's exit status explicitly. Inside an `if` condition a
           # failing command substitution is exempt from set -e, so a transient
@@ -83,7 +90,18 @@ jobs:
           fi
           if [ -n "$REMOTE_TAG" ]; then TAG_EXISTS=true; else TAG_EXISTS=false; fi
 
-          if gh release view "$TAG" >/dev/null 2>&1; then RELEASE_EXISTS=true; else RELEASE_EXISTS=false; fi
+          # A DRAFT release holds the tag name without publishing anything, and
+          # `gh release view` succeeds for drafts. Treating one as "released"
+          # would skip publishing and still report green — the same silent hole
+          # this workflow exists to close, entered through another door.
+          RELEASE_EXISTS=false
+          if RELEASE_JSON="$(gh release view "$TAG" --json isDraft 2>/dev/null)"; then
+            if [ "$(printf '%s' "$RELEASE_JSON" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).isDraft')" = "true" ]; then
+              echo "::error::a DRAFT release already exists for $TAG. Publish or delete it, then re-run."
+              exit 1
+            fi
+            RELEASE_EXISTS=true
+          fi
 
           echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
           echo "release_exists=$RELEASE_EXISTS" >> "$GITHUB_OUTPUT"
@@ -99,17 +117,22 @@ jobs:
       # and delivers nothing.
       - name: Extract release notes from CHANGELOG
         if: steps.existing.outputs.release_exists == 'false'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          node lib/changelog-notes.js "${{ steps.version.outputs.version }}" > release-notes.md
+          node lib/changelog-notes.js "$VERSION" > release-notes.md
           echo "Release notes ($(wc -l < release-notes.md) lines):"
           cat release-notes.md
 
       - name: Create and push the tag
         if: steps.existing.outputs.tag_exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Annotated, matching the existing hand-made tags. An annotated tag shows
@@ -125,9 +148,11 @@ jobs:
       # a local-only tag that was never pushed cannot masquerade as delivered.
       - name: Verify the tag is visible on origin
         if: steps.existing.outputs.release_exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
           if ! REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG")"; then
             echo "::error::could not reach origin to verify $TAG."
             exit 1
@@ -140,10 +165,11 @@ jobs:
 
       - name: Publish the GitHub Release
         if: steps.existing.outputs.release_exists == 'false'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
           gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
           echo "Published $TAG"

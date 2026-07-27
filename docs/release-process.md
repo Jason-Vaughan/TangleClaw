@@ -79,8 +79,13 @@ Check in this order:
 3. **Is the tag on origin?** `git ls-remote --tags origin | grep vX.Y.Z`. This is the exact thing
    installs poll.
 
-To re-run after fixing the cause, use the workflow's manual trigger (`workflow_dispatch`); it is
-idempotent and will skip if the tag already exists.
+To re-run after fixing the cause, use the workflow's manual trigger (`workflow_dispatch`) **from
+`main`** — the job is guarded on `github.ref`, so a dispatch aimed at any other branch exits green
+without doing anything, which looks like success.
+
+Re-running is the remedy, not a no-op: because tag and Release are checked independently, a re-run
+publishes the missing Release for a tag that already exists. It only does nothing when the version is
+genuinely tagged *and* released.
 
 ## Versions 4.31.2 – 4.31.5 are deliberately untagged
 
