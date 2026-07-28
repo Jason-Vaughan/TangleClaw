@@ -901,6 +901,19 @@ async function wizardComplete() {
     return;
   }
 
+  // Surface anything the server skipped. `warnings` has always been on this
+  // response and nothing here read it, so a project that failed to attach —
+  // a path that vanished, a name collision — left the wizard reporting success
+  // and the operator believing every directory they ticked was registered.
+  if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+    const err = document.getElementById('setupCompleteError');
+    if (err) {
+      err.textContent = `Setup finished, but ${result.warnings.length} item(s) were skipped: `
+        + result.warnings.join('; ');
+      err.classList.remove('hidden');
+    }
+  }
+
   if (result.restart) {
     // Backend always supplies redirectUrl with restart today, but fall back
     // to the current origin so the overlay still shows while the server

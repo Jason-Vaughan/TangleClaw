@@ -26,6 +26,26 @@ All notable changes to TangleClaw are documented in this file.
   until its next restart. The owner of a log owns its rotation.
 
 ### Fixed
+- **The #707 default-engine fix now reaches the surfaces that bypassed it.** Two paths still produced the
+  original symptom: the Create-project drawer seeded its engine from `config.defaultEngine` and POSTed
+  it, so the server's `data.engine || resolveDefaultEngine(config)` never reached its fallback; and
+  Master settings could pin `settings.engine`, which `_masterRuntime` honored unconditionally — an
+  operator who pinned Claude on a machine without it got `binary not found` again, from a second door.
+  The Master pin now goes through the same resolver by standing in for `defaultEngine`, so precedence is
+  identical everywhere. Engine pickers are also gated consistently: uninstalled engines stay listed
+  (someone who installs one later shouldn't have to hunt for it) but are `disabled` and labelled
+  `(not installed)` in the Create-project, Settings, and Master pickers — the last of which previously
+  neither labelled nor disabled them, on the surface where it fails hardest since the master runs its
+  engine immediately.
+- **A skipped project no longer disappears silently.** The setup wizard never read `warnings` off
+  `/api/setup/complete`, so an operator finished setup believing every directory they ticked was
+  attached; the import path logged only to `console.warn`. Both now surface to the operator, and both
+  routes log server-side regardless of what the client does.
+- **`resolveDefaultEngine` picks a stable engine and says when it substitutes.** "The first installed
+  engine" was `readdirSync` order over the profile directory — filesystem-dependent, so the same machine
+  could pick differently after a profile is added or a reinstall recreates the directory, and this value
+  gets persisted onto projects. Now sorted by id, and the substitution is logged once where it is
+  decided rather than being invisible at every call site.
 - **TangleClaw no longer defaults to an AI engine that isn't installed (#707).** The shipped config
   default is `claude`, and every fallback hardcoded the same literal — so on a machine without Claude
   Code the setup wizard's own availability list said "✗ Claude Code — Not found" while the Default
@@ -129,6 +149,20 @@ All notable changes to TangleClaw are documented in this file.
   its reasoning never reached a clone or a reviewer — the second time that has cost this project.
 
 ### Internal
+- Engine detection no longer runs per item in the bulk routes (#707). `resolveDefaultEngine` calls
+  `listWithAvailability()`, which shells out a detection probe per engine profile, so resolving inside
+  the setup-attach and import loops multiplied that across the request — and a mid-batch change in what
+  is installed would have split one batch across different engines. Both resolve once. `attachProject`
+  now reads the directory's existing `project.json` first and resolves only if that didn't answer,
+  instead of probing and discarding the result for every previously-managed directory.
+- `syncAllProjects` no longer skips the rest of a project's iteration when no engine resolves. The
+  `continue` also skipped the #247 git-hooks sync — whose own comment says it is deliberately NOT gated
+  on engine state — and the `synced` counter. Only the engine-config write is gated now.
+- The five wired `resolveDefaultEngine` call sites have tests (#707). They were untestable before:
+  the resolver read `listWithAvailability()` as a module-local reference, so availability came from
+  probing the host's PATH and a test meant different things on a developer box with four engines than on
+  CI with none. It now reads through the existing `_internal` seam. An untested call site is where this
+  bug actually lived — the resolver was never the hard part.
 - **Engine launch flags are now probed against the installed binary (#731).** Every existing engine test
   asserted a profile's args against a literal copy of itself — self-referential, so it pinned the JSON
   against an accidental edit but could never notice a CLI *removing* a flag. That is exactly how

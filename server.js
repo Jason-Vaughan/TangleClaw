@@ -1042,6 +1042,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
 
   // Attach selected projects
   const attached = [];
+  // Resolved once for the whole batch. `resolveDefaultEngine` runs
+  // `listWithAvailability()`, which shells out a detection probe per engine
+  // profile, so resolving per item multiplied that across the request — and a
+  // mid-batch change in what is installed would register different projects
+  // against different engines, which is worse than being slow.
+  const batchDefaultEngine = engines.resolveDefaultEngine(config)
+    || config.defaultEngine
+    || store.DEFAULT_CONFIG.defaultEngine;
   if (Array.isArray(body.projects)) {
     for (const proj of body.projects) {
       if (!proj || !proj.name || !proj.path) continue;
@@ -1070,9 +1078,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         // contradict the screen the operator just used. Falls back to the
         // configured intent when nothing is installed (attaching is bookkeeping;
         // it doesn't run an engine).
-        const engineId = engines.resolveDefaultEngine(config)
-          || config.defaultEngine
-          || store.DEFAULT_CONFIG.defaultEngine;
+        const engineId = batchDefaultEngine;
 
         store.projects.create({
           name: proj.name,
@@ -1115,7 +1121,13 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     _scheduleRestart();
   }
 
-  jsonResponse(res, 200, {
+    if (warnings.length > 0) {
+    // A skipped project vanished silently before: the wizard never read
+    // `warnings`, so the operator finished setup believing every directory they
+    // ticked had been attached. Log it regardless of what the client does.
+    log.warn('Setup completed with skipped projects', { count: warnings.length, warnings });
+  }
+jsonResponse(res, 200, {
     ok: true,
     setupComplete: true,
     attached,
@@ -1771,6 +1783,13 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
   const projectsDir = projects.resolveProjectsDir(config.projectsDir);
   const imported = [];
   const warnings = [];
+  // Resolved once for the batch — see the bulk-attach route for why per-item
+  // resolution is both slow (a detection probe per engine, per item) and wrong
+  // (a mid-batch change in what is installed would split the batch across
+  // engines).
+  const importDefaultEngine = engines.resolveDefaultEngine(config)
+    || config.defaultEngine
+    || store.DEFAULT_CONFIG.defaultEngine;
 
   for (const name of body.names) {
     // Case-insensitive identity (#221) — symmetric with createProject /
@@ -1799,9 +1818,7 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 
     // Prefer an installed engine over the configured default; fall back to that
     // default when nothing is installed (import is bookkeeping, not a launch).
-    const engineId = engines.resolveDefaultEngine(config)
-      || config.defaultEngine
-      || store.DEFAULT_CONFIG.defaultEngine;
+    const engineId = importDefaultEngine;
 
     try {
       store.projects.create({
@@ -1826,6 +1843,9 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
     }
   }
 
+  if (warnings.length > 0) {
+    log.warn('Project import completed with skips', { imported: imported.length, count: warnings.length, warnings });
+  }
   jsonResponse(res, 200, { imported, warnings });
 });
 

@@ -16,15 +16,50 @@
  * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
-  let html = engineList.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
+  let html = engineList.map(e => {
+    // Uninstalled engines stay listed — someone who installs one later should
+    // not have to hunt for it — but are not selectable. Labelling alone let a
+    // picker contradict the availability list beside it and hand the server an
+    // engine this machine does not have, which is #707 reached through the UI
+    // rather than through a config default. The engine currently in use is the
+    // one exception: disabling it would make the control show a value it
+    // refuses to keep.
+    const unavailable = e.available === false && e.id !== selectedId;
+    return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
+      + `${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`;
+  }).join('');
 
   if (selectedId && !engineList.some(e => e.id === selectedId)) {
     html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
   }
 
   return html;
+}
+
+/**
+ * Pick the engine a picker should open on.
+ *
+ * Mirrors `engines.resolveDefaultEngine` (`lib/engines.js`) for the cases a
+ * picker can encounter: the configured engine when it is installed, otherwise
+ * the first installed one, otherwise `''`. It exists because seeding a picker
+ * straight from `config.defaultEngine` and POSTing that value short-circuits the
+ * server's resolver entirely — the client hands over an explicit engine, so
+ * `data.engine || resolveDefaultEngine(config)` never reaches its fallback and
+ * a machine without that engine gets a project bound to it anyway.
+ *
+ * The unknown-id passthrough is deliberately NOT mirrored: that branch exists so
+ * a server-side caller can report a typo by name, and a picker has no way to
+ * render an engine it knows nothing about.
+ *
+ * @param {object[]} engineList - Engines from state.engines (carry `available`)
+ * @param {string} configured - `config.defaultEngine`
+ * @returns {string} Engine id, or '' when nothing is installed
+ */
+function resolvePickerEngine(engineList, configured) {
+  const list = Array.isArray(engineList) ? engineList : [];
+  const available = list.filter(e => e && e.available !== false);
+  if (configured && available.some(e => e.id === configured)) return configured;
+  return available.length > 0 ? available[0].id : '';
 }
 
 // ── Project Card Rendering ──
@@ -1578,7 +1613,11 @@ function openCreateModal() {
   createStep = 0;
   createData = {
     name: '',
-    engine: state.config ? state.config.defaultEngine || '' : '',
+    // Resolved against what is installed, not read straight from config. The
+    // drawer POSTs this value, so seeding it from `config.defaultEngine`
+    // short-circuited the server's resolver and created projects bound to an
+    // engine the machine does not have (#707).
+    engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
     tags: ''
   };
   renderCreateStep();
@@ -1790,7 +1829,14 @@ async function importLeaseProjects(namesJson) {
     // Show any other warnings
     const otherWarnings = result.warnings.filter(w => !w.match(/directory not found/));
     if (otherWarnings.length) {
-      console.warn('Import warnings:', otherWarnings);
+      // Was console-only, which meant a skipped import was invisible to anyone
+      // not holding devtools open. The toast is the surface the operator has.
+      const t = document.getElementById('toast');
+      if (t) {
+        t.textContent = `Import warning: ${otherWarnings.join('; ')}`;
+        t.className = 'toast toast-warn visible';
+        setTimeout(() => { t.classList.remove('visible'); }, 6000);
+      }
     }
   }
   dismissImportBanner();
@@ -3008,9 +3054,16 @@ function renderMasterSettingsBody(s, groups) {
       </label>`;
   }).join('');
 
+  // Same gating as every other engine picker (#707). This one previously
+  // neither labelled nor disabled uninstalled engines, so the Master could be
+  // pinned to an engine that isn't here — and the master runs its engine
+  // immediately, making it the surface where that fails hardest.
   const engineOpts = ['<option value="">(follow default engine)</option>']
-    .concat(state.engines.map((e) =>
-      `<option value="${esc(e.id)}" ${s.engine === e.id ? 'selected' : ''}>${esc(e.name || e.id)}</option>`))
+    .concat(state.engines.map((e) => {
+      const unavailable = e.available === false && e.id !== s.engine;
+      return `<option value="${esc(e.id)}" ${s.engine === e.id ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
+        + `${esc(e.name || e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
+    }))
     .join('');
 
   const scopeIsGroup = s.scope && s.scope !== 'all';
