@@ -1504,7 +1504,7 @@ function openGlobalSettings() {
 
     <div class="gs-section-label">Network Exposure</div>
     <div class="form-group">
-      <label class="gs-toggle-label"
+      <label class="gs-toggle-label${bindLockedByCaddy ? ' gs-toggle-locked' : ''}"
              ${bindLockedByCaddy ? 'aria-disabled="true" title="Locked while the Caddy ingress is in use"' : ''}>
         <span>Accept connections from the network</span>
         <input type="checkbox" id="gsBindAllInterfaces"

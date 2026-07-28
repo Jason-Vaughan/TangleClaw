@@ -2158,15 +2158,23 @@ body {
    bare `disabled` attribute produces no visual change at all and the 44px
    target silently swallows the tap — worst on touch, where there is no hover
    or title tooltip to fall back on. Mirrors `.master-access-disabled`.
+
+   Deliberately keyed to an explicit modifier rather than `input:disabled`:
+   `disabled` alone is not "locked". The wrap "Next action" toggle is rendered
+   checked AND disabled because it is mandatory, so a blanket disabled rule
+   would grey out a permanently-ON required control and make it read as off —
+   the same lie-about-state this styling exists to prevent, moved to another
+   feature. Opt in per control instead.
+
    This restores the VISUAL affordance only. `display: none` also drops the
    input out of the accessibility tree, so no toggle here is operable by a
    screen reader or keyboard — a shared defect across the whole settings
    surface, tracked in #740. */
-.gs-toggle-label:has(input:disabled) {
+.gs-toggle-label.gs-toggle-locked {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.gs-toggle-label input:disabled + .toggle-switch {
+.gs-toggle-label.gs-toggle-locked input:disabled + .toggle-switch {
   background: var(--border, #333);
 }
 .gs-section-label {

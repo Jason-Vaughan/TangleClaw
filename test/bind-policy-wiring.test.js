@@ -47,6 +47,14 @@ describe('server.js binds through the policy, not around it', () => {
       'a refused opt-in must be surfaced, not silently dropped');
   });
 
+  it('logs a malformed opt-in too', () => {
+    // Same shape as the refusal above, same reason: the operator who typed
+    // "true" as a string believes the door is open. Without this assertion the
+    // whole log branch can be deleted and the suite stays green.
+    assert.match(SERVER_SRC, /bind\.malformedOptIn/,
+      'a malformed opt-in must be surfaced, not silently read as false');
+  });
+
   it('publishes the narrowing notice to the browser-facing endpoint', () => {
     assert.match(SERVER_SRC, /serverInfo\.setBindNotice\(bindNotice\)/);
   });
@@ -194,6 +202,26 @@ describe('the settings toggle cannot lie about what the socket does', () => {
 
   it('marks the locked control as disabled for assistive tech, not just visually', () => {
     assert.match(UI_SRC, /aria-disabled="true"/);
+  });
+
+  it('scopes the locked styling to an opt-in modifier, so it cannot grey out other toggles', () => {
+    // `.gs-toggle-label` is shared. The wrap "Next action" toggle is rendered
+    // checked AND disabled because it is mandatory, so styling on bare
+    // `input:disabled` would paint a permanently-ON required control as off.
+    const CSS_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(CSS_SRC, /\.gs-toggle-label\.gs-toggle-locked \{/,
+      'the locked treatment must be keyed to an explicit modifier');
+    assert.doesNotMatch(CSS_SRC, /\.gs-toggle-label:has\(input:disabled\)/,
+      'a blanket disabled selector leaks onto every disabled toggle in the modal');
+    assert.doesNotMatch(CSS_SRC, /^\.gs-toggle-label input:disabled \+ \.toggle-switch/m,
+      'the sibling rule must also be scoped to the modifier');
+    assert.match(UI_SRC, /gs-toggle-label\$\{bindLockedByCaddy \? ' gs-toggle-locked' : ''\}/,
+      'the modifier must actually be applied when locked');
+  });
+
+  it('still renders the mandatory wrap toggle as checked+disabled (the control that must not regress)', () => {
+    assert.match(UI_SRC, /\$\{checked \? 'checked' : ''\} \$\{isNextAction \? 'disabled' : ''\}/,
+      'if this shape changes, re-check that the locked styling still does not reach it');
   });
 });
 
