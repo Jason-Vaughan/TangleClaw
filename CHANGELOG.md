@@ -13,6 +13,14 @@ All notable changes to TangleClaw are documented in this file.
   plist's `WorkingDirectory` actually points at *before* anything is deleted, then `bootstrap`s and
   `kickstart`s the service and confirms it through `/api/health`. Field-validated on a v4.32.2
   install by the contributor who hit it.
+- **The troubleshooting guide now explains recovery from the self-updater's `wrong-ref` guard
+  (#735).** Field-confirmed while updating 4.32.2 to 4.33.0: the checkout was still on a recovery
+  branch, so **Update & restart** correctly refused to replace it. Returning to a stale local `main`
+  then exposed the generated `.codex.yaml` as untracked, which would have tripped the updater's
+  separate `dirty-tree` guard. Both refusals are the guards working, but they read as a broken
+  release unless the operator knows that; the documented recovery inspects the tree, checks out
+  `main`, fetches, and fast-forwards to `origin/main`, at which point the generated-engine-config
+  ignore added in #718 makes the checkout clean without deleting operator config.
 
 ## [4.34.0] - 2026-07-27
 

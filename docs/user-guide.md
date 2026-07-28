@@ -328,6 +328,49 @@ Locks expire after 30 minutes and are auto-released when sessions wrap or are ki
 
 ## Troubleshooting
 
+### Update Refuses to Run from the Current Branch
+
+**Update & restart** deliberately refuses to move a development or recovery
+branch. An error such as:
+
+```text
+Update not applied: refusing to update from "docs/example-recovery"
+— checkout main (or a release tag) first
+```
+
+means the TangleClaw source checkout is on a branch that the self-updater will
+not replace. This protects branch work; it does not mean the release is broken.
+
+First find the TangleClaw source checkout, then inspect it before changing
+branches:
+
+```bash
+cd /path/to/TangleClaw
+git status --short --branch
+git branch --show-current
+```
+
+Commit or stash any work reported by `git status`. If the tree is clean, return
+to `main`, update it without creating a merge commit, and verify the result:
+
+```bash
+git checkout main
+git fetch origin main --tags
+git merge --ff-only origin/main
+git status --short --branch
+```
+
+The final status should name `main` and report no modified, staged, or untracked
+files. Retry **Update & restart**; it can then check out the advertised release
+tag and restart TangleClaw.
+
+On older 4.32-era checkouts, switching from a recovery branch to a stale local
+`main` may reveal an untracked generated engine file such as `.codex.yaml`.
+Current `main` ignores TangleClaw-generated engine configs, so the fast-forward
+above should make the tree clean without deleting the generated file. If other
+files remain, inspect and commit or stash them rather than bypassing the
+updater's clean-tree guard.
+
 ### "Press to Reconnect" After an Interrupted Project Move
 
 Moving the TangleClaw source directory while the server is running can unload
