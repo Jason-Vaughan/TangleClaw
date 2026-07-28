@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **The troubleshooting guide now covers recovery from an interrupted move of the TangleClaw source
+  directory (#733).** Moving the checkout while the server runs can unload the
+  `com.tangleclaw.server` LaunchAgent before the destination is complete, which surfaces only as a
+  dashboard stuck on "Press to Reconnect" — the terminal helper keeps running, so the install looks
+  half-alive rather than stopped. The documented recovery verifies which copy is intact and what the
+  plist's `WorkingDirectory` actually points at *before* anything is deleted, then `bootstrap`s and
+  `kickstart`s the service and confirms it through `/api/health`. Field-validated on a v4.32.2
+  install by the contributor who hit it.
+
 ## [4.34.0] - 2026-07-27
 
 ### Changed
