@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.35.0] - 2026-07-28
+
 ### Changed
 - **⚠ The terminal listener no longer accepts connections from the network, and new installs bind
   `127.0.0.1` only (#710).** Existing installs are **not** cut off — see "What happens to an existing
@@ -20,6 +22,18 @@ All notable changes to TangleClaw are documented in this file.
   proxies to `127.0.0.1:<ttydPort>` and the browser only ever loads a relative `/terminal/` URL.
   Verified against the ttyd binary rather than assumed, in both directions. The rollback path in
   `scripts/ingress-cutover.js` was wide open too and is fixed with it.
+
+  **This reaches machines that are already installed, not just new ones.** `install.sh` writes the
+  ttyd launchd job once, and a TangleClaw update is a `git checkout` that never rewrites launchd
+  jobs — so fixing the template alone would have closed this for fresh installs while the release
+  notes claimed otherwise for everyone else. `lib/ttyd-bind.js` re-pins the installed job at boot.
+  It runs unattended on machines nobody is sitting at, so it is deliberately timid: it refuses any
+  job without the `--writable`/`--url-arg` shape TangleClaw installs, refuses a socket-bound job
+  (converting that to TCP would *expose* something currently unreachable), backs up and proves the
+  candidate passes `plutil -lint` **before** the swap, confirms ttyd actually came back, and restores
+  the previous job if it did not. A missing prober counts as "unverified", never "dead". Every
+  failure is non-fatal and leaves the dashboard untouched — and if it declines while the job is still
+  listening on every interface, that is reported on the dashboard rather than only in a log file.
 
   Reaching the dashboard means running shell commands as the operator — it launches AI sessions with
   shell access — so a default install was offering arbitrary code execution, plus every managed

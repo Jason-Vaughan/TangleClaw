@@ -181,3 +181,12 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `test/engine-picker-gating.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/logger.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/setup-wizard-engines.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-28)
+
+- **TBD** — touched in this session: `deploy/INGRESS.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0003-ingress-model.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/bind-notice-render.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/bind-policy-wiring.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/bind-policy.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ttyd-bind.test.js`. <!-- describe -->
