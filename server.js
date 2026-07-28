@@ -4803,7 +4803,10 @@ if (require.main === module) {
   // Describe the socket that exists, not the one the config asked for.
   const protocol = serverProtocol(server);
   const servingHttps = protocol === 'https';
-  const bind = bindPolicy.resolveBind(config);
+  // Read once: the same fact decides both the binding and whether to warn, and
+  // re-reading could straddle a config write and answer differently each time.
+  const optInPersisted = store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY);
+  const bind = bindPolicy.resolveBind(config, optInPersisted);
   const bindHost = bind.host;
   const bindLabel = bind.label;
 
@@ -4829,16 +4832,16 @@ if (require.main === module) {
     );
   }
 
-  // Installs written before this key existed were binding every interface; they
-  // now bind loopback, which takes remote access away. Tell them, every boot,
-  // until they make a choice — the operator this strands is by definition one who
-  // cannot reach the dashboard to read a banner.
-  const bindNotice = bindPolicy.describeNarrowing(
-    config,
-    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
-  );
+  // An install written before this key existed is still bound wide, deliberately
+  // (ADR 0009's 2026-07-28 amendment) — narrowing it would take away the remote
+  // access its operator may be using to read this very dashboard, before the
+  // credential gate exists to replace it. That is a bounded exposure window, not
+  // an accepted state, so it is reported on every boot and on the dashboard until
+  // the operator resolves it. Unlike the terminal listener, which is pinned
+  // immediately because nothing external addresses it.
+  const bindNotice = bindPolicy.describeNarrowing(config, optInPersisted);
   if (bindNotice) {
-    log.warn(bindNotice.message, { setting: bindNotice.setting });
+    log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
   }
   serverInfo.setBindNotice(bindNotice);
 

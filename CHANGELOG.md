@@ -5,11 +5,22 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- **⚠ Remote access changes: TangleClaw now listens on `127.0.0.1` only, unless you explicitly opt
-  out (#710).** This breaks an install currently reached from another device — read "What breaks"
-  below before updating. It ships in the 4.x line on purpose: `5.0.0` is reserved for the completed
+- **⚠ The terminal listener no longer accepts connections from the network, and new installs bind
+  `127.0.0.1` only (#710).** Existing installs are **not** cut off — see "What happens to an existing
+  install" below. It ships in the 4.x line on purpose: `5.0.0` is reserved for the completed
   secure-by-default scope, where a credential ships with the install rather than the doors merely
   closing.
+
+  **The worse door, closed for everyone, immediately.** TangleClaw runs two shell-capable listeners
+  and only one of them was ever discussed. `ttyd` serves a `--writable` terminal that execs
+  `tmux attach-session`, and it was installed with `--port 3100` and no `--interface` — which is
+  ttyd's default of *every* interface. So `http://<lan-ip>:3100/?arg=<project>` was an
+  unauthenticated shell on the network of every direct-mode install. It is now pinned to loopback,
+  and this costs existing operators nothing: no client addresses it directly, because TangleClaw
+  proxies to `127.0.0.1:<ttydPort>` and the browser only ever loads a relative `/terminal/` URL.
+  Verified against the ttyd binary rather than assumed, in both directions. The rollback path in
+  `scripts/ingress-cutover.js` was wide open too and is fixed with it.
+
   Reaching the dashboard means running shell commands as the operator — it launches AI sessions with
   shell access — so a default install was offering arbitrary code execution, plus every managed
   project and any credential in it, to anyone who could reach the machine. That default was written
@@ -22,12 +33,25 @@ All notable changes to TangleClaw are documented in this file.
   happened; documentation is not a control, which is why this is a default and not a paragraph.
   Reasoning recorded in [ADR 0009](docs/adr/0009-secure-by-default.md).
 
-  **What breaks.** An install reached from another device today goes dark on update. That is the cost
-  of the fix, and it is taken deliberately rather than left to a paragraph nobody reads — but it is
-  never silent: an install whose config predates the new setting is detected at boot, warned in
-  `~/.tangleclaw/logs/tangleclaw.log` on every start, and shown a one-line notice in the dashboard
-  naming the setting that restores it. Both point at the login gate first, because the goal is to
-  keep remote access *with* a password rather than to talk anyone back into an open door.
+  **What happens to an existing install.** Its dashboard binding is left alone. An earlier draft of
+  this change narrowed every install and accepted that anyone reaching TangleClaw from another device
+  "goes dark" — which was a cost the author would have paid alone when it was written, and became a
+  support incident delivered by an update button the moment there were installs in the field. The
+  door that would replace it, the credential gate, exists only in caddy ingress mode, so closing this
+  one first strands the operator with nothing to open instead.
+
+  Instead the install is held in a **grace state**: it keeps its binding and says so, loudly, on every
+  boot in `~/.tangleclaw/logs/tangleclaw.log` and on the dashboard. The notice describes the machine
+  it is actually running on — reachable from the whole network, no password — rather than announcing
+  a narrowing that did not happen, and it offers the login gate first, because the goal is to keep
+  remote access *with* a password rather than talk anyone back into an open door.
+
+  The binding then closes on its own terms: either the operator sets `bindAllInterfaces` explicitly,
+  or they move to caddy mode — where loopback is pinned anyway, with the gate already in front of it.
+  Nobody has an order of operations to get right, and there is no window where a working install is
+  unreachable. The exposure window this leaves open is deliberate and bounded; it exists only so the
+  operator stays reachable long enough to reach the thing that fixes it. Recorded as an amendment in
+  [ADR 0009](docs/adr/0009-secure-by-default.md).
 
   **How to reopen it.** Set `"bindAllInterfaces": true` (Settings → Network Exposure, or
   `~/.tangleclaw/config.json`) and restart — the socket is bound once, at startup. It is the only

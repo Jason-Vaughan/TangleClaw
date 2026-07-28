@@ -211,7 +211,9 @@ Quick answers, with links into the full docs:
 
 ## Security
 
-TangleClaw runs a local server with browser-based terminal access, so reaching the dashboard means running shell commands as you. It therefore **listens on `127.0.0.1` only** unless you tell it otherwise — a fresh install is reachable from the machine it runs on, and nowhere else. The `deletePassword` config option protects destructive operations only; it is not a login.
+TangleClaw runs a local server with browser-based terminal access, so reaching the dashboard means running shell commands as you. It therefore **listens on `127.0.0.1` only** unless you tell it otherwise — a fresh install is reachable from the machine it runs on, and nowhere else. The terminal listener (`ttyd`) is pinned to loopback on every install, new or upgraded. The `deletePassword` config option protects destructive operations only; it is not a login.
+
+**Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by enabling the login gate below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
 
 To reach TangleClaw from another device, pick one of two things — never neither:
 

@@ -31,8 +31,17 @@ const STORE_SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'),
 
 describe('server.js binds through the policy, not around it', () => {
   it('calls bindPolicy.resolveBind for the listen host', () => {
-    assert.match(SERVER_SRC, /bindPolicy\.resolveBind\(config\)/,
+    assert.match(SERVER_SRC, /bindPolicy\.resolveBind\(config, optInPersisted\)/,
       'the bind host must come from the policy module');
+  });
+
+  it('passes the persisted-key fact to the resolver, not just to the notice', () => {
+    // The grace state is decided from it. If only the notice received it, a
+    // legacy install would be narrowed anyway and merely told about it — which
+    // is the blackout the ADR amendment exists to prevent.
+    assert.match(SERVER_SRC, /const optInPersisted = store\.config\.isKeyPersisted\(bindPolicy\.OPT_IN_KEY\)/);
+    assert.match(SERVER_SRC, /describeNarrowing\(config, optInPersisted\)/,
+      'both consumers must read the same evaluation');
   });
 
   it('no longer derives the bind host from ingressMode inline', () => {

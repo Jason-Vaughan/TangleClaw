@@ -85,6 +85,33 @@ goes dark. It ships with an explicit opt-out and an upgrade notice, never as a b
 Removing someone's remote access without warning is the same class of failure as shipping them no
 password.
 
+**Amendment (2026-07-28) — the two listeners close on different schedules, and the dashboard's
+closure is interlocked with the gate.** The paragraph above was written when the author was the only
+installer, so "goes dark" was a cost only he would pay. With outside installs in the field it is a
+support incident delivered by an update button, and the ADR's own retroactivity clause — *existing
+installs must not break silently, they get an upgrade path* — is better served by sequencing than by
+a notice. Three rules:
+
+1. **The terminal listener (ttyd) is pinned immediately, for everyone.** No client addresses it
+   directly — TangleClaw proxies to `127.0.0.1:<ttydPort>` and the browser loads a relative
+   `/terminal/` URL — so pinning it is invisible to every existing operator. It is also the more
+   dangerous of the two doors, being a `--writable` terminal that execs `tmux attach-session`. A
+   change that removes an unauthenticated shell at zero cost to the user is not one to stage behind
+   anything.
+2. **The dashboard listener narrows when a gate is proven to be in front of it** — `authStatus ===
+   'live'` (`lib/auth-identity.js`), meaning Caddy is fronting the request *and* a real
+   authenticated identity arrived, not merely that `authEnabled` is set. An install that never had
+   remote reach (no prior wide bind) narrows immediately, because nothing is taken away.
+3. **Until then the install keeps its binding and says so, loudly and repeatedly.** This is a
+   deliberate, bounded exposure window, not an acceptance of the old posture: the grace state exists
+   only to keep an operator reachable long enough to *reach the thing that fixes it*.
+
+The interlock is what makes this safe without coordination: the door closes only after a working
+lock is on it, so there is no ordering for an operator to get right and no window where they are
+stranded. Provisioning the credential must verify the gate answers through the ingress before
+trusting it, and roll back automatically if it does not — a cutover that half-succeeds on a remote
+machine is the failure this amendment exists to prevent.
+
 **An operator-managed Caddyfile must be preserved.** Automated provisioning either preserves a
 hand-edited config or refuses; it never clobbers one (the refuse-to-ungate guard from #463 is the
 existing precedent).
