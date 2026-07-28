@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.34.0] - 2026-07-27
+
 ### Changed
 - **Switching a project to Codex no longer silently downgrades a confirmed bypass posture — and the
   picker guard now covers that case (#731).** Reconciliation resets only modes the target engine cannot
@@ -160,6 +162,21 @@ All notable changes to TangleClaw are documented in this file.
   its reasoning never reached a clone or a reviewer — the second time that has cost this project.
 
 ### Internal
+- **Every guard added in this release was mutation-verified, and several failed that check first.** A
+  test written immediately after a fix tends to assert the shape of the code just written rather than
+  the behavior that would break, and it passes either way — so each new assertion here had the specific
+  edit it should catch applied, confirmed red, and reverted. Seven did not survive that on the first
+  attempt: a CLI test whose stubbed applier never logged (so stdout contamination was invisible); a
+  drift guard asserting its floor *after* appending a hand-written value; a coverage meta-guard
+  resolving `shellCommand` while the probes it guarded resolved `detection.target`; a prototype-key
+  fixture whose two branches coincided; a `syncAllProjects` case the schema made unreachable, then a
+  second version of it satisfied by leftover projects from sibling tests; a picker assertion matching
+  the word `disabled` in an unrelated radio template; and a wizard assertion matching the
+  availability-list span instead of the `<option>` it named. A related lesson: an `esc` stub more
+  permissive than production rendered labels the real one drops, which made a passing assertion untrue.
+  The rule this leaves behind — name the edit a test should fail on, make it, watch it go red — is
+  recorded in `learnings.md`, along with its corollary that an assertion whose both sides are this
+  repo's own files cannot detect upstream drift, which is how `--full-auto` stayed green for months.
 - Engine detection no longer runs per item in the bulk routes (#707). `resolveDefaultEngine` calls
   `listWithAvailability()`, which shells out a detection probe per engine profile, so resolving inside
   the setup-attach and import loops multiplied that across the request — and a mid-batch change in what

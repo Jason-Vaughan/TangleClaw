@@ -169,3 +169,14 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `docs/adr/0009-secure-by-default.md`. <!-- describe -->
 - **TBD** — touched in this session: `test/server-info.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/update-checker.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-27)
+
+- **TBD** — touched in this session: `data/engines/codex.json`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0010-one-update-mechanism.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/logger.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/codex-launch-modes.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/default-engine-wiring.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-picker-gating.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/logger.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-wizard-engines.test.js`. <!-- describe -->
