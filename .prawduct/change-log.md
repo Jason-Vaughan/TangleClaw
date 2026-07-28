@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)
 
-<!-- prawduct: type=feat | chunks=1 | scope=auth-6-secure-by-default -->
+<!-- prawduct: type=feat | chunks=1 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** A standard install bound every interface with no password. Reaching the dashboard means
 running shell commands as the operator — TangleClaw launches AI sessions with shell access — so the
