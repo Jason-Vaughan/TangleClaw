@@ -26,9 +26,52 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)
+
+<!-- prawduct: type=feat | chunks=1 | scope=auth-6-secure-by-default -->
+
+**Why:** A standard install bound every interface with no password. Reaching the dashboard means
+running shell commands as the operator — TangleClaw launches AI sessions with shell access — so the
+shipped defaults amounted to arbitrary code execution offered to the installer's whole network, plus
+every managed project and any credential in it. Three defaults, none wrong alone, composed into it:
+`ingressMode: 'direct'`, `authEnabled: false`, and `bindHost = caddyMode ? '127.0.0.1' : null`. The
+VPN-as-perimeter assumption behind them was reasonable for a single-operator tool and expired the
+moment TangleClaw had an outside installer, with nothing forcing the re-examination. `README.md`
+already carried the VPN advice; it changed nothing, which is why this is a default and not a
+paragraph. Requirement: `docs/adr/0009-secure-by-default.md`.
+
+**What:** `lib/bind-policy.js` owns the decision. Caddy mode pins loopback and *refuses* an opt-in
+(Caddy holds the gate; a wide Node socket would sit beside it, not behind it — worse than direct
+mode, because the operator believes they are protected). Direct mode binds wide only on
+`bindAllInterfaces === true`, boolean-guarded at both the config API and the resolver. Everything
+else is loopback. Narrowing is detected from the *absence* of the key in the persisted file — an
+install written before the key existed was, by construction, binding wide — so no new state is
+needed and the signal self-clears once a choice is stored. Those installs get a WARN every boot plus
+a dashboard notice naming the setting; both point at the login gate first, so the fix isn't "here's
+how to reopen the door". Settings gains a *Network Exposure* section, locked in caddy mode and
+rendered from the effective binding rather than the stored value.
+
+**Verified beyond the resolver:** a real socket bound per the policy refuses a TCP connect from this
+machine's LAN address (`ECONNREFUSED`) under the new default and in caddy mode, and accepts it only
+under the explicit opt-in. Suite 4926/0.
+
+**Critic (chunk + two verify passes): 0 blocking, 6 warnings, all fixed.** The two worth recording:
+the locked toggle initially rendered from the stored value, so a leftover `true` carried in from
+direct mode would have shown a switch visibly ON beside "Accept connections from the network" while
+the socket was pinned to loopback — the exact divergence the lock exists to close. And the new
+disabled-toggle CSS leaked: `.gs-toggle-label` is shared, and the wrap "Next action" toggle is
+rendered checked AND disabled because it is mandatory, so the rule would have greyed out a
+permanently-ON required control. Both were caught pre-merge; the styling is now keyed to an explicit
+modifier. A repo-wide toggle a11y defect found along the way (`display: none` keeps every settings
+toggle out of the accessibility tree) is filed as #740 rather than half-fixed on one control.
+
+**Breaking, deliberately.** An install reached from another device today goes dark on update. That is
+the cost, taken rather than documented around, but never silently — hence the boot WARN, the
+dashboard notice, and a `BREAKING:` CHANGELOG entry that drives a major bump.
+
 ## 2026-07-28: The default engine resolves against what is installed (#707)
 
-<!-- prawduct: type=bugfix | scope=707-default-engine-availability -->
+<!-- prawduct: type=bugfix | scope=707-default-engine-availability | status=shipped -->
 
 **Why:** `defaultEngine` shipped as `claude` and every fallback hardcoded the same literal, so on a
 machine without Claude Code the setup wizard's own availability list said "✗ Claude Code — Not found"
@@ -105,7 +148,7 @@ access-level radio template. Full suite **4879 tests / 0 fail / 1 skip**; eviden
 
 ## 2026-07-27: Codex Full Auto was launching a flag codex-cli had removed (#731)
 
-<!-- prawduct: type=bugfix | scope=731-codex-launch-modes -->
+<!-- prawduct: type=bugfix | scope=731-codex-launch-modes | status=shipped -->
 
 **Why:** `data/engines/codex.json` declared `--full-auto`. Current `codex-cli` rejects it —
 `codex --full-auto` exits 2, "unexpected argument". TC created the tmux session, sent the command,
@@ -214,7 +257,7 @@ accepted by invoking the real binary. Full suite **4841 tests / 0 fail / 1 skip*
 
 ## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
 
-<!-- prawduct: type=bugfix | scope=730-update-pill-guards -->
+<!-- prawduct: type=bugfix | scope=730-update-pill-guards | status=shipped -->
 
 **Why:** Two update mechanisms reached the same repository and only one was guarded. The dashboard
 button called `lib/update-applier.js` (fails closed on: not a git checkout, no newer release, dirty
@@ -263,7 +306,7 @@ executed with fakes instead.
 
 ## 2026-07-27: Releases tag and publish themselves from CI, not from the wrap pipeline (#713)
 
-<!-- prawduct: type=bugfix | scope=release-713 -->
+<!-- prawduct: type=bugfix | scope=release-713 | status=shipped -->
 
 **Why:** The wrap bumps `version.json` and promotes the `[Unreleased]` CHANGELOG section, then
 stopped — nothing created a tag. Both halves of the update path (`lib/update-checker.js`,
