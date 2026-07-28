@@ -53,8 +53,14 @@ All notable changes to TangleClaw are documented in this file.
   operator stays reachable long enough to reach the thing that fixes it. Recorded as an amendment in
   [ADR 0009](docs/adr/0009-secure-by-default.md).
 
-  **How to reopen it.** Set `"bindAllInterfaces": true` (Settings → Network Exposure, or
-  `~/.tangleclaw/config.json`) and restart — the socket is bound once, at startup. It is the only
+  **Choosing, either way.** An install still in the grace state is already open, so there is nothing
+  to reopen — the choice is whether to *record* it. Settings → Network Exposure offers both: turn the
+  switch off and Save to close the door (takes effect on the next restart), or press **Keep network
+  access** to record the open state and stop the warning, which applies immediately and never passes
+  through a closed state. That matters on a machine you reach remotely: a route that briefly recorded
+  "closed" would strand you if anything restarted in between. For an install that has already chosen,
+  set `"bindAllInterfaces"` in Settings or `~/.tangleclaw/config.json` and restart — the socket is
+  bound once, at startup. It is the only
   route to a wide bind and it accepts nothing but a real boolean, so a truthy string in a
   hand-edited config cannot widen the binding by accident — and a non-boolean value is *logged*
   rather than quietly treated as false, because the operator who typed `"true"` believes the door is

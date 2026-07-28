@@ -1579,7 +1579,12 @@ function openGlobalSettings() {
         state.config = data.config;
         closeGlobalSettings();
       } else {
+        // The operator this exists for is remote and has no console — a button
+        // that just re-enables itself reads as "nothing happened", and they are
+        // left believing the exposure warning is unresolvable.
         bindKeepOpenBtn.disabled = false;
+        bindKeepOpenBtn.textContent =
+          `Could not save: ${api.lastError || 'server rejected the change'} — tap to retry`;
       }
     });
   }

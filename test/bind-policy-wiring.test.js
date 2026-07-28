@@ -39,13 +39,31 @@ describe('server.js binds through the policy, not around it', () => {
     // The key's absence identifies a legacy install exactly once — the next
     // config save of any kind materializes the default and erases it. So the
     // migration must run, and be persisted, ahead of resolveBind.
-    assert.match(SERVER_SRC, /bindPolicy\.migrateLegacyBind\(/);
-    const migrateAt = SERVER_SRC.indexOf('bindPolicy.migrateLegacyBind(');
+    // Anchored to the BOOT call specifically. There is a second
+    // migrateLegacyBind() in the PATCH handler, far earlier in the file, and a
+    // bare indexOf('bindPolicy.migrateLegacyBind(') silently retargets onto it —
+    // which disarms this guard entirely while the assertion text still reads
+    // correct. That happened; this anchor is the fix.
+    const migrateAt = SERVER_SRC.indexOf('const legacyBind = bindPolicy.migrateLegacyBind(');
     const resolveAt = SERVER_SRC.indexOf('bindPolicy.resolveBind(config)');
-    assert.ok(migrateAt > -1 && resolveAt > migrateAt,
+    assert.ok(migrateAt > -1, 'the boot migration call must exist under its own name');
+    assert.ok(resolveAt > migrateAt,
       'migrate must precede resolve, or the first boot narrows a legacy install');
     assert.match(SERVER_SRC, /if \(legacyBind\.migrated\)[\s\S]{0,200}?store\.config\.save\(config\)/,
       'the recorded state must be persisted, not just held in memory');
+  });
+
+  it('re-asserts the grace state in the config PATCH path too', () => {
+    // If the boot-time persist ever fails (read-only disk, permissions), the key
+    // is still absent when PATCH loads — and load()'s defaults merge would make
+    // the next save write `false`, narrowing a remote install nobody decided
+    // about. Deleting that call must not leave the suite green.
+    const patchAt = SERVER_SRC.indexOf('const config = store.config.load();\n  // Re-assert the legacy grace state');
+    assert.ok(patchAt > -1, 'the PATCH handler must re-assert the grace state before saving');
+    const migrateAfter = SERVER_SRC.indexOf('bindPolicy.migrateLegacyBind(', patchAt);
+    const allowedAfter = SERVER_SRC.indexOf('const allowedFields = [', patchAt);
+    assert.ok(migrateAfter > -1 && migrateAfter < allowedAfter,
+      'it must run before the patch loop, so an explicit choice in the body still wins');
   });
 
   it('no longer derives the bind host from ingressMode inline', () => {
