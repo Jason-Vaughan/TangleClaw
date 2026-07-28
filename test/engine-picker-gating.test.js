@@ -10,9 +10,11 @@
  * That makes the picker's seed and its selectable set part of the fix, not
  * cosmetics.
  *
- * `public/ui.js` is browser code (top-level DOM access), so the functions under
- * test are sliced out of source and evaluated in isolation — the same technique
- * as test/openclaw-engine.test.js.
+ * The behavior under test is the ONE shared implementation in
+ * `public/api-helper.js`, required directly. The per-page functions are checked
+ * only for delegating to it — the duplication is what let the session-page copy
+ * ship ungated, so "does this page still have its own copy" is the thing worth
+ * asserting about the pages themselves.
  */
 
 const { describe, it, before } = require('node:test');
@@ -28,7 +30,7 @@ const path = require('node:path');
  */
 function sliceFunction(src, name) {
   const start = src.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} not found in public/ui.js`);
+  assert.notEqual(start, -1, `${name} not found in the given source`);
   let depth = 0;
   for (let i = src.indexOf('{', start); i < src.length; i++) {
     if (src[i] === '{') depth++;
@@ -120,7 +122,7 @@ describe('engine picker gating (#707)', () => {
     it('falls back to the id when a profile has no name', () => {
       // Only `id` is validated when an engine profile is saved, so a
       // hand-added profile can lack `name`. Without the fallback the option
-      // renders blank — unselectable-looking, in all four pickers.
+      // renders blank — unselectable-looking, everywhere it is shared.
       const html = buildEngineOptions([{ id: 'homegrown', available: true }], '');
       assert.match(html, />homegrown</);
     });
@@ -176,7 +178,11 @@ describe('engine picker gating (#707)', () => {
       it(`${file} calls tcBuildEngineOptions rather than re-implementing it`, () => {
         const src = fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
         const body = sliceFunction(src, 'buildEngineOptions');
-        assert.match(body, /tcBuildEngineOptions\(/, `${file} must delegate to the shared builder`);
+        // Pins the argument list too: delegating with a permissive escaper
+        // would pass a bare `tcBuildEngineOptions(` check while re-opening the
+        // blank-label hole the shared `typeof` guard closes.
+        assert.match(body, /tcBuildEngineOptions\(engineList, selectedId, esc\)/,
+          `${file} must delegate to the shared builder, passing the page's own esc`);
         assert.doesNotMatch(
           body,
           /<option value="\$\{esc\(e\.id\)\}"/,

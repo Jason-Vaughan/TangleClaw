@@ -79,6 +79,18 @@ pickers were "gated consistently". Gating copies one at a time was never going t
 now delegate to one implementation in `public/api-helper.js`, which both pages already load. The
 duplication was the defect; the missing `disabled` was a symptom of it.
 
+Not all six: the setup wizard keeps its own builder. It already gates and carries the name fallback, so
+there is no live gap, but it disables on falsy `available` where the shared builder uses
+`available === false` — converging it decides what a profile with no flag means, which is a behavior
+call, not a move. Recorded rather than folded in, because the first version of this entry claimed a
+completeness that did not hold.
+
+Deliberately not changed: `lib/projects.js` still validates only that an engine profile *exists* on a
+project PATCH, never that it is installed. Refusing an uninstalled engine there would contradict this
+change's own principle — registering or re-pointing a project is bookkeeping and must not require a
+binary to be present. The pickers are the place to prevent an accidental choice; the server is not the
+place to forbid a deliberate one.
+
 This also converted `test/openclaw-engine.test.js`'s #459 contract from source-greps over the two page
 copies into behavioral assertions against the shared function — the same contract, no longer pinned to
 where the code happens to live.
