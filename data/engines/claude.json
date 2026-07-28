@@ -38,7 +38,8 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
-    "supportsSilentPrime": true
+    "supportsSilentPrime": true,
+    "startupInjection": { "maxChars": 10000 }
   },
   "statusPage": {
     "adapter": "atlassian",

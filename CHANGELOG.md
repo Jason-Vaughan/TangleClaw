@@ -4,6 +4,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Session directives are no longer silently cut out of the prime (#749).** The prime was assembled
+  against a fixed 16,000-character constant and, on overflow, sliced at the tail. On this repo that
+  fired: the prime rendered at 16,026 characters and the slice removed everything after the Feature
+  Index — including the wrap-sentinel directive, so a typed "wrap" had no marker instruction to
+  follow. Nothing recorded the loss, and the test guarding that exact scenario asserted only that
+  the prompt was *short enough*, never what survived.
+
+  Assembly is now tiered. Bulk sections yield to the budget before any directive does, lowest
+  priority first, and each yielded section is replaced by a pointer naming what went — an omission
+  the reader can see. When the directives alone exceed the budget they are emitted whole, followed
+  by a notice naming the shortfall and the on-disk path to the complete text. The blind slice is
+  gone; a test asserts it cannot return.
+
+### Changed
+- **The prime's size budget is declared by the engine, not by TangleClaw (#749).** It now comes from
+  `capabilities.startupInjection.maxChars`, and `data/engines/claude.json` declares 10,000 to match
+  Claude Code's hook-output cap. A limit belongs to the consumer that carries the payload; a
+  constant tuned to one engine imposed that engine's number on every other. Engines declaring
+  nothing keep the previous 16,000, so no engine's behavior changes silently. Takes effect on the
+  next server restart, when bundled profiles re-sync. Resolver: `lib/sessions.js#_resolvePrimeBudget`.
+- **The Feature Index is referenced from the prime instead of inlined (#749).** Inlining made the
+  prime's length a function of how much had been authored — this repo's `FEATURES.md` is 48,605
+  characters — so the index competed with the directives and won. The prime now carries one line:
+  where the file is, plus a census of curated and ungraduated entries, so "is this worth opening" is
+  answerable without opening it. Same treatment the Project Map already had, for the same reason.
+
 ## [4.36.0] - 2026-07-28
 
 ### Added
