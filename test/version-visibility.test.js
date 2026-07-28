@@ -140,6 +140,15 @@ describe('#745 status bar names the version the process actually loaded', () => 
       assert.equal(h.setCalls.length, 0);
     });
 
+    it('corrects a version that is a prefix of the current one', () => {
+      // `v4.3` is a substring of `v4.35.0`, so a prefix comparison would read
+      // this bar as already-current and leave it wrong forever.
+      const h = harness([{ name: 'proj' }], { proj: 'status-left "#[x] TangleClaw v4.3 "' });
+      const res = tmux.refreshStatusBars(h.deps);
+      assert.deepEqual(res, { updated: 1, skipped: 0 });
+      assert.match(h.setCalls[0], /TangleClaw v4\.35\.0/);
+    });
+
     it('keeps going when one session fails', () => {
       // Multi-session hosts are the norm here; one dead session must not
       // strand the rest on a version they no longer run.
@@ -163,13 +172,51 @@ describe('#745 status bar names the version the process actually loaded', () => 
   });
 
   describe('getRunningVersion', () => {
-    it('reports the version captured at startup, not the one on disk', () => {
-      // The whole point: between a self-update's checkout and its restart the
-      // two disagree, and that is exactly when someone asks.
-      serverInfo.captureStartup();
-      const info = serverInfo.getServerInfo();
-      assert.equal(serverInfo.getRunningVersion(), info.runningVersion);
+    it('holds the startup version when the checkout moves underneath it', () => {
+      // The behaviour #745 turns on, so it is asserted by making the two
+      // disagree — a self-update checks out the new release while this process
+      // keeps serving the old one, and that is exactly when someone reads the
+      // status bar. Comparing getRunningVersion() to getServerInfo()'s own copy
+      // would pass just as well if this were rewritten to read from disk.
+      const realRead = serverInfo._internal.readFileSync;
+      try {
+        serverInfo.__unsafeResetForTest();
+        serverInfo._internal.readFileSync = () => JSON.stringify({ version: '1.1.1' });
+        serverInfo.captureStartup();
+        assert.equal(serverInfo.getRunningVersion(), '1.1.1');
+
+        // The checkout advances; the running process has not restarted.
+        serverInfo._internal.readFileSync = () => JSON.stringify({ version: '9.9.9' });
+        assert.equal(serverInfo.getRunningVersion(), '1.1.1',
+          'must report what this process loaded, never what is on disk now');
+        assert.equal(serverInfo.getServerInfo().diskVersion, '9.9.9',
+          'the disk read itself still works — the two are meant to differ here');
+      } finally {
+        serverInfo._internal.readFileSync = realRead;
+        serverInfo.__unsafeResetForTest();
+        serverInfo.captureStartup();
+      }
     });
+  });
+});
+
+describe('#744 both writers of the version label agree by construction', () => {
+  it('/api/version answers with the running version, not the disk read', () => {
+    // The header is written from GET /api/version at page load and from
+    // /api/server-info's runningVersion on every poll. Those are two endpoints
+    // answering one question, and they used to derive it differently — so the
+    // label could change under the operator 60 seconds after load with nothing
+    // having happened. Pinned at the source rather than by ordering the two
+    // calls, because the first-run wizard path never reaches the poll at all.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const start = src.indexOf('function _getVersion(');
+    assert.ok(start > -1, '_getVersion should exist');
+    const body = src.slice(start, src.indexOf('\n}', start));
+    const runningIdx = body.indexOf('serverInfo.getRunningVersion()');
+    const diskIdx = body.indexOf('readFileSync');
+    assert.ok(runningIdx > -1, '_getVersion must consult the running version');
+    assert.ok(diskIdx === -1 || runningIdx < diskIdx,
+      'the running version must be preferred over the disk read, not the reverse');
   });
 });
 
@@ -269,28 +316,51 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
 
     it('hides once the offered update is installed', async () => {
       // The state it most often re-runs into after a restart.
-      const els = await runUpdateStatus({ updateAvailable: false, currentVersion: '4.35.0' });
+      const els = await runUpdateStatus({
+        updateAvailable: false, currentVersion: '4.35.0', checkedAt: '2026-07-28T00:00:00Z'
+      });
       assert.equal(els.updatePill._hidden, true);
     });
 
-    it('hides when the endpoint gives nothing back', async () => {
-      for (const nothing of [null, undefined, {}]) {
+    it('leaves the pill alone when the server has not checked yet', async () => {
+      // `startChecker` waits 60s before its first check and answers
+      // {updateAvailable: false, checkedAt: null} until then — and a restart
+      // puts the page right into that window. Reading it as "no update" would
+      // take down a pill for an update that is still genuinely available.
+      const els = await runUpdateStatus({ updateAvailable: false, latestVersion: null, checkedAt: null });
+      assert.equal(els.updatePill._hidden, false, 'not-checked-yet is not an answer');
+    });
+
+    it('leaves the pill alone when the request failed', async () => {
+      // api() returns null on any non-OK response. Absence of an answer is not
+      // an answer of absence.
+      for (const nothing of [null, undefined]) {
         const els = await runUpdateStatus(nothing);
-        assert.equal(els.updatePill._hidden, true);
+        assert.equal(els.updatePill._hidden, false);
       }
     });
 
     it('hides a version the operator already dismissed', async () => {
       const els = await runUpdateStatus(
-        { updateAvailable: true, latestVersion: '4.36.0' }, true
+        { updateAvailable: true, latestVersion: '4.36.0', checkedAt: '2026-07-28T00:00:00Z' }, true
       );
       assert.equal(els.updatePill._hidden, true);
     });
 
     it('still shows a genuine update', async () => {
-      const els = await runUpdateStatus({ updateAvailable: true, latestVersion: '4.36.0' });
+      const els = await runUpdateStatus({
+        updateAvailable: true, latestVersion: '4.36.0', checkedAt: '2026-07-28T00:00:00Z'
+      });
       assert.equal(els.updatePill._hidden, false);
       assert.match(els.updatePill.innerHTML, /4\.36\.0/);
+    });
+
+    it('re-asks on a schedule, so a provisional answer is not the last word', async () => {
+      // Two of its answers are deliberately left showing rather than hidden.
+      // Without a retry the pill would stay up for the life of the page.
+      const polling = extract('startPolling');
+      assert.match(polling, /loop\(loadUpdateStatus,/,
+        'loadUpdateStatus must be in the polling loop, or a provisional answer is permanent');
     });
   });
 });

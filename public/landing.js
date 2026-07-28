@@ -523,11 +523,20 @@ async function loadUpdateStatus() {
   const data = await api('/api/update-status');
   const pill = document.getElementById('updatePill');
 
-  // Every path that decides "no pill" must also take one down. This function
-  // re-runs after a restart, and the state it most often re-runs into is "the
-  // update you were offering is now installed" — returning early without
-  // hiding leaves the pill offering an update to the version already running.
-  if (!data || !data.updateAvailable || !data.latestVersion) {
+  // A failed request, and a server that has not run its first check yet, are
+  // both "no answer" — not "no update". `startChecker` waits 60s before its
+  // first check and reports `{updateAvailable: false, checkedAt: null}` until
+  // then, which is precisely the window the restart-triggered re-check lands
+  // in. Hiding on that takes down a pill for an update that is still genuinely
+  // available. `checkedAt` is the discriminator, and the payload already
+  // carries it.
+  if (!data || !data.checkedAt) return;
+
+  // Past that, "no update" is a real answer and every path that reaches it must
+  // take down a pill that is showing — this function re-runs after a restart,
+  // and the state it most often re-runs into is "the update you were offering
+  // is now installed".
+  if (!data.updateAvailable || !data.latestVersion) {
     if (pill) pill.classList.add('hidden');
     return;
   }
@@ -1412,6 +1421,14 @@ function startPolling() {
   // when the operator merges/pulls while a tab is open. Slower cadence than
   // the others because it shells out to git on the server every tick.
   loop(loadServerInfo, 60000);
+  // The pill was previously decided once, at page load, and could never
+  // change its mind. It now re-asks, because two of its answers are provisional
+  // by construction: a restart resets the server's in-memory check to "not
+  // checked yet", and a failed request is not an answer at all. Both are
+  // deliberately left showing rather than hidden, so without a retry a pill for
+  // an update already installed would stay up for the life of the page. Slow —
+  // this reads a cache the server refreshes every four hours, not the network.
+  loop(loadUpdateStatus, 300000);
 }
 
 // Service worker registration + update propagation lives in /sw-register.js

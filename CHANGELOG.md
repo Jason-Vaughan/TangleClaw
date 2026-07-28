@@ -49,6 +49,23 @@ All notable changes to TangleClaw are documented in this file.
   same one-directional-render defect as the version label, in the same file, shipped at different
   times: every branch that decides "nothing to show" must also take down what is showing.
 
+  The reverse mistake is just as easy and was caught in review before shipping: "no update
+  available" is also what the server says for the first 60 seconds after boot, before its first
+  check has run, and a failed request says nothing at all. Reading either as an answer would hide a
+  pill for an update that is still genuinely available — the same defect with the sign flipped, and
+  the restart-triggered re-check lands in exactly that window. Both are now treated as the absence
+  of an answer rather than an answer of absence, and the pill re-asks on a slow schedule so a
+  provisional reply is never the last word.
+
+- **`GET /api/version` could report a release the running code was not serving (#744).** It answered
+  from a memo of `version.json` filled by the first request that asked rather than at startup, so a
+  server that had been idle when an update checked out new code would freeze the *new* number and
+  report it indefinitely while still running the old one. It now answers with the version the
+  process actually loaded, with the disk read left as the fallback for the moment before startup is
+  captured. This is the same value `/api/server-info` reports, which matters because the dashboard's
+  version label is written from both — and two endpoints answering one question differently is how
+  the label changed under the operator a minute after load with nothing having happened.
+
 ### Internal
 - Frontend behavior here is tested by executing the renderers against a DOM stub rather than by
   grepping the source. `landing.js` is a browser global rather than a module, and the repo's

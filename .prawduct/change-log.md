@@ -26,6 +26,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: The running version, visible and true wherever it appears (#744, #745)
+
+<!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 -->
+
+**Why:** The dashboard read its version and update status once, at page load, and neither was in the
+polling loop. Any restart the page did not itself drive — `launchctl kickstart`, a terminal
+`apply-update.js`, a launchd respawn — left the header naming a version the server had stopped
+running and the pill offering an update already installed, indefinitely. That label is the only
+confirmation an update took, so the failure reads to an operator as "the update didn't work". Found
+in the field immediately after a CLI-driven update on the author's own machine.
+
+Three more instances of the same one-directional-render defect were in the same file: the pill
+returned early without hiding, the stale-server banner had no hide path at all, and `_getVersion()`
+answered `GET /api/version` from a request-warmed memo of `version.json` — so an idle server that was
+then updated would freeze and report the *new disk* number while still serving the old code. Every
+branch that decides "nothing to show" must also take down what is showing, and both endpoints
+answering "what version" must derive it from the same place.
+
+Sessions gained the version in their status bar (#745), sourced from what the process loaded rather
+than from `version.json`: those disagree for exactly the window between a self-update's checkout and
+the restart that loads it, which is when the question gets asked. Existing sessions are re-stamped at
+boot — sufficient because the running version can only change by restarting — and only bars already
+carrying the TangleClaw brand are touched, since `listSessions()` returns every tmux session on the
+host.
+
+**Critic caught the fix reproducing its own bug:** hiding on `!data.updateAvailable` also fires for
+"not checked yet" (`checkedAt: null` for the first 60s after boot) and for a failed request — the
+same defect with the sign flipped, taking down a pill for an update still genuinely available. Both
+are now treated as *no answer* rather than an answer of absence, and `loadUpdateStatus` joined the
+poll loop so a provisional answer is never the last word.
+
+**Classification:** fix
+
 ## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)
 
 <!-- prawduct: type=feat | chunks=1 | scope=auth-6-secure-by-default | status=shipped -->

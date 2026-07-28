@@ -3828,6 +3828,24 @@ let _cachedVersion = null;
  * @returns {string}
  */
 function _getVersion() {
+  // The version this process loaded, when it is known. Reading version.json
+  // here instead would answer with the DISK version, and the two diverge for
+  // the whole window between a self-update's checkout and the restart that
+  // loads it — so `/api/version` would confirm a release the running code is
+  // not yet serving. The memo below made that worse rather than better: it is
+  // filled by the first request that asks, not at boot, so an idle server that
+  // is then updated freezes the *new* number and reports it indefinitely.
+  //
+  // Keeping this in step with `/api/server-info`'s `runningVersion` is a
+  // contract, not a coincidence: the dashboard writes its version label from
+  // both, and a disagreement between them is exactly the misreport this
+  // function used to produce.
+  const running = serverInfo.getRunningVersion();
+  if (running) return running;
+
+  // Fallback for the window before startup is captured (and for tests that
+  // never capture it). Memoized because it is a synchronous read on a request
+  // path.
   if (_cachedVersion) return _cachedVersion;
   try {
     const versionFile = path.join(__dirname, 'version.json');
