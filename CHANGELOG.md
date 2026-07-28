@@ -127,6 +127,13 @@ All notable changes to TangleClaw are documented in this file.
   note rather than failing the update if the log directory is unwritable.
 - The applier's result object is recorded as a two-consumer contract in `boundary-patterns.md`. It
   became a published shape the moment a second surface parsed it, and it had already drifted.
+- **The troubleshooting guide now explains recovery from the self-updater's `wrong-ref` guard.**
+  Field-confirmed while updating 4.32.2 to 4.33.0: the checkout was still on
+  `docs/interrupted-icloud-move-recovery`, so **Update & restart** correctly refused to replace the
+  branch. Returning to a stale local `main` then exposed the generated `.codex.yaml` as untracked,
+  which would have triggered the updater's separate `dirty-tree` guard. The documented recovery
+  inspects the tree, checks out `main`, fetches, and fast-forwards to `origin/main`; the existing
+  generated-engine-config ignore then makes the checkout clean without deleting operator config.
 
 ## [4.33.0] - 2026-07-26
 
