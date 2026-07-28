@@ -156,7 +156,11 @@ describe('Setup wizard — engine step (#707)', () => {
       const ctx = loadSetup([{ id: 'homegrown', available: true }], { defaultEngine: 'homegrown' });
       ctx.showWizard();
       const html = renderEngineStep(ctx);
-      assert.match(html, />homegrown</, 'a nameless profile must fall back to its id');
+      // Scoped to the <option>, not the whole step: the step also renders
+      // <span class="setup-engine-name">, so a loose />homegrown</ matches the
+      // availability list and stays green while the option renders blank.
+      assert.match(html, /<option value="homegrown"[^>]*>homegrown</,
+        'a nameless profile must fall back to its id in the picker itself');
     });
   });
 

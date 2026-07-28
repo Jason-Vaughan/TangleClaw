@@ -26,9 +26,11 @@ function buildEngineOptions(engineList, selectedId) {
     // refuses to keep.
     const unavailable = e.available === false && e.id !== selectedId;
     return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
-      // `|| e.id` because only `id` is validated when a profile is saved
-      // (lib/store.js), so a hand-added profile with no `name` would otherwise
-      // render a blank option in all four pickers.
+      // Only `id` is validated when a profile is saved (lib/store.js), and
+      // `esc` returns '' for a non-string — so without this a hand-added
+      // profile renders a blank option in all four pickers. The `typeof` guard
+      // rather than `||`: a truthy non-string passes `||` and is then dropped
+      // by `esc`, leaving the option blank anyway.
       + `${esc(typeof e.name === 'string' && e.name ? e.name : e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
   }).join('');
 
