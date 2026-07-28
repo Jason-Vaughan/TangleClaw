@@ -76,6 +76,7 @@ All notable changes to TangleClaw are documented in this file.
   fallback, but it disables on a falsy `available` where the shared builder uses `available === false`,
   so converging it is a behavior decision about a profile with no flag rather than a lift-and-shift —
   tracked as #738.
+
   Found on a first-time install where Codex was the only engine present.
 - **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
   engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
