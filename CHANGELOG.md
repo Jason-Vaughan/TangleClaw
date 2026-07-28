@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.36.0] - 2026-07-28
+
 ### Added
 - **Every session's status bar names the TangleClaw version that is actually running (#745).** The
   bottom-left label reads `TangleClaw v4.35.0` instead of just `TangleClaw`, so the version is
@@ -77,6 +79,12 @@ All notable changes to TangleClaw are documented in this file.
   grepping the source. `landing.js` is a browser global rather than a module, and the repo's
   source-grep convention can prove the word `hidden` appears somewhere but not that the pill comes
   down — which is the entire claim.
+- The status-bar reconciliation log now names why it skipped — `alreadyCurrent`, `foreign`, `failed`
+  — instead of reporting one opaque count. "Touched nothing" is also the shape a broken guard takes,
+  and on a host running hand-started tmux sessions the single count asserted bars were current that
+  were never TangleClaw's to begin with. Two version getters whose summaries still described
+  themselves as reading `version.json` were corrected to say they read the loaded version first
+  (#744, #745).
 
 ## [4.35.0] - 2026-07-28
 

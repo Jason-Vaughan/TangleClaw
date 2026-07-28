@@ -103,6 +103,10 @@ fails any auto-stub section older than 14 days.
 - **ADR: wrap-pipeline contract** — decision record for the code-owned wrap pipeline shape (one pipeline for every project, #538). `docs/adr/0002-wrap-pipeline-contract.md`.
 - **ADR: project-master session model** — decision record for the Project Master session + access model (#331). `docs/adr/0008-project-master-session-model.md`.
 - **Engine guide** — operator doc on engine profiles, detection, and per-engine config parity. `docs/engine-guide.md`.
+- **ADR: ingress model** — decision record for reverse-proxy (Caddy) ingress, adopted reversibly behind `ingressMode` default `direct`, so it stays inert until an operator cuts over (AUTH-1, #395). `docs/adr/0003-ingress-model.md`.
+- **ADR: secure by default** — decision record for shipping protected out of the box, opt-out rather than opt-in; supersedes the VPN-as-perimeter posture of ADR 0003 and the optional-login framing of ADR 0004 (#710). `docs/adr/0009-secure-by-default.md`.
+- **ADR: one update mechanism** — decision record requiring every surface that starts an update to call the applier rather than restate it, after the session badge shipped an unguarded `git pull` beside the guarded button (#730). `docs/adr/0010-one-update-mechanism.md`.
+- **Codex engine profile** — the Codex CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/codex.json`.
 
 ## CLI / Tooling
 
@@ -132,6 +136,8 @@ fails any auto-stub section older than 14 days.
 - **Cleanroom acceptance harness** — Docker-based fresh-install gate that proves the methodology-sunset cutover from an empty schema (bakes an image, provisions, runs a real first launch). `deploy/cleanroom/bake.sh`, `deploy/cleanroom/compose.yaml`, `deploy/cleanroom/provision.sh`. Test: `test/cleanroom-compose.test.js`.
 - **Configuration reference** — operator doc enumerating every project + global config field. `docs/configuration-reference.md`.
 - **Contributor guide** — dev setup, branch/PR conventions, test requirements, where to file issues. `CONTRIBUTING.md`.
+- **Logger** — leveled structured logging (`debug`/`info`/`warn`/`error`) with a settable level and swappable console stream, shared by every module. `lib/logger.js`.
+- **Ingress modes guide** — operator doc on the two ingress modes and how `ingressMode` switches between them. `deploy/INGRESS.md`.
 
 ## Tests
 
@@ -162,33 +168,6 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Store slices: `test/store-projects.test.js` — projects; `test/store-sessions.test.js` — sessions; `test/store-eval-audit.test.js` — eval-audit.
 - Governance / engines / actions: `test/antigravity-engine.test.js` + `test/openclaw-engine.test.js` — per-engine profile behavior; `test/governance-drift-badge.test.js` — governance-state badge; `test/c1-plugin-migration.test.js` — plugin-governed migration; `test/self-improvement-loop.test.js` + `test/session-rules-selfimprove.test.js` — the rule self-improvement loop; `test/eval-audit.test.js` — eval-audit engine; `test/actions-dispatcher.test.js` + `test/actions-invoke-critic.test.js` — project-action dispatch + the mark-Critic handler.
 - Store/project/setup + infra: `test/migration.test.js` — schema migrations; `test/stranded-configs.test.js` — stranded-config guard (#592); `test/create-project-modal.test.js` + `test/project-rules-modal.test.js` — those modal frontends; `test/project-version-require-cycle.test.js` — project-version require-cycle guard; `test/project-paths.test.js` — path resolver; `test/feature-index.test.js` — Feature Index maintenance; `test/continuity.test.js` — continuity store; `test/contracts.test.js` — cross-module contracts; `test/e2e-smoke.test.js` — end-to-end smoke; `test/porthub.test.js` — PortHub leasing; `test/project-map.test.js` — PROJECT-MAP refresh; `test/setup-wizard.test.js` + `test/setup-wizard-https.test.js` — first-run wizard; `test/tunnel.test.js` — Cloudflare tunnel lifecycle.
-
-## TODO (auto-stubbed 2026-07-26)
-
-- **TBD** — touched in this session: `test/api-setup-https.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-26)
-
-- **TBD** — touched in this session: `docs/adr/0009-secure-by-default.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/server-info.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/update-checker.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-27)
-
-- **TBD** — touched in this session: `data/engines/codex.json`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0010-one-update-mechanism.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/logger.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/codex-launch-modes.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/default-engine-wiring.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/engine-picker-gating.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/logger.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard-engines.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-28)
-
-- **TBD** — touched in this session: `deploy/INGRESS.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0003-ingress-model.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/bind-notice-render.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/bind-policy-wiring.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/bind-policy.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ttyd-bind.test.js`. <!-- describe -->
+- Network binding + ingress (#710): `test/bind-policy.test.js` — the bind decision itself (caddy pins loopback and refuses the opt-in, the explicit opt-out, the grace state for installs predating the setting); `test/bind-policy-wiring.test.js` — that socket, boot warnings, and settings UI all consume one server-owned classification instead of re-deriving it; `test/bind-notice-render.test.js` — the dashboard exposure chips, executed against a DOM stub because a grep cannot tell whether an exposed install actually gets one; `test/ttyd-bind.test.js` — re-pinning the installed ttyd launchd job (refuses any shape it does not recognise, validates before swapping, restores when ttyd does not come back).
+- Engine selection + launch modes: `test/codex-launch-modes.test.js` — Codex Full Auto / Bypass flag sets (#731); `test/default-engine-wiring.test.js` — default-engine resolution against what is actually installed (#707); `test/engine-picker-gating.test.js` — gating on the converged engine picker; `test/setup-wizard-engines.test.js` — the first-run wizard's engine step.
+- `test/server-info.test.js` — runtime-vs-disk identity, staleness, and the startup-captured running version; `test/update-checker.test.js` — release-tag polling, semver comparison, and the cached-status shape; `test/logger.test.js` — level filtering and structured-field output; `test/api-setup-https.test.js` — the setup HTTPS route.
