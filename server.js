@@ -3824,10 +3824,29 @@ function handleUpgrade(req, socket, head) {
 let _cachedVersion = null;
 
 /**
- * Read the version from version.json.
+ * The version this server reports as its own — what the process loaded, falling
+ * back to `version.json` only when startup was never captured.
  * @returns {string}
  */
 function _getVersion() {
+  // The version this process loaded, when it is known. Reading version.json
+  // here instead would answer with the DISK version, and the two diverge for
+  // the whole window between a self-update's checkout and the restart that
+  // loads it — so `/api/version` would confirm a release the running code is
+  // not yet serving. The memo below made that worse rather than better: it is
+  // filled by the first request that asks, not at boot, so an idle server that
+  // is then updated freezes the *new* number and reports it indefinitely.
+  //
+  // Keeping this in step with `/api/server-info`'s `runningVersion` is a
+  // contract, not a coincidence: the dashboard writes its version label from
+  // both, and a disagreement between them is exactly the misreport this
+  // function used to produce.
+  const running = serverInfo.getRunningVersion();
+  if (running) return running;
+
+  // Fallback for the window before startup is captured (and for tests that
+  // never capture it). Memoized because it is a synchronous read on a request
+  // path.
   if (_cachedVersion) return _cachedVersion;
   try {
     const versionFile = path.join(__dirname, 'version.json');
@@ -4701,6 +4720,23 @@ if (require.main === module) {
   // every boot means an update that bumps the repo script refreshes the copy on
   // the ensuing restart. Idempotent + non-throwing.
   ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
+
+  // Re-stamp the version into the status bar of sessions that already exist
+  // (#745). A session sets its bar once, at creation, so every session that
+  // survives an update would otherwise keep naming the version it was born
+  // under — and surviving the update is the normal case, since the restart
+  // that loads new code leaves tmux running. Boot is the only moment the
+  // running version can change, so this needs no polling. Deliberately before
+  // listen and synchronous, so a session attached in the first moments after a
+  // restart already reads the right version rather than briefly showing the old
+  // one: two `tmux` calls per session, ~6ms each, measured at ~58ms across ten
+  // sessions. Non-throwing, so a tmux quirk cannot keep the server from
+  // listening.
+  try {
+    tmux.refreshStatusBars();
+  } catch (err) {
+    log.warn('Status-bar refresh failed', { error: err.message });
+  }
 
   // Pin the INSTALLED ttyd job to its configured interface (#710). install.sh
   // writes that plist once and an update is only a `git checkout`, so without

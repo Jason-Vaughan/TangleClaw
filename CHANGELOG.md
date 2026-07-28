@@ -4,6 +4,80 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Every session's status bar names the TangleClaw version that is actually running (#745).** The
+  bottom-left label reads `TangleClaw v4.35.0` instead of just `TangleClaw`, so the version is
+  legible from any session without going back to the dashboard.
+
+  It reports the version the **server process loaded**, never a fresh read of `version.json`. Those
+  two disagree for the whole window between a self-update's checkout and the restart that loads it —
+  the state the stale-server banner exists to announce — and that window is exactly when someone
+  looks. A bar sourced from disk would confirm the update had landed while the old code was still
+  serving.
+
+  Sessions set their bar once, at creation, and survive the restart that loads new code, so a
+  session that outlived an update would keep advertising the version it was born under. The server
+  re-stamps existing bars at startup, which is sufficient rather than merely convenient: the running
+  version can only change by the process restarting. No polling, and no `#()` subshell re-running
+  per session on every status interval. `listSessions()` returns every tmux session on the host, so
+  the refresh re-stamps only bars already carrying the TangleClaw brand and leaves anything it did
+  not write alone; with no known version it does nothing at all, rather than stripping a good
+  version off every bar.
+
+### Fixed
+- **The dashboard no longer reports a version it has stopped running, or offers an update it has
+  already installed (#744).** The version label and the update check each ran once, at page load,
+  and were absent from the polling loop. Any restart the page did not itself drive — `launchctl
+  kickstart`, `scripts/apply-update.js` from a terminal, a launchd respawn — left the header naming
+  the old version and the pill offering an update that was already applied, indefinitely, until the
+  operator happened to reload. Since the version label is the only confirmation that an update took,
+  the failure reads as "the update didn't work".
+
+  The fix rides the poll that was already running: `/api/server-info` carries both the running
+  version and the process's `startedAt`, so the header now tracks the former every tick, and a
+  changed `startedAt` — a different process answering — re-runs the update check rather than
+  trusting an answer derived from a process that no longer exists.
+
+  Deliberately **not** an automatic page reload. A timer-driven reload is the shape that produced
+  #98 and #268, and one arriving mid-interaction is its own defect; the existing stale-server banner
+  is where an explicit reload belongs.
+
+- **Two more places that could only ever appear, never disappear (#744).** `loadUpdateStatus()`
+  returned early when no update was available without hiding a pill that was already up, and the
+  stale-server banner had no hide path at all — so a page open across the restart that resolved the
+  staleness kept telling the operator to restart a server that had already come back. Both were the
+  same one-directional-render defect as the version label, in the same file, shipped at different
+  times: every branch that decides "nothing to show" must also take down what is showing.
+
+  The reverse mistake is just as easy and was caught in review before shipping: "no update
+  available" is also what the server says for the first 60 seconds after boot, before its first
+  check has run, and a failed request says nothing at all. Reading either as an answer would hide a
+  pill for an update that is still genuinely available — the same defect with the sign flipped, and
+  the restart-triggered re-check lands in exactly that window. Both are now treated as the absence
+  of an answer rather than an answer of absence, and the pill re-asks on a slow schedule so a
+  provisional reply is never the last word.
+
+- **`GET /api/version` could report a release the running code was not serving (#744).** It answered
+  from a memo of `version.json` filled by the first request that asked rather than at startup, so a
+  server that had been idle when an update checked out new code would freeze the *new* number and
+  report it indefinitely while still running the old one. It now answers with the version the
+  process actually loaded, with the disk read left as the fallback for the moment before startup is
+  captured. This is the same value `/api/server-info` reports, which matters because the dashboard's
+  version label is written from both — and two endpoints answering one question differently is how
+  the label changed under the operator a minute after load with nothing having happened.
+
+  The update check itself was a third answer to the same question, and the one with teeth: it
+  compared the newest release against `version.json` as read from the working tree, so in the window
+  after a self-update's checkout it would conclude the install was up to date and take the pill down
+  for a server still running the old code. "Is there an update?" is a question about what is
+  running, so it now asks what this process loaded.
+
+### Internal
+- Frontend behavior here is tested by executing the renderers against a DOM stub rather than by
+  grepping the source. `landing.js` is a browser global rather than a module, and the repo's
+  source-grep convention can prove the word `hidden` appears somewhere but not that the pill comes
+  down — which is the entire claim.
+
 ## [4.35.0] - 2026-07-28
 
 ### Changed
