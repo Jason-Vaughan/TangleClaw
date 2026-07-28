@@ -1392,6 +1392,12 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
+  // #710 — the server refuses a wide bind in caddy mode, so an editable toggle
+  // here would let the operator save a value the socket never honors. That
+  // config-says-one-thing / socket-does-another gap is the failure this setting
+  // exists to close, so the control is locked rather than quietly overridden.
+  const bindLockedByCaddy = c.ingressMode === 'caddy';
+
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live
   // checkbox). serviceTokenConfigured/serviceTokenEnabled come redacted from
@@ -1494,16 +1500,21 @@ function openGlobalSettings() {
     <div class="form-group">
       <label class="gs-toggle-label">
         <span>Accept connections from the network</span>
-        <input type="checkbox" id="gsBindAllInterfaces" ${c.bindAllInterfaces === true ? 'checked' : ''}>
+        <input type="checkbox" id="gsBindAllInterfaces"
+               ${c.bindAllInterfaces === true ? 'checked' : ''} ${bindLockedByCaddy ? 'disabled' : ''}>
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">
-        Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from this
-        machine alone. On: it accepts connections from every network interface — anyone who can reach
-        this machine gets the dashboard, and the dashboard launches AI sessions with shell access.
-        Turn this on only on a network you trust, and prefer setting up the login gate instead, which
-        keeps remote access without leaving the door open. Ignored while the Caddy ingress is in use,
-        because Caddy already fronts the server and holds the gate. Requires a restart.
+        ${bindLockedByCaddy
+          ? 'Locked while the Caddy ingress is in use. Caddy fronts the server and holds the login '
+            + 'gate, so TangleClaw stays on <code>127.0.0.1</code> behind it — binding the network '
+            + 'directly would open an ungated door beside the gated one. Reach TangleClaw through '
+            + 'Caddy, or switch to direct mode first.'
+          : 'Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from '
+            + 'this machine alone. On: it accepts connections from every network interface — anyone who '
+            + 'can reach this machine gets the dashboard, and the dashboard launches AI sessions with '
+            + 'shell access. Turn this on only on a network you trust, and prefer setting up the login '
+            + 'gate instead, which keeps remote access without leaving the door open. Requires a restart.'}
       </div>
     </div>
 
@@ -1590,9 +1601,15 @@ async function saveGlobalSettings() {
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
     portScannerIntervalMs: intervalMs,
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
-    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked,
-    bindAllInterfaces: document.getElementById('gsBindAllInterfaces').checked
+    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
   };
+
+  // Omit the bind toggle entirely when it is locked (caddy mode), so a control
+  // the operator cannot act on can never write a value either.
+  const bindToggle = document.getElementById('gsBindAllInterfaces');
+  if (bindToggle && !bindToggle.disabled) {
+    patch.bindAllInterfaces = bindToggle.checked;
+  }
 
   const data = await apiMutate('/api/config', 'PATCH', patch);
   if (data && data.config) {

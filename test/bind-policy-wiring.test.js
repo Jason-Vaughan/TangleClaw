@@ -50,6 +50,19 @@ describe('server.js binds through the policy, not around it', () => {
   it('publishes the narrowing notice to the browser-facing endpoint', () => {
     assert.match(SERVER_SRC, /serverInfo\.setBindNotice\(bindNotice\)/);
   });
+
+  it('seeds the default config before deciding whether to show the notice', () => {
+    // store.init() writes DEFAULT_CONFIG when the file is missing, which
+    // materializes bindAllInterfaces. If the notice were computed first, every
+    // brand-new install would be told its binding narrowed — it did not; the
+    // install never had a wide one. The ordering is the only thing preventing
+    // that, so it is pinned rather than left to reading order.
+    const initAt = SERVER_SRC.indexOf('store.init()');
+    const noticeAt = SERVER_SRC.indexOf('bindPolicy.describeNarrowing(');
+    assert.ok(initAt > -1 && noticeAt > -1, 'both call sites should exist');
+    assert.ok(initAt < noticeAt,
+      'store.init() must run before the narrowing check, or fresh installs get a false notice');
+  });
 });
 
 describe('PATCH /api/config accepts the opt-out setting', () => {
@@ -140,6 +153,26 @@ describe('the default ships as loopback', () => {
       bindPolicy.describeNarrowing({ ingressMode: 'direct' }, true),
       null
     );
+  });
+});
+
+describe('the settings toggle cannot lie about what the socket does', () => {
+  const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+
+  it('locks the control in caddy mode, where the server refuses the opt-in', () => {
+    assert.match(UI_SRC, /const bindLockedByCaddy = c\.ingressMode === 'caddy'/);
+    assert.match(UI_SRC, /gsBindAllInterfaces[\s\S]{0,200}?bindLockedByCaddy \? 'disabled' : ''/,
+      'an editable toggle here would save a value the socket never honors');
+  });
+
+  it('omits the field from the PATCH when the control is locked', () => {
+    // Sending it anyway would round-trip a value the operator could not have
+    // chosen, and make the stored config disagree with the running socket.
+    assert.match(UI_SRC, /if \(bindToggle && !bindToggle\.disabled\) \{\s*patch\.bindAllInterfaces = bindToggle\.checked;/);
+  });
+
+  it('reads the checkbox as an explicit true, matching the server-side guard', () => {
+    assert.match(UI_SRC, /c\.bindAllInterfaces === true \? 'checked' : ''/);
   });
 });
 

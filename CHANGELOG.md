@@ -31,7 +31,8 @@ All notable changes to TangleClaw are documented in this file.
   hand-edited config cannot widen the binding by accident. Caddy mode **refuses** the opt-in and says
   so in the log: Caddy holds the credential gate, so a wide Node socket would sit beside that gate
   rather than behind it — strictly worse than direct mode, because the operator believes they are
-  protected. Resolution and the upgrade notice live in `lib/bind-policy.js`; the bind matrix
+  protected. The settings control is locked there too, and omitted from the save, so the stored
+  config can never claim something the socket does not do. Resolution and the upgrade notice live in `lib/bind-policy.js`; the bind matrix
   (ingress mode × opt-in) is pinned in `test/bind-policy.test.js`, and verified against real sockets
   — a LAN connect gets `ECONNREFUSED` under the new default and succeeds only with the opt-in.
 
