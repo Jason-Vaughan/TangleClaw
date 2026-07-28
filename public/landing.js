@@ -38,7 +38,11 @@ const state = {
   // `'launchctl'` enables the macOS path. Read by both the stale-server
   // banner and the global settings modal Diagnostics section.
   restartMechanism: null,
-  restartInFlight: false
+  restartInFlight: false,
+  // The `startedAt` of the process this page has been talking to. A change means
+  // the server restarted without this page driving it (a CLI update, launchctl,
+  // a launchd respawn), so anything cached from the old process is now suspect.
+  serverStartedAt: null
 };
 
 // ── API Helpers ──
@@ -117,8 +121,61 @@ async function loadServerInfo() {
   renderAuthStatus(data.authStatus);
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
-  if (!data.isStale) return;
+
+  // The version label is written on every tick, not only when something looks
+  // wrong. It was previously set once at page load, so a restart this page did
+  // not drive — a terminal `apply-update.js`, `launchctl kickstart`, a launchd
+  // respawn — left the header naming a version the server had stopped running,
+  // with no signal that would ever correct it.
+  renderRunningVersion(data.runningVersion);
+
+  // A new `startedAt` means a different process is answering. The update pill
+  // is derived from the old one and can now be advertising an update that has
+  // already been applied, so re-ask instead of leaving it up.
+  if (data.startedAt) {
+    const restarted = state.serverStartedAt && data.startedAt !== state.serverStartedAt;
+    state.serverStartedAt = data.startedAt;
+    if (restarted) await loadUpdateStatus();
+  }
+
+  // Hiding is as load-bearing as showing. The banner had no hide path at all,
+  // so a page open across the restart that resolved the staleness kept telling
+  // the operator to restart a server that had already come back.
+  if (!data.isStale) {
+    hideStaleServerBanner();
+    return;
+  }
   renderStaleServerBanner(data);
+}
+
+/**
+ * Write the running server's version into the header label.
+ *
+ * Takes the version the server reports for the process that is answering, not
+ * the one on disk — during the window between a self-update's checkout and the
+ * restart that loads it those differ, and the header claiming the new one is
+ * how an operator concludes an update landed when it has not.
+ *
+ * A missing value leaves the existing label alone rather than blanking it: an
+ * older server that predates the field should read as "unchanged", not as
+ * "version unknown".
+ *
+ * @param {string|null|undefined} version - `runningVersion` from /api/server-info
+ * @returns {void}
+ */
+function renderRunningVersion(version) {
+  if (typeof version !== 'string' || !version) return;
+  const el = document.getElementById('version');
+  if (el) el.textContent = `v${version}`;
+}
+
+/**
+ * Hide the stale-server banner once the condition it reports has cleared.
+ * @returns {void}
+ */
+function hideStaleServerBanner() {
+  const banner = document.getElementById('staleServerBanner');
+  if (banner) banner.classList.add('hidden');
 }
 
 /**
@@ -464,12 +521,23 @@ function pollServerBackAndReload(oldStartedAt, restore) {
  */
 async function loadUpdateStatus() {
   const data = await api('/api/update-status');
-  if (!data || !data.updateAvailable || !data.latestVersion) return;
+  const pill = document.getElementById('updatePill');
+
+  // Every path that decides "no pill" must also take one down. This function
+  // re-runs after a restart, and the state it most often re-runs into is "the
+  // update you were offering is now installed" — returning early without
+  // hiding leaves the pill offering an update to the version already running.
+  if (!data || !data.updateAvailable || !data.latestVersion) {
+    if (pill) pill.classList.add('hidden');
+    return;
+  }
 
   const dismissKey = `tc_updateDismissed_${data.latestVersion}`;
-  if (localStorage.getItem(dismissKey)) return;
+  if (localStorage.getItem(dismissKey)) {
+    if (pill) pill.classList.add('hidden');
+    return;
+  }
 
-  const pill = document.getElementById('updatePill');
   if (!pill) return;
 
   const versionLabel = `v${esc(data.latestVersion)}`;

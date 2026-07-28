@@ -4702,6 +4702,19 @@ if (require.main === module) {
   // the ensuing restart. Idempotent + non-throwing.
   ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
 
+  // Re-stamp the version into the status bar of sessions that already exist
+  // (#745). A session sets its bar once, at creation, so every session that
+  // survives an update would otherwise keep naming the version it was born
+  // under — and surviving the update is the normal case, since the restart
+  // that loads new code leaves tmux running. Boot is the only moment the
+  // running version can change, so this needs no polling. Non-throwing by
+  // contract; a cosmetic bar must never delay a listen.
+  try {
+    tmux.refreshStatusBars();
+  } catch (err) {
+    log.warn('Status-bar refresh failed', { error: err.message });
+  }
+
   // Pin the INSTALLED ttyd job to its configured interface (#710). install.sh
   // writes that plist once and an update is only a `git checkout`, so without
   // this an existing machine keeps serving a `--writable` terminal — one that
