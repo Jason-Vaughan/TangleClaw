@@ -140,6 +140,15 @@ describe('#745 status bar names the version the process actually loaded', () => 
       assert.equal(h.setCalls.length, 0);
     });
 
+    it('recognises a current bar even if tmux stops quoting the value', () => {
+      // The guard used to anchor on a trailing space, which survives _exec's
+      // trim only while tmux quotes values containing one. If it ever stopped,
+      // every branded bar would be re-stamped on every boot.
+      const h = harness([{ name: 'proj' }], { proj: 'status-left #[x] TangleClaw v4.35.0' });
+      const res = tmux.refreshStatusBars(h.deps);
+      assert.deepEqual(res, { updated: 0, skipped: 1 });
+    });
+
     it('corrects a version that is a prefix of the current one', () => {
       // `v4.3` is a substring of `v4.35.0`, so a prefix comparison would read
       // this bar as already-current and leave it wrong forever.
@@ -217,6 +226,33 @@ describe('#744 both writers of the version label agree by construction', () => {
     assert.ok(runningIdx > -1, '_getVersion must consult the running version');
     assert.ok(diskIdx === -1 || runningIdx < diskIdx,
       'the running version must be preferred over the disk read, not the reverse');
+  });
+});
+
+describe('#744 the update check asks about the code that is running', () => {
+  it('compares against the loaded version, not the checkout', () => {
+    // Otherwise the checker contradicts the server it reports on: after a
+    // self-update's checkout, version.json already reads the new number while
+    // the old code still serves, so the checker would answer "up to date" and
+    // the dashboard would take the pill down for a server that has not
+    // restarted onto it.
+    const updateChecker = require('../lib/update-checker');
+    const realRead = serverInfo._internal.readFileSync;
+    try {
+      serverInfo.__unsafeResetForTest();
+      serverInfo._internal.readFileSync = () => JSON.stringify({ version: '2.0.0' });
+      serverInfo.captureStartup();
+      assert.equal(updateChecker._getCurrentVersion(), '2.0.0');
+
+      // The checkout advances past the running process.
+      serverInfo._internal.readFileSync = () => JSON.stringify({ version: '3.0.0' });
+      assert.equal(updateChecker._getCurrentVersion(), '2.0.0',
+        'the checker must keep comparing against the code that is running');
+    } finally {
+      serverInfo._internal.readFileSync = realRead;
+      serverInfo.__unsafeResetForTest();
+      serverInfo.captureStartup();
+    }
   });
 });
 

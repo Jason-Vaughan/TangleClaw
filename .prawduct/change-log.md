@@ -57,6 +57,13 @@ same defect with the sign flipped, taking down a pill for an update still genuin
 are now treated as *no answer* rather than an answer of absence, and `loadUpdateStatus` joined the
 poll loop so a provisional answer is never the last word.
 
+**Follow-up from verify-resolutions:** a *third* disk-sourced answer to "which version is
+running" survived in `lib/update-checker.js#_getCurrentVersion` — outside the provenance rule
+this very change ratifies. In the checkout-before-restart window it reads the new disk version,
+concludes "up to date", and (given the same commit's hide-on-real-answer branch) takes the pill
+down while old code is still serving. Pointed at `getRunningVersion()` with the disk read kept
+as the fallback, so all three consumers now derive it from one place.
+
 **Classification:** fix
 
 ## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)

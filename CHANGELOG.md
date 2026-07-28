@@ -66,6 +66,12 @@ All notable changes to TangleClaw are documented in this file.
   version label is written from both — and two endpoints answering one question differently is how
   the label changed under the operator a minute after load with nothing having happened.
 
+  The update check itself was a third answer to the same question, and the one with teeth: it
+  compared the newest release against `version.json` as read from the working tree, so in the window
+  after a self-update's checkout it would conclude the install was up to date and take the pill down
+  for a server still running the old code. "Is there an update?" is a question about what is
+  running, so it now asks what this process loaded.
+
 ### Internal
 - Frontend behavior here is tested by executing the renderers against a DOM stub rather than by
   grepping the source. `landing.js` is a browser global rather than a module, and the repo's
