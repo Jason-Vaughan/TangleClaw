@@ -26,7 +26,7 @@ You VPN into your dev machine. You SSH in. You navigate to your project director
 
 TangleClaw was built to fix that. It wraps AI coding sessions in persistent tmux processes so they survive network drops, device switches, and reconnects. Close your laptop at your desk, open your phone on the couch, and pick up the exact same session. The agent never knows you left.
 
-What started as session persistence grew into a full orchestration platform — and 4.0 closes the loop on the other half of the problem: **context that survives between sessions, not just within them**. Every session now ends with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript — all searchable from the dashboard. Add password-gated remote access behind a Caddy ingress, a persistent Project Master assistant that watches the whole fleet, per-project routing to local models, and governance delegated to the live Prawduct plugin, and TangleClaw is a complete control plane for AI-assisted development — accessible from any browser or phone on your network.
+What started as session persistence grew into a full orchestration platform — and 4.0 closes the loop on the other half of the problem: **context that survives between sessions, not just within them**. Every session now ends with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript — all searchable from the dashboard. Add password-gated remote access behind a Caddy ingress, a persistent Project Master assistant that watches the whole fleet, per-project routing to local models, and governance delegated to the live Prawduct plugin, and TangleClaw is a complete control plane for AI-assisted development — reachable from any browser or phone once you put it behind the login gate.
 
 ## Screenshots
 
@@ -211,15 +211,21 @@ Quick answers, with links into the full docs:
 
 ## Security
 
-TangleClaw runs a local server with browser-based terminal access. Out of the box (direct mode) there is **no user authentication** — anyone who can reach the port can view your projects and open terminal sessions. The `deletePassword` config option protects destructive operations only.
+TangleClaw runs a local server with browser-based terminal access, so reaching the dashboard means running shell commands as you. It therefore **listens on `127.0.0.1` only** unless you tell it otherwise — a fresh install is reachable from the machine it runs on, and nowhere else. The terminal listener (`ttyd`) is pinned to loopback on every install, new or upgraded. The `deletePassword` config option protects destructive operations only; it is not a login.
 
-For anything beyond localhost, use the **Caddy ingress** (4.0): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. See [deploy/INGRESS.md](deploy/INGRESS.md).
+**Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by enabling the login gate below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
+
+To reach TangleClaw from another device, pick one of two things — never neither:
+
+- **The Caddy ingress** (recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. See [deploy/INGRESS.md](deploy/INGRESS.md).
+- **`"bindAllInterfaces": true`** in `~/.tangleclaw/config.json` (or Settings → Network Exposure): accept connections from every interface **with no password**. Only sensible on a network you fully control, and it is the deliberate opt-out from the protection above. Requires a restart.
 
 **Recommendations:**
 - **Enable the ingress** (or at minimum mkcert HTTPS) for any non-localhost access
 - Run TangleClaw on a trusted network or behind a VPN (e.g., Tailscale, WireGuard)
-- Do not expose TangleClaw ports to the public internet without the ingress password gate
 - If accessing from mobile over Wi-Fi, ensure your network is private
+
+**Internet exposure is unsupported** — not merely discouraged. The gate is a single shared Basic credential with no rate limiting, lockout, second factor, or session revocation, sitting in front of arbitrary code execution. Supported perimeters are loopback, a private tunnel (Tailscale/WireGuard), or a trusted LAN behind the gate. The reasoning is recorded in [ADR 0009](docs/adr/0009-secure-by-default.md).
 
 ## Stay Updated
 

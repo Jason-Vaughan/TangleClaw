@@ -35,6 +35,7 @@ const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
+const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
@@ -47,6 +48,7 @@ const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
+const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
@@ -505,8 +507,29 @@ function redactConfigSecrets(config) {
 
 route('GET', '/api/config', (_req, res) => {
   const config = store.config.load();
-  jsonResponse(res, 200, redactConfigSecrets(config));
+  jsonResponse(res, 200, _withBindState(config));
 });
+
+/**
+ * Attach the server-resolved network-binding state to a config response.
+ *
+ * The settings UI renders a control whose meaning depends on rules the SERVER
+ * owns — caddy mode overriding an opt-in, an unchosen install held deliberately
+ * wide. Every time the frontend re-derived those rules from the raw fields it
+ * drifted, and the drift was always a control that misdescribed the socket. So
+ * the server ships its own answer and the UI renders it.
+ * @param {object} config - Full config.
+ * @returns {object} Redacted config plus a `bindState` block.
+ */
+function _withBindState(config) {
+  // Classify from the MIGRATED view. `load()` merges DEFAULT_CONFIG's `false`,
+  // so an install whose boot-time persist failed — the contingency boot itself
+  // tolerates as non-fatal — would otherwise be reported as "closed" while its
+  // socket is wide, and the settings modal would draw a shut door over an open
+  // one and hide the way out. In-memory only: a GET must not write.
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
+  return { ...redactConfigSecrets(config), bindState: bindPolicy.describeBindState(config) };
+}
 
 /**
  * Validate a PATCHed `master` settings object (the Project Master surface).
@@ -565,6 +588,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   const config = store.config.load();
+  // Re-assert the legacy grace state before this handler saves anything. Boot
+  // normally records it, but if that write failed (read-only disk, permissions)
+  // the key is still absent here — and since `load()` merges the default, saving
+  // would silently persist `false` and narrow a remote operator's install on
+  // their next restart, without them choosing. Idempotent: a no-op once recorded.
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
   // Snapshot of pre-mutation values for fields whose downstream effects
   // are conditional on whether the value actually changed (#247 hardening
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
@@ -576,7 +605,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
-    'stripAiCoauthors', 'ingressMode', 'publicDomain',
+    'stripAiCoauthors', 'ingressMode', 'publicDomain', 'bindAllInterfaces',
     'caddyHttpsPort', 'caddyHttpPort',
     'authEnabled', 'basicAuthUser', 'basicAuthHash',
     'serviceTokenEnabled', 'wrapDisabled', 'master'
@@ -629,6 +658,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
     }
+    // Only a real boolean opens the door — a truthy string from a hand-edited
+    // config or a sloppy client must not widen the bind by accident.
+    if (key === 'bindAllInterfaces' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'bindAllInterfaces must be a boolean', 'BAD_REQUEST');
+    }
     if (key === 'ingressMode' && !validIngressModes.includes(value)) {
       return errorResponse(res, 400, `ingressMode must be one of: ${validIngressModes.join(', ')}`, 'BAD_REQUEST');
     }
@@ -675,7 +709,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       storedValue = null;
     }
 
-    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode') {
+    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode' || key === 'bindAllInterfaces') {
       if (config[key] !== storedValue) requiresRestart = true;
     }
 
@@ -775,8 +809,10 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
   }
 
-  // Build redacted response — strip credential hashes (deletePassword, basicAuthHash).
-  const redacted = redactConfigSecrets(config);
+  // Build redacted response — strip credential hashes (deletePassword,
+  // basicAuthHash) — and re-resolve the bind state so the UI re-renders the
+  // Network Exposure control from the server's answer, not its own guess.
+  const redacted = _withBindState(config);
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
 });
@@ -4666,6 +4702,68 @@ if (require.main === module) {
   // the ensuing restart. Idempotent + non-throwing.
   ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
 
+  // Pin the INSTALLED ttyd job to its configured interface (#710). install.sh
+  // writes that plist once and an update is only a `git checkout`, so without
+  // this an existing machine keeps serving a `--writable` terminal — one that
+  // execs `tmux attach-session` — to its entire network, while the release notes
+  // say otherwise. Same non-fatal contract as the attach-script sync above: it
+  // refuses anything it does not recognize, backs up and validates before
+  // touching the live job, and restores the previous one if ttyd does not come
+  // back. Nothing here can affect the dashboard or this process.
+  try {
+    const ttydPlan = ttydBind.reconcileInstalledJob({
+      home: os.homedir(),
+      config,
+      deps: {
+        fs, path, execFileSync: require('node:child_process').execFileSync,
+        uid: process.getuid ? process.getuid() : 0,
+        log,
+        // Confirm the job actually came back rather than assuming launchctl's
+        // silence means success — a valid plist that launchd accepts can still
+        // produce a ttyd that exits immediately.
+        probe: (port) => {
+          const { execFileSync } = require('node:child_process');
+          // A missing probe tool is not a failed ttyd. Rolling back a good change
+          // because `nc` is absent would be the tool breaking the thing it exists
+          // to protect, so an unavailable prober means "unverified", not "dead".
+          try {
+            execFileSync('command', ['-v', 'nc'], { timeout: 1000, stdio: 'ignore', shell: true });
+          } catch {
+            log.warn('Skipped ttyd liveness verification — no `nc` on PATH', { port });
+            return true;
+          }
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            try {
+              execFileSync('nc', ['-z', '127.0.0.1', String(port)], { timeout: 1000, stdio: 'ignore' });
+              return true;
+            } catch { /* not up yet — retry until the deadline */ }
+          }
+          return false;
+        }
+      }
+    });
+    if (ttydPlan.action === 'refuse') {
+      log.warn('Left the installed ttyd job alone', { reason: ttydPlan.reason });
+      // Refusing is correct — guessing at an unrecognized job could take every
+      // terminal down. But if the job it declined to touch is still listening on
+      // every interface, that is an unauthenticated shell on the network, and a
+      // log line reaches nobody who is looking at a browser.
+      if (ttydPlan.stillWide) {
+        serverInfo.setTtydNotice({
+          setting: 'ttyd interface',
+          severity: 'exposed',
+          message: 'TangleClaw could not pin the terminal service to this machine, so it is still '
+            + 'accepting connections from your whole network — and it opens a shell with no password. '
+            + `TangleClaw did not change it because: ${ttydPlan.reason}. Fix it from a terminal on `
+            + 'this machine, or reinstall TangleClaw to regenerate the service definition.'
+        });
+      }
+    }
+  } catch (err) {
+    log.warn('ttyd bind reconciliation skipped', { error: err.message });
+  }
+
   // Bootstrap port management — resolve actual port (env var takes precedence).
   // Shares the one derivation with every consumer that reports or injects this
   // port, so what we bind and what we tell operators/agents cannot diverge.
@@ -4680,10 +4778,11 @@ if (require.main === module) {
   porthub.startExpirationTimer();
 
   // AUTH-1 (#395): in 'caddy' ingress mode Caddy terminates TLS and is the only
-  // front door, so TC drops to plain HTTP bound to localhost only (Caddy reaches
-  // it over the loopback). 'direct' mode is unchanged — TC terminates its own
-  // HTTPS and binds all interfaces. The live cutover is operator-driven; until
-  // ingressMode is flipped this branch is inert.
+  // front door, so TC drops to plain HTTP (Caddy reaches it over the loopback).
+  // 'direct' mode terminates its own HTTPS. The live cutover is operator-driven;
+  // until ingressMode is flipped this branch is inert.
+  // This decides the PROTOCOL only — which interfaces either mode binds is
+  // lib/bind-policy.js's call, and is no longer implied by the ingress mode.
   const caddyMode = config.ingressMode === 'caddy';
   const effectiveHttps = caddyMode ? false : !!config.httpsEnabled;
   const server = createServer({
@@ -4797,8 +4896,69 @@ if (require.main === module) {
   // Describe the socket that exists, not the one the config asked for.
   const protocol = serverProtocol(server);
   const servingHttps = protocol === 'https';
-  const bindHost = caddyMode ? '127.0.0.1' : null;
-  const bindLabel = caddyMode ? '127.0.0.1' : '*';
+  // Record the legacy install's "never chosen" state as a real value before
+  // anything reads it. Absence of the key identifies such an install exactly
+  // once — the next config save of any kind would materialize the default and
+  // erase the distinction — so it is converted to an explicit null here and
+  // persisted. Everything downstream reads the value, never the file.
+  const legacyBind = bindPolicy.migrateLegacyBind(
+    config,
+    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
+  );
+  if (legacyBind.migrated) {
+    try {
+      store.config.save(config);
+      log.info('Recorded this install as predating the network-binding setting', {
+        setting: bindPolicy.OPT_IN_KEY, reason: legacyBind.reason
+      });
+    } catch (err) {
+      // Non-fatal: the in-memory value still drives this boot correctly, so the
+      // operator keeps their access and the warning below still fires. It will
+      // simply be re-attempted next start.
+      log.warn('Could not persist the network-binding grace state — will retry next start', {
+        error: err.message
+      });
+    }
+  }
+
+  const bind = bindPolicy.resolveBind(config);
+  const bindHost = bind.host;
+  const bindLabel = bind.label;
+
+  // An opt-in that caddy mode overrode is refused out loud. Silently ignoring it
+  // would leave the config claiming one thing while the socket does another —
+  // and the operator believing they had reopened remote access when they had not.
+  if (bind.refusedOptIn) {
+    log.warn(
+      `Ignoring "${bindPolicy.OPT_IN_KEY}": true — Caddy is the ingress in this mode and holds the `
+      + 'login gate, so binding every interface would expose an ungated socket beside it. '
+      + 'Reach TangleClaw through Caddy, or set "ingressMode": "direct" to bind directly.',
+      { ingressMode: config.ingressMode }
+    );
+  }
+
+  // A non-boolean opt-in reads as "not opted in", which is the safe choice — but
+  // the operator who typed it believes they reopened the door, so say otherwise.
+  if (bind.malformedOptIn) {
+    log.warn(
+      `Ignoring "${bindPolicy.OPT_IN_KEY}" — it must be a boolean (true or false, unquoted). `
+      + 'TangleClaw is treating this as not-opted-in and binding loopback only.',
+      { setting: bindPolicy.OPT_IN_KEY, type: typeof config[bindPolicy.OPT_IN_KEY] }
+    );
+  }
+
+  // An install written before this key existed is still bound wide, deliberately
+  // (ADR 0009's 2026-07-28 amendment) — narrowing it would take away the remote
+  // access its operator may be using to read this very dashboard, before the
+  // credential gate exists to replace it. That is a bounded exposure window, not
+  // an accepted state, so it is reported on every boot and on the dashboard until
+  // the operator resolves it. Unlike the terminal listener, which is pinned
+  // immediately because nothing external addresses it.
+  const bindNotice = bindPolicy.describeNarrowing(config);
+  if (bindNotice) {
+    log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
+  }
+  serverInfo.setBindNotice(bindNotice);
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -4818,7 +4978,14 @@ if (require.main === module) {
       // points back at the fallback WARN logged during construction rather
       // than leaving the operator to notice the mismatch themselves.
       ...(effectiveHttps && !servingHttps ? { httpsFallback: true } : {}),
-      ingressMode: config.ingressMode || 'direct'
+      ingressMode: config.ingressMode || 'direct',
+      // WHY this host, not just which one. An operator reading a log to find out
+      // why they cannot reach the dashboard needs the reason and the setting
+      // that changes it, otherwise the line states the symptom and withholds the
+      // cause. `grace` in particular is the one worth spotting: it means the
+      // machine is still wide open and nobody has decided yet.
+      bind: bind.reason,
+      bindSetting: bindPolicy.OPT_IN_KEY
     });
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
     ttydWatcher.start();
@@ -4840,7 +5007,8 @@ if (require.main === module) {
     sessions.resyncMedusaListeners();
   };
 
-  // Bind localhost-only in caddy mode (Caddy fronts us); all interfaces otherwise.
+  // Loopback unless something is guarding the door — see lib/bind-policy.js.
+  // A null host is Node's "every interface", reached only via the explicit opt-in.
   if (bindHost) {
     server.listen(port, bindHost, onListening);
   } else {

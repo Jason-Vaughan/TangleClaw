@@ -31,12 +31,22 @@
         <string>__TTYD_PATH__</string>
         <string>--writable</string>
         <string>--url-arg</string>
-        <!-- AUTH-1 (#395): bind args are filled per ingress mode — direct mode
-             (install.sh) → `--port 3100`; caddy mode (ingress-cutover.js) →
-             `--interface <unix-socket>` so ttyd is reachable only via the proxy
-             chain behind Caddy. -->
+        <!-- AUTH-1 (#395) + #710: ttyd ALWAYS takes an explicit `--interface`.
+             ttyd's default is every interface, and this process serves a
+             `--writable` terminal that execs `tmux attach-session` — so an
+             unspecified interface is an unauthenticated shell on the LAN.
+             Verified against the binary: `--interface 127.0.0.1` binds only
+             loopback, `--interface 0.0.0.0` binds all, and with a unix-socket
+             interface the `--port` below is ignored (no TCP listener at all).
+             Filled per mode — caddy (ingress-cutover.js) → the unix socket;
+             direct (install.sh / cutover) → always 127.0.0.1. This does NOT
+             follow `bindAllInterfaces`: that setting exists so the DASHBOARD can
+             be reached from another device, and nothing reaches ttyd directly,
+             so widening it would publish a shell for no gain. -->
         <string>__TTYD_BIND_KEY__</string>
         <string>__TTYD_BIND_VAL__</string>
+        <string>--port</string>
+        <string>__TTYD_PORT__</string>
         <!-- Raise xterm.js scrollback from its 1000-line default (#322/#290):
              gives long output room within a live session, and is large enough
              to hold the history ttyd-attach.sh replays on reconnect/restart. -->

@@ -205,7 +205,13 @@ cp "${SCRIPT_DIR}/ttyd-attach.sh" "$TTYD_ATTACH"
 chmod 0755 "$TTYD_ATTACH"
 green "  ${TTYD_ATTACH}"
 
-# ttyd plist — install.sh always installs the DIRECT-mode bind (--port 3100).
+# ttyd plist — install.sh always installs the DIRECT-mode bind, pinned to
+# loopback (#710). ttyd serves a --writable terminal that execs `tmux
+# attach-session`, and its default interface is ALL of them, so the pre-#710
+# `--port 3100` install published an unauthenticated shell to the whole network.
+# Every install is loopback-only here, and stays that way: ttyd does NOT follow
+# the `bindAllInterfaces` dashboard opt-in, because nothing addresses this port
+# directly — TangleClaw proxies to it.
 # Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
 # keeps the default install path unchanged (true rollback target). See AUTH-1.
 # (The ttyd plist no longer carries __REPO_DIR__ — the attach script moved out of
@@ -215,8 +221,9 @@ sed \
   -e "s|__TTYD_ATTACH__|${TTYD_ATTACH}|g" \
   -e "s|__HOME__|${HOME}|g" \
   -e "s|__LAUNCHD_PATH__|${LAUNCHD_PATH}|g" \
-  -e "s|__TTYD_BIND_KEY__|--port|g" \
-  -e "s|__TTYD_BIND_VAL__|3100|g" \
+  -e "s|__TTYD_BIND_KEY__|--interface|g" \
+  -e "s|__TTYD_BIND_VAL__|127.0.0.1|g" \
+  -e "s|__TTYD_PORT__|3100|g" \
   -e "s|__TTYD_SOCKET__||g" \
   "${SCRIPT_DIR}/${TTYD_PLIST}" > "${LAUNCH_AGENTS_DIR}/${TTYD_PLIST}"
 

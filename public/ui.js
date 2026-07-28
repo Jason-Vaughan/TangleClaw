@@ -1392,6 +1392,22 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
+  // #710 — rendered from the SERVER's resolved bind state (`bindState` on
+  // /api/config), never re-derived here. The rules belong to the server: caddy
+  // mode overrides an opt-in, and an install that has never chosen is held wide
+  // on purpose. Every previous attempt to restate those rules in the frontend
+  // drifted, and the drift was always a control that misdescribed the socket —
+  // a switch reading "closed" over an open port, or the reverse.
+  const bindState = c.bindState || {};
+  const bindLockedByCaddy = !!bindState.lockedByCaddy;
+  // `wide` is the binding CONFIG resolves to — what the socket will be after the
+  // next restart, and what it already is unless the setting changed since boot
+  // (hence requiresRestart). `choice` is what the operator has RECORDED. They
+  // differ in the grace state, which is why the switch reads ON there and why an
+  // untouched Save must not write anything.
+  const bindShowsOn = !!bindState.wide;
+  const bindUnchosen = bindState.choice === 'unchosen';
+
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live
   // checkbox). serviceTokenConfigured/serviceTokenEnabled come redacted from
@@ -1490,6 +1506,40 @@ function openGlobalSettings() {
     </div>
     ${tokenManageMarkup}
 
+    <div class="gs-section-label">Network Exposure</div>
+    <div class="form-group">
+      <label class="gs-toggle-label${bindLockedByCaddy ? ' gs-toggle-locked' : ''}"
+             ${bindLockedByCaddy ? 'aria-disabled="true" title="Locked while the Caddy ingress is in use"' : ''}>
+        <span>Accept connections from the network</span>
+        <input type="checkbox" id="gsBindAllInterfaces"
+               data-rendered="${bindShowsOn ? '1' : '0'}"
+               ${bindShowsOn ? 'checked' : ''} ${bindLockedByCaddy ? 'disabled' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">
+        ${bindLockedByCaddy
+          ? 'Locked while the Caddy ingress is in use. Caddy fronts the server and holds the login '
+            + 'gate, so TangleClaw stays on <code>127.0.0.1</code> behind it — binding the network '
+            + 'directly would open an ungated door beside the gated one. Reach TangleClaw through '
+            + 'Caddy, or switch to direct mode first.'
+          : 'Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from '
+            + 'this machine alone. On: it accepts connections from every network interface — anyone who '
+            + 'can reach this machine gets the dashboard, and the dashboard launches AI sessions with '
+            + 'shell access. Turn this on only on a network you trust, and prefer setting up the login '
+            + 'gate instead, which keeps remote access without leaving the door open. Requires a restart.'}
+      </div>
+    </div>
+    ${bindUnchosen && !bindLockedByCaddy ? `
+    <div class="form-group">
+      <div class="form-hint">
+        <strong>You have not chosen yet.</strong> This install predates the setting, so TangleClaw
+        left your binding alone rather than cutting off access you might be using. Turning the switch
+        off above and saving closes it. If you deliberately want to keep it open, confirm below —
+        that records the choice and stops the warning, without a moment where the door is shut on you.
+      </div>
+      <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
+    </div>` : ''}
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -1509,6 +1559,32 @@ function openGlobalSettings() {
   // because the button only exists once the modal opens. No-op when
   // disabled (no mechanism); state.restartInFlight guards double-click
   // coalescing across the banner + modal surfaces.
+  // #710 — the ONLY route from the grace state to a recorded "keep it open".
+  // The switch cannot serve that purpose: a grace install renders it already ON
+  // (truthfully — it IS bound wide), so it is never "moved" and the save omits
+  // the field. Reaching `true` by toggling off, saving, then back on would pass
+  // through a state that narrows at the next restart, which strands precisely
+  // the remote operator this whole grace mechanism exists to protect. One
+  // deliberate click, one write, no intermediate state.
+  const bindKeepOpenBtn = document.getElementById('gsBindKeepOpen');
+  if (bindKeepOpenBtn) {
+    bindKeepOpenBtn.addEventListener('click', async () => {
+      bindKeepOpenBtn.disabled = true;
+      const data = await apiMutate('/api/config', 'PATCH', { bindAllInterfaces: true });
+      if (data && data.config) {
+        state.config = data.config;
+        closeGlobalSettings();
+      } else {
+        // The operator this exists for is remote and has no console — a button
+        // that just re-enables itself reads as "nothing happened", and they are
+        // left believing the exposure warning is unresolvable.
+        bindKeepOpenBtn.disabled = false;
+        bindKeepOpenBtn.textContent =
+          `Could not save: ${api.lastError || 'server rejected the change'} — tap to retry`;
+      }
+    });
+  }
+
   const restartBtn = document.getElementById('gsRestartBtn');
   if (restartBtn && state.restartMechanism && typeof triggerServerRestart === 'function') {
     restartBtn.addEventListener('click', () => {
@@ -1575,6 +1651,25 @@ async function saveGlobalSettings() {
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
     serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
   };
+
+  // Send this ONLY when the operator actually moved the switch.
+  //
+  // Two reasons, and the second is a security bug rather than tidiness. The
+  // control is locked in caddy mode, so a locked control must never write. And
+  // an install still in the grace state renders this switch ON — truthfully,
+  // because it really is bound wide — so unconditionally posting `.checked`
+  // would record `bindAllInterfaces: true` the first time the operator saved
+  // ANY unrelated setting. That converts "never chosen, and being told about it
+  // loudly" into "deliberately opted in", which silences the warning forever and
+  // makes a bounded exposure window unbounded, without anyone choosing it.
+  //
+  // Comparing against the state it was RENDERED in is what distinguishes "the
+  // operator flipped this" from "the operator changed their theme".
+  const bindToggle = document.getElementById('gsBindAllInterfaces');
+  if (bindToggle && !bindToggle.disabled) {
+    const renderedOn = bindToggle.dataset.rendered === '1';
+    if (bindToggle.checked !== renderedOn) patch.bindAllInterfaces = bindToggle.checked;
+  }
 
   const data = await apiMutate('/api/config', 'PATCH', patch);
   if (data && data.config) {

@@ -115,6 +115,8 @@ async function loadServerInfo() {
   renderAuthUser(data.currentUser);
   // AUTH-2K9D: warn when auth is configured but not actually enforcing.
   renderAuthStatus(data.authStatus);
+  renderBindNotice(data.bindNotice);
+  renderBindNotice(data.ttydNotice, 'ttydNotice');
   if (!data.isStale) return;
   renderStaleServerBanner(data);
 }
@@ -151,6 +153,39 @@ function renderAuthStatus(authStatus) {
   const msg = _authStatusWarning(authStatus);
   if (msg) {
     el.textContent = msg;
+    el.title = msg;
+    el.classList.remove('hidden');
+  } else {
+    el.textContent = '';
+    el.classList.add('hidden');
+  }
+}
+
+/**
+ * Show or hide the notice that this install is still accepting connections from
+ * the whole network with no password (#710). Sent only to installs that predate
+ * the setting and have not yet chosen, so an operator who has decided never sees
+ * it. It is a live-exposure warning, not an after-the-fact upgrade note.
+ *
+ * State-driven like the auth chip: it mirrors the latest `/api/server-info` poll
+ * and self-clears once the operator sets the setting either way and restarts.
+ * No dismiss control and no timer — removing the cause removes the chip.
+ *
+ * Anyone who lost REMOTE access cannot see this, by definition; the boot log is
+ * their copy. This is for the operator sitting at the machine, whose dashboard
+ * still works and who would otherwise have no idea anything changed.
+ *
+ * @param {{message: string, setting: string}|null|undefined} notice
+ * @param {string} [elementId] - Which chip to render into. The terminal
+ *   listener has its own, because the two exposures are independent: one can be
+ *   resolved while the other is still open, and a shared slot would hide that.
+ */
+function renderBindNotice(notice, elementId) {
+  const el = document.getElementById(elementId || 'bindNotice');
+  if (!el) return;
+  const msg = notice && typeof notice.message === 'string' ? notice.message : null;
+  if (msg) {
+    el.textContent = `⚠ ${msg}`;
     el.title = msg;
     el.classList.remove('hidden');
   } else {

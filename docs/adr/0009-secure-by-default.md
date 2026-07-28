@@ -85,6 +85,64 @@ goes dark. It ships with an explicit opt-out and an upgrade notice, never as a b
 Removing someone's remote access without warning is the same class of failure as shipping them no
 password.
 
+**Amendment (2026-07-28) — the two listeners close on different schedules, and the dashboard's
+closure is interlocked with the gate.** The paragraph above was written when the author was the only
+installer, so "goes dark" was a cost only he would pay. With outside installs in the field it is a
+support incident delivered by an update button, and the ADR's own retroactivity clause — *existing
+installs must not break silently, they get an upgrade path* — is better served by sequencing than by
+a notice. Three rules:
+
+1. **The terminal listener (ttyd) is pinned immediately, for everyone.** No client addresses it
+   directly — TangleClaw proxies to `127.0.0.1:<ttydPort>` and the browser loads a relative
+   `/terminal/` URL — so pinning it is invisible to every existing operator. It is also the more
+   dangerous of the two doors, being a `--writable` terminal that execs `tmux attach-session`. A
+   change that removes an unauthenticated shell at zero cost to the user is not one to stage behind
+   anything.
+2. **The dashboard listener narrows when a gate is in front of it — established by ingress mode, not
+   by request identity.** The binding is chosen once, at `listen()`, where no request exists;
+   `authStatus === 'live'` (`lib/auth-identity.js`) is request-scoped and therefore cannot be
+   consulted there. The implementable equivalent is `ingressMode === 'caddy'`, and it is not a
+   weaker proxy: the credential gate exists *only* in caddy mode, so caddy mode is the necessary
+   condition for a gate to be in front of anything, and caddy mode already pins loopback for its own
+   reasons. An install that never had remote reach (no prior wide bind) narrows immediately, because
+   nothing is taken away.
+
+   What this concedes, stated plainly: an install in caddy mode with `authEnabled: false` narrows
+   without a password ever being set. That is not a regression — it is loopback-only, which is the
+   safe state — but it is not the "gate proven live" the first draft of this clause promised.
+   Proving the gate live belongs to chunk 2, where provisioning verifies the credential answers
+   through the ingress before trusting it.
+3. **Until then the install keeps its binding and says so, loudly and repeatedly.** This is a
+   deliberate, bounded exposure window, not an acceptance of the old posture: the grace state exists
+   only to keep an operator reachable long enough to *reach the thing that fixes it*.
+
+The interlock is what makes this safe without coordination: the door closes only after a working
+lock is on it, so there is no ordering for an operator to get right and no window where they are
+stranded. Provisioning the credential must verify the gate answers through the ingress before
+trusting it, and roll back automatically if it does not — a cutover that half-succeeds on a remote
+machine is the failure this amendment exists to prevent.
+
+**Caddy mode refuses the opt-in rather than honoring it.** Where the gate is in front, binding the
+server to every interface as well would publish an ungated door *beside* the gated one — strictly
+worse than direct mode, because the operator believes they are protected. The setting is not
+silently ignored there: the refusal is logged, and the settings control is locked and rendered from
+the resolved binding rather than the stored value, so the config can never appear to claim something
+the socket does not do.
+
+**"Never chosen" is a recorded value, not an inferred absence.** The population held in grace is
+identified by its config predating the setting — but that absence survives exactly one config write,
+because loading merges defaults and saving writes the whole object. Left inferred, an operator
+changing their theme would have ended their own grace period and lost remote access at the next
+restart. It is therefore converted once, at boot, to an explicit `null` distinct from both `true` and
+`false`; the config API accepts only booleans, so `null` cannot arrive from outside and means exactly
+one thing. Any surface that must distinguish "has not chosen" from "chose to close" reads that value
+— never the key's presence.
+
+**One derivation, server-side.** What the binding is, what the operator recorded, and whether the
+control should be locked are answered in one place and shipped to the frontend. Three separate
+defects in the first slice were two copies of these rules disagreeing, each surfacing as a control
+that misdescribed the socket. Consumers render the answer; they do not restate the rules.
+
 **An operator-managed Caddyfile must be preserved.** Automated provisioning either preserves a
 hand-edited config or refuses; it never clobbers one (the refuse-to-ungate guard from #463 is the
 existing precedent).

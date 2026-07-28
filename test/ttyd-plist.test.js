@@ -34,10 +34,32 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
     assert.match(plist, /<string>__TTYD_BIND_VAL__<\/string>/, 'bind value must be templated');
   });
 
-  it('should make install.sh bind ttyd to port 3100 for the default direct install', () => {
+  // #710 — REPLACES the pre-#710 contract, which filled the bind pair with
+  // `--port 3100` and no interface. Verified against the ttyd binary: `--port`
+  // alone binds `*:3100`, so that install published a `--writable` terminal
+  // running `tmux attach-session` to the entire network, unauthenticated. Every
+  // install is loopback-only now, unconditionally — ttyd does not follow the
+  // `bindAllInterfaces` dashboard opt-in.
+  it('should make install.sh pin ttyd to loopback for the default direct install', () => {
     const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
-    assert.match(installSh, /s\|__TTYD_BIND_KEY__\|--port\|g/, 'install.sh must fill the bind key with --port');
-    assert.match(installSh, /s\|__TTYD_BIND_VAL__\|3100\|g/, 'install.sh must fill the bind value with 3100');
+    assert.match(installSh, /s\|__TTYD_BIND_KEY__\|--interface\|g/,
+      'install.sh must fill the bind key with --interface — ttyd defaults to every interface');
+    assert.match(installSh, /s\|__TTYD_BIND_VAL__\|127\.0\.0\.1\|g/,
+      'the default install must bind loopback only');
+    assert.match(installSh, /s\|__TTYD_PORT__\|3100\|g/,
+      'the port contract is preserved, now in its own slot');
+    assert.doesNotMatch(installSh, /s\|__TTYD_BIND_KEY__\|--port\|g/,
+      'the pre-#710 wide bind must not come back');
+  });
+
+  it('should give the plist an explicit interface arg, never port-only', () => {
+    // Port-only is the shape that binds every interface. If the template ever
+    // loses the interface slot, every fresh install reopens the shell door.
+    assert.match(plist, /<string>__TTYD_PORT__<\/string>/, 'port must have its own slot');
+    const bindIdx = plist.indexOf('__TTYD_BIND_KEY__');
+    const portIdx = plist.indexOf('__TTYD_PORT__');
+    assert.ok(bindIdx > -1 && portIdx > bindIdx,
+      'the interface pair must precede the port arg');
   });
 
   // #500 — the attach script is a templated arg (__TTYD_ATTACH__) filled with a
