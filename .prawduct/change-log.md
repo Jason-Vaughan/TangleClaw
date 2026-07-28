@@ -87,6 +87,24 @@ existed to catch it would skip and still report green. **Third time this session
 could not fail.** It now asserts `resolveBinary('sh')`, which detects a broken resolver independent of
 which engines are installed; breaking the resolver yields 1 fail + 9 skips instead of a green wall.
 
+**Second Critic pass — 9/10 fixed, two real gaps closed after.** (a) The "records the mode it actually
+ran" fix was tmux-path only: `launchOpenClawWebUI` still persisted the requested mode, on a path where
+the mode is carried solely by ClawBridge's `permissionMode` and takes effect only on a successful
+pre-create — the code there already logged "mode will not propagate" and then recorded it anyway. My
+CHANGELOG claimed the fix without that qualification. Fixed rather than softened: it records `null`
+where nothing propagated, and logs the requested mode beside it. (b) The effective mode is now threaded
+into `_deferEngineInit`/`_resolvePreKeys` instead of re-derived, and the last two bare-index
+`launchModes[mode]` lookups now go through `honorsLaunchMode`.
+
+**Real-session verification (closes the standing "argument-parse depth only" finding).** Launching a
+throwaway tmux session against codex-cli 0.145.0: `--ask-for-approval never --sandbox workspace-write`
+brings up the TUI and the status bar reads `Ready · never`, confirming the approval policy actually
+took; `--dangerously-bypass-approvals-and-sandbox` brings up the TUI with `permissions: YOLO mode` in
+Codex's own header. Both also confirm the engine-level `preKeys: ["Enter","Enter"]` are still correct
+under the new flags — codex opens on a directory-trust prompt that those keys clear. This matters
+because the original bug's symptom was "cannot start a session at all", which no amount of flag
+parsing proves against.
+
 **Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
 codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
 accepted by invoking the real binary. Full suite **4837 tests / 0 fail / 1 skip**; evidence 2543.

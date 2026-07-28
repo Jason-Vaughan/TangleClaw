@@ -38,7 +38,13 @@ All notable changes to TangleClaw are documented in this file.
   the engine cannot honor, but the session row kept the mode that was *requested*, so the API, the UI,
   and anything else reading it asserted a posture the process was never started with — an operator who
   picked Bypass on an engine without one saw "Bypass" over an interactive agent, contradicted only by a
-  server log. The stored value is now the reconciled one.
+  server log. The stored value is now the reconciled one, and the effective mode is threaded onward to
+  preKey resolution rather than re-derived.
+  This covers the OpenClaw **Web UI** path too, where the mode is carried solely by ClawBridge's
+  `permissionMode` and therefore takes effect only on a successful pre-create — the code there already
+  logged "mode will not propagate" on failure and then recorded the mode regardless. It now records
+  `null` in exactly the cases where nothing propagated, and logs the requested mode alongside so the
+  divergence is visible.
 - **Codex's "Full Auto" launch mode could not start a session at all (#731).** `data/engines/codex.json`
   declared `--full-auto`, and current `codex-cli` rejects it outright — `codex --full-auto` exits 2 with
   `error: unexpected argument '--full-auto' found`. The tmux session was created and the launch command
