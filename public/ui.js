@@ -1533,6 +1533,16 @@ function openGlobalSettings() {
             + 'gate instead, which keeps remote access without leaving the door open. Requires a restart.'}
       </div>
     </div>
+    ${bindUnchosen && !bindLockedByCaddy ? `
+    <div class="form-group">
+      <div class="form-hint">
+        <strong>You have not chosen yet.</strong> This install predates the setting, so TangleClaw
+        left your binding alone rather than cutting off access you might be using. Turning the switch
+        off above and saving closes it. If you deliberately want to keep it open, confirm below —
+        that records the choice and stops the warning, without a moment where the door is shut on you.
+      </div>
+      <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
+    </div>` : ''}
 
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
@@ -1553,6 +1563,27 @@ function openGlobalSettings() {
   // because the button only exists once the modal opens. No-op when
   // disabled (no mechanism); state.restartInFlight guards double-click
   // coalescing across the banner + modal surfaces.
+  // #710 — the ONLY route from the grace state to a recorded "keep it open".
+  // The switch cannot serve that purpose: a grace install renders it already ON
+  // (truthfully — it IS bound wide), so it is never "moved" and the save omits
+  // the field. Reaching `true` by toggling off, saving, then back on would pass
+  // through a state that narrows at the next restart, which strands precisely
+  // the remote operator this whole grace mechanism exists to protect. One
+  // deliberate click, one write, no intermediate state.
+  const bindKeepOpenBtn = document.getElementById('gsBindKeepOpen');
+  if (bindKeepOpenBtn) {
+    bindKeepOpenBtn.addEventListener('click', async () => {
+      bindKeepOpenBtn.disabled = true;
+      const data = await apiMutate('/api/config', 'PATCH', { bindAllInterfaces: true });
+      if (data && data.config) {
+        state.config = data.config;
+        closeGlobalSettings();
+      } else {
+        bindKeepOpenBtn.disabled = false;
+      }
+    });
+  }
+
   const restartBtn = document.getElementById('gsRestartBtn');
   if (restartBtn && state.restartMechanism && typeof triggerServerRestart === 'function') {
     restartBtn.addEventListener('click', () => {

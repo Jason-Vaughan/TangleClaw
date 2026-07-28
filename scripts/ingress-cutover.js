@@ -158,13 +158,11 @@ function planCutover(target, ctx) {
   // own HTTPS.
   //
   // #710: rolling back to direct must NOT reopen the terminal to the network.
-  // ttyd runs `--writable` against `tmux attach-session`, so the interface is a
-  // security boundary, not a convenience — it follows the same `bindAllInterfaces`
-  // opt-in as the dashboard rather than defaulting wide the way it used to.
-  // Always loopback, deliberately NOT following `bindAllInterfaces` (#710).
-  // That setting is about reaching the DASHBOARD remotely; nothing addresses
-  // ttyd directly, since TC proxies to it. Widening this port would publish a
-  // --writable shell for no gain — see lib/ttyd-bind.js#desiredBind.
+  // ttyd runs `--writable` against `tmux attach-session`, so its interface is a
+  // security boundary rather than a convenience. It is pinned to loopback
+  // unconditionally and does NOT follow `bindAllInterfaces` — that setting is
+  // about reaching the DASHBOARD remotely, and nothing addresses ttyd directly
+  // since TC proxies to it. See lib/ttyd-bind.js#desiredBind.
   const ttydBindAddress = '127.0.0.1';
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, HOME: env.home,

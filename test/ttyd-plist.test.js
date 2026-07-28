@@ -37,9 +37,9 @@ describe('deploy/com.tangleclaw.ttyd.plist', () => {
   // #710 — REPLACES the pre-#710 contract, which filled the bind pair with
   // `--port 3100` and no interface. Verified against the ttyd binary: `--port`
   // alone binds `*:3100`, so that install published a `--writable` terminal
-  // running `tmux attach-session` to the entire network, unauthenticated. The
-  // default install is loopback-only now; widening is the operator's explicit
-  // `bindAllInterfaces` choice, applied by the server, never by the installer.
+  // running `tmux attach-session` to the entire network, unauthenticated. Every
+  // install is loopback-only now, unconditionally — ttyd does not follow the
+  // `bindAllInterfaces` dashboard opt-in.
   it('should make install.sh pin ttyd to loopback for the default direct install', () => {
     const installSh = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'install.sh'), 'utf8');
     assert.match(installSh, /s\|__TTYD_BIND_KEY__\|--interface\|g/,

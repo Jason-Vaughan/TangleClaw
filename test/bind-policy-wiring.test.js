@@ -248,6 +248,20 @@ describe('the settings toggle cannot lie about what the socket does', () => {
     assert.match(UI_SRC, /const bindShowsOn = \(c\.bindAllInterfaces === true \|\| bindUnchosen\) && !bindLockedByCaddy/);
   });
 
+  it('gives a grace install a one-click route to a recorded "keep it open"', () => {
+    // Without this the UI can only ever produce `false`: a grace install renders
+    // the switch already ON, so it is never "moved" and the save omits the field
+    // — while README and the CHANGELOG both advertise this screen as the way to
+    // reach `true`. Toggling off, saving, then back on would work, but between
+    // the two saves the install is set to narrow at the next restart, which
+    // strands the remote operator the grace state exists to protect.
+    assert.match(UI_SRC, /id="gsBindKeepOpen"/, 'the affordance must exist');
+    assert.match(UI_SRC, /\$\{bindUnchosen && !bindLockedByCaddy \?/,
+      'it must appear only for an install that has not chosen, and never when locked');
+    assert.match(UI_SRC, /apiMutate\('\/api\/config', 'PATCH', \{ bindAllInterfaces: true \}\)/,
+      'one deliberate click writes the choice directly — no intermediate state');
+  });
+
   it('renders the toggle OFF whenever caddy mode has pinned loopback', () => {
     // The one combination that reads as a lie: config says true, socket says
     // loopback. The switch must follow the socket, not the stored value.

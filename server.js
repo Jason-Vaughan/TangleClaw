@@ -567,6 +567,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   const config = store.config.load();
+  // Re-assert the legacy grace state before this handler saves anything. Boot
+  // normally records it, but if that write failed (read-only disk, permissions)
+  // the key is still absent here — and since `load()` merges the default, saving
+  // would silently persist `false` and narrow a remote operator's install on
+  // their next restart, without them choosing. Idempotent: a no-op once recorded.
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
   // Snapshot of pre-mutation values for fields whose downstream effects
   // are conditional on whether the value actually changed (#247 hardening
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated

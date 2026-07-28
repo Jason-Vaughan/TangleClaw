@@ -39,9 +39,10 @@
              loopback, `--interface 0.0.0.0` binds all, and with a unix-socket
              interface the `--port` below is ignored (no TCP listener at all).
              Filled per mode — caddy (ingress-cutover.js) → the unix socket;
-             direct (install.sh / cutover) → 127.0.0.1, or 0.0.0.0 only when the
-             operator set `bindAllInterfaces`, the same opt-in that widens the
-             dashboard. Both doors move together or neither does. -->
+             direct (install.sh / cutover) → always 127.0.0.1. This does NOT
+             follow `bindAllInterfaces`: that setting exists so the DASHBOARD can
+             be reached from another device, and nothing reaches ttyd directly,
+             so widening it would publish a shell for no gain. -->
         <string>__TTYD_BIND_KEY__</string>
         <string>__TTYD_BIND_VAL__</string>
         <string>--port</string>

@@ -209,9 +209,9 @@ green "  ${TTYD_ATTACH}"
 # loopback (#710). ttyd serves a --writable terminal that execs `tmux
 # attach-session`, and its default interface is ALL of them, so the pre-#710
 # `--port 3100` install published an unauthenticated shell to the whole network.
-# A fresh install is loopback-only; widening is the operator's explicit
-# `bindAllInterfaces` choice, applied by the running server, never by the
-# installer.
+# Every install is loopback-only here, and stays that way: ttyd does NOT follow
+# the `bindAllInterfaces` dashboard opt-in, because nothing addresses this port
+# directly — TangleClaw proxies to it.
 # Caddy mode rebinds ttyd to a Unix socket via scripts/ingress-cutover.js; this
 # keeps the default install path unchanged (true rollback target). See AUTH-1.
 # (The ttyd plist no longer carries __REPO_DIR__ — the attach script moved out of
