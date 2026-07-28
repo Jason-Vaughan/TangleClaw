@@ -187,7 +187,7 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
 
 | kind | When it applies | Injected? |
 |---|---|---|
-| `startup` (default) | session start — custom priming | **yes**, on their own SessionStart hook at launch (`## Project Rules`), sharded when they outgrow one channel; the prime carries a `## Rules delivery` manifest pointing at them (#749) |
+| `startup` (default) | session start — custom priming | **yes** — on engines with a silent-prime channel, on their own SessionStart hook (`## Project Rules`), sharded when they outgrow one channel, with a `## Rules delivery` manifest in the prime pointing at them; on engines without one, inline in the prime as before (#749) |
 | `wrap` | wrap time — custom wrap behavior + the self-learning sink | **yes**, into the wrap pipeline's ai-content prompts (`## Project wrap rules`) |
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
