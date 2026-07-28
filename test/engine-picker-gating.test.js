@@ -44,6 +44,7 @@ describe('engine picker gating (#707)', () => {
 
   before(() => {
     uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    require('../public/api-helper.js');
     // Copied from production `esc` (public/landing.js), non-string rejection
     // included. A more forgiving stub renders values the real one drops, which
     // makes any assertion about label text quietly untrue.
@@ -52,12 +53,10 @@ describe('engine picker gating (#707)', () => {
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     };
-    const factory = new Function('esc', `
-      ${sliceFunction(uiSrc, 'resolvePickerEngine')}
-      ${sliceFunction(uiSrc, 'buildEngineOptions')}
-      return { resolvePickerEngine, buildEngineOptions };
-    `);
-    ({ resolvePickerEngine, buildEngineOptions } = factory(esc));
+    // The real shared implementations, not slices — both page copies now
+    // delegate here, so testing this tests every picker at once.
+    buildEngineOptions = (list, sel) => globalThis.tcBuildEngineOptions(list, sel, esc);
+    resolvePickerEngine = globalThis.tcResolvePickerEngine;
   });
 
   describe('resolvePickerEngine', () => {
@@ -164,6 +163,31 @@ describe('engine picker gating (#707)', () => {
       const body = sliceFunction(uiSrc, 'renderMasterSettingsBody');
       assert.match(body, /<option value="">\(follow default engine\)<\/option>/,
         'only this picker has a no-pin state');
+    });
+  });
+
+  describe('every page-level picker delegates to the shared builder', () => {
+    // The blocking gap this closes: `public/session.js` carried its own
+    // pre-#707 copy — labelling uninstalled engines but never disabling them —
+    // and `session.html` never loads `ui.js`, so gating `ui.js` did nothing for
+    // the operator's primary surface. Its settings modal PATCHes the chosen
+    // engine straight onto the project.
+    for (const file of ['ui.js', 'session.js']) {
+      it(`${file} calls tcBuildEngineOptions rather than re-implementing it`, () => {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
+        const body = sliceFunction(src, 'buildEngineOptions');
+        assert.match(body, /tcBuildEngineOptions\(/, `${file} must delegate to the shared builder`);
+        assert.doesNotMatch(
+          body,
+          /<option value="\$\{esc\(e\.id\)\}"/,
+          `${file} still hand-rolls option markup — that duplication is what let this drift`
+        );
+      });
+    }
+
+    it('session.html loads api-helper, so the shared builder is actually present', () => {
+      const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
+      assert.match(html, /<script src="\/api-helper\.js">/);
     });
   });
 

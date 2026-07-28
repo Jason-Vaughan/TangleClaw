@@ -70,6 +70,19 @@ availability came from probing the host's PATH and a test meant different things
 engines than on CI with none. It now reads through the existing `_internal` seam. An untested call site
 is where this bug actually lived; the resolver was never the hard part.
 
+**There were five pickers, not four.** The Critic's last pass found `public/session.js` carrying its own
+pre-#707 copy of the option builder — labelling uninstalled engines but never disabling them — and
+`session.html` never loads `ui.js`, so gating that file did nothing for the session page. Its settings
+modal PATCHes the chosen engine straight onto the project, making it the shortest path back to the
+original `binary not found`, on the operator's primary surface. The CHANGELOG had already claimed the
+pickers were "gated consistently". Gating copies one at a time was never going to converge, so all five
+now delegate to one implementation in `public/api-helper.js`, which both pages already load. The
+duplication was the defect; the missing `disabled` was a symptom of it.
+
+This also converted `test/openclaw-engine.test.js`'s #459 contract from source-greps over the two page
+copies into behavioral assertions against the shared function — the same contract, no longer pinned to
+where the code happens to live.
+
 **Verification:** every fix mutation-tested — honoring the pin unconditionally, seeding the drawer from
 config, dropping the `disabled` gate, unsorting the pick, restoring the hardcoded `claude`, and
 restoring the `syncAllProjects` `continue` each fail. Two tests needed correcting first because they

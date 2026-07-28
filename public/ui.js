@@ -16,29 +16,7 @@
  * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
-  let html = engineList.map(e => {
-    // Uninstalled engines stay listed — someone who installs one later should
-    // not have to hunt for it — but are not selectable. Labelling alone let a
-    // picker contradict the availability list beside it and hand the server an
-    // engine this machine does not have, which is #707 reached through the UI
-    // rather than through a config default. The engine currently in use is the
-    // one exception: disabling it would make the control show a value it
-    // refuses to keep.
-    const unavailable = e.available === false && e.id !== selectedId;
-    return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
-      // Only `id` is validated when a profile is saved (lib/store.js), and
-      // `esc` returns '' for a non-string — so without this a hand-added
-      // profile renders a blank option in all four pickers. The `typeof` guard
-      // rather than `||`: a truthy non-string passes `||` and is then dropped
-      // by `esc`, leaving the option blank anyway.
-      + `${esc(typeof e.name === 'string' && e.name ? e.name : e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
-  }).join('');
-
-  if (selectedId && !engineList.some(e => e.id === selectedId)) {
-    html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
-  }
-
-  return html;
+  return tcBuildEngineOptions(engineList, selectedId, esc);
 }
 
 /**
@@ -61,18 +39,7 @@ function buildEngineOptions(engineList, selectedId) {
  * @returns {string} Engine id, or '' when nothing is installed
  */
 function resolvePickerEngine(engineList, configured) {
-  const list = Array.isArray(engineList) ? engineList : [];
-  // `available` truthy, matching the server's filter exactly — `!== false`
-  // would treat a missing flag as installed, which is the opposite of the safe
-  // reading for a value that gets persisted.
-  const available = list.filter(e => e && e.available);
-  if (configured && available.some(e => e.id === configured)) return configured;
-  // Sorted, for the same reason `engines.resolveDefaultEngine` sorts: the list
-  // arrives in engine-profile directory order, and this value is POSTed and
-  // persisted onto the project. An unsorted pick would bind new projects to a
-  // filesystem-dependent engine — the defect that was just fixed server-side,
-  // reintroduced one layer up.
-  return available.map(e => e.id).sort()[0] || '';
+  return tcResolvePickerEngine(engineList, configured);
 }
 
 // ── Project Card Rendering ──

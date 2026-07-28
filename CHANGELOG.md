@@ -66,7 +66,12 @@ All notable changes to TangleClaw are documented in this file.
   `projConfig` fallback in `lib/engines.js` (it answers "which engine owns this path", not "what is
   the default"), and the DB column default (changing it is a migration). The Settings, Create-project,
   and Master engine pickers are gated too: uninstalled engines stay listed but are labelled and
-  disabled. Found on a first-time install where Codex was the only engine present.
+  disabled. There turned out to be **five** engine pickers, not four — `public/session.js` carried its
+  own pre-#707 copy of the option builder, and `session.html` never loads `ui.js`, so gating that file
+  did nothing for the session page. That page's settings modal PATCHes the chosen engine straight onto
+  the project, making it the shortest path back to the original `binary not found`. All five now
+  delegate to one implementation in `public/api-helper.js`, which both pages already load — the
+  duplication was the actual defect, and gating copies one at a time was never going to end. Found on a first-time install where Codex was the only engine present.
 - **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
   engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
   labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list
