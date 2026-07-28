@@ -4745,6 +4745,20 @@ if (require.main === module) {
     });
     if (ttydPlan.action === 'refuse') {
       log.warn('Left the installed ttyd job alone', { reason: ttydPlan.reason });
+      // Refusing is correct — guessing at an unrecognized job could take every
+      // terminal down. But if the job it declined to touch is still listening on
+      // every interface, that is an unauthenticated shell on the network, and a
+      // log line reaches nobody who is looking at a browser.
+      if (ttydPlan.stillWide) {
+        serverInfo.setTtydNotice({
+          setting: 'ttyd interface',
+          severity: 'exposed',
+          message: 'TangleClaw could not pin the terminal service to this machine, so it is still '
+            + 'accepting connections from your whole network — and it opens a shell with no password. '
+            + `TangleClaw did not change it because: ${ttydPlan.reason}. Fix it from a terminal on `
+            + 'this machine, or reinstall TangleClaw to regenerate the service definition.'
+        });
+      }
     }
   } catch (err) {
     log.warn('ttyd bind reconciliation skipped', { error: err.message });

@@ -60,7 +60,7 @@ otherwise never reach.
 
 **Verified beyond the resolver:** a real socket bound per the policy refuses a TCP connect from this
 machine's LAN address (`ECONNREFUSED`) under the new default and in caddy mode, and accepts it only
-under the explicit opt-in. Suite 4926/0.
+under the explicit opt-in. Suite 4975/0 (1 skipped). NOTE: `prawduct-hook test-evidence` reports a smaller number for the same run — it sums top-level suites, where `node --test` counts every case. Both describe the identical run; do not treat the gap as a discrepancy.
 
 **Critic (chunk + two verify passes): 0 blocking, 6 warnings, all fixed.** The two worth recording:
 the locked toggle initially rendered from the stored value, so a leftover `true` carried in from

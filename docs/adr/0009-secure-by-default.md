@@ -122,6 +122,27 @@ stranded. Provisioning the credential must verify the gate answers through the i
 trusting it, and roll back automatically if it does not — a cutover that half-succeeds on a remote
 machine is the failure this amendment exists to prevent.
 
+**Caddy mode refuses the opt-in rather than honoring it.** Where the gate is in front, binding the
+server to every interface as well would publish an ungated door *beside* the gated one — strictly
+worse than direct mode, because the operator believes they are protected. The setting is not
+silently ignored there: the refusal is logged, and the settings control is locked and rendered from
+the resolved binding rather than the stored value, so the config can never appear to claim something
+the socket does not do.
+
+**"Never chosen" is a recorded value, not an inferred absence.** The population held in grace is
+identified by its config predating the setting — but that absence survives exactly one config write,
+because loading merges defaults and saving writes the whole object. Left inferred, an operator
+changing their theme would have ended their own grace period and lost remote access at the next
+restart. It is therefore converted once, at boot, to an explicit `null` distinct from both `true` and
+`false`; the config API accepts only booleans, so `null` cannot arrive from outside and means exactly
+one thing. Any surface that must distinguish "has not chosen" from "chose to close" reads that value
+— never the key's presence.
+
+**One derivation, server-side.** What the binding is, what the operator recorded, and whether the
+control should be locked are answered in one place and shipped to the frontend. Three separate
+defects in the first slice were two copies of these rules disagreeing, each surfacing as a control
+that misdescribed the socket. Consumers render the answer; they do not restate the rules.
+
 **An operator-managed Caddyfile must be preserved.** Automated provisioning either preserves a
 hand-edited config or refuses; it never clobbers one (the refuse-to-ungate guard from #463 is the
 existing precedent).

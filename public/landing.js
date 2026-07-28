@@ -116,6 +116,7 @@ async function loadServerInfo() {
   // AUTH-2K9D: warn when auth is configured but not actually enforcing.
   renderAuthStatus(data.authStatus);
   renderBindNotice(data.bindNotice);
+  renderBindNotice(data.ttydNotice, 'ttydNotice');
   if (!data.isStale) return;
   renderStaleServerBanner(data);
 }
@@ -175,9 +176,12 @@ function renderAuthStatus(authStatus) {
  * still works and who would otherwise have no idea anything changed.
  *
  * @param {{message: string, setting: string}|null|undefined} notice
+ * @param {string} [elementId] - Which chip to render into. The terminal
+ *   listener has its own, because the two exposures are independent: one can be
+ *   resolved while the other is still open, and a shared slot would hide that.
  */
-function renderBindNotice(notice) {
-  const el = document.getElementById('bindNotice');
+function renderBindNotice(notice, elementId) {
+  const el = document.getElementById(elementId || 'bindNotice');
   if (!el) return;
   const msg = notice && typeof notice.message === 'string' ? notice.message : null;
   if (msg) {
