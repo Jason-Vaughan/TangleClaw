@@ -60,9 +60,18 @@ function checkSetupWizard() {
  */
 function showWizard() {
   wizard.projectsDir = state.config ? state.config.projectsDir || '~/Documents/Projects' : '~/Documents/Projects';
-  wizard.defaultEngine = state.config ? state.config.defaultEngine || 'claude' : 'claude';
-  wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.engines = state.engines || [];
+  // Seed from config, but never carry in a default this machine can't run — the
+  // shipped config default is 'claude', which on a Codex-only machine had the
+  // wizard pre-selecting an engine its own availability list showed as missing.
+  // renderEngines re-checks on every render; this keeps the confirm summary and
+  // an early Skip honest too.
+  const seededEngine = state.config ? state.config.defaultEngine : null;
+  const seedList = state.engines && state.engines.length > 0 ? state.engines : wizard.engines;
+  wizard.defaultEngine = (seedList || []).some((e) => e && e.available && e.id === seededEngine)
+    ? seededEngine
+    : _firstAvailableEngineId(seedList);
+  wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.step = 0;
 
   // AUTH-2 — in caddy mode the admin step is mandatory, so Skip must not offer a
@@ -336,35 +345,80 @@ function wizardToggleProject(name, checked) {
   }
 }
 
+/**
+ * First installed engine id from a wizard engine list, or null when none is.
+ * The dropdown must never pre-select an engine this machine doesn't have — the
+ * availability list directly above it would be contradicting itself, and the
+ * choice surfaces much later as a launch failure.
+ * @param {object[]} list - Engines with `id` and `available`.
+ * @returns {string|null}
+ */
+function _firstAvailableEngineId(list) {
+  const found = (list || []).find((e) => e && e.available);
+  return found ? found.id : null;
+}
+
 function renderEngines(body) {
   const enginesList = state.engines.length > 0 ? state.engines : wizard.engines;
+  const firstAvailable = _firstAvailableEngineId(enginesList);
+
+  // A default carried in from config (or the shipped 'claude') is only honored
+  // when it is actually installed; otherwise fall to the first installed engine,
+  // and to nothing at all when the machine has none.
+  const selectable = enginesList.filter((e) => e && e.available);
+  const currentIsAvailable = selectable.some((e) => e.id === wizard.defaultEngine);
+  if (!currentIsAvailable) wizard.defaultEngine = firstAvailable;
 
   let optionsHtml = '';
   let listHtml = '';
   for (const e of enginesList) {
-    const selected = e.id === wizard.defaultEngine ? 'selected' : '';
-    optionsHtml += `<option value="${esc(e.id)}" ${selected}>${esc(e.name)}</option>`;
+    // Unavailable engines stay listed — an operator who installs one later
+    // shouldn't have to hunt for it — but labelled, and disabled so the value
+    // cannot be chosen. `disabled` is the browser-native refusal; the resolver
+    // server-side is the backstop.
+    const selected = e.id === wizard.defaultEngine ? ' selected' : '';
+    const disabled = e.available ? '' : ' disabled';
+    // `name` is not validated when an engine profile is saved (only `id` is),
+    // and `esc` returns '' for a non-string — so a hand-added profile without a
+    // usable name would render a blank, unidentifiable option.
+    const engineName = typeof e.name === 'string' && e.name ? e.name : e.id;
+    const label = e.available ? esc(engineName) : `${esc(engineName)} (not installed)`;
+    optionsHtml += `<option value="${esc(e.id)}"${selected}${disabled}>${label}</option>`;
 
     const availClass = e.available ? 'setup-engine-available' : 'setup-engine-unavailable';
     const availIcon = e.available ? '&#10003;' : '&#10007;';
     listHtml += `
       <div class="setup-engine-item">
         <span class="${availClass}">${availIcon}</span>
-        <span class="setup-engine-name">${esc(e.name)}</span>
+        <span class="setup-engine-name">${esc(engineName)}</span>
         <span class="setup-engine-status">${e.available ? 'Detected' : 'Not found'}</span>
       </div>`;
   }
+
+  // Nothing installed: say so plainly instead of offering a picker whose every
+  // option is refused. TangleClaw is still usable — projects can be attached
+  // once an engine exists — so this warns rather than blocks.
+  const noneAvailable = selectable.length === 0;
+  const pickerHtml = noneAvailable
+    ? `<div class="setup-https-panel setup-https-warning">
+        <div class="setup-https-warn-icon" aria-hidden="true">!</div>
+        <div>
+          <div class="setup-https-warn-title">No AI engine detected on this machine.</div>
+          <p class="setup-text-muted">TangleClaw drives an engine's CLI, so sessions can't launch until one is installed. Install Claude Code, Codex, Antigravity, or Aider, then pick a default from Settings — the rest of setup still applies.</p>
+        </div>
+      </div>`
+    : `<div class="form-group">
+        <label class="form-label" for="setupDefaultEngine">Default Engine</label>
+        <select class="form-select" id="setupDefaultEngine">${optionsHtml}</select>
+        <div class="form-hint">Used for new projects unless overridden. Only installed engines can be selected.</div>
+      </div>`;
 
   body.innerHTML = `
     <div class="setup-step">
       <h2 class="setup-heading">AI Engines</h2>
       <p class="setup-text-muted">TangleClaw supports multiple AI coding engines. Here's what's available on your system:</p>
       <div class="setup-engine-list">${listHtml}</div>
-      <div class="form-group">
-        <label class="form-label" for="setupDefaultEngine">Default Engine</label>
-        <select class="form-select" id="setupDefaultEngine">${optionsHtml}</select>
-        <div class="form-hint">Used for new projects unless overridden</div>
-      </div>
+      ${pickerHtml}
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
         <button class="btn btn-primary" onclick="wizardNext()">Next</button>
@@ -761,7 +815,11 @@ function wizardAdminNext() {
 
 function renderConfirm(body) {
   const selectedCount = wizard.selectedProjects.size;
-  const engineName = (state.engines.find(e => e.id === wizard.defaultEngine) || {}).name || wizard.defaultEngine;
+  // `wizard.defaultEngine` is null when no engine is installed — say that
+  // rather than rendering "null" in the summary the operator confirms.
+  const engineName = wizard.defaultEngine
+    ? ((state.engines.find(e => e.id === wizard.defaultEngine) || {}).name || wizard.defaultEngine)
+    : 'None installed';
 
   body.innerHTML = `
     <div class="setup-step">
@@ -845,6 +903,19 @@ async function wizardComplete() {
     btn.disabled = false;
     btn.textContent = 'Complete Setup';
     return;
+  }
+
+  // Surface anything the server skipped. `warnings` has always been on this
+  // response and nothing here read it, so a project that failed to attach —
+  // a path that vanished, a name collision — left the wizard reporting success
+  // and the operator believing every directory they ticked was registered.
+  if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+    const err = document.getElementById('setupCompleteError');
+    if (err) {
+      err.textContent = `Setup finished, but ${result.warnings.length} item(s) were skipped: `
+        + result.warnings.join('; ');
+      err.classList.remove('hidden');
+    }
   }
 
   if (result.restart) {

@@ -16,15 +16,30 @@
  * @returns {string} HTML string of <option> elements
  */
 function buildEngineOptions(engineList, selectedId) {
-  let html = engineList.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
+  return tcBuildEngineOptions(engineList, selectedId, esc);
+}
 
-  if (selectedId && !engineList.some(e => e.id === selectedId)) {
-    html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
-  }
-
-  return html;
+/**
+ * Pick the engine a picker should open on.
+ *
+ * Mirrors `engines.resolveDefaultEngine` (`lib/engines.js`) for the cases a
+ * picker can encounter: the configured engine when it is installed, otherwise
+ * the first installed one, otherwise `''`. It exists because seeding a picker
+ * straight from `config.defaultEngine` and POSTing that value short-circuits the
+ * server's resolver entirely — the client hands over an explicit engine, so
+ * `data.engine || resolveDefaultEngine(config)` never reaches its fallback and
+ * a machine without that engine gets a project bound to it anyway.
+ *
+ * The unknown-id passthrough is deliberately NOT mirrored: that branch exists so
+ * a server-side caller can report a typo by name, and a picker has no way to
+ * render an engine it knows nothing about.
+ *
+ * @param {object[]} engineList - Engines from state.engines (carry `available`)
+ * @param {string} configured - `config.defaultEngine`
+ * @returns {string} Engine id, or '' when nothing is installed
+ */
+function resolvePickerEngine(engineList, configured) {
+  return tcResolvePickerEngine(engineList, configured);
 }
 
 // ── Project Card Rendering ──
@@ -1578,7 +1593,11 @@ function openCreateModal() {
   createStep = 0;
   createData = {
     name: '',
-    engine: state.config ? state.config.defaultEngine || '' : '',
+    // Resolved against what is installed, not read straight from config. The
+    // drawer POSTs this value, so seeding it from `config.defaultEngine`
+    // short-circuited the server's resolver and created projects bound to an
+    // engine the machine does not have (#707).
+    engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
     tags: ''
   };
   renderCreateStep();
@@ -1790,7 +1809,14 @@ async function importLeaseProjects(namesJson) {
     // Show any other warnings
     const otherWarnings = result.warnings.filter(w => !w.match(/directory not found/));
     if (otherWarnings.length) {
-      console.warn('Import warnings:', otherWarnings);
+      // Was console-only, which meant a skipped import was invisible to anyone
+      // not holding devtools open. The toast is the surface the operator has.
+      const t = document.getElementById('toast');
+      if (t) {
+        t.textContent = `Import warning: ${otherWarnings.join('; ')}`;
+        t.className = 'toast toast-warn visible';
+        setTimeout(() => { t.classList.remove('visible'); }, 6000);
+      }
     }
   }
   dismissImportBanner();
@@ -3008,10 +3034,13 @@ function renderMasterSettingsBody(s, groups) {
       </label>`;
   }).join('');
 
-  const engineOpts = ['<option value="">(follow default engine)</option>']
-    .concat(state.engines.map((e) =>
-      `<option value="${esc(e.id)}" ${s.engine === e.id ? 'selected' : ''}>${esc(e.name || e.id)}</option>`))
-    .join('');
+  // Shares `buildEngineOptions` (#707). This was a fourth copy of that template
+  // and the one that drifted — neither labelling nor disabling uninstalled
+  // engines, on the surface where that fails hardest since the master launches
+  // its engine immediately. The empty option is prepended because only this
+  // picker has a "no pin" state.
+  const engineOpts = '<option value="">(follow default engine)</option>'
+    + buildEngineOptions(state.engines, s.engine || '');
 
   const scopeIsGroup = s.scope && s.scope !== 'all';
   const groupOpts = ['<option value="">All projects</option>']

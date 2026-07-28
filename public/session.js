@@ -104,15 +104,11 @@ function esc(str) {
  * @returns {string} HTML string
  */
 function buildEngineOptions(engineList, selectedId) {
-  let html = engineList.map(e =>
-    `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`
-  ).join('');
-
-  if (selectedId && !engineList.some(e => e.id === selectedId)) {
-    html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
-  }
-
-  return html;
+  // Delegates to the shared implementation (public/api-helper.js). This page
+  // carried its own pre-#707 copy, which labelled uninstalled engines but never
+  // disabled them — and it is the operator's primary surface, so two taps here
+  // bound a project to an engine that isn't installed.
+  return tcBuildEngineOptions(engineList, selectedId, esc);
 }
 
 // ── Connection State ──

@@ -248,7 +248,7 @@ Key settings:
 - `serverPort` — landing page server port (code default: 3101, launchd override: 3102)
 - `ttydPort` — ttyd terminal port (3100; in `caddy` ingress mode ttyd binds a Unix socket instead of a TCP port)
 - `projectsDir` — root directory for managed projects
-- `defaultEngine` — default engine for new projects
+- `defaultEngine` — preferred engine for new projects; used when installed, otherwise TangleClaw falls back to the first installed engine (see the configuration reference)
 - `deletePassword` — optional password for destructive operations
 - `httpsEnabled` / `httpsCertPath` / `httpsKeyPath` — direct-mode TLS
 - `ingressMode` / `caddyHttpsPort` / `caddyHttpPort` / `publicDomain` — Caddy ingress ([guide](deploy/INGRESS.md))

@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **The troubleshooting guide now covers recovery from an interrupted move of the TangleClaw source
+  directory (#733).** Moving the checkout while the server runs can unload the
+  `com.tangleclaw.server` LaunchAgent before the destination is complete, which surfaces only as a
+  dashboard stuck on "Press to Reconnect" — the terminal helper keeps running, so the install looks
+  half-alive rather than stopped. The documented recovery verifies which copy is intact and what the
+  plist's `WorkingDirectory` actually points at *before* anything is deleted, then `bootstrap`s and
+  `kickstart`s the service and confirms it through `/api/health`. Field-validated on a v4.32.2
+  install by the contributor who hit it.
+- **The troubleshooting guide now explains recovery from the self-updater's `wrong-ref` guard
+  (#735).** Field-confirmed while updating 4.32.2 to 4.33.0: the checkout was still on a recovery
+  branch, so **Update & restart** correctly refused to replace it. Returning to a stale local `main`
+  then exposed the generated `.codex.yaml` as untracked, which would have tripped the updater's
+  separate `dirty-tree` guard. Both refusals are the guards working, but they read as a broken
+  release unless the operator knows that; the documented recovery inspects the tree, checks out
+  `main`, fetches, and fast-forwards to `origin/main`, at which point the generated-engine-config
+  ignore added in #718 makes the checkout clean without deleting operator config.
+
+## [4.34.0] - 2026-07-27
+
 ### Changed
 - **Switching a project to Codex no longer silently downgrades a confirmed bypass posture — and the
   picker guard now covers that case (#731).** Reconciliation resets only modes the target engine cannot
@@ -26,6 +46,64 @@ All notable changes to TangleClaw are documented in this file.
   until its next restart. The owner of a log owns its rotation.
 
 ### Fixed
+- **The #707 default-engine fix now reaches the surfaces that bypassed it.** Two paths still produced the
+  original symptom: the Create-project drawer seeded its engine from `config.defaultEngine` and POSTed
+  it, so the server's `data.engine || resolveDefaultEngine(config)` never reached its fallback; and
+  Master settings could pin `settings.engine`, which `_masterRuntime` honored unconditionally — an
+  operator who pinned Claude on a machine without it got `binary not found` again, from a second door.
+  The Master pin now goes through the same resolver by standing in for `defaultEngine`, so precedence is
+  identical everywhere. Engine pickers are also gated consistently: uninstalled engines stay listed
+  (someone who installs one later shouldn't have to hunt for it) but are `disabled` and labelled
+  `(not installed)` in the Create-project, Settings, and Master pickers — the last of which previously
+  neither labelled nor disabled them, on the surface where it fails hardest since the master runs its
+  engine immediately.
+- **A skipped project no longer disappears silently.** The setup wizard never read `warnings` off
+  `/api/setup/complete`, so an operator finished setup believing every directory they ticked was
+  attached; the import path logged only to `console.warn`. Both now surface to the operator, and both
+  routes log server-side regardless of what the client does.
+- **`resolveDefaultEngine` picks a stable engine and says when it substitutes.** "The first installed
+  engine" was `readdirSync` order over the profile directory — filesystem-dependent, so the same machine
+  could pick differently after a profile is added or a reinstall recreates the directory, and this value
+  gets persisted onto projects. Now sorted by id, and the substitution is logged once where it is
+  decided rather than being invisible at every call site.
+- **TangleClaw no longer defaults to an AI engine that isn't installed (#707).** The shipped config
+  default is `claude`, and every fallback hardcoded the same literal — so on a machine without Claude
+  Code the setup wizard's own availability list said "✗ Claude Code — Not found" while the Default
+  Engine dropdown directly below it offered every engine and pre-selected Claude. The consequences
+  surfaced far from that screen: the Project Master refused to launch (`Engine "claude" not available
+  (binary not found)`), new and attached projects were registered against the missing engine, and
+  boot regenerated a `CLAUDE.md` for it. New `engines.resolveDefaultEngine(config)` prefers the
+  configured engine when it is installed, otherwise the first installed one, and returns `null` when
+  the machine has none. An id matching no known profile is deliberately passed through unchanged, so
+  a typo in `config.json` is still reported by name instead of being silently replaced. Wired at the
+  Project Master (`lib/master.js`), project create and attach and the boot config sync
+  (`lib/projects.js`), and wizard attach plus bulk import (`server.js`). The Project Master **refuses
+  to launch** on the `null` case and says so (`No AI engine is installed — install one …`) because it
+  runs an engine immediately; create / attach / import instead record the configured intent, since
+  registering a project is bookkeeping and must not require an engine binary to be present.
+  Deliberately still literal, each for a reason: `lib/store.js`'s row default (the store layer cannot
+  depend on `engines` without a require cycle, and callers resolve before reaching it), the
+  `projConfig` fallback in `lib/engines.js` (it answers "which engine owns this path", not "what is
+  the default"), and the DB column default (changing it is a migration). The Settings, Create-project,
+  and Master engine pickers are gated too: uninstalled engines stay listed but are labelled and
+  disabled. There turned out to be **five** engine pickers, not four — `public/session.js` carried its
+  own pre-#707 copy of the option builder, and `session.html` never loads `ui.js`, so gating that file
+  did nothing for the session page. That page's settings modal PATCHes the chosen engine straight onto
+  the project, making it the shortest path back to the original `binary not found`. All five now
+  delegate to one implementation in `public/api-helper.js`, which both pages already load — the
+  duplication was the actual defect, and gating copies one at a time was never going to end. The setup
+  wizard (`public/setup.js`) keeps its own option builder for now: it gates and carries the same name
+  fallback, but it disables on a falsy `available` where the shared builder uses `available === false`,
+  so converging it is a behavior decision about a profile with no flag rather than a lift-and-shift —
+  tracked as #738.
+
+  Found on a first-time install where Codex was the only engine present.
+- **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
+  engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
+  labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list
+  above it. The default seeds from config only when that engine is installed, is re-checked on every
+  render rather than once, and when nothing is installed the picker is replaced by a plain statement
+  of that with the confirm summary reading "None installed" instead of a literal `null`.
 - **One definition of "the engine will honor this launch mode" (#731).** Session launch, launch-command
   assembly, and project reconciliation each answered that question and had drifted into three
   predicates — two checking `disabled`, one checking only presence — so the same mode could be honored
@@ -102,6 +180,35 @@ All notable changes to TangleClaw are documented in this file.
   its reasoning never reached a clone or a reviewer — the second time that has cost this project.
 
 ### Internal
+- **Every guard added in this release was mutation-verified, and several failed that check first.** A
+  test written immediately after a fix tends to assert the shape of the code just written rather than
+  the behavior that would break, and it passes either way — so each new assertion here had the specific
+  edit it should catch applied, confirmed red, and reverted. Seven did not survive that on the first
+  attempt: a CLI test whose stubbed applier never logged (so stdout contamination was invisible); a
+  drift guard asserting its floor *after* appending a hand-written value; a coverage meta-guard
+  resolving `shellCommand` while the probes it guarded resolved `detection.target`; a prototype-key
+  fixture whose two branches coincided; a `syncAllProjects` case the schema made unreachable, then a
+  second version of it satisfied by leftover projects from sibling tests; a picker assertion matching
+  the word `disabled` in an unrelated radio template; and a wizard assertion matching the
+  availability-list span instead of the `<option>` it named. A related lesson: an `esc` stub more
+  permissive than production rendered labels the real one drops, which made a passing assertion untrue.
+  The rule this leaves behind — name the edit a test should fail on, make it, watch it go red — is
+  recorded in `learnings.md`, along with its corollary that an assertion whose both sides are this
+  repo's own files cannot detect upstream drift, which is how `--full-auto` stayed green for months.
+- Engine detection no longer runs per item in the bulk routes (#707). `resolveDefaultEngine` calls
+  `listWithAvailability()`, which shells out a detection probe per engine profile, so resolving inside
+  the setup-attach and import loops multiplied that across the request — and a mid-batch change in what
+  is installed would have split one batch across different engines. Both resolve once. `attachProject`
+  now reads the directory's existing `project.json` first and resolves only if that didn't answer,
+  instead of probing and discarding the result for every previously-managed directory.
+- `syncAllProjects` no longer skips the rest of a project's iteration when no engine resolves. The
+  `continue` also skipped the #247 git-hooks sync — whose own comment says it is deliberately NOT gated
+  on engine state — and the `synced` counter. Only the engine-config write is gated now.
+- The five wired `resolveDefaultEngine` call sites have tests (#707). They were untestable before:
+  the resolver read `listWithAvailability()` as a module-local reference, so availability came from
+  probing the host's PATH and a test meant different things on a developer box with four engines than on
+  CI with none. It now reads through the existing `_internal` seam. An untested call site is where this
+  bug actually lived — the resolver was never the hard part.
 - **Engine launch flags are now probed against the installed binary (#731).** Every existing engine test
   asserted a profile's args against a literal copy of itself — self-referential, so it pinned the JSON
   against an accidental edit but could never notice a CLI *removing* a flag. That is exactly how
@@ -127,13 +234,6 @@ All notable changes to TangleClaw are documented in this file.
   note rather than failing the update if the log directory is unwritable.
 - The applier's result object is recorded as a two-consumer contract in `boundary-patterns.md`. It
   became a published shape the moment a second surface parsed it, and it had already drifted.
-- **The troubleshooting guide now explains recovery from the self-updater's `wrong-ref` guard.**
-  Field-confirmed while updating 4.32.2 to 4.33.0: the checkout was still on
-  `docs/interrupted-icloud-move-recovery`, so **Update & restart** correctly refused to replace the
-  branch. Returning to a stale local `main` then exposed the generated `.codex.yaml` as untracked,
-  which would have triggered the updater's separate `dirty-tree` guard. The documented recovery
-  inspects the tree, checks out `main`, fetches, and fast-forwards to `origin/main`; the existing
-  generated-engine-config ignore then makes the checkout clean without deleting operator config.
 
 ## [4.33.0] - 2026-07-26
 

@@ -946,6 +946,69 @@
   global.tcParseSelectMarker = tcParseSelectMarker;
   global.tcPastePath = tcPastePath;
   global.tcIsFocusTap = tcIsFocusTap;
+  /**
+   * Build <option> HTML for an engine dropdown — the ONE implementation.
+   *
+   * Lived as separate near-copies in `ui.js` and `session.js`, plus hand-rolled
+   * variants in the Master settings body and the setup wizard. #707 gated some
+   * of them; the `session.js` copy was missed precisely because it was a copy,
+   * and it is on the operator's primary surface — two taps there bound a project
+   * to an engine the machine does not have. api-helper is loaded by both
+   * `index.html` and `session.html`, so this is the only place both can share.
+   *
+   * `esc` is a parameter because each page defines its own; passing it keeps
+   * this file free of a DOM/page dependency.
+   *
+   * @param {object[]} engineList - Engines carrying `available`
+   * @param {string} selectedId - Currently selected engine id
+   * @param {function} esc - The page's HTML escaper
+   * @returns {string} <option> markup
+   */
+  function tcBuildEngineOptions(engineList, selectedId, esc) {
+    const list = Array.isArray(engineList) ? engineList : [];
+    let html = list.map((e) => {
+      // Uninstalled engines stay listed — someone who installs one later should
+      // not have to hunt for it — but are not selectable. The engine currently
+      // in use is exempt: disabling it would make the control display a value
+      // it refuses to keep.
+      const unavailable = e.available === false && e.id !== selectedId;
+      // `typeof` rather than `||`: a truthy non-string passes `||` and is then
+      // dropped by `esc`, leaving a blank, unidentifiable option. Only `id` is
+      // validated when a profile is saved.
+      const label = typeof e.name === 'string' && e.name ? e.name : e.id;
+      return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}`
+        + `${unavailable ? ' disabled' : ''}>`
+        + `${esc(label)}${e.available === false ? ' (not installed)' : ''}</option>`;
+    }).join('');
+
+    if (selectedId && !list.some((e) => e.id === selectedId)) {
+      html += `<option value="${esc(selectedId)}" selected>${esc(selectedId)} (unavailable)</option>`;
+    }
+    return html;
+  }
+
+  /**
+   * The engine a picker should open on: the configured one when installed,
+   * else the first installed by sorted id, else ''.
+   *
+   * Sorted for the same reason `engines.resolveDefaultEngine` sorts — the list
+   * arrives in engine-profile directory order and this value gets POSTed and
+   * persisted onto a project, so an unsorted pick binds projects to a
+   * filesystem-dependent engine.
+   *
+   * @param {object[]} engineList - Engines carrying `available`
+   * @param {string} configured - `config.defaultEngine`
+   * @returns {string}
+   */
+  function tcResolvePickerEngine(engineList, configured) {
+    const list = Array.isArray(engineList) ? engineList : [];
+    const available = list.filter((e) => e && e.available);
+    if (configured && available.some((e) => e.id === configured)) return configured;
+    return available.map((e) => e.id).sort()[0] || '';
+  }
+
+  global.tcBuildEngineOptions = tcBuildEngineOptions;
+  global.tcResolvePickerEngine = tcResolvePickerEngine;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;

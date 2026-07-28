@@ -26,6 +26,83 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: The default engine resolves against what is installed (#707)
+
+<!-- prawduct: type=bugfix | scope=707-default-engine-availability -->
+
+**Why:** `defaultEngine` shipped as `claude` and every fallback hardcoded the same literal, so on a
+machine without Claude Code the setup wizard's own availability list said "✗ Claude Code — Not found"
+while the Default Engine dropdown below it pre-selected Claude. The damage surfaced far from that
+screen: the Project Master refused to launch (`Engine "claude" not available`), new and attached
+projects were registered against the missing engine, and boot regenerated a `CLAUDE.md` for it. Found
+on a first-time install where Codex was the only engine present.
+
+**What:** `engines.resolveDefaultEngine(config)` — configured engine when installed, unrecognized id
+passed through unchanged (a typo stays reportable by name rather than being silently replaced), else
+the first installed engine, else `null`. Wired at the Project Master, project create/attach, the boot
+config sync, and the wizard-attach and bulk-import routes. The master **refuses to launch** on `null`
+and says why, because it runs an engine immediately; create/attach/import instead record the
+configured intent, since registering a project is bookkeeping and must not require a binary.
+
+**The fix was incomplete against its own purpose, twice, and the Critic caught both.** First round:
+the Create-project drawer seeded its engine from `config.defaultEngine` and POSTed it, so the server's
+`data.engine || resolveDefaultEngine(config)` never reached its fallback; and Master settings could pin
+`settings.engine`, honored unconditionally — pin Claude on a machine without it and the original error
+returns through a second door. The pin now stands in for `defaultEngine` and goes through the same
+resolver, so precedence is stated once. Second round: those two fixes shipped **with no test that could
+fail against the code they replaced** — the existing master-pin test injects a pass-through resolver
+stub that ignores availability, so it returned the same answer either way.
+
+**A defect I introduced fixing it.** `resolvePickerEngine` returned `available[0].id` in engine-directory
+order while the server sorts *precisely because that value gets persisted onto projects* — and the
+drawer's value is persisted, since `data.engine` wins. I reintroduced the bug I had just fixed, one
+layer up. Now sorted, filtering truthy `available` like the server rather than `!== false`, which read
+a missing flag as installed.
+
+**Convergence.** The Master picker was a fourth hand-rolled copy of the option template, and it was the
+copy that drifted — neither labelling nor disabling uninstalled engines, on the surface where that
+fails hardest. It now calls `buildEngineOptions`, which also replaced three source-text greps with the
+behavioral assertions the shared function already has.
+
+**Testability was the root cause of the gap.** The five wired call sites were not merely untested, they
+were untestable: `resolveDefaultEngine` read `listWithAvailability()` as a module-local reference, so
+availability came from probing the host's PATH and a test meant different things on a box with four
+engines than on CI with none. It now reads through the existing `_internal` seam. An untested call site
+is where this bug actually lived; the resolver was never the hard part.
+
+**There were five pickers, not four.** The Critic's last pass found `public/session.js` carrying its own
+pre-#707 copy of the option builder — labelling uninstalled engines but never disabling them — and
+`session.html` never loads `ui.js`, so gating that file did nothing for the session page. Its settings
+modal PATCHes the chosen engine straight onto the project, making it the shortest path back to the
+original `binary not found`, on the operator's primary surface. The CHANGELOG had already claimed the
+pickers were "gated consistently". Gating copies one at a time was never going to converge, so all five
+now delegate to one implementation in `public/api-helper.js`, which both pages already load. The
+duplication was the defect; the missing `disabled` was a symptom of it.
+
+Not all six: the setup wizard keeps its own builder. It already gates and carries the name fallback, so
+there is no live gap, but it disables on falsy `available` where the shared builder uses
+`available === false` — converging it decides what a profile with no flag means, which is a behavior
+call, not a move (#738). Recorded rather than folded in, because the first version of this entry claimed a
+completeness that did not hold.
+
+Deliberately not changed: `lib/projects.js` still validates only that an engine profile *exists* on a
+project PATCH, never that it is installed. Refusing an uninstalled engine there would contradict this
+change's own principle — registering or re-pointing a project is bookkeeping and must not require a
+binary to be present. The pickers are the place to prevent an accidental choice; the server is not the
+place to forbid a deliberate one.
+
+This also converted `test/openclaw-engine.test.js`'s #459 contract from source-greps over the two page
+copies into behavioral assertions against the shared function — the same contract, no longer pinned to
+where the code happens to live.
+
+**Verification:** every fix mutation-tested — honoring the pin unconditionally, seeding the drawer from
+config, dropping the `disabled` gate, unsorting the pick, restoring the hardcoded `claude`, and
+restoring the `syncAllProjects` `continue` each fail. Two tests needed correcting first because they
+passed against the bug: the `syncAllProjects` case twice over (`store.projects.create` coalesces a
+falsy engine to `'claude'` so the branch was unreachable, then leftover sibling projects satisfied
+`synced >= 1` regardless), and the master-picker gating grep, which matched the word `disabled` in the
+access-level radio template. Full suite **4879 tests / 0 fail / 1 skip**; evidence 2559.
+
 ## 2026-07-27: Codex Full Auto was launching a flag codex-cli had removed (#731)
 
 <!-- prawduct: type=bugfix | scope=731-codex-launch-modes -->
