@@ -118,13 +118,19 @@ describe('startup session-rule delivery (#595)', () => {
       const b = store.sessionRules.create({ content: 'Never touch main', projectId: project.id });
 
       const section = sessions.buildStartupRulesSection(project.id);
-      const text = section.lines.join('\n');
 
-      assert.match(text, /## Project Rules/);
-      assert.match(text, /- Always run lint/);
-      assert.match(text, /- Never touch main/);
+      // Bodies live on `rules` (they ship on the rules channel); `lines` is the
+      // prime's fixed-size manifest, which must NOT grow with the corpus.
+      const bodies = section.rules.map((r) => r.content);
+      assert.deepEqual(bodies, ['Always run lint', 'Never touch main']);
       assert.deepEqual(section.ruleIds, [a.id, b.id]);
       assert.match(section.digest, /^[0-9a-f]{64}$/);
+
+      const manifest = section.lines.join('\n');
+      assert.match(manifest, /## Project Rules/);
+      assert.match(manifest, /2 operator-authored rules/);
+      assert.doesNotMatch(manifest, /Always run lint/,
+        'rule bodies must not ride the prime — that is what put them in competition with it');
     });
 
     it('returns an empty section (and empty digest) when the project has no rules', () => {
@@ -141,11 +147,11 @@ describe('startup session-rule delivery (#595)', () => {
       store.sessionRules.update(off.id, { enabled: false });
       store.sessionRules.create({ content: 'live directive', projectId: project.id });
 
-      const text = sessions.buildStartupRulesSection(project.id).lines.join('\n');
+      const bodies = sessions.buildStartupRulesSection(project.id).rules.map((r) => r.content).join('\n');
 
-      assert.match(text, /live directive/);
-      assert.doesNotMatch(text, /disabled directive/);
-      assert.doesNotMatch(text, /other project directive/);
+      assert.match(bodies, /live directive/);
+      assert.doesNotMatch(bodies, /disabled directive/);
+      assert.doesNotMatch(bodies, /other project directive/);
 
       for (const rule of store.sessionRules.list({ projectId: other.id })) store.sessionRules.delete(rule.id);
       store.projects.delete(other.id);
@@ -153,8 +159,10 @@ describe('startup session-rule delivery (#595)', () => {
 
     it('excludes wrap-kind rules — that tier injects at wrap time, not launch', () => {
       store.sessionRules.create({ content: 'wrap-only directive', projectId: project.id, kind: 'wrap' });
-      const text = sessions.buildStartupRulesSection(project.id).lines.join('\n');
-      assert.doesNotMatch(text, /wrap-only directive/);
+      // Against the SELECTED set: the manifest never contains any body, so
+      // asserting on it would pass even if wrap rules were being delivered.
+      const selected = sessions.buildStartupRulesSection(project.id).rules.map((r) => r.content);
+      assert.equal(selected.some((c) => /wrap-only directive/.test(c)), false);
     });
 
     it('gives the same rule set the same digest, and a changed set a different one', () => {
@@ -207,7 +215,28 @@ describe('startup session-rule delivery (#595)', () => {
     });
   });
 
-  describe('the prime carries the rules (the severed path, restored)', () => {
+
+  /**
+   * Everything this session would actually receive: the prime plus every rules
+   * shard written for the project. Rules ride the prime on engines with no
+   * second startup channel and a dedicated hook on engines that have one, so a
+   * test that only reads the prime silently stops checking delivery on Claude —
+   * which is the engine the bug was found on.
+   */
+  function deliveredText(projectRecord, engine, opts) {
+    const fs2 = require('node:fs');
+    const path2 = require('node:path');
+    const prompt = sessions.generatePrimePrompt(projectRecord, engine, opts || {});
+    const rulesChannel = require('../lib/session-rules-channel');
+    const budget = rulesChannel.resolveChannelBudget(engine);
+    const shards = rulesChannel.buildShards(
+      sessions.buildStartupRulesSection(projectRecord.id).rules, budget);
+    const shardText = shards.map((sh) => rulesChannel.renderShardText(sh, shards.length)).join('\n');
+    void fs2; void path2;
+    return { prompt, all: prompt + '\n' + shardText };
+  }
+
+  describe('rules reach the session on whichever channel the engine has', () => {
     it('delivers rules on a PLUGIN-GOVERNED project, where config generation delivers nothing', () => {
       const project = makeProject('governed-proj', { pluginGoverned: true });
       store.sessionRules.create({ content: 'governed projects must receive this', projectId: project.id });
@@ -224,8 +253,11 @@ describe('startup session-rule delivery (#595)', () => {
       // still pass if config generation merely returned empty.
       assert.match(writeResult.skipReason, /governed by the Prawduct V2 plugin/);
 
-      const prompt = sessions.generatePrimePrompt(store.projects.get(project.id), engine);
-      assert.match(prompt, /governed projects must receive this/);
+      const { prompt, all } = deliveredText(store.projects.get(project.id), engine);
+      assert.match(all, /governed projects must receive this/,
+        'the rule reaches a plugin-governed project, which config generation cannot serve');
+      assert.match(prompt, /## Project Rules/,
+        'and the prime still says rules exist, so their absence would be detectable');
 
       for (const rule of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(rule.id);
       store.projects.delete(project.id);
@@ -237,8 +269,10 @@ describe('startup session-rule delivery (#595)', () => {
       const record = store.projects.get(project.id);
 
       for (const engineId of ['claude', 'codex', 'aider', 'antigravity']) {
-        const prompt = sessions.generatePrimePrompt(record, store.engines.get(engineId));
-        assert.match(prompt, /engine-agnostic directive/, `${engineId} prime must carry the rule`);
+        const { all } = deliveredText(record, store.engines.get(engineId));
+        assert.match(all, /engine-agnostic directive/,
+          `${engineId} must receive the rule by some channel — a manifest pointing at a `
+          + 'channel the engine lacks would deliver nothing at all');
       }
 
       for (const rule of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(rule.id);
@@ -398,7 +432,17 @@ describe('startup session-rule delivery (#595)', () => {
       try {
         const result = sessions.launchSession(launched.name);
         assert.equal(result.error, null);
-        assert.match(result.primePrompt, /must be delivered at launch/);
+        // The rule ships on its own channel now, so the proof it was delivered
+        // is the shard payload the launch wrote — reading only the prime would
+        // stop checking delivery on exactly the engine the bug was found on.
+        const fs2 = require('node:fs');
+        const shard = path.join(launched.path, '.tangleclaw', 'session-rules-1.json');
+        assert.ok(fs2.existsSync(shard), 'the launch writes the rules shard the hook will read');
+        const payload = JSON.parse(fs2.readFileSync(shard, 'utf8'));
+        assert.equal(payload.hookSpecificOutput.hookEventName, 'SessionStart');
+        assert.match(payload.hookSpecificOutput.additionalContext, /must be delivered at launch/);
+        assert.match(result.primePrompt, /## Project Rules/,
+          'and the prime still declares that rules exist');
 
         const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         assert.equal(rows.length, 1, 'the launch must leave exactly one ledger row');

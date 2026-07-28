@@ -26,6 +26,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: Rules get their own delivery channel (#749)
+
+<!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 -->
+
+Chunk 01 tiered the prime and demoted the Feature Index, which cut it from 16,026 to ~11,585 on
+this repo — still over the engine's 10,000-character channel, so the rules and the wrap-sentinel
+directive would still have been replaced by a preview. The Critic caught that chunk 01 did not
+meet its own acceptance criterion, and the measurement the plan required had not been run.
+
+Chunk 02 moves rules onto a dedicated SessionStart hook with its own allowance, sharded on rule
+boundaries when the corpus outgrows one channel. The prime carries a fixed-size manifest instead,
+so the 52nd rule costs it nothing. Engines with no second startup channel keep rules inline — a
+manifest naming a channel the engine lacks would deliver nothing at all, which is the original bug
+one engine over.
+
+Measured on this repo: prime 6,993 against a 10,000 budget, all four rules delivered whole.
+
 ## 2026-07-28: The prime stops cutting its own directives (#749)
 
 <!-- prawduct: type=fix | chunks=01 | scope=prime-delivery-749 -->

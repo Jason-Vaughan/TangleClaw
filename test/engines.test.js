@@ -1881,6 +1881,32 @@ describe('engines', () => {
       assert.equal(result.SessionStart[0].matcher, 'startup');
     });
 
+    it('registers one rules hook per shard, beside the prime hook (#749)', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 3);
+      assert.equal(result.SessionStart.length, 4, 'one prime entry plus one per shard');
+      const commands = result.SessionStart.map((e) => e.hooks[0].command);
+      assert.match(commands[0], /sessionstart-prime\.sh$/);
+      // Each shard gets its OWN entry: the engine caps each hook's output
+      // separately, so one hook emitting every shard would be capped as one.
+      assert.match(commands[1], /sessionstart-rules\.sh 1$/);
+      assert.match(commands[2], /sessionstart-rules\.sh 2$/);
+      assert.match(commands[3], /sessionstart-rules\.sh 3$/);
+    });
+
+    it('registers no rules hook when the project has no rules', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 0);
+      assert.equal(result.SessionStart.length, 1, 'only the prime hook');
+      assert.match(result.SessionStart[0].hooks[0].command, /sessionstart-prime\.sh$/);
+    });
+
+    it('registers no rules hook for an engine that cannot take a silent prime', () => {
+      // The rules channel IS a startup hook, so an engine without that channel
+      // must get no entry — the rules ride the prime inline for those engines.
+      const result = engines._buildBaselineHooks(
+        { silentPrime: true }, { capabilities: { supportsSilentPrime: false } }, 2);
+      assert.deepStrictEqual(result, {});
+    });
+
     it('returns empty object when silentPrime is true but engine lacks supportsSilentPrime (Critic M1)', () => {
       const profileWithout = { capabilities: { supportsSilentPrime: false } };
       const result = engines._buildBaselineHooks({ silentPrime: true }, profileWithout);

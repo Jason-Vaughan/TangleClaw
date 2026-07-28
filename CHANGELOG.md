@@ -4,6 +4,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Project rules are delivered on their own startup channel (#749).** Rules used to ride inside the
+  session prime. The engine enforces its cap on a hook's output by *replacing* the payload with a
+  short preview rather than shortening it, so a large prime took the rules down with it — on this
+  repo the agent booted having read part of rule 1 and none of rules 2–4, while the delivery ledger
+  correctly reported success.
+
+  Rules now ship on a dedicated `SessionStart` hook with its own allowance, so the prime's growth
+  and the rule set's growth can no longer harm each other. Where the corpus outgrows one channel it
+  is **sharded** across further hooks — split only on rule boundaries, in stable rule-id order, each
+  shard naming the slice it carries so a missing one is visible in what did arrive. TangleClaw
+  writes the finished JSON envelope and the hook only reads it, so no shell code ever has to escape
+  operator-authored prose.
+
+  Engines with no second startup channel keep the rules **inline in the prime**, exactly as before —
+  a manifest pointing at a channel an engine does not have would deliver nothing at all. New module
+  `lib/session-rules-channel.js`; hook `data/hooks/sessionstart-rules.sh`.
+
+  Measured on this repo: the prime falls from 16,026 characters (truncated, directives lost) to
+  **6,993** against a 10,000 budget, with all four rules delivered whole on their own channel.
+
 ### Fixed
 - **Session directives are no longer silently cut out of the prime (#749).** The prime was assembled
   against a fixed 16,000-character constant and, on overflow, sliced at the tail. On this repo that
