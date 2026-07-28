@@ -26,6 +26,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: The prime stops cutting its own directives (#749)
+
+<!-- prawduct: type=fix | chunks=01 | scope=prime-delivery-749 -->
+
+The prime was assembled against a fixed 16,000-character constant and sliced at the tail on
+overflow. On this repo it fired at 16,026 characters and removed everything after the Feature
+Index — including the wrap-sentinel directive. The test guarding that exact scenario asserted only
+that the prompt was short enough, never what survived, so it stayed green throughout.
+
+Assembly is now tiered: bulk sections yield lowest-priority-first, each replaced by a pointer
+naming what went; anything still over budget ships whole with a notice. The budget is declared by
+the engine (`capabilities.startupInjection.maxChars`; claude declares 10,000) and resolved per
+channel, since the paste path never passes through the capped hook. The Feature Index is referenced
+with a census instead of inlined — this repo's `FEATURES.md` is 48,605 characters.
+
+Critic-caught in the same cycle: a planned 80%-of-budget early warning had been dropped silently,
+budget assertions were still pinned to the superseded constant, the budget was applied
+channel-blind, and the census gate emitted "0 curated entries. Read it FIRST" for a seeded stub.
+
 ## 2026-07-28: The running version, visible and true wherever it appears (#744, #745)
 
 <!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 -->

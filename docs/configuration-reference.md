@@ -233,7 +233,11 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
     "supportsSlashCommands": "boolean",
     "supportsPrimePrompt": "boolean",
     "supportsConfigFile": "boolean",
-    "supportsCoAuthor": "boolean"
+    "supportsCoAuthor": "boolean",
+    "supportsSilentPrime": "boolean",
+    "startupInjection": {
+      "maxChars": "number — characters this engine's startup channel carries before the engine itself truncates. Omit to keep the 16,000 fallback. See docs/engine-guide.md → Capabilities."
+    }
   }
 }
 ```

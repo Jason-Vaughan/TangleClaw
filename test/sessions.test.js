@@ -217,7 +217,12 @@ describe('sessions', () => {
           prompt.includes('[Prime prompt truncated]'), false,
           'the blind tail truncation must not fire on the medusa path'
         );
-        assert.ok(prompt.length <= sessions.PRIME_MAX_TOKENS * 4, 'the prime respects the size cap');
+        // Against the budget the ENGINE declares, not the fallback constant —
+        // measuring against 16,000 while claude declares 10,000 leaves 6,000
+        // characters unasserted on the path that actually ships.
+        const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
+        assert.ok(prompt.length <= declared,
+          `prime length ${prompt.length} must fit the declared budget ${declared}`);
       });
 
       it('#557: contract body is omitted (with a pointer) when the budget cannot hold a useful fragment', () => {
@@ -266,19 +271,30 @@ describe('sessions', () => {
           'an engine that declares no channel keeps its previous behavior');
       });
 
-      it('rejects a malformed declaration rather than trusting it', () => {
+      it('rejects a malformed declaration, and says so rather than falling back quietly', () => {
         const fallback = sessions.PRIME_MAX_TOKENS * 4;
-        // A zero or negative budget would silently empty every prime, and a
-        // string would make the length comparison meaningless. Both fall back.
-        assert.equal(
-          sessions._resolvePrimeBudget({ capabilities: { startupInjection: { maxChars: 0 } } }),
-          fallback, 'zero is not a budget');
-        assert.equal(
-          sessions._resolvePrimeBudget({ capabilities: { startupInjection: { maxChars: -5 } } }),
-          fallback, 'a negative budget is not a budget');
-        assert.equal(
-          sessions._resolvePrimeBudget({ capabilities: { startupInjection: { maxChars: '10000' } } }),
-          fallback, 'a stringified number is not a budget');
+        const { setLevel: setLogLevel } = require('../lib/logger');
+        const warnings = [];
+        // The logger sends everything below `error` to stdout, not stderr.
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        setLogLevel('warn');
+        process.stdout.write = (chunk, ...rest) => { warnings.push(String(chunk)); return originalWrite(chunk, ...rest); };
+        try {
+          // A zero or negative budget would empty every prime; a string makes
+          // the length comparison meaningless. All fall back — but an operator
+          // who typo'd the value must not be left believing a limit is in force.
+          for (const bad of [0, -5, '10000']) {
+            assert.equal(
+              sessions._resolvePrimeBudget({ id: 'fixture', capabilities: { startupInjection: { maxChars: bad } } }),
+              fallback, `${JSON.stringify(bad)} is not a budget`);
+          }
+        } finally {
+          process.stdout.write = originalWrite;
+          setLogLevel('error');
+        }
+        const unusable = warnings.filter((w) => w.includes('unusable startupInjection.maxChars'));
+        assert.equal(unusable.length, 3,
+          'each malformed declaration is reported, not silently swallowed');
       });
 
       it('no blind tail slice remains in the prime assembler', () => {
@@ -707,6 +723,27 @@ describe('sessions', () => {
         assert.equal(prompt.includes('lib/a.js'), false, 'backlog paths must not reach the prime');
       });
 
+      it('emits no pointer for a seeded stub with nothing in it yet', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        // The shape `_seedFeatureIndexFile` writes on toggle-on: headings and
+        // guidance, zero entries. Pointing an agent at this says "read this
+        // first" about a file with nothing to read.
+        fs.writeFileSync(featuresPath,
+          '# Feature Index\n\n<!-- Maintained automatically. -->\n\n## UI / Web\n\n## Server / API\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'an index with no entries produces no section at all');
+        assert.equal(prompt.includes('0 curated'), false,
+          'and certainly never instructs the agent to go read zero entries');
+      });
+
       it('pluralizes the census for a single curated entry', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
@@ -850,9 +887,11 @@ describe('sessions', () => {
         assert.equal(prompt.includes('[Prime prompt truncated]'), false,
           'the budget is met by yielding bulk sections, not by slicing the tail');
 
-        const maxChars = sessions.PRIME_MAX_TOKENS * 4;
-        assert.ok(prompt.length <= maxChars + 30,
-          `prompt length ${prompt.length} should respect maxChars budget ${maxChars}`);
+        // The declared budget, not the fallback: this project is on the silent
+        // -prime path, so the engine's 10,000 is what actually constrains it.
+        const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
+        assert.ok(prompt.length <= declared,
+          `prompt length ${prompt.length} must fit the declared budget ${declared}`);
       });
 
       it('bulk sections yield to a tight budget, and say so, while directives stay whole', () => {
@@ -887,6 +926,36 @@ describe('sessions', () => {
           'directives are never what yields');
         assert.equal(prompt.includes('[Prime prompt truncated]'), false,
           'yielding replaces slicing entirely');
+        // The point of yielding is to MEET the budget. Without this the test
+        // would pass on a prime that yielded and still overflowed.
+        assert.ok(prompt.length <= 1800,
+          `yielding must bring the prime within budget (got ${prompt.length})`);
+      });
+
+      it('does not impose the startup-hook budget on the paste channel', () => {
+        // silentPrime off — the prime is pasted into the terminal, which the
+        // engine's startup-hook limit does not describe. Bulk context must not
+        // yield to a ceiling its channel does not have.
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: false,
+          featureIndexEnabled: false
+        });
+        store.learnings.create({
+          projectId: fiProject.id,
+          content: 'paste-path learning body '.repeat(40),
+          tier: 'active'
+        });
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.ok(prompt.includes('paste-path learning body'),
+          'bulk context survives on a channel with no declared limit');
+        assert.equal(
+          sessions._resolvePrimeBudget(engine, { viaStartupHook: false }),
+          sessions.PRIME_MAX_TOKENS * 4,
+          'the paste channel falls back rather than inheriting the hook limit');
       });
 
       it('when the directives alone exceed budget, ships them whole and names the overflow', () => {
@@ -911,7 +980,7 @@ describe('sessions', () => {
           'the wrap sentinel survives even an impossible budget');
         assert.ok(prompt.includes('## Wrapping this session'),
           'the wrap instructions survive even an impossible budget');
-        assert.ok(prompt.includes('character channel budget'),
+        assert.ok(prompt.includes('budget of the channel'),
           'the overflow is named in the prime itself');
         assert.ok(prompt.includes('.tangleclaw/session-prime.md'),
           'the overflow notice points at the complete text on disk');
