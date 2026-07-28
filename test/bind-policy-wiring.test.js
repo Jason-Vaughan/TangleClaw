@@ -330,6 +330,28 @@ describe('the settings toggle cannot lie about what the socket does', () => {
   });
 });
 
+describe('a refused ttyd re-pin reaches the dashboard, not only the log', () => {
+  it('round-trips a terminal notice through /api/server-info', () => {
+    const notice = { message: 'terminal still open', setting: 'ttyd interface', severity: 'exposed' };
+    serverInfo.setTtydNotice(notice);
+    assert.deepEqual(serverInfo.getServerInfo().ttydNotice, notice);
+    serverInfo.setTtydNotice(null);
+    assert.equal(serverInfo.getServerInfo().ttydNotice, null);
+  });
+
+  it('raises it ONLY when the refusal left the job wide', () => {
+    // Refusing is frequently correct and harmless — a unix-socket job is
+    // unreachable regardless. Warning on every refusal would cry wolf; warning
+    // on none would leave an unauthenticated shell announced only in a log file.
+    assert.match(SERVER_SRC, /if \(ttydPlan\.stillWide\) \{[\s\S]{0,200}?serverInfo\.setTtydNotice\(/,
+      'the notice must be gated on stillWide');
+    const gateAt = SERVER_SRC.indexOf('if (ttydPlan.stillWide)');
+    const refuseAt = SERVER_SRC.indexOf("ttydPlan.action === 'refuse'");
+    assert.ok(refuseAt > -1 && gateAt > refuseAt,
+      'and sit inside the refusal branch, not fire on a successful pin');
+  });
+});
+
 describe('/api/server-info carries the notice', () => {
   it('round-trips a notice set at listen time', () => {
     const notice = { message: 'test notice', setting: 'bindAllInterfaces' };

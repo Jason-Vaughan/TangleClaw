@@ -270,3 +270,72 @@ describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () 
     assert.ok(!h.calls.some((c) => c.startsWith('launchctl')), 'an idempotent boot must not restart terminals');
   });
 });
+
+describe('stillWide — whether a refusal left an open shell behind', () => {
+  // This is what decides whether the operator gets a dashboard chip. A refusal
+  // is often correct AND harmless (a unix-socket job is unreachable anyway), so
+  // "declined" alone cannot drive the warning — only "declined, and the door is
+  // open" should. Untested, the whole notice could be deleted invisibly.
+  it('is true for a legacy port-only job we refuse to touch', () => {
+    const foreign = legacyPlist().replace('<string>--writable</string>', '<string>--readonly</string>');
+    const plan = planReconcile(foreign, { ingressMode: 'direct' });
+    assert.equal(plan.action, 'refuse');
+    assert.equal(plan.stillWide, true, 'unrecognized AND wide — the operator must be told');
+  });
+
+  it('is FALSE for a socket-bound job, which is unreachable over the network', () => {
+    const plan = planReconcile(pinnedPlist('/Users/x/.tangleclaw/run/ttyd.sock'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'refuse');
+    assert.equal(plan.stillWide, false, 'a false alarm here would cry wolf about a closed door');
+  });
+
+  it('assumes the worse when the plist cannot be parsed at all', () => {
+    const plan = planReconcile('not a plist', { ingressMode: 'direct' });
+    assert.equal(plan.stillWide, true, 'unknown must fail toward warning, not toward silence');
+  });
+
+  it('is false once the job is correct, and after a successful rewrite', () => {
+    assert.equal(planReconcile(pinnedPlist(), { ingressMode: 'direct' }).stillWide, false);
+    assert.equal(planReconcile(legacyPlist(), { ingressMode: 'direct' }).stillWide, false,
+      'a rewrite closes it, so there is nothing to warn about');
+  });
+
+  it('is present on EVERY outcome, so the caller can never read undefined', () => {
+    const inputs = [legacyPlist(), pinnedPlist(), pinnedPlist('0.0.0.0'), 'junk', ''];
+    for (const xml of inputs) {
+      for (const cfg of [{ ingressMode: 'direct' }, { ingressMode: 'caddy' }]) {
+        assert.equal(typeof planReconcile(xml, cfg).stillWide, 'boolean',
+          `stillWide must be a boolean for ${JSON.stringify(cfg)}`);
+      }
+    }
+  });
+
+  it('reports the rolled-back job as still wide', () => {
+    // Rollback restores the ORIGINAL job — the wide one. Reporting false here
+    // would tell the operator a door was shut immediately after reopening it.
+    const h = (function () {
+      const P = '/home/x/Library/LaunchAgents/com.tangleclaw.ttyd.plist';
+      const files = { [P]: legacyPlist() };
+      return {
+        deps: {
+          fs: {
+            existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+            readFileSync: (p) => files[p],
+            writeFileSync: (p, c) => { files[p] = c; },
+            copyFileSync: (a, b) => { files[b] = files[a]; },
+            renameSync: (a, b) => { files[b] = files[a]; delete files[a]; },
+            rmSync: (p) => { delete files[p]; }
+          },
+          path: { join: (...parts) => parts.join('/') },
+          execFileSync: () => {},
+          uid: 501,
+          log: { info() {}, warn() {}, error() {} },
+          probe: () => false // ttyd never comes back
+        }
+      };
+    })();
+    const r = reconcileInstalledJob({ home: '/home/x', config: { ingressMode: 'direct' }, deps: h.deps });
+    assert.equal(r.rolledBack, true);
+    assert.equal(r.stillWide, true, 'the restored job is the wide one');
+  });
+});

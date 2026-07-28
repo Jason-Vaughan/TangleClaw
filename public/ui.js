@@ -1400,9 +1400,11 @@ function openGlobalSettings() {
   // a switch reading "closed" over an open port, or the reverse.
   const bindState = c.bindState || {};
   const bindLockedByCaddy = !!bindState.lockedByCaddy;
-  // `wide` is what the SOCKET does; `choice` is what the operator has RECORDED.
-  // They differ exactly in the grace state, which is why the switch reads ON
-  // there and why an untouched Save must not write anything.
+  // `wide` is the binding CONFIG resolves to — what the socket will be after the
+  // next restart, and what it already is unless the setting changed since boot
+  // (hence requiresRestart). `choice` is what the operator has RECORDED. They
+  // differ in the grace state, which is why the switch reads ON there and why an
+  // untouched Save must not write anything.
   const bindShowsOn = !!bindState.wide;
   const bindUnchosen = bindState.choice === 'unchosen';
 

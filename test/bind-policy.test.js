@@ -143,6 +143,31 @@ describe('bind-policy.resolveBind — the legacy grace state (ADR 0009 amendment
   });
 });
 
+describe('describeBindState — the caddy lock, asserted directly', () => {
+  it('reports lockedByCaddy for a caddy install', () => {
+    // The UI's disabled attribute and its whole locked branch hang off this
+    // single boolean, and nothing asserted it was ever true.
+    const s = bindPolicy.describeBindState({ ingressMode: 'caddy', [OPT_IN_KEY]: false });
+    assert.equal(s.lockedByCaddy, true);
+    assert.equal(s.wide, false, 'caddy pins loopback');
+    assert.equal(s.refusedOptIn, false);
+  });
+
+  it('reports lockedByCaddy AND refusedOptIn when caddy overrides a stored opt-in', () => {
+    const s = bindPolicy.describeBindState({ ingressMode: 'caddy', [OPT_IN_KEY]: true });
+    assert.equal(s.lockedByCaddy, true);
+    assert.equal(s.refusedOptIn, true, 'the override must be reportable');
+    assert.equal(s.choice, 'opted-in', 'what the operator RECORDED');
+    assert.equal(s.wide, false, 'what the SOCKET does — deliberately different');
+  });
+
+  it('never reports lockedByCaddy in direct mode', () => {
+    for (const v of [true, false, null, undefined]) {
+      assert.equal(bindPolicy.describeBindState({ ingressMode: 'direct', [OPT_IN_KEY]: v }).lockedByCaddy, false);
+    }
+  });
+});
+
 describe('bind-policy.migrateLegacyBind — the grace state must survive an unrelated save', () => {
   it('records null for a legacy direct install', () => {
     const cfg = { ingressMode: 'direct' };
