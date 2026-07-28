@@ -105,9 +105,18 @@ under the new flags — codex opens on a directory-trust prompt that those keys 
 because the original bug's symptom was "cannot start a session at all", which no amount of flag
 parsing proves against.
 
+**Third pass — one BLOCKING, correctly raised.** The Web UI reconciliation shipped with no test at all:
+the delta's only behavior change was a four-branch decision, and it got prose in three documents while
+its tmux twin got a dedicated helper. Closed with three cases (no bridge port / failed pre-create /
+successful pre-create), mutation-verified — reverting to `options.launchMode` fails two of them. Also
+added the `_resolvePreKeys` prototype-key regression the existing `'nonexistent'` case could not
+distinguish, and moved the effective-mode judgement onto `launchProfile`, the same object
+`_buildLaunchCommand` reads for argv, so the recorded mode and the launched mode cannot drift when an
+orchestration overlay is bound.
+
 **Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
 codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
-accepted by invoking the real binary. Full suite **4837 tests / 0 fail / 1 skip**; evidence 2543.
+accepted by invoking the real binary. Full suite **4841 tests / 0 fail / 1 skip**; evidence 2545.
 
 ## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
 
