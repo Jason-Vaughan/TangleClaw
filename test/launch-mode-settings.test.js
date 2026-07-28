@@ -172,7 +172,10 @@ describe('launch-mode settings', () => {
   describe('engine-switch reconciliation (#682 trigger, #622)', () => {
     it('resets a stored mode the new engine cannot honor to default', () => {
       mkProject('lm-switch');
-      // Claude honors bypassPermissions; codex does not.
+      // Claude honors bypassPermissions; aider does not (its only non-default
+      // mode is yesAlways). This used to use codex, which gained a real bypass
+      // mode in #731 — the contract is unchanged, the example had to move to an
+      // engine where the mode is genuinely unhonorable.
       const set = projects.updateProject('lm-switch', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
@@ -181,12 +184,40 @@ describe('launch-mode settings', () => {
       assert.deepEqual(set.errors, []);
       assert.equal(set.project.defaultLaunchMode, 'bypassPermissions');
 
-      const switched = projects.updateProject('lm-switch', { engine: 'codex' });
+      const switched = projects.updateProject('lm-switch', { engine: 'aider' });
       assert.deepEqual(switched.errors.filter(e => /defaultLaunchMode|launch mode/i.test(e)), []);
       // The stranded mode is reconciled to the universally-valid default.
       const cfg = store.projectConfig.load(switched.project.path);
       assert.equal(cfg.defaultLaunchMode, 'default');
       assert.equal(switched.project.defaultLaunchMode, 'default');
+    });
+
+    it('preserves bypass when switching to an engine that DOES honor it (#731)', () => {
+      // Codex gaining a bypass mode changed this case from "reset" to "keep".
+      // Recorded deliberately rather than left to be discovered: reconciliation
+      // only downgrades modes the target engine cannot honor, so an operator who
+      // confirmed a bypass posture keeps it across a switch — the same behavior
+      // Claude -> Antigravity has always had.
+      //
+      // Worth knowing when reading this: Codex's bypass is
+      // `--dangerously-bypass-approvals-and-sandbox`, which also removes the
+      // sandbox, where Claude's `--dangerously-skip-permissions` does not. The
+      // #622 invariant is about persisting an *unconfirmed* posture, and this
+      // one was confirmed, but the carried posture is not identical in blast
+      // radius to the one that was confirmed.
+      mkProject('lm-switch-bypass-kept');
+      projects.updateProject('lm-switch-bypass-kept', {
+        defaultLaunchMode: 'bypassPermissions',
+        showLaunchModePicker: false,
+        confirmBypassHidden: true
+      });
+
+      const switched = projects.updateProject('lm-switch-bypass-kept', { engine: 'codex' });
+      assert.deepEqual(switched.errors, []);
+      assert.equal(
+        store.projectConfig.load(switched.project.path).defaultLaunchMode,
+        'bypassPermissions'
+      );
     });
 
     it('preserves a stored mode the new engine still honors', () => {
@@ -204,17 +235,52 @@ describe('launch-mode settings', () => {
         showLaunchModePicker: false,
         confirmBypassHidden: true
       });
-      // Switching to codex reconciles bypassPermissions -> default, so the
+      // Switching to aider reconciles bypassPermissions -> default, so the
       // hidden picker no longer sits over a warning mode: the guard must not
       // block this switch-to-safe, and no re-confirm should be demanded.
+      // (Was codex until #731 gave codex a real bypass mode — see the sibling
+      // test below, where the guard now correctly refuses that target.)
       const result = projects.updateProject('lm-switch-hide', {
-        engine: 'codex',
+        engine: 'aider',
         showLaunchModePicker: false
       });
       assert.deepEqual(result.errors.filter(e => /confirmBypassHidden/.test(e)), []);
       const cfg = store.projectConfig.load(result.project.path);
       assert.equal(cfg.defaultLaunchMode, 'default');
       assert.equal(cfg.showLaunchModePicker, false);
+    });
+
+    it('demands re-confirmation when the new engine DOES honor the warned mode (#731)', () => {
+      // The counterpart to the switch-to-safe case above. Codex honoring
+      // bypassPermissions means reconciliation no longer defuses this update, so
+      // hiding the picker would put a warned posture behind no warning — the
+      // #622 guard must ask again. Adding a mode to an engine widens what the
+      // guard has to catch; this pins that it does.
+      mkProject('lm-switch-hide-warned');
+      projects.updateProject('lm-switch-hide-warned', {
+        defaultLaunchMode: 'bypassPermissions',
+        showLaunchModePicker: false,
+        confirmBypassHidden: true
+      });
+
+      const blocked = projects.updateProject('lm-switch-hide-warned', {
+        engine: 'codex',
+        showLaunchModePicker: false
+      });
+      assert.equal(blocked.project, null);
+      assert.match(blocked.errors.join(' '), /confirmBypassHidden/);
+
+      // And it goes through once confirmed.
+      const confirmed = projects.updateProject('lm-switch-hide-warned', {
+        engine: 'codex',
+        showLaunchModePicker: false,
+        confirmBypassHidden: true
+      });
+      assert.deepEqual(confirmed.errors, []);
+      assert.equal(
+        store.projectConfig.load(confirmed.project.path).defaultLaunchMode,
+        'bypassPermissions'
+      );
     });
   });
 

@@ -26,6 +26,115 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-27: Codex Full Auto was launching a flag codex-cli had removed (#731)
+
+<!-- prawduct: type=bugfix | scope=731-codex-launch-modes -->
+
+**Why:** `data/engines/codex.json` declared `--full-auto`. Current `codex-cli` rejects it —
+`codex --full-auto` exits 2, "unexpected argument". TC created the tmux session, sent the command,
+and reported a launch; codex died instantly. The one non-interactive Codex mode could not start a
+session at all. Verified on codex-cli 0.145.0, where the flag is gone from `--help` entirely.
+
+**Provenance:** the flag came from #211, lifted from #209's probe target ("`--full-auto` or
+`--auto-edit` (verify per installed version)"). The guess shipped, the verification did not. It
+surfaced only when a first-time, Codex-only installer tried a non-interactive launch — the first
+person for whom Codex was the primary engine rather than a spare.
+
+**What:** Full Auto → `--ask-for-approval never --sandbox workspace-write` (its actual meaning: no
+approvals, sandbox kept). Added `bypassPermissions` → `--dangerously-bypass-approvals-and-sandbox`,
+closing the Codex half of #209 and using the key the other profiles already share so a stored
+`defaultLaunchMode` stays portable. `_buildLaunchCommand` now logs an unknown mode instead of
+launching engine defaults while reporting the requested mode.
+
+**The finding that outlives this bug.** Every engine test asserted a profile's args against a literal
+copy of itself — `assert.deepEqual(profile.launchModes.sandbox.args, ['--sandbox'])`. Both sides are
+this repo's own JSON, so no such test can ever notice the CLI removing a flag; one even names a
+version in its `describe` string ("pinned to the real agy v1.0.10 flag surface") with nothing
+enforcing it. `test/engine-launch-flags.test.js` probes the real parser instead. Two design notes
+worth keeping: (1) searching `--help` text was the obvious oracle and is **wrong** — Claude Code
+accepts `--enable-auto-mode` without documenting it, so text search fails a valid profile; only the
+parser knows what the parser takes. (2) The probe keys on `detection.target`, not
+`launch.shellCommand`, because OpenClaw dispatches over `ssh` and would otherwise be probed against
+the ssh binary.
+
+**A safety consequence, recorded rather than discovered later.** Giving Codex a bypass mode changes
+engine-switch reconciliation: it downgrades only modes the target cannot honor, so Claude→Codex now
+*keeps* a confirmed bypass posture instead of resetting it — the same behavior Claude→Antigravity has
+always had. Where the update also hides the launch-mode picker, the #622 guard correctly demands
+`confirmBypassHidden` rather than being defused by a reconciliation that no longer happens. Both
+cases are now pinned. Note the asymmetry when reviewing a carried posture: Codex's bypass also drops
+the sandbox, where Claude's `--dangerously-skip-permissions` does not, so the carried posture is not
+identical in blast radius to the one that was confirmed.
+
+**Test changes that are corrections, not weakenings.** Two existing assertions encoded facts about the
+outside world that are false: `engines.test.js` asserted `--full-auto`, and
+`launch-mode-settings.test.js` used codex as its example of "an engine that cannot honor bypass". The
+first now asserts the working flags; the second moved to `aider`, which genuinely has no bypass mode,
+so the invariant it tests is unchanged and still covered. Nothing was relaxed — both files gained
+assertions.
+
+**Critic cumulative (0 blocking / 10 warnings / 13 notes) — the three that mattered.** (1) The fix was
+log-only: `_buildLaunchCommand` dropped an unhonored mode but `sessions.js` still persisted the
+*requested* one, so the DB row and every API/UI consumer kept asserting a posture the process was never
+launched with — only a log grep disagreed. Now stores the reconciled mode. (2) The same question was
+being answered by three different predicates (two checked `disabled`, my new one checked presence
+only); collapsed into `engines.honorsLaunchMode`, which also uses `hasOwnProperty` — `constructor` /
+`__proto__` arrive from request bodies and a bare index treated them as valid modes. (3) All three
+reviewers independently flagged that my "covers at least one installed engine" meta-guard was a
+tautology: it resolved `shellCommand` (openclaw → `ssh`, present everywhere) while the real probes
+resolve `detection.target`, so it passed while zero engines were probed — and in the very failure it
+existed to catch it would skip and still report green. **Third time this session I wrote a guard that
+could not fail.** It now asserts `resolveBinary('sh')`, which detects a broken resolver independent of
+which engines are installed; breaking the resolver yields 1 fail + 9 skips instead of a green wall.
+
+**Second Critic pass — 9/10 fixed, two real gaps closed after.** (a) The "records the mode it actually
+ran" fix was tmux-path only: `launchOpenClawWebUI` still persisted the requested mode, on a path where
+the mode is carried solely by ClawBridge's `permissionMode` and takes effect only on a successful
+pre-create — the code there already logged "mode will not propagate" and then recorded it anyway. My
+CHANGELOG claimed the fix without that qualification. Fixed rather than softened: it records `null`
+where nothing propagated, and logs the requested mode beside it. (b) The effective mode is now threaded
+into `_deferEngineInit`/`_resolvePreKeys` instead of re-derived, and the last two bare-index
+`launchModes[mode]` lookups now go through `honorsLaunchMode`.
+
+**Real-session verification (closes the standing "argument-parse depth only" finding).** Launching a
+throwaway tmux session against codex-cli 0.145.0: `--ask-for-approval never --sandbox workspace-write`
+brings up the TUI and the status bar reads `Ready · never`, confirming the approval policy actually
+took; `--dangerously-bypass-approvals-and-sandbox` brings up the TUI with `permissions: YOLO mode` in
+Codex's own header. Both also confirm the engine-level `preKeys: ["Enter","Enter"]` are still correct
+under the new flags — codex opens on a directory-trust prompt that those keys clear. This matters
+because the original bug's symptom was "cannot start a session at all", which no amount of flag
+parsing proves against.
+
+**Third pass — one BLOCKING, correctly raised.** The Web UI reconciliation shipped with no test at all:
+the delta's only behavior change was a four-branch decision, and it got prose in three documents while
+its tmux twin got a dedicated helper. Closed with three cases (no bridge port / failed pre-create /
+successful pre-create), mutation-verified — reverting to `options.launchMode` fails two of them. Also
+moved the effective-mode judgement onto `launchProfile`, the same object `_buildLaunchCommand` reads for
+argv — **durability, not a fix**: `applyLaunchOverlay` spreads `...engineProfile` and rewrites `launch`
+alone, so `launchModes` is the same reference and no input changes outcome today. An asymmetry does
+survive: argv uses `options.launchMode` while the row uses `options.launchMode || defaultLaunchMode`,
+latent only because every shipped profile defaults to `default` with empty args. The durable fix is to
+have `_buildLaunchCommand` return the mode it honored; not taken here, still open.
+
+**A fourth can't-fail test, caught by the Critic.** The `_resolvePreKeys` prototype-key regression I
+added used `constructor` — and `Object.preKeys` is `undefined`, so the old bare-index path fell through
+to the identical engine-level branch. Old and new returned the same value: the test reproduced exactly
+the flaw it was written to catch. A separating fixture needs an inherited mode that actually carries
+preKeys (`Object.create({ evil: { preKeys: ['X'] } })`), where a bare index returns `['X']` and
+`hasOwnProperty` does not. Now mutation-verified.
+
+**The pattern, stated once.** Four times this session I wrote a guard or test that could not fail: a
+stub that never logged, a floor asserted after the value was pushed, a meta-guard resolving a different
+key than the thing it guarded, and a prototype fixture whose two branches coincide. Each was written
+immediately after fixing a real bug, and each asserted the shape of the code I had just written rather
+than the behavior that would break. The check that generalizes: *name the mutation this test is
+supposed to catch, apply it, and watch it go red* — if that cannot be stated concretely, the test is
+documentation.
+
+**Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
+codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
+accepted by invoking the real binary. Full suite **4841 tests / 0 fail / 1 skip**; evidence 2545.
+
 ## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
 
 <!-- prawduct: type=bugfix | scope=730-update-pill-guards -->
