@@ -65,8 +65,7 @@ All notable changes to TangleClaw are documented in this file.
   depend on `engines` without a require cycle, and callers resolve before reaching it), the
   `projConfig` fallback in `lib/engines.js` (it answers "which engine owns this path", not "what is
   the default"), and the DB column default (changing it is a migration). The Settings, Create-project,
-  and Master engine pickers are also still ungated — the wizard is gated here and the rest is
-  tracked separately. Found on a first-time install where Codex was the only engine present.
+  and Master engine pickers were initially left ungated here and gated in the follow-up entry above. Found on a first-time install where Codex was the only engine present.
 - **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
   engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
   labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list

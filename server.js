@@ -1121,13 +1121,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     _scheduleRestart();
   }
 
-    if (warnings.length > 0) {
+  if (warnings.length > 0) {
     // A skipped project vanished silently before: the wizard never read
     // `warnings`, so the operator finished setup believing every directory they
     // ticked had been attached. Log it regardless of what the client does.
     log.warn('Setup completed with skipped projects', { count: warnings.length, warnings });
   }
-jsonResponse(res, 200, {
+
+  jsonResponse(res, 200, {
     ok: true,
     setupComplete: true,
     attached,

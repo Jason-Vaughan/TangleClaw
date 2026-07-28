@@ -58,6 +58,24 @@ const availableEngines = {
   resolveDefaultEngine: (config) => (config && config.defaultEngine) || 'claude'
 };
 
+/**
+ * An engines stub whose resolution uses the REAL precedence over a controlled
+ * installed-set. `availableEngines` above is a pass-through that ignores
+ * availability entirely, so it cannot exercise a fallback — it returns the same
+ * answer whether or not the resolver is wired in, which is how the master-pin
+ * bypass survived its own test.
+ * @param {string[]} installed - Engine ids present on the imagined machine
+ * @returns {object}
+ */
+function enginesInstalling(installed) {
+  const realEngines = require('../lib/engines');
+  const list = ['claude', 'codex', 'aider'].map((id) => ({ id, available: installed.includes(id) }));
+  return {
+    detectEngine: (profile) => ({ available: installed.includes(profile && profile.id) }),
+    resolveDefaultEngine: (config) => realEngines.resolveDefaultEngine(config, list)
+  };
+}
+
 describe('buildMasterClaudeMd', () => {
   it('carries the generated marker, the role, and the read-only rules', () => {
     const md = master.buildMasterClaudeMd({ serverPort: 3101 });
@@ -531,6 +549,44 @@ describe('ensureMasterSession — settings integration', () => {
     store.sessionRules.create({ content: 'Session-rules-backed custom boundary.', kind: 'master' });
     master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: true }), enginesLib: availableEngines });
     assert.match(fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8'), /Session-rules-backed custom boundary\./);
+  });
+
+  it('resolves a pinned master.engine that is not installed (#707)', () => {
+    // The bypass this closes: `_masterRuntime` honored `settings.engine`
+    // unconditionally, so an operator who pinned Claude in Master settings on a
+    // machine without Claude got `Engine "claude" not available (binary not
+    // found)` — the exact failure the resolver exists to prevent, reached
+    // through a second door. Fails against `settings.engine || ...`.
+    const config = store.config.load();
+    const saved = config.master;
+    try {
+      config.master = { accessLevel: 'read-only', engine: 'claude', scope: 'all', autoStart: false };
+      store.config.save(config);
+      const r = master.ensureMasterSession({
+        home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['codex'])
+      });
+      assert.equal(r.engine, 'codex', 'a pinned engine that is not installed must resolve, not be honored');
+      assert.equal(r.enforcement, 'instructional');
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
+  });
+
+  it('keeps a pinned master.engine that IS installed', () => {
+    const config = store.config.load();
+    const saved = config.master;
+    try {
+      config.master = { accessLevel: 'read-only', engine: 'codex', scope: 'all', autoStart: false };
+      store.config.save(config);
+      const r = master.ensureMasterSession({
+        home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['claude', 'codex'])
+      });
+      assert.equal(r.engine, 'codex', 'an installed pin must be honored, not overridden');
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
   });
 
   it('honors master.engine over defaultEngine, and reports instructional enforcement off-claude', () => {

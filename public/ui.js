@@ -57,9 +57,17 @@ function buildEngineOptions(engineList, selectedId) {
  */
 function resolvePickerEngine(engineList, configured) {
   const list = Array.isArray(engineList) ? engineList : [];
-  const available = list.filter(e => e && e.available !== false);
+  // `available` truthy, matching the server's filter exactly — `!== false`
+  // would treat a missing flag as installed, which is the opposite of the safe
+  // reading for a value that gets persisted.
+  const available = list.filter(e => e && e.available);
   if (configured && available.some(e => e.id === configured)) return configured;
-  return available.length > 0 ? available[0].id : '';
+  // Sorted, for the same reason `engines.resolveDefaultEngine` sorts: the list
+  // arrives in engine-profile directory order, and this value is POSTed and
+  // persisted onto the project. An unsorted pick would bind new projects to a
+  // filesystem-dependent engine — the defect that was just fixed server-side,
+  // reintroduced one layer up.
+  return available.map(e => e.id).sort()[0] || '';
 }
 
 // ── Project Card Rendering ──
