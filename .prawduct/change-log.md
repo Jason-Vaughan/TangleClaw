@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-28: Rules get their own delivery channel (#749)
 
-<!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 -->
+<!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 | status=shipped -->
 
 Chunk 01 tiered the prime and demoted the Feature Index, which cut it from 16,026 to ~11,585 on
 this repo — still over the engine's 10,000-character channel, so the rules and the wrap-sentinel
@@ -45,7 +45,7 @@ Measured on this repo: prime 6,993 against a 10,000 budget, all four rules deliv
 
 ## 2026-07-28: The prime stops cutting its own directives (#749)
 
-<!-- prawduct: type=fix | chunks=01 | scope=prime-delivery-749 -->
+<!-- prawduct: type=fix | chunks=01 | scope=prime-delivery-749 | status=shipped -->
 
 The prime was assembled against a fixed 16,000-character constant and sliced at the tail on
 overflow. On this repo it fired at 16,026 characters and removed everything after the Feature

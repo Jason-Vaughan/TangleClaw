@@ -40,6 +40,15 @@ All notable changes to TangleClaw are documented in this file.
   gone; a test asserts it cannot return.
 
 ### Changed
+- **Database schema v28 → v29 (#749).** `session_rule_deliveries.channel` gains `rules-hook`, the
+  channel startup rules ride since they moved off the prime file. The CHECK constraint could not
+  otherwise represent where the rules actually went, so the only expressible answer was a false one.
+
+  SQLite cannot alter a CHECK in place, so the table is rebuilt — inside a transaction, with a
+  postcondition that reads the new DDL from `sqlite_master` and refuses to advance the schema
+  version unless the constraint really widened. Existing rows keep their ids, digests and
+  timestamps; an audit trail's value is outliving what it describes. The new value is a superset,
+  and a downgraded binary re-enters no migration (`29 < 28` is false), so unshipping is a no-op.
 - **The prime's size budget is declared by the engine, not by TangleClaw (#749).** It now comes from
   `capabilities.startupInjection.maxChars`, and `data/engines/claude.json` declares 10,000 to match
   Claude Code's hook-output cap. A limit belongs to the consumer that carries the payload; a
