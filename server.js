@@ -3824,7 +3824,8 @@ function handleUpgrade(req, socket, head) {
 let _cachedVersion = null;
 
 /**
- * Read the version from version.json.
+ * The version this server reports as its own — what the process loaded, falling
+ * back to `version.json` only when startup was never captured.
  * @returns {string}
  */
 function _getVersion() {
