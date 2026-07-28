@@ -223,15 +223,20 @@ For anything beyond localhost, use the **Caddy ingress** (4.0): a reversible cut
 
 ## Stay Updated
 
-TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and every 24 hours after). When a newer tag exists, a pill appears next to the version label — click through to the release notes, dismiss per-version, or press **Update & restart** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
+TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and every 4 hours after). When a newer tag exists, a pill appears next to the version label — click through to the release notes, dismiss per-version, or press **Update & restart** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
 
 Manual upgrade path:
 
 ```bash
 cd <your-TangleClaw-clone>
-git pull --ff-only
-./deploy/install.sh    # picks up plist changes if any; idempotent
+node scripts/apply-update.js   # same guarded applier as the button
+                               # result JSON on stdout, logs on stderr, exit 1 if refused
+launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
 ```
+
+Run `./deploy/install.sh` **only** when a release changed a launchd plist or another deploy asset — it reloads both agents itself, so it replaces the `kickstart` above rather than following it.
+
+Use the script rather than `git pull`. A successful update leaves the checkout **detached at the release tag**, which is the intended state — pulling a branch on top of that moves you to an unreleased commit, and the updater then refuses to run again because HEAD no longer sits on a tag. The script fetches and checks out the release tag itself, and fails closed on a dirty tree or a branch that isn't meant to be updated.
 
 > **Note:** if your clone predates the 4.0 rename, the repository was previously named `TangleClaw-v3`. GitHub redirects the old URL, but updating your remote is cleaner: `git remote set-url origin https://github.com/Jason-Vaughan/TangleClaw.git`
 
@@ -243,7 +248,7 @@ Key settings:
 - `serverPort` — landing page server port (code default: 3101, launchd override: 3102)
 - `ttydPort` — ttyd terminal port (3100; in `caddy` ingress mode ttyd binds a Unix socket instead of a TCP port)
 - `projectsDir` — root directory for managed projects
-- `defaultEngine` — default engine for new projects
+- `defaultEngine` — preferred engine for new projects; used when installed, otherwise TangleClaw falls back to the first installed engine (see the configuration reference)
 - `deletePassword` — optional password for destructive operations
 - `httpsEnabled` / `httpsCertPath` / `httpsKeyPath` — direct-mode TLS
 - `ingressMode` / `caddyHttpsPort` / `caddyHttpPort` / `publicDomain` — Caddy ingress ([guide](deploy/INGRESS.md))

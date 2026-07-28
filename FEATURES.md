@@ -112,8 +112,10 @@ fails any auto-stub section older than 14 days.
 - **Tunnel** — Cloudflare tunnel lifecycle for remote access. `lib/tunnel.js`.
 - **Sidecar** — supplementary process supervisor. `lib/sidecar.js`.
 - **HTTPS setup** — mkcert-backed cert discovery + HTTPS listener. `lib/https-setup.js`. The startup banner reports the protocol actually served via `serverProtocol()` in `server.js`, not config intent — HTTPS is enabled by default before any certificate exists, so the server falls back to HTTP (#616). Tests: `test/server-listen-protocol.test.js`.
+- **Engine launch modes** — per-engine flag sets in `data/engines/<id>.json#launchModes`, assembled by `lib/sessions.js#_buildLaunchCommand` and rendered by the launch-mode picker. Keys are shared across engines (`default`, `bypassPermissions`, …) so a project's stored `defaultLaunchMode` survives an engine switch. **`engines.honorsLaunchMode()` is the single definition of "this engine will run that mode"** — `engines.reconcileLaunchMode`, `projects.reconcileLaunchMode` (a delegator), the session-launch gate, launch-command assembly, and preKey resolution all route through it; it uses `hasOwnProperty`, since a mode key arrives from request bodies and `constructor`/`__proto__` otherwise resolve as valid modes. The #622 guard demands `confirmBypassHidden` before a warned mode hides behind a hidden picker. An unhonored mode logs and falls back to engine defaults, and **the session records the mode it actually ran** rather than the one requested — on both the tmux path and the OpenClaw Web UI path, where the mode only takes if the ClawBridge pre-create succeeds (#731). **Declared flags are probed against the installed CLI** in `test/engine-launch-flags.test.js` — the per-engine tests assert the JSON against itself, which is why Codex's removed `--full-auto` went unnoticed for months (#731); the probe skips engines absent from the host.
 - **Update checker** — GitHub release-tag polling. `lib/update-checker.js`.
-- **Self-update action** (#228/#229, UB) — the update pill's **Update & restart** button: `POST /api/update/apply` fetches + checks out the latest release tag with fail-closed guards (dirty-tree / no-update / wrong-ref / no-git → 409; git-error → 500; argv-form git so a tag can't shell-inject), then the client chains the existing #235 restart and polls `/api/server-info`. Does NOT restart itself; logs `fromSha` for one-line manual rollback. `lib/update-applier.js`, route `server.js` (next to `/api/update-status`), UI `public/landing.js#applyUpdateAndRestart` + `#loadUpdateStatus`, button `.update-pill-apply` (`public/style.css`).
+- **Self-update action** (#228/#229, UB) — the update pill's **Update & restart** button: `POST /api/update/apply` fetches + checks out the latest release tag with fail-closed guards (dirty-tree / no-update / wrong-ref / no-tag / no-git → 409; git-error → 500; argv-form git so a tag can't shell-inject), then the client chains the existing #235 restart and polls `/api/server-info`. Does NOT restart itself; logs `fromSha` for one-line manual rollback. `lib/update-applier.js`, route `server.js` (next to `/api/update-status`), UI `public/landing.js#applyUpdateAndRestart` + `#loadUpdateStatus`, button `.update-pill-apply` (`public/style.css`).
+- **Agent-driven update** (#730) — the session page's update badge injects an instruction prompt into the live AI session instead of acting itself (`public/session.js#buildUpdatePrompt` → `#injectUpdatePrompt` → `POST /api/sessions/:project/command`). The prompt drives `scripts/apply-update.js`, a CLI over the same `lib/update-applier.js` the button uses, so both surfaces share one set of guards — it previously handed the agent `git pull origin main`, which merged into whatever branch was checked out and moved a tag-detached install to a non-tag commit that `_headState` then refused, permanently disabling **Update & restart**. The script prints the applier's verbatim JSON, exits 1 on refusal, and never restarts. Tests: `test/update-prompt-guards.test.js`, `test/update-prompt-path.test.js` (#183, path derivation).
 - **Release automation** (#713) — the producer side of the update chain: `.github/workflows/release.yml` runs on any push to `main` that changes `version.json`, then tags and publishes so installs have something to detect. Tag and Release are checked as two independent conditions, so a failure after the tag push is recoverable by re-running instead of permanently reporting green while publishing nothing. Release notes come from `lib/changelog-notes.js#extractReleaseNotes` (reads both `## [X.Y.Z]` and bare `## X.Y.Z` headings, fence-aware; CLI shim exits 1 when a version has no CHANGELOG section so a bump can never publish an empty release). Deliberately not a wrap-pipeline step — the wrap cannot know whether or when its bump reaches `main`. Docs: `docs/release-process.md`. Tests: `test/changelog-notes.test.js`.
 - **Uploads** — file-upload handling for the in-browser drop zone. `lib/uploads.js`.
 - **System stats** — CPU / mem / disk for the landing page. `lib/system.js`.
@@ -161,3 +163,20 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 ## TODO (auto-stubbed 2026-07-26)
 
 - **TBD** — touched in this session: `test/api-setup-https.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-26)
+
+- **TBD** — touched in this session: `docs/adr/0009-secure-by-default.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/server-info.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/update-checker.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-27)
+
+- **TBD** — touched in this session: `data/engines/codex.json`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0010-one-update-mechanism.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/logger.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/codex-launch-modes.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/default-engine-wiring.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-picker-gating.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/logger.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-wizard-engines.test.js`. <!-- describe -->

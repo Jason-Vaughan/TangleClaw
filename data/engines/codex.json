@@ -24,7 +24,8 @@
   },
   "launchModes": {
     "default": { "label": "Interactive", "args": [], "description": "Asks for approval per action" },
-    "fullAuto": { "label": "Full Auto", "args": ["--full-auto"], "description": "Low-friction sandboxed automatic execution (codex --full-auto). Sandboxed but skips approval prompts.", "warning": "Sandboxed but unattended — review the generated diffs before merging." }
+    "fullAuto": { "label": "Full Auto", "args": ["--ask-for-approval", "never", "--sandbox", "workspace-write"], "description": "Never asks for approval, still sandboxed to the workspace", "warning": "Sandboxed but unattended — review the generated diffs before merging." },
+    "bypassPermissions": { "label": "Bypass", "args": ["--dangerously-bypass-approvals-and-sandbox"], "description": "Skips every approval AND the sandbox (containers/VMs only)", "warning": "Only use in isolated environments" }
   },
   "defaultLaunchMode": "default",
   "persistent": null,

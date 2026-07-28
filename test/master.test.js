@@ -50,7 +50,31 @@ function fakeTmux({ alive = false } = {}) {
   };
 }
 
-const availableEngines = { detectEngine: () => ({ available: true }) };
+const availableEngines = {
+  detectEngine: () => ({ available: true }),
+  // _masterRuntime resolves through the injected lib (#707), so the stub must
+  // answer resolution too — otherwise these tests silently fall back to the real
+  // detector and their result depends on the host's installed CLIs.
+  resolveDefaultEngine: (config) => (config && config.defaultEngine) || 'claude'
+};
+
+/**
+ * An engines stub whose resolution uses the REAL precedence over a controlled
+ * installed-set. `availableEngines` above is a pass-through that ignores
+ * availability entirely, so it cannot exercise a fallback — it returns the same
+ * answer whether or not the resolver is wired in, which is how the master-pin
+ * bypass survived its own test.
+ * @param {string[]} installed - Engine ids present on the imagined machine
+ * @returns {object}
+ */
+function enginesInstalling(installed) {
+  const realEngines = require('../lib/engines');
+  const list = ['claude', 'codex', 'aider'].map((id) => ({ id, available: installed.includes(id) }));
+  return {
+    detectEngine: (profile) => ({ available: installed.includes(profile && profile.id) }),
+    resolveDefaultEngine: (config) => realEngines.resolveDefaultEngine(config, list)
+  };
+}
 
 describe('buildMasterClaudeMd', () => {
   it('carries the generated marker, the role, and the read-only rules', () => {
@@ -152,11 +176,32 @@ describe('ensureMasterSession', () => {
   it('refuses with an error when the engine binary is unavailable — and does not create tmux', () => {
     const t = fakeTmux({ alive: false });
     const r = master.ensureMasterSession({
-      home, tmuxLib: t, enginesLib: { detectEngine: () => ({ available: false }) }
+      home,
+      tmuxLib: t,
+      // Resolution is pinned so this test is about DETECTION only — without it the
+      // real resolver runs and the assertion depends on the host's installed CLIs.
+      enginesLib: { detectEngine: () => ({ available: false }), resolveDefaultEngine: () => 'claude' }
     });
     assert.equal(r.created, false);
     assert.match(r.error, /not available/);
     assert.equal(t.calls.length, 0);
+  });
+
+  it('names the real problem when NO engine is installed, not a phantom engine id (#707)', () => {
+    // The bare-machine case. Before the resolver, config's shipped 'claude'
+    // default meant the master reported `Engine "claude" not available (binary
+    // not found)` — pointing the operator at a config value when the machine
+    // simply had no engine. The resolver returns null here; reporting
+    // `Engine "null" not found` would be no better, so the guard says it plainly.
+    // Injected through the same seam the caller uses for detection, so this
+    // doesn't depend on which CLIs the host machine has installed.
+    const noEngines = { detectEngine: () => ({ available: false }), resolveDefaultEngine: () => null };
+    const t = fakeTmux({ alive: false });
+    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: noEngines });
+    assert.equal(r.created, false);
+    assert.match(r.error, /No AI engine is installed/);
+    assert.doesNotMatch(r.error, /null/, 'must not leak the null through to the operator');
+    assert.equal(t.calls.length, 0, 'must not create a tmux session with no engine to run');
   });
 
   it('refuses with an error when the configured default engine has no profile', () => {
@@ -237,7 +282,11 @@ describe('getMasterStatus', () => {
   });
 
   it('carries the effective settings for the panel/settings UI', () => {
-    const s = master.getMasterStatus({ tmuxLib: fakeTmux() }).settings;
+    // enginesLib is injected because `resolvedEngine` now comes from availability
+    // resolution (#707); without it this asserts against whichever CLIs the host
+    // happens to have installed, and fails on a machine with none — which is the
+    // machine class the resolver exists for.
+    const s = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: availableEngines }).settings;
     assert.equal(s.accessLevel, 'read-only');
     assert.deepEqual(s.accessLevels, ['read-only', 'suggest', 'write']);
     assert.deepEqual(s.enabledAccessLevels, ['read-only']);
@@ -502,6 +551,44 @@ describe('ensureMasterSession — settings integration', () => {
     assert.match(fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8'), /Session-rules-backed custom boundary\./);
   });
 
+  it('resolves a pinned master.engine that is not installed (#707)', () => {
+    // The bypass this closes: `_masterRuntime` honored `settings.engine`
+    // unconditionally, so an operator who pinned Claude in Master settings on a
+    // machine without Claude got `Engine "claude" not available (binary not
+    // found)` — the exact failure the resolver exists to prevent, reached
+    // through a second door. Fails against `settings.engine || ...`.
+    const config = store.config.load();
+    const saved = config.master;
+    try {
+      config.master = { accessLevel: 'read-only', engine: 'claude', scope: 'all', autoStart: false };
+      store.config.save(config);
+      const r = master.ensureMasterSession({
+        home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['codex'])
+      });
+      assert.equal(r.engine, 'codex', 'a pinned engine that is not installed must resolve, not be honored');
+      assert.equal(r.enforcement, 'instructional');
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
+  });
+
+  it('keeps a pinned master.engine that IS installed', () => {
+    const config = store.config.load();
+    const saved = config.master;
+    try {
+      config.master = { accessLevel: 'read-only', engine: 'codex', scope: 'all', autoStart: false };
+      store.config.save(config);
+      const r = master.ensureMasterSession({
+        home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['claude', 'codex'])
+      });
+      assert.equal(r.engine, 'codex', 'an installed pin must be honored, not overridden');
+    } finally {
+      config.master = saved;
+      store.config.save(config);
+    }
+  });
+
   it('honors master.engine over defaultEngine, and reports instructional enforcement off-claude', () => {
     const config = store.config.load();
     const saved = config.master;
@@ -574,5 +661,52 @@ describe('master API routes over HTTP', () => {
     } finally {
       master.ensureMasterSession = original;
     }
+  });
+});
+
+describe('refreshMasterIdentity (#726)', () => {
+  const os = require('node:os');
+  const fsx = require('node:fs');
+  const pathx = require('node:path');
+
+  function tmpHome() {
+    return fsx.mkdtempSync(pathx.join(os.tmpdir(), 'tc-master-'));
+  }
+
+  it('rewrites a stale API base URL without starting a session', () => {
+    const home = tmpHome();
+    // Simulate an identity generated when the port was wrong — the #726 state.
+    fsx.writeFileSync(pathx.join(home, 'CLAUDE.md'),
+      '# CLAUDE.md — TangleClaw Project Master\n**TangleClaw API base URL**: `http://localhost:3101`\n');
+
+    const result = master.refreshMasterIdentity({ home });
+    assert.equal(result.refreshed, true);
+
+    const after = fsx.readFileSync(pathx.join(home, 'CLAUDE.md'), 'utf8');
+    // Assert the API base URL LINE specifically — the file also embeds guide
+    // prose that legitimately mentions other ports, so a whole-file search for
+    // the stale value reports a false failure.
+    const urlLine = (after.match(/\*\*TangleClaw API base URL\*\*: `[^`]+`/) || [])[0];
+    assert.ok(urlLine, 'refreshed identity must carry an API base URL line');
+
+    const expectedPort = require('../lib/https-setup').effectiveServerPort(require('../lib/store').config.load());
+    assert.match(urlLine, new RegExp(`localhost:${expectedPort}\``),
+      `identity should name the effective port ${expectedPort}, got: ${urlLine}`);
+  });
+
+  it('does nothing when skipIfAbsent is set and no master home exists', () => {
+    const home = pathx.join(os.tmpdir(), `tc-master-absent-${process.pid}`);
+    if (fsx.existsSync(home)) fsx.rmSync(home, { recursive: true });
+
+    const result = master.refreshMasterIdentity({ home, skipIfAbsent: true });
+    assert.equal(result.refreshed, false, 'must not create master state as a boot side effect');
+    assert.equal(fsx.existsSync(home), false, 'the home directory must not be created');
+  });
+
+  it('creates the identity when the home exists but the file does not', () => {
+    const home = tmpHome();
+    const result = master.refreshMasterIdentity({ home, skipIfAbsent: true });
+    assert.equal(result.refreshed, true);
+    assert.ok(fsx.existsSync(pathx.join(home, 'CLAUDE.md')));
   });
 });

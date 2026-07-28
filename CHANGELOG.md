@@ -4,6 +4,273 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.34.0] - 2026-07-27
+
+### Changed
+- **Switching a project to Codex no longer silently downgrades a confirmed bypass posture — and the
+  picker guard now covers that case (#731).** Reconciliation resets only modes the target engine cannot
+  honor, so Codex gaining `bypassPermissions` turns a Claude→Codex switch from "reset to default" into
+  "keep bypass", matching Claude→Antigravity. Where the same update also hides the launch-mode picker,
+  the #622 guard now correctly demands `confirmBypassHidden` instead of being defused by a reconciliation
+  that no longer happens. Worth knowing when reviewing a carried posture: Codex's bypass also removes the
+  sandbox, where Claude's `--dangerously-skip-permissions` does not, so a posture confirmed on Claude is
+  not identical in blast radius once carried to Codex.
+- **`logger.setConsoleStream()` can pin all console output to one stream (`lib/logger.js`).** The
+  default routing sends anything below ERROR to stdout, which is right for a long-lived server and
+  wrong for any CLI whose stdout is a parsed contract: a single INFO line lands in front of the
+  payload and breaks every caller reading stdout as data. `scripts/apply-update.js` pins to stderr,
+  so the applier's refusal log stays visible without corrupting the JSON — it was corrupting it, in
+  exactly the refusal case the prompt tells an agent to parse. Level filtering and file logging are
+  untouched, so the audit trail survives. Default behavior is unchanged.
+  `initFileLogging` also takes `{ rotate: false }` for the same caller. Rotation renames the log
+  file, and the long-running server holds an open descriptor on the old inode — a short-lived
+  process rotating the shared log would leave the server writing to `tangleclaw.log.1`, unnoticed,
+  until its next restart. The owner of a log owns its rotation.
+
+### Fixed
+- **The #707 default-engine fix now reaches the surfaces that bypassed it.** Two paths still produced the
+  original symptom: the Create-project drawer seeded its engine from `config.defaultEngine` and POSTed
+  it, so the server's `data.engine || resolveDefaultEngine(config)` never reached its fallback; and
+  Master settings could pin `settings.engine`, which `_masterRuntime` honored unconditionally — an
+  operator who pinned Claude on a machine without it got `binary not found` again, from a second door.
+  The Master pin now goes through the same resolver by standing in for `defaultEngine`, so precedence is
+  identical everywhere. Engine pickers are also gated consistently: uninstalled engines stay listed
+  (someone who installs one later shouldn't have to hunt for it) but are `disabled` and labelled
+  `(not installed)` in the Create-project, Settings, and Master pickers — the last of which previously
+  neither labelled nor disabled them, on the surface where it fails hardest since the master runs its
+  engine immediately.
+- **A skipped project no longer disappears silently.** The setup wizard never read `warnings` off
+  `/api/setup/complete`, so an operator finished setup believing every directory they ticked was
+  attached; the import path logged only to `console.warn`. Both now surface to the operator, and both
+  routes log server-side regardless of what the client does.
+- **`resolveDefaultEngine` picks a stable engine and says when it substitutes.** "The first installed
+  engine" was `readdirSync` order over the profile directory — filesystem-dependent, so the same machine
+  could pick differently after a profile is added or a reinstall recreates the directory, and this value
+  gets persisted onto projects. Now sorted by id, and the substitution is logged once where it is
+  decided rather than being invisible at every call site.
+- **TangleClaw no longer defaults to an AI engine that isn't installed (#707).** The shipped config
+  default is `claude`, and every fallback hardcoded the same literal — so on a machine without Claude
+  Code the setup wizard's own availability list said "✗ Claude Code — Not found" while the Default
+  Engine dropdown directly below it offered every engine and pre-selected Claude. The consequences
+  surfaced far from that screen: the Project Master refused to launch (`Engine "claude" not available
+  (binary not found)`), new and attached projects were registered against the missing engine, and
+  boot regenerated a `CLAUDE.md` for it. New `engines.resolveDefaultEngine(config)` prefers the
+  configured engine when it is installed, otherwise the first installed one, and returns `null` when
+  the machine has none. An id matching no known profile is deliberately passed through unchanged, so
+  a typo in `config.json` is still reported by name instead of being silently replaced. Wired at the
+  Project Master (`lib/master.js`), project create and attach and the boot config sync
+  (`lib/projects.js`), and wizard attach plus bulk import (`server.js`). The Project Master **refuses
+  to launch** on the `null` case and says so (`No AI engine is installed — install one …`) because it
+  runs an engine immediately; create / attach / import instead record the configured intent, since
+  registering a project is bookkeeping and must not require an engine binary to be present.
+  Deliberately still literal, each for a reason: `lib/store.js`'s row default (the store layer cannot
+  depend on `engines` without a require cycle, and callers resolve before reaching it), the
+  `projConfig` fallback in `lib/engines.js` (it answers "which engine owns this path", not "what is
+  the default"), and the DB column default (changing it is a migration). The Settings, Create-project,
+  and Master engine pickers are gated too: uninstalled engines stay listed but are labelled and
+  disabled. There turned out to be **five** engine pickers, not four — `public/session.js` carried its
+  own pre-#707 copy of the option builder, and `session.html` never loads `ui.js`, so gating that file
+  did nothing for the session page. That page's settings modal PATCHes the chosen engine straight onto
+  the project, making it the shortest path back to the original `binary not found`. All five now
+  delegate to one implementation in `public/api-helper.js`, which both pages already load — the
+  duplication was the actual defect, and gating copies one at a time was never going to end. The setup
+  wizard (`public/setup.js`) keeps its own option builder for now: it gates and carries the same name
+  fallback, but it disables on a falsy `available` where the shared builder uses `available === false`,
+  so converging it is a behavior decision about a profile with no flag rather than a lift-and-shift —
+  tracked as #738.
+
+  Found on a first-time install where Codex was the only engine present.
+- **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
+  engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
+  labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list
+  above it. The default seeds from config only when that engine is installed, is re-checked on every
+  render rather than once, and when nothing is installed the picker is replaced by a plain statement
+  of that with the confirm summary reading "None installed" instead of a literal `null`.
+- **One definition of "the engine will honor this launch mode" (#731).** Session launch, launch-command
+  assembly, and project reconciliation each answered that question and had drifted into three
+  predicates — two checking `disabled`, one checking only presence — so the same mode could be honored
+  by one caller and stranded by another. `engines.honorsLaunchMode()` is now the single definition and
+  the other two delegate. It uses `hasOwnProperty`, which closes a real hole: launch mode reaches the
+  server from request bodies, and `constructor` / `__proto__` / `toString` resolve to truthy prototype
+  members that a bare index accepted as valid modes — appending no args and logging no warning, exactly
+  the silent mismatch the change set out to remove.
+- **A session now records the launch mode it actually ran (#731).** `_buildLaunchCommand` drops a mode
+  the engine cannot honor, but the session row kept the mode that was *requested*, so the API, the UI,
+  and anything else reading it asserted a posture the process was never started with — an operator who
+  picked Bypass on an engine without one saw "Bypass" over an interactive agent, contradicted only by a
+  server log. The stored value is now the reconciled one, and the effective mode is threaded onward to
+  preKey resolution rather than re-derived.
+  This covers the OpenClaw **Web UI** path too, where the mode is carried solely by ClawBridge's
+  `permissionMode` and therefore takes effect only on a successful pre-create — the code there already
+  logged "mode will not propagate" on failure and then recorded the mode regardless. It now records
+  `null` in exactly the cases where nothing propagated, and logs the requested mode alongside so the
+  divergence is visible.
+- **Codex's "Full Auto" launch mode could not start a session at all (#731).** `data/engines/codex.json`
+  declared `--full-auto`, and current `codex-cli` rejects it outright — `codex --full-auto` exits 2 with
+  `error: unexpected argument '--full-auto' found`. The tmux session was created and the launch command
+  sent, so TangleClaw reported a launch while Codex died immediately; the operator saw a session that
+  never came up. Verified against `codex-cli 0.145.0`, where the flag is absent from `--help` entirely.
+  Full Auto now maps to `--ask-for-approval never --sandbox workspace-write`, which is what the mode
+  always meant: no approval prompts, sandbox retained.
+  The flag came from #211, taken verbatim from #209's probe target — which said "`--full-auto` or
+  `--auto-edit` (verify per installed version)". The guess shipped and the verification did not. Found by
+  a first-time Codex-only installer, i.e. the first person for whom Codex was not a secondary engine.
+- **Codex gains the Bypass launch mode it never had (#731, closes the Codex half of #209).**
+  `--dangerously-bypass-approvals-and-sandbox` — skips every approval *and* the sandbox, where Full Auto
+  keeps the sandbox. It uses the same `bypassPermissions` key as the `claude`, `antigravity`, and
+  `openclaw` profiles, so a project's stored `defaultLaunchMode` survives an engine change instead of
+  silently degrading. Codex and Aider were the only profiles without a bypass mode; Aider genuinely has
+  no equivalent flag, so it stays as-is.
+- **An unknown launch mode is no longer swallowed (#731).** `_buildLaunchCommand` appended mode args only
+  when the engine defined that mode, and otherwise fell through in silence — so a session launched with
+  engine defaults while reporting the mode the caller asked for, and an operator who selected Bypass got
+  an interactive agent with nothing said. Modes are engine-specific and a stored `defaultLaunchMode`
+  outlives a project's engine change, so the mismatch is reachable in ordinary use. Launching with
+  defaults is still the right fallback — refusing would strand a project over a cosmetic setting — but it
+  now logs the engine, the unknown mode, and the modes that do exist.
+- **The update prompt injected into an AI session no longer hands the agent unguarded git (#730).**
+  Tapping the session-page update badge sent a fixed six-step script whose third step was
+  `git pull origin main` — while the "Update & restart" button beside it on the dashboard went
+  through `lib/update-applier.js`, which refuses a dirty tree, refuses any HEAD that is not `main`
+  or a release tag, and moves by `git checkout <release tag>`. One operation, two mechanisms, guards
+  on only one of them. The consequences were not theoretical: the prompt would merge `main` into
+  whatever feature branch happened to be checked out (observed live against this repo's own session,
+  mid-merge, on a branch), and it shipped unreleased commits to an operator who had clicked a button
+  labelled with a version number. Worse, a successful update leaves the checkout **detached at the
+  release tag** — so running the prompt on an already-updated install fast-forwarded HEAD to a
+  non-tag commit, `git describe --exact-match` then failed, `_headState` returned `updatable: false`,
+  and every later **Update & restart** refused with `wrong-ref`. A single prompt-driven update
+  disabled the in-product updater for good, which is the stranding #711 exists to prevent, caused by
+  the feature meant to avoid it.
+  The prompt now runs `scripts/apply-update.js`, a new CLI over the same applier the button calls, so
+  an agent-driven update is bound by the same rules as a clicked one. It reports the applier's
+  verbatim JSON and exits non-zero on a refusal. Because an agent told merely to "report the error"
+  will often try to *satisfy* a guard by stashing or switching branches — destroying precisely what
+  the guard was protecting — the prompt states outright that a refusal is a stop, names every code
+  the applier can return (`dirty-tree`, `wrong-ref`, `no-update`, `no-tag`, `no-git`, `git-error`),
+  and forbids git entirely. It also names the window between a successful apply and the restart: the
+  checkout is on the new release while the server still runs the old code, and `version.json` on disk
+  already reads the new version, so an agent inferring state from it would report the update as
+  finished. The restart step says what it costs instead of issuing it silently.
+  The script deliberately does not restart: staging the new code and dropping everyone's dashboard
+  are separate decisions, which is why the HTTP route leaves the restart to its client too.
+  `no-tag` had been missing from every human-facing enumeration since the applier shipped — including
+  `FEATURES.md` — so a caller was told a code it could actually receive did not exist. The test now
+  derives the list from `lib/update-applier.js` rather than restating it.
+  Decision recorded as **ADR 0010**: an update has exactly one implementation, and any surface that
+  starts one calls it. The superseded note lived in `.prawduct/artifacts/`, which is gitignored, so
+  its reasoning never reached a clone or a reviewer — the second time that has cost this project.
+
+### Internal
+- **Every guard added in this release was mutation-verified, and several failed that check first.** A
+  test written immediately after a fix tends to assert the shape of the code just written rather than
+  the behavior that would break, and it passes either way — so each new assertion here had the specific
+  edit it should catch applied, confirmed red, and reverted. Seven did not survive that on the first
+  attempt: a CLI test whose stubbed applier never logged (so stdout contamination was invisible); a
+  drift guard asserting its floor *after* appending a hand-written value; a coverage meta-guard
+  resolving `shellCommand` while the probes it guarded resolved `detection.target`; a prototype-key
+  fixture whose two branches coincided; a `syncAllProjects` case the schema made unreachable, then a
+  second version of it satisfied by leftover projects from sibling tests; a picker assertion matching
+  the word `disabled` in an unrelated radio template; and a wizard assertion matching the
+  availability-list span instead of the `<option>` it named. A related lesson: an `esc` stub more
+  permissive than production rendered labels the real one drops, which made a passing assertion untrue.
+  The rule this leaves behind — name the edit a test should fail on, make it, watch it go red — is
+  recorded in `learnings.md`, along with its corollary that an assertion whose both sides are this
+  repo's own files cannot detect upstream drift, which is how `--full-auto` stayed green for months.
+- Engine detection no longer runs per item in the bulk routes (#707). `resolveDefaultEngine` calls
+  `listWithAvailability()`, which shells out a detection probe per engine profile, so resolving inside
+  the setup-attach and import loops multiplied that across the request — and a mid-batch change in what
+  is installed would have split one batch across different engines. Both resolve once. `attachProject`
+  now reads the directory's existing `project.json` first and resolves only if that didn't answer,
+  instead of probing and discarding the result for every previously-managed directory.
+- `syncAllProjects` no longer skips the rest of a project's iteration when no engine resolves. The
+  `continue` also skipped the #247 git-hooks sync — whose own comment says it is deliberately NOT gated
+  on engine state — and the `synced` counter. Only the engine-config write is gated now.
+- The five wired `resolveDefaultEngine` call sites have tests (#707). They were untestable before:
+  the resolver read `listWithAvailability()` as a module-local reference, so availability came from
+  probing the host's PATH and a test meant different things on a developer box with four engines than on
+  CI with none. It now reads through the existing `_internal` seam. An untested call site is where this
+  bug actually lived — the resolver was never the hard part.
+- **Engine launch flags are now probed against the installed binary (#731).** Every existing engine test
+  asserted a profile's args against a literal copy of itself — self-referential, so it pinned the JSON
+  against an accidental edit but could never notice a CLI *removing* a flag. That is exactly how
+  `--full-auto` stayed green for months. `test/engine-launch-flags.test.js` runs each declared mode's args
+  past the real parser (args plus `--help`, which short-circuits before anything executes) and fails with
+  the CLI's own error text. Engines absent from the host are skipped, so CI — which has no engines —
+  cannot be the only guard; the point is that the rot surfaces on any machine that has the engine rather
+  than on a stranger's first install. Searching `--help` *text* was tried first and rejected: Claude Code
+  accepts `--enable-auto-mode` without listing it, so a text search reports a false failure on a valid
+  profile. This is the check #209's success criteria asked for and #211 did not deliver.
+- README's upgrade section no longer documents the same defect it warns about: the manual path was
+  `git pull --ff-only`, which fails outright on the tag-detached checkout a successful update
+  produces, and strands the install when run from `main`. It now points at `scripts/apply-update.js`
+  and explains why the detached-at-a-tag state is correct rather than something to "fix". The
+  automatic-check cadence also still read "every 24 hours" after #720 changed it to four, and the
+  manual path issued two restarts — `deploy/install.sh` already unloads and loads both launchd
+  agents, so it replaces the `kickstart` rather than following it, and is only needed when a release
+  changed a deploy asset.
+- An agent-driven update now leaves the same server-side trail as a button-driven one. The applier
+  logs every refusal deliberately, but those lines only reach `~/.tangleclaw/logs/` because the
+  server initializes file logging; a separate CLI process did not, so the record existed solely in
+  the agent's terminal pane. `scripts/apply-update.js` initializes it too, and degrades to a stderr
+  note rather than failing the update if the log directory is unwritable.
+- The applier's result object is recorded as a two-consumer contract in `boundary-patterns.md`. It
+  became a published shape the moment a second surface parsed it, and it had already drifted.
+
+## [4.33.0] - 2026-07-26
+
+### Changed
+- **A running server now checks for a release every 4 hours instead of every 24 (#720).** 24h was
+  chosen for a quieter release cadence than this project has: a long-running server could sit through
+  most of a release's life without noticing it, and there is still no manual "check now" (#716), so
+  the interval was the only lever. One check is a single `git ls-remote`, so six a day instead of one
+  costs nothing measurable. The first check still runs 60s after boot.
+  `updateCheckIntervalMs` was already read by `server.js` but was undocumented, unvalidated, and had
+  no surfaced default; it is now documented in the configuration reference and resolved through
+  `updateChecker.resolveCheckInterval`. A non-number, `NaN`/`Infinity`, or a value under the
+  60-second floor falls back to the default **with a logged warning** rather than reaching
+  `setInterval` — an operator who set it deserves to know it did not take, and a units typo must not
+  become a tight poll against origin.
+
+### Fixed
+- **The Project Master's identity file no longer keeps a dead API base URL (#726).** The master's
+  generated `CLAUDE.md` embeds the TangleClaw API base URL, and the only production writer was
+  `ensureMasterSession()` — which at boot ran *only* when `master.autoStart` was enabled. Managed
+  projects heal unconditionally via `projects.syncAllProjects()`; the master had no equivalent, so on
+  an install whose effective port differs from `config.serverPort` (the launchd plist sets
+  `TANGLECLAW_PORT`, which the config does not know about) the master kept being told to call a port
+  nothing was listening on — and every PortHub and shared-docs call it made failed silently. It
+  survived restarts and the #654 upgrade indefinitely unless the operator happened to open the master.
+  Field-confirmed on a first-time install still reading `http://localhost:3101` after updating.
+  The identity regeneration is now `master.refreshMasterIdentity()`, split out of
+  `ensureMasterSession()` so it can run without starting or touching a tmux session, and boot calls it
+  on every start. It is `skipIfAbsent`, so starting the server never creates master state for an
+  operator who has never opened the master, and it preserves the "never touches an already-running
+  master" contract because it does file writes only.
+  **Correction to the 4.32.1 notes:** that entry claimed already-generated configs "heal on the next
+  server start ... operators need no manual step beyond the restart this ships with." That was true
+  for managed projects and false for the master identity file, which the same entry listed as one of
+  the three sites #654 fixed.
+
+### Internal
+- **ADR 0009 records a ratified change of security posture: TangleClaw ships protected out of the
+  box, opt-out rather than opt-in (#710).** Authentication was built at the Caddy ingress and treated
+  as optional, justified by a VPN-as-perimeter assumption that was reasonable for a personal tool and
+  expired the moment there was an outside installer. Three defaults, none wrong alone, combine badly
+  on a standard install: `ingressMode: 'direct'` and `authEnabled: false` (`lib/store.js`), an
+  admin-credential wizard step appended only in caddy mode (`public/setup.js`), and a bind of all
+  interfaces whenever caddy is off (`server.js`) — an unauthenticated dashboard that can launch shell
+  sessions, reachable across the installer's network. The ADR settles #710's standing design fork in
+  favor of making the ingress part of the install, and records that there is never a default
+  credential (this repository is public, so a default would be readable by anyone and every install
+  pre-compromised until the operator acted), that a settings surface may change the credential but
+  never blank it, that recovery proves physical control and lives outside the gate, and that internet
+  exposure is unsupported rather than merely discouraged.
+  Written as a tracked ADR deliberately: the superseded posture lived in `.prawduct/artifacts/`,
+  which is gitignored, so it never reached a fresh clone, a contributor, or review — which is how it
+  went stale unnoticed. No behavior changes here; implementation is planned separately and its first
+  chunk is breaking.
+
 ## [4.32.2] - 2026-07-26
 
 ### Fixed

@@ -26,6 +26,241 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: The default engine resolves against what is installed (#707)
+
+<!-- prawduct: type=bugfix | scope=707-default-engine-availability -->
+
+**Why:** `defaultEngine` shipped as `claude` and every fallback hardcoded the same literal, so on a
+machine without Claude Code the setup wizard's own availability list said "✗ Claude Code — Not found"
+while the Default Engine dropdown below it pre-selected Claude. The damage surfaced far from that
+screen: the Project Master refused to launch (`Engine "claude" not available`), new and attached
+projects were registered against the missing engine, and boot regenerated a `CLAUDE.md` for it. Found
+on a first-time install where Codex was the only engine present.
+
+**What:** `engines.resolveDefaultEngine(config)` — configured engine when installed, unrecognized id
+passed through unchanged (a typo stays reportable by name rather than being silently replaced), else
+the first installed engine, else `null`. Wired at the Project Master, project create/attach, the boot
+config sync, and the wizard-attach and bulk-import routes. The master **refuses to launch** on `null`
+and says why, because it runs an engine immediately; create/attach/import instead record the
+configured intent, since registering a project is bookkeeping and must not require a binary.
+
+**The fix was incomplete against its own purpose, twice, and the Critic caught both.** First round:
+the Create-project drawer seeded its engine from `config.defaultEngine` and POSTed it, so the server's
+`data.engine || resolveDefaultEngine(config)` never reached its fallback; and Master settings could pin
+`settings.engine`, honored unconditionally — pin Claude on a machine without it and the original error
+returns through a second door. The pin now stands in for `defaultEngine` and goes through the same
+resolver, so precedence is stated once. Second round: those two fixes shipped **with no test that could
+fail against the code they replaced** — the existing master-pin test injects a pass-through resolver
+stub that ignores availability, so it returned the same answer either way.
+
+**A defect I introduced fixing it.** `resolvePickerEngine` returned `available[0].id` in engine-directory
+order while the server sorts *precisely because that value gets persisted onto projects* — and the
+drawer's value is persisted, since `data.engine` wins. I reintroduced the bug I had just fixed, one
+layer up. Now sorted, filtering truthy `available` like the server rather than `!== false`, which read
+a missing flag as installed.
+
+**Convergence.** The Master picker was a fourth hand-rolled copy of the option template, and it was the
+copy that drifted — neither labelling nor disabling uninstalled engines, on the surface where that
+fails hardest. It now calls `buildEngineOptions`, which also replaced three source-text greps with the
+behavioral assertions the shared function already has.
+
+**Testability was the root cause of the gap.** The five wired call sites were not merely untested, they
+were untestable: `resolveDefaultEngine` read `listWithAvailability()` as a module-local reference, so
+availability came from probing the host's PATH and a test meant different things on a box with four
+engines than on CI with none. It now reads through the existing `_internal` seam. An untested call site
+is where this bug actually lived; the resolver was never the hard part.
+
+**There were five pickers, not four.** The Critic's last pass found `public/session.js` carrying its own
+pre-#707 copy of the option builder — labelling uninstalled engines but never disabling them — and
+`session.html` never loads `ui.js`, so gating that file did nothing for the session page. Its settings
+modal PATCHes the chosen engine straight onto the project, making it the shortest path back to the
+original `binary not found`, on the operator's primary surface. The CHANGELOG had already claimed the
+pickers were "gated consistently". Gating copies one at a time was never going to converge, so all five
+now delegate to one implementation in `public/api-helper.js`, which both pages already load. The
+duplication was the defect; the missing `disabled` was a symptom of it.
+
+Not all six: the setup wizard keeps its own builder. It already gates and carries the name fallback, so
+there is no live gap, but it disables on falsy `available` where the shared builder uses
+`available === false` — converging it decides what a profile with no flag means, which is a behavior
+call, not a move (#738). Recorded rather than folded in, because the first version of this entry claimed a
+completeness that did not hold.
+
+Deliberately not changed: `lib/projects.js` still validates only that an engine profile *exists* on a
+project PATCH, never that it is installed. Refusing an uninstalled engine there would contradict this
+change's own principle — registering or re-pointing a project is bookkeeping and must not require a
+binary to be present. The pickers are the place to prevent an accidental choice; the server is not the
+place to forbid a deliberate one.
+
+This also converted `test/openclaw-engine.test.js`'s #459 contract from source-greps over the two page
+copies into behavioral assertions against the shared function — the same contract, no longer pinned to
+where the code happens to live.
+
+**Verification:** every fix mutation-tested — honoring the pin unconditionally, seeding the drawer from
+config, dropping the `disabled` gate, unsorting the pick, restoring the hardcoded `claude`, and
+restoring the `syncAllProjects` `continue` each fail. Two tests needed correcting first because they
+passed against the bug: the `syncAllProjects` case twice over (`store.projects.create` coalesces a
+falsy engine to `'claude'` so the branch was unreachable, then leftover sibling projects satisfied
+`synced >= 1` regardless), and the master-picker gating grep, which matched the word `disabled` in the
+access-level radio template. Full suite **4879 tests / 0 fail / 1 skip**; evidence 2559.
+
+## 2026-07-27: Codex Full Auto was launching a flag codex-cli had removed (#731)
+
+<!-- prawduct: type=bugfix | scope=731-codex-launch-modes -->
+
+**Why:** `data/engines/codex.json` declared `--full-auto`. Current `codex-cli` rejects it —
+`codex --full-auto` exits 2, "unexpected argument". TC created the tmux session, sent the command,
+and reported a launch; codex died instantly. The one non-interactive Codex mode could not start a
+session at all. Verified on codex-cli 0.145.0, where the flag is gone from `--help` entirely.
+
+**Provenance:** the flag came from #211, lifted from #209's probe target ("`--full-auto` or
+`--auto-edit` (verify per installed version)"). The guess shipped, the verification did not. It
+surfaced only when a first-time, Codex-only installer tried a non-interactive launch — the first
+person for whom Codex was the primary engine rather than a spare.
+
+**What:** Full Auto → `--ask-for-approval never --sandbox workspace-write` (its actual meaning: no
+approvals, sandbox kept). Added `bypassPermissions` → `--dangerously-bypass-approvals-and-sandbox`,
+closing the Codex half of #209 and using the key the other profiles already share so a stored
+`defaultLaunchMode` stays portable. `_buildLaunchCommand` now logs an unknown mode instead of
+launching engine defaults while reporting the requested mode.
+
+**The finding that outlives this bug.** Every engine test asserted a profile's args against a literal
+copy of itself — `assert.deepEqual(profile.launchModes.sandbox.args, ['--sandbox'])`. Both sides are
+this repo's own JSON, so no such test can ever notice the CLI removing a flag; one even names a
+version in its `describe` string ("pinned to the real agy v1.0.10 flag surface") with nothing
+enforcing it. `test/engine-launch-flags.test.js` probes the real parser instead. Two design notes
+worth keeping: (1) searching `--help` text was the obvious oracle and is **wrong** — Claude Code
+accepts `--enable-auto-mode` without documenting it, so text search fails a valid profile; only the
+parser knows what the parser takes. (2) The probe keys on `detection.target`, not
+`launch.shellCommand`, because OpenClaw dispatches over `ssh` and would otherwise be probed against
+the ssh binary.
+
+**A safety consequence, recorded rather than discovered later.** Giving Codex a bypass mode changes
+engine-switch reconciliation: it downgrades only modes the target cannot honor, so Claude→Codex now
+*keeps* a confirmed bypass posture instead of resetting it — the same behavior Claude→Antigravity has
+always had. Where the update also hides the launch-mode picker, the #622 guard correctly demands
+`confirmBypassHidden` rather than being defused by a reconciliation that no longer happens. Both
+cases are now pinned. Note the asymmetry when reviewing a carried posture: Codex's bypass also drops
+the sandbox, where Claude's `--dangerously-skip-permissions` does not, so the carried posture is not
+identical in blast radius to the one that was confirmed.
+
+**Test changes that are corrections, not weakenings.** Two existing assertions encoded facts about the
+outside world that are false: `engines.test.js` asserted `--full-auto`, and
+`launch-mode-settings.test.js` used codex as its example of "an engine that cannot honor bypass". The
+first now asserts the working flags; the second moved to `aider`, which genuinely has no bypass mode,
+so the invariant it tests is unchanged and still covered. Nothing was relaxed — both files gained
+assertions.
+
+**Critic cumulative (0 blocking / 10 warnings / 13 notes) — the three that mattered.** (1) The fix was
+log-only: `_buildLaunchCommand` dropped an unhonored mode but `sessions.js` still persisted the
+*requested* one, so the DB row and every API/UI consumer kept asserting a posture the process was never
+launched with — only a log grep disagreed. Now stores the reconciled mode. (2) The same question was
+being answered by three different predicates (two checked `disabled`, my new one checked presence
+only); collapsed into `engines.honorsLaunchMode`, which also uses `hasOwnProperty` — `constructor` /
+`__proto__` arrive from request bodies and a bare index treated them as valid modes. (3) All three
+reviewers independently flagged that my "covers at least one installed engine" meta-guard was a
+tautology: it resolved `shellCommand` (openclaw → `ssh`, present everywhere) while the real probes
+resolve `detection.target`, so it passed while zero engines were probed — and in the very failure it
+existed to catch it would skip and still report green. **Third time this session I wrote a guard that
+could not fail.** It now asserts `resolveBinary('sh')`, which detects a broken resolver independent of
+which engines are installed; breaking the resolver yields 1 fail + 9 skips instead of a green wall.
+
+**Second Critic pass — 9/10 fixed, two real gaps closed after.** (a) The "records the mode it actually
+ran" fix was tmux-path only: `launchOpenClawWebUI` still persisted the requested mode, on a path where
+the mode is carried solely by ClawBridge's `permissionMode` and takes effect only on a successful
+pre-create — the code there already logged "mode will not propagate" and then recorded it anyway. My
+CHANGELOG claimed the fix without that qualification. Fixed rather than softened: it records `null`
+where nothing propagated, and logs the requested mode beside it. (b) The effective mode is now threaded
+into `_deferEngineInit`/`_resolvePreKeys` instead of re-derived, and the last two bare-index
+`launchModes[mode]` lookups now go through `honorsLaunchMode`.
+
+**Real-session verification (closes the standing "argument-parse depth only" finding).** Launching a
+throwaway tmux session against codex-cli 0.145.0: `--ask-for-approval never --sandbox workspace-write`
+brings up the TUI and the status bar reads `Ready · never`, confirming the approval policy actually
+took; `--dangerously-bypass-approvals-and-sandbox` brings up the TUI with `permissions: YOLO mode` in
+Codex's own header. Both also confirm the engine-level `preKeys: ["Enter","Enter"]` are still correct
+under the new flags — codex opens on a directory-trust prompt that those keys clear. This matters
+because the original bug's symptom was "cannot start a session at all", which no amount of flag
+parsing proves against.
+
+**Third pass — one BLOCKING, correctly raised.** The Web UI reconciliation shipped with no test at all:
+the delta's only behavior change was a four-branch decision, and it got prose in three documents while
+its tmux twin got a dedicated helper. Closed with three cases (no bridge port / failed pre-create /
+successful pre-create), mutation-verified — reverting to `options.launchMode` fails two of them. Also
+moved the effective-mode judgement onto `launchProfile`, the same object `_buildLaunchCommand` reads for
+argv — **durability, not a fix**: `applyLaunchOverlay` spreads `...engineProfile` and rewrites `launch`
+alone, so `launchModes` is the same reference and no input changes outcome today. An asymmetry does
+survive: argv uses `options.launchMode` while the row uses `options.launchMode || defaultLaunchMode`,
+latent only because every shipped profile defaults to `default` with empty args. The durable fix is to
+have `_buildLaunchCommand` return the mode it honored; not taken here, still open.
+
+**A fourth can't-fail test, caught by the Critic.** The `_resolvePreKeys` prototype-key regression I
+added used `constructor` — and `Object.preKeys` is `undefined`, so the old bare-index path fell through
+to the identical engine-level branch. Old and new returned the same value: the test reproduced exactly
+the flaw it was written to catch. A separating fixture needs an inherited mode that actually carries
+preKeys (`Object.create({ evil: { preKeys: ['X'] } })`), where a bare index returns `['X']` and
+`hasOwnProperty` does not. Now mutation-verified.
+
+**The pattern, stated once.** Four times this session I wrote a guard or test that could not fail: a
+stub that never logged, a floor asserted after the value was pushed, a meta-guard resolving a different
+key than the thing it guarded, and a prototype fixture whose two branches coincide. Each was written
+immediately after fixing a real bug, and each asserted the shape of the code I had just written rather
+than the behavior that would break. The check that generalizes: *name the mutation this test is
+supposed to catch, apply it, and watch it go red* — if that cannot be stated concretely, the test is
+documentation.
+
+**Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
+codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
+accepted by invoking the real binary. Full suite **4841 tests / 0 fail / 1 skip**; evidence 2545.
+
+## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
+
+<!-- prawduct: type=bugfix | scope=730-update-pill-guards -->
+
+**Why:** Two update mechanisms reached the same repository and only one was guarded. The dashboard
+button called `lib/update-applier.js` (fails closed on: not a git checkout, no newer release, dirty
+tree, HEAD that is neither `main` nor a release tag; moves by `git checkout <tag>`). The session-page
+badge injected a fixed script whose third step was `git pull origin main` — no guards, different ref.
+It merged `main` into whatever branch was checked out (hit live against this repo's own session,
+mid-merge, on a feature branch) and shipped unreleased commits to someone who clicked a versioned
+control. The sharp failure: a successful apply leaves the checkout detached at the release tag, so
+running the prompt on an updated install moved HEAD to a non-tag commit, `_headState()` returned
+`updatable: false`, and every later **Update & restart** refused with `wrong-ref` — one prompt-driven
+update permanently stranded the install off the in-product path, which is the failure #711 exists to
+prevent, produced by the feature meant to avoid it.
+
+**What:** `scripts/apply-update.js` — a CLI over the same applier, printing its verbatim result JSON
+on stdout and exiting 1 on refusal. `buildUpdatePrompt` drives it, names every refusal code, forbids
+git outright, and states that a refused guard is a stop (an agent told only to "report the error"
+tends to *satisfy* the guard by stashing or switching branches — destroying what it protected).
+`lib/logger.js` gains `setConsoleStream()` and `initFileLogging(dir, {rotate})`. README's manual path
+had the same defect (`git pull --ff-only`, which fails outright on a tag-detached checkout).
+
+**Decision:** an update has exactly one implementation, and any surface that starts one calls it.
+Recorded as **ADR 0010** — tracked, because the superseded note lived in `.prawduct/artifacts/`,
+which is gitignored, so its reasoning reached no clone and no reviewer. Second time that has cost
+this project a decision nobody could read.
+
+**Critic findings, and one carried disposition.** Cumulative: 0 blocking, 11 warnings — all fixed,
+verified by `verify-resolutions` (fact `rev-20260727T050157Z-5a47cedc`). The highest-value one I
+could not have found myself: the "prints JSON on stdout" contract was false on *every real
+invocation*, because the logger routes anything below ERROR to stdout and the applier logs on all
+terminal paths — so a log line preceded the payload precisely in the refusal case the prompt tells an
+agent to parse. The tests could not catch it (a stubbed applier never logs), and I had run the script
+live and read past the log line in its own output. Carried forward deliberately: **the restart stays
+unconditional** (R-7). Clicking the pill authorizes the update, and the restart is what makes it take
+effect; gating it behind a second confirm would leave installs routinely half-updated — checkout
+moved, server still on the old code — which is strictly worse than a brief dashboard drop. The prompt
+now discloses the cost and names that window instead.
+
+**Deliberately not spawn-tested.** Running the real script in the suite would call `applyUpdate()`
+for real; on a clean checkout of `main` with a newer release available that performs an actual
+update. A test suite that can silently move the developer's checkout is the exact accident this
+script exists to prevent, so the process wiring is extracted into `configureProcessLogging()` and
+executed with fakes instead.
+
+**Tests:** `+16` `test/update-prompt-guards.test.js`, `+5` `test/logger.test.js`. Full suite
+**4808 tests / 0 fail / 1 skip**; evidence 2520 JUnit cases.
+
 ## 2026-07-27: Releases tag and publish themselves from CI, not from the wrap pipeline (#713)
 
 <!-- prawduct: type=bugfix | scope=release-713 -->

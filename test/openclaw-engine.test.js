@@ -277,27 +277,48 @@ describe('OpenClaw engine integration', () => {
     });
   });
 
-  describe('buildEngineOptions frontend contract (#459, structural)', () => {
-    // Source-level assertions over the two frontend copies, matching the
-    // project's structural-test convention for picker/modal functions.
-    const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-    const sessionSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+  describe('buildEngineOptions frontend contract (#459)', () => {
+    // Was source-level over the ui.js and session.js copies. Both now delegate
+    // to one implementation in public/api-helper.js (#707 — the session.js copy
+    // was a pre-gating duplicate that shipped ungated), so these run against the
+    // real function instead of grepping for it: the same contract, checked by
+    // behavior rather than by where the code happens to live.
+    require('../public/api-helper.js');
+    const esc = (str) => (typeof str !== 'string' ? '' : str
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+    const build = (list, sel) => globalThis.tcBuildEngineOptions(list, sel, esc);
 
-    for (const [label, src] of [['ui.js', uiSrc], ['session.js', sessionSrc]]) {
-      it(`${label}: no OpenClaw optgroup remains in buildEngineOptions`, () => {
+    it('never groups entries under an optgroup', () => {
+      const html = build([
+        { id: 'claude', name: 'Claude Code', available: true },
+        { id: 'openclaw:1', name: 'Remote (OpenClaw)', available: true, category: 'OpenClaw' }
+      ], 'claude');
+      assert.ok(!html.includes('optgroup'), 'OpenClaw entries must not be grouped');
+    });
+
+    it('does not filter entries out by OpenClaw category', () => {
+      const html = build([{ id: 'openclaw:1', name: 'Remote', available: true, category: 'OpenClaw' }], '');
+      assert.ok(html.includes('value="openclaw:1"'), 'a category must not remove an entry the caller passed');
+    });
+
+    it('renders a selection missing from the served list as (unavailable)', () => {
+      // A project bound to a hidden or retired engine must still show its own
+      // value, or the settings modal silently displays a different choice than
+      // the one stored.
+      const html = build([{ id: 'claude', name: 'Claude Code', available: true }], 'gemini');
+      assert.ok(html.includes('value="gemini"'), 'the stale binding must still render');
+      assert.ok(html.includes('(unavailable)'), 'and be marked, not dropped');
+      assert.ok(/value="gemini"[^>]*selected/.test(html), 'and stay selected');
+    });
+
+    for (const file of ['ui.js', 'session.js']) {
+      it(`${file} delegates rather than keeping its own copy`, () => {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
         const fn = src.slice(src.indexOf('function buildEngineOptions'));
         const body = fn.slice(0, fn.indexOf('\n}'));
-        assert.ok(!body.includes("optgroup"), `${label} must not group OpenClaw entries anymore`);
-        assert.ok(!body.includes("category === 'OpenClaw'"), `${label} must not filter by OpenClaw category`);
-      });
-
-      it(`${label}: stale-binding fallback renders the current selection as (unavailable)`, () => {
-        const fn = src.slice(src.indexOf('function buildEngineOptions'));
-        const body = fn.slice(0, fn.indexOf('\n}'));
-        assert.ok(body.includes("!engineList.some(e => e.id === selectedId)"),
-          `${label} must guard on selectedId missing from the served list`);
-        assert.ok(body.includes('(unavailable)'),
-          `${label} must render the missing selection with an (unavailable) marker instead of dropping it`);
+        assert.ok(body.includes('tcBuildEngineOptions('), `${file} must call the shared builder`);
+        assert.ok(!body.includes('optgroup'), `${file} must not reintroduce grouping`);
       });
     }
   });

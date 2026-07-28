@@ -19,8 +19,9 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `serverPort` | number | `3101` | Landing page HTTP server port. The install script sets `TANGLECLAW_PORT=3102` via launchd, so the effective default after installation is **3102**. |
+| `updateCheckIntervalMs` | number | `14400000` (4h) | How often a running server re-checks origin for a new release. The first check runs 60s after boot regardless. Values below 60000 (1 minute), or non-numbers, are rejected with a logged warning and the default is used — a typo must not become a tight poll against origin. There is no manual "check now" yet (#716), so this interval is currently the only way to shorten notification latency. |
 | `ttydPort` | number | `3100` | ttyd terminal emulator port. `install.sh` installs the direct-mode bind (`--port 3100`); in `caddy` ingress mode `ingress-cutover.js` swaps it for a Unix socket so ttyd is reachable only through the proxy. |
-| `defaultEngine` | string | `"claude"` | Default engine for new projects |
+| `defaultEngine` | string | `"claude"` | Preferred engine for new projects. **Used only when that engine is actually installed** — otherwise TangleClaw falls back to the first installed engine (alphabetically by id, so the choice is stable across machines) and logs the substitution. With no engine installed, the Project Master refuses to launch and says so, while project create/attach/import record the configured intent anyway (registering a project is bookkeeping and must not require a binary). An id matching no known engine profile is passed through unchanged, so a typo here is reported by name rather than silently replaced. |
 | `projectsDir` | string | `"~/Documents/Projects"` | Root directory for managed projects |
 | `deletePassword` | string\|null | `null` | Password for destructive operations (hashed via scrypt when saved) |
 | `quickCommands` | array | see below | Global quick command buttons |
