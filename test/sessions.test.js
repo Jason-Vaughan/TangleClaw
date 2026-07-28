@@ -932,6 +932,50 @@ describe('sessions', () => {
           `yielding must bring the prime within budget (got ${prompt.length})`);
       });
 
+      it('warns that directives are filling the channel BEFORE anything is dropped', () => {
+        const { setLevel: setLogLevel } = require('../lib/logger');
+        const base = store.engines.get('claude');
+        // A DEDICATED project: sibling tests seed learnings on the shared
+        // fixture, and the advisory measures the non-yielding core. Sizing a
+        // budget against a prompt that carries yieldable content makes this
+        // test depend on which of its siblings ran first.
+        const advPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-advisory-'));
+        store.projects.create({ name: 'advisory-test', path: advPath });
+        store.projectConfig.save(advPath, { engine: 'claude', silentPrime: true });
+        const advProject = store.projects.getByName('advisory-test');
+
+        const bare = sessions.generatePrimePrompt(advProject, base);
+        // A budget the directives fit inside, but only just. The whole value of
+        // this signal is that it arrives while there is still room to act — a
+        // warning that fires once content is already gone arrives too late.
+        const snug = {
+          ...base,
+          capabilities: {
+            ...base.capabilities,
+            startupInjection: { maxChars: Math.ceil(bare.length / 0.84) }
+          }
+        };
+
+        const logged = [];
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        setLogLevel('warn');
+        process.stdout.write = (chunk, ...rest) => { logged.push(String(chunk)); return originalWrite(chunk, ...rest); };
+        let prompt;
+        try {
+          prompt = sessions.generatePrimePrompt(advProject, snug);
+        } finally {
+          process.stdout.write = originalWrite;
+          setLogLevel('error');
+        }
+
+        assert.ok(logged.some((l) => l.includes('approaching the channel budget')),
+          'the advisory fires');
+        assert.ok(prompt.length <= snug.capabilities.startupInjection.maxChars,
+          'and it fires while the prime still fits — a leading signal, not a post-mortem');
+        assert.equal(prompt.includes('omitted here to fit'), false,
+          'nothing has yielded yet at the moment the warning arrives');
+      });
+
       it('does not impose the startup-hook budget on the paste channel', () => {
         // silentPrime off — the prime is pasted into the terminal, which the
         // engine's startup-hook limit does not describe. Bulk context must not
