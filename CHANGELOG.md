@@ -5,7 +5,11 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- **BREAKING: TangleClaw now listens on `127.0.0.1` only, unless you explicitly opt out (#710).**
+- **⚠ Remote access changes: TangleClaw now listens on `127.0.0.1` only, unless you explicitly opt
+  out (#710).** This breaks an install currently reached from another device — read "What breaks"
+  below before updating. It ships in the 4.x line on purpose: `5.0.0` is reserved for the completed
+  secure-by-default scope, where a credential ships with the install rather than the doors merely
+  closing.
   Reaching the dashboard means running shell commands as the operator — it launches AI sessions with
   shell access — so a default install was offering arbitrary code execution, plus every managed
   project and any credential in it, to anyone who could reach the machine. That default was written

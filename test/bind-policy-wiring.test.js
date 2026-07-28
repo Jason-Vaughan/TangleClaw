@@ -164,6 +164,28 @@ describe('the default ships as loopback', () => {
   });
 });
 
+describe('both shell-capable listeners follow the same opt-in', () => {
+  const CUTOVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
+
+  it('rolls back to direct mode without reopening the terminal to the network', () => {
+    // The rollback path used to fill the bind pair with `--port <n>` and no
+    // interface, which binds every interface — so cutting back to direct mode
+    // silently republished an unauthenticated writable shell, regardless of what
+    // the dashboard was doing. Both doors move together now.
+    assert.match(CUTOVER_SRC, /const ttydBindAddress = config\.bindAllInterfaces === true \? '0\.0\.0\.0' : '127\.0\.0\.1'/);
+    assert.match(CUTOVER_SRC, /TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress/);
+    assert.doesNotMatch(CUTOVER_SRC, /TTYD_BIND_KEY: '--port'/,
+      'a port-only ttyd bind is a wide bind');
+  });
+
+  it('uses the same boolean-true test the dashboard bind uses', () => {
+    // If these two ever disagree on what counts as opting in, one door opens
+    // without the other — the asymmetric-gate failure recorded in ADR 0001.
+    assert.match(CUTOVER_SRC, /config\.bindAllInterfaces === true/,
+      'the terminal must not accept a looser truthiness test than the dashboard');
+  });
+});
+
 describe('the settings toggle cannot lie about what the socket does', () => {
   const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 

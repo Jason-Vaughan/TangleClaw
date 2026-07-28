@@ -120,6 +120,10 @@ function planCutover(target, ctx) {
       TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
       LAUNCHD_PATH: env.launchdPath,
       TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
+      // Ignored by ttyd when the interface is a unix socket (verified: no TCP
+      // listener is opened), but the template slot must still be filled or the
+      // literal placeholder would reach argv.
+      TTYD_PORT: String(config.ttydPort || 3100),
       // #397 bug 2: tell the inline launcher which socket to unlink before bind.
       TTYD_SOCKET: ctx.socketPath
     });
@@ -149,15 +153,22 @@ function planCutover(target, ctx) {
     };
   }
 
-  // target === 'direct' — restore today's behavior. Only the ttyd plist needs
+  // target === 'direct' — restore direct TCP. Only the ttyd plist needs
   // rewriting (back to TCP); Caddy is unloaded; the server restarts onto its
-  // own HTTPS on all interfaces.
+  // own HTTPS.
+  //
+  // #710: rolling back to direct must NOT reopen the terminal to the network.
+  // ttyd runs `--writable` against `tmux attach-session`, so the interface is a
+  // security boundary, not a convenience — it follows the same `bindAllInterfaces`
+  // opt-in as the dashboard rather than defaulting wide the way it used to.
+  const ttydBindAddress = config.bindAllInterfaces === true ? '0.0.0.0' : '127.0.0.1';
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, HOME: env.home,
     // #500: attach script installed outside the repo (non-TCC).
     TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
     LAUNCHD_PATH: env.launchdPath,
-    TTYD_BIND_KEY: '--port', TTYD_BIND_VAL: String(config.ttydPort || 3100),
+    TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
+    TTYD_PORT: String(config.ttydPort || 3100),
     // Direct mode binds TCP — no socket to unlink; leave TTYD_SOCKET empty.
     TTYD_SOCKET: ''
   });
