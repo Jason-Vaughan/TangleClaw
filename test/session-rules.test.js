@@ -530,7 +530,7 @@ describe('sessionRules v19→v20 kind migration (CC-6, #381)', () => {
       // project-scoped: a global (project_id NULL) row would be purged by the
       // v24→v25 tier retirement, which has its own migration test below.
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 28);
+      assert.equal(ver.version, 29);
 
       // The pre-existing row backfilled to kind='startup'…
       const rules = store.sessionRules.list();
@@ -589,7 +589,7 @@ describe('sessionRules v22→v23 op CHECK migration (SR-3MW8)', () => {
       const db = store.getDb();
       // Schema advanced to current (v22→v23 op CHECK, then v23→v24 critic_gate).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 28);
+      assert.equal(ver.version, 29);
 
       // The CHECK constraint is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -721,7 +721,7 @@ describe('sessionRules v23→v24 critic_gate migration (SR-7K2P)', () => {
       const db = store.getDb();
       // Schema advanced to current (the v23→v24 rebuild is the last step).
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 28);
+      assert.equal(ver.version, 29);
 
       // The critic_gate CHECK is now present in the rebuilt table's DDL.
       const ddl = db.prepare(
@@ -816,7 +816,7 @@ describe('sessionRules v24→v25 tier-retirement purge', () => {
 
       const db = store.getDb();
       const ver = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(ver.version, 28);
+      assert.equal(ver.version, 29);
 
       // Only the project-scoped startup rule survives.
       const rows = db.prepare('SELECT id, content FROM session_rules ORDER BY id').all();
@@ -830,6 +830,97 @@ describe('sessionRules v24→v25 tier-retirement purge', () => {
       assert.equal(versions[0].rule_id, 2);
     } finally {
       try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sessionRuleDeliveries v28→v29 rules-hook channel migration (#749)', () => {
+  it('preserves every existing row and accepts the new channel value', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-srd-v29-'));
+    try {
+      // Seed a v28 ledger holding rows in each pre-existing channel. The
+      // migration DROPs and recreates this table to widen a CHECK constraint,
+      // and its whole promise is that the audit trail outlives the change —
+      // a promise nothing checked until this test.
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (28);
+        CREATE TABLE session_rule_deliveries (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id   INTEGER,
+          project_id   INTEGER,
+          engine_id    TEXT    NOT NULL,
+          kind         TEXT    NOT NULL DEFAULT 'startup',
+          channel      TEXT    NOT NULL CHECK (channel IN ('prime-file','prime-paste','none')),
+          outcome      TEXT    NOT NULL CHECK (outcome IN ('delivered','no-rules','skipped')),
+          skip_reason  TEXT,
+          rule_ids     TEXT    NOT NULL DEFAULT '[]',
+          rule_count   INTEGER NOT NULL DEFAULT 0,
+          digest       TEXT    NOT NULL,
+          created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+          CHECK (outcome != 'delivered' OR channel != 'none'),
+          CHECK (outcome != 'skipped'   OR skip_reason IS NOT NULL)
+        );
+        INSERT INTO session_rule_deliveries
+          (session_id, project_id, engine_id, channel, outcome, skip_reason, rule_ids, rule_count, digest, created_at)
+        VALUES
+          (11, 21, 'claude', 'prime-file',  'delivered', NULL,        '[1,2]', 2, 'aa', '2026-07-01T00:00:00Z'),
+          (12, 22, 'codex',  'prime-paste', 'delivered', NULL,        '[3]',   1, 'bb', '2026-07-02T00:00:00Z'),
+          (13, 23, 'aider',  'none',        'skipped',   'no channel','[]',    0, 'cc', '2026-07-03T00:00:00Z');
+      `);
+      seed.close();
+
+      store._setBasePath(tmpDir);
+      store.init();
+      const db = new DatabaseSync(dbPath);
+
+      assert.equal(db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 29);
+
+      const rows = db.prepare('SELECT * FROM session_rule_deliveries ORDER BY id').all();
+      assert.equal(rows.length, 3, 'every pre-existing row survives the rebuild');
+      assert.deepEqual(rows.map((r) => r.channel), ['prime-file', 'prime-paste', 'none']);
+      assert.deepEqual(rows.map((r) => r.id), [1, 2, 3], 'ids are preserved, not renumbered');
+      assert.equal(rows[0].digest, 'aa');
+      assert.equal(rows[0].created_at, '2026-07-01T00:00:00Z', 'timestamps are not restamped');
+      assert.equal(rows[2].skip_reason, 'no channel');
+
+      // The point of the rebuild: the new value is now representable.
+      db.prepare(
+        `INSERT INTO session_rule_deliveries
+           (session_id, project_id, engine_id, channel, outcome, rule_ids, rule_count, digest)
+         VALUES (14, 24, 'claude', 'rules-hook', 'delivered', '[4]', 1, 'dd')`
+      ).run();
+      assert.equal(
+        db.prepare("SELECT COUNT(*) c FROM session_rule_deliveries WHERE channel = 'rules-hook'").get().c, 1);
+
+      // And the constraints the rebuild had to carry forward still bite.
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_deliveries
+             (session_id, engine_id, channel, outcome, rule_ids, rule_count, digest)
+           VALUES (15, 'claude', 'made-up', 'delivered', '[]', 0, 'ee')`
+        ).run(),
+        /CHECK constraint failed/,
+        'an unknown channel is still rejected'
+      );
+      assert.throws(
+        () => db.prepare(
+          `INSERT INTO session_rule_deliveries
+             (session_id, engine_id, channel, outcome, rule_ids, rule_count, digest)
+           VALUES (16, 'claude', 'none', 'delivered', '[]', 0, 'ff')`
+        ).run(),
+        /CHECK constraint failed/,
+        'delivered-through-no-channel is still unrepresentable'
+      );
+      db.close();
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

@@ -4,6 +4,63 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Project rules are delivered on their own startup channel (#749).** Rules used to ride inside the
+  session prime. The engine enforces its cap on a hook's output by *replacing* the payload with a
+  short preview rather than shortening it, so a large prime took the rules down with it — on this
+  repo the agent booted having read part of rule 1 and none of rules 2–4, while the delivery ledger
+  correctly reported success.
+
+  Rules now ship on a dedicated `SessionStart` hook with its own allowance, so the prime's growth
+  and the rule set's growth can no longer harm each other. Where the corpus outgrows one channel it
+  is **sharded** across further hooks — split only on rule boundaries, in stable rule-id order, each
+  shard naming the slice it carries so a missing one is visible in what did arrive. TangleClaw
+  writes the finished JSON envelope and the hook only reads it, so no shell code ever has to escape
+  operator-authored prose.
+
+  Engines with no second startup channel keep the rules **inline in the prime**, exactly as before —
+  a manifest pointing at a channel an engine does not have would deliver nothing at all. New module
+  `lib/session-rules-channel.js`; hook `data/hooks/sessionstart-rules.sh`.
+
+  Measured on this repo: the prime falls from 16,026 characters (truncated, directives lost) to
+  **6,993** against a 10,000 budget, with all four rules delivered whole on their own channel.
+
+### Fixed
+- **Session directives are no longer silently cut out of the prime (#749).** The prime was assembled
+  against a fixed 16,000-character constant and, on overflow, sliced at the tail. On this repo that
+  fired: the prime rendered at 16,026 characters and the slice removed everything after the Feature
+  Index — including the wrap-sentinel directive, so a typed "wrap" had no marker instruction to
+  follow. Nothing recorded the loss, and the test guarding that exact scenario asserted only that
+  the prompt was *short enough*, never what survived.
+
+  Assembly is now tiered. Bulk sections yield to the budget before any directive does, lowest
+  priority first, and each yielded section is replaced by a pointer naming what went — an omission
+  the reader can see. When the directives alone exceed the budget they are emitted whole, followed
+  by a notice naming the shortfall and the on-disk path to the complete text. The blind slice is
+  gone; a test asserts it cannot return.
+
+### Changed
+- **Database schema v28 → v29 (#749).** `session_rule_deliveries.channel` gains `rules-hook`, the
+  channel startup rules ride since they moved off the prime file. The CHECK constraint could not
+  otherwise represent where the rules actually went, so the only expressible answer was a false one.
+
+  SQLite cannot alter a CHECK in place, so the table is rebuilt — inside a transaction, with a
+  postcondition that reads the new DDL from `sqlite_master` and refuses to advance the schema
+  version unless the constraint really widened. Existing rows keep their ids, digests and
+  timestamps; an audit trail's value is outliving what it describes. The new value is a superset,
+  and a downgraded binary re-enters no migration (`29 < 28` is false), so unshipping is a no-op.
+- **The prime's size budget is declared by the engine, not by TangleClaw (#749).** It now comes from
+  `capabilities.startupInjection.maxChars`, and `data/engines/claude.json` declares 10,000 to match
+  Claude Code's hook-output cap. A limit belongs to the consumer that carries the payload; a
+  constant tuned to one engine imposed that engine's number on every other. Engines declaring
+  nothing keep the previous 16,000, so no engine's behavior changes silently. Takes effect on the
+  next server restart, when bundled profiles re-sync. Resolver: `lib/sessions.js#_resolvePrimeBudget`.
+- **The Feature Index is referenced from the prime instead of inlined (#749).** Inlining made the
+  prime's length a function of how much had been authored — this repo's `FEATURES.md` is 48,605
+  characters — so the index competed with the directives and won. The prime now carries one line:
+  where the file is, plus a census of curated and ungraduated entries, so "is this worth opening" is
+  answerable without opening it. Same treatment the Project Map already had, for the same reason.
+
 ## [4.36.0] - 2026-07-28
 
 ### Added

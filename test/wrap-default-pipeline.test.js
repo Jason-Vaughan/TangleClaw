@@ -208,7 +208,7 @@ describe('v27→v28 methodology drop — terminal wrap-config seed', () => {
     const cols = store.getDb().prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
     assert.ok(!cols.includes('methodology'), 'the methodology column must be gone');
     const version = store.getDb().prepare('SELECT MAX(version) v FROM schema_version').get().v;
-    assert.equal(version, 28);
+    assert.equal(version, 29);
     store.close();
   });
 

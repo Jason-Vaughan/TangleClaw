@@ -165,6 +165,29 @@ The `configFormat` above is set to `null` because config file generation require
 | `supportsPrimePrompt` | Engine accepts injected prime prompts |
 | `supportsConfigFile` | Engine reads a config file from the project root |
 | `supportsCoAuthor` | Engine supports git co-author attribution |
+| `supportsSilentPrime` | Engine can receive the prime as hidden context at startup, rather than as typed input |
+| `startupInjection.maxChars` | How many characters this engine's startup channel can carry before *it* truncates — see below |
+
+#### `startupInjection.maxChars`
+
+An object, not a boolean: `"startupInjection": { "maxChars": 10000 }`.
+
+This is a fact about the **engine's own harness**, not a TangleClaw preference. Claude Code caps
+hook output at 10,000 characters and replaces anything longer with a short preview plus a file path
+— which means a prime that exceeds it is not shortened, it is *replaced*, and the session never sees
+the directives it carried.
+
+TangleClaw assembles the prime against whatever an engine declares here: bulk sections yield first,
+each replaced by a pointer naming what was dropped, and anything still over budget is shipped whole
+with a notice rather than cut. **Omit the field and the engine keeps the historical 16,000-character
+fallback**, so declaring it for one engine never changes another's behavior.
+
+The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the
+prime is pasted into the terminal instead, and the fallback is used.
+
+**Verify the number against the engine's own documentation before declaring it, and re-verify if
+directives start going missing.** A value copied from another engine, or left stale after the
+harness changes, fails silently and in the one place nothing else is watching.
 
 ## Config File Generation
 

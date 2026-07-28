@@ -217,7 +217,12 @@ describe('sessions', () => {
           prompt.includes('[Prime prompt truncated]'), false,
           'the blind tail truncation must not fire on the medusa path'
         );
-        assert.ok(prompt.length <= sessions.PRIME_MAX_TOKENS * 4, 'the prime respects the size cap');
+        // Against the budget the ENGINE declares, not the fallback constant —
+        // measuring against 16,000 while claude declares 10,000 leaves 6,000
+        // characters unasserted on the path that actually ships.
+        const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
+        assert.ok(prompt.length <= declared,
+          `prime length ${prompt.length} must fit the declared budget ${declared}`);
       });
 
       it('#557: contract body is omitted (with a pointer) when the budget cannot hold a useful fragment', () => {
@@ -241,6 +246,64 @@ describe('sessions', () => {
         const section = sessions._medusaContractSection(Infinity).join('\n');
         assert.ok(section.includes(body.trim()), 'the whole contract embeds under an infinite budget');
         assert.equal(section.includes('truncated'), false, 'no trim note when nothing was trimmed');
+      });
+    });
+
+    describe('startup channel budget (#749)', () => {
+      it('uses the budget the engine declares', () => {
+        // Synthetic profiles on purpose: asserting that OUR json says 10000
+        // would compare this repo against this repo and could never detect the
+        // upstream limit changing. What is testable here is that a declared
+        // budget is honored — the number's provenance is documented at the
+        // resolver and must be re-verified at its source.
+        assert.equal(
+          sessions._resolvePrimeBudget({ capabilities: { startupInjection: { maxChars: 1234 } } }),
+          1234
+        );
+      });
+
+      it('falls back to the historical budget when an engine declares nothing', () => {
+        const fallback = sessions.PRIME_MAX_TOKENS * 4;
+        assert.equal(sessions._resolvePrimeBudget(null), fallback,
+          'a null profile must not zero the budget');
+        assert.equal(sessions._resolvePrimeBudget({}), fallback);
+        assert.equal(sessions._resolvePrimeBudget({ capabilities: {} }), fallback,
+          'an engine that declares no channel keeps its previous behavior');
+      });
+
+      it('rejects a malformed declaration, and says so rather than falling back quietly', () => {
+        const fallback = sessions.PRIME_MAX_TOKENS * 4;
+        const { setLevel: setLogLevel } = require('../lib/logger');
+        const warnings = [];
+        // The logger sends everything below `error` to stdout, not stderr.
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        setLogLevel('warn');
+        process.stdout.write = (chunk, ...rest) => { warnings.push(String(chunk)); return originalWrite(chunk, ...rest); };
+        try {
+          // A zero or negative budget would empty every prime; a string makes
+          // the length comparison meaningless. All fall back — but an operator
+          // who typo'd the value must not be left believing a limit is in force.
+          for (const bad of [0, -5, '10000']) {
+            assert.equal(
+              sessions._resolvePrimeBudget({ id: 'fixture', capabilities: { startupInjection: { maxChars: bad } } }),
+              fallback, `${JSON.stringify(bad)} is not a budget`);
+          }
+        } finally {
+          process.stdout.write = originalWrite;
+          setLogLevel('error');
+        }
+        const unusable = warnings.filter((w) => w.includes('unusable startupInjection.maxChars'));
+        assert.equal(unusable.length, 3,
+          'each malformed declaration is reported, not silently swallowed');
+      });
+
+      it('no blind tail slice remains in the prime assembler', () => {
+        // Structural guard. The slice was the mechanism that silently removed
+        // the wrap-sentinel directive in production; behavior tests prove it is
+        // not reached today, this proves it cannot be reintroduced quietly.
+        const src = fs.readFileSync(require.resolve('../lib/sessions.js'), 'utf8');
+        assert.equal(src.includes('[Prime prompt truncated]'), false,
+          'sessions.js must not carry a blind-truncation marker');
       });
     });
 
@@ -613,7 +676,12 @@ describe('sessions', () => {
         try { fs.rmSync(featuresPath, { force: true }); } catch {}
       });
 
-      it('injects FEATURES.md contents under "## Feature Index" when all three gates are true', () => {
+      // The index is REFERENCED, not inlined. Inlining made the prime's length a
+      // function of how much had been authored, and the overflow silently ate
+      // whatever directive sorted after it. These three tests previously
+      // asserted the inlining contract; they now assert the pointer contract
+      // that replaced it.
+      it('points at FEATURES.md rather than inlining it when all three gates are true', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
           silentPrime: true,
@@ -624,12 +692,13 @@ describe('sessions', () => {
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
 
-        assert.ok(prompt.includes('## Feature Index'), 'prime should contain Feature Index heading');
-        assert.ok(prompt.includes('**Pill**'), 'prime should contain authored entry');
-        assert.ok(prompt.includes('lib/pill.js:42'), 'prime should contain the file pointer');
+        assert.ok(prompt.includes('## Feature Index'), 'prime should contain the Feature Index heading');
+        assert.ok(prompt.includes('`FEATURES.md`'), 'the pointer names the file to read');
+        assert.equal(prompt.includes('**Pill**'), false, 'authored entries must not be inlined');
+        assert.equal(prompt.includes('lib/pill.js:42'), false, 'entry file pointers must not be inlined');
       });
 
-      it('inlines only curated categories and caps the TODO backlog to a count (#568)', () => {
+      it('census counts curated entries and names the ungraduated backlog', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
           silentPrime: true,
@@ -645,27 +714,50 @@ describe('sessions', () => {
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
 
         assert.ok(prompt.includes('## Feature Index'), 'section header present');
-        assert.ok(prompt.includes('**Handler**'), 'curated category entry inlined');
-        // The auto-stubbed backlog is NOT inlined — only counted.
+        assert.ok(prompt.includes('1 curated entry'), 'census counts the curated entries');
+        assert.ok(prompt.includes('2 auto-stubbed awaiting graduation'), 'census names the backlog');
+        // Neither curated bodies nor backlog stubs reach the prime any more —
+        // that is the whole point of the demotion.
+        assert.equal(prompt.includes('**Handler**'), false, 'curated bodies must not be inlined');
         assert.equal(prompt.includes('**TBD**'), false, 'TBD stubs must not reach the prime');
         assert.equal(prompt.includes('lib/a.js'), false, 'backlog paths must not reach the prime');
-        assert.ok(prompt.includes('2 auto-stubbed entries awaiting graduation in 1 backlog block'),
-          'backlog is summarized as a count line');
       });
 
-      it('singularizes the backlog count line for a single entry/block (#568)', () => {
+      it('emits no pointer for a seeded stub with nothing in it yet', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: true
+        });
+        // The shape `_seedFeatureIndexFile` writes on toggle-on: headings and
+        // guidance, zero entries. Pointing an agent at this says "read this
+        // first" about a file with nothing to read.
+        fs.writeFileSync(featuresPath,
+          '# Feature Index\n\n<!-- Maintained automatically. -->\n\n## UI / Web\n\n## Server / API\n');
+
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        assert.equal(prompt.includes('## Feature Index'), false,
+          'an index with no entries produces no section at all');
+        assert.equal(prompt.includes('0 curated'), false,
+          'and certainly never instructs the agent to go read zero entries');
+      });
+
+      it('pluralizes the census for a single curated entry', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
           silentPrime: true,
           featureIndexEnabled: true
         });
         fs.writeFileSync(featuresPath,
-          '# Feature Index\n\n## TODO (auto-stubbed 2026-07-02)\n\n- **TBD** — `lib/a.js`. <!-- describe -->\n');
+          '# Feature Index\n\n## Server / API\n\n- **Only** — one thing. `lib/o.js`\n');
 
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
-        assert.ok(prompt.includes('1 auto-stubbed entry awaiting graduation in 1 backlog block'),
-          'singular entry + singular block');
+        assert.ok(prompt.includes('1 curated entry.'), 'singular entry, and no backlog clause');
+        assert.equal(prompt.includes('awaiting graduation'), false,
+          'the backlog clause is omitted when there is no backlog');
       });
 
       it('is skipped when featureIndexEnabled is false (even with silentPrime + capability)', () => {
@@ -759,29 +851,235 @@ describe('sessions', () => {
           'whitespace-only FEATURES.md should not produce an empty section');
       });
 
-      it('respects the prime size cap when FEATURES.md pushes prompt over budget', () => {
+      it('keeps every directive when FEATURES.md pushes the prompt over budget', () => {
         store.projectConfig.save(fiProjectPath, {
           engine: 'claude',
           silentPrime: true,
           featureIndexEnabled: true
         });
 
-        // Build a FEATURES.md large enough to exceed the prime's size cap, so
-        // the tail truncation has to fire.
+        // A FEATURES.md large enough to exceed the prime's size budget on its
+        // own. Bulk reference material must yield to the directives; the
+        // directives must never yield to it.
         const huge = '# Feature Index\n\n' + ('- entry padding word '.repeat(2000)) + '\n';
         fs.writeFileSync(featuresPath, huge);
+
+        const wrapSentinel = require('../lib/wrap-sentinel');
+        const engine = store.engines.get('claude');
+        const prompt = sessions.generatePrimePrompt(fiProject, engine);
+
+        // Hard precondition: if the budget is ever removed this test must fail
+        // loudly, not pass silently against an unbounded prompt.
+        assert.ok(Number.isFinite(sessions.PRIME_MAX_TOKENS) && sessions.PRIME_MAX_TOKENS > 0,
+          'precondition: the prime size budget is a real number');
+
+        // The load-bearing assertion. Measuring only that the prompt got SHORT
+        // ENOUGH treats truncation itself as success — which is how an oversized
+        // Feature Index silently ate the wrap-sentinel directive in production
+        // while this test stayed green. What matters is what SURVIVED.
+        assert.ok(prompt.includes('## Wrapping this session'),
+          'the wrap instructions survive a Feature Index that overflows the budget');
+        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
+          'the wrap sentinel token survives a Feature Index that overflows the budget');
+
+        // A blind tail slice is never an acceptable way to meet the budget: its
+        // failure mode is a prime the reader cannot tell is incomplete.
+        assert.equal(prompt.includes('[Prime prompt truncated]'), false,
+          'the budget is met by yielding bulk sections, not by slicing the tail');
+
+        // The declared budget, not the fallback: this project is on the silent
+        // -prime path, so the engine's 10,000 is what actually constrains it.
+        const declared = sessions._resolvePrimeBudget(engine, { viaStartupHook: true });
+        assert.ok(prompt.length <= declared,
+          `prompt length ${prompt.length} must fit the declared budget ${declared}`);
+      });
+
+      it('bulk sections yield to a tight budget, and say so, while directives stay whole', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: false
+        });
+        store.learnings.create({
+          projectId: fiProject.id,
+          content: 'padding learning '.repeat(60),
+          tier: 'active'
+        });
+
+        const wrapSentinel = require('../lib/wrap-sentinel');
+        const base = store.engines.get('claude');
+        // A budget deliberately too small for the learnings block but large
+        // enough for the directives, so the yield is the only way to fit.
+        const tight = {
+          ...base,
+          capabilities: { ...base.capabilities, startupInjection: { maxChars: 1800 } }
+        };
+        const prompt = sessions.generatePrimePrompt(fiProject, tight);
+
+        assert.equal(prompt.includes('padding learning padding learning'), false,
+          'the bulk learning body yields');
+        assert.ok(prompt.includes('omitted here to fit the prime size budget'),
+          'the omission is announced, not silent');
+        assert.ok(prompt.includes('## Active Learnings'),
+          'the heading stays so the reader knows something was dropped');
+        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
+          'directives are never what yields');
+        assert.equal(prompt.includes('[Prime prompt truncated]'), false,
+          'yielding replaces slicing entirely');
+        // The point of yielding is to MEET the budget. Without this the test
+        // would pass on a prime that yielded and still overflowed.
+        assert.ok(prompt.length <= 1800,
+          `yielding must bring the prime within budget (got ${prompt.length})`);
+      });
+
+      it('warns that directives are filling the channel BEFORE anything is dropped', () => {
+        const { setLevel: setLogLevel } = require('../lib/logger');
+        const base = store.engines.get('claude');
+        // A DEDICATED project: sibling tests seed learnings on the shared
+        // fixture, and the advisory measures the non-yielding core. Sizing a
+        // budget against a prompt that carries yieldable content makes this
+        // test depend on which of its siblings ran first.
+        const advPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-advisory-'));
+        store.projects.create({ name: 'advisory-test', path: advPath });
+        store.projectConfig.save(advPath, { engine: 'claude', silentPrime: true });
+        const advProject = store.projects.getByName('advisory-test');
+
+        const bare = sessions.generatePrimePrompt(advProject, base);
+        // A budget the directives fit inside, but only just. The whole value of
+        // this signal is that it arrives while there is still room to act — a
+        // warning that fires once content is already gone arrives too late.
+        const snug = {
+          ...base,
+          capabilities: {
+            ...base.capabilities,
+            startupInjection: { maxChars: Math.ceil(bare.length / 0.84) }
+          }
+        };
+
+        const logged = [];
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        setLogLevel('warn');
+        process.stdout.write = (chunk, ...rest) => { logged.push(String(chunk)); return originalWrite(chunk, ...rest); };
+        let prompt;
+        try {
+          prompt = sessions.generatePrimePrompt(advProject, snug);
+        } finally {
+          process.stdout.write = originalWrite;
+          setLogLevel('error');
+        }
+
+        assert.ok(logged.some((l) => l.includes('approaching the channel budget')),
+          'the advisory fires');
+        assert.ok(prompt.length <= snug.capabilities.startupInjection.maxChars,
+          'and it fires while the prime still fits — a leading signal, not a post-mortem');
+        assert.equal(prompt.includes('omitted here to fit'), false,
+          'nothing has yielded yet at the moment the warning arrives');
+      });
+
+      it('the Medusa contract yields before this project\'s own bulk does', () => {
+        // The scenario the contract-inside-the-loop change is FOR: medusa active
+        // and yieldable sections present at the same time. Between two pieces of
+        // bulk, the static protocol doc — identical for every project — gives way
+        // before the project's own accumulated state.
+        const medPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medyield-'));
+        store.projects.create({ name: 'med-yield-test', path: medPath });
+        store.projectConfig.save(medPath, {
+          engine: 'claude', silentPrime: true, medusaEnabled: true
+        });
+        const medProject = store.projects.getByName('med-yield-test');
+        store.learnings.create({
+          projectId: medProject.id,
+          content: 'project-specific learning that must outlive the contract ',
+          tier: 'active'
+        });
+
+        const contractFile = path.join(medPath, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\n' + 'protocol line\n'.repeat(300));
+        // Save/restore rather than delete: an unconditional delete would clear a
+        // value this test never set, leaking into whatever ran before it.
+        const priorContractPath = process.env.MEDUSA_CONTRACT_PATH;
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        try {
+          const base = store.engines.get('claude');
+          const tight = {
+            ...base,
+            capabilities: { ...base.capabilities, startupInjection: { maxChars: 4400 } }
+          };
+          const prompt = sessions.generatePrimePrompt(medProject, tight,
+            { medusaWorkspaceId: 'med-yield-cafe0123' });
+
+          assert.ok(prompt.length <= 4400,
+            `the contract's yielding must bring the whole prime within budget (got ${prompt.length})`);
+          // "Yielded" means gave up space and said so — either trimmed with a
+          // note or reduced to its pointer. Asserting one specific branch would
+          // pin the test to a budget arithmetic detail rather than the contract.
+          assert.ok(
+            /truncated to fit the prime size budget|Omitted to fit the prime size budget/.test(prompt),
+            'the contract gave up space, and announced it');
+          assert.ok(prompt.includes('project-specific learning'),
+            "the project's own learnings survive a squeeze the contract can absorb");
+          assert.ok(prompt.includes('`med-yield-cafe0123`'),
+            'the workspace identity is a directive and never yields');
+        } finally {
+          if (priorContractPath === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
+          else process.env.MEDUSA_CONTRACT_PATH = priorContractPath;
+        }
+      });
+
+      it('does not impose the startup-hook budget on the paste channel', () => {
+        // silentPrime off — the prime is pasted into the terminal, which the
+        // engine's startup-hook limit does not describe. Bulk context must not
+        // yield to a ceiling its channel does not have.
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: false,
+          featureIndexEnabled: false
+        });
+        store.learnings.create({
+          projectId: fiProject.id,
+          content: 'paste-path learning body '.repeat(40),
+          tier: 'active'
+        });
 
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(fiProject, engine);
 
-        // Hard precondition: if the cap is ever removed this test must fail
-        // loudly, not pass silently against an unbounded prompt.
-        assert.ok(Number.isFinite(sessions.PRIME_MAX_TOKENS) && sessions.PRIME_MAX_TOKENS > 0,
-          'precondition: the prime size cap is a real number');
+        assert.ok(prompt.includes('paste-path learning body'),
+          'bulk context survives on a channel with no declared limit');
+        assert.equal(
+          sessions._resolvePrimeBudget(engine, { viaStartupHook: false }),
+          sessions.PRIME_MAX_TOKENS * 4,
+          'the paste channel falls back rather than inheriting the hook limit');
+      });
 
-        const maxChars = sessions.PRIME_MAX_TOKENS * 4;
-        assert.ok(prompt.length <= maxChars + 30,
-          `prompt length ${prompt.length} should respect maxChars budget ${maxChars} (+truncation marker)`);
+      it('when the directives alone exceed budget, ships them whole and names the overflow', () => {
+        store.projectConfig.save(fiProjectPath, {
+          engine: 'claude',
+          silentPrime: true,
+          featureIndexEnabled: false
+        });
+
+        const wrapSentinel = require('../lib/wrap-sentinel');
+        const base = store.engines.get('claude');
+        // Smaller than the directive core can possibly be. Nothing may be cut:
+        // a slice here would drop whichever directive sorted last, which is the
+        // exact failure this replaced.
+        const impossible = {
+          ...base,
+          capabilities: { ...base.capabilities, startupInjection: { maxChars: 200 } }
+        };
+        const prompt = sessions.generatePrimePrompt(fiProject, impossible);
+
+        assert.ok(prompt.includes(wrapSentinel.SENTINEL_TOKEN),
+          'the wrap sentinel survives even an impossible budget');
+        assert.ok(prompt.includes('## Wrapping this session'),
+          'the wrap instructions survive even an impossible budget');
+        assert.ok(prompt.includes('budget of the channel'),
+          'the overflow is named in the prime itself');
+        assert.ok(prompt.includes('.tangleclaw/session-prime.md'),
+          'the overflow notice points at the complete text on disk');
+        assert.equal(prompt.includes('[Prime prompt truncated]'), false,
+          'an impossible budget still never produces a blind slice');
       });
 
       after(() => {

@@ -26,9 +26,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-28: Rules get their own delivery channel (#749)
+
+<!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 | status=shipped -->
+
+Chunk 01 tiered the prime and demoted the Feature Index, which cut it from 16,026 to ~11,585 on
+this repo — still over the engine's 10,000-character channel, so the rules and the wrap-sentinel
+directive would still have been replaced by a preview. The Critic caught that chunk 01 did not
+meet its own acceptance criterion, and the measurement the plan required had not been run.
+
+Chunk 02 moves rules onto a dedicated SessionStart hook with its own allowance, sharded on rule
+boundaries when the corpus outgrows one channel. The prime carries a fixed-size manifest instead,
+so the 52nd rule costs it nothing. Engines with no second startup channel keep rules inline — a
+manifest naming a channel the engine lacks would deliver nothing at all, which is the original bug
+one engine over.
+
+Measured on this repo: prime 6,993 against a 10,000 budget, all four rules delivered whole.
+
+## 2026-07-28: The prime stops cutting its own directives (#749)
+
+<!-- prawduct: type=fix | chunks=01 | scope=prime-delivery-749 | status=shipped -->
+
+The prime was assembled against a fixed 16,000-character constant and sliced at the tail on
+overflow. On this repo it fired at 16,026 characters and removed everything after the Feature
+Index — including the wrap-sentinel directive. The test guarding that exact scenario asserted only
+that the prompt was short enough, never what survived, so it stayed green throughout.
+
+Assembly is now tiered: bulk sections yield lowest-priority-first, each replaced by a pointer
+naming what went; anything still over budget ships whole with a notice. The budget is declared by
+the engine (`capabilities.startupInjection.maxChars`; claude declares 10,000) and resolved per
+channel, since the paste path never passes through the capped hook. The Feature Index is referenced
+with a census instead of inlined — this repo's `FEATURES.md` is 48,605 characters.
+
+Critic-caught in the same cycle: a planned 80%-of-budget early warning had been dropped silently,
+budget assertions were still pinned to the superseded constant, the budget was applied
+channel-blind, and the census gate emitted "0 curated entries. Read it FIRST" for a seeded stub.
+
 ## 2026-07-28: The running version, visible and true wherever it appears (#744, #745)
 
-<!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 -->
+<!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 | status=shipped -->
 
 **Why:** The dashboard read its version and update status once, at page load, and neither was in the
 polling loop. Any restart the page did not itself drive — `launchctl kickstart`, a terminal

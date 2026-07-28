@@ -1881,6 +1881,32 @@ describe('engines', () => {
       assert.equal(result.SessionStart[0].matcher, 'startup');
     });
 
+    it('registers one rules hook per shard, beside the prime hook (#749)', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 3);
+      assert.equal(result.SessionStart.length, 4, 'one prime entry plus one per shard');
+      const commands = result.SessionStart.map((e) => e.hooks[0].command);
+      assert.match(commands[0], /sessionstart-prime\.sh$/);
+      // Each shard gets its OWN entry: the engine caps each hook's output
+      // separately, so one hook emitting every shard would be capped as one.
+      assert.match(commands[1], /sessionstart-rules\.sh" 1$/);
+      assert.match(commands[2], /sessionstart-rules\.sh" 2$/);
+      assert.match(commands[3], /sessionstart-rules\.sh" 3$/);
+    });
+
+    it('registers no rules hook when the project has no rules', () => {
+      const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 0);
+      assert.equal(result.SessionStart.length, 1, 'only the prime hook');
+      assert.match(result.SessionStart[0].hooks[0].command, /sessionstart-prime\.sh$/);
+    });
+
+    it('registers no rules hook for an engine that cannot take a silent prime', () => {
+      // The rules channel IS a startup hook, so an engine without that channel
+      // must get no entry — the rules ride the prime inline for those engines.
+      const result = engines._buildBaselineHooks(
+        { silentPrime: true }, { capabilities: { supportsSilentPrime: false } }, 2);
+      assert.deepStrictEqual(result, {});
+    });
+
     it('returns empty object when silentPrime is true but engine lacks supportsSilentPrime (Critic M1)', () => {
       const profileWithout = { capabilities: { supportsSilentPrime: false } };
       const result = engines._buildBaselineHooks({ silentPrime: true }, profileWithout);
@@ -1940,6 +1966,100 @@ describe('engines', () => {
       assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
     });
 
+
+    it('writes a rules hook per shard into a real project\'s settings.json (#749)', () => {
+      // The integration the unit tests cannot reach: only this path derives the
+      // shard count from the store and puts the rules hook where the engine will
+      // actually read it. Without a REGISTERED project the derivation silently
+      // yields zero, which is why the sibling tests above still see one entry.
+      const project = store.projects.create({ name: `hookint-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      store.sessionRules.create({ content: 'a rule that must reach the session', projectId: project.id });
+      try {
+        engines.syncEngineHooks(projectDir);
+
+        const entries = readSettings().hooks.SessionStart;
+        assert.equal(entries.length, 2, 'prime hook plus one rules hook');
+        const rulesCmd = entries[1].hooks[0].command;
+        assert.match(rulesCmd, /sessionstart-rules\.sh" 1$/);
+        assert.match(rulesCmd, /^"/, 'the path is quoted, so an install directory with a space still runs');
+        assert.equal(rulesCmd.includes('{{TANGLECLAW_DIR}}'), false,
+          'the placeholder must be resolved before the engine reads it');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('is idempotent — re-syncing does not accumulate rules hooks', () => {
+      const project = store.projects.create({ name: `hookidem-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      store.sessionRules.create({ content: 'stable rule', projectId: project.id });
+      try {
+        engines.syncEngineHooks(projectDir);
+        const first = readSettings().hooks.SessionStart;
+        engines.syncEngineHooks(projectDir);
+        const second = readSettings().hooks.SessionStart;
+        assert.deepEqual(second, first,
+          'every launch re-syncs, so a non-idempotent write would grow the block without bound');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('registers exactly as many rules hooks as there are shards to read', () => {
+      // The hook count and the shard count are derived in different modules.
+      // If they disagree, either a shard is never read or a hook reads a file
+      // that was never written — both silent.
+      const rulesChannel = require('../lib/session-rules-channel');
+      const project = store.projects.create({ name: `hookcount-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      for (let i = 0; i < 6; i += 1) {
+        store.sessionRules.create({ content: `rule ${i} ` + 'y'.repeat(3000), projectId: project.id });
+      }
+      try {
+        engines.syncEngineHooks(projectDir);
+        const hookEntries = readSettings().hooks.SessionStart.length - 1; // minus the prime hook
+        const shards = rulesChannel.buildShards(
+          store.sessionRules.listActiveForProject(project.id),
+          rulesChannel.resolveChannelBudget(store.engines.get('claude'))
+        );
+        assert.ok(shards.length > 1, 'precondition: this rule set must actually shard');
+        assert.equal(hookEntries, shards.length, 'one hook per shard, no more and no fewer');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('still writes the prime hook when the rules query fails', () => {
+      const project = store.projects.create({ name: `hookfail-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      const real = store.sessionRules.listActiveForProject;
+      store.sessionRules.listActiveForProject = () => { throw new Error('db exploded'); };
+      try {
+        engines.syncEngineHooks(projectDir);
+        const entries = readSettings().hooks.SessionStart;
+        assert.equal(entries.length, 1, 'a rules-query failure must not cost the session its prime');
+        assert.match(entries[0].hooks[0].command, /sessionstart-prime\.sh$/);
+      } finally {
+        store.sessionRules.listActiveForProject = real;
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('writes no rules hook for a registered project with no rules', () => {
+      const project = store.projects.create({ name: `hooknone-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      try {
+        engines.syncEngineHooks(projectDir);
+        assert.equal(readSettings().hooks.SessionStart.length, 1,
+          'no rules means no rules hook — an entry reading a file that was never written');
+      } finally {
+        store.projects.delete(project.id);
+      }
+    });
 
     it('resolves {{TANGLECLAW_DIR}} in the baseline entry on disk', () => {
       writeProjConfig({ engine: 'claude', silentPrime: true });
