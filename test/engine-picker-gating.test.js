@@ -114,6 +114,14 @@ describe('engine picker gating (#707)', () => {
       assert.doesNotMatch(codexOpt, /disabled/);
     });
 
+    it('falls back to the id when a profile has no name', () => {
+      // Only `id` is validated when an engine profile is saved, so a
+      // hand-added profile can lack `name`. Without the fallback the option
+      // renders blank — unselectable-looking, in all four pickers.
+      const html = buildEngineOptions([{ id: 'homegrown', available: true }], '');
+      assert.match(html, />homegrown</);
+    });
+
     it('never disables the engine currently in use', () => {
       // A project already bound to an engine that has since been uninstalled
       // must still render its own value — disabling it would make the control

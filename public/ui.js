@@ -26,7 +26,10 @@ function buildEngineOptions(engineList, selectedId) {
     // refuses to keep.
     const unavailable = e.available === false && e.id !== selectedId;
     return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
-      + `${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`;
+      // `|| e.id` because only `id` is validated when a profile is saved
+      // (lib/store.js), so a hand-added profile with no `name` would otherwise
+      // render a blank option in all four pickers.
+      + `${esc(e.name || e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
   }).join('');
 
   if (selectedId && !engineList.some(e => e.id === selectedId)) {
@@ -3062,16 +3065,11 @@ function renderMasterSettingsBody(s, groups) {
       </label>`;
   }).join('');
 
-  // Same gating as every other engine picker (#707). This one previously
-  // neither labelled nor disabled uninstalled engines, so the Master could be
-  // pinned to an engine that isn't here — and the master runs its engine
-  // immediately, making it the surface where that fails hardest.
-  // Shares `buildEngineOptions` rather than hand-rolling near-identical markup:
-  // this was a fourth copy of the same option template, and it was the copy that
-  // drifted — it neither labelled nor disabled uninstalled engines, on the
-  // surface where that fails hardest, since the master launches its engine
-  // immediately. The empty option is prepended because only this picker has a
-  // "no pin" state.
+  // Shares `buildEngineOptions` (#707). This was a fourth copy of that template
+  // and the one that drifted — neither labelling nor disabling uninstalled
+  // engines, on the surface where that fails hardest since the master launches
+  // its engine immediately. The empty option is prepended because only this
+  // picker has a "no pin" state.
   const engineOpts = '<option value="">(follow default engine)</option>'
     + buildEngineOptions(state.engines, s.engine || '');
 
