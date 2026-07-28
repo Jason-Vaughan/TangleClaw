@@ -213,7 +213,10 @@ describe('the settings toggle cannot lie about what the socket does', () => {
       'the locked treatment must be keyed to an explicit modifier');
     assert.doesNotMatch(CSS_SRC, /\.gs-toggle-label:has\(input:disabled\)/,
       'a blanket disabled selector leaks onto every disabled toggle in the modal');
-    assert.doesNotMatch(CSS_SRC, /^\.gs-toggle-label input:disabled \+ \.toggle-switch/m,
+    // Unanchored on purpose: a `^`-anchored guard is defeated by one leading
+    // space, so the exact selector just removed could return indented — inside
+    // a media query or a nesting block — and the guard would stay green.
+    assert.doesNotMatch(CSS_SRC, /(^|\s)\.gs-toggle-label input:disabled/m,
       'the sibling rule must also be scoped to the modifier');
     assert.match(UI_SRC, /gs-toggle-label\$\{bindLockedByCaddy \? ' gs-toggle-locked' : ''\}/,
       'the modifier must actually be applied when locked');
