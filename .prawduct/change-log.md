@@ -82,7 +82,7 @@ duplication was the defect; the missing `disabled` was a symptom of it.
 Not all six: the setup wizard keeps its own builder. It already gates and carries the name fallback, so
 there is no live gap, but it disables on falsy `available` where the shared builder uses
 `available === false` — converging it decides what a profile with no flag means, which is a behavior
-call, not a move. Recorded rather than folded in, because the first version of this entry claimed a
+call, not a move (#738). Recorded rather than folded in, because the first version of this entry claimed a
 completeness that did not hold.
 
 Deliberately not changed: `lib/projects.js` still validates only that an engine profile *exists* on a

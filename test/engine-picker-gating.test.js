@@ -178,9 +178,14 @@ describe('engine picker gating (#707)', () => {
       it(`${file} calls tcBuildEngineOptions rather than re-implementing it`, () => {
         const src = fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
         const body = sliceFunction(src, 'buildEngineOptions');
-        // Pins the argument list too: delegating with a permissive escaper
-        // would pass a bare `tcBuildEngineOptions(` check while re-opening the
-        // blank-label hole the shared `typeof` guard closes.
+        // Pins the argument list, not just the call name. The shared builder
+        // escapes with whatever it is handed, so a page delegating with
+        // `String` or an identity function would satisfy a bare
+        // `tcBuildEngineOptions(` grep while injecting unescaped markup from an
+        // engine id or name. (It does not guard the blank-label case — the
+        // `typeof` fallback picks the label before escaping, so that one is
+        // safe regardless of the escaper.) Note this matches the parameter
+        // identifiers verbatim, so renaming them is a deliberate edit here too.
         assert.match(body, /tcBuildEngineOptions\(engineList, selectedId, esc\)/,
           `${file} must delegate to the shared builder, passing the page's own esc`);
         assert.doesNotMatch(

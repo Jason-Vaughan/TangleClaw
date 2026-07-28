@@ -71,11 +71,12 @@ All notable changes to TangleClaw are documented in this file.
   did nothing for the session page. That page's settings modal PATCHes the chosen engine straight onto
   the project, making it the shortest path back to the original `binary not found`. All five now
   delegate to one implementation in `public/api-helper.js`, which both pages already load — the
-  duplication was the actual defect, and gating copies one at a time was never going to end.
-  The setup wizard (`public/setup.js`) keeps its own option builder for now: it gates and carries the
-  same name fallback, but it disables on a falsy `available` where the shared builder uses
-  `available === false`, so converging it is a behavior decision about a profile with no flag rather
-  than a lift-and-shift. Tracked separately. Found on a first-time install where Codex was the only engine present.
+  duplication was the actual defect, and gating copies one at a time was never going to end. The setup
+  wizard (`public/setup.js`) keeps its own option builder for now: it gates and carries the same name
+  fallback, but it disables on a falsy `available` where the shared builder uses `available === false`,
+  so converging it is a behavior decision about a profile with no flag rather than a lift-and-shift —
+  tracked as #738.
+  Found on a first-time install where Codex was the only engine present.
 - **The setup wizard can no longer select an engine this machine doesn't have (#707).** Uninstalled
   engines stay listed — someone who installs one later shouldn't have to hunt for it — but are
   labelled `(not installed)` and `disabled`, so the picker cannot contradict the availability list
