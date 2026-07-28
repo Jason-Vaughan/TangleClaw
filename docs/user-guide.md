@@ -328,6 +328,49 @@ Locks expire after 30 minutes and are auto-released when sessions wrap or are ki
 
 ## Troubleshooting
 
+### "Press to Reconnect" After an Interrupted Project Move
+
+Moving the TangleClaw source directory while the server is running can unload
+the `com.tangleclaw.server` LaunchAgent before the destination is ready. The
+terminal helper may remain running, but the dashboard cannot reconnect because
+the main server on port 3102 is stopped.
+
+First, verify which copy is complete. Do not delete the original directory when
+the destination is empty or only partially copied:
+
+```bash
+ls -la /path/to/original/TangleClaw
+ls -la /path/to/destination/TangleClaw
+plutil -p ~/Library/LaunchAgents/com.tangleclaw.server.plist
+```
+
+The plist's `WorkingDirectory` must point to a complete TangleClaw directory
+containing `server.js`. If it still points to the intact original directory,
+restore the unloaded service with:
+
+```bash
+launchctl bootstrap gui/$(id -u) \
+  ~/Library/LaunchAgents/com.tangleclaw.server.plist
+launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
+```
+
+If `bootstrap` reports that the service is already loaded, run only the
+`kickstart` command. Confirm recovery before retrying the move:
+
+```bash
+launchctl print gui/$(id -u)/com.tangleclaw.server
+curl -s http://localhost:3102/api/health | python3 -m json.tool
+tail -20 ~/.tangleclaw/logs/tangleclaw.log
+```
+
+A healthy response reports `"status": "ok"` and the log reports that TangleClaw
+is listening on port 3102. Refresh the dashboard once if its reconnect banner
+remains stale.
+
+Before completing a later move, update or reinstall the LaunchAgent so its
+`WorkingDirectory` refers to the final, fully copied location. Keep the original
+copy until the health check succeeds from that location.
+
 ### Dashboard Constantly Refreshes After Enabling HTTPS
 
 Port 3102 serves either HTTP or HTTPS, not both. If HTTPS is enabled but the
