@@ -62,8 +62,12 @@ describe('ttyd-bind.desiredBind', () => {
     assert.equal(d.iface, '127.0.0.1');
   });
 
-  it('wants every interface only when the operator opted in', () => {
-    assert.equal(desiredBind({ ingressMode: 'direct', bindAllInterfaces: true }).iface, '0.0.0.0');
+  it('stays on loopback EVEN WHEN the operator opted the dashboard wide', () => {
+    // The opt-in is about reaching the dashboard remotely. Nothing addresses
+    // ttyd directly, so following it here would publish a --writable shell for
+    // no gain — and would silently re-open this port on the next restart for
+    // anyone who ever set the flag.
+    assert.equal(desiredBind({ ingressMode: 'direct', bindAllInterfaces: true }).iface, '127.0.0.1');
   });
 
   it('declines to manage a caddy install, whose socket the cutover owns', () => {
@@ -71,11 +75,10 @@ describe('ttyd-bind.desiredBind', () => {
     assert.equal(d.manage, false, 'a unix socket is already unreachable over the network');
   });
 
-  it('follows the same strict boolean test the dashboard bind uses', () => {
-    // A looser test here would open the terminal on an install whose dashboard
-    // stayed shut — asymmetric gates around one flag (ADR 0001).
-    for (const loose of ['true', 1, {}]) {
-      assert.equal(desiredBind({ ingressMode: 'direct', bindAllInterfaces: loose }).iface, '127.0.0.1');
+  it('is unaffected by the dashboard setting in any form', () => {
+    for (const value of [true, false, null, undefined, 'true', 1, {}]) {
+      assert.equal(desiredBind({ ingressMode: 'direct', bindAllInterfaces: value }).iface, '127.0.0.1',
+        `ttyd must stay pinned regardless of bindAllInterfaces=${JSON.stringify(value)}`);
     }
   });
 });
@@ -131,11 +134,13 @@ describe('ttyd-bind.planReconcile', () => {
     assert.equal(plan.reason, 'already-correct');
   });
 
-  it('widens an already-pinned job when the operator opts in', () => {
-    const plan = planReconcile(pinnedPlist(), { ingressMode: 'direct', bindAllInterfaces: true });
+  it('re-pins a job someone widened, rather than honouring it', () => {
+    // The regression this guards: a config that says bindAllInterfaces:true must
+    // NOT drag the terminal port open with it on the next restart.
+    const plan = planReconcile(pinnedPlist('0.0.0.0'), { ingressMode: 'direct', bindAllInterfaces: true });
     assert.equal(plan.action, 'rewrite');
-    assert.equal(plan.to, '0.0.0.0');
-    assert.equal(describeInstalledBind(parseProgramArguments(plan.xml).args).iface, '0.0.0.0');
+    assert.equal(plan.to, '127.0.0.1');
+    assert.equal(describeInstalledBind(parseProgramArguments(plan.xml).args).iface, '127.0.0.1');
   });
 
   it('leaves a caddy install alone entirely', () => {

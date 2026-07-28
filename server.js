@@ -4935,7 +4935,14 @@ if (require.main === module) {
       // points back at the fallback WARN logged during construction rather
       // than leaving the operator to notice the mismatch themselves.
       ...(effectiveHttps && !servingHttps ? { httpsFallback: true } : {}),
-      ingressMode: config.ingressMode || 'direct'
+      ingressMode: config.ingressMode || 'direct',
+      // WHY this host, not just which one. An operator reading a log to find out
+      // why they cannot reach the dashboard needs the reason and the setting
+      // that changes it, otherwise the line states the symptom and withholds the
+      // cause. `grace` in particular is the one worth spotting: it means the
+      // machine is still wide open and nobody has decided yet.
+      bind: bind.reason,
+      bindSetting: bindPolicy.OPT_IN_KEY
     });
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
     ttydWatcher.start();

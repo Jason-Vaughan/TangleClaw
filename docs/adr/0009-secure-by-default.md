@@ -98,10 +98,20 @@ a notice. Three rules:
    dangerous of the two doors, being a `--writable` terminal that execs `tmux attach-session`. A
    change that removes an unauthenticated shell at zero cost to the user is not one to stage behind
    anything.
-2. **The dashboard listener narrows when a gate is proven to be in front of it** — `authStatus ===
-   'live'` (`lib/auth-identity.js`), meaning Caddy is fronting the request *and* a real
-   authenticated identity arrived, not merely that `authEnabled` is set. An install that never had
-   remote reach (no prior wide bind) narrows immediately, because nothing is taken away.
+2. **The dashboard listener narrows when a gate is in front of it — established by ingress mode, not
+   by request identity.** The binding is chosen once, at `listen()`, where no request exists;
+   `authStatus === 'live'` (`lib/auth-identity.js`) is request-scoped and therefore cannot be
+   consulted there. The implementable equivalent is `ingressMode === 'caddy'`, and it is not a
+   weaker proxy: the credential gate exists *only* in caddy mode, so caddy mode is the necessary
+   condition for a gate to be in front of anything, and caddy mode already pins loopback for its own
+   reasons. An install that never had remote reach (no prior wide bind) narrows immediately, because
+   nothing is taken away.
+
+   What this concedes, stated plainly: an install in caddy mode with `authEnabled: false` narrows
+   without a password ever being set. That is not a regression — it is loopback-only, which is the
+   safe state — but it is not the "gate proven live" the first draft of this clause promised.
+   Proving the gate live belongs to chunk 2, where provisioning verifies the credential answers
+   through the ingress before trusting it.
 3. **Until then the install keeps its binding and says so, loudly and repeatedly.** This is a
    deliberate, bounded exposure window, not an acceptance of the old posture: the grace state exists
    only to keep an operator reachable long enough to *reach the thing that fixes it*.

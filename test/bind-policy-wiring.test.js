@@ -183,19 +183,19 @@ describe('both shell-capable listeners follow the same opt-in', () => {
   it('rolls back to direct mode without reopening the terminal to the network', () => {
     // The rollback path used to fill the bind pair with `--port <n>` and no
     // interface, which binds every interface — so cutting back to direct mode
-    // silently republished an unauthenticated writable shell, regardless of what
-    // the dashboard was doing. Both doors move together now.
-    assert.match(CUTOVER_SRC, /const ttydBindAddress = config\.bindAllInterfaces === true \? '0\.0\.0\.0' : '127\.0\.0\.1'/);
+    // silently republished an unauthenticated writable shell.
+    assert.match(CUTOVER_SRC, /const ttydBindAddress = '127\.0\.0\.1'/);
     assert.match(CUTOVER_SRC, /TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress/);
     assert.doesNotMatch(CUTOVER_SRC, /TTYD_BIND_KEY: '--port'/,
       'a port-only ttyd bind is a wide bind');
   });
 
-  it('uses the same boolean-true test the dashboard bind uses', () => {
-    // If these two ever disagree on what counts as opting in, one door opens
-    // without the other — the asymmetric-gate failure recorded in ADR 0001.
-    assert.match(CUTOVER_SRC, /config\.bindAllInterfaces === true/,
-      'the terminal must not accept a looser truthiness test than the dashboard');
+  it('does NOT let the dashboard opt-in drag the terminal port open with it', () => {
+    // ttyd is pinned unconditionally: nothing addresses it directly, so widening
+    // it grants nothing the operator asked for. Coupling the two meant any path
+    // that set bindAllInterfaces:true re-opened the shell on the next restart.
+    assert.doesNotMatch(CUTOVER_SRC, /ttydBindAddress = config\.bindAllInterfaces/,
+      'the terminal bind must not read the dashboard opt-in');
   });
 });
 
@@ -211,7 +211,20 @@ describe('the settings toggle cannot lie about what the socket does', () => {
   it('omits the field from the PATCH when the control is locked', () => {
     // Sending it anyway would round-trip a value the operator could not have
     // chosen, and make the stored config disagree with the running socket.
-    assert.match(UI_SRC, /if \(bindToggle && !bindToggle\.disabled\) \{\s*patch\.bindAllInterfaces = bindToggle\.checked;/);
+    assert.match(UI_SRC, /if \(bindToggle && !bindToggle\.disabled\) \{/);
+  });
+
+  it('sends the bind field ONLY when the operator moved the switch', () => {
+    // The regression that made this necessary: a grace-state install renders the
+    // switch ON (truthfully — it IS bound wide), so posting `.checked` on every
+    // save recorded an explicit opt-in the first time the operator changed their
+    // theme. That silenced the exposure warning permanently and, while ttyd still
+    // followed the same key, re-opened the terminal port on the next restart.
+    assert.match(UI_SRC, /data-rendered="\$\{bindShowsOn \? '1' : '0'\}"/,
+      'the rendered state must be recorded so the save can compare against it');
+    assert.match(UI_SRC, /const renderedOn = bindToggle\.dataset\.rendered === '1';/);
+    assert.match(UI_SRC, /if \(bindToggle\.checked !== renderedOn\) patch\.bindAllInterfaces = bindToggle\.checked;/,
+      'an untouched switch must contribute nothing to the patch');
   });
 
   it('does not also set the field unconditionally in the patch literal', () => {

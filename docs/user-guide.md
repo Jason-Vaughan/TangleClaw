@@ -328,39 +328,52 @@ Locks expire after 30 minutes and are auto-released when sessions wrap or are ki
 
 ## Troubleshooting
 
-### Can't Reach the Dashboard From Another Device After Updating
+### TangleClaw Says Your Dashboard Is Exposed
 
-TangleClaw listens on `127.0.0.1` only unless told otherwise. Installs created
-before this became the default were accepting connections from the whole network
-without a password, so updating one narrows its binding and remote access stops
-working. This is deliberate: reaching the dashboard means running shell commands
-on that machine.
+If TangleClaw warns — on the dashboard, and in
+`~/.tangleclaw/logs/tangleclaw.log` on every start — that it is reachable from
+your whole network with no password, that warning is accurate and worth acting
+on. The dashboard can open terminal sessions, so anyone who can reach the
+machine can run commands as you.
 
-From a terminal on the machine itself, confirm what it is bound to:
+This affects installs created before TangleClaw pinned its listener to
+`127.0.0.1`. **Updating does not close it for you.** Closing it automatically
+would take away the remote access you may be using right now, before there is a
+password to put in its place — so TangleClaw keeps your binding as it was and
+tells you instead. New installs are loopback-only from the start.
+
+Confirm what you are actually bound to:
 
 ```bash
-curl -s http://localhost:3102/api/health | python3 -m json.tool
-grep -n "listening on" ~/.tangleclaw/logs/tangleclaw.log | tail -3
+lsof -nP -iTCP:3102 -sTCP:LISTEN
 ```
 
-A `listening on http://127.0.0.1:3102` line is the narrowed binding. The log also
-carries a warning naming the setting that restores the old behavior.
+`*:3102` means every interface. `127.0.0.1:3102` means loopback only — that is
+the protected state, not a fault; do not "fix" it by widening it.
 
-There are two ways forward. Prefer the first:
+There are two ways to resolve it, and the first is better because it keeps
+remote access:
 
-1. **Set up the login gate**, which keeps remote access *and* puts a password in
-   front of it — see [deploy/INGRESS.md](../deploy/INGRESS.md).
-2. **Reopen the binding without a password**, appropriate only on a network you
-   fully control. In Settings → Network Exposure, turn on "Accept connections
+1. **Set up the login gate** — a reverse proxy that puts TLS and a password in
+   front of the dashboard, terminals, and APIs. See
+   [deploy/INGRESS.md](../deploy/INGRESS.md). Once it is running, TangleClaw
+   binds loopback automatically, because the gate is in front of it.
+2. **Close the door entirely**, if you only ever use TangleClaw from the machine
+   it runs on. In Settings → Network Exposure, turn *off* "Accept connections
    from the network", or set it directly:
 
 ```bash
 # ~/.tangleclaw/config.json
-"bindAllInterfaces": true
+"bindAllInterfaces": false
 ```
 
 Either way, restart TangleClaw afterwards — the socket is bound once at startup,
 so the change does not take effect until the process restarts.
+
+**The terminal port is already closed.** Separately from the above, `ttyd` (port
+3100) is pinned to `127.0.0.1` on every install, new or upgraded, and TangleClaw
+re-pins it at startup if it finds it otherwise. Nothing addresses it directly —
+TangleClaw proxies to it — so this costs you nothing and needs no action.
 
 ### Update Refuses to Run from the Current Branch
 

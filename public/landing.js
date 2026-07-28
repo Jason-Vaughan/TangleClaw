@@ -161,9 +161,10 @@ function renderAuthStatus(authStatus) {
 }
 
 /**
- * Show or hide the notice that this install's network binding narrowed to
- * loopback (#710). Sent only to installs whose config predates the setting, so
- * an operator who has made a choice never sees it.
+ * Show or hide the notice that this install is still accepting connections from
+ * the whole network with no password (#710). Sent only to installs that predate
+ * the setting and have not yet chosen, so an operator who has decided never sees
+ * it. It is a live-exposure warning, not an after-the-fact upgrade note.
  *
  * State-driven like the auth chip: it mirrors the latest `/api/server-info` poll
  * and self-clears once the operator sets the setting either way and restarts.

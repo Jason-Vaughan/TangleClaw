@@ -1516,6 +1516,7 @@ function openGlobalSettings() {
              ${bindLockedByCaddy ? 'aria-disabled="true" title="Locked while the Caddy ingress is in use"' : ''}>
         <span>Accept connections from the network</span>
         <input type="checkbox" id="gsBindAllInterfaces"
+               data-rendered="${bindShowsOn ? '1' : '0'}"
                ${bindShowsOn ? 'checked' : ''} ${bindLockedByCaddy ? 'disabled' : ''}>
         <span class="toggle-switch"></span>
       </label>
@@ -1619,11 +1620,23 @@ async function saveGlobalSettings() {
     serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
   };
 
-  // Omit the bind toggle entirely when it is locked (caddy mode), so a control
-  // the operator cannot act on can never write a value either.
+  // Send this ONLY when the operator actually moved the switch.
+  //
+  // Two reasons, and the second is a security bug rather than tidiness. The
+  // control is locked in caddy mode, so a locked control must never write. And
+  // an install still in the grace state renders this switch ON — truthfully,
+  // because it really is bound wide — so unconditionally posting `.checked`
+  // would record `bindAllInterfaces: true` the first time the operator saved
+  // ANY unrelated setting. That converts "never chosen, and being told about it
+  // loudly" into "deliberately opted in", which silences the warning forever and
+  // makes a bounded exposure window unbounded, without anyone choosing it.
+  //
+  // Comparing against the state it was RENDERED in is what distinguishes "the
+  // operator flipped this" from "the operator changed their theme".
   const bindToggle = document.getElementById('gsBindAllInterfaces');
   if (bindToggle && !bindToggle.disabled) {
-    patch.bindAllInterfaces = bindToggle.checked;
+    const renderedOn = bindToggle.dataset.rendered === '1';
+    if (bindToggle.checked !== renderedOn) patch.bindAllInterfaces = bindToggle.checked;
   }
 
   const data = await apiMutate('/api/config', 'PATCH', patch);

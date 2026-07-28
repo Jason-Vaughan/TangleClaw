@@ -44,12 +44,19 @@ paragraph. Requirement: `docs/adr/0009-secure-by-default.md`.
 (Caddy holds the gate; a wide Node socket would sit beside it, not behind it — worse than direct
 mode, because the operator believes they are protected). Direct mode binds wide only on
 `bindAllInterfaces === true`, boolean-guarded at both the config API and the resolver. Everything
-else is loopback. Narrowing is detected from the *absence* of the key in the persisted file — an
-install written before the key existed was, by construction, binding wide — so no new state is
-needed and the signal self-clears once a choice is stored. Those installs get a WARN every boot plus
-a dashboard notice naming the setting; both point at the login gate first, so the fix isn't "here's
-how to reopen the door". Settings gains a *Network Exposure* section, locked in caddy mode and
-rendered from the effective binding rather than the stored value.
+else is loopback. An install predating the key is identified by its absence and converted ONCE to an
+explicit `null` ("never chosen") — inference alone could not survive, because `PATCH /api/config`
+saves the whole defaults-merged object, so a theme change would have erased it. Those installs get a
+WARN every boot plus a dashboard notice; both point at the login gate first, so the fix isn't "here's
+how to reopen the door". Settings gains a *Network Exposure* section, locked in caddy mode, rendered
+from the effective binding, and posted only when the operator actually moves it.
+
+**The terminal listener is the other half, and the worse one.** `ttyd` served a `--writable` shell
+that execs `tmux attach-session`, installed with `--port 3100` and no `--interface` — ttyd's default
+of every interface. It is pinned unconditionally now (it does NOT follow `bindAllInterfaces`, since
+nothing addresses it directly), at the template, in `install.sh`, in the cutover's rollback branch,
+and — via `lib/ttyd-bind.js` — on already-installed machines, which a `git checkout` update would
+otherwise never reach.
 
 **Verified beyond the resolver:** a real socket bound per the policy refuses a TCP connect from this
 machine's LAN address (`ECONNREFUSED`) under the new default and in caddy mode, and accepts it only
@@ -65,9 +72,13 @@ permanently-ON required control. Both were caught pre-merge; the styling is now 
 modifier. A repo-wide toggle a11y defect found along the way (`display: none` keeps every settings
 toggle out of the accessibility tree) is filed as #740 rather than half-fixed on one control.
 
-**Breaking, deliberately.** An install reached from another device today goes dark on update. That is
-the cost, taken rather than documented around, but never silently — hence the boot WARN, the
-dashboard notice, and a `BREAKING:` CHANGELOG entry that drives a major bump.
+**Re-scoped mid-build, and the reason matters.** The first draft narrowed every install and accepted
+that anyone reaching TangleClaw from another device "goes dark" — a cost the author would have paid
+alone when the ADR was written, and a support incident delivered by an update button once there were
+installs in the field. An existing install now keeps its dashboard binding in a reported grace state
+until the operator chooses or moves behind the gate. Recorded as an ADR 0009 amendment. It ships in
+the 4.x line deliberately: `5.0.0` is reserved for the completed scope, where a credential ships with
+the install rather than the doors merely closing.
 
 ## 2026-07-28: The default engine resolves against what is installed (#707)
 

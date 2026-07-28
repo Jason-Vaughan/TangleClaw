@@ -161,7 +161,11 @@ function planCutover(target, ctx) {
   // ttyd runs `--writable` against `tmux attach-session`, so the interface is a
   // security boundary, not a convenience — it follows the same `bindAllInterfaces`
   // opt-in as the dashboard rather than defaulting wide the way it used to.
-  const ttydBindAddress = config.bindAllInterfaces === true ? '0.0.0.0' : '127.0.0.1';
+  // Always loopback, deliberately NOT following `bindAllInterfaces` (#710).
+  // That setting is about reaching the DASHBOARD remotely; nothing addresses
+  // ttyd directly, since TC proxies to it. Widening this port would publish a
+  // --writable shell for no gain — see lib/ttyd-bind.js#desiredBind.
+  const ttydBindAddress = '127.0.0.1';
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, HOME: env.home,
     // #500: attach script installed outside the repo (non-TCC).
