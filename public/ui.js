@@ -3066,13 +3066,14 @@ function renderMasterSettingsBody(s, groups) {
   // neither labelled nor disabled uninstalled engines, so the Master could be
   // pinned to an engine that isn't here — and the master runs its engine
   // immediately, making it the surface where that fails hardest.
-  const engineOpts = ['<option value="">(follow default engine)</option>']
-    .concat(state.engines.map((e) => {
-      const unavailable = e.available === false && e.id !== s.engine;
-      return `<option value="${esc(e.id)}" ${s.engine === e.id ? 'selected' : ''}${unavailable ? ' disabled' : ''}>`
-        + `${esc(e.name || e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
-    }))
-    .join('');
+  // Shares `buildEngineOptions` rather than hand-rolling near-identical markup:
+  // this was a fourth copy of the same option template, and it was the copy that
+  // drifted — it neither labelled nor disabled uninstalled engines, on the
+  // surface where that fails hardest, since the master launches its engine
+  // immediately. The empty option is prepended because only this picker has a
+  // "no pin" state.
+  const engineOpts = '<option value="">(follow default engine)</option>'
+    + buildEngineOptions(state.engines, s.engine || '');
 
   const scopeIsGroup = s.scope && s.scope !== 'all';
   const groupOpts = ['<option value="">All projects</option>']

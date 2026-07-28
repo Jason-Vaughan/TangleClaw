@@ -125,14 +125,24 @@ describe('engine picker gating (#707)', () => {
   });
 
   describe('the Master picker uses the same gating', () => {
-    it('disables and labels uninstalled engines', () => {
-      // This picker previously did neither, on the surface where it matters
-      // most: the master launches its engine immediately, so an unavailable
-      // pin fails at once rather than at some later project launch.
+    // Asserting /disabled/ over this function's source could not fail: it also
+    // builds the access-level radios, whose template contains the word. The
+    // picker now shares `buildEngineOptions`, so the behavioral assertions above
+    // cover it and the only thing left to pin is that it still delegates.
+    it('delegates to buildEngineOptions instead of hand-rolling options', () => {
       const body = sliceFunction(uiSrc, 'renderMasterSettingsBody');
-      assert.match(body, /e\.available === false/, 'master picker must consider availability');
-      assert.match(body, /disabled/, 'master picker must disable uninstalled engines');
-      assert.match(body, /not installed/, 'master picker must label uninstalled engines');
+      assert.match(body, /buildEngineOptions\(state\.engines/);
+      assert.doesNotMatch(
+        body,
+        /<option value="\$\{esc\(e\.id\)\}"/,
+        'a fourth copy of the option template is how this picker drifted in the first place'
+      );
+    });
+
+    it('keeps its own "follow default engine" empty option', () => {
+      const body = sliceFunction(uiSrc, 'renderMasterSettingsBody');
+      assert.match(body, /<option value="">\(follow default engine\)<\/option>/,
+        'only this picker has a no-pin state');
     });
   });
 
