@@ -4803,10 +4803,32 @@ if (require.main === module) {
   // Describe the socket that exists, not the one the config asked for.
   const protocol = serverProtocol(server);
   const servingHttps = protocol === 'https';
-  // Read once: the same fact decides both the binding and whether to warn, and
-  // re-reading could straddle a config write and answer differently each time.
-  const optInPersisted = store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY);
-  const bind = bindPolicy.resolveBind(config, optInPersisted);
+  // Record the legacy install's "never chosen" state as a real value before
+  // anything reads it. Absence of the key identifies such an install exactly
+  // once — the next config save of any kind would materialize the default and
+  // erase the distinction — so it is converted to an explicit null here and
+  // persisted. Everything downstream reads the value, never the file.
+  const legacyBind = bindPolicy.migrateLegacyBind(
+    config,
+    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
+  );
+  if (legacyBind.migrated) {
+    try {
+      store.config.save(config);
+      log.info('Recorded this install as predating the network-binding setting', {
+        setting: bindPolicy.OPT_IN_KEY, reason: legacyBind.reason
+      });
+    } catch (err) {
+      // Non-fatal: the in-memory value still drives this boot correctly, so the
+      // operator keeps their access and the warning below still fires. It will
+      // simply be re-attempted next start.
+      log.warn('Could not persist the network-binding grace state — will retry next start', {
+        error: err.message
+      });
+    }
+  }
+
+  const bind = bindPolicy.resolveBind(config);
   const bindHost = bind.host;
   const bindLabel = bind.label;
 
@@ -4839,7 +4861,7 @@ if (require.main === module) {
   // an accepted state, so it is reported on every boot and on the dashboard until
   // the operator resolves it. Unlike the terminal listener, which is pinned
   // immediately because nothing external addresses it.
-  const bindNotice = bindPolicy.describeNarrowing(config, optInPersisted);
+  const bindNotice = bindPolicy.describeNarrowing(config);
   if (bindNotice) {
     log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
   }

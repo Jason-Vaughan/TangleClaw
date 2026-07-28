@@ -31,17 +31,21 @@ const STORE_SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'store.js'),
 
 describe('server.js binds through the policy, not around it', () => {
   it('calls bindPolicy.resolveBind for the listen host', () => {
-    assert.match(SERVER_SRC, /bindPolicy\.resolveBind\(config, optInPersisted\)/,
+    assert.match(SERVER_SRC, /bindPolicy\.resolveBind\(config\)/,
       'the bind host must come from the policy module');
   });
 
-  it('passes the persisted-key fact to the resolver, not just to the notice', () => {
-    // The grace state is decided from it. If only the notice received it, a
-    // legacy install would be narrowed anyway and merely told about it — which
-    // is the blackout the ADR amendment exists to prevent.
-    assert.match(SERVER_SRC, /const optInPersisted = store\.config\.isKeyPersisted\(bindPolicy\.OPT_IN_KEY\)/);
-    assert.match(SERVER_SRC, /describeNarrowing\(config, optInPersisted\)/,
-      'both consumers must read the same evaluation');
+  it('records the legacy grace state BEFORE anything reads the binding', () => {
+    // The key's absence identifies a legacy install exactly once — the next
+    // config save of any kind materializes the default and erases it. So the
+    // migration must run, and be persisted, ahead of resolveBind.
+    assert.match(SERVER_SRC, /bindPolicy\.migrateLegacyBind\(/);
+    const migrateAt = SERVER_SRC.indexOf('bindPolicy.migrateLegacyBind(');
+    const resolveAt = SERVER_SRC.indexOf('bindPolicy.resolveBind(config)');
+    assert.ok(migrateAt > -1 && resolveAt > migrateAt,
+      'migrate must precede resolve, or the first boot narrows a legacy install');
+    assert.match(SERVER_SRC, /if \(legacyBind\.migrated\)[\s\S]{0,200}?store\.config\.save\(config\)/,
+      'the recorded state must be persisted, not just held in memory');
   });
 
   it('no longer derives the bind host from ingressMode inline', () => {
@@ -160,14 +164,14 @@ describe('the default ships as loopback', () => {
       'the shipped default must be the safe one');
   });
 
-  it('a fresh install persists the key, so it is never told its bind narrowed', () => {
+  it('a fresh install persists the key, so it is never placed in the grace state', () => {
     // Setup writes the defaults-merged config, so the key materializes on any
     // new install — which is what keeps the upgrade notice aimed only at
     // installs that actually changed behavior.
     const store = require('../lib/store');
     assert.equal(store.DEFAULT_CONFIG.bindAllInterfaces, false);
     assert.equal(
-      bindPolicy.describeNarrowing({ ingressMode: 'direct' }, true),
+      bindPolicy.describeNarrowing({ ingressMode: 'direct', bindAllInterfaces: false }),
       null
     );
   });
