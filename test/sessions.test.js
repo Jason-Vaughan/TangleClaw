@@ -995,6 +995,9 @@ describe('sessions', () => {
 
         const contractFile = path.join(medPath, 'fixture-contract.md');
         fs.writeFileSync(contractFile, '# Fixture Consumer Contract\n' + 'protocol line\n'.repeat(300));
+        // Save/restore rather than delete: an unconditional delete would clear a
+        // value this test never set, leaking into whatever ran before it.
+        const priorContractPath = process.env.MEDUSA_CONTRACT_PATH;
         process.env.MEDUSA_CONTRACT_PATH = contractFile;
         try {
           const base = store.engines.get('claude');
@@ -1018,7 +1021,8 @@ describe('sessions', () => {
           assert.ok(prompt.includes('`med-yield-cafe0123`'),
             'the workspace identity is a directive and never yields');
         } finally {
-          delete process.env.MEDUSA_CONTRACT_PATH;
+          if (priorContractPath === undefined) delete process.env.MEDUSA_CONTRACT_PATH;
+          else process.env.MEDUSA_CONTRACT_PATH = priorContractPath;
         }
       });
 
