@@ -507,8 +507,23 @@ function redactConfigSecrets(config) {
 
 route('GET', '/api/config', (_req, res) => {
   const config = store.config.load();
-  jsonResponse(res, 200, redactConfigSecrets(config));
+  jsonResponse(res, 200, _withBindState(config));
 });
+
+/**
+ * Attach the server-resolved network-binding state to a config response.
+ *
+ * The settings UI renders a control whose meaning depends on rules the SERVER
+ * owns — caddy mode overriding an opt-in, an unchosen install held deliberately
+ * wide. Every time the frontend re-derived those rules from the raw fields it
+ * drifted, and the drift was always a control that misdescribed the socket. So
+ * the server ships its own answer and the UI renders it.
+ * @param {object} config - Full config.
+ * @returns {object} Redacted config plus a `bindState` block.
+ */
+function _withBindState(config) {
+  return { ...redactConfigSecrets(config), bindState: bindPolicy.describeBindState(config) };
+}
 
 /**
  * Validate a PATCHed `master` settings object (the Project Master surface).
@@ -788,8 +803,10 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
   }
 
-  // Build redacted response — strip credential hashes (deletePassword, basicAuthHash).
-  const redacted = redactConfigSecrets(config);
+  // Build redacted response — strip credential hashes (deletePassword,
+  // basicAuthHash) — and re-resolve the bind state so the UI re-renders the
+  // Network Exposure control from the server's answer, not its own guess.
+  const redacted = _withBindState(config);
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
 });

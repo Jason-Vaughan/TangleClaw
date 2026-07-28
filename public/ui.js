@@ -1392,25 +1392,19 @@ function openGlobalSettings() {
 
   const scannerIntervalSec = Math.round((c.portScannerIntervalMs || 60000) / 1000);
 
-  // #710 — the server refuses a wide bind in caddy mode, so an editable toggle
-  // here would let the operator save a value the socket never honors. That
-  // config-says-one-thing / socket-does-another gap is the failure this setting
-  // exists to close, so the control is locked rather than quietly overridden.
-  const bindLockedByCaddy = c.ingressMode === 'caddy';
-  // Show the binding the SOCKET has, not the value the config happens to store.
-  // Caddy mode pins loopback and refuses the opt-in, so a config carrying a
-  // leftover `true` from a previous stint in direct mode would otherwise render
-  // a switch visibly ON beside the words "Accept connections from the network"
-  // while nothing outside this machine can connect.
-  // `null` is the recorded "never chosen" state on an install that predates this
-  // setting — and such an install is STILL BOUND WIDE, deliberately, so that an
-  // update cannot take away remote access before there is a password to replace
-  // it. The switch has to read ON for it. Showing OFF beside "Accept connections
-  // from the network" while the socket accepts them is the same lie the caddy
-  // lock exists to prevent, told in the more dangerous direction: it says
-  // "closed" about a door that is open.
-  const bindUnchosen = c.bindAllInterfaces === null || c.bindAllInterfaces === undefined;
-  const bindShowsOn = (c.bindAllInterfaces === true || bindUnchosen) && !bindLockedByCaddy;
+  // #710 — rendered from the SERVER's resolved bind state (`bindState` on
+  // /api/config), never re-derived here. The rules belong to the server: caddy
+  // mode overrides an opt-in, and an install that has never chosen is held wide
+  // on purpose. Every previous attempt to restate those rules in the frontend
+  // drifted, and the drift was always a control that misdescribed the socket —
+  // a switch reading "closed" over an open port, or the reverse.
+  const bindState = c.bindState || {};
+  const bindLockedByCaddy = !!bindState.lockedByCaddy;
+  // `wide` is what the SOCKET does; `choice` is what the operator has RECORDED.
+  // They differ exactly in the grace state, which is why the switch reads ON
+  // there and why an untouched Save must not write anything.
+  const bindShowsOn = !!bindState.wide;
+  const bindUnchosen = bindState.choice === 'unchosen';
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live

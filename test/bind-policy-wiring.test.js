@@ -220,8 +220,20 @@ describe('both shell-capable listeners follow the same opt-in', () => {
 describe('the settings toggle cannot lie about what the socket does', () => {
   const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 
+  it('re-derives nothing — the frontend reads the server\'s classification', () => {
+    // The structural cause of three separate defects in this chunk was two
+    // copies of these rules disagreeing. There is one copy now, server-side.
+    const modal = UI_SRC.slice(UI_SRC.indexOf('const bindState = c.bindState'),
+      UI_SRC.indexOf('gs-section-label">Diagnostics'));
+    assert.doesNotMatch(modal, /c\.bindAllInterfaces/,
+      'the settings modal must not read the raw key');
+    assert.doesNotMatch(modal, /c\.ingressMode === 'caddy'/,
+      'nor re-test the ingress mode');
+  });
+
   it('locks the control in caddy mode, where the server refuses the opt-in', () => {
-    assert.match(UI_SRC, /const bindLockedByCaddy = c\.ingressMode === 'caddy'/);
+    assert.match(UI_SRC, /const bindLockedByCaddy = !!bindState\.lockedByCaddy;/,
+      'the lock is the server\'s call, not a frontend re-test of ingressMode');
     assert.match(UI_SRC, /gsBindAllInterfaces[\s\S]{0,200}?bindLockedByCaddy \? 'disabled' : ''/,
       'an editable toggle here would save a value the socket never honors');
   });
@@ -262,8 +274,9 @@ describe('the settings toggle cannot lie about what the socket does', () => {
     // The dangerous direction of the same lie: a legacy install is still bound
     // wide on purpose, so a switch reading OFF beside "Accept connections from
     // the network" would tell the operator the door is shut while it is open.
-    assert.match(UI_SRC, /const bindUnchosen = c\.bindAllInterfaces === null \|\| c\.bindAllInterfaces === undefined/);
-    assert.match(UI_SRC, /const bindShowsOn = \(c\.bindAllInterfaces === true \|\| bindUnchosen\) && !bindLockedByCaddy/);
+    assert.match(UI_SRC, /const bindShowsOn = !!bindState\.wide;/,
+      'the switch must follow the socket, which the server reports');
+    assert.match(UI_SRC, /const bindUnchosen = bindState\.choice === 'unchosen';/);
   });
 
   it('gives a grace install a one-click route to a recorded "keep it open"', () => {
@@ -283,8 +296,8 @@ describe('the settings toggle cannot lie about what the socket does', () => {
   it('renders the toggle OFF whenever caddy mode has pinned loopback', () => {
     // The one combination that reads as a lie: config says true, socket says
     // loopback. The switch must follow the socket, not the stored value.
-    assert.match(UI_SRC, /&& !bindLockedByCaddy/,
-      'caddy mode must force the switch off regardless of the stored value');
+    assert.match(UI_SRC, /const bindLockedByCaddy = !!bindState\.lockedByCaddy;/,
+      'the lock is the server\'s call, not a frontend re-test of ingressMode');
     assert.match(UI_SRC, /\$\{bindShowsOn \? 'checked' : ''\}/,
       'the checked attribute must derive from the effective state, not the raw config');
   });
