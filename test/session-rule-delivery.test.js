@@ -583,6 +583,38 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('writes no rule shards when the launch asks for no prime, so the skip row is true', () => {
+      // The ledger reports the launch. If shards were still written here, the
+      // hooks would deliver rules while the row said "skipped" — the mirror
+      // image of a row saying "delivered" when nothing shipped.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      stub(tmux, 'hasSession', () => false);
+      stub(tmux, 'createSession', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+
+      const launched = makeProject(`noprime-${uid()}`);
+      store.sessionRules.create({ content: 'must not be delivered', projectId: launched.id });
+      try {
+        const result = sessions.launchSession(launched.name, { primePrompt: false });
+        assert.equal(result.error, null);
+
+        const fs2 = require('node:fs');
+        assert.equal(
+          fs2.existsSync(path.join(launched.path, '.tangleclaw', 'session-rules-1.json')), false,
+          'no shard is written, so no hook can deliver rules this launch');
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'skipped');
+        assert.match(rows[0].skipReason, /prime prompt disabled/);
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
     it('records a skip when the rules cannot be written to their channel', () => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');

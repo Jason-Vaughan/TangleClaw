@@ -1991,6 +1991,64 @@ describe('engines', () => {
       }
     });
 
+    it('is idempotent — re-syncing does not accumulate rules hooks', () => {
+      const project = store.projects.create({ name: `hookidem-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      store.sessionRules.create({ content: 'stable rule', projectId: project.id });
+      try {
+        engines.syncEngineHooks(projectDir);
+        const first = readSettings().hooks.SessionStart;
+        engines.syncEngineHooks(projectDir);
+        const second = readSettings().hooks.SessionStart;
+        assert.deepEqual(second, first,
+          'every launch re-syncs, so a non-idempotent write would grow the block without bound');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('registers exactly as many rules hooks as there are shards to read', () => {
+      // The hook count and the shard count are derived in different modules.
+      // If they disagree, either a shard is never read or a hook reads a file
+      // that was never written — both silent.
+      const rulesChannel = require('../lib/session-rules-channel');
+      const project = store.projects.create({ name: `hookcount-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      for (let i = 0; i < 6; i += 1) {
+        store.sessionRules.create({ content: `rule ${i} ` + 'y'.repeat(3000), projectId: project.id });
+      }
+      try {
+        engines.syncEngineHooks(projectDir);
+        const hookEntries = readSettings().hooks.SessionStart.length - 1; // minus the prime hook
+        const shards = rulesChannel.buildShards(
+          store.sessionRules.listActiveForProject(project.id),
+          rulesChannel.resolveChannelBudget(store.engines.get('claude'))
+        );
+        assert.ok(shards.length > 1, 'precondition: this rule set must actually shard');
+        assert.equal(hookEntries, shards.length, 'one hook per shard, no more and no fewer');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('still writes the prime hook when the rules query fails', () => {
+      const project = store.projects.create({ name: `hookfail-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      const real = store.sessionRules.listActiveForProject;
+      store.sessionRules.listActiveForProject = () => { throw new Error('db exploded'); };
+      try {
+        engines.syncEngineHooks(projectDir);
+        const entries = readSettings().hooks.SessionStart;
+        assert.equal(entries.length, 1, 'a rules-query failure must not cost the session its prime');
+        assert.match(entries[0].hooks[0].command, /sessionstart-prime\.sh$/);
+      } finally {
+        store.sessionRules.listActiveForProject = real;
+        store.projects.delete(project.id);
+      }
+    });
+
     it('writes no rules hook for a registered project with no rules', () => {
       const project = store.projects.create({ name: `hooknone-${Date.now()}`, path: projectDir });
       store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
