@@ -596,8 +596,24 @@ async function loadUpdateStatus() {
 
 /**
  * Build the update instruction prompt for the AI agent.
+ *
  * The install path comes from the server (`repoRoot` on /api/update-status,
  * #183) — never hardcoded, so a renamed/relocated checkout stays correct.
+ *
+ * The update itself is delegated to `scripts/apply-update.js`, the CLI face of
+ * the same guarded applier the dashboard's "Update & restart" button calls.
+ * This prompt used to hand the agent raw git (`git pull origin main`), which
+ * bypassed every guard the button honors: it merged main into whatever branch
+ * happened to be checked out, shipped unreleased commits to an operator who
+ * asked for a released version, and left the install detached at a non-tag
+ * commit — a state the applier then refuses, so one prompt-driven update
+ * disabled the button for good (#730). One operation, one set of rules,
+ * whichever surface starts it.
+ *
+ * A refused guard is a stop, not an obstacle: the agent reports it and leaves
+ * the tree alone. Working around a refusal (stashing, switching branches) is
+ * how the guard's whole purpose gets defeated, so the prompt says so outright.
+ *
  * @param {object} data - Update status data
  * @returns {string}
  */
@@ -607,12 +623,24 @@ function buildUpdatePrompt(data) {
     `TangleClaw update available: v${data.currentVersion} → v${data.latestVersion}.`,
     'Please update TangleClaw by running these steps:',
     `1. cd ${repoRoot}`,
-    '2. git fetch --tags origin',
-    '3. git pull origin main',
+    '2. Apply the update through the guarded updater: node scripts/apply-update.js',
+    '   Do NOT use git directly for this — no pull, no checkout, no stash, no branch',
+    '   switch. The script fetches and checks out the release tag itself.',
+    '3. If it exits non-zero it refused or failed; the JSON it printed carries a',
+    '   `code` (dirty-tree, wrong-ref, no-update, no-tag, no-git, git-error) and an',
+    '   `error`.',
+    '   Report that to the operator and STOP. Do not try to satisfy the guard by',
+    '   changing the working tree — the guard is protecting uncommitted work or a',
+    '   branch that is not meant to be updated.',
     '4. Review CHANGELOG.md for breaking changes',
     '5. Run the test suite: node --test test/*.test.js',
     '6. If tests pass, restart TangleClaw: launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server',
-    'If there are merge conflicts or test failures, report them before restarting.'
+    '   The restart briefly drops the dashboard and API for anyone connected; the',
+    '   browser reconnects on its own, and terminal sessions are unaffected.',
+    'If the updater refuses or tests fail, report it before restarting. Note that once',
+    'step 2 succeeds the checkout is already on the new release, so until the restart',
+    'happens the server is still running the previous version — say so plainly rather',
+    'than reporting the update as either done or not started.'
   ].join('\n');
 }
 

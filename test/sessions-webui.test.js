@@ -319,6 +319,70 @@ describe('Web UI session lifecycle', () => {
       assert.equal(result.primePrompt, null);
     });
 
+    describe('records the launch mode that actually propagated (#731)', () => {
+      // On this path the mode reaches the agent ONLY through a successful
+      // ClawBridge pre-create — there is no CLI flag carrying it. The row used
+      // to store the requested mode regardless, so the API and UI asserted a
+      // posture nothing was launched with, directly contradicting the adjacent
+      // "mode will not propagate" warning.
+      const clawbridge = require('../lib/clawbridge');
+      let originalStartSession;
+      let bridgeConnId;
+
+      before(() => {
+        const c = store.openclawConnections.create({
+          name: 'WebUI-Bridge',
+          host: '198.51.100.11',
+          port: 18790,
+          sshUser: 'testuser',
+          sshKeyPath: '~/.ssh/test_key',
+          gatewayToken: 'bridge-token',
+          localPort: 18790,
+          bridgePort: 18999,
+          availableAsEngine: true,
+          defaultMode: 'webui'
+        });
+        bridgeConnId = c.id;
+      });
+
+      beforeEach(() => {
+        originalStartSession = clawbridge.startSession;
+        tunnelModule.ensureTunnel = async () => ({ ok: true, alreadyUp: false, pid: 1, error: null });
+        tunnelModule.checkHealth = async () => ({ healthy: true, error: null });
+      });
+
+      afterEach(() => { clawbridge.startSession = originalStartSession; });
+
+      /** Launch with a mode and hand back what the session row recorded. */
+      async function launchAndReadMode(connRecord, launchMode) {
+        const project = store.projects.getByName('webui-proj');
+        const result = await sessions.launchWebuiSession(
+          'webui-proj', connRecord, `openclaw:${connRecord.id}`,
+          store.engines.get('openclaw'), project, { launchMode }
+        );
+        assert.equal(result.error, null);
+        return result.session.launchMode;
+      }
+
+      it('records null when the connection has no bridge port — nothing carried the mode', async () => {
+        clawbridge.startSession = async () => { throw new Error('must not be called without a bridge port'); };
+        const conn = store.openclawConnections.get(connId); // the bridge-less fixture
+        assert.equal(await launchAndReadMode(conn, 'bypassPermissions'), null);
+      });
+
+      it('records null when the ClawBridge pre-create fails', async () => {
+        clawbridge.startSession = async () => ({ ok: false, status: 500, error: 'boom' });
+        const conn = store.openclawConnections.get(bridgeConnId);
+        assert.equal(await launchAndReadMode(conn, 'bypassPermissions'), null);
+      });
+
+      it('records the mode when the pre-create succeeds', async () => {
+        clawbridge.startSession = async () => ({ ok: true, sessionId: 's1', attached: false });
+        const conn = store.openclawConnections.get(bridgeConnId);
+        assert.equal(await launchAndReadMode(conn, 'bypassPermissions'), 'bypassPermissions');
+      });
+    });
+
     it('returns error when tunnel fails', async () => {
       tunnelModule.ensureTunnel = async () => ({ ok: false, alreadyUp: false, pid: null, error: 'Connection refused' });
 

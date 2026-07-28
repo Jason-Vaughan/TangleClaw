@@ -276,14 +276,31 @@ describe('engines', () => {
         assert.deepEqual(aider.launchModes.default.args, []);
       });
 
-      it('codex exposes fullAuto via --full-auto (sandboxed, not true YOLO)', () => {
+      it('codex exposes fullAuto (sandboxed) and bypass (not sandboxed)', () => {
+        // This test previously asserted `--full-auto`, which codex-cli has
+        // since removed — `codex --full-auto` exits 2 with "unexpected
+        // argument", so the mode could not start a session at all (#731). The
+        // assertion held because both sides of it were this repo's own JSON;
+        // test/engine-launch-flags.test.js now probes the installed binary,
+        // which is the check that can actually catch a flag removal.
         const codex = engines.listWithAvailability().find(e => e.id === 'codex');
         assert.ok(codex.launchModes, 'codex should have launchModes');
         assert.equal(codex.defaultLaunchMode, 'default');
-        assert.deepEqual(codex.launchModes.fullAuto.args, ['--full-auto']);
+
+        assert.deepEqual(
+          codex.launchModes.fullAuto.args,
+          ['--ask-for-approval', 'never', '--sandbox', 'workspace-write']
+        );
         assert.ok(codex.launchModes.fullAuto.warning, 'fullAuto must carry a warning even though sandboxed');
-        // Label calls out the distinction from Claude/Gemini YOLO — codex is sandboxed.
         assert.equal(codex.launchModes.fullAuto.label, 'Full Auto');
+
+        // The distinction fullAuto's old label carried in prose is now a real
+        // second mode: fullAuto keeps the sandbox, bypass drops it.
+        assert.deepEqual(
+          codex.launchModes.bypassPermissions.args,
+          ['--dangerously-bypass-approvals-and-sandbox']
+        );
+        assert.ok(codex.launchModes.bypassPermissions.warning, 'bypass must carry a warning');
       });
 
       it('every engine with launchModes has a default key that matches defaultLaunchMode', () => {

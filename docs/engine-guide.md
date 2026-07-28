@@ -30,6 +30,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 - **Interaction model**: Session-based
 - **Config file**: `.codex.yaml` (YAML)
 - **Slash commands**: None
+- **Launch modes**: Interactive (default), Full Auto (`--ask-for-approval never --sandbox workspace-write` — no approval prompts, sandbox retained), Bypass (`--dangerously-bypass-approvals-and-sandbox` — no approvals **and no sandbox**, containers/VMs only). Verified against codex-cli 0.145.0. Note this is the one Bypass mode across all engines that also removes the sandbox: Claude's and Antigravity's `--dangerously-skip-permissions` skip approvals only. A bypass posture confirmed on another engine and carried to Codex by an engine switch is therefore wider than the one that was confirmed
 - **Capabilities**: Prime prompt, config file, co-author
 
 ### Aider
