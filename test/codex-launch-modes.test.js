@@ -154,18 +154,26 @@ describe('_buildLaunchCommand rejects prototype members as modes (#731)', () => 
 });
 
 describe('_resolvePreKeys uses the same honored-mode predicate (#731)', () => {
-  it('falls back to engine preKeys for an inherited key, not a prototype member', () => {
-    // The nearest existing case used the literal 'nonexistent', which the old
-    // bare index also rejected — so it could not distinguish the hardening.
-    // `constructor` is the case a bare index got wrong.
-    const engineLevel = sessions._resolvePreKeys(codex, null);
-    for (const key of ['constructor', '__proto__', 'toString']) {
-      assert.deepEqual(
-        sessions._resolvePreKeys(codex, key),
-        engineLevel,
-        `${key} must resolve to engine-level preKeys, never a prototype member`
-      );
-    }
+  it('ignores an inherited mode that would supply preKeys', () => {
+    // The fixture has to be one where a bare index and hasOwnProperty actually
+    // DIVERGE. `constructor` does not: `Object.preKeys` is undefined, so the
+    // old bare-index path fell straight through to the same engine-level
+    // branch, and a test using it passes identically before and after the
+    // hardening — the exact defect this test exists to catch, which is why the
+    // first version of it was worthless.
+    //
+    // An inherited mode that DOES carry preKeys separates them: a bare index
+    // finds it through the prototype chain and returns ['X']; hasOwnProperty
+    // does not, so engine-level preKeys win.
+    const profile = {
+      launch: { preKeys: ['Enter', 'Enter'], preKeyDelay: 3000 },
+      launchModes: Object.create({ evil: { preKeys: ['X'] } })
+    };
+    profile.launchModes.default = { args: [] };
+
+    const resolved = sessions._resolvePreKeys(profile, 'evil');
+    assert.deepEqual(resolved.preKeys, ['Enter', 'Enter'], 'an inherited mode must not supply preKeys');
+    assert.notDeepEqual(resolved.preKeys, ['X']);
   });
 
   it('still returns engine preKeys for a real mode that declares none', () => {

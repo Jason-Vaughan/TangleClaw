@@ -109,10 +109,27 @@ parsing proves against.
 the delta's only behavior change was a four-branch decision, and it got prose in three documents while
 its tmux twin got a dedicated helper. Closed with three cases (no bridge port / failed pre-create /
 successful pre-create), mutation-verified — reverting to `options.launchMode` fails two of them. Also
-added the `_resolvePreKeys` prototype-key regression the existing `'nonexistent'` case could not
-distinguish, and moved the effective-mode judgement onto `launchProfile`, the same object
-`_buildLaunchCommand` reads for argv, so the recorded mode and the launched mode cannot drift when an
-orchestration overlay is bound.
+moved the effective-mode judgement onto `launchProfile`, the same object `_buildLaunchCommand` reads for
+argv — **durability, not a fix**: `applyLaunchOverlay` spreads `...engineProfile` and rewrites `launch`
+alone, so `launchModes` is the same reference and no input changes outcome today. An asymmetry does
+survive: argv uses `options.launchMode` while the row uses `options.launchMode || defaultLaunchMode`,
+latent only because every shipped profile defaults to `default` with empty args. The durable fix is to
+have `_buildLaunchCommand` return the mode it honored; not taken here, still open.
+
+**A fourth can't-fail test, caught by the Critic.** The `_resolvePreKeys` prototype-key regression I
+added used `constructor` — and `Object.preKeys` is `undefined`, so the old bare-index path fell through
+to the identical engine-level branch. Old and new returned the same value: the test reproduced exactly
+the flaw it was written to catch. A separating fixture needs an inherited mode that actually carries
+preKeys (`Object.create({ evil: { preKeys: ['X'] } })`), where a bare index returns `['X']` and
+`hasOwnProperty` does not. Now mutation-verified.
+
+**The pattern, stated once.** Four times this session I wrote a guard or test that could not fail: a
+stub that never logged, a floor asserted after the value was pushed, a meta-guard resolving a different
+key than the thing it guarded, and a prototype fixture whose two branches coincide. Each was written
+immediately after fixing a real bug, and each asserted the shape of the code I had just written rather
+than the behavior that would break. The check that generalizes: *name the mutation this test is
+supposed to catch, apply it, and watch it go red* — if that cannot be stated concretely, the test is
+documentation.
 
 **Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
 codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
