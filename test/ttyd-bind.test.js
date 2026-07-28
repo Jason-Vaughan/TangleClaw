@@ -187,6 +187,69 @@ describe('ttyd-bind.planReconcile', () => {
   });
 });
 
+describe('reconcileInstalledJob.stillWide — what server.js actually reads', () => {
+  const HOME = '/home/x';
+  const PLIST = '/home/x/Library/LaunchAgents/com.tangleclaw.ttyd.plist';
+
+  function harness({ initial = legacyPlist(), lintFails = false, listening = true } = {}) {
+    const files = { [PLIST]: initial };
+    return {
+      files,
+      deps: {
+        fs: {
+          existsSync: (p) => Object.prototype.hasOwnProperty.call(files, p),
+          readFileSync: (p) => files[p],
+          writeFileSync: (p, c) => { files[p] = c; },
+          copyFileSync: (a, b) => { files[b] = files[a]; },
+          renameSync: (a, b) => { files[b] = files[a]; delete files[a]; },
+          rmSync: (p) => { delete files[p]; }
+        },
+        path: { join: (...parts) => parts.join('/') },
+        execFileSync: (cmd) => { if (cmd === 'plutil' && lintFails) throw new Error('malformed'); },
+        uid: 501,
+        log: { info() {}, warn() {}, error() {} },
+        probe: () => listening
+      }
+    };
+  }
+
+  const run = (opts, config = { ingressMode: 'direct' }) =>
+    reconcileInstalledJob({ home: HOME, config, deps: harness(opts).deps });
+
+  it('reports STILL WIDE when staging fails and the live job was never touched', () => {
+    // The regression that prompted this: a plan carrying the post-apply state
+    // made this report `false`, so an operator with a read-only LaunchAgents
+    // directory kept an unauthenticated shell and got no dashboard chip.
+    const r = run({ lintFails: true });
+    assert.equal(r.action, 'refuse');
+    assert.equal(r.stillWide, true, 'the wide job is still installed');
+  });
+
+  it('reports not-wide after a successful pin', () => {
+    const r = run({});
+    assert.equal(r.action, 'rewrite');
+    assert.equal(r.stillWide, false);
+  });
+
+  it('reports not-wide when the job was already correct', () => {
+    assert.equal(run({ initial: pinnedPlist() }).stillWide, false);
+  });
+
+  it('reports not-wide for an unrecognized job that is nonetheless pinned', () => {
+    const foreign = pinnedPlist().replace('<string>--writable</string>', '<string>--readonly</string>');
+    const r = run({ initial: foreign });
+    assert.equal(r.action, 'refuse');
+    assert.equal(r.stillWide, false, 'not ours, but not exposed either — do not cry wolf');
+  });
+
+  it('always returns a boolean, on every path server.js can reach', () => {
+    for (const opts of [{}, { lintFails: true }, { listening: false }, { initial: pinnedPlist() }]) {
+      assert.equal(typeof run(opts).stillWide, 'boolean');
+    }
+    assert.equal(typeof run({}, { ingressMode: 'caddy' }).stillWide, 'boolean');
+  });
+});
+
 describe('ttyd-bind.reconcileInstalledJob — the apply must be reversible', () => {
   const HOME = '/home/x';
   const PLIST = '/home/x/Library/LaunchAgents/com.tangleclaw.ttyd.plist';
@@ -294,10 +357,14 @@ describe('stillWide — whether a refusal left an open shell behind', () => {
     assert.equal(plan.stillWide, true, 'unknown must fail toward warning, not toward silence');
   });
 
-  it('is false once the job is correct, and after a successful rewrite', () => {
-    assert.equal(planReconcile(pinnedPlist(), { ingressMode: 'direct' }).stillWide, false);
-    assert.equal(planReconcile(legacyPlist(), { ingressMode: 'direct' }).stillWide, false,
-      'a rewrite closes it, so there is nothing to warn about');
+  it('describes the job as it STANDS, not as a successful apply would leave it', () => {
+    // A rewrite plan's stillWide is read on exactly one path: staging failure,
+    // where the live plist was never touched. Reporting the intended post-apply
+    // state there tells an operator whose write failed that their door is shut.
+    assert.equal(planReconcile(pinnedPlist(), { ingressMode: 'direct' }).stillWide, false,
+      'already pinned — genuinely not wide');
+    assert.equal(planReconcile(legacyPlist(), { ingressMode: 'direct' }).stillWide, true,
+      'a wide job is still wide until the rewrite is actually installed');
   });
 
   it('is present on EVERY outcome, so the caller can never read undefined', () => {
