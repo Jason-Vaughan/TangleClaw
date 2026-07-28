@@ -1888,9 +1888,9 @@ describe('engines', () => {
       assert.match(commands[0], /sessionstart-prime\.sh$/);
       // Each shard gets its OWN entry: the engine caps each hook's output
       // separately, so one hook emitting every shard would be capped as one.
-      assert.match(commands[1], /sessionstart-rules\.sh 1$/);
-      assert.match(commands[2], /sessionstart-rules\.sh 2$/);
-      assert.match(commands[3], /sessionstart-rules\.sh 3$/);
+      assert.match(commands[1], /sessionstart-rules\.sh" 1$/);
+      assert.match(commands[2], /sessionstart-rules\.sh" 2$/);
+      assert.match(commands[3], /sessionstart-rules\.sh" 3$/);
     });
 
     it('registers no rules hook when the project has no rules', () => {
@@ -1966,6 +1966,42 @@ describe('engines', () => {
       assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
     });
 
+
+    it('writes a rules hook per shard into a real project\'s settings.json (#749)', () => {
+      // The integration the unit tests cannot reach: only this path derives the
+      // shard count from the store and puts the rules hook where the engine will
+      // actually read it. Without a REGISTERED project the derivation silently
+      // yields zero, which is why the sibling tests above still see one entry.
+      const project = store.projects.create({ name: `hookint-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      store.sessionRules.create({ content: 'a rule that must reach the session', projectId: project.id });
+      try {
+        engines.syncEngineHooks(projectDir);
+
+        const entries = readSettings().hooks.SessionStart;
+        assert.equal(entries.length, 2, 'prime hook plus one rules hook');
+        const rulesCmd = entries[1].hooks[0].command;
+        assert.match(rulesCmd, /sessionstart-rules\.sh" 1$/);
+        assert.match(rulesCmd, /^"/, 'the path is quoted, so an install directory with a space still runs');
+        assert.equal(rulesCmd.includes('{{TANGLECLAW_DIR}}'), false,
+          'the placeholder must be resolved before the engine reads it');
+      } finally {
+        for (const r of store.sessionRules.list({ projectId: project.id })) store.sessionRules.delete(r.id);
+        store.projects.delete(project.id);
+      }
+    });
+
+    it('writes no rules hook for a registered project with no rules', () => {
+      const project = store.projects.create({ name: `hooknone-${Date.now()}`, path: projectDir });
+      store.projectConfig.save(projectDir, { engine: 'claude', silentPrime: true });
+      try {
+        engines.syncEngineHooks(projectDir);
+        assert.equal(readSettings().hooks.SessionStart.length, 1,
+          'no rules means no rules hook — an entry reading a file that was never written');
+      } finally {
+        store.projects.delete(project.id);
+      }
+    });
 
     it('resolves {{TANGLECLAW_DIR}} in the baseline entry on disk', () => {
       writeProjConfig({ engine: 'claude', silentPrime: true });

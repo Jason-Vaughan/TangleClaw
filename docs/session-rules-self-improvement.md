@@ -196,7 +196,9 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
   the prompt at assembly time — `sessions.buildStartupRulesSection` at launch,
   `_appendWrapRules` at wrap — rather than being written into a config file whose
   generation can be skipped. (The *transport* still differs afterwards: the startup
-  prime reaches Claude via `.tangleclaw/session-prime.md` + the SessionStart hook, or
+  prime reaches Claude via `.tangleclaw/session-prime.md` + the SessionStart hook, while the
+  RULES themselves ride a separate SessionStart hook reading
+  `.tangleclaw/session-rules-<n>.json` (#749) so neither payload can displace the other; or
   via tmux paste on other engines. What changed is that assembly no longer depends on
   owning the engine's config file.) Startup rules previously
   travelled inside the generated engine config file, which `writeEngineConfig` skips

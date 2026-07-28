@@ -50,6 +50,13 @@ describe('session rules channel (#749)', () => {
     });
   });
 
+  it('agrees with sessions.PRIME_MAX_TOKENS — two copies of one number', () => {
+    // The fallback exists in token form in sessions.js and character form here.
+    // Editing one alone would silently change what an undeclared engine gets.
+    const sessions = require('../lib/sessions');
+    assert.equal(sessions.PRIME_MAX_TOKENS * 4, channel.FALLBACK_CHANNEL_CHARS);
+  });
+
   describe('buildShards', () => {
     it('keeps a set that fits in a single shard', () => {
       const shards = channel.buildShards(makeRules([[1, 100], [2, 100]]), 10000);

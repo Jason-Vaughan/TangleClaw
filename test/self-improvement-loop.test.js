@@ -210,7 +210,7 @@ describe('self-improvement loop (#569)', () => {
         assert.equal(row.project_id, 424242);
         assert.equal(row.status, 'active');
         assert.equal(
-          h.db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 28,
+          h.db.prepare('SELECT MAX(version) v FROM schema_version').get().v, 29,
           'the upgrade must complete, not stall on the orphan');
       } finally { done(h); }
     });

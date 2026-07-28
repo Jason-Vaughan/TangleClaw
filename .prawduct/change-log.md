@@ -64,7 +64,7 @@ channel-blind, and the census gate emitted "0 curated entries. Read it FIRST" fo
 
 ## 2026-07-28: The running version, visible and true wherever it appears (#744, #745)
 
-<!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 -->
+<!-- prawduct: type=fix | chunks=1 | scope=version-visibility-744 | status=shipped -->
 
 **Why:** The dashboard read its version and update status once, at page load, and neither was in the
 polling loop. Any restart the page did not itself drive — `launchctl kickstart`, a terminal
