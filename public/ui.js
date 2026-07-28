@@ -1402,7 +1402,15 @@ function openGlobalSettings() {
   // leftover `true` from a previous stint in direct mode would otherwise render
   // a switch visibly ON beside the words "Accept connections from the network"
   // while nothing outside this machine can connect.
-  const bindShowsOn = c.bindAllInterfaces === true && !bindLockedByCaddy;
+  // `null` is the recorded "never chosen" state on an install that predates this
+  // setting — and such an install is STILL BOUND WIDE, deliberately, so that an
+  // update cannot take away remote access before there is a password to replace
+  // it. The switch has to read ON for it. Showing OFF beside "Accept connections
+  // from the network" while the socket accepts them is the same lie the caddy
+  // lock exists to prevent, told in the more dangerous direction: it says
+  // "closed" about a door that is open.
+  const bindUnchosen = c.bindAllInterfaces === null || c.bindAllInterfaces === undefined;
+  const bindShowsOn = (c.bindAllInterfaces === true || bindUnchosen) && !bindLockedByCaddy;
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live

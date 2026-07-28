@@ -227,10 +227,19 @@ describe('the settings toggle cannot lie about what the socket does', () => {
       'the field must reach the patch only through the disabled-guarded assignment');
   });
 
+  it('renders the toggle ON for an install still in the grace state', () => {
+    // The dangerous direction of the same lie: a legacy install is still bound
+    // wide on purpose, so a switch reading OFF beside "Accept connections from
+    // the network" would tell the operator the door is shut while it is open.
+    assert.match(UI_SRC, /const bindUnchosen = c\.bindAllInterfaces === null \|\| c\.bindAllInterfaces === undefined/);
+    assert.match(UI_SRC, /const bindShowsOn = \(c\.bindAllInterfaces === true \|\| bindUnchosen\) && !bindLockedByCaddy/);
+  });
+
   it('renders the toggle OFF whenever caddy mode has pinned loopback', () => {
     // The one combination that reads as a lie: config says true, socket says
     // loopback. The switch must follow the socket, not the stored value.
-    assert.match(UI_SRC, /const bindShowsOn = c\.bindAllInterfaces === true && !bindLockedByCaddy/);
+    assert.match(UI_SRC, /&& !bindLockedByCaddy/,
+      'caddy mode must force the switch off regardless of the stored value');
     assert.match(UI_SRC, /\$\{bindShowsOn \? 'checked' : ''\}/,
       'the checked attribute must derive from the effective state, not the raw config');
   });

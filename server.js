@@ -48,6 +48,7 @@ const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
+const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
@@ -4671,6 +4672,54 @@ if (require.main === module) {
   // every boot means an update that bumps the repo script refreshes the copy on
   // the ensuing restart. Idempotent + non-throwing.
   ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
+
+  // Pin the INSTALLED ttyd job to its configured interface (#710). install.sh
+  // writes that plist once and an update is only a `git checkout`, so without
+  // this an existing machine keeps serving a `--writable` terminal — one that
+  // execs `tmux attach-session` — to its entire network, while the release notes
+  // say otherwise. Same non-fatal contract as the attach-script sync above: it
+  // refuses anything it does not recognize, backs up and validates before
+  // touching the live job, and restores the previous one if ttyd does not come
+  // back. Nothing here can affect the dashboard or this process.
+  try {
+    const ttydPlan = ttydBind.reconcileInstalledJob({
+      home: os.homedir(),
+      config,
+      deps: {
+        fs, path, execFileSync: require('node:child_process').execFileSync,
+        uid: process.getuid ? process.getuid() : 0,
+        log,
+        // Confirm the job actually came back rather than assuming launchctl's
+        // silence means success — a valid plist that launchd accepts can still
+        // produce a ttyd that exits immediately.
+        probe: (port) => {
+          const { execFileSync } = require('node:child_process');
+          // A missing probe tool is not a failed ttyd. Rolling back a good change
+          // because `nc` is absent would be the tool breaking the thing it exists
+          // to protect, so an unavailable prober means "unverified", not "dead".
+          try {
+            execFileSync('command', ['-v', 'nc'], { timeout: 1000, stdio: 'ignore', shell: true });
+          } catch {
+            log.warn('Skipped ttyd liveness verification — no `nc` on PATH', { port });
+            return true;
+          }
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            try {
+              execFileSync('nc', ['-z', '127.0.0.1', String(port)], { timeout: 1000, stdio: 'ignore' });
+              return true;
+            } catch { /* not up yet — retry until the deadline */ }
+          }
+          return false;
+        }
+      }
+    });
+    if (ttydPlan.action === 'refuse') {
+      log.warn('Left the installed ttyd job alone', { reason: ttydPlan.reason });
+    }
+  } catch (err) {
+    log.warn('ttyd bind reconciliation skipped', { error: err.message });
+  }
 
   // Bootstrap port management — resolve actual port (env var takes precedence).
   // Shares the one derivation with every consumer that reports or injects this
