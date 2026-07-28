@@ -148,6 +148,18 @@ describe('Setup wizard — engine step (#707)', () => {
     });
   });
 
+  describe('a profile with no usable name', () => {
+    it('labels the option with the id rather than rendering blank', () => {
+      // `name` is not validated when an engine profile is saved (only `id` is),
+      // and `esc` returns '' for a non-string — so a hand-added profile would
+      // otherwise show an unidentifiable empty option in the wizard's picker.
+      const ctx = loadSetup([{ id: 'homegrown', available: true }], { defaultEngine: 'homegrown' });
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, />homegrown</, 'a nameless profile must fall back to its id');
+    });
+  });
+
   describe('an installed config default is respected', () => {
     it('keeps the operator\'s choice when that engine is present', () => {
       const ctx = loadSetup(

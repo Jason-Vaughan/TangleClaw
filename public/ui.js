@@ -29,7 +29,7 @@ function buildEngineOptions(engineList, selectedId) {
       // `|| e.id` because only `id` is validated when a profile is saved
       // (lib/store.js), so a hand-added profile with no `name` would otherwise
       // render a blank option in all four pickers.
-      + `${esc(e.name || e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
+      + `${esc(typeof e.name === 'string' && e.name ? e.name : e.id)}${e.available === false ? ' (not installed)' : ''}</option>`;
   }).join('');
 
   if (selectedId && !engineList.some(e => e.id === selectedId)) {

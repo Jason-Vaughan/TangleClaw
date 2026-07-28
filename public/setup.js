@@ -378,7 +378,11 @@ function renderEngines(body) {
     // server-side is the backstop.
     const selected = e.id === wizard.defaultEngine ? ' selected' : '';
     const disabled = e.available ? '' : ' disabled';
-    const label = e.available ? esc(e.name) : `${esc(e.name)} (not installed)`;
+    // `name` is not validated when an engine profile is saved (only `id` is),
+    // and `esc` returns '' for a non-string — so a hand-added profile without a
+    // usable name would render a blank, unidentifiable option.
+    const engineName = typeof e.name === 'string' && e.name ? e.name : e.id;
+    const label = e.available ? esc(engineName) : `${esc(engineName)} (not installed)`;
     optionsHtml += `<option value="${esc(e.id)}"${selected}${disabled}>${label}</option>`;
 
     const availClass = e.available ? 'setup-engine-available' : 'setup-engine-unavailable';
@@ -386,7 +390,7 @@ function renderEngines(body) {
     listHtml += `
       <div class="setup-engine-item">
         <span class="${availClass}">${availIcon}</span>
-        <span class="setup-engine-name">${esc(e.name)}</span>
+        <span class="setup-engine-name">${esc(engineName)}</span>
         <span class="setup-engine-status">${e.available ? 'Detected' : 'Not found'}</span>
       </div>`;
   }

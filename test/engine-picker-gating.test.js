@@ -44,10 +44,14 @@ describe('engine picker gating (#707)', () => {
 
   before(() => {
     uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-    // `esc` is the only helper these two need.
-    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => (
-      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ));
+    // Copied from production `esc` (public/landing.js), non-string rejection
+    // included. A more forgiving stub renders values the real one drops, which
+    // makes any assertion about label text quietly untrue.
+    const esc = (str) => {
+      if (typeof str !== 'string') return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
     const factory = new Function('esc', `
       ${sliceFunction(uiSrc, 'resolvePickerEngine')}
       ${sliceFunction(uiSrc, 'buildEngineOptions')}
@@ -119,6 +123,15 @@ describe('engine picker gating (#707)', () => {
       // hand-added profile can lack `name`. Without the fallback the option
       // renders blank — unselectable-looking, in all four pickers.
       const html = buildEngineOptions([{ id: 'homegrown', available: true }], '');
+      assert.match(html, />homegrown</);
+    });
+
+    it('falls back for a non-string name too, which esc drops', () => {
+      // `e.name || e.id` alone is not enough: a truthy non-string takes the
+      // left branch and production `esc` returns '' for it, so the option is
+      // blank anyway. Profile save validates only `id`, and `get()` JSON-parses
+      // whatever is on disk, so the shape is reachable.
+      const html = buildEngineOptions([{ id: 'homegrown', name: 42, available: true }], '');
       assert.match(html, />homegrown</);
     });
 
