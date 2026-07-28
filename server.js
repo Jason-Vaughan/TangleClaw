@@ -4686,10 +4686,11 @@ if (require.main === module) {
   porthub.startExpirationTimer();
 
   // AUTH-1 (#395): in 'caddy' ingress mode Caddy terminates TLS and is the only
-  // front door, so TC drops to plain HTTP bound to localhost only (Caddy reaches
-  // it over the loopback). 'direct' mode is unchanged — TC terminates its own
-  // HTTPS and binds all interfaces. The live cutover is operator-driven; until
-  // ingressMode is flipped this branch is inert.
+  // front door, so TC drops to plain HTTP (Caddy reaches it over the loopback).
+  // 'direct' mode terminates its own HTTPS. The live cutover is operator-driven;
+  // until ingressMode is flipped this branch is inert.
+  // This decides the PROTOCOL only — which interfaces either mode binds is
+  // lib/bind-policy.js's call, and is no longer implied by the ingress mode.
   const caddyMode = config.ingressMode === 'caddy';
   const effectiveHttps = caddyMode ? false : !!config.httpsEnabled;
   const server = createServer({

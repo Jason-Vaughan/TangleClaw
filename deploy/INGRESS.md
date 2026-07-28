@@ -7,7 +7,7 @@ the historical behavior.
 | | `direct` (default) | `caddy` |
 |---|---|---|
 | TLS terminated by | TC itself (mkcert via `lib/https-setup.js`) | **Caddy** |
-| TC listener | all interfaces, HTTPS | `127.0.0.1`, plain HTTP (Caddy fronts it) |
+| TC listener | `127.0.0.1`, HTTPS (all interfaces only if `bindAllInterfaces`) | `127.0.0.1`, plain HTTP (Caddy fronts it) |
 | ttyd bind | TCP `:3100` | Unix socket `~/.tangleclaw/run/ttyd.sock` |
 | single ingress | no | yes — Caddy is the only path |
 | local URL | `https://localhost:3102` | `https://localhost:8443` |

@@ -23,7 +23,9 @@ this touches the live ingress of a tool they depend on.
 
 Introduce **Caddy** as an optional single ingress, selected by a new `ingressMode` config flag:
 
-- **`direct`** (default): unchanged. TC terminates HTTPS and binds all interfaces; ttyd on `:3100`.
+- **`direct`** (default): TC terminates HTTPS itself; ttyd on `:3100`. **Amended by ADR 0009** —
+  direct mode no longer binds all interfaces by default; it binds `127.0.0.1` unless
+  `bindAllInterfaces` is set, and ttyd is pinned to `127.0.0.1` on every install.
 - **`caddy`**: TC binds `127.0.0.1` plain-HTTP; **Caddy terminates TLS** (reusing the existing
   mkcert cert for `localhost`, ACME for a configured `publicDomain`) and is the only path; ttyd
   rebinds to a Unix domain socket so it is unreachable except via the proxy chain.
