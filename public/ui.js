@@ -1397,6 +1397,12 @@ function openGlobalSettings() {
   // config-says-one-thing / socket-does-another gap is the failure this setting
   // exists to close, so the control is locked rather than quietly overridden.
   const bindLockedByCaddy = c.ingressMode === 'caddy';
+  // Show the binding the SOCKET has, not the value the config happens to store.
+  // Caddy mode pins loopback and refuses the opt-in, so a config carrying a
+  // leftover `true` from a previous stint in direct mode would otherwise render
+  // a switch visibly ON beside the words "Accept connections from the network"
+  // while nothing outside this machine can connect.
+  const bindShowsOn = c.bindAllInterfaces === true && !bindLockedByCaddy;
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live
@@ -1498,10 +1504,11 @@ function openGlobalSettings() {
 
     <div class="gs-section-label">Network Exposure</div>
     <div class="form-group">
-      <label class="gs-toggle-label">
+      <label class="gs-toggle-label"
+             ${bindLockedByCaddy ? 'aria-disabled="true" title="Locked while the Caddy ingress is in use"' : ''}>
         <span>Accept connections from the network</span>
         <input type="checkbox" id="gsBindAllInterfaces"
-               ${c.bindAllInterfaces === true ? 'checked' : ''} ${bindLockedByCaddy ? 'disabled' : ''}>
+               ${bindShowsOn ? 'checked' : ''} ${bindLockedByCaddy ? 'disabled' : ''}>
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">

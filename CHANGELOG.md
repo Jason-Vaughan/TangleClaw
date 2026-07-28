@@ -28,11 +28,16 @@ All notable changes to TangleClaw are documented in this file.
   **How to reopen it.** Set `"bindAllInterfaces": true` (Settings → Network Exposure, or
   `~/.tangleclaw/config.json`) and restart — the socket is bound once, at startup. It is the only
   route to a wide bind and it accepts nothing but a real boolean, so a truthy string in a
-  hand-edited config cannot widen the binding by accident. Caddy mode **refuses** the opt-in and says
+  hand-edited config cannot widen the binding by accident — and a non-boolean value is *logged*
+  rather than quietly treated as false, because the operator who typed `"true"` believes the door is
+  open and would otherwise never find out it isn't. Caddy mode **refuses** the opt-in and says
   so in the log: Caddy holds the credential gate, so a wide Node socket would sit beside that gate
   rather than behind it — strictly worse than direct mode, because the operator believes they are
-  protected. The settings control is locked there too, and omitted from the save, so the stored
-  config can never claim something the socket does not do. Resolution and the upgrade notice live in `lib/bind-policy.js`; the bind matrix
+  protected. The settings control is locked there too — visibly so, not just via an attribute on a
+  hidden input — omitted from the save, and rendered from the *effective* binding rather than the
+  stored value, so a leftover `true` carried in from a previous stint in direct mode cannot show a
+  switch sitting ON beside the words "Accept connections from the network" while nothing outside the
+  machine can connect. Resolution and the upgrade notice live in `lib/bind-policy.js`; the bind matrix
   (ingress mode × opt-in) is pinned in `test/bind-policy.test.js`, and verified against real sockets
   — a LAN connect gets `ECONNREFUSED` under the new default and succeeds only with the opt-in.
 

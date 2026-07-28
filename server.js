@@ -4819,6 +4819,16 @@ if (require.main === module) {
     );
   }
 
+  // A non-boolean opt-in reads as "not opted in", which is the safe choice — but
+  // the operator who typed it believes they reopened the door, so say otherwise.
+  if (bind.malformedOptIn) {
+    log.warn(
+      `Ignoring "${bindPolicy.OPT_IN_KEY}" — it must be a boolean (true or false, unquoted). `
+      + 'TangleClaw is treating this as not-opted-in and binding loopback only.',
+      { setting: bindPolicy.OPT_IN_KEY, type: typeof config[bindPolicy.OPT_IN_KEY] }
+    );
+  }
+
   // Installs written before this key existed were binding every interface; they
   // now bind loopback, which takes remote access away. Tell them, every boot,
   // until they make a choice — the operator this strands is by definition one who

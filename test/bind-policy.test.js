@@ -72,6 +72,27 @@ describe('bind-policy.resolveBind — the bind matrix', () => {
       );
     }
   });
+
+  it('reports a malformed opt-in so it can be logged, rather than silently ignoring it', () => {
+    // Treating "true" as false is the safe reading, but the operator who typed
+    // it believes the door is open. A config that disagrees with the socket
+    // without saying so is the failure this whole module exists to prevent.
+    for (const value of ['true', 'false', 1, 0, null, {}]) {
+      assert.equal(
+        resolveBind({ ingressMode: 'direct', [OPT_IN_KEY]: value }).malformedOptIn,
+        true,
+        `${JSON.stringify(value)} should be reported as malformed`
+      );
+    }
+  });
+
+  it('does not call a legitimately absent or boolean key malformed', () => {
+    assert.equal(resolveBind({ ingressMode: 'direct' }).malformedOptIn, false,
+      'absence is the normal state for a config written before the key existed');
+    assert.equal(resolveBind({ ingressMode: 'direct', [OPT_IN_KEY]: true }).malformedOptIn, false);
+    assert.equal(resolveBind({ ingressMode: 'direct', [OPT_IN_KEY]: false }).malformedOptIn, false);
+    assert.equal(resolveBind({ ingressMode: 'caddy', [OPT_IN_KEY]: false }).malformedOptIn, false);
+  });
 });
 
 describe('bind-policy.describeNarrowing — who gets told', () => {

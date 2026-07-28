@@ -171,8 +171,29 @@ describe('the settings toggle cannot lie about what the socket does', () => {
     assert.match(UI_SRC, /if \(bindToggle && !bindToggle\.disabled\) \{\s*patch\.bindAllInterfaces = bindToggle\.checked;/);
   });
 
-  it('reads the checkbox as an explicit true, matching the server-side guard', () => {
-    assert.match(UI_SRC, /c\.bindAllInterfaces === true \? 'checked' : ''/);
+  it('does not also set the field unconditionally in the patch literal', () => {
+    // Without this, the guarded assignment above can be defeated silently:
+    // re-adding bindAllInterfaces to the base literal restores the locked-mode
+    // write and leaves the positive assertion perfectly green.
+    const literal = UI_SRC.slice(
+      UI_SRC.indexOf('const patch = {'),
+      UI_SRC.indexOf('};', UI_SRC.indexOf('const patch = {'))
+    );
+    assert.ok(literal.length > 0, 'the patch literal should be findable');
+    assert.doesNotMatch(literal, /bindAllInterfaces/,
+      'the field must reach the patch only through the disabled-guarded assignment');
+  });
+
+  it('renders the toggle OFF whenever caddy mode has pinned loopback', () => {
+    // The one combination that reads as a lie: config says true, socket says
+    // loopback. The switch must follow the socket, not the stored value.
+    assert.match(UI_SRC, /const bindShowsOn = c\.bindAllInterfaces === true && !bindLockedByCaddy/);
+    assert.match(UI_SRC, /\$\{bindShowsOn \? 'checked' : ''\}/,
+      'the checked attribute must derive from the effective state, not the raw config');
+  });
+
+  it('marks the locked control as disabled for assistive tech, not just visually', () => {
+    assert.match(UI_SRC, /aria-disabled="true"/);
   });
 });
 
