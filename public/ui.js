@@ -1490,6 +1490,23 @@ function openGlobalSettings() {
     </div>
     ${tokenManageMarkup}
 
+    <div class="gs-section-label">Network Exposure</div>
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Accept connections from the network</span>
+        <input type="checkbox" id="gsBindAllInterfaces" ${c.bindAllInterfaces === true ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">
+        Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from this
+        machine alone. On: it accepts connections from every network interface — anyone who can reach
+        this machine gets the dashboard, and the dashboard launches AI sessions with shell access.
+        Turn this on only on a network you trust, and prefer setting up the login gate instead, which
+        keeps remote access without leaving the door open. Ignored while the Caddy ingress is in use,
+        because Caddy already fronts the server and holds the gate. Requires a restart.
+      </div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -1573,7 +1590,8 @@ async function saveGlobalSettings() {
     portScannerEnabled: document.getElementById('gsPortScannerEnabled').checked,
     portScannerIntervalMs: intervalMs,
     stripAiCoauthors: document.getElementById('gsStripAiCoauthors').checked,
-    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked
+    serviceTokenEnabled: document.getElementById('gsServiceTokenEnabled').checked,
+    bindAllInterfaces: document.getElementById('gsBindAllInterfaces').checked
   };
 
   const data = await apiMutate('/api/config', 'PATCH', patch);

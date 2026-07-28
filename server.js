@@ -35,6 +35,7 @@ const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
+const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
@@ -576,7 +577,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
     'portScannerEnabled', 'portScannerIntervalMs',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
-    'stripAiCoauthors', 'ingressMode', 'publicDomain',
+    'stripAiCoauthors', 'ingressMode', 'publicDomain', 'bindAllInterfaces',
     'caddyHttpsPort', 'caddyHttpPort',
     'authEnabled', 'basicAuthUser', 'basicAuthHash',
     'serviceTokenEnabled', 'wrapDisabled', 'master'
@@ -629,6 +630,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     if (key === 'httpsEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'httpsEnabled must be a boolean', 'BAD_REQUEST');
     }
+    // Only a real boolean opens the door — a truthy string from a hand-edited
+    // config or a sloppy client must not widen the bind by accident.
+    if (key === 'bindAllInterfaces' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'bindAllInterfaces must be a boolean', 'BAD_REQUEST');
+    }
     if (key === 'ingressMode' && !validIngressModes.includes(value)) {
       return errorResponse(res, 400, `ingressMode must be one of: ${validIngressModes.join(', ')}`, 'BAD_REQUEST');
     }
@@ -675,7 +681,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       storedValue = null;
     }
 
-    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode') {
+    if (key === 'serverPort' || key === 'ttydPort' || key === 'httpsEnabled' || key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'ingressMode' || key === 'bindAllInterfaces') {
       if (config[key] !== storedValue) requiresRestart = true;
     }
 
@@ -4797,8 +4803,34 @@ if (require.main === module) {
   // Describe the socket that exists, not the one the config asked for.
   const protocol = serverProtocol(server);
   const servingHttps = protocol === 'https';
-  const bindHost = caddyMode ? '127.0.0.1' : null;
-  const bindLabel = caddyMode ? '127.0.0.1' : '*';
+  const bind = bindPolicy.resolveBind(config);
+  const bindHost = bind.host;
+  const bindLabel = bind.label;
+
+  // An opt-in that caddy mode overrode is refused out loud. Silently ignoring it
+  // would leave the config claiming one thing while the socket does another —
+  // and the operator believing they had reopened remote access when they had not.
+  if (bind.refusedOptIn) {
+    log.warn(
+      `Ignoring "${bindPolicy.OPT_IN_KEY}": true — Caddy is the ingress in this mode and holds the `
+      + 'login gate, so binding every interface would expose an ungated socket beside it. '
+      + 'Reach TangleClaw through Caddy, or set "ingressMode": "direct" to bind directly.',
+      { ingressMode: config.ingressMode }
+    );
+  }
+
+  // Installs written before this key existed were binding every interface; they
+  // now bind loopback, which takes remote access away. Tell them, every boot,
+  // until they make a choice — the operator this strands is by definition one who
+  // cannot reach the dashboard to read a banner.
+  const bindNotice = bindPolicy.describeNarrowing(
+    config,
+    store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY)
+  );
+  if (bindNotice) {
+    log.warn(bindNotice.message, { setting: bindNotice.setting });
+  }
+  serverInfo.setBindNotice(bindNotice);
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -4840,7 +4872,8 @@ if (require.main === module) {
     sessions.resyncMedusaListeners();
   };
 
-  // Bind localhost-only in caddy mode (Caddy fronts us); all interfaces otherwise.
+  // Loopback unless something is guarding the door — see lib/bind-policy.js.
+  // A null host is Node's "every interface", reached only via the explicit opt-in.
   if (bindHost) {
     server.listen(port, bindHost, onListening);
   } else {

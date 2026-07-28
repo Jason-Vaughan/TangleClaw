@@ -328,6 +328,40 @@ Locks expire after 30 minutes and are auto-released when sessions wrap or are ki
 
 ## Troubleshooting
 
+### Can't Reach the Dashboard From Another Device After Updating
+
+TangleClaw listens on `127.0.0.1` only unless told otherwise. Installs created
+before this became the default were accepting connections from the whole network
+without a password, so updating one narrows its binding and remote access stops
+working. This is deliberate: reaching the dashboard means running shell commands
+on that machine.
+
+From a terminal on the machine itself, confirm what it is bound to:
+
+```bash
+curl -s http://localhost:3102/api/health | python3 -m json.tool
+grep -n "listening on" ~/.tangleclaw/logs/tangleclaw.log | tail -3
+```
+
+A `listening on http://127.0.0.1:3102` line is the narrowed binding. The log also
+carries a warning naming the setting that restores the old behavior.
+
+There are two ways forward. Prefer the first:
+
+1. **Set up the login gate**, which keeps remote access *and* puts a password in
+   front of it — see [deploy/INGRESS.md](../deploy/INGRESS.md).
+2. **Reopen the binding without a password**, appropriate only on a network you
+   fully control. In Settings → Network Exposure, turn on "Accept connections
+   from the network", or set it directly:
+
+```bash
+# ~/.tangleclaw/config.json
+"bindAllInterfaces": true
+```
+
+Either way, restart TangleClaw afterwards — the socket is bound once at startup,
+so the change does not take effect until the process restarts.
+
 ### Update Refuses to Run from the Current Branch
 
 **Update & restart** deliberately refuses to move a development or recovery

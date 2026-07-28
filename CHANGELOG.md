@@ -4,6 +4,37 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: TangleClaw now listens on `127.0.0.1` only, unless you explicitly opt out (#710).**
+  Reaching the dashboard means running shell commands as the operator — it launches AI sessions with
+  shell access — so a default install was offering arbitrary code execution, plus every managed
+  project and any credential in it, to anyone who could reach the machine. That default was written
+  when the only installer was the author, behind a personal VPN; it expired the moment TangleClaw had
+  an outside installer, and nothing forced the re-examination. Measured on a first-time install:
+  `ingressMode: 'direct'` and `authEnabled: false` ship as defaults, the wizard collects a credential
+  only in caddy mode, and `server.js` bound every interface whenever caddy was off. None of those
+  three is wrong alone. Together they are an unauthenticated dashboard on the installer's network.
+  `README.md` already said "run behind a VPN" and "don't expose to the internet" before that install
+  happened; documentation is not a control, which is why this is a default and not a paragraph.
+  Reasoning recorded in [ADR 0009](docs/adr/0009-secure-by-default.md).
+
+  **What breaks.** An install reached from another device today goes dark on update. That is the cost
+  of the fix, and it is taken deliberately rather than left to a paragraph nobody reads — but it is
+  never silent: an install whose config predates the new setting is detected at boot, warned in
+  `~/.tangleclaw/logs/tangleclaw.log` on every start, and shown a one-line notice in the dashboard
+  naming the setting that restores it. Both point at the login gate first, because the goal is to
+  keep remote access *with* a password rather than to talk anyone back into an open door.
+
+  **How to reopen it.** Set `"bindAllInterfaces": true` (Settings → Network Exposure, or
+  `~/.tangleclaw/config.json`) and restart — the socket is bound once, at startup. It is the only
+  route to a wide bind and it accepts nothing but a real boolean, so a truthy string in a
+  hand-edited config cannot widen the binding by accident. Caddy mode **refuses** the opt-in and says
+  so in the log: Caddy holds the credential gate, so a wide Node socket would sit beside that gate
+  rather than behind it — strictly worse than direct mode, because the operator believes they are
+  protected. Resolution and the upgrade notice live in `lib/bind-policy.js`; the bind matrix
+  (ingress mode × opt-in) is pinned in `test/bind-policy.test.js`, and verified against real sockets
+  — a LAN connect gets `ECONNREFUSED` under the new default and succeeds only with the opt-in.
+
 ### Internal
 - **The troubleshooting guide now covers recovery from an interrupted move of the TangleClaw source
   directory (#733).** Moving the checkout while the server runs can unload the
