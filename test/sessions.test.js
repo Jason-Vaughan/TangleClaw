@@ -976,6 +976,52 @@ describe('sessions', () => {
           'nothing has yielded yet at the moment the warning arrives');
       });
 
+      it('the Medusa contract yields before this project\'s own bulk does', () => {
+        // The scenario the contract-inside-the-loop change is FOR: medusa active
+        // and yieldable sections present at the same time. Between two pieces of
+        // bulk, the static protocol doc — identical for every project — gives way
+        // before the project's own accumulated state.
+        const medPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medyield-'));
+        store.projects.create({ name: 'med-yield-test', path: medPath });
+        store.projectConfig.save(medPath, {
+          engine: 'claude', silentPrime: true, medusaEnabled: true
+        });
+        const medProject = store.projects.getByName('med-yield-test');
+        store.learnings.create({
+          projectId: medProject.id,
+          content: 'project-specific learning that must outlive the contract ',
+          tier: 'active'
+        });
+
+        const contractFile = path.join(medPath, 'fixture-contract.md');
+        fs.writeFileSync(contractFile, '# Fixture Consumer Contract\n' + 'protocol line\n'.repeat(300));
+        process.env.MEDUSA_CONTRACT_PATH = contractFile;
+        try {
+          const base = store.engines.get('claude');
+          const tight = {
+            ...base,
+            capabilities: { ...base.capabilities, startupInjection: { maxChars: 4400 } }
+          };
+          const prompt = sessions.generatePrimePrompt(medProject, tight,
+            { medusaWorkspaceId: 'med-yield-cafe0123' });
+
+          assert.ok(prompt.length <= 4400,
+            `the contract's yielding must bring the whole prime within budget (got ${prompt.length})`);
+          // "Yielded" means gave up space and said so — either trimmed with a
+          // note or reduced to its pointer. Asserting one specific branch would
+          // pin the test to a budget arithmetic detail rather than the contract.
+          assert.ok(
+            /truncated to fit the prime size budget|Omitted to fit the prime size budget/.test(prompt),
+            'the contract gave up space, and announced it');
+          assert.ok(prompt.includes('project-specific learning'),
+            "the project's own learnings survive a squeeze the contract can absorb");
+          assert.ok(prompt.includes('`med-yield-cafe0123`'),
+            'the workspace identity is a directive and never yields');
+        } finally {
+          delete process.env.MEDUSA_CONTRACT_PATH;
+        }
+      });
+
       it('does not impose the startup-hook budget on the paste channel', () => {
         // silentPrime off — the prime is pasted into the terminal, which the
         // engine's startup-hook limit does not describe. Bulk context must not
