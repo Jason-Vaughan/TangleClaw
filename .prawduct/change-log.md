@@ -73,9 +73,23 @@ first now asserts the working flags; the second moved to `aider`, which genuinel
 so the invariant it tests is unchanged and still covered. Nothing was relaxed — both files gained
 assertions.
 
+**Critic cumulative (0 blocking / 10 warnings / 13 notes) — the three that mattered.** (1) The fix was
+log-only: `_buildLaunchCommand` dropped an unhonored mode but `sessions.js` still persisted the
+*requested* one, so the DB row and every API/UI consumer kept asserting a posture the process was never
+launched with — only a log grep disagreed. Now stores the reconciled mode. (2) The same question was
+being answered by three different predicates (two checked `disabled`, my new one checked presence
+only); collapsed into `engines.honorsLaunchMode`, which also uses `hasOwnProperty` — `constructor` /
+`__proto__` arrive from request bodies and a bare index treated them as valid modes. (3) All three
+reviewers independently flagged that my "covers at least one installed engine" meta-guard was a
+tautology: it resolved `shellCommand` (openclaw → `ssh`, present everywhere) while the real probes
+resolve `detection.target`, so it passed while zero engines were probed — and in the very failure it
+existed to catch it would skip and still report green. **Third time this session I wrote a guard that
+could not fail.** It now asserts `resolveBinary('sh')`, which detects a broken resolver independent of
+which engines are installed; breaking the resolver yields 1 fail + 9 skips instead of a green wall.
+
 **Verification:** both new guards mutation-tested — restoring `--full-auto` fails the flag probe with
 codex's own error text; restoring the silent fall-through fails the unknown-mode test. Flags confirmed
-accepted by invoking the real binary. Full suite **4830 tests / 0 fail / 1 skip**.
+accepted by invoking the real binary. Full suite **4837 tests / 0 fail / 1 skip**; evidence 2543.
 
 ## 2026-07-27: The injected update prompt runs the guarded applier, not raw git (#730)
 

@@ -26,6 +26,19 @@ All notable changes to TangleClaw are documented in this file.
   until its next restart. The owner of a log owns its rotation.
 
 ### Fixed
+- **One definition of "the engine will honor this launch mode" (#731).** Session launch, launch-command
+  assembly, and project reconciliation each answered that question and had drifted into three
+  predicates — two checking `disabled`, one checking only presence — so the same mode could be honored
+  by one caller and stranded by another. `engines.honorsLaunchMode()` is now the single definition and
+  the other two delegate. It uses `hasOwnProperty`, which closes a real hole: launch mode reaches the
+  server from request bodies, and `constructor` / `__proto__` / `toString` resolve to truthy prototype
+  members that a bare index accepted as valid modes — appending no args and logging no warning, exactly
+  the silent mismatch the change set out to remove.
+- **A session now records the launch mode it actually ran (#731).** `_buildLaunchCommand` drops a mode
+  the engine cannot honor, but the session row kept the mode that was *requested*, so the API, the UI,
+  and anything else reading it asserted a posture the process was never started with — an operator who
+  picked Bypass on an engine without one saw "Bypass" over an interactive agent, contradicted only by a
+  server log. The stored value is now the reconciled one.
 - **Codex's "Full Auto" launch mode could not start a session at all (#731).** `data/engines/codex.json`
   declared `--full-auto`, and current `codex-cli` rejects it outright — `codex --full-auto` exits 2 with
   `error: unexpected argument '--full-auto' found`. The tmux session was created and the launch command

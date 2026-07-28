@@ -96,6 +96,63 @@ describe('_buildLaunchCommand assembles Codex modes (#731)', () => {
   });
 });
 
+describe('honorsLaunchMode is the single definition of "the engine will run this" (#731)', () => {
+  const engines = require('../lib/engines');
+
+  it('accepts a mode the profile declares', () => {
+    assert.equal(engines.honorsLaunchMode(codex, 'bypassPermissions'), true);
+  });
+
+  it('rejects a mode the profile does not declare', () => {
+    assert.equal(engines.honorsLaunchMode(codex, 'acceptEdits'), false);
+  });
+
+  it('rejects a declared-but-disabled mode', () => {
+    const disabled = { launchModes: { fullAuto: { args: [], disabled: true } } };
+    assert.equal(engines.honorsLaunchMode(disabled, 'fullAuto'), false);
+  });
+
+  it('rejects inherited Object members — a mode key arrives from request bodies', () => {
+    // `constructor` / `__proto__` / `toString` resolve to truthy prototype
+    // members. A bare index treats them as valid modes: no args appended, no
+    // warning logged — the precise silent mismatch this predicate exists for.
+    for (const key of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      assert.equal(engines.honorsLaunchMode(codex, key), false, `${key} must not resolve as a mode`);
+    }
+  });
+
+  it('handles a missing or malformed profile without throwing', () => {
+    assert.equal(engines.honorsLaunchMode(null, 'default'), false);
+    assert.equal(engines.honorsLaunchMode({}, 'default'), false);
+    assert.equal(engines.honorsLaunchMode(codex, ''), false);
+    assert.equal(engines.honorsLaunchMode(codex, undefined), false);
+  });
+
+  it('reconciles an unhonored mode to default, including inherited keys', () => {
+    // `projects.reconcileLaunchMode` is module-internal and now delegates here;
+    // that delegation is covered behaviorally by the engine-switch tests in
+    // test/launch-mode-settings.test.js rather than by exporting it for a test.
+    assert.equal(engines.reconcileLaunchMode('bypassPermissions', codex), 'bypassPermissions');
+    assert.equal(engines.reconcileLaunchMode('acceptEdits', codex), 'default');
+    assert.equal(engines.reconcileLaunchMode('__proto__', codex), 'default');
+    assert.equal(engines.reconcileLaunchMode('default', null), 'default');
+  });
+});
+
+describe('_buildLaunchCommand rejects prototype members as modes (#731)', () => {
+  it('appends nothing and warns for an inherited key', () => {
+    const captured = [];
+    logger.setConsoleStream({ write: (s) => captured.push(s) });
+    try {
+      const cmd = sessions._buildLaunchCommand(codex, null, 'constructor');
+      assert.equal(cmd, 'codex', 'a prototype member must never contribute args');
+      assert.match(captured.join(''), /not honored by this engine/);
+    } finally {
+      logger.setConsoleStream(null);
+    }
+  });
+});
+
 describe('unknown launch mode is reported, not swallowed (#731)', () => {
   let captured;
 
@@ -112,7 +169,7 @@ describe('unknown launch mode is reported, not swallowed (#731)', () => {
     const cmd = sessions._buildLaunchCommand(codex, null, 'acceptEdits');
 
     const text = captured.join('');
-    assert.match(text, /Unknown launch mode/);
+    assert.match(text, /not honored by this engine/);
     assert.match(text, /launchMode=acceptEdits/);
     assert.match(text, /engine=codex/);
     assert.match(text, /available=/, 'the warning must name the modes that do exist');
@@ -122,6 +179,6 @@ describe('unknown launch mode is reported, not swallowed (#731)', () => {
 
   it('stays quiet on a mode the engine does define', () => {
     sessions._buildLaunchCommand(codex, null, 'fullAuto');
-    assert.doesNotMatch(captured.join(''), /Unknown launch mode/);
+    assert.doesNotMatch(captured.join(''), /not honored by this engine/);
   });
 });

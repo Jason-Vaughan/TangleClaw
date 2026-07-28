@@ -57,7 +57,9 @@ function resolveBinary(command) {
  *
  * @param {string} command - Binary name
  * @param {string[]} args - Mode args to probe
- * @returns {{accepted: boolean, error: string}}
+ * @returns {{accepted: boolean, inconclusive: boolean, error: string}} `inconclusive`
+ *   means the probe never reached a verdict (timeout, binary vanished) — the
+ *   caller skips rather than counting it either way.
  */
 function probeArgs(command, args) {
   try {
@@ -66,15 +68,17 @@ function probeArgs(command, args) {
       timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe']
     });
-    return { accepted: true, error: '' };
+    return { accepted: true, inconclusive: false, error: '' };
   } catch (err) {
     const stderr = String((err && err.stderr) || '');
-    // A timeout or a missing binary is an inconclusive probe, not a rejection —
-    // only an argument-parse complaint counts as a real failure.
+    // Inconclusive is its own answer, distinct from acceptance. Reporting a
+    // timeout as "accepted" would let a hung CLI mask a genuinely bad flag —
+    // the caller skips on `inconclusive` so the result is never mistaken for
+    // a pass that verified something.
     if (err && (err.code === 'ETIMEDOUT' || err.code === 'ENOENT')) {
-      return { accepted: true, error: '' };
+      return { accepted: false, inconclusive: true, error: `probe inconclusive (${err.code})` };
     }
-    return { accepted: false, error: stderr.split('\n').find(Boolean) || `exit ${err && err.status}` };
+    return { accepted: false, inconclusive: false, error: stderr.split('\n').find(Boolean) || `exit ${err && err.status}` };
   }
 }
 
@@ -115,7 +119,11 @@ describe('engine launch flags exist in the installed CLI (#731)', () => {
             return;
           }
 
-          const { accepted, error } = probeArgs(command, args);
+          const { accepted, inconclusive, error } = probeArgs(command, args);
+          if (inconclusive) {
+            t.skip(`${command} probe inconclusive: ${error}`);
+            return;
+          }
           assert.ok(
             accepted,
             `${profile.id} launch mode "${mode}" declares \`${args.join(' ')}\` in `
@@ -129,18 +137,35 @@ describe('engine launch flags exist in the installed CLI (#731)', () => {
     });
   }
 
-  it('covers at least one installed engine on this host', (t) => {
-    // Guards the guard: if resolveBinary ever broke, every engine would skip and
-    // the file would report green while checking nothing. On a machine with no
-    // engines at all (CI) this legitimately skips too.
-    const installed = profiles.filter((p) => {
-      const command = (p.launch && p.launch.shellCommand) || p.command;
-      return command && resolveBinary(command);
+  it('actually probed something, or says plainly that it did not', (t) => {
+    // Guards the guard. The first version of this resolved binaries via
+    // `launch.shellCommand || command` while every real probe resolves
+    // `detection.target` — and openclaw's shellCommand is `ssh`, present on
+    // essentially every host. So it reported "covered" while zero engines had
+    // been probed, and in the one failure it existed to catch (resolveBinary
+    // breaking) every probe would skip and it would still pass. A guard that
+    // cannot fail is worse than no guard: it reads as coverage.
+    //
+    // It now resolves exactly what the probes resolve, and asserts that at
+    // least one engine declaring flags was really exercised.
+    const probed = profiles.filter((p) => {
+      const command = (p.detection && p.detection.strategy === 'which') ? p.detection.target : null;
+      return command && modeArgSets(p).length > 0 && resolveBinary(command);
     });
-    if (installed.length === 0) {
-      t.skip('no engines installed on this host (expected in CI)');
-      return;
+
+    // `resolveBinary` is the machinery every probe depends on. Assert it against
+    // a binary guaranteed to exist, so "nothing was probed" can be told apart
+    // from "the resolver is broken" — the second is the failure that would
+    // silently turn every assertion above into a skip. This assertion can fail;
+    // `probed.length > 0` below the skip could not, which is what made the first
+    // version of this guard theatre.
+    assert.ok(
+      resolveBinary('sh'),
+      'resolveBinary cannot find /bin/sh — the resolver is broken, so every probe above skipped rather than verified'
+    );
+
+    if (probed.length === 0) {
+      t.skip('no flag-declaring engine installed on this host — nothing was verified here (expected in CI)');
     }
-    assert.ok(installed.length > 0);
   });
 });
