@@ -522,6 +522,12 @@ route('GET', '/api/config', (_req, res) => {
  * @returns {object} Redacted config plus a `bindState` block.
  */
 function _withBindState(config) {
+  // Classify from the MIGRATED view. `load()` merges DEFAULT_CONFIG's `false`,
+  // so an install whose boot-time persist failed — the contingency boot itself
+  // tolerates as non-fatal — would otherwise be reported as "closed" while its
+  // socket is wide, and the settings modal would draw a shut door over an open
+  // one and hide the way out. In-memory only: a GET must not write.
+  bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
   return { ...redactConfigSecrets(config), bindState: bindPolicy.describeBindState(config) };
 }
 

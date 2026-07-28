@@ -74,6 +74,58 @@ describe('API endpoints', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // #710 — the server owns the network-binding classification and ships it as
+  // `bindState`. The frontend renders that and derives nothing. These are live
+  // HTTP assertions on purpose: the frontend guards are source-greps, so
+  // reverting the two server call sites left every one of them green while the
+  // settings modal fell back to `{}` — rendering a grace install's switch OFF
+  // over a wide-open socket, with the keep-open button gone. That is the exact
+  // defect the chunk exists to prevent, reachable by deleting one expression.
+  describe('bindState on the config API (#710)', () => {
+    it('GET /api/config carries the server-resolved bind state', async () => {
+      const { status, data } = await request(server, 'GET', '/api/config');
+      assert.equal(status, 200);
+      assert.ok(data.bindState, 'the classification must reach the client');
+      assert.equal(data.bindState.setting, 'bindAllInterfaces');
+      assert.equal(typeof data.bindState.wide, 'boolean');
+      assert.equal(typeof data.bindState.lockedByCaddy, 'boolean');
+      assert.ok(['opted-in', 'closed', 'unchosen'].includes(data.bindState.choice));
+    });
+
+    it('PATCH /api/config returns it too, so the control re-renders from the server', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', { chimeMuted: false });
+      assert.equal(status, 200);
+      assert.ok(data.config.bindState, 'the PATCH response must carry it as well');
+    });
+
+    it('reports wide + unchosen for an install that predates the setting', async () => {
+      // The population this whole mechanism exists for. If the API reports
+      // `closed` here, the settings modal draws a shut door over an open one.
+      const raw = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf8'));
+      const saved = raw.bindAllInterfaces;
+      delete raw.bindAllInterfaces;
+      raw.ingressMode = 'direct';
+      fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify(raw));
+      try {
+        const { data } = await request(server, 'GET', '/api/config');
+        assert.equal(data.bindState.choice, 'unchosen');
+        assert.equal(data.bindState.wide, true, 'a legacy install is still bound wide, deliberately');
+        assert.equal(data.bindState.grace, true);
+      } finally {
+        raw.bindAllInterfaces = saved;
+        fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify(raw));
+      }
+    });
+
+    it('reports closed once the operator has chosen', async () => {
+      await request(server, 'PATCH', '/api/config', { bindAllInterfaces: false });
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal(data.bindState.choice, 'closed');
+      assert.equal(data.bindState.wide, false);
+      assert.equal(data.bindState.grace, false);
+    });
+  });
+
   describe('GET /api/health', () => {
     it('should return 200 with service status', async () => {
       const { status, data } = await request(server, 'GET', '/api/health');
