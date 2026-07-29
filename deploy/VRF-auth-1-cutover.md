@@ -282,7 +282,11 @@ cat /tmp/cutover-result.json
       ```sh
       python3 -c "import json;d=json.load(open('/tmp/cutover-result.json'));assert d['code']=='unreadable' and d['ok'] is False, d;print('✓', d)"
       ```
-- [ ] The Caddyfile is **untouched** — nothing written, no backup attempted.
+- [ ] The Caddyfile is **untouched** — nothing written, no backup attempted:
+      ```sh
+      ls -l ~/.tangleclaw/*.bak* 2>/dev/null && echo "UNEXPECTED backup" || echo "OK no backup taken"
+      stat -f '%m %N' ~/.tangleclaw/Caddyfile   # mtime must predate this phase
+      ```
 
 ```sh
 # 7b.3  STILL UNREADABLE at this point, deliberately: --force must not rescue a
@@ -315,6 +319,44 @@ python3 -c "import json;d=json.load(open('/tmp/cutover-ok.json'));assert d['ok']
       ran. (`healthOk: false` is a legitimate pass here; it means the cutover applied but the
       service had not come up yet. Only `null` is wrong.)
 - [ ] `finishedAt` is a timestamp from *this* run, not a stale file from an earlier one.
+
+## Phase 7d — An ungate refusal reports `ungate-refused`, not `failed`  ← #710
+
+The refusal and its tag are unit-tested; the **routing** from tag to reported code is not, and
+cannot be — it lives in the executor. Mutation this catches: reporting every `planCutover` throw
+as `failed`. The suite stays green, 7b and 7c stay green, and the wizard loses the one signal
+that tells it to send the operator to `reset-admin.js` rather than to a generic failure.
+
+Arrange a Caddyfile that IS gated while config carries no credential — the #397 shape.
+
+```sh
+# 7d.1  Strip the credential from config, leaving the live Caddyfile gated
+cp ~/.tangleclaw/config.json /tmp/config.before.json
+node -e '
+  const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/config.json";
+  const c=JSON.parse(fs.readFileSync(p,"utf8"));
+  c.authEnabled=false; c.basicAuthUser=null; c.basicAuthHash=null;
+  fs.writeFileSync(p,JSON.stringify(c,null,2));
+  console.log("config credential cleared; Caddyfile still gated");
+'
+
+# 7d.2  Attempt the cutover
+rm -f /tmp/cutover-ungate.json
+node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-ungate.json ; echo "exit=$?"
+python3 -c "import json;d=json.load(open('/tmp/cutover-ungate.json'));assert d['code']=='ungate-refused',d;print('OK',d)"
+
+# 7d.3  Restore config
+cp /tmp/config.before.json ~/.tangleclaw/config.json
+```
+
+- [ ] Refuses with **`"code": "ungate-refused"`** — NOT `"failed"`. A `failed` here is the
+      regression this phase exists for.
+- [ ] The message names `scripts/reset-admin.js` as the way forward.
+- [ ] The Caddyfile still carries its `basic_auth` block (the gate was never dropped):
+      ```sh
+      grep -c basic_auth ~/.tangleclaw/Caddyfile   # >= 1
+      ```
+- [ ] Config restored before continuing.
 
 ## Phase 8 — Roll back to direct (reversibility)
 
@@ -357,9 +399,10 @@ mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
 | Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
 | #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | |
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | |
+| #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | |
 | Rollback restores direct mode cleanly | 8 | |
 
-All **eight** green → `VRF-auth-1-cutover` PASSES.
+All **nine** green → `VRF-auth-1-cutover` PASSES.
 
 Phases 7b and 7c are not optional: they are the accepted substitute for unit coverage of the
 executor's ordering, which cannot be tested in-process (see #772). A run that skips them has not

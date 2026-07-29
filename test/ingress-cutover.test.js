@@ -305,24 +305,21 @@ describe('ingress-cutover', () => {
       );
     });
 
-    // The refusal itself had no test of any kind. These pin BOTH halves of it:
-    // that it fires, and that it is distinguishable from the generator's five
-    // unrelated validation errors. Without the tag every refusal collapses to one
-    // code, and a caller would answer a missing-certificate fault by telling the
-    // operator to reset their password.
+    // That the refusal FIRES is already covered, in
+    // `test/auth-credential-durability.test.js` → "planCutover — refuse-to-ungate
+    // guard". Do NOT delete that as redundant with this: the test below asserts a
+    // different property and deliberately does not re-assert the throw.
+    //
+    // What is covered here is that the refusal stays DISTINGUISHABLE from the five
+    // unrelated validation errors `buildCaddyfileContent` raises. Untagged, they
+    // all collapse into one code, and a caller would answer a missing-certificate
+    // fault by telling the operator to reset their password.
     /** ctx whose LIVE Caddyfile is gated while config carries no credential. */
     function gatedFileCtx() {
       const ctx = makeCtx({ config: { authEnabled: false } });
       ctx.existingCaddyfileText = `localhost {\n\tbasic_auth {\n\t\tjason ${BCRYPT}\n\t}\n}\n`;
       return ctx;
     }
-
-    it('refuses to regenerate a GATED Caddyfile as an ungated one (#397)', () => {
-      assert.throws(
-        () => cutover.planCutover('caddy', gatedFileCtx()),
-        /would replace a basic_auth-GATED Caddyfile with an UNGATED one/
-      );
-    });
 
     it('tags ONLY the ungate refusal, so it can be told apart from a build failure', () => {
       let refusal = null;
