@@ -5,6 +5,24 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
+- **The ingress cutover can now report how it ended to something that isn't a terminal
+  (#710, v5 chunk 2 groundwork).** `scripts/ingress-cutover.js` takes `--result-file <path>` and
+  writes a JSON outcome there: `ok`, a stable `code`, the `target`, an `error` string, the health URL
+  and whether the health check passed, plus `finishedAt`.
+
+  This exists because of a constraint discovered while building the slice: the cutover's launchctl
+  sequence ends by restarting the TangleClaw server, so the server cannot run it in-process — it
+  would kill itself partway and never learn the result. Provisioning from the setup wizard therefore
+  has to happen in a detached child, and a detached child has no stdout anyone is reading. The codes
+  are the contract (`ok`, `caddy-missing`, `unreadable`, `hand-edited`, `ungate-refused`,
+  `validate-failed`, `failed`) — deliberately distinguishing "config has no credential to emit" from
+  "an existing file must not be touched", because a caller has to respond differently to each.
+
+  `writeCutoverResult` never throws. A status file that cannot be written is a reporting failure, and
+  a cutover that has already reloaded launchd must not abort over one; the failure goes to stderr and
+  the absent file is itself legible to the reader as "the run died before finishing". No behavior
+  changes without the flag — `parseArgs` gains `resultFile` and nothing else moves.
+
 - **One derivation of "may this Caddyfile be overwritten", and a probe the wizard can ask
   (#710, v5 chunk 2 groundwork).** Chunk 2 makes the setup wizard put a login in front of TangleClaw
   by default, so it will meet machines that already have a Caddy config. A terminal tool can afford

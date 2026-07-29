@@ -194,25 +194,86 @@ function planCutover(target, ctx) {
 // ── Executor (side-effecting; not unit-tested — VRF-auth-1-cutover) ──
 
 /**
- * Parse CLI args into { target, dryRun, force }.
+ * Parse CLI args into { target, dryRun, force, resultFile }.
  * `--force` overrides the guard that refuses to overwrite a hand-edited Caddyfile
- * (#397 bug 3).
+ * (#397 bug 3). `--result-file` names a path to write a machine-readable outcome
+ * to; it is what lets a caller that is not watching stdout learn how the cutover
+ * ended.
  * @param {string[]} argv - process.argv.slice(2)
- * @returns {{ target: 'caddy'|'direct'|null, dryRun: boolean, force: boolean }}
+ * @returns {{ target: 'caddy'|'direct'|null, dryRun: boolean, force: boolean, resultFile: (string|null) }}
  */
 function parseArgs(argv) {
   let target = null;
   let dryRun = false;
   let force = false;
+  let resultFile = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--to') { target = argv[++i]; }
     else if (a === '--rollback') { target = 'direct'; }
     else if (a === '--dry-run') { dryRun = true; }
     else if (a === '--force') { force = true; }
+    else if (a === '--result-file') { resultFile = argv[++i] || null; }
   }
   if (target !== 'caddy' && target !== 'direct') target = null;
-  return { target, dryRun, force };
+  return { target, dryRun, force, resultFile };
+}
+
+/**
+ * Outcome codes written to a `--result-file`. Stable strings: a caller branches
+ * on these rather than on prose, so they are part of the contract and must not be
+ * reworded to suit a message.
+ *
+ * `ungate-refused` and `unreadable`/`hand-edited` differ in kind and a caller
+ * needs to tell them apart: the first means config has no credential to emit, the
+ * others mean an existing file must not be touched.
+ * @type {Readonly<Record<string, string>>}
+ */
+const CUTOVER_CODES = Object.freeze({
+  OK: 'ok',
+  CADDY_MISSING: 'caddy-missing',
+  UNREADABLE: 'unreadable',
+  HAND_EDITED: 'hand-edited',
+  UNGATE_REFUSED: 'ungate-refused',
+  VALIDATE_FAILED: 'validate-failed',
+  FAILED: 'failed'
+});
+
+/**
+ * Write the cutover's machine-readable outcome, best-effort.
+ *
+ * Deliberately never throws: this is a reporting channel, and a caller that
+ * cannot be told the outcome is strictly better off than one whose ingress
+ * cutover aborted because a status file could not be written. A missing result
+ * file is itself meaningful to the reader (the run died before finishing), so
+ * silence here degrades honestly rather than misleading.
+ * @param {string|null} resultFile - Path to write, or null to do nothing.
+ * @param {{ok: boolean, code: string, target: string, error?: (string|null), healthUrl?: (string|null), healthOk?: (boolean|null)}} result
+ * @returns {boolean} Whether the file was written.
+ */
+function writeCutoverResult(resultFile, result) {
+  if (!resultFile) return false;
+  try {
+    fs.mkdirSync(path.dirname(resultFile), { recursive: true });
+    fs.writeFileSync(resultFile, `${JSON.stringify({
+      ok: Boolean(result.ok),
+      code: result.code,
+      target: result.target,
+      error: result.error || null,
+      healthUrl: result.healthUrl || null,
+      healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
+      finishedAt: new Date().toISOString()
+    })}\n`, { mode: 0o600 });
+    return true;
+  } catch {
+    // prawduct:allow prawduct/broad-except -- reporting channel; see JSDoc. The
+    // failure is surfaced on stderr rather than swallowed, and must not abort a
+    // cutover that has already touched launchd.
+    try {
+      process.stderr.write(`WARNING: could not write cutover result file: ${resultFile}\n`);
+    } catch { /* stderr gone too (detached, closed fds) — nothing left to report with */ }
+    return false;
+  }
 }
 
 /**
@@ -527,4 +588,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited, applyDryRunAdoptionPreview };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited, applyDryRunAdoptionPreview, writeCutoverResult, CUTOVER_CODES };

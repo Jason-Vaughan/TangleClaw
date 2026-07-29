@@ -41,22 +41,98 @@ function makeCtx(overrides = {}) {
 describe('ingress-cutover', () => {
   describe('parseArgs', () => {
     it('parses --to caddy', () => {
-      assert.deepEqual(cutover.parseArgs(['--to', 'caddy']), { target: 'caddy', dryRun: false, force: false });
+      assert.deepEqual(cutover.parseArgs(['--to', 'caddy']), { target: 'caddy', dryRun: false, force: false, resultFile: null });
     });
     it('parses --to direct --dry-run', () => {
-      assert.deepEqual(cutover.parseArgs(['--to', 'direct', '--dry-run']), { target: 'direct', dryRun: true, force: false });
+      assert.deepEqual(cutover.parseArgs(['--to', 'direct', '--dry-run']), { target: 'direct', dryRun: true, force: false, resultFile: null });
     });
     it('treats --rollback as --to direct', () => {
-      assert.deepEqual(cutover.parseArgs(['--rollback']), { target: 'direct', dryRun: false, force: false });
+      assert.deepEqual(cutover.parseArgs(['--rollback']), { target: 'direct', dryRun: false, force: false, resultFile: null });
     });
     it('parses --force (#397 clobber-guard override)', () => {
-      assert.deepEqual(cutover.parseArgs(['--to', 'caddy', '--force']), { target: 'caddy', dryRun: false, force: true });
+      assert.deepEqual(cutover.parseArgs(['--to', 'caddy', '--force']), { target: 'caddy', dryRun: false, force: true, resultFile: null });
     });
     it('rejects an unknown target', () => {
       assert.equal(cutover.parseArgs(['--to', 'nginx']).target, null);
     });
     it('returns null target when none given', () => {
       assert.equal(cutover.parseArgs([]).target, null);
+    });
+
+    it('parses --result-file', () => {
+      assert.equal(cutover.parseArgs(['--to', 'caddy', '--result-file', '/tmp/r.json']).resultFile, '/tmp/r.json');
+    });
+    // A trailing --result-file with no value must not swallow the flag as its own
+    // path, nor yield undefined: the caller branches on null.
+    it('treats a valueless --result-file as absent', () => {
+      assert.equal(cutover.parseArgs(['--to', 'caddy', '--result-file']).resultFile, null);
+    });
+    // The reporting flag must not change what the cutover DOES.
+    it('does not disturb target/dryRun/force', () => {
+      assert.deepEqual(
+        cutover.parseArgs(['--to', 'direct', '--result-file', '/tmp/r.json', '--force', '--dry-run']),
+        { target: 'direct', dryRun: true, force: true, resultFile: '/tmp/r.json' }
+      );
+    });
+  });
+
+  describe('writeCutoverResult', () => {
+    let dir;
+    before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-result-')); });
+    after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+    it('writes a parseable outcome with the fields a caller branches on', () => {
+      const p = path.join(dir, 'ok.json');
+      assert.equal(cutover.writeCutoverResult(p, {
+        ok: true, code: cutover.CUTOVER_CODES.OK, target: 'caddy',
+        healthUrl: 'https://localhost:8443/api/health', healthOk: true
+      }), true);
+      const r = JSON.parse(fs.readFileSync(p, 'utf8'));
+      assert.equal(r.ok, true);
+      assert.equal(r.code, 'ok');
+      assert.equal(r.target, 'caddy');
+      assert.equal(r.healthOk, true);
+      assert.equal(r.error, null);
+      assert.ok(r.finishedAt, 'carries a timestamp so a stale file is detectable');
+    });
+
+    it('normalizes a failure outcome — error text present, healthOk null not false', () => {
+      const p = path.join(dir, 'fail.json');
+      cutover.writeCutoverResult(p, {
+        ok: false, code: cutover.CUTOVER_CODES.HAND_EDITED, target: 'caddy', error: 'refusing to overwrite'
+      });
+      const r = JSON.parse(fs.readFileSync(p, 'utf8'));
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'hand-edited');
+      assert.equal(r.error, 'refusing to overwrite');
+      // null, not false: "never got far enough to check" is not "checked and unhealthy".
+      assert.equal(r.healthOk, null);
+    });
+
+    it('creates the parent directory rather than failing on it', () => {
+      const p = path.join(dir, 'nested', 'deeper', 'r.json');
+      assert.equal(cutover.writeCutoverResult(p, { ok: true, code: 'ok', target: 'direct' }), true);
+      assert.ok(fs.existsSync(p));
+    });
+
+    it('writes 0600 — the outcome names paths on the operator\'s box', () => {
+      const p = path.join(dir, 'mode.json');
+      cutover.writeCutoverResult(p, { ok: true, code: 'ok', target: 'caddy' });
+      assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+    });
+
+    it('does nothing, and reports so, when no result file was requested', () => {
+      assert.equal(cutover.writeCutoverResult(null, { ok: true, code: 'ok', target: 'caddy' }), false);
+    });
+
+    // The whole point of the best-effort contract: a cutover that has already
+    // touched launchd must not abort because its status file is unwritable.
+    it('never throws when the path cannot be written', () => {
+      const p = path.join(dir, 'blocked');
+      fs.mkdirSync(p, { recursive: true }); // a directory where a file must go
+      assert.doesNotThrow(() => {
+        assert.equal(cutover.writeCutoverResult(p, { ok: true, code: 'ok', target: 'caddy' }), false);
+      });
     });
   });
 
