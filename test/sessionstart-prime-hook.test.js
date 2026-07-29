@@ -122,7 +122,7 @@ describe('sessionstart-prime.sh hook script (#103)', () => {
 });
 
 /*
- * #760 — every emitted hook command must survive an install path with a space.
+ * #759 — every emitted hook command must survive an install path with a space.
  *
  * Reported from the field: a TangleClaw directory under `~/Library/Mobile
  * Documents/…` made every Claude session start fail with
@@ -135,8 +135,15 @@ describe('sessionstart-prime.sh hook script (#103)', () => {
  * by running the command the way Claude Code does rather than by inspecting the
  * string. Unreproducible on this machine's own install, whose path has no space.
  */
-describe('#760 hook commands survive a TangleClaw path containing a space', () => {
+describe('#759 hook commands survive a TangleClaw path containing a space', () => {
   const engines = require('../lib/engines');
+
+  // Matches this file's existing convention — every fixture root this block
+  // creates is torn down, so a run leaves nothing behind in tmp.
+  const fixtureRoots = [];
+  afterEach(() => {
+    while (fixtureRoots.length) fs.rmSync(fixtureRoots.pop(), { recursive: true, force: true });
+  });
 
   /** An engine profile that opts into the silent-prime hook. */
   const PROFILE = { id: 'claude', capabilities: { supportsSilentPrime: true } };
@@ -148,6 +155,7 @@ describe('#760 hook commands survive a TangleClaw path containing a space', () =
    */
   function makeSpacedInstallDir() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-hooks-'));
+    fixtureRoots.push(root);
     const dir = path.join(root, 'Mobile Documents', 'TangleClaw');
     fs.mkdirSync(path.join(dir, 'data', 'hooks'), { recursive: true });
     for (const name of ['sessionstart-prime.sh', 'sessionstart-rules.sh']) {
