@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.37.0] - 2026-07-28
+
 ### Added
 - **Project rules are delivered on their own startup channel (#749).** Rules used to ride inside the
   session prime. The engine enforces its cap on a hook's output by *replacing* the payload with a
