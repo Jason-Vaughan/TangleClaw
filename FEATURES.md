@@ -177,3 +177,7 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 ## TODO (auto-stubbed 2026-07-28)
 
 - **TBD** — touched in this session: `lib/feature-index-prime.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-28)
+
+- **TBD** — touched in this session: `test/sessionstart-prime-hook.test.js`. <!-- describe -->
