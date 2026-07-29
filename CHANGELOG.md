@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A session launch could kill, or type into, a different project's live session (#774).** tmux
+  resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
+  then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
+  With no session named `TangleClaw` running, every `-t TangleClaw` silently retargeted
+  `TangleClaw-Roadmap`. Relaunching one project killed the other's live session; the prefix fallback
+  was verified on `send-keys` and `set-option` too, so it could equally have typed into or
+  reconfigured the neighbour, and `deploy/ttyd-attach.sh` would have attached the browser terminal
+  to that neighbour's pane.
+
+  Every tmux target now carries tmux's `=` exact-match prefix, so an absent session is an error
+  instead of whichever running session its name happens to prefix. The form is `'=name:'`: a bare
+  `=name` is honoured only by commands taking a *target-session* (`has-session`, `kill-session`),
+  while `send-keys`, `capture-pane`, `paste-buffer`, `set-option`, `show-option(s)` and `set-hook`
+  reject it outright and need the trailing colon — verified against tmux 3.6a, including that
+  `set-option -t '=name:'` still writes the session option rather than a window one. `display-message`
+  is the one command that cannot be protected this way, because it answers for the attached client
+  rather than failing on an absent session, so its caller checks existence explicitly.
+
+  Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
+  `RentalClaw-Project` — were the exposed cases; no rename is needed now.
+
 ### Changed
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
