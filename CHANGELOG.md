@@ -26,6 +26,19 @@ All notable changes to TangleClaw are documented in this file.
   Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
+  Tests: `test/tmux.test.js` gains a live-neighbour suite (a `X-neighbour` session with no `X`
+  present, asserting `hasSession`, `killSession`, `sendKeys`, `capturePane`, `getMouseState`,
+  `setMouse`, `unsetMouse` and `isAlternateScreen` all refuse it, the neighbour survives, and the
+  exact name still resolves when both exist), a mouse/hook round-trip that reads hooks back with
+  `show-hooks` because `setMouse` only `log.warn`s when `set-hook` fails, and a **source-level
+  structural pin** asserting all 20 `-t` sites are built by `_target()` while `new-session -s` stays
+  bare. The structural pin exists because every behavioural test enters through `hasSession`, so a
+  lost `=` on any other verb would otherwise stay green — reverting one `set-option` target trips
+  only that test. `test/ttyd-attach.test.js` pins the target *shape* per verb class, since the
+  script's `capture-pane` line ends in `2>/dev/null || true` and would have skipped the #322
+  scrollback replay silently. `.prawduct/artifacts/boundary-patterns.md` records the invariant, which
+  had been documenting the old bare-name wire form.
+
 ### Changed
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took

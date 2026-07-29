@@ -30,5 +30,5 @@ to file paths — this maps the layout itself.
   - `CHANGELOG`
   - `CLAUDE`
   - `CLAW_CODE_SETUP`
-- **Tangle-Shared** → _(no shared directory)_
+- **Tangle-Shared** → `/Users/jasonvaughan/Documents/Projects/Shared/Tangle-Shared`
   - _(no docs registered)_
