@@ -147,6 +147,27 @@ that misdescribed the socket. Consumers render the answer; they do not restate t
 hand-edited config or refuses; it never clobbers one (the refuse-to-ungate guard from #463 is the
 existing precedent).
 
+**Amendment 2026-07-29 — "preserve or refuse" is not enough on its own, and the wizard gets no
+override.** The clause above is satisfied by a user interface that asks "overwrite your existing
+config?" and proceeds when the operator clicks yes. That is not the intent, and stating only the
+weaker rule left the stronger one unwritten and therefore unenforceable. Made explicit:
+
+- The setup wizard **never writes a Caddyfile that a human maintains** — not with a confirmation, not
+  behind an "advanced" disclosure, not at all. It offers **no equivalent of the CLI's `--force`**.
+- Where a hand-maintained config already carries exactly one credential, the wizard **adopts** it —
+  reads it into canonical config, read-only on the file — and reports that it kept the operator's
+  existing login.
+- Where it carries several credentials, or none, or cannot be read, the wizard **refuses and routes
+  the operator to `scripts/ingress-cutover.js`**, where `--force`, `--rollback` and a timestamped
+  backup exist. Destroying a working gate stays a deliberate act taken at a terminal, with an undo.
+
+The reasoning is the same as the no-default-credential rule: a prompt that can be clicked through
+during first-run setup is not a control. The difference from the CLI is not trust in the operator, it
+is that the terminal path carries a backup and a rollback and the browser path carries neither.
+
+Recorded here rather than in the build plan because build plans are deleted when their work ships,
+and `.prawduct/` is gitignored — the same failure mode this ADR's closing paragraph describes.
+
 **Why this ADR exists at all.** The superseded posture was written down — in a project artifact under
 `.prawduct/`, which is gitignored. It was therefore invisible to a fresh clone, to contributors, and
 to review. A security posture that only exists on one machine cannot be checked, inherited, or

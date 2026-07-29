@@ -5,44 +5,56 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
-- **`GET /api/setup/ingress-state` — the wizard's read-only probe for whether it may install a login
-  (#710, v5 chunk 2 groundwork).** Reports the `classifyIngressState` verdict plus whether `caddy` is
-  installed at all, so the setup wizard can tell "I can provision a gate here" from "someone already
-  built one" before it offers anything. Detection only: it never writes the Caddyfile, never reloads,
-  never provisions — the sibling of `/api/setup/https-check`, which reports on mkcert the same way.
-  Deliberately narrower than the classifier it wraps: **the credential hash never crosses the
-  boundary, and the raw username list is reduced to a count**, with the single user named only in the
-  `adoptable` case where the UI will say "keeping your existing login for ⟨user⟩". This endpoint
-  answers *before* setup completes, which is exactly when no gate exists in front of it, so
-  enumerating account names here would be a free read; the count still lets the UI say why it cannot
-  adopt. No behavior change yet — nothing consumes it.
-  **Tests:** `test/setup-ingress-state-endpoint.test.js` (+8) — one per state, an assertion that no
-  bcrypt-shaped string appears in any response, that a second account name is never enumerated, that
-  `users` never crosses the boundary, and that probing neither creates nor modifies a Caddyfile.
-- **`caddy.classifyIngressState()` — tell apart the ways an existing Caddyfile can block
-  automated setup (#710, v5 chunk 2 groundwork).** The setup wizard is going to put a login in front
-  of TangleClaw by default, which means it will meet machines that already have a Caddy config. A
-  terminal tool can afford to ask "overwrite it?" because the answer comes with a backup, a `--force`
-  and a `--rollback`; a browser has none of those, so the cases have to be separated before the
-  question is asked. The classifier reports `absent`, `generated` (sha256-verified as ours, so
-  rewriting reproduces it), `adoptable` (a human maintains it, exactly one credential),
-  `ambiguous` (a human maintains it, several distinct users) or `ungated` (a human maintains it, no
-  credential), plus a single `safeToWrite` boolean so the write decision cannot drift as states are
-  added. Reading is its only effect — it never writes or reloads.
-  `ambiguous` and `ungated` are deliberately not merged: `extractBasicAuthCredential` returns null
-  for both, so a caller built on it would tell an operator who has two logins that they have none,
-  and then offer to replace the file currently holding the door shut. A sixth state, `unreadable`,
-  covers a file that is present but cannot be opened — it **fails closed** rather than reporting
-  `absent`, because not knowing what is in a file is not the same as knowing there is nothing in it,
-  and the difference decides whether a working gate gets overwritten. That case logs; a genuine
-  ENOENT does not, being the ordinary first-run path.
-  No behavior change yet — nothing consumes this. Verified against the live hand-edited Caddyfile on
-  the developer's own machine, which classifies `adoptable` / `safeToWrite: false`, i.e. the wizard
-  will adopt its credential rather than regenerate over it.
-  **Tests:** `test/caddy-ingress-state.test.js` (+9) — one per state, the ungated-vs-ambiguous
-  separation asserted directly against `extractBasicAuthCredential`'s collapse, a sweep proving no
-  hand-edited state is ever `safeToWrite`, unreadable-path handling, and a live-file case that skips
-  when no Caddyfile is present. Full suite 5108 pass / 0 fail / 1 skip.
+- **One derivation of "may this Caddyfile be overwritten", and a probe the wizard can ask
+  (#710, v5 chunk 2 groundwork).** Chunk 2 makes the setup wizard put a login in front of TangleClaw
+  by default, so it will meet machines that already have a Caddy config. A terminal tool can afford
+  to ask "overwrite it?" because the answer arrives with a timestamped backup, a `--force` and a
+  `--rollback`. A browser has none of those, so the cases are separated before anything is offered.
+
+  `caddy.classifyCaddyfileContent()` (pure) and `caddy.classifyIngressState()` (its path-reading
+  wrapper) report `generated` — sha256-verified as ours, so regenerating reproduces it — `adoptable`
+  (a human maintains it, exactly one credential), `ambiguous` (several distinct users), `ungated` (no
+  credential), plus the two states that belong to the filesystem rather than any content: `absent`
+  and `unreadable`. One `safeToWrite` boolean carries the write decision, true only for `absent` and
+  `generated`.
+
+  Three distinctions are the point. **`ambiguous` is not `ungated`:** `extractBasicAuthCredential`
+  returns null for both, so a caller built on it would tell an operator who has two logins that they
+  have none, then offer to replace the file currently holding the door shut. **`unreadable` is not
+  `absent`:** not knowing what is in a file is not the same as knowing there is nothing in it, so a
+  present-but-unopenable config fails closed and logs the path, while a genuine ENOENT stays the
+  quiet first-run path. **A `generated` file still reports its credential** — it is usually gated, and
+  that is the one state where a caller is simultaneously told the file may be replaced.
+
+  `scripts/ingress-cutover.js`'s `caddyfileIsHandEdited` now delegates to the same classifier instead
+  of repeating the check, so the CLI and the wizard cannot reach opposite conclusions about one file.
+  Behaviour there is unchanged for every case it already handled and tightened for one it did not: an
+  existing-but-unreadable Caddyfile now counts as protected rather than throwing.
+
+  **`GET /api/setup/ingress-state`** exposes the verdict to the wizard along with whether `caddy` is
+  installed at all. Detection only — it never writes the Caddyfile, never reloads, never provisions —
+  the sibling of `/api/setup/https-check`. It is deliberately narrower than the classifier: the
+  credential hash never crosses the boundary and the raw username list is reduced to a count. The one
+  username it can disclose is released **only while `setupComplete` is `false`**, because in direct
+  mode this route answers with no gate in front of it and an installed TangleClaw should not hand out
+  an account name for the asking; state and count stay honest either way.
+
+  Verified against the live hand-edited Caddyfile on the developer's own machine: classifies
+  `adoptable` / `safeToWrite: false`, i.e. the wizard will adopt that credential rather than
+  regenerate over it. Nothing in the wizard consumes this yet — the step-list change ships with
+  provisioning, because collecting a password that nothing enforces would be worse than today's
+  honest absence.
+
+  **Tests:** `test/caddy-ingress-state.test.js` (12) — every one of the six states, the
+  ungated-vs-ambiguous separation asserted directly against `extractBasicAuthCredential`'s collapse,
+  the credential reported for a `generated` file, purity of `classifyCaddyfileContent`, a sweep
+  proving no hand-edited state is ever `safeToWrite`, a chmod-000 fail-closed case that skips when
+  running privileged, and a live-file case that skips when no Caddyfile is present.
+  `test/setup-ingress-state-endpoint.test.js` (9) — four of the six states at the HTTP boundary
+  (`generated` and `unreadable` are covered at the unit level only), no bcrypt-shaped string in any
+  response, no enumeration of a second account name, `users` never crossing the boundary, the
+  username withheld once `setupComplete` flips, and proof that probing neither creates nor modifies a
+  Caddyfile.
 
 ### Changed
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**

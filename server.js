@@ -873,20 +873,24 @@ route('GET', '/api/setup/https-check', (_req, res) => {
 // /api/setup/https-check, which reports on mkcert the same way.
 //
 // Deliberately narrower than `classifyIngressState` returns. The credential hash
-// never crosses the boundary, and the raw user list is reduced to a count with
-// the single adoptable user named. Two reasons: the response is the wizard's,
-// and the wizard only needs the name in the one case where it will say "keeping
-// your existing login for <user>"; and this endpoint answers before setup
-// completes, which is precisely when no gate exists in front of it, so account
-// enumeration here would be a free read. The count still lets the UI be specific
-// about why it cannot adopt.
+// never crosses the boundary, and the raw user list is reduced to a count.
+//
+// The one username this can disclose is released only while `setupComplete` is
+// false. The wizard needs it for a single sentence — "keeping your existing
+// login for <user>" — and that sentence is only ever shown during setup. Once
+// setup is finished the name is withheld, because in direct mode this route
+// answers with no gate in front of it and an installed, running TangleClaw
+// should not hand out an account name for the asking. The state and the count
+// still answer honestly, which is all any later caller needs.
 route('GET', '/api/setup/ingress-state', (_req, res) => {
+  const config = store.config.load();
+  const duringSetup = config.setupComplete === false;
   const detection = caddy.detectCaddy();
   const state = caddy.classifyIngressState();
   jsonResponse(res, 200, {
     state: state.state,
     safeToWrite: state.safeToWrite,
-    user: state.user,
+    user: duringSetup ? state.user : null,
     userCount: state.users.length,
     caddy: {
       available: detection.available,

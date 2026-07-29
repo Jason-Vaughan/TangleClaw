@@ -234,15 +234,25 @@ function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
 }
 
 /**
- * Whether an existing Caddyfile is hand-edited (exists and is NOT an
- * integrity-verified generated file). Shared by the dry-run preview and the
- * executor so the clobber-guard decision (#397 bug 3) can't drift between them.
+ * Whether an existing Caddyfile must be protected from being overwritten.
+ *
+ * Delegates to `caddy.classifyIngressState`, which the setup wizard also
+ * consults — one derivation of "may this be written", so the CLI and the UI
+ * cannot reach opposite conclusions about the same file. `safeToWrite` is the
+ * classifier's single write-decision field; its negation is exactly this
+ * question.
+ *
+ * Behaviour is unchanged for the cases this function already handled (missing →
+ * false, integrity-verified generated → false, anything else → true) and
+ * tightened for one it did not: a file that exists but cannot be READ now
+ * counts as protected rather than crashing the caller, so an unreadable config
+ * is never silently replaced.
+ *
  * @param {string} caddyfilePath
  * @returns {boolean}
  */
 function caddyfileIsHandEdited(caddyfilePath) {
-  if (!fs.existsSync(caddyfilePath)) return false;
-  return !caddy.isGeneratedCaddyfile(fs.readFileSync(caddyfilePath, 'utf8'));
+  return !caddy.classifyIngressState(caddyfilePath).safeToWrite;
 }
 
 /** Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT wins, else config. */

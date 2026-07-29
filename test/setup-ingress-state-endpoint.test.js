@@ -155,6 +155,28 @@ describe('GET /api/setup/ingress-state', () => {
     assert.equal(res.data.users, undefined, 'raw user list must not cross the API boundary');
   });
 
+  it('withholds the username once setup is complete, keeping state and count honest', async () => {
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+
+    const during = await get(server, '/api/setup/ingress-state');
+    assert.equal(during.data.user, 'jason', 'the wizard needs the name while it runs');
+
+    const config = store.config.load();
+    const orig = config.setupComplete;
+    config.setupComplete = true;
+    store.config.save(config);
+    try {
+      const after = await get(server, '/api/setup/ingress-state');
+      assert.equal(after.data.user, null, 'an installed TangleClaw must not hand out an account name');
+      assert.ok(!after.raw.includes('jason'), 'the name leaked by another field');
+      assert.equal(after.data.state, 'adoptable', 'the state is still answered honestly');
+      assert.equal(after.data.userCount, 1, 'the count is still answered honestly');
+    } finally {
+      config.setupComplete = orig;
+      store.config.save(config);
+    }
+  });
+
   it('reports whether caddy is installed, so the wizard knows if it can provision', async () => {
     const res = await get(server, '/api/setup/ingress-state');
     assert.equal(typeof res.data.caddy, 'object');

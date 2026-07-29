@@ -59,6 +59,36 @@ describe('classifyIngressState', () => {
     assert.equal(state.user, null);
   });
 
+  it('reports the credential a GENERATED file carries — the state that also authorizes a rewrite', () => {
+    // A generated Caddyfile is usually gated. Reporting no users here would tell
+    // a caller "this install has no login yet" about the one state where it is
+    // simultaneously being told the file may be replaced.
+    const content = caddy.buildCaddyfileContent({
+      serverPort: 3102,
+      certPath: '/tmp/cert.pem',
+      keyPath: '/tmp/key.pem',
+      basicAuthUser: 'jason',
+      basicAuthHash: BCRYPT_A
+    });
+    assert.deepEqual(caddy.listBasicAuthUsers(content), ['jason'], 'premise: the file does carry a user');
+
+    const state = caddy.classifyIngressState(tmpCaddyfile(content));
+    assert.equal(state.state, 'generated');
+    assert.equal(state.safeToWrite, true);
+    assert.deepEqual(state.users, ['jason']);
+    assert.equal(state.user, 'jason');
+  });
+
+  it('classifyCaddyfileContent is pure — same verdict, no filesystem, minus the path-only states', () => {
+    const content = handEdited([`jason ${BCRYPT_A}`]);
+    const pure = caddy.classifyCaddyfileContent(content);
+    const viaPath = caddy.classifyIngressState(tmpCaddyfile(content));
+    assert.equal(pure.state, viaPath.state);
+    assert.equal(pure.safeToWrite, viaPath.safeToWrite);
+    assert.deepEqual(pure.users, viaPath.users);
+    assert.equal(pure.path, undefined, 'the pure form knows nothing about a path');
+  });
+
   it('reports "generated" for an integrity-verified generated file, which may be rewritten', () => {
     const content = caddy.buildCaddyfileContent({
       serverPort: 3102,
