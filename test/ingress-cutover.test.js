@@ -188,33 +188,37 @@ describe('ingress-cutover', () => {
     });
   });
 
-  describe('caddyfileIsHandEdited (#397 clobber-guard, shared by dry-run + executor)', () => {
+  // The executor's clobber guard reads `safeToWrite` from classifyIngressState —
+  // so that is what these assert. They previously went through a thin wrapper in
+  // this script; the wrapper is gone, and testing it would have meant the suite's
+  // only clobber-guard coverage exercised a function the executor never calls.
+  describe('clobber guard — safeToWrite is what the executor branches on (#397/#710)', () => {
     let tmpDir;
     before(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-he-')); });
     after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
     const caddy = require('../lib/caddy');
 
-    it('returns false when the file does not exist (first cutover)', () => {
-      assert.equal(cutover.caddyfileIsHandEdited(path.join(tmpDir, 'absent')), false);
+    it('absent → safe to write (the ordinary first cutover)', () => {
+      assert.equal(caddy.classifyIngressState(path.join(tmpDir, 'absent')).safeToWrite, true);
     });
-    it('returns false for a pristine generated Caddyfile (safe to overwrite)', () => {
+    it('pristine generated → safe to write (regenerating reproduces it)', () => {
       const p = path.join(tmpDir, 'gen');
       fs.writeFileSync(p, caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' }));
-      assert.equal(cutover.caddyfileIsHandEdited(p), false);
+      assert.equal(caddy.classifyIngressState(p).safeToWrite, true);
     });
-    it('returns true for a hand-edited Caddyfile (header kept, body changed)', () => {
+    it('hand-edited (header kept, body changed) → NOT safe to write', () => {
       const p = path.join(tmpDir, 'edited');
       const tampered = caddy.buildCaddyfileContent({ serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' })
         .replace(/\}\n$/, '\tbasic_auth { jason $2a$hash }\n}\n');
       fs.writeFileSync(p, tampered);
-      assert.equal(cutover.caddyfileIsHandEdited(p), true);
+      assert.equal(caddy.classifyIngressState(p).safeToWrite, false);
     });
 
-    it('returns true for a file that exists but cannot be read', (t) => {
-      // Protected, not "absent". The executor additionally refuses this case
-      // outright before taking a backup -- a file that cannot be read cannot be
-      // copied, so --force has no safety net to offer here.
+    it('present but unreadable → NOT safe to write, and reported as its own state', (t) => {
+      // Protected, not "absent". The executor refuses this case outright BEFORE
+      // building its context -- an unreadable file cannot be copied, so --force
+      // has no safety net to offer here.
       const p = path.join(tmpDir, 'unreadable');
       fs.writeFileSync(p, 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
       fs.chmodSync(p, 0o000);
@@ -225,9 +229,10 @@ describe('ingress-cutover', () => {
         return;
       } catch { /* expected */ }
 
-      assert.equal(cutover.caddyfileIsHandEdited(p), true);
-      assert.equal(caddy.classifyIngressState(p).state, 'unreadable',
-        'the executor keys its explicit refusal off this state, not off the boolean');
+      const state = caddy.classifyIngressState(p);
+      assert.equal(state.safeToWrite, false);
+      assert.equal(state.state, 'unreadable',
+        'the executor keys its explicit refusal off this state, not off a boolean alone');
     });
   });
 

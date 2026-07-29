@@ -272,6 +272,59 @@ lsof -nP -iTCP:8443 -sTCP:LISTEN || echo "✓ nothing on 8443 (caddy stopped)"
 
 ---
 
+## Phase 7b — Unreadable Caddyfile refuses, and says so in the result file  ← #710
+
+Both checks here exist because a unit test **cannot** see them: they are properties of the
+order `main()` does things in, and the executor is deliberately not unit-tested
+(see the header of `scripts/ingress-cutover.js`). Each one names the mutation it catches.
+
+A present-but-unreadable Caddyfile must produce a *refusal*, not a stack trace. It previously
+produced a stack trace, because building the cutover context read the same file before the
+guard could run.
+
+```sh
+# 7b.1  Make the live Caddyfile unreadable (root-owned, mode 000 — a real-world
+#       permissions accident, and what a restored-from-backup file can look like)
+sudo chmod 000 ~/.tangleclaw/Caddyfile
+
+# 7b.2  Run the cutover, asking for a machine-readable outcome
+rm -f /tmp/cutover-result.json
+node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-result.json ; echo "exit=$?"
+cat /tmp/cutover-result.json
+```
+
+- [ ] Exit is **non-zero** and the message names the path and says permissions.
+- [ ] **No stack trace.** An `EACCES` traceback here is the regression this phase exists for —
+      it means the file is being read before it is classified.
+- [ ] `/tmp/cutover-result.json` exists and reports `"code": "unreadable"`, `"ok": false`:
+      ```sh
+      python3 -c "import json;d=json.load(open('/tmp/cutover-result.json'));assert d['code']=='unreadable' and d['ok'] is False, d;print('✓', d)"
+      ```
+- [ ] The Caddyfile is **untouched** (nothing written, no backup attempted — an unreadable
+      file cannot be backed up, so `--force` must not help either):
+      ```sh
+      sudo chmod 600 ~/.tangleclaw/Caddyfile     # restore before continuing
+      ```
+- [ ] Re-run with `--force` and confirm it **still refuses** (force does not apply to this state).
+
+## Phase 7c — A successful cutover writes its outcome  ← #710
+
+Catches the mutation of dropping `--result-file` from the executor: the flag would still parse,
+the cutover would still work, and every unit test would still pass — while the wizard that polls
+for the result would read a successful cutover as a crash, because an absent file means "died".
+
+```sh
+rm -f /tmp/cutover-ok.json
+node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-ok.json ; echo "exit=$?"
+python3 -c "import json;d=json.load(open('/tmp/cutover-ok.json'));assert d['ok'] and d['code']=='ok',d;print('✓',d)"
+```
+
+- [ ] Exit `0`, and the file reports `"ok": true`, `"code": "ok"`.
+- [ ] `healthUrl` is the HTTPS URL, and `healthOk` is a **boolean, not null** — the health poll
+      ran. (`healthOk: false` is a legitimate pass here; it means the cutover applied but the
+      service had not come up yet. Only `null` is wrong.)
+- [ ] `finishedAt` is a timestamp from *this* run, not a stale file from an earlier one.
+
 ## Phase 9 — Teardown (optional, leaves elkaholic clean)
 
 ```sh

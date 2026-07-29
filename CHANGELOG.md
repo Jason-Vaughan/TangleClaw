@@ -21,8 +21,11 @@ All notable changes to TangleClaw are documented in this file.
   `writeCutoverResult` never throws. A status file that cannot be written is a reporting failure, and
   a cutover that has already reloaded launchd must not abort over one; the failure goes to stderr and
   the absent file is itself legible to the reader as "the run died before finishing". That reading
-  only holds because **every** non-fatal exit writes one — the refusals included — so a caller can
-  distinguish "refused, and here is why" from "died partway". No behavior changes without the flag.
+  only holds because every exit *after the run begins* writes one — the refusals included — so a
+  caller can distinguish "refused, and here is why" from "died partway". Two exits deliberately write
+  nothing: a usage error (the arguments were never valid, so there is no run to report on) and
+  `--dry-run` (a preview changes nothing, and a caller polling a result file must never read a
+  rehearsal as a completed cutover). No behavior changes without the flag.
 
   Two defects found by review in the preceding commits of this branch, fixed here rather than
   shipped: the flag parsed but was never read, so the script's documented outcome file was never
@@ -59,8 +62,13 @@ All notable changes to TangleClaw are documented in this file.
   explicit: **the executor refuses an existing-but-unreadable Caddyfile outright, before attempting a
   backup, and `--force` does not override it.** Forcing is survivable only because of the timestamped
   backup, and a file that cannot be read cannot be copied — so forcing past it would replace a config
-  with no recovery. Previously that path reached `fs.copyFileSync` and died on the same EACCES with
-  no explanation.
+  with no recovery.
+
+  Correcting this entry's original account of the prior behaviour: the run did **not** get as far as
+  `fs.copyFileSync`. It died earlier still, on the unguarded read that builds the cutover context, and
+  the refusal described above was itself unreachable until the ordering was fixed later on this
+  branch. Both the original claim and the guard were wrong in the same direction — describing a
+  protection that the control flow never reached.
 
   **`GET /api/setup/ingress-state`** exposes the verdict to the wizard along with whether `caddy` is
   installed at all. Detection only — it never writes the Caddyfile, never reloads, never provisions —

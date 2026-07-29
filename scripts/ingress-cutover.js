@@ -90,9 +90,15 @@ function planCutover(target, ctx) {
     const effectiveAuth = Boolean(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
     if (!effectiveAuth && typeof ctx.existingCaddyfileText === 'string'
         && caddy.listBasicAuthUsers(ctx.existingCaddyfileText).length > 0) {
-      throw new Error('cutover would replace a basic_auth-GATED Caddyfile with an UNGATED one '
+      const err = new Error('cutover would replace a basic_auth-GATED Caddyfile with an UNGATED one '
         + '(config has no credential). Set one first: node scripts/reset-admin.js '
         + '(or restart the server in caddy mode to auto-adopt the live credential into config).');
+      // Tagged so a caller can tell THIS refusal from the five unrelated errors
+      // buildCaddyfileContent raises below (missing port, missing cert pair, …).
+      // Without the tag they collapse into one code, and a wizard would answer a
+      // missing-certificate fault by telling the operator to reset their password.
+      err.cutoverCode = 'ungate-refused';
+      throw err;
     }
     const caddyfile = caddy.buildCaddyfileContent({
       serverPort: upstreamPort,
@@ -295,27 +301,6 @@ function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
   return caddy.computeCaddyfileAdoption(config, existingCaddyfileText).changed;
 }
 
-/**
- * Whether an existing Caddyfile must be protected from being overwritten.
- *
- * Delegates to `caddy.classifyIngressState`, which the setup wizard also
- * consults — one derivation of "may this be written", so the CLI and the UI
- * cannot reach opposite conclusions about the same file. `safeToWrite` is the
- * classifier's single write-decision field; its negation is exactly this
- * question.
- *
- * Behaviour is unchanged for the cases this function already handled: missing →
- * false, integrity-verified generated → false, anything else → true. A file that
- * exists but cannot be READ also reports true, but callers must not rely on that
- * alone — the executor refuses that case explicitly, before the backup, because
- * an unreadable file cannot be copied and so cannot be protected by one.
- *
- * @param {string} caddyfilePath
- * @returns {boolean}
- */
-function caddyfileIsHandEdited(caddyfilePath) {
-  return !caddy.classifyIngressState(caddyfilePath).safeToWrite;
-}
 
 /** Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT wins, else config. */
 function resolveUpstreamPort(serverPlistPath, config) {
@@ -500,9 +485,12 @@ function main() {
   let plan;
   try {
     plan = planCutover(target, ctx);
-  } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's own refusals arrive as Error; reported verbatim below, never swallowed
+  } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's refusals and its generator's validation errors both arrive as Error; reported verbatim below, never swallowed
     process.stderr.write(`ERROR: ${err.message}\n`);
-    finish(CUTOVER_CODES.UNGATE_REFUSED, err.message);
+    // Only the tagged refusal is `ungate-refused`. Everything else the generator
+    // raises is a plain build failure, and must not be reported as a credential
+    // problem — the two have completely different operator remedies.
+    finish(err.cutoverCode === 'ungate-refused' ? CUTOVER_CODES.UNGATE_REFUSED : CUTOVER_CODES.FAILED, err.message);
   }
 
   if (dryRun) {
@@ -647,4 +635,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, caddyfileIsHandEdited, applyDryRunAdoptionPreview, writeCutoverResult, CUTOVER_CODES };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, CUTOVER_CODES };
