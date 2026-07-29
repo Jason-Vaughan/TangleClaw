@@ -864,6 +864,38 @@ route('GET', '/api/setup/https-check', (_req, res) => {
   });
 });
 
+// GET /api/setup/ingress-state — What the wizard is allowed to do about a login.
+//
+// Two facts the wizard needs before it can offer to put a gate in front of this
+// install: whether Caddy is installed at all, and whether a Caddy config already
+// exists that a human maintains. Detection only — this never writes the
+// Caddyfile, never reloads, and never provisions; it is the sibling of
+// /api/setup/https-check, which reports on mkcert the same way.
+//
+// Deliberately narrower than `classifyIngressState` returns. The credential hash
+// never crosses the boundary, and the raw user list is reduced to a count with
+// the single adoptable user named. Two reasons: the response is the wizard's,
+// and the wizard only needs the name in the one case where it will say "keeping
+// your existing login for <user>"; and this endpoint answers before setup
+// completes, which is precisely when no gate exists in front of it, so account
+// enumeration here would be a free read. The count still lets the UI be specific
+// about why it cannot adopt.
+route('GET', '/api/setup/ingress-state', (_req, res) => {
+  const detection = caddy.detectCaddy();
+  const state = caddy.classifyIngressState();
+  jsonResponse(res, 200, {
+    state: state.state,
+    safeToWrite: state.safeToWrite,
+    user: state.user,
+    userCount: state.users.length,
+    caddy: {
+      available: detection.available,
+      version: detection.version || null,
+      error: detection.error || null
+    }
+  });
+});
+
 // POST /api/setup/generate-cert — Run mkcert to produce cert.pem + key.pem
 // Valid host: letters/digits/dots/colons/hyphens, not starting with '-' so mkcert
 // can't mistake it for a flag. Max length 253 per RFC 1035 (plus IPv6 colons).

@@ -5,6 +5,20 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
+- **`GET /api/setup/ingress-state` — the wizard's read-only probe for whether it may install a login
+  (#710, v5 chunk 2 groundwork).** Reports the `classifyIngressState` verdict plus whether `caddy` is
+  installed at all, so the setup wizard can tell "I can provision a gate here" from "someone already
+  built one" before it offers anything. Detection only: it never writes the Caddyfile, never reloads,
+  never provisions — the sibling of `/api/setup/https-check`, which reports on mkcert the same way.
+  Deliberately narrower than the classifier it wraps: **the credential hash never crosses the
+  boundary, and the raw username list is reduced to a count**, with the single user named only in the
+  `adoptable` case where the UI will say "keeping your existing login for ⟨user⟩". This endpoint
+  answers *before* setup completes, which is exactly when no gate exists in front of it, so
+  enumerating account names here would be a free read; the count still lets the UI say why it cannot
+  adopt. No behavior change yet — nothing consumes it.
+  **Tests:** `test/setup-ingress-state-endpoint.test.js` (+8) — one per state, an assertion that no
+  bcrypt-shaped string appears in any response, that a second account name is never enumerated, that
+  `users` never crosses the boundary, and that probing neither creates nor modifies a Caddyfile.
 - **`caddy.classifyIngressState()` — tell apart the four ways an existing Caddyfile can block
   automated setup (#710, v5 chunk 2 groundwork).** The setup wizard is going to put a login in front
   of TangleClaw by default, which means it will meet machines that already have a Caddy config. A
