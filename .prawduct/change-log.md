@@ -43,6 +43,11 @@ invisible on engines that never read `.claude/settings.json`, so it surfaced onl
 installed Claude Code and switched a project off codex. His report carried the generated settings
 file, both real paths, exact versions, and the correct fix.
 
+**Recovery is automatic.** `syncEngineHooks` rewrites the entire `hooks` block before every launch
+(`lib/sessions.js`), so an install carrying the broken command self-heals on its first session after
+updating — no hand-edit of `.claude/settings.json`, which is the first thing the reporter would
+otherwise have to ask.
+
 **What:** one-character-class fix — quote the command, exactly as its sibling already is. The guard
 runs **every** command `_buildBaselineHooks` emits through `/bin/sh` from a fixture directory
 containing a space, rather than asserting on the string: the rules hook was already correct, so a

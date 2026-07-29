@@ -43,6 +43,11 @@ All notable changes to TangleClaw are documented in this file.
   from codex to claude. The sibling rules hook added in the previous release was already quoted and
   carried a comment naming this exact hazard; the older prime hook beside it was not brought along.
 
+  **No manual cleanup is needed on an affected install.** `syncEngineHooks` rewrites the whole
+  `hooks` block in `.claude/settings.json` before every session launch, so an install that already
+  has the broken command self-heals the first time it launches a session after updating — nothing to
+  hand-edit.
+
   The regression guard runs **every** command `_buildBaselineHooks` emits through `/bin/sh` from a
   fixture directory containing a space, rather than asserting on the string — a test that sampled one
   command would have hit the correct one and passed.
