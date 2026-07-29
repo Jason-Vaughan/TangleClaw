@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.38.0] - 2026-07-28
+
 ### Added
 - **Update checks now happen when they matter, and can be demanded (#716).** The dashboard measures
   on page load and whenever its tab regains focus, and the header version is a button that runs a
