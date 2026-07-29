@@ -16,6 +16,10 @@ All notable changes to TangleClaw are documented in this file.
   that same stale answer roughly 48 times before it could change. The polling looked like checking
   and was not.
 
+  The version control announces its result to assistive technology (`aria-live`), since the outcome
+  is delivered by swapping the button's own text and reporting that outcome is the entire reason
+  the control exists.
+
   New `POST /api/update/check`, backed by `refreshIfStale` — throttled (5 minutes for an automatic
   check, 10 seconds for one the operator asked for) and single-flight, so neither a reload loop nor
   a dozen open tabs can turn into a `git ls-remote` loop against origin. The check also moved off
@@ -24,6 +28,19 @@ All notable changes to TangleClaw are documented in this file.
   /api/update-status` is unchanged for its existing consumers.
 
 ### Fixed
+- **The header version no longer freezes when a tab is backgrounded (#716, #744).** A browser
+  suspends timers in a background tab, so the 60-second poll #744 added simply stops and the header
+  keeps naming whatever version was running when the tab was last awake — observed 2026-07-29, a tab
+  reading 4.36.0 against a server running 4.37.0 while that session's own tmux status bar, stamped
+  server-side, correctly read 4.37.0. Returning to the tab now refreshes the running version as well
+  as the update answer. Refreshing only the latter would have made it worse, not better: the header
+  could then contradict the pill beside it.
+- **A throw during a manual update check can no longer freeze the header permanently (#716).** The
+  flag that protects a check result from being overwritten by the version poll also blocks the poll
+  from ever correcting the label, so an exception in the render path stranded the header on
+  "checking…" for the life of the page. The failure is now reported honestly, in the label and in
+  the tooltip — the tooltip outlives the label, so leaving a stale "Up to date" there was the
+  longer-lived of the two lies.
 - **A failed update check no longer reports as "up to date" (#716).** The failure path and the
   reachable-remote-with-no-tags path built byte-identical payloads, so an install that could not
   reach GitHub rendered exactly like one that was current. The status now carries `checkOk`, and the

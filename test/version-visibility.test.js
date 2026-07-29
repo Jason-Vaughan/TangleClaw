@@ -509,8 +509,13 @@ describe('#716 update checks happen when they matter', () => {
     // update-checker.test.js.
     assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)[\s\S]{0,80}loadServerInfo\(\)/,
       'page load must measure, not read a four-hour-old cache');
-    assert.match(SRC, /visibilitychange[\s\S]{0,200}loadUpdateStatus\(\{ refresh: true \}\)/,
+    assert.match(SRC, /visibilitychange[\s\S]{0,600}loadUpdateStatus\(\{ refresh: true \}\)/,
       'returning to the tab is when the page is most likely stale');
+    // Refreshing the update answer without the running version leaves the
+    // header contradicting the pill next to it — observed 2026-07-29, a
+    // suspended tab reading 4.36.0 against a server running 4.37.0.
+    assert.match(SRC, /visibilitychange[\s\S]{0,600}loadServerInfo\(\)/,
+      'a suspended tab freezes the version poll too, not just the update check');
     assert.match(SRC, /function wireVersionCheck\(/,
       'the operator needs a control, or "no pill" stays unfalsifiable');
   });
@@ -589,5 +594,14 @@ describe('#716 update checks happen when they matter', () => {
     const r = await clickVersion(new Error('render blew up'));
     assert.doesNotMatch(r.label, /checking/i);
     assert.match(r.label, /couldn't check/i);
+  });
+
+  it('does not leave a tooltip claiming success after a throw', async () => {
+    // The label reverts after the hold; the title does not, so it is the
+    // durable record. A stale "Up to date" surviving a failed check is the
+    // longer-lived lie of the two.
+    const r = await clickVersion(new Error('render blew up'));
+    assert.doesNotMatch(r.title, /up to date/i);
+    assert.match(r.title, /couldn't reach|could not reach/i);
   });
 });

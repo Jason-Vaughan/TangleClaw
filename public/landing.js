@@ -295,6 +295,12 @@ function wireVersionCheck() {
       // page. Report the failure honestly and let the hold expire.
       console.error('update check failed:', err);
       _showVersionLabel("couldn't check", true);
+      // The tooltip is the durable half of this control — the label reverts
+      // after the hold, the title does not. A throw at or before
+      // renderVersionCheckHint leaves the previous answer in place, so the
+      // tooltip would outlive the label still claiming "Up to date" for a
+      // check that never completed.
+      renderVersionCheckHint(null);
     } finally {
       _versionCheckInFlight = false;
     }
@@ -1599,7 +1605,16 @@ function startPolling() {
   // (see sw-register.js). The server's staleness floor makes rapid tab
   // switching harmless.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') loadUpdateStatus({ refresh: true });
+    if (document.visibilityState !== 'visible') return;
+    // Both halves, deliberately. A browser suspends timers in a backgrounded
+    // tab, so the 60s poll stops and the header keeps naming whatever version
+    // was running when the tab was last awake — observed 2026-07-29, a tab
+    // showing 4.36.0 against a server running 4.37.0. Refreshing the update
+    // answer without the running version would leave the header contradicting
+    // the pill beside it, since "is there an update?" is answered relative to
+    // the version actually loaded.
+    loadServerInfo();
+    loadUpdateStatus({ refresh: true });
   });
 }
 
