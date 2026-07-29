@@ -252,18 +252,29 @@ function renderVersionCheckHint(data) {
   const el = document.getElementById('version');
   if (!el) return;
   let hint;
+  // `unknown` = never measured, `failed` = measured and could not answer. Both
+  // must be VISIBLE, not tooltip-only: `title` and `:hover` do not exist on a
+  // touch device, and this dashboard is read mostly from a phone, so a
+  // tooltip-only signal renders both states identically to "you are current" —
+  // exactly the indistinguishability this work exists to remove.
+  let mark = null;
   if (!data) {
     hint = "Couldn't reach the server to check for updates — tap to retry";
+    mark = 'check-failed';
   } else if (!data.checkedAt) {
     hint = 'Not checked for updates yet — tap to check now';
+    mark = 'check-unknown';
   } else if (data.checkOk === false) {
     hint = `Update check failed ${_agoLabel(data.checkedAt)} — tap to retry`;
+    mark = 'check-failed';
   } else if (data.updateAvailable) {
     hint = `v${data.latestVersion} available — checked ${_agoLabel(data.checkedAt)}`;
   } else {
     hint = `Up to date — checked ${_agoLabel(data.checkedAt)}. Tap to check now`;
   }
   el.title = hint;
+  el.classList.remove('check-unknown', 'check-failed');
+  if (mark) el.classList.add(mark);
 }
 
 /**
@@ -1565,7 +1576,16 @@ async function init() {
   // until that timer next fired — up to four hours of a page that had been
   // asked, and answered from memory. Throttled server-side, so a reload loop
   // costs one check per window rather than one per load.
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus({ refresh: true }), loadServerInfo()]);
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
+    // `.catch` rather than bare: a rejection inside Promise.all would abandon
+    // the rest of init — checkPortImports, maybeShowFilter,
+    // updateUnregisteredToggle and startPolling all sit after this await, so a
+    // failed update check must not be able to leave the dashboard unpolled.
+    loadUpdateStatus({ refresh: true }).catch((err) => {
+      console.error('update check on load failed:', err);
+      return null;
+    }),
+    loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -1624,12 +1644,19 @@ function startPolling() {
     // answer without the running version would leave the header contradicting
     // the pill beside it, since "is there an update?" is answered relative to
     // the version actually loaded.
-    // Sequenced, not concurrent. When loadServerInfo sees a restart it re-asks
-    // for update status itself — a plain cached GET — so firing both at once
-    // lets that stale read land after the fresh measurement and repaint the
-    // older answer. Awaiting means the refresh is always the last word.
-    await loadServerInfo();
-    await loadUpdateStatus({ refresh: true });
+    try {
+      // Sequenced, not concurrent. When loadServerInfo sees a restart it
+      // re-asks for update status itself — a plain cached GET — so firing both
+      // at once lets that stale read land after the fresh measurement and
+      // repaint the older answer. Awaiting means the refresh is the last word.
+      await loadServerInfo();
+      await loadUpdateStatus({ refresh: true });
+    } catch (err) { // prawduct:allow prawduct/broad-except -- an async event listener's rejection is unhandled and invisible; logged instead
+      // The manual path already reports its own failures in the UI. This one is
+      // background work the operator did not ask for, so it stays quiet on
+      // screen and loud in the console.
+      console.error('refresh on tab focus failed:', err);
+    }
   });
 }
 

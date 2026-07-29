@@ -408,4 +408,36 @@ describe('#716 measuring on demand', () => {
     assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS < uc.AUTO_REFRESH_MIN_AGE_MS);
     assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS > 0, 'still guards against a double-tap');
   });
+
+  it('maps the manual flag to the right floor, in the right direction', () => {
+    // The mutation this exists to catch is an inverted ternary, which hands
+    // automatic checks the aggressive floor and operator requests the lazy one
+    // — backwards, and invisible in review because both values are plausible.
+    assert.equal(uc.resolveRefreshFloor(true), uc.MANUAL_REFRESH_MIN_AGE_MS);
+    assert.equal(uc.resolveRefreshFloor(false), uc.AUTO_REFRESH_MIN_AGE_MS);
+    // A malformed body must degrade to the SAFER (longer) floor, never the
+    // aggressive one — `{"manual": "yes"}` is not consent to poll harder.
+    for (const junk of [undefined, null, 'true', 1, {}]) {
+      assert.equal(uc.resolveRefreshFloor(junk), uc.AUTO_REFRESH_MIN_AGE_MS,
+        `${JSON.stringify(junk)} must not buy the manual floor`);
+    }
+  });
+
+  it('the async transport builds exactly what _buildStatus builds', async () => {
+    // The previous guard only checked that both functions mention _buildStatus.
+    // That passes even if the async path hands it the wrong argument — so this
+    // compares the actual payloads for the same tag list.
+    stubLsRemote(TAGS);
+    const viaAsync = await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+    const direct = uc._buildStatus(viaAsync.currentVersion, TAGS, viaAsync.checkedAt);
+    assert.deepEqual(viaAsync, direct);
+    assert.equal(viaAsync.latestVersion, '9.9.9', 'and it is the real parse, not two matching nulls');
+  });
+
+  it('a failed async query yields the failure payload, not a parse of empty output', async () => {
+    stubLsRemote(null);
+    const failed = await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+    assert.deepEqual(failed, uc._buildStatus(failed.currentVersion, null, failed.checkedAt));
+    assert.equal(failed.checkOk, false);
+  });
 });

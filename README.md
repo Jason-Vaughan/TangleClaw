@@ -229,7 +229,13 @@ To reach TangleClaw from another device, pick one of two things — never neithe
 
 ## Stay Updated
 
-TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and every 4 hours after). When a newer tag exists, a pill appears next to the version label — click through to the release notes, dismiss per-version, or press **Update & restart** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
+TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and every 4 hours after). It also re-checks when you open the dashboard and whenever you return to its tab, so a release published between timer ticks is noticed within moments of you looking at the page rather than up to four hours later.
+
+**To check on demand, click the version number** in the header. It reports the result inline — up to date, an update available, or that the check could not be made. That last distinction matters: an install that cannot reach `origin` is not the same as one that is current, and before #716 both rendered identically as "no pill".
+
+When a newer tag exists, a pill appears next to the version label — click through to the release notes, dismiss per-version, or press **Update & restart** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
+
+> **A fork `origin` freezes detection.** GitHub copies tags into a fork only at creation, so a clone whose `origin` points at your own fork will report "up to date" indefinitely no matter how often it checks. Point `origin` at the upstream repo, or fetch tags from upstream yourself. Tracked as [#711](https://github.com/Jason-Vaughan/TangleClaw/issues/711).
 
 Manual upgrade path:
 

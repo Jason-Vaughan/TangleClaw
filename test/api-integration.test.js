@@ -586,24 +586,26 @@ describe('Landing Page API Integration', () => {
     // Assertions here deliberately hold whether or not the remote is reachable:
     // a failed measurement is a legitimate outcome, and a test that needed
     // GitHub to answer would be a flake rather than a contract.
-    it('answers with the status shape plus whether it re-measured', async () => {
+    it('answers with the same status shape the GET serves', async () => {
       const res = await request('/api/update/check', { method: 'POST', body: { manual: true } });
       assert.equal(res.status, 200);
       assert.equal(typeof res.data.updateAvailable, 'boolean');
-      assert.equal(typeof res.data.refreshed, 'boolean');
       assert.equal(typeof res.data.checkOk, 'boolean');
       assert.ok(res.data.checkedAt, 'a check always stamps when it happened');
+      // Same shape as the GET, so no consumer has to branch on which it called.
+      const cached = await request('/api/update-status');
+      assert.deepEqual(Object.keys(res.data).sort(), Object.keys(cached.data).sort());
     });
 
     it('throttles a repeat request instead of measuring again', async () => {
       // The property that makes this safe to call on every page load and tab
       // refocus. Without it, a reload loop is a git ls-remote loop against
-      // origin. The first call leaves a fresh cache; the second must reuse it.
-      await request('/api/update/check', { method: 'POST', body: { manual: true } });
+      // origin. `checkedAt` not moving IS the evidence no new measurement ran —
+      // it is stamped per attempt, so a re-measure would advance it.
+      const first = await request('/api/update/check', { method: 'POST', body: { manual: true } });
       const second = await request('/api/update/check', { method: 'POST', body: {} });
       assert.equal(second.status, 200);
-      assert.equal(second.refreshed, undefined, 'refreshed belongs to the payload, not the envelope');
-      assert.equal(second.data.refreshed, false,
+      assert.equal(second.data.checkedAt, first.data.checkedAt,
         'an automatic check moments after a manual one must serve the cache');
     });
   });

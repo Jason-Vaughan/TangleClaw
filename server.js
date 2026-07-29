@@ -1546,15 +1546,15 @@ route('GET', '/api/update-status', (_req, res) => {
 // Throttling and single-flight both live in `refreshIfStale`, so no amount of
 // reloading turns into a poll loop against origin.
 route('POST', '/api/update/check', (_req, res, _params, body) => {
-  const manual = body && body.manual === true;
-  const maxAge = manual
-    ? updateChecker.MANUAL_REFRESH_MIN_AGE_MS
-    : updateChecker.AUTO_REFRESH_MIN_AGE_MS;
+  const maxAge = updateChecker.resolveRefreshFloor(body && body.manual === true);
 
-  updateChecker.refreshIfStale(maxAge, (status, refreshed) => {
-    // `refreshed` distinguishes a fresh measurement from a throttled cache hit,
-    // so the client can say "checked just now" honestly instead of implying it.
-    jsonResponse(res, 200, { ...status, refreshed });
+  // Responds with the status object unchanged — deliberately the same shape as
+  // the GET, so nothing has to branch on which route it asked. Whether this was
+  // a fresh measurement or a throttled cache hit is already observable in
+  // `checkedAt`, which does not move when the cache is reused; a separate
+  // `refreshed` flag would be a second encoding of the same fact.
+  updateChecker.refreshIfStale(maxAge, (status) => {
+    jsonResponse(res, 200, status);
   });
 });
 

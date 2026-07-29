@@ -60,9 +60,21 @@ function makeDom(ids) {
       textContent: '',
       innerHTML: '',
       _hidden: true,
+      // Non-'hidden' classes are recorded too: the version control signals
+      // never-checked / check-failed with a class, because a tooltip cannot be
+      // seen on a touch device (#716).
+      _classes: new Set(),
       classList: {
-        add(c) { if (c === 'hidden') els[id]._hidden = true; },
-        remove(c) { if (c === 'hidden') els[id]._hidden = false; }
+        add(...cs) {
+          for (const c of cs) {
+            if (c === 'hidden') els[id]._hidden = true; else els[id]._classes.add(c);
+          }
+        },
+        remove(...cs) {
+          for (const c of cs) {
+            if (c === 'hidden') els[id]._hidden = false; else els[id]._classes.delete(c);
+          }
+        }
       },
       // The show path wires an apply and a dismiss button into the pill it just
       // rendered, so querySelector must hand back something listenable.
@@ -481,6 +493,38 @@ describe('#716 update checks happen when they matter', () => {
     assert.match(els.version.title, /couldn't reach|could not reach/i);
   });
 
+  it('marks the abnormal states visibly, because a tooltip does not exist on touch', async () => {
+    // `title` and `:hover` are desktop-only affordances, and this dashboard is
+    // read mostly from a phone. Without a rendered marker, "never checked" and
+    // "check failed" look identical to "you are current" — the exact
+    // indistinguishability this work exists to remove.
+    const cold = await runHint({ updateAvailable: false, latestVersion: null, checkedAt: null });
+    assert.ok(cold.els.version._classes.has('check-unknown'));
+
+    const failed = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: false,
+      checkedAt: new Date().toISOString()
+    });
+    assert.ok(failed.els.version._classes.has('check-failed'));
+
+    // Silent when healthy — the operator chose no permanent chrome.
+    const healthy = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.equal(healthy.els.version._classes.has('check-unknown'), false);
+    assert.equal(healthy.els.version._classes.has('check-failed'), false);
+  });
+
+  it('ships CSS for those markers and a touch-sized tap target', () => {
+    // A class nothing styles is a marker nobody sees.
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.dash-version\.check-unknown::after/);
+    assert.match(css, /\.dash-version\.check-failed::after/);
+    assert.match(css, /@media \(pointer: coarse\)[\s\S]{0,900}\.dash-version\s*\{[^}]*min-height: 44px/,
+      'a ~14px label is not a usable tap target on the primary platform');
+  });
+
   it('reads the cache by default and measures only when asked', async () => {
     const cached = await runHint({ updateAvailable: false, checkOk: true, checkedAt: new Date().toISOString() });
     assert.deepEqual(cached.calls, ['GET'],
@@ -507,8 +551,12 @@ describe('#716 update checks happen when they matter', () => {
     // Each of the three is a separate reason the answer goes stale; a grep here
     // is honest because the behaviors themselves are exercised above and in
     // update-checker.test.js.
-    assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)[\s\S]{0,80}loadServerInfo\(\)/,
+    assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)[\s\S]{0,500}loadServerInfo\(\)\]\)/,
       'page load must measure, not read a four-hour-old cache');
+    // A rejection inside that Promise.all would abandon startPolling and the
+    // rest of init, so the load-time check must not be able to throw out.
+    assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)\.catch\(/,
+      'the load-time check must not be able to abort init');
     assert.match(SRC, /visibilitychange/,
       'returning to the tab is when the page is most likely stale');
     // Both halves, in that order. Refreshing the update answer without the

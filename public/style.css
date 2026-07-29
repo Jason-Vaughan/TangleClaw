@@ -127,6 +127,18 @@ body {
 /* Keyboard focus must stay visible — this is the control's only discoverability
    for anyone not using a pointer. */
 .dash-version:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+/* The abnormal states have to be VISIBLE, not just in the tooltip. `title` and
+   `:hover` do not exist on a touch device, and this dashboard is used mostly
+   from a phone — without a rendered marker, "never checked" and "the check
+   failed" look exactly like "you are current", which is the whole defect #716
+   set out to fix. Silent when healthy: no marker in the normal case. */
+.dash-version.check-unknown::after,
+.dash-version.check-failed::after {
+  content: " ?";
+  color: var(--amber);
+  font-weight: bold;
+}
+.dash-version.check-failed::after { content: " !"; }
 /* AUTH-3: "logged in as <user>" chip, shown only behind the Caddy login gate. */
 .dash-auth-user {
   font-size: 10px;
@@ -1652,6 +1664,11 @@ body {
   .btn-compact { min-height: 44px; }
   .btn-icon-tiny { min-width: 44px; max-width: 44px; min-height: 44px; }
   .card-row { min-height: 48px; }
+  /* The version doubles as the check-for-updates control (#716). At its natural
+     ~14px it is a genuinely hard target on a phone, which is the primary way
+     this dashboard is used. Padding rather than min-height so it still sits on
+     the header's baseline instead of stretching the bar. */
+  .dash-version { min-height: 44px; padding: 0 10px; }
 }
 
 /* ── Card Detail Expansion ── */

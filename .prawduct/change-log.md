@@ -26,6 +26,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-29: Update checks happen when they matter (#716)
+
+<!-- prawduct: type=feat | chunks=01 | scope=716-update-check-on-demand -->
+
+**Why:** The dashboard polled `/api/update-status` every five minutes and learned nothing — the
+route is a pure cache read, and only a 4h timer refreshed that cache. Measured on this repo: server
+up `00:07:37`, its one check at `00:08:37`, v4.37.0 published `00:46:06`, next check `04:08:37`. The
+poll looked like checking and was not, so a missing update pill was unfalsifiable from the UI.
+
+**What:** `POST /api/update/check` over a new `refreshIfStale(maxAgeMs, cb)` — throttled
+(`resolveRefreshFloor`: 5m automatic, 10s operator-asked) and single-flight, so neither a reload loop
+nor N open tabs multiply `git ls-remote` against origin. Checks now fire on page load, on tab
+refocus, and on tapping the header version (now a real `<button>`). The measurement moved off
+`execSync` to `execFile`: request-triggered synchronous git would stall the single-threaded server —
+terminal websockets included — for up to its 15s timeout. Sync and async transports share one pure
+`_buildStatus`. `_getReleasesUrlBase` is memoized because it is a *synchronous* spawn now reachable
+from every page load, and a sync spawn under a TCC-protected directory can hang outright (#324).
+
+Also fixed three ways the UI could lie: a failed check and a reachable-remote-with-no-tags built
+byte-identical payloads (now `checkOk`); a backgrounded tab froze the header version because a
+browser suspends timers, so refocus refreshes the running version too, sequenced ahead of the
+measurement; and the never-checked / check-failed states were tooltip-only, which is invisible on
+touch — they now render a visible marker, and the control gets a 44px tap target under
+`(pointer: coarse)`.
+
+**Evidence:** Suite 5089/5090, 0 fail (baseline 5057/5058) — 33 new tests. Revert-verified: removing
+the `_inFlight` queue, short-circuiting the staleness comparison, inverting the manual→floor ternary,
+and feeding `_buildStatus` the wrong output each turn their guard red. Critic: `chunk` →
+`verify-resolutions` (4/4 resolved) → `cumulative` (0 blocking, 15 warning, 8 note); this entry and
+the docs/robustness/test-guard fixes above close the cumulative findings.
+
 ## 2026-07-28: Rules get their own delivery channel (#749)
 
 <!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 | status=shipped -->

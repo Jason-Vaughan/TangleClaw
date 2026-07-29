@@ -42,11 +42,29 @@ All notable changes to TangleClaw are documented in this file.
   "checking…" for the life of the page. The failure is now reported honestly, in the label and in
   the tooltip — the tooltip outlives the label, so leaving a stale "Up to date" there was the
   longer-lived of the two lies.
+- **"Never checked" and "check failed" are now visible on a phone (#716).** Both states were carried
+  only in the version control's tooltip, and neither `title` nor `:hover` exists on a touch device —
+  so on the platform this dashboard is mostly read from, they rendered identically to "you are up to
+  date", which is the exact indistinguishability this work set out to remove. They now show a marker
+  beside the version, and the control gets a 44px tap target instead of a ~14px one. Still silent
+  when everything is healthy.
 - **A failed update check no longer reports as "up to date" (#716).** The failure path and the
   reachable-remote-with-no-tags path built byte-identical payloads, so an install that could not
   reach GitHub rendered exactly like one that was current. The status now carries `checkOk`, and the
-  version control's tooltip distinguishes never-checked, check-failed, and measured-and-current —
-  three facts an operator acts on differently.
+  version control distinguishes never-checked, check-failed, and measured-and-current — three facts
+  an operator acts on differently.
+
+### Internal
+- **Update-check robustness (#716).** `_getReleasesUrlBase` is memoized: it is a *synchronous* spawn
+  and the request path now reaches it on every page load and tab refocus, where a sync spawn under a
+  TCC-protected directory can hang the server outright (#324). Waiters coalesced behind a single
+  in-flight check are invoked in isolation, so one callback throwing — writing to a socket the client
+  already closed — cannot strand its siblings as requests that never answer. The automatic callers
+  (page load, tab refocus) gained the failure guard the manual one already had; a rejection inside
+  `init()`'s `Promise.all` would otherwise have skipped `startPolling`. Docs corrected across
+  `README.md`, `docs/configuration-reference.md` (which still claimed no manual check exists),
+  `FEATURES.md`, `api-contracts.md`, and `boundary-patterns.md` — the last two now also record the
+  fork-`origin` detection freeze (#711).
 
 ## [4.37.0] - 2026-07-28
 
