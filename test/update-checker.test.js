@@ -250,14 +250,17 @@ describe('#716 measuring on demand', () => {
   const TAGS = '0000\trefs/tags/v9.9.9\n1111\trefs/tags/v1.0.0\n';
 
   let realLsRemote;
+  let realGitRemote;
 
   beforeEach(() => {
     realLsRemote = uc._internal.lsRemote;
+    realGitRemote = uc._internal.gitRemote;
     uc._reset();
   });
 
   afterEach(() => {
     uc._internal.lsRemote = realLsRemote;
+    uc._internal.gitRemote = realGitRemote;
     uc._reset();
   });
 
@@ -407,6 +410,69 @@ describe('#716 measuring on demand', () => {
     // answer; someone who deliberately asked is owed a real measurement.
     assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS < uc.AUTO_REFRESH_MIN_AGE_MS);
     assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS > 0, 'still guards against a double-tap');
+  });
+
+  describe('the origin lookup is memoized, but only when it answered', () => {
+    /** @returns {{count: () => number}} */
+    function stubGitRemote(value) {
+      let calls = 0;
+      uc._internal.gitRemote = () => {
+        calls++;
+        if (value instanceof Error) throw value;
+        return value;
+      };
+      return { count: () => calls };
+    }
+
+    it('spawns once for a real answer, not on every request', () => {
+      // This is a SYNCHRONOUS spawn now reached from every page load and tab
+      // refocus. Without the memo it is a 2s-timeout blocking call on the hot
+      // request path.
+      const git = stubGitRemote('https://github.com/o/r.git\n');
+      const first = uc._getReleasesUrlBase();
+      const second = uc._getReleasesUrlBase();
+      assert.equal(first, 'https://github.com/o/r/releases/tag/');
+      assert.equal(second, first);
+      assert.equal(git.count(), 1);
+    });
+
+    it('memoizes "not a GitHub remote" — that is a real answer', () => {
+      const git = stubGitRemote('git@gitlab.com:o/r.git\n');
+      assert.equal(uc._getReleasesUrlBase(), null);
+      assert.equal(uc._getReleasesUrlBase(), null);
+      assert.equal(git.count(), 1);
+    });
+
+    it('does NOT memoize a failure — one timeout must not kill the link forever', () => {
+      // The hazard that motivated memoizing at all is a sync spawn that HANGS
+      // (#324), and that is the case which throws. Caching it would trade a
+      // repeated stall for permanently losing every release-notes link on an
+      // install already in trouble.
+      const failing = stubGitRemote(new Error('spawn timed out'));
+      assert.equal(uc._getReleasesUrlBase(), null, 'degrades to no link for now');
+      assert.equal(uc._getReleasesUrlBase(), null);
+      assert.equal(failing.count(), 2, 'a failed read stays retryable');
+
+      const recovered = stubGitRemote('https://github.com/o/r.git\n');
+      assert.equal(uc._getReleasesUrlBase(), 'https://github.com/o/r/releases/tag/',
+        'and the link comes back once git works again');
+      assert.equal(recovered.count(), 1);
+    });
+  });
+
+  it('one throwing waiter cannot strand the others', async () => {
+    // These callbacks write HTTP responses; writing to a socket the client
+    // already closed throws. A bare fan-out loop would abandon every waiter
+    // after the first, and the server's non-exiting uncaughtException handler
+    // turns those into requests that simply never answer.
+    stubLsRemote(TAGS);
+    const served = [];
+    await new Promise((resolve) => {
+      uc.refreshIfStale(60000, () => { throw new Error('socket destroyed'); });
+      uc.refreshIfStale(60000, (s) => { served.push(s.latestVersion); });
+      uc.refreshIfStale(60000, (s) => { served.push(s.latestVersion); resolve(); });
+    });
+    assert.deepEqual(served, ['9.9.9', '9.9.9'], 'siblings of a throwing waiter still get served');
   });
 
   it('maps the manual flag to the right floor, in the right direction', () => {

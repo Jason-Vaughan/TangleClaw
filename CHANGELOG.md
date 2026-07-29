@@ -62,9 +62,11 @@ All notable changes to TangleClaw are documented in this file.
   already closed — cannot strand its siblings as requests that never answer. The automatic callers
   (page load, tab refocus) gained the failure guard the manual one already had; a rejection inside
   `init()`'s `Promise.all` would otherwise have skipped `startPolling`. Docs corrected across
-  `README.md`, `docs/configuration-reference.md` (which still claimed no manual check exists),
-  `FEATURES.md`, `api-contracts.md`, and `boundary-patterns.md` — the last two now also record the
-  fork-`origin` detection freeze (#711).
+  `README.md`, `docs/configuration-reference.md` (whose field table still claimed no manual check
+  exists, and whose endpoint table omitted the new route), and `FEATURES.md`. The fork-`origin`
+  detection freeze (#711) — a fork's tags stop at creation, so such an install reports "up to date"
+  forever and no amount of re-checking helps — is now written down in `README.md` where a user can
+  actually find it, rather than only in untracked internal artifacts.
 
 ## [4.37.0] - 2026-07-28
 

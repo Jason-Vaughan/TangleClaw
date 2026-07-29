@@ -285,7 +285,8 @@ TangleClaw exposes 62 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/config` | GET | Global config (password redacted) |
 | `/api/config` | PATCH | Update config fields |
 | `/api/models/status` | GET | Upstream API status for all engines |
-| `/api/update-status` | GET | Version update check |
+| `/api/update-status` | GET | Last update-check result, from cache — no network, no side effect. `checkedAt: null` means never measured (the window after every boot) and `checkOk: false` means the last attempt failed; neither is "you are up to date" |
+| `/api/update/check` | POST | Measure now. `{"manual": true}` takes the 10s staleness floor, anything else the 5m one. Throttled and single-flight, so reloads and open tabs cannot multiply `git ls-remote` calls against `origin` |
 
 ### Engines
 
