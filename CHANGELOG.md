@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
+  The install instructions were a bare `git clone` of the default branch, so a new install took
+  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
+  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
+  network binding are configured — a half-finished version of that is exactly the thing not to hand
+  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
+  moves to `v5.0.0` when it ships, and the accompanying note is removed.
+  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
+  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
+
 ## [4.38.0] - 2026-07-28
 
 ### Added
