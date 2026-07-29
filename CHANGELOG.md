@@ -29,6 +29,28 @@ All notable changes to TangleClaw are documented in this file.
   /api/update-status` is unchanged for its existing consumers.
 
 ### Fixed
+- **Claude sessions no longer fail at startup when TangleClaw is installed under a path containing a
+  space (#759).** The silent-prime `SessionStart` hook was written into `.claude/settings.json`
+  unquoted, so `/bin/sh` split the path and every session start reported
+  `/bin/sh: /Users/<user>/Library/Mobile: No such file or directory`. Those sessions also launched
+  with **no session prime and no project rules** — the agent booted without its resume context or the
+  operator's governing rules.
+
+  Reported from the field by an installer whose checkout lives in iCloud Drive
+  (`~/Library/Mobile Documents/…`), complete with the generated settings file. Unreproducible on a
+  development machine whose own install path happens to have no space, and invisible on any engine
+  that does not read `.claude/settings.json` — it surfaced the moment that install switched a project
+  from codex to claude. The sibling rules hook added in the previous release was already quoted and
+  carried a comment naming this exact hazard; the older prime hook beside it was not brought along.
+
+  **No manual cleanup is needed on an affected install.** `syncEngineHooks` rewrites the whole
+  `hooks` block in `.claude/settings.json` before every session launch, so an install that already
+  has the broken command self-heals the first time it launches a session after updating — nothing to
+  hand-edit.
+
+  The regression guard runs **every** command `_buildBaselineHooks` emits through `/bin/sh` from a
+  fixture directory containing a space, rather than asserting on the string — a test that sampled one
+  command would have hit the correct one and passed.
 - **The header version no longer freezes when a tab is backgrounded (#716, #744).** A browser
   suspends timers in a background tab, so the 60-second poll #744 added simply stops and the header
   keeps naming whatever version was running when the tab was last awake — observed 2026-07-29, a tab

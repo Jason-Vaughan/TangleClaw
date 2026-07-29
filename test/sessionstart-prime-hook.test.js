@@ -120,3 +120,86 @@ describe('sessionstart-prime.sh hook script (#103)', () => {
     assert.equal(out, '');
   });
 });
+
+/*
+ * #759 — every emitted hook command must survive an install path with a space.
+ *
+ * Reported from the field: a TangleClaw directory under `~/Library/Mobile
+ * Documents/…` made every Claude session start fail with
+ * `/bin/sh: /Users/<user>/Library/Mobile  No such file or directory`. The prime
+ * hook was emitted unquoted while the rules hook fifteen lines below it was
+ * quoted, with a comment naming this exact hazard — so a test that sampled one
+ * command could pass while the other shipped broken.
+ *
+ * This asserts over EVERY command `_buildBaselineHooks` emits, and asserts it
+ * by running the command the way Claude Code does rather than by inspecting the
+ * string. Unreproducible on this machine's own install, whose path has no space.
+ */
+describe('#759 hook commands survive a TangleClaw path containing a space', () => {
+  const engines = require('../lib/engines');
+
+  // Matches this file's existing convention — every fixture root this block
+  // creates is torn down, so a run leaves nothing behind in tmp.
+  const fixtureRoots = [];
+  afterEach(() => {
+    while (fixtureRoots.length) fs.rmSync(fixtureRoots.pop(), { recursive: true, force: true });
+  });
+
+  /** An engine profile that opts into the silent-prime hook. */
+  const PROFILE = { id: 'claude', capabilities: { supportsSilentPrime: true } };
+
+  /**
+   * Build a fake TangleClaw dir whose path contains a space, with executable
+   * no-op stand-ins for every shipped hook script.
+   * @returns {string} the directory path
+   */
+  function makeSpacedInstallDir() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-hooks-'));
+    fixtureRoots.push(root);
+    const dir = path.join(root, 'Mobile Documents', 'TangleClaw');
+    fs.mkdirSync(path.join(dir, 'data', 'hooks'), { recursive: true });
+    for (const name of ['sessionstart-prime.sh', 'sessionstart-rules.sh']) {
+      const p = path.join(dir, 'data', 'hooks', name);
+      fs.writeFileSync(p, '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(p, 0o755);
+    }
+    assert.ok(dir.includes(' '), 'the fixture must actually contain a space');
+    return dir;
+  }
+
+  /** Every command string in a hooks object, flattened. @returns {string[]} */
+  function allCommands(hooks) {
+    const out = [];
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        for (const h of entry.hooks) out.push(h.command);
+      }
+    }
+    return out;
+  }
+
+  it('runs every emitted command from a spaced install path', () => {
+    const dir = makeSpacedInstallDir();
+    // Two shards so the rules hook is emitted more than once — the loop that
+    // builds them must not be the only guarded path.
+    const hooks = engines._buildBaselineHooks({ silentPrime: true }, PROFILE, 2);
+    const commands = allCommands(hooks);
+    assert.ok(commands.length >= 2, `expected prime + rules commands, got ${commands.length}`);
+
+    for (const raw of commands) {
+      const command = raw.replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
+      // Exactly how the engine runs it: hand the string to a shell.
+      execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+    }
+  });
+
+  it('covers the prime hook specifically, since that is the one that shipped broken', () => {
+    const dir = makeSpacedInstallDir();
+    const hooks = engines._buildBaselineHooks({ silentPrime: true }, PROFILE, 0);
+    const commands = allCommands(hooks);
+    assert.equal(commands.length, 1, 'with no rule shards, only the prime hook is emitted');
+    const command = commands[0].replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
+    assert.match(command, /sessionstart-prime\.sh/);
+    execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+});

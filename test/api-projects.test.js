@@ -229,7 +229,8 @@ describe('api-projects', () => {
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(settings.hooks && settings.hooks.SessionStart, 'SessionStart hook should be present');
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;
-      assert.ok(cmd.endsWith('sessionstart-prime.sh'), 'should point at the bundled hook script');
+      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+        'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
     });
   });
 

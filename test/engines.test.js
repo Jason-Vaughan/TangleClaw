@@ -1885,7 +1885,7 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 3);
       assert.equal(result.SessionStart.length, 4, 'one prime entry plus one per shard');
       const commands = result.SessionStart.map((e) => e.hooks[0].command);
-      assert.match(commands[0], /sessionstart-prime\.sh$/);
+      assert.match(commands[0], /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
       // Each shard gets its OWN entry: the engine caps each hook's output
       // separately, so one hook emitting every shard would be capped as one.
       assert.match(commands[1], /sessionstart-rules\.sh" 1$/);
@@ -1896,7 +1896,7 @@ describe('engines', () => {
     it('registers no rules hook when the project has no rules', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 0);
       assert.equal(result.SessionStart.length, 1, 'only the prime hook');
-      assert.match(result.SessionStart[0].hooks[0].command, /sessionstart-prime\.sh$/);
+      assert.match(result.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
     });
 
     it('registers no rules hook for an engine that cannot take a silent prime', () => {
@@ -1922,7 +1922,8 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
       const cmd = result.SessionStart[0].hooks[0].command;
       assert.ok(cmd.includes('{{TANGLECLAW_DIR}}'), 'should use placeholder for portability');
-      assert.ok(cmd.endsWith('sessionstart-prime.sh'), 'should point at the bundled hook script');
+      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+        'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
     });
 
     it('SessionStart entry has command type and a status message', () => {
@@ -1963,7 +1964,8 @@ describe('engines', () => {
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 1);
       assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
-      assert.ok(settings.hooks.SessionStart[0].hooks[0].command.endsWith('sessionstart-prime.sh'));
+      assert.match(settings.hooks.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+        'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
     });
 
 
@@ -2042,7 +2044,7 @@ describe('engines', () => {
         engines.syncEngineHooks(projectDir);
         const entries = readSettings().hooks.SessionStart;
         assert.equal(entries.length, 1, 'a rules-query failure must not cost the session its prime');
-        assert.match(entries[0].hooks[0].command, /sessionstart-prime\.sh$/);
+        assert.match(entries[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
       } finally {
         store.sessionRules.listActiveForProject = real;
         store.projects.delete(project.id);
@@ -2068,8 +2070,13 @@ describe('engines', () => {
       const settings = readSettings();
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;
       assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved before write');
-      assert.ok(path.isAbsolute(cmd), 'resolved path should be absolute');
-      assert.ok(cmd.endsWith('/data/hooks/sessionstart-prime.sh'));
+      // The command is a quoted path, so assert on what is INSIDE the quotes —
+      // testing the raw command string as if it were a bare path is the shape
+      // of assertion that let the unquoted form ship (#759).
+      const quoted = /^"(.+)"$/.exec(cmd);
+      assert.ok(quoted, 'the command must be a QUOTED path — unquoted breaks on a space (#759)');
+      assert.ok(path.isAbsolute(quoted[1]), 'resolved path should be absolute');
+      assert.match(quoted[1], /\/data\/hooks\/sessionstart-prime\.sh$/)
     });
 
     it('does not run for non-claude engines even with silentPrime enabled', () => {
