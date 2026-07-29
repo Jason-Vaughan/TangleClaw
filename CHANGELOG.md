@@ -42,6 +42,20 @@ All notable changes to TangleClaw are documented in this file.
   "checking…" for the life of the page. The failure is now reported honestly, in the label and in
   the tooltip — the tooltip outlives the label, so leaving a stale "Up to date" there was the
   longer-lived of the two lies.
+- **The dashboard no longer reports a failed check while the server is simply older than its assets
+  (#716).** TangleClaw serves `public/` straight off the working tree, so an update — or a merge on
+  the machine that hosts the install — puts new client files in place while the running process
+  keeps serving its old routes until it restarts. The self-update path opens the same window by
+  design: the checkout lands before the restart. In it, `POST /api/update/check` 404s, and reading
+  that as "the check failed" raised the new failure marker on every page load until someone
+  restarted — a false alarm from the one feature meant to stop misreporting update state. The client
+  now falls back to the cached read, which every server version has. Keyed to `NOT_FOUND`
+  specifically: a 500 or an unreachable server still reports honestly.
+
+  Narrow known gap in that same window: a server predating this release does not send `checkOk`, so
+  an on-demand check there reports "up to date" from the older server's own last measurement rather
+  than a fresh one. The tooltip still carries how long ago that was, and the window closes on
+  restart.
 - **"Never checked" and "check failed" are now visible on a phone (#716).** Both states were carried
   only in the version control's tooltip, and neither `title` nor `:hover` exists on a touch device —
   so on the platform this dashboard is mostly read from, they rendered identically to "you are up to

@@ -49,6 +49,17 @@ for permanently losing the release-notes link on an install already in trouble. 
 at `warn` on **both** the timer-driven and request-driven paths; the logger defaults to `info`, so
 at `debug` an install that had quietly stopped detecting releases left no trace an operator finds.
 
+**The client tolerates a server older than itself.** `public/` is served straight off the working
+tree, so a merge or a self-update puts new client files in place while the running process keeps its
+old routes until restart (the self-update path opens that window by design — checkout, then
+restart). `POST /api/update/check` 404s there, and reading that as a failed check raised the new
+failure marker on every page load until someone restarted — a false alarm from the feature built to
+stop misreporting update state. Falls back to the cached `GET`, which every version serves, keyed to
+`NOT_FOUND` so a 500 or an unreachable server still reports honestly. Found by the PR reviewer
+probing the *running* install rather than reading the diff. Known narrow gap: a pre-release server
+sends no `checkOk`, so an on-demand check in that window reports "up to date" from that server's own
+last measurement; the tooltip carries its age and the window closes at restart.
+
 Also fixed three ways the UI could lie: a failed check and a reachable-remote-with-no-tags built
 byte-identical payloads (now `checkOk`); a backgrounded tab froze the header version because a
 browser suspends timers, so refocus refreshes the running version too, sequenced ahead of the
