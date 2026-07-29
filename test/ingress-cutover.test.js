@@ -134,6 +134,25 @@ describe('ingress-cutover', () => {
       fs.writeFileSync(p, tampered);
       assert.equal(cutover.caddyfileIsHandEdited(p), true);
     });
+
+    it('returns true for a file that exists but cannot be read', (t) => {
+      // Protected, not "absent". The executor additionally refuses this case
+      // outright before taking a backup -- a file that cannot be read cannot be
+      // copied, so --force has no safety net to offer here.
+      const p = path.join(tmpDir, 'unreadable');
+      fs.writeFileSync(p, 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
+      fs.chmodSync(p, 0o000);
+      t.after(() => fs.chmodSync(p, 0o600));
+      try {
+        fs.readFileSync(p, 'utf8');
+        t.skip('running privileged — cannot make a file unreadable');
+        return;
+      } catch { /* expected */ }
+
+      assert.equal(cutover.caddyfileIsHandEdited(p), true);
+      assert.equal(caddy.classifyIngressState(p).state, 'unreadable',
+        'the executor keys its explicit refusal off this state, not off the boolean');
+    });
   });
 
   describe('planCutover → caddy', () => {

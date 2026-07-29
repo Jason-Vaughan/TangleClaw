@@ -242,11 +242,11 @@ function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
  * classifier's single write-decision field; its negation is exactly this
  * question.
  *
- * Behaviour is unchanged for the cases this function already handled (missing →
- * false, integrity-verified generated → false, anything else → true) and
- * tightened for one it did not: a file that exists but cannot be READ now
- * counts as protected rather than crashing the caller, so an unreadable config
- * is never silently replaced.
+ * Behaviour is unchanged for the cases this function already handled: missing →
+ * false, integrity-verified generated → false, anything else → true. A file that
+ * exists but cannot be READ also reports true, but callers must not rely on that
+ * alone — the executor refuses that case explicitly, before the backup, because
+ * an unreadable file cannot be copied and so cannot be protected by one.
  *
  * @param {string} caddyfilePath
  * @returns {boolean}
@@ -416,6 +416,23 @@ function main() {
     // the operator's basic_auth password + remote-access block — wiping it locks
     // them out remotely). Back it up (timestamped, so repeated runs never
     // overwrite an earlier backup), and refuse unless --force.
+    // A file that exists and cannot be READ is refused before anything is
+    // attempted, and --force does not override it. Force is survivable only
+    // because of the backup taken below, and a file that cannot be read cannot
+    // be backed up — copying it raises the same EACCES, and forcing past it
+    // would destroy a config with no recovery. Refusing is the only honest
+    // answer available here.
+    const caddyfileState = caddy.classifyIngressState(plan.caddyfile.path);
+    if (caddyfileState.state === 'unreadable') {
+      process.stderr.write(
+        'ERROR: the existing Caddyfile cannot be read, so it cannot be backed up (ingress untouched).\n'
+        + `  Path: ${plan.caddyfile.path}\n`
+        + '  Fix its permissions, or move it aside yourself, then re-run.\n'
+        + '  --force does not apply: forcing past an unreadable file would replace it with no backup.\n'
+      );
+      store.close();
+      process.exit(1);
+    }
     if (caddyfileIsHandEdited(plan.caddyfile.path)) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backup = `${plan.caddyfile.path}.${stamp}.bak`;

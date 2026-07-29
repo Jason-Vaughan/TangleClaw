@@ -28,8 +28,12 @@ All notable changes to TangleClaw are documented in this file.
 
   `scripts/ingress-cutover.js`'s `caddyfileIsHandEdited` now delegates to the same classifier instead
   of repeating the check, so the CLI and the wizard cannot reach opposite conclusions about one file.
-  Behaviour there is unchanged for every case it already handled and tightened for one it did not: an
-  existing-but-unreadable Caddyfile now counts as protected rather than throwing.
+  Behaviour is unchanged for every case it already handled. One case it did not handle is now
+  explicit: **the executor refuses an existing-but-unreadable Caddyfile outright, before attempting a
+  backup, and `--force` does not override it.** Forcing is survivable only because of the timestamped
+  backup, and a file that cannot be read cannot be copied — so forcing past it would replace a config
+  with no recovery. Previously that path reached `fs.copyFileSync` and died on the same EACCES with
+  no explanation.
 
   **`GET /api/setup/ingress-state`** exposes the verdict to the wizard along with whether `caddy` is
   installed at all. Detection only — it never writes the Caddyfile, never reloads, never provisions —
@@ -50,10 +54,10 @@ All notable changes to TangleClaw are documented in this file.
   the credential reported for a `generated` file, purity of `classifyCaddyfileContent`, a sweep
   proving no hand-edited state is ever `safeToWrite`, a chmod-000 fail-closed case that skips when
   running privileged, and a live-file case that skips when no Caddyfile is present.
-  `test/setup-ingress-state-endpoint.test.js` (9) — four of the six states at the HTTP boundary
+  `test/setup-ingress-state-endpoint.test.js` (10) — four of the six states at the HTTP boundary
   (`generated` and `unreadable` are covered at the unit level only), no bcrypt-shaped string in any
   response, no enumeration of a second account name, `users` never crossing the boundary, the
-  username withheld once `setupComplete` flips, and proof that probing neither creates nor modifies a
+  username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof that probing neither creates nor modifies a
   Caddyfile.
 
 ### Changed

@@ -177,10 +177,41 @@ describe('GET /api/setup/ingress-state', () => {
     }
   });
 
-  it('reports whether caddy is installed, so the wizard knows if it can provision', async () => {
-    const res = await get(server, '/api/setup/ingress-state');
-    assert.equal(typeof res.data.caddy, 'object');
-    assert.equal(typeof res.data.caddy.available, 'boolean');
+  it('reports caddy as unavailable, with a reason, when it is not on PATH', async () => {
+    // A `typeof … === 'boolean'` assertion passes whichever way detection goes,
+    // so it proves nothing about the branch the wizard actually depends on:
+    // "I cannot provision a gate here". Force the absent case.
+    const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-nopath-'));
+    const origPath = process.env.PATH;
+    process.env.PATH = emptyBin;
+    try {
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.equal(res.status, 200, 'a missing caddy is a reportable state, not an error');
+      assert.equal(res.data.caddy.available, false);
+      assert.ok(res.data.caddy.error, 'the wizard needs a reason it can show');
+    } finally {
+      process.env.PATH = origPath;
+      fs.rmSync(emptyBin, { recursive: true, force: true });
+    }
+  });
+
+  it('still classifies the Caddyfile when caddy itself is missing', async () => {
+    // Detection and classification are independent: an operator can have a
+    // hand-rolled config from a caddy they later uninstalled, and the wizard
+    // must not offer to overwrite it just because the binary is gone.
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+    const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-nopath-'));
+    const origPath = process.env.PATH;
+    process.env.PATH = emptyBin;
+    try {
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.equal(res.data.caddy.available, false);
+      assert.equal(res.data.state, 'adoptable');
+      assert.equal(res.data.safeToWrite, false);
+    } finally {
+      process.env.PATH = origPath;
+      fs.rmSync(emptyBin, { recursive: true, force: true });
+    }
   });
 
   it('never writes or creates a Caddyfile as a side effect of probing', async () => {
