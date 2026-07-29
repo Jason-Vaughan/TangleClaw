@@ -509,13 +509,16 @@ describe('#716 update checks happen when they matter', () => {
     // update-checker.test.js.
     assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)[\s\S]{0,80}loadServerInfo\(\)/,
       'page load must measure, not read a four-hour-old cache');
-    assert.match(SRC, /visibilitychange[\s\S]{0,600}loadUpdateStatus\(\{ refresh: true \}\)/,
+    assert.match(SRC, /visibilitychange/,
       'returning to the tab is when the page is most likely stale');
-    // Refreshing the update answer without the running version leaves the
-    // header contradicting the pill next to it — observed 2026-07-29, a
-    // suspended tab reading 4.36.0 against a server running 4.37.0.
-    assert.match(SRC, /visibilitychange[\s\S]{0,600}loadServerInfo\(\)/,
-      'a suspended tab freezes the version poll too, not just the update check');
+    // Both halves, in that order. Refreshing the update answer without the
+    // running version leaves the header contradicting the pill beside it
+    // (observed 2026-07-29: a suspended tab read 4.36.0 against a server
+    // running 4.37.0). And they must be sequenced — loadServerInfo re-asks for
+    // update status with a cached GET when it sees a restart, which would
+    // otherwise land after the fresh measurement and repaint the older answer.
+    assert.match(SRC, /await loadServerInfo\(\);\s*\n\s*await loadUpdateStatus\(\{ refresh: true \}\);/,
+      'refocus must refresh the version first, then measure — sequenced, not raced');
     assert.match(SRC, /function wireVersionCheck\(/,
       'the operator needs a control, or "no pill" stays unfalsifiable');
   });
@@ -540,8 +543,9 @@ describe('#716 update checks happen when they matter', () => {
       querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
       addEventListener: () => {}
     };
+    const versionCheckLive = { textContent: '' };
     const ctx = vm.createContext({
-      document: { getElementById: (id) => ({ version, updatePill })[id] || null },
+      document: { getElementById: (id) => ({ version, updatePill, versionCheckLive })[id] || null },
       api: async () => payload,
       apiMutate: async () => {
         if (payload instanceof Error) throw payload;
@@ -567,7 +571,7 @@ describe('#716 update checks happen when they matter', () => {
       ctx
     );
     await handlers.click();
-    return { label: version.textContent, title: version.title };
+    return { label: version.textContent, title: version.title, live: versionCheckLive.textContent };
   }
 
   it('answers an operator who asks, so no-pill stops being unfalsifiable', async () => {
@@ -603,5 +607,49 @@ describe('#716 update checks happen when they matter', () => {
     const r = await clickVersion(new Error('render blew up'));
     assert.doesNotMatch(r.title, /up to date/i);
     assert.match(r.title, /couldn't reach|could not reach/i);
+  });
+
+  it('announces the outcome from a live region, not from the button', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.live, /up to date/i, 'the result must reach assistive tech');
+
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const versionBtn = /<button[^>]*id="version"[^>]*>/.exec(html);
+    assert.ok(versionBtn, 'the version control should be a real button');
+    assert.doesNotMatch(versionBtn[0], /aria-live/,
+      'a live region on a control whose text IS its accessible name re-announces on every '
+      + 'version poll and double-announces on activation');
+    assert.match(html, /id="versionCheckLive"[^>]*aria-live="polite"|aria-live="polite"[^>]*id="versionCheckLive"/,
+      'the outcome needs its own polite live region');
+  });
+
+  it('does not rewrite the version label when nothing changed', () => {
+    // #version sits beside a live region and is written on every 60s poll.
+    // A no-op rewrite is churn at best; assistive tech that re-reads on
+    // mutation would narrate the version forever.
+    let writes = 0;
+    const el = {
+      _text: 'v4.37.0',
+      get textContent() { return this._text; },
+      set textContent(v) { writes++; this._text = v; }
+    };
+    const ctx = vm.createContext({
+      document: { getElementById: () => el },
+      _versionLabelHeld: false,
+      _lastRenderedVersion: null
+    });
+    vm.runInContext(
+      `${extract('renderRunningVersion')}\n`
+      + 'renderRunningVersion("4.37.0"); renderRunningVersion("4.37.0");',
+      ctx
+    );
+    assert.equal(writes, 0, 'an unchanged version must not touch the DOM');
+
+    vm.runInContext('renderRunningVersion("4.38.0");', ctx);
+    assert.equal(writes, 1, 'a real change still lands');
+    assert.equal(el._text, 'v4.38.0');
   });
 });

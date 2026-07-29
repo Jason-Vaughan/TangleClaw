@@ -28,11 +28,14 @@
       <!-- A real button, not a styled span: this is the only control that can
            prove an update check actually ran, so it must be reachable by
            keyboard and announced as actionable. -->
-      <!-- aria-live: the check's outcome is delivered by swapping this button's
-           own text, which a screen reader would otherwise never announce — the
-           result is the entire point of the control. -->
-      <button type="button" id="version" class="dash-version" aria-live="polite"
+      <button type="button" id="version" class="dash-version"
               title="Tap to check for updates"></button>
+      <!-- The outcome is announced from a separate live region, NOT from the
+           button. The button's text is its own accessible name and is rewritten
+           on every 60s server-info poll, so making it live would re-announce the
+           version indefinitely and double-announce on activation. Same pattern
+           as #medusaLive on the session page. -->
+      <span class="sr-only" id="versionCheckLive" aria-live="polite"></span>
       <span id="updatePill" class="update-pill hidden"></span>
       <span id="authUser" class="dash-auth-user hidden" title="Authenticated via the Caddy login gate"></span>
       <span id="authStatusWarning" class="dash-auth-warning hidden" role="status"></span>

@@ -167,9 +167,12 @@ function renderRunningVersion(version) {
   if (typeof version !== 'string' || !version) return;
   _lastRenderedVersion = version;
   const el = document.getElementById('version');
-  // A check result currently occupying the label is left alone; it restores
-  // itself to whatever the newest version is, so the two never fight.
-  if (el && !_versionLabelHeld) el.textContent = `v${version}`;
+  if (!el || _versionLabelHeld) return; // a check result is occupying the label
+  // Only write on a real change. This runs on every 60s poll and the label sits
+  // next to a live region; a no-op rewrite is pointless DOM churn at best, and
+  // assistive tech that re-reads on mutation would narrate the version forever.
+  const next = `v${version}`;
+  if (el.textContent !== next) el.textContent = next;
 }
 
 // The newest version the server has reported, so a transient check result can
@@ -206,11 +209,19 @@ function _showVersionLabel(text, hold) {
   }
   _versionLabelHeld = true;
   el.textContent = text;
+  // Announce from a dedicated live region rather than the button itself: the
+  // button's text is its accessible name, so a live button would re-announce on
+  // every version poll and double-announce when activated.
+  const live = document.getElementById('versionCheckLive');
+  if (live) live.textContent = text;
   if (!hold) return;
   _versionLabelRestore = setTimeout(() => {
     _versionLabelRestore = null;
     _versionLabelHeld = false;
     if (_lastRenderedVersion) el.textContent = `v${_lastRenderedVersion}`;
+    // Clear rather than restate: the restore is housekeeping, not news, and
+    // narrating the version again 4s after the result is noise.
+    if (live) live.textContent = '';
   }, VERSION_RESULT_HOLD_MS);
 }
 
@@ -1604,7 +1615,7 @@ function startPolling() {
   // to be stale. Mirrors the service worker's own visibility-driven update poll
   // (see sw-register.js). The server's staleness floor makes rapid tab
   // switching harmless.
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
     // Both halves, deliberately. A browser suspends timers in a backgrounded
     // tab, so the 60s poll stops and the header keeps naming whatever version
@@ -1613,8 +1624,12 @@ function startPolling() {
     // answer without the running version would leave the header contradicting
     // the pill beside it, since "is there an update?" is answered relative to
     // the version actually loaded.
-    loadServerInfo();
-    loadUpdateStatus({ refresh: true });
+    // Sequenced, not concurrent. When loadServerInfo sees a restart it re-asks
+    // for update status itself — a plain cached GET — so firing both at once
+    // lets that stale read land after the fresh measurement and repaint the
+    // older answer. Awaiting means the refresh is always the last word.
+    await loadServerInfo();
+    await loadUpdateStatus({ refresh: true });
   });
 }
 

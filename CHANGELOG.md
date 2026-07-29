@@ -16,9 +16,10 @@ All notable changes to TangleClaw are documented in this file.
   that same stale answer roughly 48 times before it could change. The polling looked like checking
   and was not.
 
-  The version control announces its result to assistive technology (`aria-live`), since the outcome
-  is delivered by swapping the button's own text and reporting that outcome is the entire reason
-  the control exists.
+  The check's result is announced to assistive technology from a dedicated polite live region beside
+  the control — not from the button itself, whose text is its own accessible name and is rewritten on
+  every version poll, so making it live would narrate the version indefinitely and double-announce on
+  activation.
 
   New `POST /api/update/check`, backed by `refreshIfStale` — throttled (5 minutes for an automatic
   check, 10 seconds for one the operator asked for) and single-flight, so neither a reload loop nor
