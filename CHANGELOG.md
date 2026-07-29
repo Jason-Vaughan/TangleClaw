@@ -56,8 +56,9 @@ All notable changes to TangleClaw are documented in this file.
   quiet first-run path. **A `generated` file still reports its credential** — it is usually gated, and
   that is the one state where a caller is simultaneously told the file may be replaced.
 
-  `scripts/ingress-cutover.js`'s `caddyfileIsHandEdited` now delegates to the same classifier instead
-  of repeating the check, so the CLI and the wizard cannot reach opposite conclusions about one file.
+  `scripts/ingress-cutover.js` no longer carries its own `caddyfileIsHandEdited` predicate: the
+  executor branches on the classifier's `safeToWrite` directly, so the CLI and the wizard cannot
+  reach opposite conclusions about one file.
   Behaviour is unchanged for every case it already handled. One case it did not handle is now
   explicit: **the executor refuses an existing-but-unreadable Caddyfile outright, before attempting a
   backup, and `--force` does not override it.** Forcing is survivable only because of the timestamped
@@ -69,6 +70,11 @@ All notable changes to TangleClaw are documented in this file.
   the refusal described above was itself unreachable until the ordering was fixed later on this
   branch. Both the original claim and the guard were wrong in the same direction — describing a
   protection that the control flow never reached.
+
+  Two derivations remain outside that single classification and are named rather than glossed:
+  `planCutover` still re-derives gated-vs-ungated from the raw text via `listBasicAuthUsers`, and
+  building the context re-opens the file once more. Both are narrowed, neither is eliminated;
+  collapsing them belongs with the decision-extraction refactor in #772.
 
   **`GET /api/setup/ingress-state`** exposes the verdict to the wizard along with whether `caddy` is
   installed at all. Detection only — it never writes the Caddyfile, never reloads, never provisions —

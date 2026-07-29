@@ -12,6 +12,9 @@
 //   node scripts/ingress-cutover.js --rollback             alias for --to direct
 //   node scripts/ingress-cutover.js --to caddy --dry-run   print the plan, touch nothing
 //   node scripts/ingress-cutover.js --to caddy --force      overwrite a hand-edited Caddyfile
+//   node scripts/ingress-cutover.js --to caddy --result-file <path>
+//                                                          also write a JSON outcome for a
+//                                                          caller that is not reading stdout
 //
 // Fail-closed: in caddy mode the Caddyfile is `caddy validate`d BEFORE any
 // launchd reload, so a bad config can never take the ingress down. The flip
@@ -333,10 +336,14 @@ function main() {
 
   /**
    * End the run: report the outcome to `--result-file` (if asked), close the
-   * store, and exit. Every terminal path goes through here so a caller polling
-   * the result file can never mistake a refusal for a crash — an ABSENT file
-   * means the process died, and that distinction only holds if the non-fatal
-   * exits all write one.
+   * store, and exit. Every exit *after the run begins* goes through here, so a
+   * caller polling the result file can never mistake a refusal for a crash — an
+   * ABSENT file means the process died, and that reading only holds because the
+   * refusals write one too.
+   *
+   * Two exits deliberately do not: a usage error (exits before this exists —
+   * the arguments were never valid, so there is no run to report on) and
+   * `--dry-run` (a preview must never be readable as a completed cutover).
    * @param {string} code - A CUTOVER_CODES value.
    * @param {string|null} error - Operator-facing reason, or null on success.
    * @param {{healthUrl?: string, healthOk?: boolean}} [extra]

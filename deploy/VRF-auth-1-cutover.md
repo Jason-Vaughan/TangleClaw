@@ -254,24 +254,6 @@ cp /tmp/caddyfile.before ~/.tangleclaw/Caddyfile
 
 ---
 
-## Phase 8 — Roll back to direct (reversibility)
-
-```sh
-node scripts/ingress-cutover.js --to direct      # or --rollback
-```
-
-- [ ] `https://localhost:3102` serves again (direct HTTPS).
-- [ ] `lsof -nP -iTCP:3100 -sTCP:LISTEN` → ttyd back on TCP :3100.
-- [ ] `launchctl list | grep com.tangleclaw.caddy` → **gone** (caddy LaunchAgent unloaded).
-- [ ] `ingressMode` back to `direct` in config.json.
-
-```sh
-curl -k -so /dev/null -w "%{http_code}\n" https://localhost:3102   # 200
-lsof -nP -iTCP:8443 -sTCP:LISTEN || echo "✓ nothing on 8443 (caddy stopped)"
-```
-
----
-
 ## Phase 7b — Unreadable Caddyfile refuses, and says so in the result file  ← #710
 
 Both checks here exist because a unit test **cannot** see them: they are properties of the
@@ -300,12 +282,21 @@ cat /tmp/cutover-result.json
       ```sh
       python3 -c "import json;d=json.load(open('/tmp/cutover-result.json'));assert d['code']=='unreadable' and d['ok'] is False, d;print('✓', d)"
       ```
-- [ ] The Caddyfile is **untouched** (nothing written, no backup attempted — an unreadable
-      file cannot be backed up, so `--force` must not help either):
-      ```sh
-      sudo chmod 600 ~/.tangleclaw/Caddyfile     # restore before continuing
-      ```
-- [ ] Re-run with `--force` and confirm it **still refuses** (force does not apply to this state).
+- [ ] The Caddyfile is **untouched** — nothing written, no backup attempted.
+
+```sh
+# 7b.3  STILL UNREADABLE at this point, deliberately: --force must not rescue a
+#       file that cannot be backed up. Do NOT restore permissions before this.
+node scripts/ingress-cutover.js --to caddy --force --result-file /tmp/cutover-forced.json ; echo "exit=$?"
+python3 -c "import json;d=json.load(open('/tmp/cutover-forced.json'));assert d['code']=='unreadable',d;print('OK', d)"
+
+# 7b.4  NOW restore, and only now
+sudo chmod 600 ~/.tangleclaw/Caddyfile
+```
+
+- [ ] `--force` **still refuses**, with `"code": "unreadable"`. Force applies to a hand-edited
+      file (which can be backed up), never to an unreadable one (which cannot).
+- [ ] Permissions restored to `600` before continuing to the next phase.
 
 ## Phase 7c — A successful cutover writes its outcome  ← #710
 
@@ -324,6 +315,24 @@ python3 -c "import json;d=json.load(open('/tmp/cutover-ok.json'));assert d['ok']
       ran. (`healthOk: false` is a legitimate pass here; it means the cutover applied but the
       service had not come up yet. Only `null` is wrong.)
 - [ ] `finishedAt` is a timestamp from *this* run, not a stale file from an earlier one.
+
+## Phase 8 — Roll back to direct (reversibility)
+
+```sh
+node scripts/ingress-cutover.js --to direct      # or --rollback
+```
+
+- [ ] `https://localhost:3102` serves again (direct HTTPS).
+- [ ] `lsof -nP -iTCP:3100 -sTCP:LISTEN` → ttyd back on TCP :3100.
+- [ ] `launchctl list | grep com.tangleclaw.caddy` → **gone** (caddy LaunchAgent unloaded).
+- [ ] `ingressMode` back to `direct` in config.json.
+
+```sh
+curl -k -so /dev/null -w "%{http_code}\n" https://localhost:3102   # 200
+lsof -nP -iTCP:8443 -sTCP:LISTEN || echo "✓ nothing on 8443 (caddy stopped)"
+```
+
+---
 
 ## Phase 9 — Teardown (optional, leaves elkaholic clean)
 
@@ -346,7 +355,13 @@ mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
 | Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | |
 | Bug 2 — ttyd re-binds Unix socket across restarts | 6 | |
 | Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
+| #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | |
+| #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | |
 | Rollback restores direct mode cleanly | 8 | |
 
-All six green → `VRF-auth-1-cutover` PASSES → merge PR #398 → close #397 → close #395.
+All **eight** green → `VRF-auth-1-cutover` PASSES.
+
+Phases 7b and 7c are not optional: they are the accepted substitute for unit coverage of the
+executor's ordering, which cannot be tested in-process (see #772). A run that skips them has not
+verified the #710 work at all.
 Any red → capture the failing command's output + `~/.tangleclaw/logs/` and stop.
