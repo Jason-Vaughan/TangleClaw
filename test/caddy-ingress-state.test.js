@@ -128,9 +128,31 @@ describe('classifyIngressState', () => {
     }
   });
 
-  it('treats an unreadable path as absent rather than throwing', () => {
+  it('treats a missing path as absent rather than throwing', () => {
     const state = caddy.classifyIngressState('/nonexistent/dir/Caddyfile');
     assert.equal(state.state, 'absent');
+  });
+
+  it('fails closed on a file that exists but cannot be read', (t) => {
+    // Not knowing is not the same as knowing there is nothing. A caller told
+    // "absent, safe to write" would overwrite a config it merely failed to open —
+    // which on a real machine may be the only thing holding the door shut.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ingress-state-'));
+    const p = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(p, handEdited([`jason ${BCRYPT_A}`]));
+    fs.chmodSync(p, 0o000);
+    t.after(() => fs.chmodSync(p, 0o600));
+
+    // Running privileged ignores the mode bits, so the branch is unreachable there.
+    try {
+      fs.readFileSync(p, 'utf8');
+      t.skip('running privileged — cannot make a file unreadable');
+      return;
+    } catch { /* expected: the file is genuinely unreadable */ }
+
+    const state = caddy.classifyIngressState(p);
+    assert.equal(state.state, 'unreadable');
+    assert.equal(state.safeToWrite, false, 'an unreadable file must never be reported writable');
   });
 
   it('classifies THIS machine\'s live Caddyfile as protected, when one is present', (t) => {

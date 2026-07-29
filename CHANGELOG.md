@@ -19,7 +19,7 @@ All notable changes to TangleClaw are documented in this file.
   **Tests:** `test/setup-ingress-state-endpoint.test.js` (+8) — one per state, an assertion that no
   bcrypt-shaped string appears in any response, that a second account name is never enumerated, that
   `users` never crosses the boundary, and that probing neither creates nor modifies a Caddyfile.
-- **`caddy.classifyIngressState()` — tell apart the four ways an existing Caddyfile can block
+- **`caddy.classifyIngressState()` — tell apart the ways an existing Caddyfile can block
   automated setup (#710, v5 chunk 2 groundwork).** The setup wizard is going to put a login in front
   of TangleClaw by default, which means it will meet machines that already have a Caddy config. A
   terminal tool can afford to ask "overwrite it?" because the answer comes with a backup, a `--force`
@@ -31,7 +31,11 @@ All notable changes to TangleClaw are documented in this file.
   added. Reading is its only effect — it never writes or reloads.
   `ambiguous` and `ungated` are deliberately not merged: `extractBasicAuthCredential` returns null
   for both, so a caller built on it would tell an operator who has two logins that they have none,
-  and then offer to replace the file currently holding the door shut.
+  and then offer to replace the file currently holding the door shut. A sixth state, `unreadable`,
+  covers a file that is present but cannot be opened — it **fails closed** rather than reporting
+  `absent`, because not knowing what is in a file is not the same as knowing there is nothing in it,
+  and the difference decides whether a working gate gets overwritten. That case logs; a genuine
+  ENOENT does not, being the ordinary first-run path.
   No behavior change yet — nothing consumes this. Verified against the live hand-edited Caddyfile on
   the developer's own machine, which classifies `adoptable` / `safeToWrite: false`, i.e. the wizard
   will adopt its credential rather than regenerate over it.
