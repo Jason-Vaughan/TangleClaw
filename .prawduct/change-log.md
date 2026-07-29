@@ -26,6 +26,66 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-29: Update checks happen when they matter (#716)
+
+<!-- prawduct: type=feat | chunks=01 | scope=716-update-check-on-demand | status=shipped -->
+
+**Why:** The dashboard polled `/api/update-status` every five minutes and learned nothing — the
+route is a pure cache read, and only a 4h timer refreshed that cache. Measured on this repo: server
+up `00:07:37`, its one check at `00:08:37`, v4.37.0 published `00:46:06`, next check `04:08:37`. The
+poll looked like checking and was not, so a missing update pill was unfalsifiable from the UI.
+
+**What:** `POST /api/update/check` over a new `refreshIfStale(maxAgeMs, cb)` — throttled
+(`resolveRefreshFloor`: 5m automatic, 10s operator-asked) and single-flight, so neither a reload loop
+nor N open tabs multiply `git ls-remote` against origin. Checks now fire on page load, on tab
+refocus, and on tapping the header version (now a real `<button>`). The measurement moved off
+`execSync` to `execFile`: request-triggered synchronous git would stall the single-threaded server —
+terminal websockets included — for up to its 15s timeout. Sync and async transports share one pure
+`_buildStatus`. `_getReleasesUrlBase` memoizes its **answer but never a failure** — it is a
+*synchronous* spawn now reachable from every page load, and a sync spawn under a TCC-protected
+directory can hang outright (#324), so a "not a GitHub remote" result is cached while a throw stays
+retryable. Caching both (which an intermediate commit on this branch did) trades a repeated stall
+for permanently losing the release-notes link on an install already in trouble. A failed check logs
+at `warn` on **both** the timer-driven and request-driven paths; the logger defaults to `info`, so
+at `debug` an install that had quietly stopped detecting releases left no trace an operator finds.
+
+**The client tolerates a server older than itself.** `public/` is served straight off the working
+tree, so a merge or a self-update puts new client files in place while the running process keeps its
+old routes until restart (the self-update path opens that window by design — checkout, then
+restart). `POST /api/update/check` 404s there, and reading that as a failed check raised the new
+failure marker on every page load until someone restarted — a false alarm from the feature built to
+stop misreporting update state. Falls back to the cached `GET`, which every version serves, keyed to
+`NOT_FOUND` so a 500 or an unreachable server still reports honestly. Found by the PR reviewer
+probing the *running* install rather than reading the diff. Known narrow gap: a pre-release server
+sends no `checkOk`, so an on-demand check in that window reports "up to date" from that server's own
+last measurement; the tooltip carries its age and the window closes at restart.
+
+Also fixed three ways the UI could lie: a failed check and a reachable-remote-with-no-tags built
+byte-identical payloads (now `checkOk`); a backgrounded tab froze the header version because a
+browser suspends timers, so refocus refreshes the running version too, sequenced ahead of the
+measurement; and the never-checked / check-failed states were tooltip-only, which is invisible on
+touch — they now render a visible marker, and the control gets a 44px tap target under
+`(pointer: coarse)`.
+
+**Evidence:** `node --test` reports **5095 pass / 0 fail / 1** pre-existing skip of 5096, against a
+5057/5058 baseline — **38 new tests**. `.test-evidence.json` records the same run as "2708 passed".
+The runner's figure is the true leaf count (the JUnit file carries 5097 `<testcase>` elements);
+`prawduct-hook` **undercounts**, because it sums the `tests=` attribute of the 464 *top-level*
+`<testsuite>` elements (2709) and node's JUnit reporter sets `tests=` to a suite's **direct-child**
+count — so every case nested inside an inner `describe` is dropped. Verified by parsing the artifact,
+after an earlier revision of this entry stated the mechanism exactly backwards. Both agree on the
+load-bearing fact: **0 failures**. **Six mutations revert-verified**, each turning its own guard red:
+removing the `_inFlight` queue, short-circuiting the staleness comparison, inverting the
+manual→floor ternary, feeding `_buildStatus` the wrong output, memoizing a failed `origin` read, and
+dropping the per-waiter `try/catch`. The failed-check log level is guarded too — behaviorally (the
+message must surface at the default `info`) and structurally (neither catch may fall back to
+`debug`).
+
+Critic: `chunk` → `verify-resolutions` (4/4) → `cumulative` (0 blocking, 15 warning, 8 note) →
+`verify-resolutions` ×3 (10/15, then 4/5, then 3/3), every pass 0 blocking. Two rounds' findings
+were defects *introduced by the previous round's fixes* — the failure-caching memo and the
+half-applied log level — which is the honest record of how this converged.
+
 ## 2026-07-28: Rules get their own delivery channel (#749)
 
 <!-- prawduct: type=feat | chunks=02 | scope=prime-delivery-749 | status=shipped -->

@@ -19,7 +19,7 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `serverPort` | number | `3101` | Landing page HTTP server port. The install script sets `TANGLECLAW_PORT=3102` via launchd, so the effective default after installation is **3102**. |
-| `updateCheckIntervalMs` | number | `14400000` (4h) | How often a running server re-checks origin for a new release. The first check runs 60s after boot regardless. Values below 60000 (1 minute), or non-numbers, are rejected with a logged warning and the default is used — a typo must not become a tight poll against origin. There is no manual "check now" yet (#716), so this interval is currently the only way to shorten notification latency. |
+| `updateCheckIntervalMs` | number | `14400000` (4h) | How often a running server re-checks origin for a new release. The first check runs 60s after boot regardless. Values below 60000 (1 minute), or non-numbers, are rejected with a logged warning and the default is used — a typo must not become a tight poll against origin. This is the **floor**, not the only path: since #716 the dashboard also re-checks on page load and whenever its tab regains focus, and the header version is a button that checks on demand — so lowering this value is rarely necessary. |
 | `ttydPort` | number | `3100` | ttyd terminal emulator port. Pinned to `127.0.0.1` on every install — nothing addresses it directly, because TangleClaw proxies to it and the browser only ever loads a same-origin terminal route. In `caddy` ingress mode `ingress-cutover.js` swaps it for a Unix socket so ttyd is reachable only through the proxy. |
 | `bindAllInterfaces` | boolean\|null | `false` | Accept dashboard connections from every network interface instead of `127.0.0.1` only. **This is the deliberate opt-out from the protection, not a convenience toggle** — the dashboard can open terminal sessions, so anyone who can reach the machine gets shell access as you. Prefer the Caddy login gate, which keeps remote access behind a password. Ignored (and logged) in `caddy` ingress mode, where Caddy fronts the server and a wide Node socket would sit beside the gate rather than behind it. Only a real boolean is accepted; a quoted `"true"` is refused and logged rather than silently treated as false. `null` is written once, automatically, on an install that predates this setting: it means "never chosen", keeps that install's existing wide binding so an update cannot take away remote access, and is reported on every boot and on the dashboard until resolved. Requires a restart. See [ADR 0009](adr/0009-secure-by-default.md). |
 | `defaultEngine` | string | `"claude"` | Preferred engine for new projects. **Used only when that engine is actually installed** — otherwise TangleClaw falls back to the first installed engine (alphabetically by id, so the choice is stable across machines) and logs the substitution. With no engine installed, the Project Master refuses to launch and says so, while project create/attach/import record the configured intent anyway (registering a project is bookkeeping and must not require a binary). An id matching no known engine profile is passed through unchanged, so a typo here is reported by name rather than silently replaced. |
@@ -269,7 +269,7 @@ The `port_leases` table stores all managed port assignments. TangleClaw is the a
 
 ## API Overview
 
-TangleClaw exposes 62 HTTP endpoints under `/api/`. All endpoints accept and return JSON. Error responses use the format:
+TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. All endpoints accept and return JSON. Error responses use the format:
 
 ```json
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
@@ -285,7 +285,8 @@ TangleClaw exposes 62 HTTP endpoints under `/api/`. All endpoints accept and ret
 | `/api/config` | GET | Global config (password redacted) |
 | `/api/config` | PATCH | Update config fields |
 | `/api/models/status` | GET | Upstream API status for all engines |
-| `/api/update-status` | GET | Version update check |
+| `/api/update-status` | GET | Last update-check result, from cache — no network, no side effect. `checkedAt: null` means never measured (the window after every boot) and `checkOk: false` means the last attempt failed; neither is "you are up to date" |
+| `/api/update/check` | POST | Measure now. `{"manual": true}` takes the 10s staleness floor, anything else the 5m one. Throttled and single-flight, so reloads and open tabs cannot multiply `git ls-remote` calls against `origin` |
 
 ### Engines
 

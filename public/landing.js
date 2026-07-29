@@ -165,9 +165,172 @@ async function loadServerInfo() {
  */
 function renderRunningVersion(version) {
   if (typeof version !== 'string' || !version) return;
+  _lastRenderedVersion = version;
   const el = document.getElementById('version');
-  if (el) el.textContent = `v${version}`;
+  if (!el || _versionLabelHeld) return; // a check result is occupying the label
+  // Only write on a real change. This runs on every 60s poll and the label sits
+  // next to a live region; a no-op rewrite is pointless DOM churn at best, and
+  // assistive tech that re-reads on mutation would narrate the version forever.
+  const next = `v${version}`;
+  if (el.textContent !== next) el.textContent = next;
 }
+
+// The newest version the server has reported, so a transient check result can
+// restore the label without re-fetching.
+let _lastRenderedVersion = null;
+
+// True while a manual check's outcome is occupying the version label.
+let _versionLabelHeld = false;
+
+// Handle for the pending restore, so back-to-back taps don't stack restores.
+let _versionLabelRestore = null;
+
+// How long a manual check's outcome stays in the label before it reverts to the
+// version. Purely a text swap — the authoritative result also lands in the
+// element's `title`, which persists, so nothing is lost when this fires. (The
+// no-timer-driven-lifecycle rule from #98/#268 governs dismiss / redirect /
+// close actions; restoring a label is none of those.)
+const VERSION_RESULT_HOLD_MS = 4000;
+
+/**
+ * Put text in the version label and hold it there briefly, then restore the
+ * version. Used for the in-flight and result states of a manual check.
+ * @param {string} text - What to show
+ * @param {boolean} hold - Whether to schedule a restore (false for "checking…",
+ *   which ends when the request resolves rather than on a clock)
+ * @returns {void}
+ */
+function _showVersionLabel(text, hold) {
+  const el = document.getElementById('version');
+  if (!el) return;
+  if (_versionLabelRestore) {
+    clearTimeout(_versionLabelRestore);
+    _versionLabelRestore = null;
+  }
+  _versionLabelHeld = true;
+  el.textContent = text;
+  // Announce from a dedicated live region rather than the button itself: the
+  // button's text is its accessible name, so a live button would re-announce on
+  // every version poll and double-announce when activated.
+  const live = document.getElementById('versionCheckLive');
+  if (live) live.textContent = text;
+  if (!hold) return;
+  _versionLabelRestore = setTimeout(() => {
+    _versionLabelRestore = null;
+    _versionLabelHeld = false;
+    if (_lastRenderedVersion) el.textContent = `v${_lastRenderedVersion}`;
+    // Clear rather than restate: the restore is housekeeping, not news, and
+    // narrating the version again 4s after the result is noise.
+    if (live) live.textContent = '';
+  }, VERSION_RESULT_HOLD_MS);
+}
+
+/**
+ * Render a compact "how long ago" for an ISO timestamp.
+ * @param {string} iso - ISO-8601 instant
+ * @returns {string} e.g. "just now", "3m ago", "2h ago"
+ */
+function _agoLabel(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return 'just now';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+/**
+ * Keep the version control's tooltip describing the real state of update
+ * checking. This is what makes "no pill" falsifiable: the label alone cannot
+ * distinguish "checked, you are current" from "never checked" from "the check
+ * failed", and those are three different facts an operator acts on differently.
+ *
+ * @param {object|null} data - An update-status payload, or null if the request failed
+ * @returns {void}
+ */
+function renderVersionCheckHint(data) {
+  const el = document.getElementById('version');
+  if (!el) return;
+  let hint;
+  // `unknown` = never measured, `failed` = measured and could not answer. Both
+  // must be VISIBLE, not tooltip-only: `title` and `:hover` do not exist on a
+  // touch device, and this dashboard is read mostly from a phone, so a
+  // tooltip-only signal renders both states identically to "you are current" —
+  // exactly the indistinguishability this work exists to remove.
+  let mark = null;
+  if (!data) {
+    hint = "Couldn't reach the server to check for updates — tap to retry";
+    mark = 'check-failed';
+  } else if (!data.checkedAt) {
+    hint = 'Not checked for updates yet — tap to check now';
+    mark = 'check-unknown';
+  } else if (data.checkOk === false) {
+    hint = `Update check failed ${_agoLabel(data.checkedAt)} — tap to retry`;
+    mark = 'check-failed';
+  } else if (data.updateAvailable) {
+    hint = `v${data.latestVersion} available — checked ${_agoLabel(data.checkedAt)}`;
+  } else {
+    hint = `Up to date — checked ${_agoLabel(data.checkedAt)}. Tap to check now`;
+  }
+  el.title = hint;
+  el.classList.remove('check-unknown', 'check-failed');
+  if (mark) el.classList.add(mark);
+}
+
+/**
+ * Make the header version an explicit "check for updates now" control.
+ *
+ * The update pill only exists when an update exists, so before this there was
+ * no way to tell a measured "you are current" from a check that never ran — the
+ * absence of a pill was unfalsifiable from the UI, and an operator who suspected
+ * a release existed had nothing to press. The version label is the natural home:
+ * it is already the update-adjacent thing on screen and already re-renders when
+ * the running version changes.
+ *
+ * @returns {void}
+ */
+function wireVersionCheck() {
+  const el = document.getElementById('version');
+  if (!el) return;
+  el.addEventListener('click', async () => {
+    if (_versionCheckInFlight) return;
+    _versionCheckInFlight = true;
+    _showVersionLabel('checking…', false);
+    try {
+      const data = await loadUpdateStatus({ refresh: true, manual: true });
+      // No answer and a failed measurement are the same thing to an operator:
+      // the question was not resolved. `api()` already returns null rather than
+      // throwing for the first.
+      if (!data || data.checkOk === false) {
+        _showVersionLabel("couldn't check", true);
+      } else if (data.updateAvailable) {
+        // The pill is the real answer here and it has just been rendered, so the
+        // label goes straight back to the version rather than duplicating it.
+        _showVersionLabel(`v${_lastRenderedVersion || data.currentVersion}`, true);
+      } else {
+        _showVersionLabel('up to date ✓', true);
+      }
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a throw anywhere in the render path must not strand the label
+      // Without this the label stays on "checking…" forever AND, because the
+      // hold flag is still set, renderRunningVersion can never correct it again
+      // — one unlucky exception would freeze the header for the life of the
+      // page. Report the failure honestly and let the hold expire.
+      console.error('update check failed:', err);
+      _showVersionLabel("couldn't check", true);
+      // The tooltip is the durable half of this control — the label reverts
+      // after the hold, the title does not. A throw at or before
+      // renderVersionCheckHint leaves the previous answer in place, so the
+      // tooltip would outlive the label still claiming "Up to date" for a
+      // check that never completed.
+      renderVersionCheckHint(null);
+    } finally {
+      _versionCheckInFlight = false;
+    }
+  });
+}
+
+// Guards against a second check starting while one is in flight.
+let _versionCheckInFlight = false;
 
 /**
  * Hide the stale-server banner once the condition it reports has cleared.
@@ -518,10 +681,40 @@ function pollServerBackAndReload(oldStartedAt, restore) {
  * text is wrapped in an anchor to the GitHub release page (#149) when the
  * backend supplies a `releaseUrl` — falls back to plain text otherwise so
  * pre-#149 servers or non-GitHub remotes still surface the notification.
+ *
+ * Two modes. Plain (`opts` omitted) reads the server's cached answer — cheap,
+ * no network. `{refresh: true}` asks the server to measure again, which is what
+ * makes an update visible within minutes of it existing rather than whenever
+ * the periodic timer next happens to fire. `{manual: true}` additionally marks
+ * the request as operator-initiated, which earns a much shorter staleness floor
+ * server-side; throttling and coalescing live there, so callers here cannot
+ * cause a poll loop against origin no matter how often they fire.
+ *
+ * @param {{refresh?: boolean, manual?: boolean}} [opts]
+ * @returns {Promise<object|null>} The status payload, or null if the request failed
  */
-async function loadUpdateStatus() {
-  const data = await api('/api/update-status');
+async function loadUpdateStatus(opts) {
+  const refresh = !!(opts && opts.refresh);
+  const manual = !!(opts && opts.manual);
+  let data = null;
+  if (refresh) {
+    data = await apiMutate('/api/update/check', 'POST', { manual });
+    // A server older than these assets does not have this route. That window is
+    // not hypothetical: this repo IS the live install, so a merge or a
+    // self-update puts new client files on disk while the running process keeps
+    // serving the old routes until it restarts. Without this fallback the page
+    // would read the 404 as "the check failed" and raise the failure marker on
+    // every load until the restart — a false alarm from the very feature built
+    // to stop misreporting update state. Fall back to the cached answer, which
+    // every server has, and let the marker mean what it says.
+    if (!data && api.lastErrorCode === 'NOT_FOUND') {
+      data = await api('/api/update-status');
+    }
+  } else {
+    data = await api('/api/update-status');
+  }
   const pill = document.getElementById('updatePill');
+  renderVersionCheckHint(data);
 
   // A failed request, and a server that has not run its first check yet, are
   // both "no answer" — not "no update". `startChecker` waits 60s before its
@@ -530,7 +723,7 @@ async function loadUpdateStatus() {
   // in. Hiding on that takes down a pill for an update that is still genuinely
   // available. `checkedAt` is the discriminator, and the payload already
   // carries it.
-  if (!data || !data.checkedAt) return;
+  if (!data || !data.checkedAt) return data;
 
   // Past that, "no update" is a real answer and every path that reaches it must
   // take down a pill that is showing — this function re-runs after a restart,
@@ -538,16 +731,16 @@ async function loadUpdateStatus() {
   // is now installed".
   if (!data.updateAvailable || !data.latestVersion) {
     if (pill) pill.classList.add('hidden');
-    return;
+    return data;
   }
 
   const dismissKey = `tc_updateDismissed_${data.latestVersion}`;
   if (localStorage.getItem(dismissKey)) {
     if (pill) pill.classList.add('hidden');
-    return;
+    return data;
   }
 
-  if (!pill) return;
+  if (!pill) return data;
 
   const versionLabel = `v${esc(data.latestVersion)}`;
   const versionHtml = data.releaseUrl
@@ -575,6 +768,8 @@ async function loadUpdateStatus() {
     pill.classList.add('hidden');
     localStorage.setItem(dismissKey, '1');
   });
+
+  return data;
 }
 
 /**
@@ -1388,8 +1583,23 @@ async function init() {
 
   wireOrphanHooksBanner();
   wireStaleServerBanner();
+  wireVersionCheck();
   await loadProjects();
-  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(), loadUpdateStatus(), loadServerInfo()]);
+  // Opening the dashboard is a real measurement, not a cache read. A release
+  // published since the server's last periodic check was previously invisible
+  // until that timer next fired — up to four hours of a page that had been
+  // asked, and answered from memory. Throttled server-side, so a reload loop
+  // costs one check per window rather than one per load.
+  await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
+    // `.catch` rather than bare: a rejection inside Promise.all would abandon
+    // the rest of init — checkPortImports, maybeShowFilter,
+    // updateUnregisteredToggle and startPolling all sit after this await, so a
+    // failed update check must not be able to leave the dashboard unpolled.
+    loadUpdateStatus({ refresh: true }).catch((err) => {
+      console.error('update check on load failed:', err);
+      return null;
+    }),
+    loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
   updateUnregisteredToggle();
@@ -1426,9 +1636,42 @@ function startPolling() {
   // by construction: a restart resets the server's in-memory check to "not
   // checked yet", and a failed request is not an answer at all. Both are
   // deliberately left showing rather than hidden, so without a retry a pill for
-  // an update already installed would stay up for the life of the page. Slow —
-  // this reads a cache the server refreshes every four hours, not the network.
+  // an update already installed would stay up for the life of the page.
+  //
+  // Deliberately still a plain cache read, NOT a re-measurement: turning this
+  // into one would mean a `git ls-remote` every five minutes for the life of
+  // every open tab. Freshness is event-driven instead — page load and the
+  // visibility handler below — with the server's periodic check as the floor.
   loop(loadUpdateStatus, 300000);
+
+  // Returning to the tab is the moment an operator is about to trust what the
+  // page says, and it is exactly when a page left open for hours is most likely
+  // to be stale. Mirrors the service worker's own visibility-driven update poll
+  // (see sw-register.js). The server's staleness floor makes rapid tab
+  // switching harmless.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    // Both halves, deliberately. A browser suspends timers in a backgrounded
+    // tab, so the 60s poll stops and the header keeps naming whatever version
+    // was running when the tab was last awake — observed 2026-07-29, a tab
+    // showing 4.36.0 against a server running 4.37.0. Refreshing the update
+    // answer without the running version would leave the header contradicting
+    // the pill beside it, since "is there an update?" is answered relative to
+    // the version actually loaded.
+    try {
+      // Sequenced, not concurrent. When loadServerInfo sees a restart it
+      // re-asks for update status itself — a plain cached GET — so firing both
+      // at once lets that stale read land after the fresh measurement and
+      // repaint the older answer. Awaiting means the refresh is the last word.
+      await loadServerInfo();
+      await loadUpdateStatus({ refresh: true });
+    } catch (err) { // prawduct:allow prawduct/broad-except -- an async event listener's rejection is unhandled and invisible; logged instead
+      // The manual path already reports its own failures in the UI. This one is
+      // background work the operator did not ask for, so it stays quiet on
+      // screen and loud in the console.
+      console.error('refresh on tab focus failed:', err);
+    }
+  });
 }
 
 // Service worker registration + update propagation lives in /sw-register.js

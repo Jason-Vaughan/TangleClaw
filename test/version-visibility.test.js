@@ -60,9 +60,21 @@ function makeDom(ids) {
       textContent: '',
       innerHTML: '',
       _hidden: true,
+      // Non-'hidden' classes are recorded too: the version control signals
+      // never-checked / check-failed with a class, because a tooltip cannot be
+      // seen on a touch device (#716).
+      _classes: new Set(),
       classList: {
-        add(c) { if (c === 'hidden') els[id]._hidden = true; },
-        remove(c) { if (c === 'hidden') els[id]._hidden = false; }
+        add(...cs) {
+          for (const c of cs) {
+            if (c === 'hidden') els[id]._hidden = true; else els[id]._classes.add(c);
+          }
+        },
+        remove(...cs) {
+          for (const c of cs) {
+            if (c === 'hidden') els[id]._hidden = false; else els[id]._classes.delete(c);
+          }
+        }
       },
       // The show path wires an apply and a dismiss button into the pill it just
       // rendered, so querySelector must hand back something listenable.
@@ -272,6 +284,11 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       document: dom.document,
       state,
       api: async () => payload,
+      // Module-level state renderRunningVersion consults so a manual check's
+      // transient result (#716) is not overwritten mid-display by this poll.
+      // Seeded false: no check result is showing in these scenarios.
+      _versionLabelHeld: false,
+      _lastRenderedVersion: null,
       loadUpdateStatus: async () => { updateChecks++; },
       renderAuthUser: () => {},
       renderAuthStatus: () => {},
@@ -338,15 +355,22 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
      * @returns {Promise<object>} The stubbed elements.
      */
     async function runUpdateStatus(payload, dismissed = false) {
-      const dom = makeDom(['updatePill']);
+      const dom = makeDom(['updatePill', 'version']);
       dom.els.updatePill.classList.remove('hidden'); // a pill is already showing
       const ctx = vm.createContext({
         document: dom.document,
         api: async () => payload,
+        // The refresh path (#716) goes through apiMutate; stubbed to the same
+        // payload so a test can drive either without changing its expectation.
+        apiMutate: async () => payload,
         localStorage: { getItem: () => (dismissed ? '1' : null), setItem: () => {} },
         esc: (s) => String(s)
       });
-      await vm.runInContext(`${extract('loadUpdateStatus')}\nloadUpdateStatus();`, ctx);
+      await vm.runInContext(
+        `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+        + `${extract('loadUpdateStatus')}\nloadUpdateStatus();`,
+        ctx
+      );
       return dom.els;
     }
 
@@ -398,5 +422,341 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       assert.match(polling, /loop\(loadUpdateStatus,/,
         'loadUpdateStatus must be in the polling loop, or a provisional answer is permanent');
     });
+  });
+});
+
+/*
+ * #716 — the absence of an update pill must be falsifiable.
+ *
+ * The pill only exists when an update exists, so "no pill" previously covered
+ * three different facts an operator acts on differently: checked and current,
+ * never checked, and the check failed. Measured on this repo 2026-07-29 — a
+ * release published 37 minutes after the server's only check stayed invisible,
+ * because GET /api/update-status is a pure cache read and nothing re-measured.
+ */
+describe('#716 update checks happen when they matter', () => {
+  /**
+   * Run loadUpdateStatus and hand back the version element's tooltip plus which
+   * transport was used.
+   * @param {object|null} payload - The stubbed response.
+   * @param {object} [opts] - Passed through to loadUpdateStatus.
+   * @returns {Promise<{els: object, calls: string[]}>}
+   */
+  async function runHint(payload, opts) {
+    const dom = makeDom(['updatePill', 'version']);
+    const calls = [];
+    const ctx = vm.createContext({
+      document: dom.document,
+      api: async () => { calls.push('GET'); return payload; },
+      apiMutate: async (url, method, body) => {
+        calls.push(`${method} ${url} manual=${body && body.manual}`);
+        return payload;
+      },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s) => String(s)
+    });
+    await vm.runInContext(
+      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+      + `${extract('loadUpdateStatus')}\n`
+      + `loadUpdateStatus(${opts ? JSON.stringify(opts) : ''});`,
+      ctx
+    );
+    return { els: dom.els, calls };
+  }
+
+  it('distinguishes "never checked" from "checked and current"', async () => {
+    const cold = await runHint({ updateAvailable: false, latestVersion: null, checkedAt: null });
+    assert.match(cold.els.version.title, /not checked/i,
+      'a cold cache must not read as up to date — it is the state every restart lands in');
+
+    const measured = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(measured.els.version.title, /up to date/i);
+    assert.doesNotMatch(measured.els.version.title, /not checked/i);
+  });
+
+  it('says a failed check failed, rather than reporting it as up to date', async () => {
+    // The failure path and the no-tags-found path built byte-identical payloads
+    // before `checkOk` existed, so an offline box claimed it was current.
+    const { els } = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: false,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(els.version.title, /failed/i);
+    assert.doesNotMatch(els.version.title, /up to date/i);
+  });
+
+  it('reports an unreachable server rather than silently keeping a stale hint', async () => {
+    const { els } = await runHint(null);
+    assert.match(els.version.title, /couldn't reach|could not reach/i);
+  });
+
+  it('falls back to the cached read when the server predates the new route', async () => {
+    // This repo IS the live install: a merge — or a self-update, where the
+    // checkout lands before the restart — puts new client files on disk while
+    // the running process still serves the old routes. Probed on the running
+    // install during review: POST /api/update/check returned 404 NOT_FOUND.
+    // Reading that as "the check failed" would raise the failure marker on
+    // every page load until someone restarted, which is a false alarm from the
+    // one feature built to stop misreporting update state.
+    const dom = makeDom(['updatePill', 'version']);
+    const calls = [];
+    const cached = {
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    };
+    const api = async (url) => { calls.push(`GET ${url}`); return cached; };
+    api.lastErrorCode = 'NOT_FOUND';
+    const ctx = vm.createContext({
+      document: dom.document,
+      api,
+      apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s) => String(s)
+    });
+    await vm.runInContext(
+      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      ctx
+    );
+    assert.deepEqual(calls, ['POST /api/update/check', 'GET /api/update-status'],
+      'a 404 on the new route must fall back, not be reported as a failed check');
+    assert.match(dom.els.version.title, /up to date/i);
+    assert.equal(dom.els.version._classes.has('check-failed'), false,
+      'an old server is not a failed check');
+  });
+
+  it('does NOT swallow a genuine failure as if the route were missing', async () => {
+    // The fallback keys on NOT_FOUND specifically. A real network failure or a
+    // 500 must still surface — otherwise the fallback would resurrect the very
+    // "silently report up to date" bug this branch removed.
+    const dom = makeDom(['updatePill', 'version']);
+    const calls = [];
+    const api = async (url) => { calls.push(`GET ${url}`); return null; };
+    api.lastErrorCode = null;
+    const ctx = vm.createContext({
+      document: dom.document,
+      api,
+      apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s) => String(s)
+    });
+    await vm.runInContext(
+      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      ctx
+    );
+    assert.deepEqual(calls, ['POST /api/update/check'], 'no fallback without NOT_FOUND');
+    assert.ok(dom.els.version._classes.has('check-failed'), 'a real failure still reports');
+  });
+
+  it('marks the abnormal states visibly, because a tooltip does not exist on touch', async () => {
+    // `title` and `:hover` are desktop-only affordances, and this dashboard is
+    // read mostly from a phone. Without a rendered marker, "never checked" and
+    // "check failed" look identical to "you are current" — the exact
+    // indistinguishability this work exists to remove.
+    const cold = await runHint({ updateAvailable: false, latestVersion: null, checkedAt: null });
+    assert.ok(cold.els.version._classes.has('check-unknown'));
+
+    const failed = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: false,
+      checkedAt: new Date().toISOString()
+    });
+    assert.ok(failed.els.version._classes.has('check-failed'));
+
+    // Silent when healthy — the operator chose no permanent chrome.
+    const healthy = await runHint({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.equal(healthy.els.version._classes.has('check-unknown'), false);
+    assert.equal(healthy.els.version._classes.has('check-failed'), false);
+  });
+
+  it('ships CSS for those markers and a touch-sized tap target', () => {
+    // A class nothing styles is a marker nobody sees.
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    assert.match(css, /\.dash-version\.check-unknown::after/);
+    assert.match(css, /\.dash-version\.check-failed::after/);
+    assert.match(css, /@media \(pointer: coarse\)[\s\S]{0,900}\.dash-version\s*\{[^}]*min-height: 44px/,
+      'a ~14px label is not a usable tap target on the primary platform');
+  });
+
+  it('reads the cache by default and measures only when asked', async () => {
+    const cached = await runHint({ updateAvailable: false, checkOk: true, checkedAt: new Date().toISOString() });
+    assert.deepEqual(cached.calls, ['GET'],
+      'the 5-minute poll must stay a cache read — refreshing it would be a git ls-remote every 5 minutes per tab');
+
+    const refreshed = await runHint(
+      { updateAvailable: false, checkOk: true, checkedAt: new Date().toISOString() },
+      { refresh: true, manual: true }
+    );
+    assert.deepEqual(refreshed.calls, ['POST /api/update/check manual=true']);
+  });
+
+  it('carries the manual flag only when the operator actually asked', async () => {
+    // The flag selects the tighter staleness floor server-side; an automatic
+    // refresh claiming to be manual would defeat the throttle it exists for.
+    const auto = await runHint(
+      { updateAvailable: false, checkOk: true, checkedAt: new Date().toISOString() },
+      { refresh: true }
+    );
+    assert.deepEqual(auto.calls, ['POST /api/update/check manual=false']);
+  });
+
+  it('wires the load, the refocus, and the operator gesture', () => {
+    // Each of the three is a separate reason the answer goes stale; a grep here
+    // is honest because the behaviors themselves are exercised above and in
+    // update-checker.test.js.
+    assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)[\s\S]{0,500}loadServerInfo\(\)\]\)/,
+      'page load must measure, not read a four-hour-old cache');
+    // A rejection inside that Promise.all would abandon startPolling and the
+    // rest of init, so the load-time check must not be able to throw out.
+    assert.match(SRC, /loadUpdateStatus\(\{ refresh: true \}\)\.catch\(/,
+      'the load-time check must not be able to abort init');
+    assert.match(SRC, /visibilitychange/,
+      'returning to the tab is when the page is most likely stale');
+    // Both halves, in that order. Refreshing the update answer without the
+    // running version leaves the header contradicting the pill beside it
+    // (observed 2026-07-29: a suspended tab read 4.36.0 against a server
+    // running 4.37.0). And they must be sequenced — loadServerInfo re-asks for
+    // update status with a cached GET when it sees a restart, which would
+    // otherwise land after the fresh measurement and repaint the older answer.
+    assert.match(SRC, /await loadServerInfo\(\);\s*\n\s*await loadUpdateStatus\(\{ refresh: true \}\);/,
+      'refocus must refresh the version first, then measure — sequenced, not raced');
+    assert.match(SRC, /function wireVersionCheck\(/,
+      'the operator needs a control, or "no pill" stays unfalsifiable');
+  });
+
+  /**
+   * Wire the version control and fire its click, returning what the label did.
+   * @param {object|null} payload - Stubbed response, or an Error to throw.
+   * @returns {Promise<{label: string, title: string}>}
+   */
+  async function clickVersion(payload) {
+    const handlers = {};
+    const version = {
+      textContent: 'v4.37.0',
+      title: '',
+      addEventListener: (ev, fn) => { handlers[ev] = fn; },
+      classList: { add() {}, remove() {} },
+      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false })
+    };
+    const updatePill = {
+      textContent: '', innerHTML: '', _hidden: true,
+      classList: { add() { updatePill._hidden = true; }, remove() { updatePill._hidden = false; } },
+      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
+      addEventListener: () => {}
+    };
+    const versionCheckLive = { textContent: '' };
+    const ctx = vm.createContext({
+      document: { getElementById: (id) => ({ version, updatePill, versionCheckLive })[id] || null },
+      api: async () => payload,
+      apiMutate: async () => {
+        if (payload instanceof Error) throw payload;
+        return payload;
+      },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s2) => String(s2),
+      console: { error: () => {} },
+      // The restore is scheduled, never run here — the assertion is about what
+      // the operator sees when the check resolves, not 4s later.
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      _versionLabelHeld: false,
+      _lastRenderedVersion: '4.37.0',
+      _versionLabelRestore: null,
+      _versionCheckInFlight: false,
+      VERSION_RESULT_HOLD_MS: 4000
+    });
+    await vm.runInContext(
+      `${extract('_showVersionLabel')}\n${extract('_agoLabel')}\n`
+      + `${extract('renderVersionCheckHint')}\n${extract('loadUpdateStatus')}\n`
+      + `${extract('wireVersionCheck')}\nwireVersionCheck();`,
+      ctx
+    );
+    await handlers.click();
+    return { label: version.textContent, title: version.title, live: versionCheckLive.textContent };
+  }
+
+  it('answers an operator who asks, so no-pill stops being unfalsifiable', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.label, /up to date/i);
+  });
+
+  it('says so when the check could not be made', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: false,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.label, /couldn't check/i);
+    assert.doesNotMatch(r.label, /up to date/i);
+  });
+
+  it('never strands the label on "checking…" when something throws', async () => {
+    // The hold flag that protects a result from the 60s poll also blocks
+    // renderRunningVersion from correcting it, so an unhandled throw here would
+    // freeze the header for the life of the page.
+    const r = await clickVersion(new Error('render blew up'));
+    assert.doesNotMatch(r.label, /checking/i);
+    assert.match(r.label, /couldn't check/i);
+  });
+
+  it('does not leave a tooltip claiming success after a throw', async () => {
+    // The label reverts after the hold; the title does not, so it is the
+    // durable record. A stale "Up to date" surviving a failed check is the
+    // longer-lived lie of the two.
+    const r = await clickVersion(new Error('render blew up'));
+    assert.doesNotMatch(r.title, /up to date/i);
+    assert.match(r.title, /couldn't reach|could not reach/i);
+  });
+
+  it('announces the outcome from a live region, not from the button', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.live, /up to date/i, 'the result must reach assistive tech');
+
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const versionBtn = /<button[^>]*id="version"[^>]*>/.exec(html);
+    assert.ok(versionBtn, 'the version control should be a real button');
+    assert.doesNotMatch(versionBtn[0], /aria-live/,
+      'a live region on a control whose text IS its accessible name re-announces on every '
+      + 'version poll and double-announces on activation');
+    assert.match(html, /id="versionCheckLive"[^>]*aria-live="polite"|aria-live="polite"[^>]*id="versionCheckLive"/,
+      'the outcome needs its own polite live region');
+  });
+
+  it('does not rewrite the version label when nothing changed', () => {
+    // #version sits beside a live region and is written on every 60s poll.
+    // A no-op rewrite is churn at best; assistive tech that re-reads on
+    // mutation would narrate the version forever.
+    let writes = 0;
+    const el = {
+      _text: 'v4.37.0',
+      get textContent() { return this._text; },
+      set textContent(v) { writes++; this._text = v; }
+    };
+    const ctx = vm.createContext({
+      document: { getElementById: () => el },
+      _versionLabelHeld: false,
+      _lastRenderedVersion: null
+    });
+    vm.runInContext(
+      `${extract('renderRunningVersion')}\n`
+      + 'renderRunningVersion("4.37.0"); renderRunningVersion("4.37.0");',
+      ctx
+    );
+    assert.equal(writes, 0, 'an unchanged version must not touch the DOM');
+
+    vm.runInContext('renderRunningVersion("4.38.0");', ctx);
+    assert.equal(writes, 1, 'a real change still lands');
+    assert.equal(el._text, 'v4.38.0');
   });
 });

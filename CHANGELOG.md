@@ -4,6 +4,90 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Update checks now happen when they matter, and can be demanded (#716).** The dashboard measures
+  on page load and whenever its tab regains focus, and the header version is a button that runs a
+  check on the spot — so "no update pill" is finally something an operator can verify rather than
+  merely observe.
+
+  Measured on this repo: the server started at `00:07:37`, ran its one check at `00:08:37`, and
+  v4.37.0 was published at `00:46:06` — 37 minutes later, with the next check four hours out.
+  `GET /api/update-status` was a pure cache read, so the dashboard's own five-minute poll re-read
+  that same stale answer roughly 48 times before it could change. The polling looked like checking
+  and was not.
+
+  The check's result is announced to assistive technology from a dedicated polite live region beside
+  the control — not from the button itself, whose text is its own accessible name and is rewritten on
+  every version poll, so making it live would narrate the version indefinitely and double-announce on
+  activation.
+
+  New `POST /api/update/check`, backed by `refreshIfStale` — throttled (5 minutes for an automatic
+  check, 10 seconds for one the operator asked for) and single-flight, so neither a reload loop nor
+  a dozen open tabs can turn into a `git ls-remote` loop against origin. The check also moved off
+  `execSync`: request-triggered synchronous git would have stalled the single-threaded server —
+  terminal websockets included — for up to its 15s timeout on a flaky network. `GET
+  /api/update-status` is unchanged for its existing consumers.
+
+### Fixed
+- **The header version no longer freezes when a tab is backgrounded (#716, #744).** A browser
+  suspends timers in a background tab, so the 60-second poll #744 added simply stops and the header
+  keeps naming whatever version was running when the tab was last awake — observed 2026-07-29, a tab
+  reading 4.36.0 against a server running 4.37.0 while that session's own tmux status bar, stamped
+  server-side, correctly read 4.37.0. Returning to the tab now refreshes the running version as well
+  as the update answer. Refreshing only the latter would have made it worse, not better: the header
+  could then contradict the pill beside it.
+- **A throw during a manual update check can no longer freeze the header permanently (#716).** The
+  flag that protects a check result from being overwritten by the version poll also blocks the poll
+  from ever correcting the label, so an exception in the render path stranded the header on
+  "checking…" for the life of the page. The failure is now reported honestly, in the label and in
+  the tooltip — the tooltip outlives the label, so leaving a stale "Up to date" there was the
+  longer-lived of the two lies.
+- **The dashboard no longer reports a failed check while the server is simply older than its assets
+  (#716).** TangleClaw serves `public/` straight off the working tree, so an update — or a merge on
+  the machine that hosts the install — puts new client files in place while the running process
+  keeps serving its old routes until it restarts. The self-update path opens the same window by
+  design: the checkout lands before the restart. In it, `POST /api/update/check` 404s, and reading
+  that as "the check failed" raised the new failure marker on every page load until someone
+  restarted — a false alarm from the one feature meant to stop misreporting update state. The client
+  now falls back to the cached read, which every server version has. Keyed to `NOT_FOUND`
+  specifically: a 500 or an unreachable server still reports honestly.
+
+  Narrow known gap in that same window: a server predating this release does not send `checkOk`, so
+  an on-demand check there reports "up to date" from the older server's own last measurement rather
+  than a fresh one. The tooltip still carries how long ago that was, and the window closes on
+  restart.
+- **"Never checked" and "check failed" are now visible on a phone (#716).** Both states were carried
+  only in the version control's tooltip, and neither `title` nor `:hover` exists on a touch device —
+  so on the platform this dashboard is mostly read from, they rendered identically to "you are up to
+  date", which is the exact indistinguishability this work set out to remove. They now show a marker
+  beside the version, and the control gets a 44px tap target instead of a ~14px one. Still silent
+  when everything is healthy.
+- **A failed update check no longer reports as "up to date" (#716).** The failure path and the
+  reachable-remote-with-no-tags path built byte-identical payloads, so an install that could not
+  reach GitHub rendered exactly like one that was current. The status now carries `checkOk`, and the
+  version control distinguishes never-checked, check-failed, and measured-and-current — three facts
+  an operator acts on differently.
+
+### Internal
+- **Update-check robustness (#716).** `_getReleasesUrlBase` memoizes its **answer but never a
+  failure**: it is a *synchronous* spawn and the request path now reaches it on every page load and
+  tab refocus, where a sync spawn under a TCC-protected directory can hang the server outright
+  (#324) — so a "not a GitHub remote" result is cached while a throw stays retryable. Caching both
+  would trade a repeated stall for permanently losing the release-notes link on an install already
+  in trouble. A failed update check also now logs at `warn` rather than `debug` on **both** the
+  timer-driven and request-driven paths; the logger defaults to `info`, so at debug an install that
+  had quietly stopped detecting releases left no trace an operator would find. Waiters coalesced
+  behind a single
+  in-flight check are invoked in isolation, so one callback throwing — writing to a socket the client
+  already closed — cannot strand its siblings as requests that never answer. The automatic callers
+  (page load, tab refocus) gained the failure guard the manual one already had; a rejection inside
+  `init()`'s `Promise.all` would otherwise have skipped `startPolling`. Docs corrected across
+  `README.md`, `docs/configuration-reference.md` (whose field table still claimed no manual check
+  exists, and whose endpoint table omitted the new route), and `FEATURES.md`. The fork-`origin`
+  detection freeze (#711) — a fork's tags stop at creation, so such an install reports "up to date"
+  forever and no amount of re-checking helps — is now written down in `README.md` where a user can
+  actually find it, rather than only in untracked internal artifacts.
+
 ## [4.37.0] - 2026-07-28
 
 ### Added

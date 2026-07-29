@@ -25,7 +25,17 @@
            onerror="this.src='/logo.png'; this.width=32; this.height=32;">
       <img class="dash-wordmark" src="/logo-text.png" alt="TangleClaw" height="18"
            onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dash-title',textContent:'TANGLECLAW'}));">
-      <span id="version" class="dash-version"></span>
+      <!-- A real button, not a styled span: this is the only control that can
+           prove an update check actually ran, so it must be reachable by
+           keyboard and announced as actionable. -->
+      <button type="button" id="version" class="dash-version"
+              title="Tap to check for updates"></button>
+      <!-- The outcome is announced from a separate live region, NOT from the
+           button. The button's text is its own accessible name and is rewritten
+           on every 60s server-info poll, so making it live would re-announce the
+           version indefinitely and double-announce on activation. Same pattern
+           as #medusaLive on the session page. -->
+      <span class="sr-only" id="versionCheckLive" aria-live="polite"></span>
       <span id="updatePill" class="update-pill hidden"></span>
       <span id="authUser" class="dash-auth-user hidden" title="Authenticated via the Caddy login gate"></span>
       <span id="authStatusWarning" class="dash-auth-warning hidden" role="status"></span>
