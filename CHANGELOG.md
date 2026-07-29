@@ -20,8 +20,17 @@ All notable changes to TangleClaw are documented in this file.
 
   `writeCutoverResult` never throws. A status file that cannot be written is a reporting failure, and
   a cutover that has already reloaded launchd must not abort over one; the failure goes to stderr and
-  the absent file is itself legible to the reader as "the run died before finishing". No behavior
-  changes without the flag — `parseArgs` gains `resultFile` and nothing else moves.
+  the absent file is itself legible to the reader as "the run died before finishing". That reading
+  only holds because **every** non-fatal exit writes one — the refusals included — so a caller can
+  distinguish "refused, and here is why" from "died partway". No behavior changes without the flag.
+
+  Two defects found by review in the preceding commits of this branch, fixed here rather than
+  shipped: the flag parsed but was never read, so the script's documented outcome file was never
+  written; and the present-but-unreadable Caddyfile refusal was **unreachable**, because building the
+  cutover context read that same file ~100 lines earlier and died on EACCES first. The classification
+  now happens once, before anything reads the file, and every later decision derives from it — which
+  also stops the CLI and the wizard from reaching different conclusions about one file. The dry-run
+  preview no longer offers `--force` for the unreadable case, which the executor refuses to honor.
 
 - **One derivation of "may this Caddyfile be overwritten", and a probe the wizard can ask
   (#710, v5 chunk 2 groundwork).** Chunk 2 makes the setup wizard put a login in front of TangleClaw

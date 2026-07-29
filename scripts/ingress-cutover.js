@@ -265,13 +265,14 @@ function writeCutoverResult(resultFile, result) {
       finishedAt: new Date().toISOString()
     })}\n`, { mode: 0o600 });
     return true;
-  } catch {
-    // prawduct:allow prawduct/broad-except -- reporting channel; see JSDoc. The
-    // failure is surfaced on stderr rather than swallowed, and must not abort a
-    // cutover that has already touched launchd.
+  } catch (err) { // prawduct:allow prawduct/broad-except -- reporting channel; see JSDoc. Reported with its cause below, never swallowed, and must not abort a cutover that has already touched launchd.
     try {
-      process.stderr.write(`WARNING: could not write cutover result file: ${resultFile}\n`);
-    } catch { /* stderr gone too (detached, closed fds) — nothing left to report with */ }
+      // The cause matters: EACCES on the directory and ENOSPC are different
+      // problems for whoever has to work out why the caller never got a result.
+      process.stderr.write(`WARNING: could not write cutover result file ${resultFile}: ${err.message}\n`);
+    } catch { // prawduct:allow prawduct/broad-except -- stderr itself is what just failed (detached child, closed fds); there is no remaining channel to report on, and throwing here would abort a completed cutover
+      /* nothing left to report with */
+    }
     return false;
   }
 }
@@ -339,11 +340,30 @@ function which(bin) {
 }
 
 function main() {
-  const { target, dryRun, force } = parseArgs(process.argv.slice(2));
+  const { target, dryRun, force, resultFile } = parseArgs(process.argv.slice(2));
   if (!target) {
-    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run] [--force]\n       node scripts/ingress-cutover.js --rollback\n');
+    process.stderr.write('Usage: node scripts/ingress-cutover.js --to caddy|direct [--dry-run] [--force] [--result-file <path>]\n       node scripts/ingress-cutover.js --rollback\n');
     process.exit(2);
   }
+
+  /**
+   * End the run: report the outcome to `--result-file` (if asked), close the
+   * store, and exit. Every terminal path goes through here so a caller polling
+   * the result file can never mistake a refusal for a crash — an ABSENT file
+   * means the process died, and that distinction only holds if the non-fatal
+   * exits all write one.
+   * @param {string} code - A CUTOVER_CODES value.
+   * @param {string|null} error - Operator-facing reason, or null on success.
+   * @param {{healthUrl?: string, healthOk?: boolean}} [extra]
+   * @returns {never}
+   */
+  const finish = (code, error, extra = {}) => {
+    writeCutoverResult(resultFile, {
+      ok: !error, code, target, error: error || null, ...extra
+    });
+    store.close();
+    process.exit(error ? 1 : 0);
+  };
 
   store.init();
   const config = store.config.load();
@@ -366,21 +386,53 @@ function main() {
     uid: process.getuid()
   };
 
+  // Classify the existing Caddyfile ONCE, up front, and derive every later
+  // decision from this single read.
+  //
+  // Order matters and is the whole point: reading the file to build `ctx` below
+  // is what a present-but-unreadable config crashes on (EACCES), and it happens
+  // long before any guard downstream could refuse gracefully. Classifying first
+  // means the refusal is reachable — otherwise the operator gets a bare stack
+  // trace from the very case the refusal exists to explain.
+  const caddyfilePath = caddy.getCaddyfilePath();
+  const ingress = caddy.classifyIngressState(caddyfilePath);
+
+  // Only a run that would WRITE the Caddyfile has to refuse an unreadable one.
+  // `--to direct` never writes it (it unloads Caddy instead), so an unreadable
+  // file is merely uninformative there, not blocking — the text below feeds the
+  // caddy-only refuse-to-ungate guard.
+  if (target === 'caddy' && ingress.state === 'unreadable' && !dryRun) {
+    process.stderr.write(
+      'ERROR: the existing Caddyfile cannot be read, so it cannot be backed up (ingress untouched).\n'
+      + `  Path: ${caddyfilePath}\n`
+      + '  Fix its permissions, or move it aside yourself, then re-run.\n'
+      + '  --force does not apply: forcing past an unreadable file would replace it with no backup.\n'
+    );
+    finish(CUTOVER_CODES.UNREADABLE, `Caddyfile cannot be read: ${caddyfilePath}`);
+  }
+
   const ctx = {
     config,
     env,
     upstreamPort: resolveUpstreamPort(path.join(launchAgentsDir, `${SERVER_LABEL}.plist`), config),
-    caddyfilePath: caddy.getCaddyfilePath(),
+    caddyfilePath,
     socketPath: caddy.getTtydSocketPath(),
     ttydTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${TTYD_LABEL}.plist`), 'utf8'),
     caddyTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${CADDY_LABEL}.plist`), 'utf8'),
     certPath: null,
     keyPath: null,
-    // #397 — the existing Caddyfile's text (null if absent) feeds the
-    // refuse-to-ungate guard in planCutover.
-    existingCaddyfileText: fs.existsSync(caddy.getCaddyfilePath())
-      ? fs.readFileSync(caddy.getCaddyfilePath(), 'utf8')
-      : null
+    // #397 — the existing Caddyfile's text (null if absent OR unreadable) feeds
+    // the refuse-to-ungate guard in planCutover. Read only in the states the
+    // classification above proved readable; `unreadable` has already refused for
+    // a caddy run, and a direct run does not consult this.
+    //
+    // Deliberately NOT taken from classifyIngressState's return: that shape is
+    // also serialized by GET /api/setup/ingress-state, and putting raw Caddyfile
+    // text on it would push the file's bcrypt hash across an HTTP boundary that
+    // is careful today to expose only a state name.
+    existingCaddyfileText: (ingress.state === 'absent' || ingress.state === 'unreadable')
+      ? null
+      : fs.readFileSync(caddyfilePath, 'utf8')
   };
 
   if (target === 'caddy') {
@@ -407,7 +459,7 @@ function main() {
     if (!env.caddyPath) {
       if (!dryRun) {
         process.stderr.write('ERROR: caddy not found on PATH. Install with: brew install caddy\n');
-        process.exit(1);
+        finish(CUTOVER_CODES.CADDY_MISSING, 'caddy not found on PATH (install: brew install caddy)');
       }
       process.stdout.write('NOTE: caddy not found on PATH (dry-run) — install with: brew install caddy\n');
       env.caddyPath = 'caddy'; // placeholder for the previewed plist
@@ -445,7 +497,13 @@ function main() {
     }
   }
 
-  const plan = planCutover(target, ctx);
+  let plan;
+  try {
+    plan = planCutover(target, ctx);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's own refusals arrive as Error; reported verbatim below, never swallowed
+    process.stderr.write(`ERROR: ${err.message}\n`);
+    finish(CUTOVER_CODES.UNGATE_REFUSED, err.message);
+  }
 
   if (dryRun) {
     process.stdout.write(`\n[dry-run] ingress cutover → ${target}\n`);
@@ -453,7 +511,15 @@ function main() {
     if (plan.caddyfile) {
       // Preview the clobber guard (#397 bug 3) so the operator knows a hand-edited
       // Caddyfile would be protected, not silently overwritten.
-      if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+      // Preview the two refusals separately — they do NOT resolve the same way,
+      // and a preview that offers `--force` for the unreadable case would send
+      // the operator to a flag the executor deliberately refuses to honor there.
+      if (ingress.state === 'unreadable') {
+        process.stdout.write(
+          `  ✗ would REFUSE: ${plan.caddyfile.path} cannot be READ, so it cannot be backed up\n`
+          + '    --force does NOT apply here — fix permissions or move the file aside, then re-run\n'
+        );
+      } else if (!ingress.safeToWrite) {
         process.stdout.write(force
           ? `  ⚠ overwrite HAND-EDITED Caddyfile (--force; timestamped backup written first): ${plan.caddyfile.path}\n`
           : `  ✗ would REFUSE: ${plan.caddyfile.path} is hand-edited (timestamped backup + re-run with --force to replace)\n`);
@@ -465,6 +531,9 @@ function main() {
     for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
     process.stdout.write(`  rollback:        ${plan.rollbackHint}\n\n`);
+    // A preview changes nothing, so it deliberately writes NO result file: a
+    // caller polling one must never see a dry run and conclude the ingress moved.
+    if (resultFile) process.stdout.write('  note: --result-file is not written for a dry run\n');
     store.close();
     return;
   }
@@ -477,31 +546,19 @@ function main() {
     // the operator's basic_auth password + remote-access block — wiping it locks
     // them out remotely). Back it up (timestamped, so repeated runs never
     // overwrite an earlier backup), and refuse unless --force.
-    // A file that exists and cannot be READ is refused before anything is
-    // attempted, and --force does not override it. Force is survivable only
+    // The unreadable case was refused before `ctx` was built — it has to be,
+    // because building `ctx` reads this same file and would otherwise crash on
+    // EACCES first. `--force` never applies to it: force is survivable only
     // because of the backup taken below, and a file that cannot be read cannot
-    // be backed up — copying it raises the same EACCES, and forcing past it
-    // would destroy a config with no recovery. Refusing is the only honest
-    // answer available here.
-    const caddyfileState = caddy.classifyIngressState(plan.caddyfile.path);
-    if (caddyfileState.state === 'unreadable') {
-      process.stderr.write(
-        'ERROR: the existing Caddyfile cannot be read, so it cannot be backed up (ingress untouched).\n'
-        + `  Path: ${plan.caddyfile.path}\n`
-        + '  Fix its permissions, or move it aside yourself, then re-run.\n'
-        + '  --force does not apply: forcing past an unreadable file would replace it with no backup.\n'
-      );
-      store.close();
-      process.exit(1);
-    }
-    if (caddyfileIsHandEdited(plan.caddyfile.path)) {
+    // be backed up (copying raises the same EACCES), so forcing past it would
+    // destroy a config with no recovery.
+    if (!ingress.safeToWrite) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backup = `${plan.caddyfile.path}.${stamp}.bak`;
       fs.copyFileSync(plan.caddyfile.path, backup);
       if (!force) {
         process.stderr.write(`ERROR: refusing to overwrite a hand-edited Caddyfile (ingress untouched).\n  Backed up to: ${backup}\n  Re-run with --force to replace it.\n`);
-        store.close();
-        process.exit(1);
+        finish(CUTOVER_CODES.HAND_EDITED, `refusing to overwrite a hand-edited Caddyfile (backup: ${backup})`);
       }
       process.stdout.write(`WARNING: overwriting hand-edited Caddyfile (--force). Backup: ${backup}\n`);
     }
@@ -509,8 +566,7 @@ function main() {
     const v = caddy.validateCaddyfile(plan.caddyfile.path);
     if (!v.ok) {
       process.stderr.write(`ERROR: generated Caddyfile failed validation — aborting (ingress untouched):\n  ${v.error}\n`);
-      store.close();
-      process.exit(1);
+      finish(CUTOVER_CODES.VALIDATE_FAILED, `generated Caddyfile failed validation: ${v.error}`);
     }
   }
 
@@ -552,7 +608,10 @@ function main() {
   // 6. Best-effort health poll (non-fatal — the operator VRF confirms end-to-end).
   pollHealth(plan.healthUrl, 6).then((ok) => {
     process.stdout.write(ok ? '  ✓ health check passed\n' : '  ⚠ health check not green yet — check logs (~/.tangleclaw/logs/)\n');
-    store.close();
+    // The cutover itself succeeded either way — the plan was applied. healthOk
+    // carries whether it came up, which is a separate fact a caller may want to
+    // act on (retry, surface a warning) without being told the run failed.
+    finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: ok });
   });
 }
 
