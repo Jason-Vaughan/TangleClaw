@@ -118,7 +118,10 @@ describe('#745 status bar names the version the process actually loaded', () => 
       const setCalls = [];
       const exec = (cmd) => {
         if (cmd.includes('set-option')) { setCalls.push(cmd); return ''; }
-        const name = /-t '?([^' ]+)/.exec(cmd)[1];
+        // Targets are exact-match (`'=name:'`) so tmux cannot prefix-resolve
+        // them onto a neighbouring session; strip the `=` and `:` to recover
+        // the plain name this fixture is keyed by.
+        const name = /-t '?=?([^':]+)/.exec(cmd)[1];
         const val = current[name];
         if (val instanceof Error) throw val;
         return val;
@@ -179,7 +182,7 @@ describe('#745 status bar names the version the process actually loaded', () => 
       );
       const res = tmux.refreshStatusBars(h.deps);
       assert.deepEqual(res, { updated: 1, skipped: 1 });
-      assert.match(h.setCalls[0], /-t 'good'/);
+      assert.match(h.setCalls[0], /-t '=good:'/);
     });
 
     it('does nothing at all when the running version is unknown', () => {

@@ -11,7 +11,11 @@ session=$(echo "$raw" | tr ' ' '-' | sed 's/[^a-zA-Z0-9_-]//g')
 # The old `tmux new-session -A` pattern silently spawned a bare shell when the
 # real engine session ended, leaving an orphan that confused TangleClaw's
 # session state tracking and showed ulimit errors from .zshrc (fixes #47).
-if tmux has-session -t "$session" 2>/dev/null; then
+# The `=` prefix on every target forces an EXACT session-name match. tmux
+# otherwise falls back to matching a unique PREFIX, so with no `TangleClaw`
+# session running, `-t TangleClaw` resolves to `TangleClaw-Roadmap` — and this
+# script would attach the browser terminal to a different project's live pane.
+if tmux has-session -t "=$session" 2>/dev/null; then
   # Replay scrolled-off history into the fresh xterm.js buffer before attaching
   # (#322). ttyd pipes this script's stdout straight into the browser terminal,
   # so printing the pane history here restores scrollback that a reconnect or a
@@ -26,8 +30,8 @@ if tmux has-session -t "$session" 2>/dev/null; then
   #             is about to redraw aren't printed twice
   # Errors (e.g. a brand-new pane with no history) are swallowed — the replay is
   # best-effort and must never block the attach.
-  tmux capture-pane -e -p -t "$session" -S -10000 -E -1 2>/dev/null || true
-  exec tmux attach-session -t "$session"
+  tmux capture-pane -e -p -t "=$session:" -S -10000 -E -1 2>/dev/null || true
+  exec tmux attach-session -t "=$session"
 else
   echo "Session '${session}' is not running."
   echo "Return to TangleClaw to start a new session."

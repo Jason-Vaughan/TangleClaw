@@ -542,4 +542,83 @@ describe('tmux', () => {
       assert.equal(result, false);
     });
   });
+
+  // tmux resolves a `-t` target by exact name, then by unique PREFIX, then by
+  // fnmatch. The prefix fallback is why a relaunch of project `Foo` killed live
+  // session `Foo-Bar`: with no `Foo` session, every `-t Foo` silently retargeted
+  // its longer-named neighbour. These tests pin the exact-match contract, so a
+  // target that loses its `=` prefix goes red instead of eating a neighbour.
+  describe('exact session-name targeting (no prefix fallback)', () => {
+    const base = '__tc_test_prefix__';
+    const longer = `${base}-neighbour`;
+
+    const withNeighbour = (fn) => {
+      tmux.createSession(longer, { command: 'exec bash --norc --noprofile' });
+      try {
+        assert.equal(tmux.hasSession(longer), true, 'precondition: neighbour should exist');
+        fn();
+      } finally {
+        try { tmux.killSession(longer); } catch (_) {}
+      }
+    };
+
+    it('should not report a session as existing when only a longer-named one does', () => {
+      withNeighbour(() => {
+        assert.equal(
+          tmux.hasSession(base),
+          false,
+          `hasSession('${base}') must be false while only '${longer}' is running`
+        );
+      });
+    });
+
+    it('should refuse to kill a longer-named session when the exact name is absent', () => {
+      withNeighbour(() => {
+        assert.equal(
+          tmux.killSession(base),
+          false,
+          'killSession must not resolve to a prefix-matched neighbour'
+        );
+        assert.equal(
+          tmux.hasSession(longer),
+          true,
+          'the neighbour session must survive — this is the data-loss case'
+        );
+      });
+    });
+
+    it('should refuse to send keys to a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(
+          () => tmux.sendKeys(base, 'echo prefix-leak'),
+          /does not exist/,
+          'sendKeys must not type into a prefix-matched neighbour'
+        );
+      });
+    });
+
+    it('should refuse to capture a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(
+          () => tmux.capturePane(base),
+          /does not exist/,
+          'capturePane must not read a prefix-matched neighbour'
+        );
+      });
+    });
+
+    it('should still act on the exact name when both it and a longer one exist', () => {
+      withNeighbour(() => {
+        tmux.createSession(base, { command: 'exec bash --norc --noprofile' });
+        try {
+          assert.equal(tmux.hasSession(base), true);
+          assert.equal(tmux.killSession(base), true);
+          assert.equal(tmux.hasSession(base), false, 'the exact-named session should be gone');
+          assert.equal(tmux.hasSession(longer), true, 'the neighbour should be untouched');
+        } finally {
+          try { tmux.killSession(base); } catch (_) {}
+        }
+      });
+    });
+  });
 });

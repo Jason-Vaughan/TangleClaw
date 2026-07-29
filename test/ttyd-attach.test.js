@@ -40,6 +40,26 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
+  // tmux falls back to matching a unique PREFIX when no session has the exact
+  // target name, so `-t "$session"` would attach the browser terminal to a
+  // different project's live pane whenever the requested session is down and a
+  // longer-named one is up (e.g. TangleClaw down, TangleClaw-Roadmap running).
+  // The `=` prefix demands an exact match.
+  it('should target sessions by exact name so it cannot attach to a prefix-matched neighbour', () => {
+    const targets = codeLines().filter(l => /tmux\s+\S+\s.*-t\s/.test(l));
+    assert.ok(targets.length >= 3, 'expected has-session, capture-pane and attach-session targets');
+
+    for (const line of targets) {
+      const target = line.match(/-t\s+("?)(\S*?)\1(\s|$)/);
+      assert.ok(target, `could not parse -t target from: ${line.trim()}`);
+      assert.match(
+        target[2],
+        /^=/,
+        `tmux target must be exact-matched with a leading "=": ${line.trim()}`
+      );
+    }
+  });
+
   it('should use tmux attach-session (not new-session -A) to avoid orphan shells', () => {
     const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
     assert.ok(attachLine, 'must use tmux attach-session for existing sessions');
@@ -74,9 +94,12 @@ describe('deploy/ttyd-attach.sh', () => {
 
   it('should quote the session variable', () => {
     const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
+    // The exact-match `=` prefix (and the `:` pane-scope suffix some verbs
+    // need) sit INSIDE the quotes, so the assertion allows them while still
+    // requiring the quoting this test exists to protect.
     assert.match(
       attachLine,
-      /"\$session"/,
+      /"=?\$session:?"/,
       'session variable must be quoted to handle names with spaces'
     );
   });
