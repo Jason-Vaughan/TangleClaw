@@ -26,6 +26,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-29: Quote the prime hook so a spaced install path stops breaking Claude startup (#759)
+
+<!-- prawduct: type=fix | chunks=01 | scope=759-hook-path-quoting -->
+
+**Why:** TangleClaw wrote the silent-prime `SessionStart` command into `.claude/settings.json`
+unquoted (`lib/engines.js`), and `_resolveHookPlaceholders` substitutes the install path by literal
+string replace. On an install under `~/Library/Mobile Documents/…` that made `/bin/sh` split the
+path — every Claude session start reported a hook error and booted with no prime and no project
+rules. The sibling rules hook shipped in #749 was quoted and carried a comment naming this precise
+hazard; the pre-existing prime hook fifteen lines above it was not brought along, which is the
+defect: the risk was identified and written down without sweeping the file it was written in.
+
+**Field-reported.** Structurally unreproducible here (this install's path has no space) and
+invisible on engines that never read `.claude/settings.json`, so it surfaced only when the reporter
+installed Claude Code and switched a project off codex. His report carried the generated settings
+file, both real paths, exact versions, and the correct fix.
+
+**What:** one-character-class fix — quote the command, exactly as its sibling already is. The guard
+runs **every** command `_buildBaselineHooks` emits through `/bin/sh` from a fixture directory
+containing a space, rather than asserting on the string: the rules hook was already correct, so a
+sampled test could have passed while the bug shipped. Revert-verified — un-quoting turns both new
+tests red.
+
+**Process note:** a duplicate (#760) was filed from this session ~20 minutes after the reporter's
+#759, because the pre-filing duplicate search was skipped. Closed as a duplicate; #759 is canonical.
+
 ## 2026-07-29: Update checks happen when they matter (#716)
 
 <!-- prawduct: type=feat | chunks=01 | scope=716-update-check-on-demand | status=shipped -->
