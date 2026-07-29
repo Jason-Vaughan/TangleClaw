@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **`caddy.classifyIngressState()` — tell apart the four ways an existing Caddyfile can block
+  automated setup (#710, v5 chunk 2 groundwork).** The setup wizard is going to put a login in front
+  of TangleClaw by default, which means it will meet machines that already have a Caddy config. A
+  terminal tool can afford to ask "overwrite it?" because the answer comes with a backup, a `--force`
+  and a `--rollback`; a browser has none of those, so the cases have to be separated before the
+  question is asked. The classifier reports `absent`, `generated` (sha256-verified as ours, so
+  rewriting reproduces it), `adoptable` (a human maintains it, exactly one credential),
+  `ambiguous` (a human maintains it, several distinct users) or `ungated` (a human maintains it, no
+  credential), plus a single `safeToWrite` boolean so the write decision cannot drift as states are
+  added. Reading is its only effect — it never writes or reloads.
+  `ambiguous` and `ungated` are deliberately not merged: `extractBasicAuthCredential` returns null
+  for both, so a caller built on it would tell an operator who has two logins that they have none,
+  and then offer to replace the file currently holding the door shut.
+  No behavior change yet — nothing consumes this. Verified against the live hand-edited Caddyfile on
+  the developer's own machine, which classifies `adoptable` / `safeToWrite: false`, i.e. the wizard
+  will adopt its credential rather than regenerate over it.
+  **Tests:** `test/caddy-ingress-state.test.js` (+9) — one per state, the ungated-vs-ambiguous
+  separation asserted directly against `extractBasicAuthCredential`'s collapse, a sweep proving no
+  hand-edited state is ever `safeToWrite`, unreadable-path handling, and a live-file case that skips
+  when no Caddyfile is present. Full suite 5108 pass / 0 fail / 1 skip.
+
 ### Changed
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
