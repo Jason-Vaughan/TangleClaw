@@ -460,6 +460,38 @@ describe('#716 measuring on demand', () => {
     });
   });
 
+  it('a failed check is visible at the default log level', async () => {
+    // `lib/logger.js` defaults to `info`. At debug, an install that had quietly
+    // stopped being able to detect releases left no trace an operator would
+    // ever find — the failure mode is silence, so the log IS the feature.
+    const logger = require('../lib/logger');
+    const lines = [];
+    logger.setConsoleStream({ write: (s) => lines.push(s) });
+    logger.setLevel('info');
+    try {
+      stubLsRemote(null);
+      await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    assert.ok(lines.some((l) => /Update check failed/.test(l)),
+      'a failed check must surface at info, not only at debug');
+  });
+
+  it('upgraded BOTH failure paths, not just the one under test', () => {
+    // The sync path is what `startChecker` drives every 4h and what
+    // `update-applier` runs pre-flight — i.e. the one that fails on an
+    // unattended server, where nobody is watching a dashboard. Upgrading only
+    // the async path would leave the quieter, more important path dark.
+    const src = require('node:fs').readFileSync(
+      path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
+    assert.doesNotMatch(src, /log\.debug\('Update check failed/,
+      'both catch blocks must report at the same visible level');
+    assert.equal((src.match(/log\.warn\('Update check failed/g) || []).length, 2,
+      'sync and async both report the failure');
+  });
+
   it('one throwing waiter cannot strand the others', async () => {
     // These callbacks write HTTP responses; writing to a socket the client
     // already closed throws. A bare fan-out loop would abandon every waiter

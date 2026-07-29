@@ -55,9 +55,15 @@ All notable changes to TangleClaw are documented in this file.
   an operator acts on differently.
 
 ### Internal
-- **Update-check robustness (#716).** `_getReleasesUrlBase` is memoized: it is a *synchronous* spawn
-  and the request path now reaches it on every page load and tab refocus, where a sync spawn under a
-  TCC-protected directory can hang the server outright (#324). Waiters coalesced behind a single
+- **Update-check robustness (#716).** `_getReleasesUrlBase` memoizes its **answer but never a
+  failure**: it is a *synchronous* spawn and the request path now reaches it on every page load and
+  tab refocus, where a sync spawn under a TCC-protected directory can hang the server outright
+  (#324) — so a "not a GitHub remote" result is cached while a throw stays retryable. Caching both
+  would trade a repeated stall for permanently losing the release-notes link on an install already
+  in trouble. A failed update check also now logs at `warn` rather than `debug` on **both** the
+  timer-driven and request-driven paths; the logger defaults to `info`, so at debug an install that
+  had quietly stopped detecting releases left no trace an operator would find. Waiters coalesced
+  behind a single
   in-flight check are invoked in isolation, so one callback throwing — writing to a socket the client
   already closed — cannot strand its siblings as requests that never answer. The automatic callers
   (page load, tab refocus) gained the failure guard the manual one already had; a rejection inside

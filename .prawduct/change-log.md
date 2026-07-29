@@ -51,11 +51,14 @@ measurement; and the never-checked / check-failed states were tooltip-only, whic
 touch — they now render a visible marker, and the control gets a 44px tap target under
 `(pointer: coarse)`.
 
-**Evidence:** `node --test` reports 5089 pass / 0 fail / 1 pre-existing skip of 5090, against a
-5057/5058 baseline. `.test-evidence.json` records the same run as "2704 passed" — the two disagree
-because the recorder counts only leaf cases while the runner counts nested container cases too (the
-JUnit file itself carries 5091 `<testcase>` elements). Not a different result: **both report 0
-failures**, which is the load-bearing fact. Revert-verified: removing
+**Evidence:** `node --test` reports **5095 pass / 0 fail / 1** pre-existing skip of 5096, against a
+5057/5058 baseline — **38 new tests**. `.test-evidence.json` records the same run as "2708 passed".
+The runner's figure is the true leaf count (the JUnit file carries 5097 `<testcase>` elements);
+`prawduct-hook` **undercounts**, because it sums the `tests=` attribute of the 464 *top-level*
+`<testsuite>` elements (2709) and node's JUnit reporter sets `tests=` to a suite's **direct-child**
+count — so every case nested inside an inner `describe` is dropped. Verified by parsing the artifact,
+after an earlier revision of this entry stated the mechanism exactly backwards. Both agree on the
+load-bearing fact: **0 failures**. Revert-verified: removing
 the `_inFlight` queue, short-circuiting the staleness comparison, inverting the manual→floor ternary,
 and feeding `_buildStatus` the wrong output each turn their guard red. Critic: `chunk` →
 `verify-resolutions` (4/4 resolved) → `cumulative` (0 blocking, 15 warning, 8 note); this entry and
