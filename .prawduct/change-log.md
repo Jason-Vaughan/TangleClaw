@@ -41,8 +41,13 @@ nor N open tabs multiply `git ls-remote` against origin. Checks now fire on page
 refocus, and on tapping the header version (now a real `<button>`). The measurement moved off
 `execSync` to `execFile`: request-triggered synchronous git would stall the single-threaded server —
 terminal websockets included — for up to its 15s timeout. Sync and async transports share one pure
-`_buildStatus`. `_getReleasesUrlBase` is memoized because it is a *synchronous* spawn now reachable
-from every page load, and a sync spawn under a TCC-protected directory can hang outright (#324).
+`_buildStatus`. `_getReleasesUrlBase` memoizes its **answer but never a failure** — it is a
+*synchronous* spawn now reachable from every page load, and a sync spawn under a TCC-protected
+directory can hang outright (#324), so a "not a GitHub remote" result is cached while a throw stays
+retryable. Caching both (which an intermediate commit on this branch did) trades a repeated stall
+for permanently losing the release-notes link on an install already in trouble. A failed check logs
+at `warn` on **both** the timer-driven and request-driven paths; the logger defaults to `info`, so
+at `debug` an install that had quietly stopped detecting releases left no trace an operator finds.
 
 Also fixed three ways the UI could lie: a failed check and a reachable-remote-with-no-tags built
 byte-identical payloads (now `checkOk`); a backgrounded tab froze the header version because a
@@ -58,11 +63,17 @@ The runner's figure is the true leaf count (the JUnit file carries 5097 `<testca
 `<testsuite>` elements (2709) and node's JUnit reporter sets `tests=` to a suite's **direct-child**
 count — so every case nested inside an inner `describe` is dropped. Verified by parsing the artifact,
 after an earlier revision of this entry stated the mechanism exactly backwards. Both agree on the
-load-bearing fact: **0 failures**. Revert-verified: removing
-the `_inFlight` queue, short-circuiting the staleness comparison, inverting the manual→floor ternary,
-and feeding `_buildStatus` the wrong output each turn their guard red. Critic: `chunk` →
-`verify-resolutions` (4/4 resolved) → `cumulative` (0 blocking, 15 warning, 8 note); this entry and
-the docs/robustness/test-guard fixes above close the cumulative findings.
+load-bearing fact: **0 failures**. **Six mutations revert-verified**, each turning its own guard red:
+removing the `_inFlight` queue, short-circuiting the staleness comparison, inverting the
+manual→floor ternary, feeding `_buildStatus` the wrong output, memoizing a failed `origin` read, and
+dropping the per-waiter `try/catch`. The failed-check log level is guarded too — behaviorally (the
+message must surface at the default `info`) and structurally (neither catch may fall back to
+`debug`).
+
+Critic: `chunk` → `verify-resolutions` (4/4) → `cumulative` (0 blocking, 15 warning, 8 note) →
+`verify-resolutions` ×3 (10/15, then 4/5, then 3/3), every pass 0 blocking. Two rounds' findings
+were defects *introduced by the previous round's fixes* — the failure-caching memo and the
+half-applied log level — which is the honest record of how this converged.
 
 ## 2026-07-28: Rules get their own delivery channel (#749)
 
