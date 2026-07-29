@@ -1528,6 +1528,36 @@ route('GET', '/api/update-status', (_req, res) => {
   jsonResponse(res, 200, updateChecker.getCachedStatus());
 });
 
+// POST /api/update/check — measure now, rather than reporting whatever the
+// periodic timer last saw.
+//
+// The timer alone cannot keep the answer current: it fires every four hours, so
+// a release published just after a check stays invisible for most of its life,
+// and the dashboard's own status poll only re-read the same cached value. This
+// is the route that lets a page load, a tab regaining focus, or the operator
+// asking directly produce a real measurement.
+//
+// POST rather than a flag on the GET because it has a side effect — it can start
+// a network call. `GET /api/update-status` stays a cheap, side-effect-free cache
+// read for the consumers that just want the last known answer.
+//
+// `{"manual": true}` selects the tighter staleness floor: an explicit request is
+// owed a real check, where an automatic one should settle for a recent answer.
+// Throttling and single-flight both live in `refreshIfStale`, so no amount of
+// reloading turns into a poll loop against origin.
+route('POST', '/api/update/check', (_req, res, _params, body) => {
+  const manual = body && body.manual === true;
+  const maxAge = manual
+    ? updateChecker.MANUAL_REFRESH_MIN_AGE_MS
+    : updateChecker.AUTO_REFRESH_MIN_AGE_MS;
+
+  updateChecker.refreshIfStale(maxAge, (status, refreshed) => {
+    // `refreshed` distinguishes a fresh measurement from a throttled cache hit,
+    // so the client can say "checked just now" honestly instead of implying it.
+    jsonResponse(res, 200, { ...status, refreshed });
+  });
+});
+
 // POST /api/update/apply — the self-update ACTION (#228/#229, UB). Fetches +
 // checks out the latest release tag; does NOT restart. The client chains
 // POST /api/server/restart on a 200. A refused safety guard (dirty tree, no

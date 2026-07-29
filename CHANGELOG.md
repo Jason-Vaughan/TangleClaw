@@ -4,6 +4,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Update checks now happen when they matter, and can be demanded (#716).** The dashboard measures
+  on page load and whenever its tab regains focus, and the header version is a button that runs a
+  check on the spot — so "no update pill" is finally something an operator can verify rather than
+  merely observe.
+
+  Measured on this repo: the server started at `00:07:37`, ran its one check at `00:08:37`, and
+  v4.37.0 was published at `00:46:06` — 37 minutes later, with the next check four hours out.
+  `GET /api/update-status` was a pure cache read, so the dashboard's own five-minute poll re-read
+  that same stale answer roughly 48 times before it could change. The polling looked like checking
+  and was not.
+
+  New `POST /api/update/check`, backed by `refreshIfStale` — throttled (5 minutes for an automatic
+  check, 10 seconds for one the operator asked for) and single-flight, so neither a reload loop nor
+  a dozen open tabs can turn into a `git ls-remote` loop against origin. The check also moved off
+  `execSync`: request-triggered synchronous git would have stalled the single-threaded server —
+  terminal websockets included — for up to its 15s timeout on a flaky network. `GET
+  /api/update-status` is unchanged for its existing consumers.
+
+### Fixed
+- **A failed update check no longer reports as "up to date" (#716).** The failure path and the
+  reachable-remote-with-no-tags path built byte-identical payloads, so an install that could not
+  reach GitHub rendered exactly like one that was current. The status now carries `checkOk`, and the
+  version control's tooltip distinguishes never-checked, check-failed, and measured-and-current —
+  three facts an operator acts on differently.
+
 ## [4.37.0] - 2026-07-28
 
 ### Added

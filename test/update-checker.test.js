@@ -236,3 +236,176 @@ describe('resolveCheckInterval (#720)', () => {
       { intervalMs: uc.MIN_CHECK_INTERVAL_MS, warning: null }, 'the floor itself is allowed');
   });
 });
+
+/*
+ * #716 — an answer nobody re-measures is not an answer.
+ *
+ * Reproduced on this repo 2026-07-29: the server checked once, 60s after boot,
+ * 37 minutes before the release it was asked about existed, and the next check
+ * was four hours out. GET /api/update-status is a pure cache read, so the
+ * dashboard's own 5-minute poll re-read that same stale value ~48 times.
+ */
+describe('#716 measuring on demand', () => {
+  const uc = require('../lib/update-checker');
+  const TAGS = '0000\trefs/tags/v9.9.9\n1111\trefs/tags/v1.0.0\n';
+
+  let realLsRemote;
+
+  beforeEach(() => {
+    realLsRemote = uc._internal.lsRemote;
+    uc._reset();
+  });
+
+  afterEach(() => {
+    uc._internal.lsRemote = realLsRemote;
+    uc._reset();
+  });
+
+  /**
+   * Install an lsRemote stub and count how often the network was touched.
+   * @param {string|null} output - stdout to yield, or null to fail the call
+   * @returns {{count: () => number}}
+   */
+  function stubLsRemote(output) {
+    let calls = 0;
+    uc._internal.lsRemote = (cb) => {
+      calls++;
+      // Async on purpose: a synchronous stub would let a broken single-flight
+      // pass, because the second caller could never arrive mid-check.
+      setImmediate(() => (output === null
+        ? cb(new Error('offline'), '')
+        : cb(null, output)));
+    };
+    return { count: () => calls };
+  }
+
+  /** @returns {Promise<{status: object, refreshed: boolean}>} */
+  function refresh(maxAgeMs) {
+    return new Promise((resolve) => {
+      uc.refreshIfStale(maxAgeMs, (status, refreshed) => resolve({ status, refreshed }));
+    });
+  }
+
+  describe('_buildStatus separates "could not measure" from "nothing to offer"', () => {
+    it('reports a failed query as checkOk:false, never as up to date', () => {
+      // Before this field these two produced byte-identical payloads, so an
+      // offline install rendered exactly like a current one.
+      const s = uc._buildStatus('1.0.0', null, '2026-07-29T00:00:00Z');
+      assert.equal(s.checkOk, false);
+      assert.equal(s.updateAvailable, false);
+      assert.equal(s.latestVersion, null);
+    });
+
+    it('reports a reachable remote with no version tags as a real measurement', () => {
+      const s = uc._buildStatus('1.0.0', 'abc\trefs/heads/main\n', '2026-07-29T00:00:00Z');
+      assert.equal(s.checkOk, true, 'nothing to offer IS an answer');
+      assert.equal(s.latestVersion, null);
+    });
+
+    it('still detects a newer tag', () => {
+      const s = uc._buildStatus('1.0.0', TAGS, '2026-07-29T00:00:00Z');
+      assert.equal(s.checkOk, true);
+      assert.equal(s.updateAvailable, true);
+      assert.equal(s.latestVersion, '9.9.9');
+    });
+
+    it('cannot measure without a current version to compare against', () => {
+      const s = uc._buildStatus(null, TAGS, '2026-07-29T00:00:00Z');
+      assert.equal(s.checkOk, false);
+      assert.equal(s.currentVersion, null);
+    });
+  });
+
+  it('both transports interpret the tag list in one place', () => {
+    // The sync form still serves the timer and update-applier; the async form
+    // serves requests. Two parsers would eventually disagree about the same
+    // remote, and the disagreement would surface as a phantom or missing pill.
+    const src = require('node:fs').readFileSync(
+      path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
+    const sync = src.slice(src.indexOf('function checkForUpdate('), src.indexOf('function checkForUpdateAsync('));
+    const async_ = src.slice(src.indexOf('function checkForUpdateAsync('), src.indexOf('function refreshIfStale('));
+    assert.match(sync, /_buildStatus\(/, 'checkForUpdate must delegate parsing');
+    assert.match(async_, /_buildStatus\(/, 'checkForUpdateAsync must delegate parsing');
+  });
+
+  describe('refreshIfStale', () => {
+    it('measures when nothing has ever been checked, whatever the floor', async () => {
+      // The state every freshly booted server sits in, and precisely when an
+      // answer is most wanted — a cold cache must never be served as fresh.
+      const net = stubLsRemote(TAGS);
+      const { refreshed, status } = await refresh(60 * 60 * 1000);
+      assert.equal(refreshed, true);
+      assert.equal(net.count(), 1);
+      assert.equal(status.checkOk, true);
+    });
+
+    it('serves the cache inside the window instead of touching the network', async () => {
+      const net = stubLsRemote(TAGS);
+      await refresh(60000);
+      assert.equal(net.count(), 1);
+
+      const second = await refresh(60000);
+      assert.equal(second.refreshed, false, 'a reload loop must not become a git ls-remote loop');
+      assert.equal(net.count(), 1);
+    });
+
+    it('measures again once the cache ages past the window', async () => {
+      const net = stubLsRemote(TAGS);
+      await refresh(60000);
+      // Age the cached answer rather than sleeping.
+      uc.getCachedStatus().checkedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+      const again = await refresh(60000);
+      assert.equal(again.refreshed, true);
+      assert.equal(net.count(), 2);
+    });
+
+    it('does not trust a timestamp from the future', async () => {
+      const net = stubLsRemote(TAGS);
+      await refresh(60000);
+      uc.getCachedStatus().checkedAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+      const again = await refresh(60000);
+      assert.equal(again.refreshed, true, 'clock skew must fail toward measuring, not toward silence');
+      assert.equal(net.count(), 2);
+    });
+
+    it('coalesces concurrent callers into one network call', async () => {
+      // Every open tab refreshes on focus. Without single-flight, N tabs are N
+      // simultaneous git ls-remote calls against origin.
+      const net = stubLsRemote(TAGS);
+      const results = await Promise.all([refresh(60000), refresh(60000), refresh(60000)]);
+      assert.equal(net.count(), 1);
+      for (const r of results) {
+        assert.equal(r.refreshed, true);
+        assert.equal(r.status.latestVersion, '9.9.9', 'every waiter gets the real result');
+      }
+    });
+
+    it('reports a failed measurement rather than a false all-clear', async () => {
+      const net = stubLsRemote(null);
+      const { status, refreshed } = await refresh(60000);
+      assert.equal(refreshed, true);
+      assert.equal(net.count(), 1);
+      assert.equal(status.checkOk, false);
+      assert.equal(status.updateAvailable, false);
+    });
+
+    it('releases the in-flight queue so a later caller can measure again', async () => {
+      // A queue left populated would strand every subsequent caller forever.
+      const net = stubLsRemote(TAGS);
+      await refresh(60000);
+      uc.getCachedStatus().checkedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const again = await refresh(60000);
+      assert.equal(again.refreshed, true);
+      assert.equal(net.count(), 2);
+    });
+  });
+
+  it('gives an operator-initiated check a much shorter floor than an automatic one', () => {
+    // Same throttle, two floors: an automatic refocus should settle for a recent
+    // answer; someone who deliberately asked is owed a real measurement.
+    assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS < uc.AUTO_REFRESH_MIN_AGE_MS);
+    assert.ok(uc.MANUAL_REFRESH_MIN_AGE_MS > 0, 'still guards against a double-tap');
+  });
+});

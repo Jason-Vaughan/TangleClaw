@@ -576,6 +576,35 @@ describe('Landing Page API Integration', () => {
       assert.ok('currentVersion' in res.data);
       assert.ok('latestVersion' in res.data);
       assert.ok('checkedAt' in res.data);
+      // #716: a cold or failed cache must be distinguishable from a measured
+      // "you are current", or the dashboard renders all three identically.
+      assert.ok('checkOk' in res.data);
+    });
+  });
+
+  describe('POST /api/update/check (#716)', () => {
+    // Assertions here deliberately hold whether or not the remote is reachable:
+    // a failed measurement is a legitimate outcome, and a test that needed
+    // GitHub to answer would be a flake rather than a contract.
+    it('answers with the status shape plus whether it re-measured', async () => {
+      const res = await request('/api/update/check', { method: 'POST', body: { manual: true } });
+      assert.equal(res.status, 200);
+      assert.equal(typeof res.data.updateAvailable, 'boolean');
+      assert.equal(typeof res.data.refreshed, 'boolean');
+      assert.equal(typeof res.data.checkOk, 'boolean');
+      assert.ok(res.data.checkedAt, 'a check always stamps when it happened');
+    });
+
+    it('throttles a repeat request instead of measuring again', async () => {
+      // The property that makes this safe to call on every page load and tab
+      // refocus. Without it, a reload loop is a git ls-remote loop against
+      // origin. The first call leaves a fresh cache; the second must reuse it.
+      await request('/api/update/check', { method: 'POST', body: { manual: true } });
+      const second = await request('/api/update/check', { method: 'POST', body: {} });
+      assert.equal(second.status, 200);
+      assert.equal(second.refreshed, undefined, 'refreshed belongs to the payload, not the envelope');
+      assert.equal(second.data.refreshed, false,
+        'an automatic check moments after a manual one must serve the cache');
     });
   });
 });

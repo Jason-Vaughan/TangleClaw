@@ -25,7 +25,11 @@
            onerror="this.src='/logo.png'; this.width=32; this.height=32;">
       <img class="dash-wordmark" src="/logo-text.png" alt="TangleClaw" height="18"
            onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dash-title',textContent:'TANGLECLAW'}));">
-      <span id="version" class="dash-version"></span>
+      <!-- A real button, not a styled span: this is the only control that can
+           prove an update check actually ran, so it must be reachable by
+           keyboard and announced as actionable. -->
+      <button type="button" id="version" class="dash-version"
+              title="Tap to check for updates"></button>
       <span id="updatePill" class="update-pill hidden"></span>
       <span id="authUser" class="dash-auth-user hidden" title="Authenticated via the Caddy login gate"></span>
       <span id="authStatusWarning" class="dash-auth-warning hidden" role="status"></span>
