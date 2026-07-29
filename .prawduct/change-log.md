@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-07-29: Update checks happen when they matter (#716)
 
-<!-- prawduct: type=feat | chunks=01 | scope=716-update-check-on-demand -->
+<!-- prawduct: type=feat | chunks=01 | scope=716-update-check-on-demand | status=shipped -->
 
 **Why:** The dashboard polled `/api/update-status` every five minutes and learned nothing — the
 route is a pure cache read, and only a 4h timer refreshed that cache. Measured on this repo: server
