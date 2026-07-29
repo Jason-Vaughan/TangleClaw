@@ -615,9 +615,13 @@ describe('tmux', () => {
     // target goes through _target" for verbs whose misuse is silent.
     it('should route every tmux -t target in lib/tmux.js through _target', () => {
       const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
-      const targets = [...src.matchAll(/-t \$\{([^}]+)\}/g)].map(m => m[1]);
+      // Matches a quoted spelling too (`-t '${x}'`), which the bare-brace form
+      // would let slip past unchecked.
+      const targets = [...src.matchAll(/-t '?\$\{([^}]+)\}/g)].map(m => m[1]);
 
-      assert.ok(targets.length >= 15, `expected the module's many -t sites, found ${targets.length}`);
+      // An exact floor, not a lower bound: a site DISAPPEARING is as much a
+      // regression as one losing its wrapper, and `>=` would wave that through.
+      assert.equal(targets.length, 20, `expected 20 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
@@ -636,6 +640,10 @@ describe('tmux', () => {
     // the wrong-but-plausible value #574/#579 record as poisoning
     // sessionState.mouseOn. A round trip is the only thing that catches it.
     it('should round-trip mouse state and hooks through exact-match targets', () => {
+      /** @returns {string} The session's installed hooks, via an exact-match target. */
+      const showHooks = () =>
+        tmux._exec(`tmux show-hooks -t ${tmux._escapeArg(`=${longer}:`)} 2>/dev/null`);
+
       tmux.createSession(longer, { command: 'exec bash --norc --noprofile' });
       try {
         tmux.setMouse(longer, true, { hooks: true });
@@ -643,8 +651,22 @@ describe('tmux', () => {
         assert.equal(on.on, true, 'mouse should read back on — a rejected target would read false');
         assert.equal(on.explicit, true, 'a session-level override should be visible as explicit');
 
+        // setMouse only log.warns when `set-hook -t` fails, so a rejected hook
+        // target leaves the auto-toggle hooks uninstalled with the test still
+        // green. Read them back or this assertion is decoration.
+        assert.match(
+          showHooks(),
+          /after-select-window/,
+          'enabling with hooks:true must actually install the after-select-window hook'
+        );
+
         tmux.setMouse(longer, false, { hooks: true });
         assert.equal(tmux.getMouse(longer), false, 'mouse should read back off');
+        assert.doesNotMatch(
+          showHooks(),
+          /after-select-window/,
+          'disabling with hooks:true must actually unset the hook'
+        );
 
         tmux.unsetMouse(longer);
         assert.equal(

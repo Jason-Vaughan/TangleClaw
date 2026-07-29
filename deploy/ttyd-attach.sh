@@ -15,6 +15,14 @@ session=$(echo "$raw" | tr ' ' '-' | sed 's/[^a-zA-Z0-9_-]//g')
 # otherwise falls back to matching a unique PREFIX, so with no `TangleClaw`
 # session running, `-t TangleClaw` resolves to `TangleClaw-Roadmap` — and this
 # script would attach the browser terminal to a different project's live pane.
+#
+# The targets are NOT spelled the same way, and the difference is load-bearing.
+# `has-session` and `attach-session` take a target-SESSION and accept `=name`.
+# `capture-pane` takes a target-PANE and rejects `=name` outright ("can't find
+# pane"); it needs the trailing `:`, which resolves the session exactly and then
+# takes its current pane. Getting that wrong is silent here — the capture-pane
+# line ends in `2>/dev/null || true`, so a rejected target would just skip the
+# scrollback replay below with nothing to see. Measured against tmux 3.6a.
 if tmux has-session -t "=$session" 2>/dev/null; then
   # Replay scrolled-off history into the fresh xterm.js buffer before attaching
   # (#322). ttyd pipes this script's stdout straight into the browser terminal,

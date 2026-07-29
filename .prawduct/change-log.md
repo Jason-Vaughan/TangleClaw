@@ -2629,7 +2629,7 @@ writes the session option rather than a window one. `display-message` cannot be 
 (it answers for the attached client instead of failing), so `isAlternateScreen` checks existence
 explicitly. `new-session -s` stays bare — it names a session, it does not target one.
 
-Critic `cumulative` rev-20260729T192459Z-2bd57807: 0 blocking, 6 warnings, 13 notes. Five warnings
+Critic `cumulative` rev-20260729T192459Z-2bd57807: 0 blocking, 6 warnings, 13 notes. All six
 closed here — a structural test pinning the `_target` invariant across all 20 call sites (three
 reviewers independently found that rule was held by prose alone), pane-vs-session target-shape
 assertions in the shell test plus reverting a quoting regex that had been loosened enough to accept
@@ -2644,3 +2644,11 @@ name pairs were live on a box about to go unattended.
 
 **Classification:** fix
 **chunks:** 5
+
+Follow-up `verify-resolutions` rev-20260729T194003Z-441ad91b confirmed all six fixed (0 blocking)
+and caught one more: the round-trip test was *named* for hooks while asserting only mouse state, and
+`setMouse` merely `log.warn`s when `set-hook -t` fails — so a rejected hook target would have left
+the auto-toggle hooks uninstalled with the suite green. It now reads them back via `show-hooks`.
+Also tightened the structural extractor to catch a quoted `-t '${x}'` spelling and pinned the site
+count at exactly 20 (a site disappearing is a regression too), and moved the colon rationale into
+`deploy/ttyd-attach.sh` itself, where the next editor will actually be reading.
