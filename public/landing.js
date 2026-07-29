@@ -276,9 +276,10 @@ function wireVersionCheck() {
     _showVersionLabel('checking…', false);
     try {
       const data = await loadUpdateStatus({ refresh: true, manual: true });
-      if (!data) {
-        _showVersionLabel("couldn't check", true);
-      } else if (data.checkOk === false) {
+      // No answer and a failed measurement are the same thing to an operator:
+      // the question was not resolved. `api()` already returns null rather than
+      // throwing for the first.
+      if (!data || data.checkOk === false) {
         _showVersionLabel("couldn't check", true);
       } else if (data.updateAvailable) {
         // The pill is the real answer here and it has just been rendered, so the
@@ -287,6 +288,13 @@ function wireVersionCheck() {
       } else {
         _showVersionLabel('up to date ✓', true);
       }
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a throw anywhere in the render path must not strand the label
+      // Without this the label stays on "checking…" forever AND, because the
+      // hold flag is still set, renderRunningVersion can never correct it again
+      // — one unlucky exception would freeze the header for the life of the
+      // page. Report the failure honestly and let the hold expire.
+      console.error('update check failed:', err);
+      _showVersionLabel("couldn't check", true);
     } finally {
       _versionCheckInFlight = false;
     }

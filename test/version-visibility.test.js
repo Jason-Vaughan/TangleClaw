@@ -514,4 +514,80 @@ describe('#716 update checks happen when they matter', () => {
     assert.match(SRC, /function wireVersionCheck\(/,
       'the operator needs a control, or "no pill" stays unfalsifiable');
   });
+
+  /**
+   * Wire the version control and fire its click, returning what the label did.
+   * @param {object|null} payload - Stubbed response, or an Error to throw.
+   * @returns {Promise<{label: string, title: string}>}
+   */
+  async function clickVersion(payload) {
+    const handlers = {};
+    const version = {
+      textContent: 'v4.37.0',
+      title: '',
+      addEventListener: (ev, fn) => { handlers[ev] = fn; },
+      classList: { add() {}, remove() {} },
+      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false })
+    };
+    const updatePill = {
+      textContent: '', innerHTML: '', _hidden: true,
+      classList: { add() { updatePill._hidden = true; }, remove() { updatePill._hidden = false; } },
+      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
+      addEventListener: () => {}
+    };
+    const ctx = vm.createContext({
+      document: { getElementById: (id) => ({ version, updatePill })[id] || null },
+      api: async () => payload,
+      apiMutate: async () => {
+        if (payload instanceof Error) throw payload;
+        return payload;
+      },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s2) => String(s2),
+      console: { error: () => {} },
+      // The restore is scheduled, never run here — the assertion is about what
+      // the operator sees when the check resolves, not 4s later.
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      _versionLabelHeld: false,
+      _lastRenderedVersion: '4.37.0',
+      _versionLabelRestore: null,
+      _versionCheckInFlight: false,
+      VERSION_RESULT_HOLD_MS: 4000
+    });
+    await vm.runInContext(
+      `${extract('_showVersionLabel')}\n${extract('_agoLabel')}\n`
+      + `${extract('renderVersionCheckHint')}\n${extract('loadUpdateStatus')}\n`
+      + `${extract('wireVersionCheck')}\nwireVersionCheck();`,
+      ctx
+    );
+    await handlers.click();
+    return { label: version.textContent, title: version.title };
+  }
+
+  it('answers an operator who asks, so no-pill stops being unfalsifiable', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.label, /up to date/i);
+  });
+
+  it('says so when the check could not be made', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkOk: false,
+      checkedAt: new Date().toISOString()
+    });
+    assert.match(r.label, /couldn't check/i);
+    assert.doesNotMatch(r.label, /up to date/i);
+  });
+
+  it('never strands the label on "checking…" when something throws', async () => {
+    // The hold flag that protects a result from the 60s poll also blocks
+    // renderRunningVersion from correcting it, so an unhandled throw here would
+    // freeze the header for the life of the page.
+    const r = await clickVersion(new Error('render blew up'));
+    assert.doesNotMatch(r.label, /checking/i);
+    assert.match(r.label, /couldn't check/i);
+  });
 });

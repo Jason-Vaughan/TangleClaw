@@ -28,7 +28,10 @@
       <!-- A real button, not a styled span: this is the only control that can
            prove an update check actually ran, so it must be reachable by
            keyboard and announced as actionable. -->
-      <button type="button" id="version" class="dash-version"
+      <!-- aria-live: the check's outcome is delivered by swapping this button's
+           own text, which a screen reader would otherwise never announce — the
+           result is the entire point of the control. -->
+      <button type="button" id="version" class="dash-version" aria-live="polite"
               title="Tap to check for updates"></button>
       <span id="updatePill" class="update-pill hidden"></span>
       <span id="authUser" class="dash-auth-user hidden" title="Authenticated via the Caddy login gate"></span>
