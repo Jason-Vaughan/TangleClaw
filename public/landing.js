@@ -696,9 +696,23 @@ function pollServerBackAndReload(oldStartedAt, restore) {
 async function loadUpdateStatus(opts) {
   const refresh = !!(opts && opts.refresh);
   const manual = !!(opts && opts.manual);
-  const data = refresh
-    ? await apiMutate('/api/update/check', 'POST', { manual })
-    : await api('/api/update-status');
+  let data = null;
+  if (refresh) {
+    data = await apiMutate('/api/update/check', 'POST', { manual });
+    // A server older than these assets does not have this route. That window is
+    // not hypothetical: this repo IS the live install, so a merge or a
+    // self-update puts new client files on disk while the running process keeps
+    // serving the old routes until it restarts. Without this fallback the page
+    // would read the 404 as "the check failed" and raise the failure marker on
+    // every load until the restart — a false alarm from the very feature built
+    // to stop misreporting update state. Fall back to the cached answer, which
+    // every server has, and let the marker mean what it says.
+    if (!data && api.lastErrorCode === 'NOT_FOUND') {
+      data = await api('/api/update-status');
+    }
+  } else {
+    data = await api('/api/update-status');
+  }
   const pill = document.getElementById('updatePill');
   renderVersionCheckHint(data);
 

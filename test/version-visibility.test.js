@@ -493,6 +493,65 @@ describe('#716 update checks happen when they matter', () => {
     assert.match(els.version.title, /couldn't reach|could not reach/i);
   });
 
+  it('falls back to the cached read when the server predates the new route', async () => {
+    // This repo IS the live install: a merge — or a self-update, where the
+    // checkout lands before the restart — puts new client files on disk while
+    // the running process still serves the old routes. Probed on the running
+    // install during review: POST /api/update/check returned 404 NOT_FOUND.
+    // Reading that as "the check failed" would raise the failure marker on
+    // every page load until someone restarted, which is a false alarm from the
+    // one feature built to stop misreporting update state.
+    const dom = makeDom(['updatePill', 'version']);
+    const calls = [];
+    const cached = {
+      updateAvailable: false, latestVersion: null, checkOk: true,
+      checkedAt: new Date().toISOString()
+    };
+    const api = async (url) => { calls.push(`GET ${url}`); return cached; };
+    api.lastErrorCode = 'NOT_FOUND';
+    const ctx = vm.createContext({
+      document: dom.document,
+      api,
+      apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s) => String(s)
+    });
+    await vm.runInContext(
+      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      ctx
+    );
+    assert.deepEqual(calls, ['POST /api/update/check', 'GET /api/update-status'],
+      'a 404 on the new route must fall back, not be reported as a failed check');
+    assert.match(dom.els.version.title, /up to date/i);
+    assert.equal(dom.els.version._classes.has('check-failed'), false,
+      'an old server is not a failed check');
+  });
+
+  it('does NOT swallow a genuine failure as if the route were missing', async () => {
+    // The fallback keys on NOT_FOUND specifically. A real network failure or a
+    // 500 must still surface — otherwise the fallback would resurrect the very
+    // "silently report up to date" bug this branch removed.
+    const dom = makeDom(['updatePill', 'version']);
+    const calls = [];
+    const api = async (url) => { calls.push(`GET ${url}`); return null; };
+    api.lastErrorCode = null;
+    const ctx = vm.createContext({
+      document: dom.document,
+      api,
+      apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
+      localStorage: { getItem: () => null, setItem: () => {} },
+      esc: (s) => String(s)
+    });
+    await vm.runInContext(
+      `${extract('_agoLabel')}\n${extract('renderVersionCheckHint')}\n`
+      + `${extract('loadUpdateStatus')}\nloadUpdateStatus({ refresh: true });`,
+      ctx
+    );
+    assert.deepEqual(calls, ['POST /api/update/check'], 'no fallback without NOT_FOUND');
+    assert.ok(dom.els.version._classes.has('check-failed'), 'a real failure still reports');
+  });
+
   it('marks the abnormal states visibly, because a tooltip does not exist on touch', async () => {
     // `title` and `:hover` are desktop-only affordances, and this dashboard is
     // read mostly from a phone. Without a rendered marker, "never checked" and

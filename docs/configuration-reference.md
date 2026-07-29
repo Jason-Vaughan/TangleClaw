@@ -269,7 +269,7 @@ The `port_leases` table stores all managed port assignments. TangleClaw is the a
 
 ## API Overview
 
-TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. (There was a hardcoded endpoint count here. It said 62 against 82 actual rows, having drifted every time a route shipped without someone remembering to update a number nothing verifies — so it is gone rather than reset.) All endpoints accept and return JSON. Error responses use the format:
+TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. All endpoints accept and return JSON. Error responses use the format:
 
 ```json
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
