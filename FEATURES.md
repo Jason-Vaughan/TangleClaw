@@ -109,6 +109,7 @@ fails any auto-stub section older than 14 days.
 - **ADR: secure by default** — decision record for shipping protected out of the box, opt-out rather than opt-in; supersedes the VPN-as-perimeter posture of ADR 0003 and the optional-login framing of ADR 0004 (#710). `docs/adr/0009-secure-by-default.md`.
 - **ADR: one update mechanism** — decision record requiring every surface that starts an update to call the applier rather than restate it, after the session badge shipped an unguarded `git pull` beside the guarded button (#730). `docs/adr/0010-one-update-mechanism.md`.
 - **Codex engine profile** — the Codex CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/codex.json`.
+- **Feature Index prime summarizer** — parses `FEATURES.md` into curated and auto-stubbed counts so the session prime carries a pointer plus a census instead of the whole file, whose length would otherwise grow with the project and push later directives out of the prime budget (#568). Shared by the prime builder and the index-describe wrap step so both count the same way. `lib/feature-index-prime.js`.
 
 ## CLI / Tooling
 
@@ -173,11 +174,4 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Network binding + ingress (#710): `test/bind-policy.test.js` — the bind decision itself (caddy pins loopback and refuses the opt-in, the explicit opt-out, the grace state for installs predating the setting); `test/bind-policy-wiring.test.js` — that socket, boot warnings, and settings UI all consume one server-owned classification instead of re-deriving it; `test/bind-notice-render.test.js` — the dashboard exposure chips, executed against a DOM stub because a grep cannot tell whether an exposed install actually gets one; `test/ttyd-bind.test.js` — re-pinning the installed ttyd launchd job (refuses any shape it does not recognise, validates before swapping, restores when ttyd does not come back).
 - Engine selection + launch modes: `test/codex-launch-modes.test.js` — Codex Full Auto / Bypass flag sets (#731); `test/default-engine-wiring.test.js` — default-engine resolution against what is actually installed (#707); `test/engine-picker-gating.test.js` — gating on the converged engine picker; `test/setup-wizard-engines.test.js` — the first-run wizard's engine step.
 - `test/server-info.test.js` — runtime-vs-disk identity, staleness, and the startup-captured running version; `test/update-checker.test.js` — release-tag polling, semver comparison, and the cached-status shape; `test/logger.test.js` — level filtering and structured-field output; `test/api-setup-https.test.js` — the setup HTTPS route.
-
-## TODO (auto-stubbed 2026-07-28)
-
-- **TBD** — touched in this session: `lib/feature-index-prime.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-28)
-
-- **TBD** — touched in this session: `test/sessionstart-prime-hook.test.js`. <!-- describe -->
+- `test/sessionstart-prime-hook.test.js` — executes the generated `data/hooks/sessionstart-prime.sh` as a real shell script rather than asserting on its text, so a hook that parses but cannot run is caught (#103; the class of defect behind #759's spaced-install-path outage).
