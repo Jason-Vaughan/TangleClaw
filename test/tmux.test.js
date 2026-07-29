@@ -2,6 +2,8 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const tmux = require('../lib/tmux');
 
 describe('tmux', () => {
@@ -603,6 +605,67 @@ describe('tmux', () => {
           () => tmux.capturePane(base),
           /does not exist/,
           'capturePane must not read a prefix-matched neighbour'
+        );
+      });
+    });
+
+    // The behavioural tests above all enter through hasSession, so a `-t` that
+    // lost its exact-match target on some OTHER verb would still pass them.
+    // This reads the source instead, which is the only way to hold "every
+    // target goes through _target" for verbs whose misuse is silent.
+    it('should route every tmux -t target in lib/tmux.js through _target', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
+      const targets = [...src.matchAll(/-t \$\{([^}]+)\}/g)].map(m => m[1]);
+
+      assert.ok(targets.length >= 15, `expected the module's many -t sites, found ${targets.length}`);
+      for (const expr of targets) {
+        assert.match(
+          expr,
+          /^_target\(/,
+          `every tmux -t target must be built by _target(), found: -t \${${expr}}`
+        );
+      }
+      // `new-session -s` names a session being created; it is not a target and
+      // must stay bare, or tmux would create a session literally called "=x:".
+      assert.match(src, /new-session[^\n]*-s \$\{_escapeArg\(name\)\}/,
+        'new-session -s names a new session and must NOT be exact-match wrapped');
+    });
+
+    // These four verbs reject a bare `=name` and are the ones whose failure is
+    // invisible: getMouseState catches and returns {on:false, explicit:false} —
+    // the wrong-but-plausible value #574/#579 record as poisoning
+    // sessionState.mouseOn. A round trip is the only thing that catches it.
+    it('should round-trip mouse state and hooks through exact-match targets', () => {
+      tmux.createSession(longer, { command: 'exec bash --norc --noprofile' });
+      try {
+        tmux.setMouse(longer, true, { hooks: true });
+        const on = tmux.getMouseState(longer);
+        assert.equal(on.on, true, 'mouse should read back on — a rejected target would read false');
+        assert.equal(on.explicit, true, 'a session-level override should be visible as explicit');
+
+        tmux.setMouse(longer, false, { hooks: true });
+        assert.equal(tmux.getMouse(longer), false, 'mouse should read back off');
+
+        tmux.unsetMouse(longer);
+        assert.equal(
+          tmux.getMouseState(longer).explicit,
+          false,
+          'unsetMouse should remove the session-level override, not silently no-op'
+        );
+      } finally {
+        try { tmux.killSession(longer); } catch (_) {}
+      }
+    });
+
+    it('should refuse mouse and capture calls aimed at a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(() => tmux.getMouseState(base), /does not exist/);
+        assert.throws(() => tmux.setMouse(base, true), /does not exist/);
+        assert.throws(() => tmux.unsetMouse(base), /does not exist/);
+        assert.equal(
+          tmux.isAlternateScreen(base),
+          false,
+          'isAlternateScreen must not answer for the attached client when the session is absent'
         );
       });
     });

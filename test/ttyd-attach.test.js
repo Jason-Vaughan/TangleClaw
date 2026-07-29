@@ -60,6 +60,36 @@ describe('deploy/ttyd-attach.sh', () => {
     }
   });
 
+  // The `=` alone is not enough, and getting this wrong is SILENT here: the
+  // capture-pane line ends in `2>/dev/null || true`, so a target tmux rejects
+  // just skips the scrollback replay (#322) with no error anyone sees. tmux
+  // accepts a bare `=name` only for target-SESSION verbs (has-session,
+  // attach-session); pane-scoped verbs need the `:` suffix or they fail with
+  // "can't find pane".
+  it('should give pane-scoped verbs the ":" suffix and session-scoped verbs the bare form', () => {
+    const paneScoped = /\b(capture-pane|send-keys|paste-buffer|display-message)\b/;
+    const sessionScoped = /\b(has-session|attach-session|kill-session)\b/;
+
+    for (const line of codeLines().filter(l => /tmux\s+\S+\s.*-t\s/.test(l))) {
+      const target = line.match(/-t\s+"([^"]+)"/);
+      assert.ok(target, `expected a quoted -t target in: ${line.trim()}`);
+
+      if (paneScoped.test(line)) {
+        assert.match(
+          target[1],
+          /^=.*:$/,
+          `pane-scoped tmux verbs need an "=name:" target or tmux rejects them: ${line.trim()}`
+        );
+      } else if (sessionScoped.test(line)) {
+        assert.match(
+          target[1],
+          /^=[^:]*$/,
+          `session-scoped tmux verbs take "=name" without the colon: ${line.trim()}`
+        );
+      }
+    }
+  });
+
   it('should use tmux attach-session (not new-session -A) to avoid orphan shells', () => {
     const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
     assert.ok(attachLine, 'must use tmux attach-session for existing sessions');
@@ -94,12 +124,12 @@ describe('deploy/ttyd-attach.sh', () => {
 
   it('should quote the session variable', () => {
     const attachLine = codeLines().find(l => l.includes('tmux attach-session'));
-    // The exact-match `=` prefix (and the `:` pane-scope suffix some verbs
-    // need) sit INSIDE the quotes, so the assertion allows them while still
-    // requiring the quoting this test exists to protect.
+    // The exact-match `=` prefix sits INSIDE the quotes. It is required, not
+    // optional: an `=?` here would also accept the pre-fix `"$session"` form
+    // this test is meant to outlive.
     assert.match(
       attachLine,
-      /"=?\$session:?"/,
+      /"=\$session"/,
       'session variable must be quoted to handle names with spaces'
     );
   });
