@@ -145,6 +145,13 @@ All notable changes to TangleClaw are documented in this file.
   that cannot even build a request now reports "not healthy" and lets the caller decide, instead of
   taking down a run whose actual work already finished.
 
+  The result file gains a **`healthError`** key, distinct from `error` on purpose. `finish` derives
+  both `ok` and the process exit code from `error`, so reporting a health-probe reason through it
+  would make a fully-applied cutover write `{"ok": false, "code": "ok"}` and exit 1 — which the wizard
+  maps to a failure screen reading "No login is in force" on an install that *is* gated. That is the
+  exact false negative this release exists to prevent, reachable through the fix for it. Whether the
+  cutover applied and whether the service answered are two facts, and they now have two fields.
+
   Found by VRF Phase 8 on the macOS clean-room guest, immediately after Phase 7c passed against the
   HTTPS path — which is exactly why the asymmetry survived: the only direction anyone exercises
   regularly is the one that worked. `pollHealth` is now exported so it can be tested, and both halves

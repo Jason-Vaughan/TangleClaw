@@ -52,8 +52,14 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     // deliberate act; this assertion is what makes it one.
     const src = workflowSource();
     assert.match(src, /^\s*pull_request:/m);
-    const branches = src.match(/^\s*branches: \[(.+)\]/m);
-    assert.ok(branches, 'push: must pin an explicit branch list');
+    // Anchored to `push:` and tolerant of comment lines between the two, so this
+    // binds THREE facts the way the original did: push: exists, it carries a
+    // branch filter, and the filter is exactly this list. Matching `branches:`
+    // anywhere would pass green if `push:` were deleted and the filter left
+    // dangling under `pull_request:` — CI would stop running on pushes entirely
+    // while the test still said it triggered on them.
+    const branches = src.match(/^\s*push:\n(?:\s*#.*\n)*\s*branches: \[(.+)\]/m);
+    assert.ok(branches, 'push: must exist and carry an explicit branch list directly under it');
     const listed = branches[1].split(',').map((b) => b.trim());
     assert.deepEqual(listed, ['main', 'v5-baseline'],
       'CI must run on pushes to main and to the v5 integration branch');

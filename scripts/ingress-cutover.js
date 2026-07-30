@@ -272,6 +272,14 @@ function writeCutoverResult(resultFile, result) {
       error: result.error || null,
       healthUrl: result.healthUrl || null,
       healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
+      // Distinct from `error` ON PURPOSE. `finish` derives both `ok` and the exit
+      // code from `error`, so routing a health-probe reason through it would make
+      // a fully-applied cutover report {ok:false, code:'ok'} and exit 1 — which the
+      // wizard renders as "No login is in force" on an install that IS gated. The
+      // health result is a separate fact from whether the cutover succeeded, and
+      // this key exists so it can be reported without inverting the outcome.
+      // This builder names every key explicitly: anything absent here is dropped.
+      healthError: result.healthError || null,
       finishedAt: new Date().toISOString()
     })}\n`, { mode: 0o600 });
     return true;
@@ -613,7 +621,10 @@ function main() {
     // The cutover itself succeeded either way — the plan was applied. healthOk
     // carries whether it came up, which is a separate fact a caller may want to
     // act on (retry, surface a warning) without being told the run failed.
-    finish(CUTOVER_CODES.OK, healthError, { healthUrl: plan.healthUrl, healthOk: ok });
+    // healthError goes in its OWN field, never as `error`: the cutover succeeded —
+    // the plan was applied — and reporting otherwise would tell the wizard a gated
+    // install has no login.
+    finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: ok, healthError });
   });
 }
 
@@ -635,6 +646,9 @@ function main() {
  * must never take down a run whose actual work already completed.
  * @param {string} url
  * @param {number} tries
+ * @param {Function} [onUnbuildable] - Called with the Error when the request could
+ *   not be constructed at all. Invoked only from the catch and `typeof`-guarded, so
+ *   two-argument callers are unaffected and the success path cannot reach it.
  * @returns {Promise<boolean>}
  */
 function pollHealth(url, tries, onUnbuildable) {

@@ -412,4 +412,70 @@ describe('ingress-cutover', () => {
       assert.equal(await cutover.pollHealth('http://127.0.0.1:1/api/health', 1), false);
     });
   });
+
+  describe('an unbuildable health URL must not invert the outcome (#789 follow-up)', () => {
+    // The trap this pins: `finish` derives BOTH `ok` and the exit code from `error`
+    // (`ok: !error`, `process.exit(error ? 1 : 0)`). Routing a health-probe reason
+    // through `error` therefore makes a fully-applied cutover report
+    // {ok:false, code:'ok'} and exit 1 — which server.js forwards and the wizard
+    // maps to phase:'failed', rendering "No login is in force" on an install that
+    // IS gated. That is the exact false-negative this whole chunk exists to prevent,
+    // reached through the fix for it.
+
+    it('reports the reason without saying the cutover failed', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-res-'));
+      const file = path.join(dir, 'result.json');
+      try {
+        cutover.writeCutoverResult(file, {
+          ok: true, code: cutover.CUTOVER_CODES.OK, target: 'direct', error: null,
+          healthUrl: 'http://localhost:3102/api/health', healthOk: false,
+          healthError: 'Protocol "ftp:" not supported'
+        });
+        const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+        assert.equal(d.ok, true, 'the plan was applied — the run did not fail');
+        assert.equal(d.code, 'ok');
+        assert.equal(d.error, null, 'a health-probe reason must never land in `error`');
+        assert.equal(d.healthOk, false);
+        assert.equal(d.healthError, 'Protocol "ftp:" not supported',
+          'the reason must survive into the result file — the detached child has no stdout');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('carries healthError as its own key, since the builder drops unnamed fields', () => {
+      // writeCutoverResult assembles the JSON key-by-key, so a field that is not
+      // named explicitly is silently discarded. That is why the reason was first
+      // (wrongly) routed through `error`. If someone removes the key, this goes red
+      // rather than the reason quietly vanishing again.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-key-'));
+      const file = path.join(dir, 'r.json');
+      try {
+        cutover.writeCutoverResult(file, { ok: true, code: 'ok', target: 'caddy', healthError: 'boom' });
+        const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+        assert.ok('healthError' in d, 'healthError must be an explicit key in the result contract');
+        assert.equal(d.healthError, 'boom');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('invokes onUnbuildable with the cause, and only from the failure path', async () => {
+      const seen = [];
+      assert.equal(await cutover.pollHealth('ftp://localhost/api/health', 1, (e) => seen.push(e.message)), false);
+      assert.equal(seen.length, 1, 'the caller must learn WHY, not just that it failed');
+      assert.match(seen[0], /.+/);
+
+      // Success path must never reach it.
+      const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      try {
+        const before = seen.length;
+        await cutover.pollHealth(`http://127.0.0.1:${server.address().port}/h`, 2, (e) => seen.push(e.message));
+        assert.equal(seen.length, before, 'onUnbuildable must not fire on a healthy probe');
+      } finally {
+        await new Promise((r) => server.close(r));
+      }
+    });
+  });
 });

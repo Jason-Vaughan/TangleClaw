@@ -462,9 +462,11 @@ that survives the restart, so the poll can be observed resolving rather than tim
       **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
 - [~] **Skip is not offered** anywhere in the flow.  
       **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
-- [x] After *Complete Setup*: a "Putting your login in place…" screen appears, and the response
+- [~] After *Complete Setup*: a "Putting your login in place…" screen appears, and the response
       arrived — i.e. the browser is not showing a network error. (A response that never arrives means
-      the spawn happened before the reply was written.)
+      the spawn happened before the reply was written.)  
+      **PARTIALLY VERIFIED — the response half is measured (HTTP 200 in 1s, so the spawn followed the
+      reply); the "screen appears" half is browser-only and was NOT observed.**
 - [~] The screen resolves on its own to **"Your login is in force"** without a reload. That is the  
       **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
       detached child surviving the restart and writing its outcome.
@@ -542,8 +544,8 @@ root-owned mode 000 as written. `~/.tangleclaw` prior state was generated with
 `caddy.buildCaddyfileContent` (real `basic_auth` block, real integrity header,
 `classifyIngressState` → `generated`) since `install.sh` refuses on non-Darwin. Measured: exit `1`,
 refusal names path and permissions, **no stack trace**, `{"code":"unreadable","ok":false}`, no
-backup written, mtime identical before and after, and `--force` still refused with `unreadable` at
-exit `1`. Per the EPERM caveat in the spec, this is re-run in the macOS guest as confirmation and the
+backup written, mtime identical before and after, `--force` still refused with `unreadable` at
+exit `1`, and permissions were restored to `600` (`-rw------- tcuser`) before moving on. Per the EPERM caveat in the spec, this is re-run in the macOS guest as confirmation and the
 guest wins on any disagreement.
 
 **Execution record — 7d, same container and branch, 2026-07-30.** Ran only after the fixture
@@ -598,17 +600,17 @@ is the evidence, not the code review.
 
 | Check | Phase | Pass? |
 |---|---|---|
-| Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | **PASS (API-driven)** — 2026-07-30 |
+| Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | **PARTIAL** — completion + cert-gen exercised via the API; the per-step wizard walk (projects dir / engine / methodology / chime) was NOT run, so its boxes stay blank |
 | Dry-run touches nothing | 4 | |
 | Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | |
-| Bug 2 — ttyd re-binds Unix socket across restarts | 6 | **PASS** — exit status 0, not 126 |
+| Bug 2 — ttyd re-binds Unix socket across restarts | 6 | **PARTIAL** — ttyd observed at exit status 0 (not 126) across the restarts 7c/7e caused; the repeated-kickstart loop this phase specifies was NOT run |
 | Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
 | #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 |
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | **PASS** — habitat guest, 2026-07-30, @4e4e55e |
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
 | #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | **PASS** — server PID 6053→6219, 401/401/200 |
 | #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
-| Rollback restores direct mode cleanly | 8 | **PASS** — after the #789 fix; re-run @ad280a7 |
+| Rollback restores direct mode cleanly | 8 | **PASS (partial)** — after the #789 fix, re-run @ad280a7: caddy unloaded, `ingressMode` direct, 3102 answering 200. The direct-HTTPS and ttyd-on-3100 checks were NOT run |
 
 **Every row above** green → `VRF-auth-1-cutover` PASSES. (Count the rows rather than trusting a
 number written here — the matrix grows as phases are added, and a stale count is how a phase gets
