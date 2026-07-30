@@ -170,10 +170,21 @@ All notable changes to TangleClaw are documented in this file.
   the plainest ungated install of all — no Caddy installed, so no credential anywhere — reaches **no
   arm**, taking its `reason` from the plan. A warnings-only client learned nothing in exactly the case
   that matters most. The push now happens once after the whole chain, scoped to the protection states
-  that mean no login is in force; `existing` and `pending` are excluded because their `reason`
-  describes a gate that is kept or in flight, and restating it would invent a problem. Both edges are
+  that mean no login is in force. `existing` is excluded because its `reason` describes a gate that
+  IS in force, and restating that as a warning invents a problem; `pending` is excluded too, but
+  harmlessly — the provision plan carries an empty reason, so there is nothing to push there. Both edges are
   mutation-verified: removing the push and widening it to `existing` each turn a test red, the second
   of which was green against the entire suite until this commit added the pin.
+
+  Making that push unconditional then exposed an older contradiction it had been hiding. The
+  credential-saved warning ended "Run `node scripts/ingress-cutover.js --to caddy` to activate the
+  login gate" — but every path to that state is a refusal with a credential already configured, and in
+  almost all of them the live Caddyfile is hand-edited, which the cutover's own guard refuses without
+  `--force` (and for an unreadable file, `--force` is not honored at all). The plan's `remedy`, which
+  renders on the same screen, carries the correct `--force` form. So the screen offered one command in
+  two forms and put the failing one under "Also worth knowing". The warning now states the situation
+  and names no command, leaving the state-specific answer to `remedy` — pinned in both files that had
+  asserted the command's presence.
 
   Also recorded while covering the family: the adopt block's "could not be adopted" arm is
   unreachable by construction. An `adopt` plan exists only in caddy mode, and the caddy-mode

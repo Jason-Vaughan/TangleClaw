@@ -489,7 +489,16 @@ describe('setup provisions a login by default', () => {
 
       const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
       assert.equal(res.data.ingress.protection, 'unchanged');
-      assert.ok(res.data.warnings.some((w) => /ingress-cutover/.test(w)));
+      assert.ok(res.data.warnings.some((w) => /left untouched/.test(w)),
+        'the operator must still be told the live config was not changed');
+      // The warning states the situation and names NO command. A bare `--to caddy` is
+      // the form the cutover refuses on a hand-edited Caddyfile — which every path to
+      // this state has — so recommending it here put the failing form on the same
+      // screen as `remedy`'s working one.
+      assert.ok(!res.data.warnings.some((w) => /ingress-cutover/.test(w)),
+        'the warning must not name a command the cutover would refuse');
+      assert.match(res.data.ingress.remedy, /--force/,
+        'the state-specific command belongs in remedy, and on a hand-edited file it needs --force');
       assert.equal(cutovers.length, 0);
     });
   });

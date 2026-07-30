@@ -153,8 +153,14 @@ describe('forced first-run admin credential', () => {
         { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
       assert.equal(status, 200);
       assert.equal(data.setupComplete, true);
-      // Warning steers the operator to run the cutover to activate the live gate.
-      assert.ok(data.warnings.some((w) => /ingress-cutover/.test(w)));
+      // The warning tells the operator the live config was not changed; the command
+      // that changes it comes from `ingress.remedy`, which is state-specific. A fixed
+      // command in the warning was the bare `--to caddy` form — the one the cutover
+      // refuses on the hand-edited Caddyfile every path to this state has.
+      assert.ok(data.warnings.some((w) => /left untouched/.test(w)),
+        'the operator must still learn the live config was not changed');
+      assert.ok(!data.warnings.some((w) => /ingress-cutover/.test(w)),
+        'the warning must not name a command the cutover would refuse');
 
       const config = store.config.load();
       assert.equal(config.authEnabled, true);

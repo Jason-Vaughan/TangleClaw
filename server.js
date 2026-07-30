@@ -1478,8 +1478,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // backup and rollback exist.
     ingress.protection = 'unchanged';
     ingress.user = config.basicAuthUser || null;
-    warnings.push('Admin credential saved, but the Caddy config was left untouched. '
-      + 'Run `node scripts/ingress-cutover.js --to caddy` to activate the login gate.');
+    // States the situation and names no command. Every path here is refuse +
+    // adminConfigured, and in almost all of them the live Caddyfile is hand-edited —
+    // so a bare `--to caddy` is the form the cutover's own guard REFUSES, and for an
+    // unreadable file `--force` is not honored at all. The plan's `remedy` is the
+    // state-specific answer and renders on this same screen; a fixed command here
+    // put the failing form under "Also worth knowing" beside the working one.
+    warnings.push('Admin credential saved, but the Caddy config was left untouched, '
+      + 'so the login is only as active as that file already makes it.');
   }
 
   // One place, after every branch, so the guarantee holds for outcomes that reach no
@@ -1488,9 +1494,15 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // below. Doing this per-arm left exactly that case — the plainest ungated install
   // there is — telling a warnings-only client nothing.
   //
-  // Only the states that mean "no login is in force" qualify. 'existing' and 'pending'
-  // carry a `reason` that describes a kept or in-flight gate, not a missing one, and
-  // restating it as a warning would invent a problem.
+  // Only the states that mean "no login is in force" qualify. 'existing' is excluded
+  // because its `reason` describes a gate that IS in force ("will be kept rather than
+  // replaced") — restating that as a warning invents a problem. 'pending' is excluded
+  // too, but is inert rather than dangerous: `decideProvisioning` returns an empty
+  // reason for `provision`, so there is nothing to push in that state either way.
+  //
+  // The `includes` check is a forward interlock, not a live de-duplicator: no arm above
+  // pushes this exact string today, so it never fires. It is here so that adding an arm
+  // that does push `reason` cannot silently double it.
   if (ingress.reason
       && (ingress.protection === 'none'
         || ingress.protection === 'unchanged'

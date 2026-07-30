@@ -672,7 +672,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
       { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
         ingress: { action: 'refuse', provisioning: false, protection: 'unchanged' } },
-      { name: 'adopted', expect: /Setup finished/,
+      { name: 'adopted', expect: /did not change it/,
         ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
       { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
         ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
@@ -930,7 +930,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
           ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443' } },
         { name: 'no login', expect: /TangleClaw has no login/, restart: false,
           ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
-        { name: 'adopted', expect: /Setup finished/, restart: false,
+        { name: 'adopted', expect: /did not change it/, restart: false,
           ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
         { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
           ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
