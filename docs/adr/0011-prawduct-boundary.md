@@ -32,8 +32,9 @@ once governance moved plugin-side (#570).
 *Ask: map the exact coupling points.* Done below.
 
 **The decision therefore already exists — as behavior, and as one inline code comment.**
-`lib/engines.js:1139` reads "Defer to the Prawduct V2 Claude Code plugin when it governs this project
-(#330 hybrid)." That comment is currently the most authoritative written record of the position, and
+`lib/engines.js` reads "Defer to the Prawduct V2 Claude Code plugin when it governs this project
+(#330 hybrid)" — grep the comment rather than a line number, which moves. That comment is currently
+the most authoritative written record of the position, and
 it is a parenthetical inside a function about writing engine config files. The rest lives in
 per-machine session memory, which does not survive a fresh clone and is not reviewable.
 

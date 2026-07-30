@@ -251,9 +251,9 @@ All notable changes to TangleClaw are documented in this file.
   **Running it found a defect in the phase itself.** 7d's fixture cleared config's credential and
   left the Caddyfile gated — but in `scripts/ingress-cutover.js` the `adoptCredentialIntoConfig`
   call precedes the `planCutover` call, so adoption re-adopted the credential immediately and
-  `ungate-refused` was unreachable. Platform-independent: it would have failed identically on macOS, after consuming a
-  scheduled egress window. The fixture now makes the live gate ambiguous first, so adoption cannot
-  adopt.
+  `ungate-refused` was unreachable. Platform-independent: it would have failed identically on
+  macOS, after consuming a scheduled egress window. The fixture now makes the live gate ambiguous
+  first, so adoption cannot adopt.
 
   The report-back matrix records every deviation rather than a bare tick, because the deviations
   change what the results mean: the container runs as **root**, where a `chmod 000` file stays
@@ -297,8 +297,8 @@ All notable changes to TangleClaw are documented in this file.
 - **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
   decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
   a Claude Code plugin — and the decision had since been made by what got built rather than by
-  anything written. Its most authoritative record was a parenthetical comment at
-  `lib/engines.js:1139`; the rest lived in per-machine session memory, which does not survive a fresh
+  anything written. Its most authoritative record was a parenthetical comment in `lib/engines.js`
+  (grep "Defer to the Prawduct"); the rest lived in per-machine session memory, which does not survive a fresh
   clone and cannot be reviewed. Closing #330 in that state would have discarded the one thing it
   existed for.
 

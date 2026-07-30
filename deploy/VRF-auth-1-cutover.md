@@ -379,16 +379,17 @@ as `failed`. The suite stays green, 7b and 7c stay green, and the wizard loses t
 that tells it to send the operator to `reset-admin.js` rather than to a generic failure.
 
 > **Fixture corrected 2026-07-30 — the original could not reach this refusal on ANY platform.**
-> It cleared config's credential and left the Caddyfile gated, but `adoptCredentialIntoConfig`
-> runs at `scripts/ingress-cutover.js:441`, *before* `planCutover` at `:494`, and immediately
+> It cleared config's credential and left the Caddyfile gated, but in `scripts/ingress-cutover.js`
+> the `adoptCredentialIntoConfig` call runs *before* the `planCutover` call, and immediately
 > re-adopts the single credential it finds — printing "Adopted live Caddyfile state into config".
 > The ungate condition therefore never held and `ungate-refused` was unreachable. Caught by
 > executing 7b/7d in the `tc-cleanroom` container on 2026-07-30; it would have failed the same
 > way on macOS, after a scheduled egress window.
 >
 > **Order of the gates before the refusal**, all of which must be satisfied for this phase to
-> reach its assertion: adoption `:441` → `caddy-missing` `:454` → cert generation `:472` →
-> `planCutover` `:494`. So 7d needs a `caddy` binary on PATH and a **valid cert pair already
+> reach its assertion — grep `scripts/ingress-cutover.js` for each in turn rather than trusting a
+> line number, which moves: `adoptCredentialIntoConfig` → the `CADDY_MISSING` refusal →
+> `httpsSetup.generateCerts` → `planCutover`. So 7d needs a `caddy` binary on PATH and a **valid cert pair already
 > configured** — both of which a real run has from Phases 2–3. They are prior state, not part of
 > what 7d tests; synthesize them if you run this phase out of sequence.
 
@@ -571,10 +572,10 @@ guest wins on any disagreement.
 **Execution record — 7d, same container and branch, 2026-07-30.** Ran only after the fixture
 correction above; the original fixture could not reach the refusal at all. Prior state synthesized
 because `install.sh` cannot run on Linux: a real `openssl` self-signed cert pair (so
-`validateCertFiles` passes and the mkcert branch at `:472` is never entered — the absence of mkcert
-there throws untagged, filed as #786) and a `caddy` stub answering `version`, the same pattern the
-repo's own suite uses because CI has no Caddy. Neither substitutes for anything 7d asserts: the
-refusal is raised inside `planCutover` at `:494`, before either is used again. Measured: exit `1`,
+`validateCertFiles` passes and the `httpsSetup.generateCerts` branch is never entered — the absence
+of mkcert there throws untagged, filed as #786) and a `caddy` stub answering `version`, the same
+pattern the repo's own suite uses because CI has no Caddy. Neither substitutes for anything 7d
+asserts: the refusal is raised inside `planCutover`, before either is used again. Measured: exit `1`,
 `{"code":"ungate-refused","ok":false}`, the error names `scripts/reset-admin.js`, the live Caddyfile
 still carries its `basic_auth` block, and **no stack trace**. Config and Caddyfile restored after.
 
