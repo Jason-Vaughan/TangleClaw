@@ -531,7 +531,8 @@ All notable changes to TangleClaw are documented in this file.
   the credential reported for a `generated` file, purity of `classifyCaddyfileContent`, a sweep
   proving no hand-edited state is ever `safeToWrite`, a chmod-000 fail-closed case that skips when
   running privileged, and a live-file case that skips when no Caddyfile is present.
-  `test/setup-ingress-state-endpoint.test.js` (+10 with this slice; 16 in the file now) — four of the six states at the HTTP boundary
+  `test/setup-ingress-state-endpoint.test.js` (+10 with this slice; 16 in the file
+  now) — four of the six states at the HTTP boundary
   (`generated` and `unreadable` are covered at the unit level only), no bcrypt-shaped string in any
   response, no enumeration of a second account name, `users` never crossing the boundary, the
   username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an

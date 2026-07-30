@@ -1014,6 +1014,17 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.equal(ctx.document.getElementById('setupOverlayError').textContent, 'Disk is full');
       ctx.wizardNext();
       assert.equal(ctx.document.getElementById('setupOverlayError').textContent, '');
+
+      // Back as well as Next. The banner outlives a step render by design, so
+      // every navigation that leaves the failed step has to clear it; pinning
+      // only the forward one leaves a stale error sitting above an unrelated step
+      // for anyone who goes back instead.
+      ctx.api.lastError = 'Disk is full';
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(ctx.document.getElementById('setupOverlayError').textContent, 'Disk is full');
+      ctx.wizardBack();
+      assert.equal(ctx.document.getElementById('setupOverlayError').textContent, '');
     });
 
     it('is cleared by every terminal screen, so it cannot sit under a success message', async () => {
@@ -1022,8 +1033,9 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       // entry points that matter here: `wizard.view` takes exactly four terminal
       // values, each set in a function that clears the banner first, so four rows
       // cover every path that can clear it however many screens those paths
-      // render. (`_clearOverlayError` has more call sites than that; the rest are
-      // step navigation, covered by the test directly above.) Each row is still
+      // render. (`_clearOverlayError` has more call sites than that: the wizard
+      // entry point, and step navigation both ways — Next and Back are both
+      // covered by the test directly above.) Each row is still
       // pinned to the screen it names; an earlier version asserted nothing about
       // where it landed, so a row could stop being evidence about its subject
       // without failing.
