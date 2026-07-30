@@ -35,6 +35,21 @@ All notable changes to TangleClaw are documented in this file.
   also stops the CLI and the wizard from reaching different conclusions about one file. The dry-run
   preview no longer offers `--force` for the unreadable case, which the executor refuses to honor.
 
+  **How this is verified, and where it cannot be.** The refusal's *tag* is unit-tested — the
+  `ungate-refused` marker must stay distinguishable from the five unrelated validation errors
+  `buildCaddyfileContent` raises, or a caller answers a missing-certificate fault by telling the
+  operator to reset their password. Everything else here is a property of the **order** the executor
+  does things in, which no unit test can observe: the executor rewrites launchd plists and restarts
+  the server, and on the developer's machine that is also the live install. So the coverage lives in
+  `deploy/VRF-auth-1-cutover.md` as three new clean-room phases, each naming the mutation it catches
+  — **7b** a chmod-000 Caddyfile must refuse with `unreadable` rather than an EACCES stack trace
+  (and `--force` must not rescue it, since a file that cannot be read cannot be backed up), **7c** a
+  successful run must leave a result file at all, **7d** an ungate refusal must report
+  `ungate-refused` rather than `failed`. The report-back matrix now gates on all of them; they are
+  not optional, because they are the whole substitute for coverage the executor cannot get in
+  process. Making that class unit-testable — by extracting the decisions from the effects — is
+  tracked as **#772**.
+
 - **One derivation of "may this Caddyfile be overwritten", and a probe the wizard can ask
   (#710, v5 chunk 2 groundwork).** Chunk 2 makes the setup wizard put a login in front of TangleClaw
   by default, so it will meet machines that already have a Caddy config. A terminal tool can afford
