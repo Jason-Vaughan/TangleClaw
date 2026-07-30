@@ -12,6 +12,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const caddy = require('../lib/caddy');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
@@ -53,10 +54,20 @@ function request(server, method, urlPath, body) {
  * from stdin) so the admin happy-path is hermetic without a real Caddy.
  * @param {string} stubDir
  */
-function writeCaddyStub(stubDir) {
+function writeCaddyStub(stubDir, opts = {}) {
+  // `version` is opt-in. The default stub deliberately FAILS it, so most of this
+  // suite runs as "caddy not installed" — which is what makes its no-credential
+  // cases legitimate rather than a hole. One case needs the opposite and says so.
+  const versionCase = opts.answersVersion
+    ? `  version)
+    echo 'v2.8.4 h1:stub'
+    exit 0
+    ;;
+`
+    : '';
   const script = `#!/bin/bash
 case "$1" in
-  hash-password)
+${versionCase}  hash-password)
     read -r pw
     echo '\$2a\$14\$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU'
     exit 0
@@ -218,26 +229,30 @@ describe('forced first-run admin credential', () => {
       assert.equal(store.config.load().setupComplete, true);
     });
 
-    it('refuses Skip on a direct-mode install that CAN run a gate', async (t) => {
+    it('refuses Skip on a direct-mode install that CAN run a gate', async () => {
       // The default fresh install: direct mode, caddy installed. Skip is the other
       // route that can finish setup, so it has to answer to the same rule as
       // /api/setup/complete or it is a way past the login gate.
+      //
+      // Depends on a stub that answers `version`, NOT on finding a real caddy in
+      // /opt/homebrew or /usr/local: CI runs ubuntu-latest with no Caddy, so a
+      // real-binary lookup made the regression guard for the most important fix in
+      // this chunk skip exactly where it needed to run. The guard has to be
+      // deterministic on every machine, or it is not a guard.
       resetConfig('direct');
-      const realCaddy = ['/opt/homebrew/bin', '/usr/local/bin'].find(
-        (d) => fs.existsSync(path.join(d, 'caddy')));
-      // A silent `return` here would report a pass on a machine where the branch
-      // never ran — the shape this suite has already been burned by twice. Skip
-      // visibly instead.
-      if (!realCaddy) return t.skip('no caddy binary on this machine; branch unreachable');
+      const presentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-present-'));
+      writeCaddyStub(presentDir, { answersVersion: true });
       const origPath = process.env.PATH;
-      process.env.PATH = realCaddy;
+      process.env.PATH = presentDir + path.delimiter + (origPath || '');
       try {
+        assert.equal(caddy.detectCaddy().available, true, 'the stub must read as an installed caddy');
         const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
         assert.equal(status, 400);
         assert.equal(data.code, 'ADMIN_REQUIRED');
         assert.equal(store.config.load().setupComplete, false, 'a refused Skip must not finish setup');
       } finally {
         process.env.PATH = origPath;
+        fs.rmSync(presentDir, { recursive: true, force: true });
       }
     });
 

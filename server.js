@@ -964,8 +964,10 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
 // over direct HTTPS, or over a LAN address, loses it at the restart).
 //
 // Nothing secret crosses this boundary, and that is enforced by what is BUILT
-// rather than by what the child happened to write: a coarse outcome code, the
-// target, and whether the health probe passed. The child's free-text `error` is
+// rather than by what the child happened to write. The response is exactly:
+// `state`, `ok`, `code`, `target`, `healthOk`, `hasError`, `logLocation` (a
+// RELATIVE path — the resolved one names the OS account) and `finishedAt`.
+// The child's free-text `error` is
 // deliberately NOT forwarded — its producer fills that field with absolute
 // filesystem paths (an unreadable Caddyfile names its path, a backup names its
 // path, `caddy validate` stderr names the config and can quote the offending

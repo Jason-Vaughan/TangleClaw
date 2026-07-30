@@ -212,8 +212,24 @@ function wizardBack() {
 }
 
 async function wizardSkip() {
-  // Set setupComplete without changing other config
-  await apiMutate('/api/config', 'PATCH', { setupComplete: true });
+  // `apiMutate` returns null on a non-2xx rather than throwing, and this path can
+  // now be REFUSED: finishing setup requires a credential wherever a gate can be
+  // enforced, and the button is reachable in cases where the plan does not demand
+  // one but the server still does (an install already in caddy mode whose
+  // credential would have come from adopting its Caddyfile — adoption happens on
+  // the complete route, not this one). Ignoring the null set `setupComplete` in
+  // local state and dismissed, landing the operator on a dashboard as though setup
+  // had finished while the server still says it had not.
+  const ok = await apiMutate('/api/config', 'PATCH', { setupComplete: true });
+  if (!ok) {
+    _showUnprotectedScreen({
+      protection: 'none',
+      reason: api.lastError || 'TangleClaw could not finish setup without a login.',
+      remedy: 'Go back and set a username and password, or set one at a terminal with '
+        + '`node scripts/reset-admin.js`.'
+    }, []);
+    return;
+  }
   if (state.config) state.config.setupComplete = true;
   dismissWizard();
 }
@@ -291,7 +307,7 @@ function renderWelcome(body) {
       <h2 class="setup-heading">Welcome to TangleClaw</h2>
       <p class="setup-text">AI Development Orchestration Platform</p>
       <p class="setup-text-muted">This wizard will help you configure your projects directory, detect existing projects, select your default AI engine, and set your preferences.</p>
-      <p class="setup-text-muted">It only takes a minute. You can skip at any time.</p>
+      <p class="setup-text-muted">It only takes a minute.</p>
       <button class="btn btn-primary setup-btn" onclick="wizardNext()">Get Started</button>
     </div>`;
 }
@@ -1062,13 +1078,42 @@ async function wizardComplete() {
     // to the current origin so the overlay still shows while the server
     // cycles — otherwise the normal dismiss flow would run fetches against
     // a process that's exiting.
-    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/');
+    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/', carried);
+    return;
+  }
+
+  // Successful adopt, or nothing to report. Warnings still must not be dropped by
+  // the dismiss that follows the render which showed them — an adopted install can
+  // carry a skipped-project warning like any other.
+  if (carried.length > 0) {
+    _showAdoptedScreen(ingress, carried);
     return;
   }
 
   // Refresh state and dismiss — dismissWizard() handles loadProjects()
   await loadConfig();
   dismissWizard();
+}
+
+/**
+ * Terminal screen for a setup that ended with a login already in force, when the
+ * server also had something to report. Exists so the render that surfaces the
+ * warnings is not the render that closes the overlay carrying them.
+ * @param {object|null} ingress - `ingress` block from POST /api/setup/complete.
+ * @param {string[]} warnings
+ */
+function _showAdoptedScreen(ingress, warnings) {
+  wizard.view = 'adopted';
+  const body = document.getElementById('setupBody');
+  if (!body) return;
+  const user = ingress && ingress.user ? ingress.user : null;
+  body.innerHTML = `
+    <div class="setup-step" role="status" aria-live="polite">
+      <h2 class="setup-heading">Setup finished</h2>
+      <p class="setup-text">Your existing login${user ? ` for <strong>${esc(user)}</strong>` : ''} is in place — TangleClaw did not change it.</p>
+      ${_warningsBlock(warnings)}
+      <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue</button>
+    </div>`;
 }
 
 /**
@@ -1332,7 +1377,7 @@ function _showUnprotectedScreen(ingress, warnings) {
     : `<p class="setup-text"><strong>Nothing is asking for a password.</strong> ${esc(ingress.reason || 'TangleClaw could not put a login in front of itself on this machine.')}</p>`;
 
   body.innerHTML = `
-    <div class="setup-step">
+    <div class="setup-step" role="alert">
       <h2 class="setup-heading">${esc(heading)}</h2>
       ${lead}
       ${stored && ingress.reason ? `<p class="setup-text-muted">${esc(ingress.reason)}</p>` : ''}
@@ -1369,14 +1414,17 @@ function _httpsSummaryLabel() {
   return 'Not configured';
 }
 
-function _showRestartOverlay(redirectUrl) {
-  // Claims the view for the same reason the provisioning screens do: the ingress
-  // probe re-renders asynchronously and would otherwise repaint this one.
+function _showRestartOverlay(redirectUrl, warnings) {
+  // Every terminal screen owes the same three things, and this one was outside all
+  // of them: claim the view (the ingress probe re-renders asynchronously and would
+  // repaint it), announce itself (it appears without the operator acting), and
+  // carry the server's warnings (the element that reported them is inside the body
+  // this replaces).
   wizard.view = 'restarting';
   const body = document.getElementById('setupBody');
   if (!body) return;
   body.innerHTML = `
-    <div class="setup-step">
+    <div class="setup-step" role="status" aria-live="polite" aria-busy="true">
       <h2 class="setup-heading">Restarting TangleClaw…</h2>
       <div class="setup-https-restart-panel">
         <div class="spinner"></div>
@@ -1384,6 +1432,7 @@ function _showRestartOverlay(redirectUrl) {
         <p class="setup-text-muted">You'll be redirected to <code>${esc(redirectUrl)}</code> automatically.</p>
         <button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Go now</button>
       </div>
+      ${_warningsBlock(warnings)}
     </div>`;
   _pollRestartAndRedirect(redirectUrl);
 }

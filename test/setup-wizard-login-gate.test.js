@@ -631,6 +631,146 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
   });
 
+  describe('every terminal screen owes the same three things', () => {
+    // The Critic named the pattern: three fixes in one changeset applied at one
+    // call site and not its family (view ownership, warnings, aria), and three
+    // shipped with no assertion at all — revert the lines and the suite stayed
+    // green. These cases cover the family, not a member.
+    // Each entry must actually REACH the screen it names. Two earlier versions of
+    // this table did not: a `restarting` row carrying `protection: 'unchanged'`
+    // returned at the unprotected branch before the restart check, and a
+    // `provisioning` row with an unreachable status route ended on 'unconfirmed'
+    // rather than the success screen — so two mutations survived a suite that
+    // claimed to cover them. `expect` pins which screen each row lands on.
+    const SCREENS = [
+      { name: 'provisioning (success)', expect: /Your login is in force/,
+        status: { state: 'done', ok: true, code: 'ok' },
+        ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
+      { name: 'provisioning (failed)', expect: /No login is in force/,
+        status: { state: 'done', ok: false, code: 'failed' },
+        ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
+      { name: 'provisioning (unconfirmed)', expect: /can't see the result|hasn't reported back/,
+        status: 'unreachable',
+        ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
+      { name: 'unprotected', expect: /TangleClaw has no login/,
+        ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
+      { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
+        ingress: { action: 'refuse', provisioning: false, protection: 'unchanged' } },
+      { name: 'adopted', expect: /Setup finished/,
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
+      { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
+    ];
+
+    /** Finish setup with the given ingress block and report what the body became. */
+    async function endOn(screen, warnings, opts = {}) {
+      const ctx = loadSetup({
+        plan: REFUSE_PLAN,
+        statusFetch: () => {
+          if (!screen.status || screen.status === 'unreachable') throw new Error('ECONNREFUSED');
+          return { ok: true, json: async () => screen.status };
+        },
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: warnings || [],
+          restart: screen.restart === true,
+          redirectUrl: screen.restart ? 'https://host:3102' : null,
+          ingress: screen.ingress
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      let dismissed = false;
+      ctx.dismissWizard = () => { dismissed = true; };
+      await ctx.wizardComplete();
+      await settle(2000);
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      // The row is only evidence about the screen it claims. Skipped for the case
+      // that deliberately asserts the DISMISS path, where no screen is expected.
+      if (!opts.expectDismiss) {
+        assert.match(html, screen.expect, `fixture for "${screen.name}" landed on a different screen`);
+      }
+      return { ctx, html, dismissed };
+    }
+
+    it('claims the view, so an async re-render cannot repaint any of them', async () => {
+      for (const screen of SCREENS) {
+        const { ctx } = await endOn(screen, ['a warning keeps this screen up']);
+        assert.notEqual(ctx.wizard.view, 'steps', `${screen.name} left the view as the step flow`);
+      }
+    });
+
+    it('announces itself, since none of them is reached by an operator action', async () => {
+      for (const screen of SCREENS) {
+        const { html } = await endOn(screen, ['a warning keeps this screen up']);
+        assert.match(html, /role="(status|alert)"/, `${screen.name} announced nothing`);
+      }
+    });
+
+    it('carries the server\'s warnings rather than closing the overlay holding them', async () => {
+      for (const screen of SCREENS) {
+        const { html, dismissed } = await endOn(screen, ['Skipped "old-project": path does not exist']);
+        assert.equal(dismissed, false, `${screen.name} dismissed over its own warnings`);
+        assert.match(html, /old-project/, `${screen.name} dropped the warnings`);
+      }
+    });
+
+    it('still dismisses normally when there is nothing to report', async () => {
+      // The warnings carry-through must not turn an uneventful adopt into an extra
+      // click for everyone.
+      const { dismissed } = await endOn(
+        SCREENS.find((s) => s.name === 'adopted'), [], { expectDismiss: true });
+      assert.equal(dismissed, true);
+    });
+  });
+
+  describe('Skip cannot report a success the server refused', () => {
+    it('shows the refusal instead of dismissing into a dashboard', async () => {
+      // apiMutate returns null on a non-2xx rather than throwing, and this path can
+      // now be refused. Ignoring the null set setupComplete in local state and
+      // dismissed — the operator landed on a dashboard as though setup had
+      // finished while the server still said it had not.
+      let dismissed = false;
+      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      ctx.dismissWizard = () => { dismissed = true; };
+      ctx.api.lastError = 'Cannot finish setup without an admin credential.';
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(dismissed, false, 'a refused Skip must not dismiss');
+      assert.equal(ctx.state.config.setupComplete, false, 'nor claim completion locally');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /no login/i);
+    });
+
+    it('still dismisses when the server accepts', async () => {
+      let dismissed = false;
+      const ctx = loadSetup({ plan: REFUSE_PLAN, apiMutate: async () => ({ ok: true }) });
+      ctx.showWizard();
+      await settle();
+      ctx.dismissWizard = () => { dismissed = true; };
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(dismissed, true);
+      assert.equal(ctx.state.config.setupComplete, true);
+    });
+  });
+
+  describe('Skip is offered only when the answer is known', () => {
+    it('stays hidden while the plan is unknown, not just when it demands a credential', async () => {
+      // Unknown is not "not required". The probe is unawaited, so there is a window
+      // at startup — and forever on a failed probe — where showing Skip offers a way
+      // past the gate on exactly the machines whose answer has not arrived.
+      const ctx = loadSetup({ plan: null });
+      ctx.showWizard();
+      assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none',
+        'Skip was visible before the plan arrived');
+      await settle();
+      assert.equal(ctx.wizard.ingressPlan, null, 'the probe failed, so the plan stays unknown');
+      assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none',
+        'Skip stayed visible after a failed probe');
+    });
+  });
+
   describe('a setup that never attempts a gate says so', () => {
     it('shows an unprotected screen instead of dismissing into a normal dashboard', async () => {
       let dismissed = false;

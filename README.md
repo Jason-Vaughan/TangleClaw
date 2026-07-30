@@ -127,7 +127,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Security & Remote Access
 - **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
-- **Forced admin setup** — behind the ingress, the first-run wizard requires creating an admin login before anything else works
+- **Forced admin setup** — the first-run wizard requires creating an admin login on any machine that can enforce one, which is the default; there is no default credential and no way to skip past it
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
 - **User attribution** — when the ingress authenticates a user, TangleClaw records who did what

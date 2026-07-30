@@ -59,7 +59,10 @@ All notable changes to TangleClaw are documented in this file.
   close. It now consults the same derivation. Skip is also hidden while the plan is *unknown* rather
   than only when it says a credential is required: the probe is unawaited, so there was a window at
   startup — and, on a failed probe, forever — where the button offered a way past the gate on exactly
-  the machines whose answer had not arrived.
+  the machines whose answer had not arrived. And `wizardSkip` no longer reports a success the server
+  refused: `apiMutate` returns null on a non-2xx rather than throwing, so ignoring it set
+  `setupComplete` in local state and dismissed — landing the operator on a dashboard as though setup
+  had finished while the server still said it had not.
 
   Provisioning is gated to a **first run**. `/api/setup/complete` has never required setup to be
   unfinished, and it can now rewrite launchd plists and restart the server — so on an install that is
@@ -75,7 +78,7 @@ All notable changes to TangleClaw are documented in this file.
   outcome is often unobservable from the page that started it — both facts a future reader would
   otherwise have to rediscover from a deleted plan.
 
-  **Tests:** 5245 passing overall. `test/ingress-provision.test.js` (31) — every Caddyfile state
+  **Tests:** 5252 passing overall. `test/ingress-provision.test.js` (31) — every Caddyfile state
   mapped to exactly one action, an unrecognized state failing closed, `provision` pinned to
   `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress each beating
   `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,
@@ -86,11 +89,19 @@ All notable changes to TangleClaw are documented in this file.
   first run, a caller-supplied `Host` discarded rather than echoed into the URL the wizard renders,
   the operator's Caddyfile unchanged byte-for-byte on adopt, adoption that no-opped not reported as
   "kept", and `provision-status` withholding a path planted in `error` — the field that can actually
-  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (35) —
+  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (42) —
   the step list against each plan (including the direct-mode flip), the payload sent under the same
   predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
-  answered", a stored-but-unconfirmed login getting its own screen, one screen owning the body at a
-  time, recovery keyed on the error code, and no navigation without a click.
+  answered", a stored-but-unconfirmed login getting its own screen, recovery keyed on the error code,
+  and no navigation without a click. Three properties are asserted across **every** terminal screen
+  rather than one — that each claims the view so an async re-render cannot repaint it, announces
+  itself since none is reached by an operator action, and carries the server's warnings instead of
+  closing the overlay holding them. Each had been fixed on one screen and missed on its siblings, and
+  the fixture table now pins which screen every row actually lands on: two earlier versions of it did
+  not reach the screens they named, so two mutations survived a suite that claimed to cover them.
+  `test/auth2-setup-admin.test.js` (11) — the Skip route's refusal, against a stub that answers
+  `caddy version` rather than a real binary found on PATH, because CI has no Caddy and the guard for
+  the most important fix in this chunk was skipping exactly where it needed to run.
   `test/setup-ingress-state-endpoint.test.js` (16) — the probe's six states plus the plan it now
   returns, and that no hash crosses the boundary in either ingress mode.
 
