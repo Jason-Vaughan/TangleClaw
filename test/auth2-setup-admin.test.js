@@ -157,10 +157,18 @@ describe('forced first-run admin credential', () => {
       // that changes it comes from `ingress.remedy`, which is state-specific. A fixed
       // command in the warning was the bare `--to caddy` form — the one the cutover
       // refuses on the hand-edited Caddyfile every path to this state has.
-      assert.ok(data.warnings.some((w) => /left untouched/.test(w)),
-        'the operator must still learn the live config was not changed');
+      assert.ok(data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
+        'the operator must still learn nothing is known to be enforcing the login');
       assert.ok(!data.warnings.some((w) => /ingress-cutover/.test(w)),
         'the warning must not name a command the cutover would refuse');
+      // This suite's caddy stub deliberately fails `version`, so this assertion runs on
+      // a machine with NO Caddy — where claiming the Caddyfile governs protection would
+      // be a false reassurance about a file nothing is serving.
+      assert.ok(!data.warnings.some((w) => /that file already makes it/.test(w)),
+        'the warning must not name the Caddyfile as what determines protection');
+      // Every path that reaches this warning must still leave one actionable step.
+      assert.ok(data.ingress.remedy && data.ingress.remedy.trim().length > 0,
+        'a screen carrying this warning must offer a next step');
 
       const config = store.config.load();
       assert.equal(config.authEnabled, true);

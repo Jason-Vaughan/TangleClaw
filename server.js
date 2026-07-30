@@ -1484,8 +1484,24 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // unreadable file `--force` is not honored at all. The plan's `remedy` is the
     // state-specific answer and renders on this same screen; a fixed command here
     // put the failing form under "Also worth knowing" beside the working one.
-    warnings.push('Admin credential saved, but the Caddy config was left untouched, '
-      + 'so the login is only as active as that file already makes it.');
+    //
+    // It also must not name the Caddyfile as what determines whether the login is
+    // active. In two states nothing is serving that file at all — no Caddy binary, or
+    // an adoptable config while the install runs in direct mode — and claiming the file
+    // governs protection is the false-reassurance this endpoint exists to avoid. Say
+    // only what is true everywhere: the live ingress was not changed, so nothing here
+    // can confirm the login is enforced.
+    warnings.push('Admin credential saved, but TangleClaw did not change the live ingress '
+      + 'config — so it cannot confirm anything is enforcing this login.');
+    // A completed install re-POSTing here gets a plan built without `decideProvisioning`,
+    // whose `remedy` is null — so removing the command from the warning above left that
+    // path with no next step whatsoever. The dry-run is the one instruction that is both
+    // safe and honest in every state: it writes nothing, and it reports the situation it
+    // finds rather than assuming a gate can be activated.
+    if (!ingress.remedy) {
+      ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy --dry-run` at a '
+        + 'terminal to see what activating the login gate would do.';
+    }
   }
 
   // One place, after every branch, so the guarantee holds for outcomes that reach no

@@ -186,6 +186,18 @@ All notable changes to TangleClaw are documented in this file.
   and names no command, leaving the state-specific answer to `remedy` — pinned in both files that had
   asserted the command's presence.
 
+  Removing that command then exposed two more problems, both of which the removal caused. Dropping it
+  left an **eighth** path with nothing actionable at all: when setup is already complete the plan is
+  built without `decideProvisioning`, so its `remedy` is null, and a re-POST rendered the situation
+  with no way to act on it — strictly worse than the wrong command. That path now falls back to the
+  cutover's `--dry-run`, the one instruction that writes nothing and reports honestly in every state.
+  And the replacement wording said the login was "only as active as that file already makes it",
+  naming the Caddyfile as what governs protection — false in the two states where nothing is serving
+  it at all (no Caddy binary; an adoptable config while the install runs in direct mode). It now
+  claims only what holds everywhere: the live ingress was not changed, so nothing here can confirm the
+  login is enforced. Both are mutation-verified, and the second was being asserted by a suite whose
+  own Caddy stub fails `version` — i.e. on a machine with no Caddy.
+
   Also recorded while covering the family: the adopt block's "could not be adopted" arm is
   unreachable by construction. An `adopt` plan exists only in caddy mode, and the caddy-mode
   credential gate refuses the request before the ingress answer is composed, which is exactly that

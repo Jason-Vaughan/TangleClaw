@@ -389,6 +389,30 @@ describe('setup provisions a login by default', () => {
       assert.ok(res.data.warnings.some((w) => /cannot tell/.test(w)));
     });
 
+    it('still offers a next step when a completed install re-POSTs', async () => {
+      // The eighth path, and the one the seven-state table never covered: when setup is
+      // already complete the plan is built WITHOUT decideProvisioning, so its `remedy` is
+      // null. Removing the command from the warning left this path with the situation
+      // described and nothing to do about it — strictly worse than the wrong command.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      const c = store.config.load();
+      c.setupComplete = true;
+      c.authEnabled = true;
+      c.basicAuthUser = 'admin';
+      c.basicAuthHash = BCRYPT_A;
+      store.config.save(c);
+
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.protection, 'unchanged');
+      assert.ok(res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)));
+      assert.ok(res.data.ingress.remedy && res.data.ingress.remedy.trim().length > 0,
+        'a completed install must not be left with a warning and no next step');
+      assert.match(res.data.ingress.remedy, /--dry-run/,
+        'the fallback must be the one instruction that writes nothing and is honest in every state');
+      assert.equal(cutovers.length, 0, 'reporting must never act');
+    });
+
     it('refuses outright when adoption declines and no credential is configured', async () => {
       // Why the "could not be adopted" answer in the adopt block is unreachable, pinned
       // as behavior rather than left as a comment someone can quietly invalidate.
@@ -489,14 +513,18 @@ describe('setup provisions a login by default', () => {
 
       const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
       assert.equal(res.data.ingress.protection, 'unchanged');
-      assert.ok(res.data.warnings.some((w) => /left untouched/.test(w)),
-        'the operator must still be told the live config was not changed');
+      assert.ok(res.data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
+        'the operator must still be told nothing is known to be enforcing the login');
       // The warning states the situation and names NO command. A bare `--to caddy` is
       // the form the cutover refuses on a hand-edited Caddyfile — which every path to
       // this state has — so recommending it here put the failing form on the same
       // screen as `remedy`'s working one.
       assert.ok(!res.data.warnings.some((w) => /ingress-cutover/.test(w)),
         'the warning must not name a command the cutover would refuse');
+      // It also must not name the Caddyfile as what governs protection: two states
+      // reaching this arm have nothing serving that file at all.
+      assert.ok(!res.data.warnings.some((w) => /that file already makes it/.test(w)),
+        'the warning must not claim the Caddyfile determines whether the login is active');
       assert.match(res.data.ingress.remedy, /--force/,
         'the state-specific command belongs in remedy, and on a hand-edited file it needs --force');
       assert.equal(cutovers.length, 0);
