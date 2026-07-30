@@ -1293,7 +1293,17 @@ function _showProvisioningScreen(ingress, warnings) {
     user: ingress.user || null,
     code: null,
     hasError: false,
+    // Filled from whatever the poll answers, including `pending` — NOT seeded with
+    // a literal here, which would be a second copy of a server constant. It stays
+    // null only if no poll ever got a reply. This matters because the 'unconfirmed'
+    // phase is reached by the deadline expiring, which passes through no branch
+    // that assigns it, and that phase is the crash path where the log is the only
+    // durable evidence the operator has.
     logLocation: null,
+    // Whether the cutover's own health probe came back green. `null` until a poll
+    // answers. Distinct from `ok`, which says only that the plan was applied: an
+    // applied plan whose gate never answered must not claim a login is in force.
+    healthOk: null,
     reachable: true,
     networkExposed: ingress.networkExposed === true,
     warnings: Array.isArray(warnings) ? warnings : []
@@ -1324,11 +1334,26 @@ async function _pollProvisionOutcome() {
       // Origin is gone or the server is mid-restart. Both mean "keep waiting".
       wizard.provision.reachable = false;
     }
+    // Every answer carries it, `pending` included — see logLocation's note above.
+    if (data && data.logLocation) wizard.provision.logLocation = data.logLocation;
     if (data && data.state === 'done') {
+      wizard.provision.healthOk = typeof data.healthOk === 'boolean' ? data.healthOk : null;
+      // `ok` says the plan was applied. `healthOk` says the gate actually answered.
+      // Only both together justify "your login is in force" — the chunk's rule is
+      // that no screen claims protection it did not observe, and a cutover whose
+      // health probe never came back green is precisely an unobserved gate. It is
+      // not a failure either: the plan IS applied, so `failed` would be its own
+      // false report. That is what 'unconfirmed' is for.
+      if (data.ok && wizard.provision.healthOk === false) {
+        wizard.provision.phase = 'unconfirmed';
+        wizard.provision.code = data.code || null;
+        wizard.provision.hasError = data.hasError === true;
+        _renderProvisionScreen();
+        return;
+      }
       wizard.provision.phase = data.ok ? 'gated' : 'failed';
       wizard.provision.code = data.code || null;
       wizard.provision.hasError = data.hasError === true;
-      wizard.provision.logLocation = data.logLocation || null;
       _renderProvisionScreen();
       return;
     }
@@ -1336,7 +1361,6 @@ async function _pollProvisionOutcome() {
       wizard.provision.phase = 'failed';
       wizard.provision.code = null;
       wizard.provision.hasError = true;
-      wizard.provision.logLocation = data.logLocation || null;
       _renderProvisionScreen();
       return;
     }
@@ -1411,7 +1435,9 @@ function _renderProvisionScreen() {
     ? `
     <div class="setup-step" role="alert">
       <h2 class="setup-heading">Started — but it hasn't reported back</h2>
-      <p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>
+      ${p.healthOk === false
+        ? '<p class="setup-text">The login was applied, but TangleClaw could not reach the gated address afterwards to confirm it answers. <strong>It may or may not be asking for a password</strong> — this page did not observe it, so it will not claim it.</p>'
+        : '<p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>'}
       ${openedCheck}
       ${p.logLocation ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logLocation)}</code>.</p>` : ''}
       ${rollback}
@@ -1519,33 +1545,73 @@ function _showRestartOverlay(redirectUrl, warnings) {
   wizard.view = 'restarting';
   const body = document.getElementById('setupBody');
   if (!body) return;
-  body.innerHTML = `
-    <div class="setup-step" role="status" aria-live="polite" aria-busy="true">
-      <h2 class="setup-heading">Restarting TangleClaw…</h2>
-      <div class="setup-https-restart-panel">
+  _renderRestartOverlay(redirectUrl, warnings, 'waiting');
+  _pollRestartReady(redirectUrl, warnings);
+}
+
+/**
+ * Paint the restart overlay for one readiness state.
+ *
+ * Navigation is ALWAYS the button, never this function — see `_pollRestartReady`.
+ * @param {string} redirectUrl - Where TangleClaw will be reachable.
+ * @param {string[]} [warnings] - Server warnings to restate.
+ * @param {'waiting'|'ready'|'unconfirmed'} state - What the probe has observed.
+ */
+function _renderRestartOverlay(redirectUrl, warnings, state) {
+  const body = document.getElementById('setupBody');
+  if (!body) return;
+  const go = `<button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Open ${esc(redirectUrl)}</button>`;
+  const panel = {
+    waiting: `
         <div class="spinner"></div>
         <p class="setup-text">The server is restarting with your new HTTPS configuration.</p>
-        <p class="setup-text-muted">You'll be redirected to <code>${esc(redirectUrl)}</code> automatically.</p>
-        <button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Go now</button>
+        <p class="setup-text-muted">When it is back, open <code>${esc(redirectUrl)}</code>.</p>`,
+    ready: `
+        <p class="setup-text">TangleClaw is back up at <code>${esc(redirectUrl)}</code>.</p>
+        <p class="setup-text-muted">This address will not work any more.</p>`,
+    unconfirmed: `
+        <p class="setup-text">The server was restarting, and this page has not seen it come back at <code>${esc(redirectUrl)}</code>.</p>
+        <p class="setup-text-muted">That may just mean this page cannot reach the new address — try opening it. If nothing loads, check <code>~/.tangleclaw/logs/</code>.</p>`
+  }[state];
+  // The heading names the operation and stays put across all three states; the
+  // panel below carries what has been observed. A heading that changes underneath
+  // the operator reads as a different screen appearing on its own.
+  body.innerHTML = `
+    <div class="setup-step" role="status" aria-live="polite"${state === 'waiting' ? ' aria-busy="true"' : ''}>
+      <h2 class="setup-heading">Restarting TangleClaw…</h2>
+      <div class="setup-https-restart-panel">${panel}
+        ${go}
       </div>
       ${_warningsBlock(warnings)}
     </div>`;
-  _pollRestartAndRedirect(redirectUrl);
 }
 
-async function _pollRestartAndRedirect(redirectUrl) {
+/**
+ * Probe the post-restart address and report what it finds. It never navigates.
+ *
+ * The probe used to redirect on success and then redirect ANYWAY at a 20s
+ * deadline, with no evidence the server had come back. Both are timer-driven UI
+ * lifecycle, which this project does not do (#98, #268): a page that moves on its
+ * own takes the decision away at exactly the moment the operator needs to read
+ * what happened, and the deadline branch actively asserted something it had not
+ * observed. The polling stays — knowing the server is back is genuinely useful —
+ * but it only ever changes the words on screen. Leaving is the button.
+ * @param {string} redirectUrl - Address to probe.
+ * @param {string[]} [warnings] - Warnings to keep on screen across re-renders.
+ * @returns {Promise<void>}
+ */
+async function _pollRestartReady(redirectUrl, warnings) {
   const deadline = Date.now() + 20000;
   // Give the server time to actually exit before we start probing.
   await new Promise((r) => setTimeout(r, 1200));
   while (Date.now() < deadline) {
     try {
       await fetch(redirectUrl, { mode: 'no-cors', cache: 'no-store' });
-      window.location.href = redirectUrl;
+      if (wizard.view === 'restarting') _renderRestartOverlay(redirectUrl, warnings, 'ready');
       return;
     } catch {
       await new Promise((r) => setTimeout(r, 800));
     }
   }
-  // Timeout fallback — redirect anyway so the user isn't stuck on the overlay.
-  window.location.href = redirectUrl;
+  if (wizard.view === 'restarting') _renderRestartOverlay(redirectUrl, warnings, 'unconfirmed');
 }

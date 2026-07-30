@@ -979,7 +979,18 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
   if (!present) {
     // Not "failed" — the child may still be running, or may never have started.
     // The wizard distinguishes those by its own deadline, not by this answer.
-    return jsonResponse(res, 200, { state: 'pending', ok: null, code: null });
+    //
+    // `logLocation` rides along even here, because the case it serves is the one
+    // where no better answer ever arrives: a child that dies between writing the
+    // plists and calling finish() leaves NO result file, so every poll gets this
+    // response until the wizard's deadline expires and it renders the crash
+    // screen. The log is then the only durable evidence of what happened, and
+    // without this the screen has no name to give for it. It discloses nothing —
+    // the constant is a relative path, chosen so it never names the OS account.
+    return jsonResponse(res, 200, {
+      state: 'pending', ok: null, code: null,
+      logLocation: ingressProvision.CUTOVER_LOG_RELATIVE
+    });
   }
   if (malformed) {
     // `unparseable-result`, not `unreadable`: this surface already uses

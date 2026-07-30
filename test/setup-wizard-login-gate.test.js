@@ -313,6 +313,36 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.match(html, /host:8443/);
     });
 
+    it('does NOT claim the login is in force when the gate never answered', async () => {
+      // `ok` and `healthOk` are separate facts on purpose — the cutover records
+      // them separately and its own tests pin the separation. `ok` says the plan
+      // was applied; `healthOk` says the gated address actually answered. Only
+      // both together justify "Your login is in force", because the chunk's rule
+      // is that no screen claims protection it did not observe. Branching on `ok`
+      // alone made an applied-but-unverified cutover render as confirmed.
+      const ctx = await provisionWith([
+        { state: 'done', ok: true, code: 'ok', healthOk: false }
+      ]);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.ok(!/Your login is in force/.test(html),
+        'an unobserved gate must not read as a confirmed one');
+      assert.match(html, /could not reach the gated address/,
+        'and the operator must be told which half is unverified');
+      assert.match(html, /asks for a username and password/,
+        'plus the check that settles it themselves');
+    });
+
+    it('still claims it in force when the gate did answer', async () => {
+      // The other side of the same edge: healthOk true must not be confused with
+      // healthOk false, or the fix above would suppress every success screen.
+      const ctx = await provisionWith([
+        { state: 'done', ok: true, code: 'ok', healthOk: true }
+      ]);
+      assert.equal(ctx.wizard.provision.phase, 'gated');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /Your login is in force/);
+    });
+
     it('treats an unreachable origin as still restarting, not as failure', async () => {
       // The server being polled is the one the cutover is kicking.
       const ctx = await provisionWith([

@@ -130,6 +130,31 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **Setup can no longer overwrite the admin credential on an install that is already finished
+  (#710).** `POST /api/setup/complete` authenticates nobody. The first-run guard added with the
+  provisioning work scoped the detached cutover spawn but not the credential write, so the
+  credential branch still ran unconditionally — an unauthenticated caller could set an admin
+  credential of their choosing on a completed install, reachable from off-box on the ungated,
+  network-reachable legacy grace state. The handler's own comment already said this was a settings
+  action rather than a setup one; now the code enforces it, with `409 SETUP_ALREADY_COMPLETE`. It
+  refuses rather than ignoring the field on purpose: answering `200` while silently dropping a
+  credential tells the caller a login is in force when none is.
+
+- **The wizard no longer reports a login as in force when it never saw the gate answer (#710).**
+  The cutover records `ok` (the plan was applied) and `healthOk` (the gated address answered) as
+  separate facts, and forwards both — but `_pollProvisionOutcome` branched on `ok` alone, so a
+  cutover whose health probe never came back green rendered "Your login is in force. Every page
+  will ask for it." That is the one claim this chunk exists to make only when observed. It now
+  lands on the existing "started — but it hasn't reported back" screen, which names which half is
+  unverified and tells the operator how to settle it themselves.
+
+- **The restart screen no longer navigates on a timer (#710, #98, #268).** `_showRestartOverlay`
+  redirected as soon as a `no-cors` probe succeeded and then, at a 20-second deadline, redirected
+  **anyway** — asserting a working server it had just spent 20 seconds failing to reach. No
+  timer-driven UI lifecycle is a standing project rule, and the same file already honors it on the
+  provisioning path. The probe stays, because knowing the server is back is genuinely useful; it
+  now only changes the words on screen. Leaving is the button, in all three states.
 - **The ingress rollback no longer crashes after succeeding (#789).**
   `node scripts/ingress-cutover.js --to direct` switched the ingress correctly and then threw
   `ERR_INVALID_PROTOCOL`, exiting 1 and writing no result file. `pollHealth` called `https.get`
@@ -210,6 +235,20 @@ All notable changes to TangleClaw are documented in this file.
 
   Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
+
+### Security
+- **A credential hash can no longer reach the application log through a cutover failure (#710).**
+  `observability-strategy.md` forbids passwords plaintext or hashed at any level. On the
+  `validate-failed` path the cutover's error text is `caddy validate` stderr, which quotes the
+  offending Caddyfile line — and the file it had just generated carries
+  `basic_auth <user> <bcrypt-hash>`. `GET /api/setup/provision-status` correctly withheld that
+  string from its response and then logged it verbatim: filtered at one boundary, unfiltered at the
+  other. New `caddy.redactHashes` scrubs it. This needed a second, unanchored pattern —
+  `BCRYPT_HASH_RE` is anchored and cannot match a substring, so redaction built on it would have
+  been a silent no-op, which a test now pins directly. The username is deliberately not redacted:
+  it is already at the HTTP boundary and is what makes the failure diagnosable. The cutover log is
+  also opened `0600` to match the result file it sits beside, since the child's stderr copy of the
+  same text lands there.
 
 ### Internal
 - **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
