@@ -2612,3 +2612,43 @@ listed above.
 **Why:** lib/sessions.js (launch, prime prompt generation, idle detection, wrap orchestration, peek, command injection, kill, history), lib/skills.js (skill loading, wrap skill), store.sessions.start/wrap/kill/markCrashed/count, store.learnings.* full CRUD with auto-promotion, 8 API endpoints (sessions launch/kill/status/command/wrap/peek/history, activity). Critic: 2 blocking fixed (command length validation added per security-model.md, COUNT(*) replaced inefficient session list for totals), 5 warnings addressed (busy-wait replaced with spawnSync sleep, dead code removed, idle cache leak acknowledged, LIMIT string interpolation noted).
 
 **Classification:** build
+
+## 2026-07-29: tmux targets match a session name exactly — no prefix fallback (#774, PR #775)
+
+**Why:** tmux resolves a `-t <name>` target by exact name, then by unique **prefix**, then by
+fnmatch. From code that silently retargets another project's session: with no `TangleClaw` session
+running, a relaunch's orphan check matched `TangleClaw-Roadmap` and killed it in production. The
+kill was the symptom, not the boundary — the same fallback was measured on `send-keys`,
+`capture-pane` and `set-option`, and `deploy/ttyd-attach.sh` would have attached the browser
+terminal to a neighbouring project's live pane.
+
+Every `-t` now goes through `_target()`, emitting `'=name:'`. The colon is load-bearing: a bare
+`=name` is honoured only by target-session verbs, while pane- and option-scoped verbs reject it
+("can't find pane"). Verified against tmux 3.6a, including that `set-option -t '=name:'` still
+writes the session option rather than a window one. `display-message` cannot be protected this way
+(it answers for the attached client instead of failing), so `isAlternateScreen` checks existence
+explicitly. `new-session -s` stays bare — it names a session, it does not target one.
+
+Critic `cumulative` rev-20260729T192459Z-2bd57807: 0 blocking, 6 warnings, 13 notes. All six
+closed here — a structural test pinning the `_target` invariant across all 20 call sites (three
+reviewers independently found that rule was held by prose alone), pane-vs-session target-shape
+assertions in the shell test plus reverting a quoting regex that had been loosened enough to accept
+the pre-fix form, mouse/hook round-trip coverage for the verbs whose rejection is silent
+(`getMouseState` catches and returns the wrong-but-plausible `{on:false}` that #574/#579 record as
+poisoning `sessionState.mouseOn`), this entry, and the `boundary-patterns.md` contract, which had
+been documenting the old wire form.
+
+Also hot-patched onto the running install the same day (uncommitted `lib/tmux.js` on `main` plus the
+live `~/.tangleclaw/deploy/ttyd-attach.sh` copy, server restarted and verified), because the exposed
+name pairs were live on a box about to go unattended.
+
+**Classification:** fix
+**chunks:** 5
+
+Follow-up `verify-resolutions` rev-20260729T194003Z-441ad91b confirmed all six fixed (0 blocking)
+and caught one more: the round-trip test was *named* for hooks while asserting only mouse state, and
+`setMouse` merely `log.warn`s when `set-hook -t` fails — so a rejected hook target would have left
+the auto-toggle hooks uninstalled with the suite green. It now reads them back via `show-hooks`.
+Also tightened the structural extractor to catch a quoted `-t '${x}'` spelling and pinned the site
+count at exactly 20 (a site disappearing is a regression too), and moved the colon rationale into
+`deploy/ttyd-attach.sh` itself, where the next editor will actually be reading.

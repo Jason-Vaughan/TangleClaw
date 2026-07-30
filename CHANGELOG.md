@@ -4,6 +4,39 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
+  The install instructions were a bare `git clone` of the default branch, so a new install took
+  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
+  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
+  network binding are configured — a half-finished version of that is exactly the thing not to hand
+  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
+  moves to `v5.0.0` when it ships, and the accompanying note is removed.
+  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
+  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
+
+### Fixed
+- **A session launch could kill, or type into, a different project's live session (#774).** tmux
+  resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
+  then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
+  With no session named `TangleClaw` running, every `-t TangleClaw` silently retargeted
+  `TangleClaw-Roadmap`. Relaunching one project killed the other's live session; the prefix fallback
+  was verified on `send-keys` and `set-option` too, so it could equally have typed into or
+  reconfigured the neighbour, and `deploy/ttyd-attach.sh` would have attached the browser terminal
+  to that neighbour's pane.
+
+  Every tmux target now carries tmux's `=` exact-match prefix, so an absent session is an error
+  instead of whichever running session its name happens to prefix. The form is `'=name:'`: a bare
+  `=name` is honoured only by commands taking a *target-session* (`has-session`, `kill-session`),
+  while `send-keys`, `capture-pane`, `paste-buffer`, `set-option`, `show-option(s)` and `set-hook`
+  reject it outright and need the trailing colon — verified against tmux 3.6a, including that
+  `set-option -t '=name:'` still writes the session option rather than a window one. `display-message`
+  is the one command that cannot be protected this way, because it answers for the attached client
+  rather than failing on an absent session, so its caller checks existence explicitly.
+
+  Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
+  `RentalClaw-Project` — were the exposed cases; no rename is needed now.
+
 ### Internal
 - **The ingress cutover can now report how it ended to something that isn't a terminal
   (#710, v5 chunk 2 groundwork).** `scripts/ingress-cutover.js` takes `--result-file <path>` and
@@ -115,17 +148,6 @@ All notable changes to TangleClaw are documented in this file.
   response, no enumeration of a second account name, `users` never crossing the boundary, the
   username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof that probing neither creates nor modifies a
   Caddyfile.
-
-### Changed
-- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
-  The install instructions were a bare `git clone` of the default branch, so a new install took
-  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
-  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
-  network binding are configured — a half-finished version of that is exactly the thing not to hand
-  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
-  moves to `v5.0.0` when it ships, and the accompanying note is removed.
-  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
-  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ## [4.38.0] - 2026-07-28
 

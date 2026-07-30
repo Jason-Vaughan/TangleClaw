@@ -2,6 +2,8 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const tmux = require('../lib/tmux');
 
 describe('tmux', () => {
@@ -540,6 +542,168 @@ describe('tmux', () => {
     it('should return false when killing a non-existent session', () => {
       const result = tmux.killSession('__never_existed_session__');
       assert.equal(result, false);
+    });
+  });
+
+  // tmux resolves a `-t` target by exact name, then by unique PREFIX, then by
+  // fnmatch. The prefix fallback is why a relaunch of project `Foo` killed live
+  // session `Foo-Bar`: with no `Foo` session, every `-t Foo` silently retargeted
+  // its longer-named neighbour. These tests pin the exact-match contract, so a
+  // target that loses its `=` prefix goes red instead of eating a neighbour.
+  describe('exact session-name targeting (no prefix fallback)', () => {
+    const base = '__tc_test_prefix__';
+    const longer = `${base}-neighbour`;
+
+    const withNeighbour = (fn) => {
+      tmux.createSession(longer, { command: 'exec bash --norc --noprofile' });
+      try {
+        assert.equal(tmux.hasSession(longer), true, 'precondition: neighbour should exist');
+        fn();
+      } finally {
+        try { tmux.killSession(longer); } catch (_) {}
+      }
+    };
+
+    it('should not report a session as existing when only a longer-named one does', () => {
+      withNeighbour(() => {
+        assert.equal(
+          tmux.hasSession(base),
+          false,
+          `hasSession('${base}') must be false while only '${longer}' is running`
+        );
+      });
+    });
+
+    it('should refuse to kill a longer-named session when the exact name is absent', () => {
+      withNeighbour(() => {
+        assert.equal(
+          tmux.killSession(base),
+          false,
+          'killSession must not resolve to a prefix-matched neighbour'
+        );
+        assert.equal(
+          tmux.hasSession(longer),
+          true,
+          'the neighbour session must survive — this is the data-loss case'
+        );
+      });
+    });
+
+    it('should refuse to send keys to a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(
+          () => tmux.sendKeys(base, 'echo prefix-leak'),
+          /does not exist/,
+          'sendKeys must not type into a prefix-matched neighbour'
+        );
+      });
+    });
+
+    it('should refuse to capture a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(
+          () => tmux.capturePane(base),
+          /does not exist/,
+          'capturePane must not read a prefix-matched neighbour'
+        );
+      });
+    });
+
+    // The behavioural tests above all enter through hasSession, so a `-t` that
+    // lost its exact-match target on some OTHER verb would still pass them.
+    // This reads the source instead, which is the only way to hold "every
+    // target goes through _target" for verbs whose misuse is silent.
+    it('should route every tmux -t target in lib/tmux.js through _target', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8');
+      // Matches a quoted spelling too (`-t '${x}'`), which the bare-brace form
+      // would let slip past unchecked.
+      const targets = [...src.matchAll(/-t '?\$\{([^}]+)\}/g)].map(m => m[1]);
+
+      // An exact floor, not a lower bound: a site DISAPPEARING is as much a
+      // regression as one losing its wrapper, and `>=` would wave that through.
+      assert.equal(targets.length, 20, `expected 20 -t sites in lib/tmux.js, found ${targets.length}`);
+      for (const expr of targets) {
+        assert.match(
+          expr,
+          /^_target\(/,
+          `every tmux -t target must be built by _target(), found: -t \${${expr}}`
+        );
+      }
+      // `new-session -s` names a session being created; it is not a target and
+      // must stay bare, or tmux would create a session literally called "=x:".
+      assert.match(src, /new-session[^\n]*-s \$\{_escapeArg\(name\)\}/,
+        'new-session -s names a new session and must NOT be exact-match wrapped');
+    });
+
+    // These four verbs reject a bare `=name` and are the ones whose failure is
+    // invisible: getMouseState catches and returns {on:false, explicit:false} —
+    // the wrong-but-plausible value #574/#579 record as poisoning
+    // sessionState.mouseOn. A round trip is the only thing that catches it.
+    it('should round-trip mouse state and hooks through exact-match targets', () => {
+      /** @returns {string} The session's installed hooks, via an exact-match target. */
+      const showHooks = () =>
+        tmux._exec(`tmux show-hooks -t ${tmux._escapeArg(`=${longer}:`)} 2>/dev/null`);
+
+      tmux.createSession(longer, { command: 'exec bash --norc --noprofile' });
+      try {
+        tmux.setMouse(longer, true, { hooks: true });
+        const on = tmux.getMouseState(longer);
+        assert.equal(on.on, true, 'mouse should read back on — a rejected target would read false');
+        assert.equal(on.explicit, true, 'a session-level override should be visible as explicit');
+
+        // setMouse only log.warns when `set-hook -t` fails, so a rejected hook
+        // target leaves the auto-toggle hooks uninstalled with the test still
+        // green. Read them back or this assertion is decoration.
+        assert.match(
+          showHooks(),
+          /after-select-window/,
+          'enabling with hooks:true must actually install the after-select-window hook'
+        );
+
+        tmux.setMouse(longer, false, { hooks: true });
+        assert.equal(tmux.getMouse(longer), false, 'mouse should read back off');
+        assert.doesNotMatch(
+          showHooks(),
+          /after-select-window/,
+          'disabling with hooks:true must actually unset the hook'
+        );
+
+        tmux.unsetMouse(longer);
+        assert.equal(
+          tmux.getMouseState(longer).explicit,
+          false,
+          'unsetMouse should remove the session-level override, not silently no-op'
+        );
+      } finally {
+        try { tmux.killSession(longer); } catch (_) {}
+      }
+    });
+
+    it('should refuse mouse and capture calls aimed at a prefix-matched neighbour', () => {
+      withNeighbour(() => {
+        assert.throws(() => tmux.getMouseState(base), /does not exist/);
+        assert.throws(() => tmux.setMouse(base, true), /does not exist/);
+        assert.throws(() => tmux.unsetMouse(base), /does not exist/);
+        assert.equal(
+          tmux.isAlternateScreen(base),
+          false,
+          'isAlternateScreen must not answer for the attached client when the session is absent'
+        );
+      });
+    });
+
+    it('should still act on the exact name when both it and a longer one exist', () => {
+      withNeighbour(() => {
+        tmux.createSession(base, { command: 'exec bash --norc --noprofile' });
+        try {
+          assert.equal(tmux.hasSession(base), true);
+          assert.equal(tmux.killSession(base), true);
+          assert.equal(tmux.hasSession(base), false, 'the exact-named session should be gone');
+          assert.equal(tmux.hasSession(longer), true, 'the neighbour should be untouched');
+        } finally {
+          try { tmux.killSession(base); } catch (_) {}
+        }
+      });
     });
   });
 });
