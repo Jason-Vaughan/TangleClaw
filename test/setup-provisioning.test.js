@@ -553,6 +553,49 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(store.config.load().chimeEnabled, false, 'the update still applied');
     });
+
+    it('refuses to OVERWRITE the credential on a completed install, and changes nothing', async () => {
+      // This route authenticates nobody. The cutover spawn was already first-run
+      // scoped; the credential write was not, so an unauthenticated caller could
+      // set an admin credential of their choosing on a finished install — reachable
+      // from off-box on the ungated legacy grace state. The handler's own comment
+      // claimed this was out of scope while the code did it anyway.
+      const config = store.config.load();
+      config.setupComplete = true;
+      config.authEnabled = true;
+      config.basicAuthUser = 'owner';
+      config.basicAuthHash = '$2a$14$' + 'a'.repeat(53);
+      store.config.save(config);
+
+      const res = await request(server, 'POST', '/api/setup/complete', {
+        adminUser: 'attacker', adminPassword: 'a-perfectly-valid-passphrase'
+      });
+
+      assert.equal(res.status, 409);
+      assert.equal(res.data.code, 'SETUP_ALREADY_COMPLETE');
+      const after = store.config.load();
+      assert.equal(after.basicAuthUser, 'owner', 'the existing credential must survive');
+      assert.equal(after.basicAuthHash, '$2a$14$' + 'a'.repeat(53));
+    });
+
+    it('refuses rather than silently ignoring the credential field', async () => {
+      // Dropping the field with a 200 would tell the caller it succeeded. On a
+      // machine with NO credential yet, that reads as "a login is now in force"
+      // when none is — the exact false report this chunk exists to prevent.
+      const config = store.config.load();
+      config.setupComplete = true;
+      config.authEnabled = false;
+      config.basicAuthUser = null;
+      config.basicAuthHash = null;
+      store.config.save(config);
+
+      const res = await request(server, 'POST', '/api/setup/complete', {
+        adminUser: 'someone', adminPassword: 'a-perfectly-valid-passphrase'
+      });
+
+      assert.equal(res.status, 409, 'must not answer 200 to a credential it did not set');
+      assert.equal(store.config.load().basicAuthUser, null, 'nothing was written');
+    });
   });
 
   describe('GET /api/setup/provision-status', () => {
@@ -590,6 +633,22 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.hasError, true);
       assert.equal(res.data.error, undefined);
       assert.ok(res.data.logLocation, 'the operator needs somewhere to read the reason');
+    });
+
+    it('redacts the hash before logging the failure reason, not only before returning it', () => {
+      // The endpoint already withholds `error` from the RESPONSE — the tests above
+      // pin that. It then logs the same string verbatim, and on the validate-failed
+      // path that string is `caddy validate` stderr quoting a
+      // `basic_auth <user> <bcrypt-hash>` line. Filtered at one boundary, unfiltered
+      // at the other. Source-asserted because the log call sits inside the request
+      // handler, where no test can observe the arguments it passes.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      assert.match(src,
+        /log\.warn\('Ingress cutover reported a failure',\s*\{[^}]*error: caddy\.redactHashes\(result\.error\)/,
+        'the failure reason must be redacted on its way to the log');
+      assert.doesNotMatch(src,
+        /log\.warn\('Ingress cutover reported a failure',\s*\{[^}]*error: result\.error\s*\}/,
+        'logging the raw reason puts a credential hash in the application log');
     });
 
     it('reports a corrupt outcome file as unparseable rather than as still pending', async () => {

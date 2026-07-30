@@ -998,8 +998,14 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
   }
   if (result.ok !== true && typeof result.error === 'string' && result.error) {
     // Logged, not returned. This is the operator's copy of the detail the
-    // response withholds.
-    log.warn('Ingress cutover reported a failure', { code: result.code || null, error: result.error });
+    // response withholds — but "withheld from the response" is not the same as
+    // "safe to log": on the validate-failed path this string is `caddy validate`
+    // stderr, which quotes the offending Caddyfile line, and that line is
+    // `basic_auth <user> <bcrypt-hash>`. observability-strategy.md forbids
+    // passwords hashed or plaintext at any level, so it is redacted here rather
+    // than trusted to be hash-free.
+    log.warn('Ingress cutover reported a failure',
+      { code: result.code || null, error: caddy.redactHashes(result.error) });
   }
   jsonResponse(res, 200, {
     state: 'done',
@@ -1239,6 +1245,18 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // enforced server-side so it can't be bypassed.
   const inCaddyMode = config.ingressMode === 'caddy';
   const adminProvided = body.adminUser !== undefined || body.adminPassword !== undefined;
+  // The credential write is first-run only, for the same reason the cutover spawn
+  // above is: this route authenticates nobody. Without this, an unauthenticated
+  // caller could POST a credential of their choosing onto an ALREADY-COMPLETED
+  // install — and on the ungated, network-reachable legacy grace state that is
+  // reachable from off-box. Refuse loudly rather than ignoring the field: silently
+  // dropping a credential the caller believes it set is its own false report, and
+  // the wizard would have no way to tell the difference.
+  if (adminProvided && !firstRun) {
+    return errorResponse(res, 409,
+      'Setup is already complete — change the admin credential from settings, not from setup.',
+      'SETUP_ALREADY_COMPLETE');
+  }
   if (adminProvided) {
     const adminUser = typeof body.adminUser === 'string' ? body.adminUser.trim() : '';
     const adminPassword = typeof body.adminPassword === 'string' ? body.adminPassword : '';
