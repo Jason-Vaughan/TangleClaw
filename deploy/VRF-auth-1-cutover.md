@@ -370,15 +370,6 @@ cp /tmp/config.before.json ~/.tangleclaw/config.json
       ```
 - [ ] Config restored before continuing.
 
-> **STATUS 2026-07-29 — phases 7b/7c/7d/7e are UNRUN, deliberately, and this is the gate on #710
-> chunk 2.** They cannot be run from a session on the developer's machine: a real cutover rewrites
-> launchd plists and restarts the TangleClaw server, and there that server is the live install
-> serving the operator's own dashboard from the same clone. What stands in for them meanwhile — unit
-> coverage of the decisions, and an interlock refusing a real spawn from a test process — does not
-> observe the detached child surviving the restart and does not prove a login is in force. **Chunk 2
-> must not be ticked, and its PR must not be treated as complete, on code review alone.** Run these
-> four on the habitat clean-room image and fill the report-back matrix.
-
 ## Phase 7e — The wizard's own provisioning survives the restart it causes  ← #710
 
 The single property no unit test can reach, and the reason the whole detached-child shape exists:

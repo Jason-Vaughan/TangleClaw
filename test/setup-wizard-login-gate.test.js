@@ -738,7 +738,9 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       // would delete the operator's only copy instead of removing a second one.
       const REASON = 'An existing Caddy login was found but could not be adopted';
       const { html } = await endOn(
-        { name: 'adopted', expect: /Setup finished/,
+        // NOT /Setup finished/ — that string also appears on the failed-provisioning
+        // screen, so it cannot prove this fixture landed on the adopted one.
+        { name: 'adopted', expect: /did not change it/,
           ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason', reason: REASON } },
         [REASON]
       );

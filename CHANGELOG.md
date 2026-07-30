@@ -152,20 +152,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 - **A setup outcome that explains why no login is in force is now printed once, without narrowing
-  what the API reports (#710).** Every arm of the ingress answer puts that sentence in both
+  what the API reports (#710).** Any outcome that ends ungated puts that sentence in both
   `ingress.reason` and `warnings`, because a client reading only `warnings` must still learn the
-  install is ungated — but three of the four terminal-screen states render `reason` themselves on the
-  same screen as the warnings block, so the operator read the identical sentence twice.
+  install is ungated — but the terminal-screen states render `reason` themselves on the same screen
+  as the warnings block, so the operator read the identical sentence twice.
 
-  The first attempt at this suppressed the push on one arm. That fixed the screen at the cost of the
-  field, and it fixed only the arm the finding named while three siblings kept duplicating — the
-  failure mode this chunk has now hit repeatedly. The duplication is a rendering concern, so it is
-  handled where the rendering happens: `_warningsBlock` in `public/setup.js` takes the prose its
-  caller has already printed and drops a warning matching it. That covers all four states at once and
-  any state added later, and the payload stays complete for every non-wizard consumer. The
-  de-duplication is keyed on what the caller actually rendered rather than on `reason` existing,
-  because a screen that never printed the reason would otherwise delete the operator's only copy —
-  pinned by a test that asserts the warning survives there.
+  The first attempt suppressed the push on one arm. That fixed the screen at the cost of the field,
+  and it fixed only the arm the finding named while three siblings kept duplicating — the failure
+  mode this chunk has now hit repeatedly. The duplication is a rendering concern, so it is handled
+  where the rendering happens: `_warningsBlock` in `public/setup.js` takes the prose its caller has
+  already printed and drops a warning matching it, and the payload stays complete for every
+  non-wizard consumer. The de-duplication is keyed on what the caller actually rendered rather than on
+  `reason` being set, because a screen that never printed the reason would otherwise delete the
+  operator's only copy — pinned by a test that asserts the warning survives there.
+
+  The second attempt then pushed from all four arms, which was still wrong in the other direction:
+  the plainest ungated install of all — no Caddy installed, so no credential anywhere — reaches **no
+  arm**, taking its `reason` from the plan. A warnings-only client learned nothing in exactly the case
+  that matters most. The push now happens once after the whole chain, scoped to the protection states
+  that mean no login is in force; `existing` and `pending` are excluded because their `reason`
+  describes a gate that is kept or in flight, and restating it would invent a problem. Both edges are
+  mutation-verified: removing the push and widening it to `existing` each turn a test red, the second
+  of which was green against the entire suite until this commit added the pin.
 
   Also recorded while covering the family: the adopt block's "could not be adopted" arm is
   unreachable by construction. An `adopt` plan exists only in caddy mode, and the caddy-mode

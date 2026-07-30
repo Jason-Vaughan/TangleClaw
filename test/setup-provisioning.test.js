@@ -305,6 +305,21 @@ describe('setup provisions a login by default', () => {
       assert.equal(config.basicAuthUser, 'jason');
     });
 
+    it('does not restate a login that IS in force as a warning', async () => {
+      // `reason` on the adopt-success path describes a working gate — "will be kept
+      // rather than replaced". The post-chain push is scoped to the ungated protection
+      // states precisely so a protected outcome cannot manufacture a problem to report.
+      // Verified by mutation: widening that condition to include 'existing' left every
+      // other assertion in this file, and the whole frontend suite, green.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      caddyIsLive();
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.data.ingress.protection, 'existing');
+      assert.match(res.data.ingress.reason, /kept rather than replaced/);
+      assert.ok(!res.data.warnings.some((w) => /kept rather than replaced/.test(w)),
+        'a login that is in force must not be restated as a warning');
+    });
+
     it('leaves the operator\'s Caddyfile byte-for-byte untouched', async () => {
       const content = handEdited([`jason ${BCRYPT_A}`]);
       writeLive(content);
@@ -443,6 +458,12 @@ describe('setup provisions a login by default', () => {
       assert.match(res.data.ingress.reason, /not installed/);
       assert.match(res.data.ingress.remedy, /install/i);
       assert.equal(cutovers.length, 0);
+      // The case that reaches NO arm of the ingress answer: `reason` comes from the
+      // plan and nothing below sets it. Pushing per-arm left the plainest ungated
+      // install of all — no Caddy, no credential anywhere — telling a client that
+      // reads only `warnings` nothing at all. The single post-chain push covers it.
+      assert.ok(res.data.warnings.some((w) => /not installed/.test(w)),
+        'a warnings-only client must learn an install with no gate at all is ungated');
     });
 
     it('does not adopt a credential from a config nothing is running', async () => {

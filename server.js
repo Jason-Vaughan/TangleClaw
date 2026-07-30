@@ -1371,14 +1371,16 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // 'pending' only ever means "a cutover is running and the answer is not in
     // yet"; the wizard resolves it by polling /api/setup/provision-status.
     protection: 'none',
-    // Whenever `reason` explains why no login is in force, the same sentence also
-    // goes into `warnings` — every arm below, without exception. `warnings` is the
-    // complete machine-readable list, because a client that reads only that field
-    // must still learn the install is ungated; `reason` is the wizard's prose copy.
-    // The two therefore overlap by design, and de-duplicating belongs at the point
-    // of RENDER, not here: `_warningsBlock` in public/setup.js drops any warning a
-    // screen has already printed. Suppressing the push instead silently narrows the
-    // API for every non-wizard consumer.
+    // Whenever this ends with no login in force, the explanation goes into BOTH
+    // `reason` and `warnings`. `warnings` is the complete machine-readable list,
+    // because a client that reads only that field must still learn the install is
+    // ungated; `reason` is the wizard's prose copy. They overlap by design.
+    //
+    // The push happens once, after the whole if/else chain below — not per-arm. An
+    // outcome can reach no arm at all, and per-arm pushes left that case reporting
+    // nothing. De-duplicating belongs at the point of RENDER: `_warningsBlock` in
+    // public/setup.js drops any warning the screen has already printed. Suppressing
+    // the push instead silently narrows the API for every non-wizard consumer.
     reason: ingressPlan.reason || null,
     remedy: ingressPlan.remedy || null,
     user: null,
@@ -1410,7 +1412,6 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       ingress.reason = `TangleClaw could not start the ingress cutover: ${started.error}. `
         + 'Your login has been saved but nothing is enforcing it yet.';
       ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy` at a terminal.';
-      warnings.push(ingress.reason);
       log.error('Setup could not start the ingress cutover', { error: started.error });
     }
   } else if (ingressPlan.action === 'adopt') {
@@ -1434,10 +1435,9 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         + 'credential it already had, not the new one.';
       ingress.remedy = 'Set both from one place with `node scripts/reset-admin.js`, which rewrites '
         + 'the credential in the live Caddy config as well.';
-      // Pushed like every other arm — see the note on `reason` above. The screen
-      // renders it once because `_warningsBlock` de-duplicates, not because this
-      // arm withholds it.
-      warnings.push(ingress.reason);
+      // `reason` reaches `warnings` from the single push after this chain — see the
+      // note on `reason` above. The screen still shows it once because the render
+      // de-duplicates, not because any arm withholds it.
       log.warn('Setup saved a credential the live Caddy config does not enforce', {
         user: after.basicAuthUser || null
       });
@@ -1457,12 +1457,10 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         + 'same credential.';
       ingress.remedy = 'If your saved login does not work, set both from one place with '
         + '`node scripts/reset-admin.js`.';
-      warnings.push(ingress.reason);
     } else {
       ingress.reason = 'An existing Caddy login was found but could not be adopted'
         + `${adoption && adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
       ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
-      warnings.push(ingress.reason);
       // Unreachable by construction, kept as the honest fallback if that ever changes.
       // An `adopt` plan only exists in caddy mode, and the caddy-mode credential gate
       // above refuses the request before this block runs whenever no complete credential
@@ -1482,6 +1480,23 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     ingress.user = config.basicAuthUser || null;
     warnings.push('Admin credential saved, but the Caddy config was left untouched. '
       + 'Run `node scripts/ingress-cutover.js --to caddy` to activate the login gate.');
+  }
+
+  // One place, after every branch, so the guarantee holds for outcomes that reach no
+  // branch at all — `refuse` with no credential anywhere (no Caddy installed, or a
+  // Caddyfile too ambiguous to adopt) sets `reason` from the plan and enters nothing
+  // below. Doing this per-arm left exactly that case — the plainest ungated install
+  // there is — telling a warnings-only client nothing.
+  //
+  // Only the states that mean "no login is in force" qualify. 'existing' and 'pending'
+  // carry a `reason` that describes a kept or in-flight gate, not a missing one, and
+  // restating it as a warning would invent a problem.
+  if (ingress.reason
+      && (ingress.protection === 'none'
+        || ingress.protection === 'unchanged'
+        || ingress.protection === 'existing-unverified')
+      && !warnings.includes(ingress.reason)) {
+    warnings.push(ingress.reason);
   }
 
   // Decide whether to schedule a restart so the server re-binds with the new protocol
