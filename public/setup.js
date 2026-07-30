@@ -1186,7 +1186,7 @@ async function _pollProvisionOutcome() {
       _renderProvisionScreen();
       return;
     }
-    if (data && data.state === 'unreadable') {
+    if (data && data.state === 'unparseable-result') {
       wizard.provision.phase = 'failed';
       wizard.provision.code = null;
       wizard.provision.hasError = true;
@@ -1212,7 +1212,7 @@ function _renderProvisionScreen() {
 
   if (p.phase === 'working') {
     body.innerHTML = `
-      <div class="setup-step">
+      <div class="setup-step" role="status" aria-live="polite" aria-busy="true">
         <h2 class="setup-heading">Putting your login in place…</h2>
         <div class="setup-https-restart-panel">
           <div class="spinner"></div>
@@ -1228,7 +1228,7 @@ function _renderProvisionScreen() {
 
   if (p.phase === 'gated') {
     body.innerHTML = `
-      <div class="setup-step">
+      <div class="setup-step" role="status" aria-live="polite">
         <h2 class="setup-heading">Your login is in force</h2>
         <p class="setup-text">TangleClaw is now behind a login${p.user ? ` for <strong>${esc(p.user)}</strong>` : ''}. Every page will ask for it.</p>
         ${url ? `<p class="setup-text-muted">TangleClaw has moved to <code>${esc(url)}</code>. This address will not work any more.</p>` : ''}
@@ -1239,7 +1239,7 @@ function _renderProvisionScreen() {
 
   if (p.phase === 'failed') {
     body.innerHTML = `
-      <div class="setup-step">
+      <div class="setup-step" role="alert">
         <h2 class="setup-heading">No login is in force</h2>
         <p class="setup-text">Setup finished, but putting a login in front of TangleClaw did not work${p.code ? ` (<code>${esc(p.code)}</code>)` : ''}. <strong>Nothing is asking for a password right now.</strong></p>
         ${p.hasError && p.logPath ? `<p class="setup-text-muted">It reported a reason, which is in <code>${esc(p.logPath)}</code> and in TangleClaw's log.</p>` : ''}
@@ -1262,7 +1262,7 @@ function _renderProvisionScreen() {
 
   body.innerHTML = p.reachable
     ? `
-    <div class="setup-step">
+    <div class="setup-step" role="alert">
       <h2 class="setup-heading">Started — but it hasn't reported back</h2>
       <p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>
       ${openedCheck}
@@ -1273,7 +1273,7 @@ function _renderProvisionScreen() {
       <button class="btn setup-btn" onclick="_finishAfterProvisioning()">Stay on this page</button>
     </div>`
     : `
-    <div class="setup-step">
+    <div class="setup-step" role="alert">
       <h2 class="setup-heading">Started — but this page can't see the result</h2>
       <p class="setup-text">The login setup was started and TangleClaw restarted. This page was served from an address the restart closes, so it cannot read the outcome.</p>
       ${openedCheck}

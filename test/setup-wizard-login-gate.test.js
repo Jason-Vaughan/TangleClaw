@@ -334,7 +334,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
 
     it('treats a corrupt outcome as a failure to confirm, not as success', async () => {
-      const ctx = await provisionWith([{ state: 'unreadable', error: 'could not be parsed' }]);
+      const ctx = await provisionWith([{ state: 'unparseable-result', hasError: true }]);
       assert.equal(ctx.wizard.provision.phase, 'failed');
       assert.match(ctx.document.getElementById('setupBody').innerHTML, /No login is in force/);
     });
@@ -589,6 +589,45 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await ctx.wizardComplete();
       await settle();
       assert.equal(ctx.wizard.step, stepBefore, 'an unrelated failure must not navigate');
+    });
+  });
+
+  describe('the screens that change without a click announce themselves', () => {
+    // Every state here is reached by a poll resolving, not by the operator doing
+    // something — so a screen reader user would otherwise have to go looking to
+    // find out whether a login is in force, which is the one fact this slice
+    // exists to state plainly.
+    async function provisionWith(answers) {
+      const ctx = loadSetup({
+        plan: PROVISION_PLAN,
+        statusFetch: (n) => {
+          const a = answers[Math.min(n, answers.length) - 1];
+          if (a === 'unreachable') throw new Error('ECONNREFUSED');
+          return { ok: true, json: async () => a };
+        },
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'provision', provisioning: true, protection: 'pending',
+            url: 'https://host:8443', user: 'jason' }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle(2000);
+      return ctx;
+    }
+
+    it('announces the in-progress and success states politely', async () => {
+      const ctx = await provisionWith([{ state: 'done', ok: true, code: 'ok' }]);
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /aria-live="polite"/);
+    });
+
+    it('announces a failure assertively, since it changes what the operator must do', async () => {
+      for (const answers of [[{ state: 'done', ok: false, code: 'failed' }], ['unreachable']]) {
+        const ctx = await provisionWith(answers);
+        assert.match(ctx.document.getElementById('setupBody').innerHTML, /role="alert"/);
+      }
     });
   });
 

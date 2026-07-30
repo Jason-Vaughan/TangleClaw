@@ -61,9 +61,12 @@ All notable changes to TangleClaw are documented in this file.
   Descoped explicitly: the wizard does not **install** Caddy. Running a package manager from an HTTP
   handler is its own capability, and the honest degraded path was already required for provisioning
   failure — caddy-missing reaches the same end state for a different reason, told plainly with the
-  two commands that fix it.
+  two commands that fix it. No issue filed for it yet; the reasoning is in the build plan and in
+  `deploy/INGRESS.md`, which also records why the cutover must run as a detached child and why its
+  outcome is often unobservable from the page that started it — both facts a future reader would
+  otherwise have to rediscover from a deleted plan.
 
-  **Tests:** 5242 passing overall. `test/ingress-provision.test.js` (31) — every Caddyfile state
+  **Tests:** 5244 passing overall. `test/ingress-provision.test.js` (31) — every Caddyfile state
   mapped to exactly one action, an unrecognized state failing closed, `provision` pinned to
   `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress each beating
   `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,

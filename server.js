@@ -964,11 +964,18 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
     return jsonResponse(res, 200, { state: 'pending', ok: null, code: null });
   }
   if (malformed) {
+    // `unparseable-result`, not `unreadable`: this surface already uses
+    // `unreadable` for a Caddyfile that cannot be read, and one word meaning two
+    // unrelated conditions on the same endpoint family is how a caller ends up
+    // answering the wrong one.
+    log.warn('Ingress cutover wrote an outcome file that could not be parsed',
+      { path: ingressProvision.resultPath() });
     return jsonResponse(res, 200, {
-      state: 'unreadable',
+      state: 'unparseable-result',
       ok: null,
       code: null,
-      error: 'The cutover wrote an outcome file that could not be parsed.'
+      hasError: true,
+      logPath: ingressProvision.cutoverLogPath()
     });
   }
   if (result.ok !== true && typeof result.error === 'string' && result.error) {

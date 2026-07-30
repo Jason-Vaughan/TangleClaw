@@ -483,12 +483,17 @@ describe('setup provisions a login by default', () => {
       assert.ok(res.data.logPath, 'the operator needs somewhere to read the reason');
     });
 
-    it('reports a corrupt outcome file as unreadable rather than as still pending', async () => {
+    it('reports a corrupt outcome file as unparseable rather than as still pending', async () => {
       fs.writeFileSync(provision.resultPath(), '{ not json');
       const res = await request(server, 'GET', '/api/setup/provision-status');
-      assert.equal(res.data.state, 'unreadable');
+      // Deliberately NOT `unreadable`: that word already means "the Caddyfile
+      // could not be read" on this endpoint family, and one name for two unrelated
+      // conditions is how a caller answers the wrong one.
+      assert.equal(res.data.state, 'unparseable-result');
+      assert.notEqual(res.data.state, 'unreadable');
       assert.equal(res.data.ok, null);
-      assert.ok(res.data.error);
+      assert.equal(res.data.hasError, true);
+      assert.ok(res.data.logPath, 'the operator needs somewhere to read what was in it');
     });
 
     it('discloses no paths, usernames or hashes — including through `error`', async () => {
