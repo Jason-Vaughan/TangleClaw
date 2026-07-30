@@ -36,7 +36,14 @@ const wizard = {
   ingressPlan: null,
   ingressPlanError: null,
   // Outcome of provisioning, once setup has been submitted.
-  provision: null
+  provision: null,
+  // Which screen owns the wizard body: the step flow, or one of the terminal
+  // screens setup ends on. Modelled explicitly because three things re-render
+  // asynchronously (the ingress probe, the provisioning poll, and step
+  // navigation) and without it the last one to resolve wins — a probe that
+  // returned late could repaint a live "no login is in force" screen with a
+  // wizard step while the poll kept writing into a body it no longer owned.
+  view: 'steps'
 };
 
 /**
@@ -131,6 +138,7 @@ function showWizard() {
   wizard.chimeEnabled = state.config ? state.config.chimeEnabled !== false : true;
   wizard.step = 0;
   wizard.provision = null;
+  wizard.view = 'steps';
 
   _syncSkipButton();
   // Ask what this machine can do about a login. Deliberately not awaited: the
@@ -206,9 +214,24 @@ async function wizardSkip() {
 // ── Step Rendering ──
 
 function renderWizardStep() {
+  // The step flow is only one of the things that can own the body. Once setup has
+  // been submitted, a terminal screen owns it and must not be painted over — the
+  // probe and the outcome poll both re-render asynchronously, and whichever
+  // resolved last would otherwise win.
+  if (wizard.view !== 'steps') return;
+
   const body = document.getElementById('setupBody');
   const keys = wizardStepKeys();
   wizard.totalSteps = keys.length;
+
+  // The step list changes length at runtime (the admin step appears once the
+  // server's plan arrives, and would disappear again if a re-probe failed), so an
+  // integer index into it can be left pointing past the end. Clamp before use:
+  // an out-of-range index used to match no case in the switch below and leave the
+  // previous screen in place, which read as a Confirm step that re-submitted into
+  // the same refusal forever.
+  if (wizard.step > keys.length - 1) wizard.step = keys.length - 1;
+  if (wizard.step < 0) wizard.step = 0;
   _renderStepDots(keys.length);
 
   switch (keys[wizard.step]) {
@@ -220,6 +243,13 @@ function renderWizardStep() {
     case 'https': renderHttpsSetup(body); break;
     case 'admin': renderAdminSetup(body); break;
     case 'confirm': renderConfirm(body); break;
+    default:
+      // Unreachable after the clamp above. Rendering the first step is the safe
+      // answer if it ever is reached — a blank body with working dots is the one
+      // outcome the operator cannot act on.
+      wizard.step = 0;
+      renderWelcome(body);
+      break;
   }
 }
 
@@ -978,7 +1008,10 @@ async function wizardComplete() {
     // run a gate. Reaching that means the wizard's own plan was stale or missing
     // (a failed probe reads as "no admin step"), so re-ask and route back to the
     // step rather than leaving the operator on an error they cannot act on.
-    if (/admin/i.test(api.lastError || '')) await _recoverToAdminStep();
+    // The stable code, not the message: the server sends ADMIN_REQUIRED on both
+    // refusals, and matching prose both breaks on any rewording and over-matches
+    // (a bad adminUser and a hashing failure also say "admin").
+    if (api.lastErrorCode === 'ADMIN_REQUIRED') await _recoverToAdminStep();
     return;
   }
 
@@ -998,12 +1031,22 @@ async function wizardComplete() {
   // What happened to the login, before anything else — it is the one outcome the
   // operator must not be left guessing about.
   const ingress = result.ingress || null;
+  // The warnings were rendered into #setupCompleteError above, which lives inside
+  // the confirm step's body — and every terminal screen below replaces that body.
+  // Carry them onto the screen instead of letting the render that reports them
+  // also be the render that discards them.
+  const carried = Array.isArray(result.warnings) ? result.warnings : [];
   if (ingress && ingress.provisioning) {
-    _showProvisioningScreen(ingress);
+    _showProvisioningScreen(ingress, carried);
     return;
   }
-  if (ingress && ingress.protection === 'none') {
-    _showUnprotectedScreen(ingress);
+  if (ingress && (ingress.protection === 'none' || ingress.protection === 'unchanged'
+      || ingress.protection === 'existing-unverified')) {
+    // 'unchanged' and 'existing-unverified' both mean a credential exists and
+    // TangleClaw cannot say it is in force. Dismissing into a dashboard that looks
+    // identical to a protected one is the failure this screen exists to prevent,
+    // so they route here rather than falling through.
+    _showUnprotectedScreen(ingress, carried);
     return;
   }
 
@@ -1058,6 +1101,24 @@ const PROVISION_POLL_MS = 1500;
 const PROVISION_DEADLINE_MS = 90000;
 
 /**
+ * Render the server's warnings as a block, or nothing when there are none.
+ *
+ * The confirm step reported these into an element the terminal screens replace,
+ * so each terminal screen re-states them. A skipped project or an unadoptable
+ * credential must not vanish because the screen that would have shown it was
+ * swapped out.
+ * @param {string[]} warnings
+ * @returns {string} HTML, or '' when there is nothing to say.
+ */
+function _warningsBlock(warnings) {
+  const list = Array.isArray(warnings) ? warnings.filter((w) => typeof w === 'string' && w) : [];
+  if (list.length === 0) return '';
+  return `<div class="form-error" role="status"><strong>Also worth knowing:</strong><ul>`
+    + list.map((w) => `<li>${esc(w)}</li>`).join('')
+    + `</ul></div>`;
+}
+
+/**
  * How exposed an ungated TangleClaw actually is, in one sentence.
  *
  * Read from the server's own bind classification rather than assumed. An install
@@ -1078,15 +1139,18 @@ function _exposureSentence(exposed) {
  * Show the provisioning screen and start polling for the cutover's outcome.
  * @param {object} ingress - `ingress` block from POST /api/setup/complete.
  */
-function _showProvisioningScreen(ingress) {
+function _showProvisioningScreen(ingress, warnings) {
+  wizard.view = 'provisioning';
   wizard.provision = {
     phase: 'working',
     url: ingress.url || null,
     user: ingress.user || null,
     code: null,
-    error: null,
+    hasError: false,
+    logPath: null,
     reachable: true,
-    networkExposed: ingress.networkExposed === true
+    networkExposed: ingress.networkExposed === true,
+    warnings: Array.isArray(warnings) ? warnings : []
   };
   _renderProvisionScreen();
   _pollProvisionOutcome();
@@ -1117,13 +1181,16 @@ async function _pollProvisionOutcome() {
     if (data && data.state === 'done') {
       wizard.provision.phase = data.ok ? 'gated' : 'failed';
       wizard.provision.code = data.code || null;
-      wizard.provision.error = data.error || null;
+      wizard.provision.hasError = data.hasError === true;
+      wizard.provision.logPath = data.logPath || null;
       _renderProvisionScreen();
       return;
     }
     if (data && data.state === 'unreadable') {
       wizard.provision.phase = 'failed';
-      wizard.provision.error = data.error || 'The cutover did not report a usable outcome.';
+      wizard.provision.code = null;
+      wizard.provision.hasError = true;
+      wizard.provision.logPath = data.logPath || null;
       _renderProvisionScreen();
       return;
     }
@@ -1154,6 +1221,7 @@ function _renderProvisionScreen() {
             ? 'Waiting for it to report back.'
             : 'The server is restarting, so this page cannot reach it for a moment.'}</p>
         </div>
+        ${_warningsBlock(p.warnings)}
       </div>`;
     return;
   }
@@ -1174,21 +1242,43 @@ function _renderProvisionScreen() {
       <div class="setup-step">
         <h2 class="setup-heading">No login is in force</h2>
         <p class="setup-text">Setup finished, but putting a login in front of TangleClaw did not work${p.code ? ` (<code>${esc(p.code)}</code>)` : ''}. <strong>Nothing is asking for a password right now.</strong></p>
-        ${p.error ? `<p class="setup-text-muted">${esc(p.error)}</p>` : ''}
+        ${p.hasError && p.logPath ? `<p class="setup-text-muted">It reported a reason, which is in <code>${esc(p.logPath)}</code> and in TangleClaw's log.</p>` : ''}
         <p class="setup-text-muted">${_exposureSentence(p.networkExposed)} To put the login in place, run
           <code>node scripts/ingress-cutover.js --to caddy</code> at a terminal.</p>
+        ${_warningsBlock(p.warnings)}
         <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue unprotected</button>
       </div>`;
     return;
   }
 
-  // 'unconfirmed' — the honest end of an unobservable cutover.
-  body.innerHTML = `
+  // 'unconfirmed' — the deadline passed. Which of the two things happened is the
+  // whole content of this screen, and `reachable` is the only evidence for it.
+  // Claiming the origin closed when it never did would send an operator whose
+  // cutover merely stalled to --rollback for no reason.
+  const openedCheck = url
+    ? `<p class="setup-text">Open <code>${esc(url)}</code>. <strong>If it asks for a username and password, your login is in force.</strong> If it loads without asking, it is not.</p>`
+    : '';
+  const rollback = '<p class="setup-text-muted">If nothing loads at all, run <code>node scripts/ingress-cutover.js --rollback</code> at a terminal to put TangleClaw back the way it was.</p>';
+
+  body.innerHTML = p.reachable
+    ? `
+    <div class="setup-step">
+      <h2 class="setup-heading">Started — but it hasn't reported back</h2>
+      <p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>
+      ${openedCheck}
+      ${p.logPath ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logPath)}</code>.</p>` : ''}
+      ${rollback}
+      ${_warningsBlock(p.warnings)}
+      ${signIn}
+      <button class="btn setup-btn" onclick="_finishAfterProvisioning()">Stay on this page</button>
+    </div>`
+    : `
     <div class="setup-step">
       <h2 class="setup-heading">Started — but this page can't see the result</h2>
-      <p class="setup-text">The login gate was set up and TangleClaw restarted. This page was served from an address the restart closes, so it cannot read the outcome.</p>
-      ${url ? `<p class="setup-text">Open <code>${esc(url)}</code>. <strong>If it asks for a username and password, your login is in force.</strong> If it loads without asking, it is not.</p>` : ''}
-      <p class="setup-text-muted">If nothing loads at all, run <code>node scripts/ingress-cutover.js --rollback</code> at a terminal to put TangleClaw back the way it was.</p>
+      <p class="setup-text">The login setup was started and TangleClaw restarted. This page was served from an address the restart closes, so it cannot read the outcome.</p>
+      ${openedCheck}
+      ${rollback}
+      ${_warningsBlock(p.warnings)}
       ${signIn}
       <button class="btn setup-btn" onclick="_finishAfterProvisioning()">Stay on this page</button>
     </div>`;
@@ -1200,6 +1290,7 @@ function _renderProvisionScreen() {
  * @returns {Promise<void>}
  */
 async function _finishAfterProvisioning() {
+  wizard.view = 'steps';
   await loadConfig();
   dismissWizard();
 }
@@ -1211,15 +1302,29 @@ async function _finishAfterProvisioning() {
  * identical to a protected one.
  * @param {object} ingress - `ingress` block from POST /api/setup/complete.
  */
-function _showUnprotectedScreen(ingress) {
+function _showUnprotectedScreen(ingress, warnings) {
+  wizard.view = 'unprotected';
   const body = document.getElementById('setupBody');
   if (!body) return;
+
+  // Three states land here and they are not the same claim. 'none' means there is
+  // no login at all. 'unchanged' and 'existing-unverified' mean a credential is
+  // stored while TangleClaw cannot say it is being enforced — asserting "nothing
+  // is asking for a password" there would be a guess in the other direction.
+  const stored = ingress.protection === 'unchanged' || ingress.protection === 'existing-unverified';
+  const heading = stored ? 'Your login is saved, but not confirmed' : 'TangleClaw has no login';
+  const lead = stored
+    ? `<p class="setup-text">A login is saved, but TangleClaw <strong>cannot confirm anything is enforcing it</strong>, and it did not change the Caddy config to find out.</p>`
+    : `<p class="setup-text"><strong>Nothing is asking for a password.</strong> ${esc(ingress.reason || 'TangleClaw could not put a login in front of itself on this machine.')}</p>`;
+
   body.innerHTML = `
     <div class="setup-step">
-      <h2 class="setup-heading">TangleClaw has no login</h2>
-      <p class="setup-text"><strong>Nothing is asking for a password.</strong> ${esc(ingress.reason || 'TangleClaw could not put a login in front of itself on this machine.')}</p>
+      <h2 class="setup-heading">${esc(heading)}</h2>
+      ${lead}
+      ${stored && ingress.reason ? `<p class="setup-text-muted">${esc(ingress.reason)}</p>` : ''}
       ${ingress.remedy ? `<p class="setup-text-muted">${esc(ingress.remedy)}</p>` : ''}
       <p class="setup-text-muted">${_exposureSentence(ingress.networkExposed === true)}</p>
+      ${_warningsBlock(warnings)}
       <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue</button>
     </div>`;
 }

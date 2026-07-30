@@ -26,9 +26,10 @@ Plus: the **first-run Setup Wizard** (projects dir / engine / methodology / chim
 **HTTPS mkcert cert-gen**) — only testable on a clean install, since it never re-fires once
 configured.
 
-> **Not in scope (doesn't exist on this branch):** the AUTH-2 forced-admin wizard step
-> (`caddy hash-password`, no-default-creds, break-glass). This box becomes its test bed
-> once AUTH-2 is built.
+> **Now in scope.** The forced-admin wizard step (`caddy hash-password`, no default
+> credential) shipped, and setup provisions the gate itself — so phases **7b–7e** below cover
+> the machine-readable outcome channel and the server-spawned cutover the wizard drives.
+> Break-glass recovery is still verified separately.
 
 ---
 
@@ -476,9 +477,13 @@ mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
 | #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
 | Rollback restores direct mode cleanly | 8 | |
 
-All **nine** green → `VRF-auth-1-cutover` PASSES.
+**Every row above** green → `VRF-auth-1-cutover` PASSES. (Count the rows rather than trusting a
+number written here — the matrix grows as phases are added, and a stale count is how a phase gets
+quietly dropped from the criterion.)
 
-Phases 7b and 7c are not optional: they are the accepted substitute for unit coverage of the
-executor's ordering, which cannot be tested in-process (see #772). A run that skips them has not
-verified the #710 work at all.
+Phases **7b, 7c, 7d and 7e are not optional**: they are the accepted substitute for unit coverage
+that cannot exist in-process (see #772). 7b/7c/7d cover the executor's ordering; **7e is the only
+end-to-end proof that a login is actually in force** after the wizard-driven, server-spawned path —
+everything in-process stubs that spawn, necessarily, because a real one restarts the machine's live
+install. A run that skips any of them has not verified the #710 work at all.
 Any red → capture the failing command's output + `~/.tangleclaw/logs/` and stop.

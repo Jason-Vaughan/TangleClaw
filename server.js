@@ -910,7 +910,9 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
   const state = caddy.classifyIngressState();
   const plan = ingressProvision.decideProvisioning({
     state: state.state,
+    safeToWrite: state.safeToWrite,
     caddyAvailable: detection.available,
+    ingressMode: config.ingressMode,
     user: duringSetup ? state.user : null
   });
   jsonResponse(res, 200, {
@@ -945,8 +947,15 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
 // must also handle its own origin disappearing (an operator who reached setup
 // over direct HTTPS, or over a LAN address, loses it at the restart).
 //
-// Nothing secret crosses this boundary: a coarse outcome code, the target, and
-// whether the health probe passed. No paths, no usernames, no hashes.
+// Nothing secret crosses this boundary, and that is enforced by what is BUILT
+// rather than by what the child happened to write: a coarse outcome code, the
+// target, and whether the health probe passed. The child's free-text `error` is
+// deliberately NOT forwarded — its producer fills that field with absolute
+// filesystem paths (an unreadable Caddyfile names its path, a backup names its
+// path, `caddy validate` stderr names the config and can quote the offending
+// line), and this route has no `setupComplete` gate in front of it. The detail is
+// not lost: it goes to the server log and to the cutover's own log file, where an
+// operator can read it and a stranger cannot.
 route('GET', '/api/setup/provision-status', (_req, res) => {
   const { present, malformed, result } = ingressProvision.readResult();
   if (!present) {
@@ -962,13 +971,21 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
       error: 'The cutover wrote an outcome file that could not be parsed.'
     });
   }
+  if (result.ok !== true && typeof result.error === 'string' && result.error) {
+    // Logged, not returned. This is the operator's copy of the detail the
+    // response withholds.
+    log.warn('Ingress cutover reported a failure', { code: result.code || null, error: result.error });
+  }
   jsonResponse(res, 200, {
     state: 'done',
     ok: result.ok === true,
     code: typeof result.code === 'string' ? result.code : null,
     target: typeof result.target === 'string' ? result.target : null,
     healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
-    error: typeof result.error === 'string' ? result.error : null,
+    // `hasError` rather than the message: enough for the wizard to say the
+    // cutover reported a reason and name where to read it.
+    hasError: typeof result.error === 'string' && result.error.length > 0,
+    logPath: ingressProvision.cutoverLogPath(),
     finishedAt: typeof result.finishedAt === 'string' ? result.finishedAt : null
   });
 });
@@ -1085,7 +1102,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
-  const config = store.config.load();
+  let config = store.config.load();
   const warnings = [];
   // Captured before this handler sets it. Provisioning is a FIRST-RUN action: it
   // rewrites launchd plists and restarts the server, and this route has never
@@ -1095,6 +1112,50 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // unauthenticated caller a service restart. Changing the credential on a
   // finished install is a settings action with its own surface, not this one.
   const firstRun = config.setupComplete === false;
+
+  // A login is the DEFAULT outcome of setup, not something that happens only on a
+  // machine already running behind Caddy. The same derivation the wizard asked for
+  // at GET /api/setup/ingress-state decides what this install can have, so the two
+  // cannot disagree about a machine between the step list and the submission:
+  //
+  //   provision → the wizard collected a credential; persist it, then hand the
+  //               cutover to a detached child (it restarts this server, so this
+  //               handler cannot run it and live to report the outcome).
+  //   adopt     → a working hand-rolled gate is already in front of us; take its
+  //               credential into config and never collect a second one.
+  //   refuse    → nothing may be written. Finish honestly ungated rather than
+  //               storing a credential nothing enforces.
+  const ingressDetection = caddy.detectCaddy();
+  const ingressState = caddy.classifyIngressState();
+  const ingressPlan = firstRun
+    ? ingressProvision.decideProvisioning({
+      state: ingressState.state,
+      safeToWrite: ingressState.safeToWrite,
+      caddyAvailable: ingressDetection.available,
+      ingressMode: config.ingressMode,
+      user: ingressState.user
+    })
+    // Already-complete install: report the state, act on nothing. `refuse` is the
+    // no-op action, so a re-POST persists whatever config fields it carries and
+    // leaves the ingress exactly as it found it.
+    : { action: 'refuse', reason: 'Setup is already complete, so the ingress was left unchanged.',
+      remedy: null, user: null };
+
+  // Adoption happens HERE, before the credential gates below, because it is what
+  // supplies the credential in this case. Run after them and a caddy-mode install
+  // whose hand-maintained Caddyfile already holds the only login would be refused
+  // with ADMIN_REQUIRED — the one shape the adopt path exists to serve.
+  //
+  // `adoptCredentialIntoConfig` persists its own copy of config, so re-read
+  // rather than carrying a stale object forward. Safe at this point precisely
+  // because nothing from the request body has been applied yet.
+  let adoption = null;
+  if (ingressPlan.action === 'adopt') {
+    // requireCaddyMode is off because the plan already established that Caddy IS
+    // the live ingress — the guard's own question, asked one layer up.
+    adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
+    if (adoption.changed) config = store.config.load();
+  }
 
   // Snapshot HTTPS state before mutations so we can decide whether to restart
   const prevHttps = {
@@ -1140,32 +1201,6 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   } else if (config.httpsEnabled && (config.httpsCertPath || config.httpsKeyPath)) {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
-
-  // A login is the DEFAULT outcome of setup, not something that happens only on a
-  // machine already running behind Caddy. The same derivation the wizard asked for
-  // at GET /api/setup/ingress-state decides what this install can have, so the two
-  // cannot disagree about a machine between the step list and the submission:
-  //
-  //   provision → the wizard collected a credential; persist it, then hand the
-  //               cutover to a detached child (it restarts this server, so this
-  //               handler cannot run it and live to report the outcome).
-  //   adopt     → a working hand-rolled gate is already in front of us; take its
-  //               credential into config and never collect a second one.
-  //   refuse    → nothing may be written. Finish honestly ungated rather than
-  //               storing a credential nothing enforces.
-  const ingressDetection = caddy.detectCaddy();
-  const ingressState = caddy.classifyIngressState();
-  const ingressPlan = firstRun
-    ? ingressProvision.decideProvisioning({
-      state: ingressState.state,
-      caddyAvailable: ingressDetection.available,
-      user: ingressState.user
-    })
-    // Already-complete install: report the state, act on nothing. `refuse` is the
-    // no-op action, so a re-POST persists whatever config fields it carries and
-    // leaves the ingress exactly as it found it.
-    : { action: 'refuse', reason: 'Setup is already complete, so the ingress was left unchanged.',
-      remedy: null, user: null };
 
   // AUTH-2 — forced first-run admin in caddy ingress mode. The login gate lives at
   // Caddy (basic_auth), so completing setup behind Caddy with NO credential would
@@ -1320,8 +1355,8 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   };
 
   if (ingressPlan.action === 'provision') {
-    // A leftover outcome from an earlier run would be read as this one's.
-    ingressProvision.clearResult();
+    // spawnCutover clears any previous outcome itself, so the poller cannot read
+    // an earlier run's result as this one's.
     const started = _spawnCutover({ target: 'caddy' });
     if (started.ok) {
       ingress.provisioning = true;
@@ -1342,17 +1377,28 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       log.error('Setup could not start the ingress cutover', { error: started.error });
     }
   } else if (ingressPlan.action === 'adopt') {
-    const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
-    // Re-read: adoption persists its own copy of config, so the local object is
-    // behind by exactly the fields we now want to report.
-    const after = store.config.load();
-    const gated = !!(after.authEnabled && after.basicAuthUser && after.basicAuthHash);
-    if (gated) {
+    // Adoption already ran, above the credential gates. Report what it answered.
+    const after = config;
+    if (adoption && adoption.adopted) {
       ingress.protection = 'existing';
+      ingress.user = adoption.user || after.basicAuthUser || null;
+    } else if (after.authEnabled && after.basicAuthUser && after.basicAuthHash) {
+      // Config already carried a credential, so adoption deliberately no-opped
+      // rather than overwriting it. The live Caddyfile may enforce a DIFFERENT
+      // one, and nothing here can tell — so this is not "your existing login was
+      // kept". Reporting it as such is how a config-vs-live mismatch becomes
+      // invisible, which this repo already ships an auth-drift warning for.
+      ingress.protection = 'existing-unverified';
       ingress.user = after.basicAuthUser;
+      ingress.reason = 'A login is already configured and a hand-maintained Caddy config is in front '
+        + 'of TangleClaw. TangleClaw did not change either, and cannot tell whether they carry the '
+        + 'same credential.';
+      ingress.remedy = 'If your saved login does not work, set both from one place with '
+        + '`node scripts/reset-admin.js`.';
+      warnings.push(ingress.reason);
     } else {
       ingress.reason = 'An existing Caddy login was found but could not be adopted'
-        + `${adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
+        + `${adoption && adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
       ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
       warnings.push(ingress.reason);
     }

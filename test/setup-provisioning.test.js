@@ -91,6 +91,11 @@ function requestWithHost(server, host, body) {
   });
 }
 
+/** Call the real module spawner — reaches its test-process interlock, never a cutover. */
+function provisionModuleSpawn(opts) {
+  return provision.spawnCutover(opts);
+}
+
 /** A hand-edited Caddyfile (no integrity stamp) carrying the given credential lines. */
 function handEdited(credentialLines) {
   return [
@@ -242,13 +247,21 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.url, 'https://cursatory.tail123678.ts.net:8443');
     });
 
-    it('clears a previous run\'s outcome before starting, so a stale ok cannot be read as this one', async () => {
-      fs.writeFileSync(provision.resultPath(), JSON.stringify({ ok: true, code: 'ok', target: 'caddy' }));
-      await request(server, 'POST', '/api/setup/complete', {
+    it('provisions through the real module, so the module\'s own guards apply', async () => {
+      // Clearing a previous outcome before the child starts is now spawnCutover's
+      // job rather than this route's (pinned in test/ingress-provision.test.js), so
+      // it cannot be asserted through a stubbed spawner. What this route is
+      // responsible for is going through that module at all — proved here by
+      // removing the stub and observing the module's test-process interlock, which
+      // only exists inside lib/ingress-provision.js.
+      _setCutoverSpawner((opts) => provisionModuleSpawn(opts));
+      const res = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
       });
-      const status = await request(server, 'GET', '/api/setup/provision-status');
-      assert.equal(status.data.state, 'pending', 'the poll read a previous run as this one');
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.provisioning, false,
+        'the interlock refused a real cutover, which is the module speaking');
+      assert.match(res.data.ingress.reason, /nothing is enforcing it/);
     });
 
     it('says plainly that nothing is enforcing the login when the cutover cannot start', async () => {
@@ -270,8 +283,16 @@ describe('setup provisions a login by default', () => {
   });
 
   describe('adopt — a working hand-rolled gate is already there', () => {
+    /** Put the install behind Caddy — adoption only claims protection when it is live. */
+    function caddyIsLive() {
+      const c = store.config.load();
+      c.ingressMode = 'caddy';
+      store.config.save(c);
+    }
+
     it('keeps the existing login instead of collecting or provisioning a second one', async () => {
       writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      caddyIsLive();
       const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.action, 'adopt');
@@ -287,8 +308,39 @@ describe('setup provisions a login by default', () => {
     it('leaves the operator\'s Caddyfile byte-for-byte untouched', async () => {
       const content = handEdited([`jason ${BCRYPT_A}`]);
       writeLive(content);
+      caddyIsLive();
       await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
       assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), content);
+    });
+
+    it('will not call an on-disk login "kept" when Caddy is not the active ingress', async () => {
+      // `ingress-cutover.js --rollback` leaves exactly this shape behind: a gated
+      // Caddyfile with Caddy unloaded and ingressMode back to direct. Adopting
+      // there would set authEnabled on an install with nothing in front of it.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.data.ingress.action, 'refuse');
+      assert.equal(res.data.ingress.protection, 'none');
+      assert.equal(store.config.load().authEnabled, false);
+    });
+
+    it('does not claim an existing login was kept when adoption no-opped', async () => {
+      // computeCaddyfileAdoption never overwrites a credential already in config,
+      // so on an install that has one, adoption is a no-op while the live
+      // hand-maintained file may enforce a DIFFERENT credential. Reporting
+      // "existing" from a config predicate is how that drift goes unseen.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      caddyIsLive();
+      const c = store.config.load();
+      c.authEnabled = true;
+      c.basicAuthUser = 'someone-else';
+      c.basicAuthHash = BCRYPT_B;
+      store.config.save(c);
+
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.data.ingress.protection, 'existing-unverified');
+      assert.match(res.data.ingress.reason, /cannot tell whether they carry the same/);
+      assert.ok(res.data.warnings.some((w) => /cannot tell/.test(w)));
     });
   });
 
@@ -424,7 +476,11 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.state, 'done');
       assert.equal(res.data.ok, false);
       assert.equal(res.data.code, 'ungate-refused');
-      assert.match(res.data.error, /no credential/);
+      // The code is the contract; the free-text reason is not returned (see the
+      // disclosure case below). The wizard is told there IS one and where to read it.
+      assert.equal(res.data.hasError, true);
+      assert.equal(res.data.error, undefined);
+      assert.ok(res.data.logPath, 'the operator needs somewhere to read the reason');
     });
 
     it('reports a corrupt outcome file as unreadable rather than as still pending', async () => {
@@ -435,17 +491,34 @@ describe('setup provisions a login by default', () => {
       assert.ok(res.data.error);
     });
 
-    it('discloses no paths, usernames or hashes', async () => {
+    it('discloses no paths, usernames or hashes — including through `error`', async () => {
+      // The earlier version of this test put the path in a `caddyfilePath` key the
+      // route's allow-list drops, and left `error` empty: it exercised the field
+      // that cannot leak and skipped the one that can. The producer fills `error`
+      // with absolute paths on codes the wizard can actually reach —
+      // "Caddyfile cannot be read: <path>", `caddy validate` stderr, a backup path
+      // — and this route has no setupComplete gate in front of it.
       fs.writeFileSync(provision.resultPath(), JSON.stringify({
-        ok: true, code: 'ok', target: 'caddy',
+        ok: false, code: 'validate-failed', target: 'caddy',
+        error: 'generated Caddyfile failed validation: /Users/jason/.tangleclaw/Caddyfile:12 '
+          + `basic_auth jason ${BCRYPT_A}`,
         healthUrl: 'https://localhost:8443/api/health',
         caddyfilePath: '/Users/someone/.tangleclaw/Caddyfile',
         basicAuthUser: 'jason', basicAuthHash: BCRYPT_A
       }));
       const res = await request(server, 'GET', '/api/setup/provision-status');
+      assert.equal(res.data.code, 'validate-failed', 'the code still crosses');
+      assert.equal(res.data.hasError, true, 'and the fact that there was a reason');
       assert.ok(!res.raw.includes('jason'), 'response leaked a username');
       assert.ok(!/\$2[aby]\$/.test(res.raw), 'response carried something bcrypt-shaped');
       assert.ok(!res.raw.includes('/Users/'), 'response leaked a filesystem path');
+      assert.ok(!res.raw.includes('failed validation'), 'response forwarded the raw error text');
+    });
+
+    it('reports the log path so the withheld detail is still reachable by the operator', async () => {
+      fs.writeFileSync(provision.resultPath(), JSON.stringify({ ok: false, code: 'failed', error: 'x' }));
+      const res = await request(server, 'GET', '/api/setup/provision-status');
+      assert.equal(res.data.logPath, provision.cutoverLogPath());
     });
 
     it('never writes or creates the outcome file as a side effect of polling', async () => {

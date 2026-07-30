@@ -126,7 +126,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
 ### Security & Remote Access
-- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
+- **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
 - **Forced admin setup** — behind the ingress, the first-run wizard requires creating an admin login before anything else works
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
@@ -221,9 +221,16 @@ TangleClaw runs a local server with browser-based terminal access, so reaching t
 
 **Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by enabling the login gate below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
 
+**A fresh install sets a login during setup.** The wizard asks for a username and password and then
+configures the Caddy gate itself, so the password-gated ingress below is the **default outcome of
+installing**, not something you go and turn on afterwards. There is no default credential — you set
+one, or setup does not finish. TangleClaw skips the step only where it could not enforce a
+credential anyway (Caddy not installed, or a Caddy config it must not overwrite), and then says
+plainly that no login is in force rather than implying one.
+
 To reach TangleClaw from another device, pick one of two things — never neither:
 
-- **The Caddy ingress** (recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. See [deploy/INGRESS.md](deploy/INGRESS.md).
+- **The Caddy ingress** (the default, and recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. Setup provisions this for you; `scripts/ingress-cutover.js` is the manual path for upgrades and recovery. See [deploy/INGRESS.md](deploy/INGRESS.md).
 - **`"bindAllInterfaces": true`** in `~/.tangleclaw/config.json` (or Settings → Network Exposure): accept connections from every interface **with no password**. Only sensible on a network you fully control, and it is the deliberate opt-out from the protection above. Requires a restart.
 
 **Recommendations:**

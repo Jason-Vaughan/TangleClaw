@@ -93,7 +93,7 @@ function loadSetup(opts = {}) {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;')),
     apiMutate: opts.apiMutate || (async () => null),
-    api: Object.assign(async () => null, { lastError: null }),
+    api: Object.assign(async () => null, { lastError: null, lastErrorCode: null }),
     loadConfig: async () => {}, loadProjects: async () => ({}), loadStats: async () => {},
     loadPorts: async () => {}, maybeShowFilter: () => {}, startPolling: () => {},
     state: {
@@ -413,6 +413,182 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await ctx.wizardComplete();
       await settle();
       assert.match(ctx.document.getElementById('setupBody').innerHTML, /reachable from your network/);
+    });
+  });
+
+  describe('the deadline distinguishes "cannot see it" from "it has not answered"', () => {
+    /** Provision, answering the status route with `answers[n-1]` on poll n. */
+    async function provisionWith(answers) {
+      const ctx = loadSetup({
+        plan: PROVISION_PLAN,
+        statusFetch: (n) => {
+          const a = answers[Math.min(n, answers.length) - 1];
+          if (a === 'unreachable') throw new Error('ECONNREFUSED');
+          return { ok: true, json: async () => a };
+        },
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'provision', provisioning: true, protection: 'pending',
+            url: 'https://host:8443', user: 'jason' }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle(2000);
+      return ctx;
+    }
+
+    it('says the origin closed only when the origin actually closed', async () => {
+      const ctx = await provisionWith(['unreachable']);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      assert.equal(ctx.wizard.provision.reachable, false);
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /can't see the result/);
+    });
+
+    it('says it has not reported back when the origin stayed reachable', async () => {
+      // Reachable + no result means the child died before writing, or the cutover
+      // ran past the deadline. Neither is "the address this page used has closed",
+      // and claiming it would send the operator to --rollback for no reason.
+      const ctx = await provisionWith([{ state: 'pending', ok: null, code: null }]);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      assert.equal(ctx.wizard.provision.reachable, true);
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /hasn't reported back/);
+      assert.doesNotMatch(html, /an address the restart closes/,
+        'a reachable origin must not be described as gone');
+      assert.match(html, /may or may not have finished/, 'and it must not guess either way');
+    });
+  });
+
+  describe('a stored-but-unconfirmed login gets its own screen', () => {
+    /** Complete setup with the given ingress block and report the rendered body. */
+    async function completeWith(ingress, warnings) {
+      let dismissed = false;
+      const ctx = loadSetup({
+        plan: REFUSE_PLAN,
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: warnings || [],
+          restart: false, ingress
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      ctx.dismissWizard = () => { dismissed = true; };
+      await ctx.wizardComplete();
+      await settle();
+      return { html: ctx.document.getElementById('setupBody').innerHTML, dismissed, ctx };
+    }
+
+    it('does not dismiss into a dashboard that looks protected', async () => {
+      // 'unchanged' means the credential is stored and the Caddy config was left
+      // alone, so nothing is known to be enforcing it. Dismissing closed the
+      // overlay that carried the server's own warning about exactly that.
+      const { html, dismissed } = await completeWith({
+        action: 'refuse', provisioning: false, protection: 'unchanged',
+        remedy: 'Run `node scripts/ingress-cutover.js --to caddy`.'
+      });
+      assert.equal(dismissed, false);
+      assert.match(html, /saved, but not confirmed/);
+      assert.doesNotMatch(html, /Nothing is asking for a password/,
+        'a stored credential must not be reported as no login at all');
+    });
+
+    it('gives the same treatment to an adoption that could not be verified', async () => {
+      const { html, dismissed } = await completeWith({
+        action: 'adopt', provisioning: false, protection: 'existing-unverified',
+        reason: 'TangleClaw cannot tell whether they carry the same credential.'
+      });
+      assert.equal(dismissed, false);
+      assert.match(html, /saved, but not confirmed/);
+      assert.match(html, /cannot tell whether/);
+    });
+
+    it('carries the server\'s warnings onto the screen that replaces the one reporting them', async () => {
+      // The warnings were written into an element inside the confirm step's body,
+      // and every terminal screen replaces that body.
+      const { html } = await completeWith(
+        { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' },
+        ['Skipped "old-project": path does not exist or is not a directory']
+      );
+      assert.match(html, /Skipped &quot;old-project&quot;|Skipped "old-project"/);
+    });
+  });
+
+  describe('one screen owns the body at a time', () => {
+    it('a late ingress probe does not repaint a live terminal screen', async () => {
+      // The probe and the poll both re-render asynchronously. Without an explicit
+      // view, whichever resolved last won — and a probe returning after setup
+      // finished would replace "no login is in force" with a wizard step while the
+      // poll kept writing into a body it no longer owned.
+      const ctx = loadSetup({
+        plan: REFUSE_PLAN,
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle();
+      assert.equal(ctx.wizard.view, 'unprotected');
+      const before = ctx.document.getElementById('setupBody').innerHTML;
+
+      await ctx.loadIngressPlan();
+      await settle();
+      assert.equal(ctx.document.getElementById('setupBody').innerHTML, before,
+        'the probe repainted a terminal screen');
+    });
+
+    it('a step index left past the end of a shrunken list cannot blank the wizard', async () => {
+      // The admin step appears when the plan says provision and would disappear
+      // again if a re-probe failed. An index into that list can outlive it; the
+      // switch had no default, so the body was left as a stale Confirm screen
+      // whose button re-submitted into the same refusal forever.
+      const ctx = loadSetup({ plan: PROVISION_PLAN });
+      ctx.showWizard();
+      await settle();
+      assert.equal(ctx.wizardStepKeys().length, 8);
+      ctx.wizard.step = 7;
+
+      ctx.wizard.ingressPlan = null;   // as a failed re-probe leaves it
+      ctx.renderWizardStep();
+      assert.ok(ctx.wizard.step <= ctx.wizardStepKeys().length - 1, 'the index must be clamped');
+      assert.ok(ctx.document.getElementById('setupBody').innerHTML.length > 0,
+        'the body must never be left with nothing the operator can act on');
+    });
+  });
+
+  describe('recovery from the server\'s refusal', () => {
+    it('routes back to the admin step on the error CODE, not on message text', async () => {
+      const ctx = loadSetup({
+        plan: PROVISION_PLAN,
+        apiMutate: async () => null
+      });
+      ctx.showWizard();
+      await settle();
+      ctx.wizard.ingressPlan = null;          // as a failed probe leaves it
+      ctx.api.lastError = 'An admin username and password are required to finish setup.';
+      ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
+      await ctx.wizardComplete();
+      await settle();
+      assert.equal(ctx.wizardStepKeys().includes('admin'), true, 're-probe restored the plan');
+      assert.equal(ctx.wizardStepKeys()[ctx.wizard.step], 'admin');
+    });
+
+    it('does not re-route on an unrelated error that merely mentions "admin"', async () => {
+      // 'adminUser is required…' (BAD_REQUEST) and 'Could not hash admin
+      // password…' (HASH_FAILED) both contain the word.
+      const ctx = loadSetup({ plan: PROVISION_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      const stepBefore = ctx.wizard.step;
+      ctx.api.lastError = 'Could not hash admin password: caddy exited 1';
+      ctx.api.lastErrorCode = 'HASH_FAILED';
+      await ctx.wizardComplete();
+      await settle();
+      assert.equal(ctx.wizard.step, stepBefore, 'an unrelated failure must not navigate');
     });
   });
 

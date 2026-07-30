@@ -35,7 +35,8 @@ On first launch, TangleClaw creates `~/.tangleclaw/` with:
 - `engines/` — engine profile JSON files
 - `tangleclaw.db` — SQLite database for runtime state
 
-Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard** will guide you through initial configuration. If you enable HTTPS in the wizard, use https://localhost:3102 after setup completes:
+Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard** will guide you
+through initial configuration:
 
 1. **Welcome** — overview of what TangleClaw does
 2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
@@ -43,9 +44,51 @@ Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard
 4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
 5. **Preferences** — delete protection password, idle chime toggle
 6. **HTTPS** — generate or select a certificate, or keep local HTTP
-7. **Confirm** — summary of all selections, then "Complete Setup"
+7. **Admin Login** — the username and password you will sign in with (see below; this step is not always shown)
+8. **Confirm** — summary of all selections, then "Complete Setup"
 
-You can **skip the wizard** at any step — it will use sensible defaults. The wizard only appears once; subsequent launches go straight to the landing page.
+The wizard only appears once; subsequent launches go straight to the landing page.
+
+#### The login step, and when it appears
+
+TangleClaw puts a login in front of itself by default. There is **no default credential** — you set
+one during setup, or setup does not finish. The gate is enforced by Caddy, which TangleClaw
+configures for you at the end of setup.
+
+The **Admin Login** step appears whenever this machine can actually run that gate. It is skipped —
+deliberately, not as a convenience — in the cases where a password would be collected with nothing
+to enforce it:
+
+| Situation | What the wizard does |
+|---|---|
+| No Caddy config yet, or one TangleClaw generated | Asks for a login, then configures Caddy and puts it in force |
+| A Caddy config you maintain, with exactly one login, and Caddy is the active ingress | Keeps your login. Asks for nothing |
+| A Caddy config you maintain that TangleClaw must not touch (several logins, no login, or unreadable) | Asks for nothing, and finishes saying no login is in force |
+| Caddy is not installed | Asks for nothing, and tells you the two commands that fix it |
+
+When the login step is shown, **Skip is not offered** — skipping it would be a way past the gate.
+Skip is available in the cases above where no credential is being collected.
+
+#### What you see at the end
+
+After *Complete Setup*, if TangleClaw is configuring the gate it restarts itself, so the wizard
+waits and then tells you one of four things:
+
+- **Your login is in force** — with the address to open and sign in at. Note this is **not** the
+  address you started on: the gate answers on `https://<your-host>:8443` by default, and TangleClaw
+  itself moves to plain HTTP behind it. Use the address on screen.
+- **Started, but this page can't see the result** — the expected outcome when you ran setup from
+  anything other than `http://localhost:3102`, because the restart closes the address this page was
+  served from. Open the address it names: **if it asks for a username and password, your login is in
+  force.** If it loads without asking, it is not.
+- **Started, but it hasn't reported back** — TangleClaw is still reachable here and the gate setup
+  has not said how it ended. Same check applies.
+- **No login is in force** — said plainly, with what to run. TangleClaw is reachable from this
+  machine only unless you have opted into a wider binding (see *Network Exposure* in Global
+  Settings).
+
+If nothing loads at all after a cutover, `node scripts/ingress-cutover.js --rollback` puts
+TangleClaw back the way it was.
 
 ### PWA Installation (Mobile)
 

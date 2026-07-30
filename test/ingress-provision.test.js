@@ -11,11 +11,12 @@
 //      credential nothing enforces — the specific failure #710 chunk 2 exists
 //      to prevent.
 //
-//   2. The cutover child is spawned detached, with no inherited stdio, and any
-//      previous result is cleared FIRST. Each of those is load-bearing: the
-//      child restarts this server, so a child sharing the parent's fate (or a
-//      poller reading last week's `ok`) reports success for a cutover that has
-//      not happened.
+//   2. The cutover child is spawned detached, with its output sent to a log file
+//      rather than discarded, and any previous result cleared FIRST. Each is
+//      load-bearing: the child restarts this server, so a child sharing the
+//      parent's fate (or a poller reading last week's `ok`) reports success for
+//      a cutover that has not happened — and when the result file is the thing
+//      that failed, the child's own stderr is the only remaining witness.
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -27,17 +28,32 @@ const provision = require('../lib/ingress-provision');
 
 const ALL_STATES = ['absent', 'generated', 'adoptable', 'ambiguous', 'ungated', 'unreadable'];
 
+// `safeToWrite` is true for exactly `absent` and `generated` (lib/caddy.js), and
+// an existing login only counts as in force when Caddy is the live ingress.
+// Helpers build the real shape so a case cannot pass by omitting a fact.
+const SAFE = new Set(['absent', 'generated']);
+/** Facts as classifyIngressState + detectCaddy would really report them. */
+function facts(state, over = {}) {
+  return {
+    state,
+    safeToWrite: SAFE.has(state),
+    caddyAvailable: true,
+    ingressMode: 'caddy',
+    ...over
+  };
+}
+
 describe('decideProvisioning', () => {
   it('provisions for the two states where nothing a human maintains is at risk', () => {
     for (const state of ['absent', 'generated']) {
-      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      const d = provision.decideProvisioning(facts(state));
       assert.equal(d.action, 'provision', `${state} should provision`);
       assert.equal(d.remedy, null, `${state} has nothing to remedy`);
     }
   });
 
   it('adopts an existing single-credential Caddyfile and names the user back', () => {
-    const d = provision.decideProvisioning({ state: 'adoptable', caddyAvailable: true, user: 'jason' });
+    const d = provision.decideProvisioning(facts('adoptable', { user: 'jason' }));
     assert.equal(d.action, 'adopt');
     assert.equal(d.user, 'jason');
     assert.match(d.reason, /jason/);
@@ -47,7 +63,7 @@ describe('decideProvisioning', () => {
   it('adopts without a username when the state is adoptable but no user was passed', () => {
     // classifyIngressState reports the user; a caller that omits it must still
     // get the adopt action rather than falling through to a refusal.
-    const d = provision.decideProvisioning({ state: 'adoptable', caddyAvailable: true });
+    const d = provision.decideProvisioning(facts('adoptable'));
     assert.equal(d.action, 'adopt');
     assert.equal(d.user, null);
     assert.ok(d.reason.length > 0);
@@ -55,7 +71,7 @@ describe('decideProvisioning', () => {
 
   it('refuses the three states it cannot act on safely, each with a remedy', () => {
     for (const state of ['ambiguous', 'ungated', 'unreadable']) {
-      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      const d = provision.decideProvisioning(facts(state));
       assert.equal(d.action, 'refuse', `${state} should refuse`);
       assert.ok(d.reason.length > 0, `${state} must say why`);
       assert.ok(d.remedy && d.remedy.length > 0, `${state} must say what fixes it`);
@@ -63,21 +79,21 @@ describe('decideProvisioning', () => {
   });
 
   it('routes an ungated hand-written config to the CLI, where a backup and rollback exist', () => {
-    const d = provision.decideProvisioning({ state: 'ungated', caddyAvailable: true });
+    const d = provision.decideProvisioning(facts('ungated'));
     assert.match(d.remedy, /ingress-cutover\.js/);
     assert.match(d.remedy, /--force/);
     assert.match(d.remedy, /rollback/);
   });
 
   it('never offers --force for an unreadable config, which cannot be backed up', () => {
-    const d = provision.decideProvisioning({ state: 'unreadable', caddyAvailable: true });
+    const d = provision.decideProvisioning(facts('unreadable'));
     assert.equal(d.action, 'refuse');
     assert.ok(!/--force/.test(d.remedy), `unreadable must not suggest --force: ${d.remedy}`);
   });
 
   it('refuses an unrecognized state instead of guessing', () => {
     for (const state of ['', null, undefined, 'partially-gated', 'GENERATED']) {
-      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      const d = provision.decideProvisioning(facts(state));
       assert.equal(d.action, 'refuse', `${String(state)} must fail closed`);
     }
   });
@@ -87,7 +103,7 @@ describe('decideProvisioning', () => {
     // nothing is running. Adopting its credential would mark TangleClaw
     // protected while nothing enforces the gate.
     for (const state of ALL_STATES) {
-      const d = provision.decideProvisioning({ state, caddyAvailable: false, user: 'jason' });
+      const d = provision.decideProvisioning(facts(state, { caddyAvailable: false, user: 'jason' }));
       assert.equal(d.action, 'refuse', `${state} must refuse with no caddy`);
       assert.match(d.reason, /not installed/);
       assert.match(d.remedy, /install/i);
@@ -99,23 +115,56 @@ describe('decideProvisioning', () => {
     // Pins the two tables together: a state added to lib/caddy.js with no row
     // here would otherwise land in the fail-closed default silently.
     for (const state of ALL_STATES) {
-      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      const d = provision.decideProvisioning(facts(state));
       assert.ok(['provision', 'adopt', 'refuse'].includes(d.action), `${state} → ${d.action}`);
     }
   });
 
   it('is pure — the same facts give the same answer and the input is not mutated', () => {
-    const facts = { state: 'adoptable', caddyAvailable: true, user: 'jason' };
-    const frozen = JSON.stringify(facts);
-    const a = provision.decideProvisioning(facts);
-    const b = provision.decideProvisioning(facts);
+    const input = facts('adoptable', { user: 'jason' });
+    const frozen = JSON.stringify(input);
+    const a = provision.decideProvisioning(input);
+    const b = provision.decideProvisioning(input);
     assert.deepEqual(a, b);
-    assert.equal(JSON.stringify(facts), frozen);
+    assert.equal(JSON.stringify(input), frozen);
   });
 
   it('does not throw on a missing facts object', () => {
     const d = provision.decideProvisioning();
     assert.equal(d.action, 'refuse');
+  });
+
+  it('consumes safeToWrite rather than re-deriving it from the state name', () => {
+    // The project keeps ONE derivation of "may this file be overwritten", in
+    // lib/caddy.js. If the classifier ever stops calling `generated` writable —
+    // a plausible hardening — a copy of the rule here would still answer
+    // `provision` and spawn a cutover against a file it was told to leave alone.
+    for (const state of ['absent', 'generated']) {
+      const d = provision.decideProvisioning(facts(state, { safeToWrite: false }));
+      assert.equal(d.action, 'refuse', `${state} must follow safeToWrite, not its own name`);
+    }
+  });
+
+  it('pins provision ⟺ safeToWrite across every state', () => {
+    for (const state of ALL_STATES) {
+      const d = provision.decideProvisioning(facts(state));
+      if (d.action === 'provision') assert.equal(SAFE.has(state), true, `${state} provisioned unsafely`);
+    }
+  });
+
+  it('refuses to adopt a login that Caddy is not actually serving', () => {
+    // Reachable by a supported sequence: `ingress-cutover.js --rollback` unloads
+    // Caddy and sets ingressMode back to direct, leaving the Caddyfile on disk.
+    // Adopting there would set authEnabled on an install with no gate.
+    const d = provision.decideProvisioning(facts('adoptable', { ingressMode: 'direct', user: 'jason' }));
+    assert.equal(d.action, 'refuse');
+    assert.match(d.reason, /not the active ingress/);
+    assert.equal(d.user, null, 'must not name a login it cannot vouch for');
+  });
+
+  it('still adopts when Caddy IS the active ingress', () => {
+    const d = provision.decideProvisioning(facts('adoptable', { ingressMode: 'caddy', user: 'jason' }));
+    assert.equal(d.action, 'adopt');
   });
 });
 
@@ -214,7 +263,7 @@ describe('spawnCutover', () => {
     assert.equal(seen, process.execPath);
   });
 
-  it('detaches, ignores stdio, and unrefs — the child restarts this server', () => {
+  it('detaches and unrefs — the child restarts this server', () => {
     let opts = null;
     let unrefCalls = 0;
     provision.spawnCutover({
@@ -222,9 +271,42 @@ describe('spawnCutover', () => {
       spawnFn: (_cmd, _argv, o) => { opts = o; return { pid: 7, unref() { unrefCalls++; } }; }
     });
     assert.equal(opts.detached, true);
-    assert.equal(opts.stdio, 'ignore');
     assert.equal(opts.cwd, provision.repoDir());
     assert.equal(unrefCalls, 1, 'an un-unrefd child holds the event loop open past the response');
+    // Stdin is closed; stdout/stderr go to the log (asserted in its own case).
+    assert.equal(opts.stdio[0], 'ignore');
+  });
+
+  it('clears a previous outcome itself, so the ordering is not a caller obligation', () => {
+    // The channel's correctness depends on clearing BEFORE the child starts. When
+    // that lived in the caller, today's one call site was covered and the next one
+    // would not have been.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-spawn-clear-'));
+    const resultFile = path.join(tmp, 'result.json');
+    fs.writeFileSync(resultFile, JSON.stringify({ ok: true, code: 'ok' }));
+    let existedAtSpawn = true;
+    provision.spawnCutover({
+      resultFile,
+      spawnFn: () => { existedAtSpawn = fs.existsSync(resultFile); return { pid: 1, unref() {} }; }
+    });
+    assert.equal(existedAtSpawn, false, 'a stale outcome was still on disk when the child started');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('sends the child\'s output to a log file rather than discarding it', () => {
+    // stdio: 'ignore' threw away the cutover's own "could not write result file"
+    // warning — the one diagnostic that matters when the result channel is what
+    // failed, leaving no trace anywhere.
+    let opts = null;
+    const res = provision.spawnCutover({
+      resultFile: path.join(os.tmpdir(), 'tc-x.json'),
+      spawnFn: (_c, _a, o) => { opts = o; return { pid: 2, unref() {} }; }
+    });
+    assert.ok(Array.isArray(opts.stdio), 'stdio must name a destination, not discard');
+    assert.equal(opts.stdio[0], 'ignore', 'the child has no stdin');
+    assert.equal(typeof opts.stdio[1], 'number', 'stdout goes to a descriptor');
+    assert.equal(opts.stdio[1], opts.stdio[2], 'stdout and stderr share the log');
+    assert.equal(res.logPath, provision.cutoverLogPath());
   });
 
   it('defaults to the caddy target and the shared result path', () => {

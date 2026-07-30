@@ -239,11 +239,32 @@ describe('GET /api/setup/ingress-state', () => {
     assert.equal(res.data.plan.remedy, null);
   });
 
-  it('tells the wizard to adopt, and names the user, when a single-login config exists', async () => {
+  it('tells the wizard to adopt, and names the user, when Caddy is live with a single login', async () => {
+    // Adoption is only honest when Caddy is the ACTIVE ingress: a Caddyfile on a
+    // direct-mode install is a config nothing is serving, so its credential is
+    // not protection. Set the mode the claim depends on.
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+    const config = store.config.load();
+    const prev = config.ingressMode;
+    config.ingressMode = 'caddy';
+    store.config.save(config);
+    try {
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.equal(res.data.plan.action, 'adopt');
+      assert.match(res.data.plan.reason, /jason/);
+    } finally {
+      const c = store.config.load();
+      c.ingressMode = prev;
+      store.config.save(c);
+    }
+  });
+
+  it('refuses to adopt a login Caddy is not serving, even though the file is adoptable', async () => {
     writeLive(handEdited([`jason ${BCRYPT_A}`]));
     const res = await get(server, '/api/setup/ingress-state');
-    assert.equal(res.data.plan.action, 'adopt');
-    assert.match(res.data.plan.reason, /jason/);
+    assert.equal(res.data.state, 'adoptable', 'the file classification is unchanged');
+    assert.equal(res.data.plan.action, 'refuse');
+    assert.match(res.data.plan.reason, /not the active ingress/);
   });
 
   it('tells the wizard to refuse — with a reason and a remedy — when it must not write', async () => {
@@ -278,9 +299,17 @@ describe('GET /api/setup/ingress-state', () => {
   });
 
   it('never leaks the credential hash through the plan text', async () => {
-    writeLive(handEdited([`jason ${BCRYPT_A}`]));
-    const res = await get(server, '/api/setup/ingress-state');
-    assert.equal(res.data.plan.action, 'adopt');
-    assert.ok(!/\$2[aby]\$/.test(JSON.stringify(res.data.plan)), 'plan carried something bcrypt-shaped');
+    for (const mode of ['caddy', 'direct']) {
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      const config = store.config.load();
+      config.ingressMode = mode;
+      store.config.save(config);
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.ok(!/\$2[aby]\$/.test(JSON.stringify(res.data.plan)),
+        `plan carried something bcrypt-shaped in ${mode} mode`);
+    }
+    const c = store.config.load();
+    c.ingressMode = 'direct';
+    store.config.save(c);
   });
 });

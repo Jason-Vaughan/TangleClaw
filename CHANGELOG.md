@@ -63,18 +63,24 @@ All notable changes to TangleClaw are documented in this file.
   failure — caddy-missing reaches the same end state for a different reason, told plainly with the
   two commands that fix it.
 
-  **Tests:** 5223 passing overall. `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
-  action, an unrecognized state failing closed, caddy-missing beating `adoptable`, absent vs
-  malformed vs readable outcome files kept distinct, the spawn's argv and its `detached`/`stdio:
-  ignore`/`unref` trio, and an interlock that refuses a REAL cutover from a test process (a run
-  rewrites launchd plists and restarts the machine's live server, so a missed stub must fail rather
-  than cause an outage). `test/setup-provisioning.test.js` (21) — the completion matrix at the HTTP
-  boundary, including refusal-with-no-credential-demanded, a stale outcome cleared before spawning,
-  the operator's Caddyfile unchanged byte-for-byte on adopt, a caller-supplied `Host` discarded
-  rather than echoed into the URL the wizard renders, and no username, hash or path crossing
-  `provision-status`. `test/setup-wizard-login-gate.test.js` (24) — the step list against each plan
-  (including the direct-mode flip), the payload sent under the same predicate that collected it,
-  every terminal screen's honesty, and no navigation without a click.
+  **Tests:** 5242 passing overall. `test/ingress-provision.test.js` (31) — every Caddyfile state
+  mapped to exactly one action, an unrecognized state failing closed, `provision` pinned to
+  `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress each beating
+  `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,
+  detach/unref, log-file stdio and self-clearing, and an interlock that refuses a REAL cutover from a
+  test process (a run rewrites launchd plists and restarts the machine's live server, so a missed stub
+  must fail rather than cause an outage). `test/setup-provisioning.test.js` (26) — the completion
+  matrix at the HTTP boundary, including refusal-with-no-credential-demanded, provisioning gated to a
+  first run, a caller-supplied `Host` discarded rather than echoed into the URL the wizard renders,
+  the operator's Caddyfile unchanged byte-for-byte on adopt, adoption that no-opped not reported as
+  "kept", and `provision-status` withholding a path planted in `error` — the field that can actually
+  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (33) —
+  the step list against each plan (including the direct-mode flip), the payload sent under the same
+  predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
+  answered", a stored-but-unconfirmed login getting its own screen, one screen owning the body at a
+  time, recovery keyed on the error code, and no navigation without a click.
+  `test/setup-ingress-state-endpoint.test.js` (16) — the probe's six states plus the plan it now
+  returns, and that no hash crosses the boundary in either ingress mode.
 
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
