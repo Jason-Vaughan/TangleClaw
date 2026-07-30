@@ -389,9 +389,9 @@ that tells it to send the operator to `reset-admin.js` rather than to a generic 
 > **Order of the gates before the refusal**, all of which must be satisfied for this phase to
 > reach its assertion — grep `scripts/ingress-cutover.js` for each in turn rather than trusting a
 > line number, which moves: `adoptCredentialIntoConfig` → the `CADDY_MISSING` refusal →
-> `httpsSetup.generateCerts` → `planCutover`. So 7d needs a `caddy` binary on PATH and a **valid cert pair already
-> configured** — both of which a real run has from Phases 2–3. They are prior state, not part of
-> what 7d tests; synthesize them if you run this phase out of sequence.
+> `httpsSetup.generateCerts` → `planCutover`. So 7d needs a `caddy` binary on PATH and a **valid
+> cert pair already configured** — both of which a real run has from Phases 2–3. They are prior
+> state, not part of what 7d tests; synthesize them if you run this phase out of sequence.
 
 Arrange a Caddyfile that IS gated while config carries no credential — the #397 shape.
 

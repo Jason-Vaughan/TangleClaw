@@ -298,9 +298,9 @@ All notable changes to TangleClaw are documented in this file.
   decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
   a Claude Code plugin — and the decision had since been made by what got built rather than by
   anything written. Its most authoritative record was a parenthetical comment in `lib/engines.js`
-  (grep "Defer to the Prawduct"); the rest lived in per-machine session memory, which does not survive a fresh
-  clone and cannot be reviewed. Closing #330 in that state would have discarded the one thing it
-  existed for.
+  (grep "Defer to the Prawduct"); the rest lived in per-machine session memory, which does not
+  survive a fresh clone and cannot be reviewed. Closing #330 in that state would have discarded
+  the one thing it existed for.
 
   `docs/adr/0011-prawduct-boundary.md` ratifies option 3 of the issue — the plugin is another engine
   capability — and maps the seam to exactly three items: the `prawduct@*` key in a project's
