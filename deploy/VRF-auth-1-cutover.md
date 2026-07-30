@@ -353,17 +353,48 @@ cannot be — it lives in the executor. Mutation this catches: reporting every `
 as `failed`. The suite stays green, 7b and 7c stay green, and the wizard loses the one signal
 that tells it to send the operator to `reset-admin.js` rather than to a generic failure.
 
+> **Fixture corrected 2026-07-30 — the original could not reach this refusal on ANY platform.**
+> It cleared config's credential and left the Caddyfile gated, but `adoptCredentialIntoConfig`
+> runs at `scripts/ingress-cutover.js:441`, *before* `planCutover` at `:494`, and immediately
+> re-adopts the single credential it finds — printing "Adopted live Caddyfile state into config".
+> The ungate condition therefore never held and `ungate-refused` was unreachable. Caught by
+> executing 7b/7d in the `tc-cleanroom` container on 2026-07-30; it would have failed the same
+> way on macOS, after a scheduled egress window.
+>
+> **Order of the gates before the refusal**, all of which must be satisfied for this phase to
+> reach its assertion: adoption `:441` → `caddy-missing` `:454` → cert generation `:472` →
+> `planCutover` `:494`. So 7d needs a `caddy` binary on PATH and a **valid cert pair already
+> configured** — both of which a real run has from Phases 2–3. They are prior state, not part of
+> what 7d tests; synthesize them if you run this phase out of sequence.
+
 Arrange a Caddyfile that IS gated while config carries no credential — the #397 shape.
 
 ```sh
-# 7d.1  Strip the credential from config, leaving the live Caddyfile gated
+# 7d.1  Arrange the ungate condition. Clearing config alone is NOT enough — see
+#       the note below. The live Caddyfile must be gated AND unadoptable.
 cp ~/.tangleclaw/config.json /tmp/config.before.json
+cp ~/.tangleclaw/Caddyfile /tmp/Caddyfile.before
+
+# (a) Make the live gate AMBIGUOUS — two basic_auth users. `extractBasicAuthCredential`
+#     returns null for a multi-user file, so adoption cannot adopt from it.
+node -e '
+  const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/Caddyfile";
+  let s=fs.readFileSync(p,"utf8");
+  const m=s.match(/^(\s*)(\S+)\s+(\$2[aby]\$\S+)\s*$/m);
+  if(!m) throw new Error("no basic_auth credential line found to duplicate");
+  s=s.replace(m[0], m[0]+"\n"+m[1]+"alex "+m[3]);
+  fs.writeFileSync(p,s);
+  console.log("live Caddyfile now defines 2 basic_auth users (unadoptable)");
+'
+
+# (b) NOW clear config's credential. Adoption runs before the ungate check and would
+#     otherwise put it straight back.
 node -e '
   const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/config.json";
   const c=JSON.parse(fs.readFileSync(p,"utf8"));
   c.authEnabled=false; c.basicAuthUser=null; c.basicAuthHash=null;
   fs.writeFileSync(p,JSON.stringify(c,null,2));
-  console.log("config credential cleared; Caddyfile still gated");
+  console.log("config credential cleared; Caddyfile still gated and unadoptable");
 '
 
 # 7d.2  Attempt the cutover
@@ -371,8 +402,9 @@ rm -f /tmp/cutover-ungate.json
 node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-ungate.json ; echo "exit=$?"
 python3 -c "import json;d=json.load(open('/tmp/cutover-ungate.json'));assert d['code']=='ungate-refused',d;print('OK',d)"
 
-# 7d.3  Restore config
+# 7d.3  Restore config AND the Caddyfile
 cp /tmp/config.before.json ~/.tangleclaw/config.json
+cp /tmp/Caddyfile.before ~/.tangleclaw/Caddyfile
 ```
 
 - [ ] Refuses with **`"code": "ungate-refused"`** — NOT `"failed"`. A `failed` here is the
@@ -488,6 +520,28 @@ mkcert -uninstall    # only if you don't want the test CA trusted in the guest
 
 ## Result matrix (report back)
 
+**Execution record — 7b, `tc-cleanroom` Linux container on habitat, 2026-07-30, branch @e20c1a3.**
+Deviations, recorded because they change what the result means: the container runs as **root**, and
+root bypasses DAC permission checks — a `chmod 000` file is still readable, so the phase would have
+passed vacuously. A non-root `tcuser` was created to mirror the macOS operator, with the Caddyfile
+root-owned mode 000 as written. `~/.tangleclaw` prior state was generated with
+`caddy.buildCaddyfileContent` (real `basic_auth` block, real integrity header,
+`classifyIngressState` → `generated`) since `install.sh` refuses on non-Darwin. Measured: exit `1`,
+refusal names path and permissions, **no stack trace**, `{"code":"unreadable","ok":false}`, no
+backup written, mtime identical before and after, and `--force` still refused with `unreadable` at
+exit `1`. Per the EPERM caveat in the spec, this is re-run in the macOS guest as confirmation and the
+guest wins on any disagreement.
+
+**Execution record — 7d, same container and branch, 2026-07-30.** Ran only after the fixture
+correction above; the original fixture could not reach the refusal at all. Prior state synthesized
+because `install.sh` cannot run on Linux: a real `openssl` self-signed cert pair (so
+`validateCertFiles` passes and the mkcert branch at `:472` is never entered — the absence of mkcert
+there throws untagged, filed as #786) and a `caddy` stub answering `version`, the same pattern the
+repo's own suite uses because CI has no Caddy. Neither substitutes for anything 7d asserts: the
+refusal is raised inside `planCutover` at `:494`, before either is used again. Measured: exit `1`,
+`{"code":"ungate-refused","ok":false}`, the error names `scripts/reset-admin.js`, the live Caddyfile
+still carries its `basic_auth` block, and **no stack trace**. Config and Caddyfile restored after.
+
 | Check | Phase | Pass? |
 |---|---|---|
 | Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | |
@@ -495,9 +549,9 @@ mkcert -uninstall    # only if you don't want the test CA trusted in the guest
 | Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | |
 | Bug 2 — ttyd re-binds Unix socket across restarts | 6 | |
 | Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
-| #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | |
+| #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 |
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | |
-| #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | |
+| #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
 | #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | |
 | #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
 | Rollback restores direct mode cleanly | 8 | |
