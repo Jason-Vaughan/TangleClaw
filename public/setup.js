@@ -222,12 +222,26 @@ async function wizardSkip() {
   // had finished while the server still says it had not.
   const ok = await apiMutate('/api/config', 'PATCH', { setupComplete: true });
   if (!ok) {
-    _showUnprotectedScreen({
-      protection: 'none',
-      reason: api.lastError || 'TangleClaw could not finish setup without a login.',
-      remedy: 'Go back and set a username and password, or set one at a terminal with '
-        + '`node scripts/reset-admin.js`.'
-    }, []);
+    // Refused. Do NOT render an unprotected screen from an invented ingress block:
+    // Skip is only visible when the plan does not demand a credential, so the only
+    // refusals that reach here come from an install already in caddy mode — where a
+    // gate may well be live (adopt, ambiguous) and where an ungated Caddyfile is
+    // network-reachable. A hardcoded `protection: 'none'` would tell the first group
+    // that nothing is asking for a password, and an absent `networkExposed` would
+    // tell the second it is not exposed — the false reassurance this whole slice
+    // exists to prevent, produced by the screen meant to prevent it.
+    //
+    // The honest response to "a credential is required" is the step that collects
+    // one, not a verdict about a state we did not measure.
+    if (api.lastErrorCode === 'ADMIN_REQUIRED') {
+      await _recoverToAdminStep();
+      return;
+    }
+    const err = document.getElementById('setupCompleteError');
+    if (err) {
+      err.textContent = api.lastError || 'Could not finish setup.';
+      err.classList.remove('hidden');
+    }
     return;
   }
   if (state.config) state.config.setupComplete = true;
@@ -1096,11 +1110,14 @@ async function wizardComplete() {
 }
 
 /**
- * Terminal screen for a setup that ended with a login already in force, when the
- * server also had something to report. Exists so the render that surfaces the
- * warnings is not the render that closes the overlay carrying them.
+ * Terminal screen for a setup that finished without needing to provision anything
+ * and DID have something to report — today that is the successful-adopt path.
+ * Keyed on there being warnings, not on the protection state: its reason for
+ * existing is that the render which surfaces warnings must not also be the render
+ * that closes the overlay carrying them. With nothing to report the caller
+ * dismisses instead, so this never adds a click for an uneventful setup.
  * @param {object|null} ingress - `ingress` block from POST /api/setup/complete.
- * @param {string[]} warnings
+ * @param {string[]} warnings - Server warnings to restate here.
  */
 function _showAdoptedScreen(ingress, warnings) {
   wizard.view = 'adopted';
@@ -1124,10 +1141,19 @@ function _showAdoptedScreen(ingress, warnings) {
  */
 async function _recoverToAdminStep() {
   await loadIngressPlan();
-  if (!_adminStepRequired()) return;
+  if (!_adminStepRequired()) {
+    // The server demanded a credential and the probe disagrees — an install
+    // already behind Caddy whose credential would have come from adopting its
+    // Caddyfile is the reachable case. The server is authoritative about what it
+    // will accept, so show the step and say why, rather than leaving the operator
+    // on a screen with no way forward.
+    wizard.ingressPlan = { action: 'provision', reason: '', remedy: null, serverForced: true };
+  }
+  _syncSkipButton();
   const keys = wizardStepKeys();
   const idx = keys.indexOf('admin');
   if (idx >= 0) {
+    wizard.view = 'steps';
     wizard.step = idx;
     renderWizardStep();
   }
@@ -1414,6 +1440,12 @@ function _httpsSummaryLabel() {
   return 'Not configured';
 }
 
+/**
+ * Terminal screen shown while the server restarts to apply a new HTTPS config.
+ * @param {string} redirectUrl - Where the operator will be able to reach TangleClaw.
+ * @param {string[]} [warnings] - Server warnings to restate here, since this screen
+ *   replaces the body that reported them.
+ */
 function _showRestartOverlay(redirectUrl, warnings) {
   // Every terminal screen owes the same three things, and this one was outside all
   // of them: claim the view (the ingress probe re-renders asynchronously and would

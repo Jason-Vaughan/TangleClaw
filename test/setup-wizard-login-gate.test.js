@@ -618,9 +618,25 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       return ctx;
     }
 
-    it('announces the in-progress and success states politely', async () => {
+    it('announces the in-progress state politely, and marks it busy', async () => {
+      // Rendered directly: driving it through the poll resolves past this screen,
+      // so a case that only awaited the outcome was titled for two states while
+      // exercising one.
+      const ctx = loadSetup({ plan: PROVISION_PLAN });
+      ctx.showWizard();
+      await settle();
+      ctx._showProvisioningScreen({ provisioning: true, url: 'https://host:8443', user: 'jason' }, []);
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /aria-live="polite"/);
+      assert.match(html, /aria-busy="true"/);
+      assert.match(html, /Putting your login in place/);
+    });
+
+    it('announces the success state politely', async () => {
       const ctx = await provisionWith([{ state: 'done', ok: true, code: 'ok' }]);
-      assert.match(ctx.document.getElementById('setupBody').innerHTML, /aria-live="polite"/);
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /Your login is in force/, 'must actually be on the success screen');
+      assert.match(html, /aria-live="polite"/);
     });
 
     it('announces a failure assertively, since it changes what the operator must do', async () => {
@@ -702,7 +718,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     it('announces itself, since none of them is reached by an operator action', async () => {
       for (const screen of SCREENS) {
         const { html } = await endOn(screen, ['a warning keeps this screen up']);
-        assert.match(html, /role="(status|alert)"/, `${screen.name} announced nothing`);
+        // The role must be on the SCREEN's own container. Matching `role=` anywhere
+        // in the body is blind: `_warningsBlock` emits its own `role="status"` and
+        // `endOn` always passes a warning, so deleting the screen's role left this
+        // green. Third instance in this changeset of an assertion that cannot fail.
+        const step = html.match(/<div class="setup-step"[^>]*>/);
+        assert.ok(step, `${screen.name} rendered no setup-step container`);
+        assert.match(step[0], /role="(status|alert)"/, `${screen.name} announced nothing`);
       }
     });
 
@@ -724,22 +746,51 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
   });
 
   describe('Skip cannot report a success the server refused', () => {
-    it('shows the refusal instead of dismissing into a dashboard', async () => {
-      // apiMutate returns null on a non-2xx rather than throwing, and this path can
-      // now be refused. Ignoring the null set setupComplete in local state and
-      // dismissed — the operator landed on a dashboard as though setup had
-      // finished while the server still said it had not.
+    it('routes a credential refusal to the step that collects one', async () => {
+      // apiMutate returns null on a non-2xx rather than throwing, so ignoring it set
+      // setupComplete locally and dismissed — the operator landed on a dashboard as
+      // though setup had finished while the server said it had not.
+      //
+      // And the fix must not swing the other way. Skip is only visible when the plan
+      // does NOT demand a credential, so every refusal reaching here comes from an
+      // install already in caddy mode — where a gate may be live (adopt, ambiguous),
+      // and where an ungated Caddyfile is network-reachable. Rendering an
+      // "unprotected" verdict from an invented ingress block told the first group
+      // nothing was asking for a password and the second that it was not exposed:
+      // the false reassurance the screen exists to prevent, produced by the screen.
       let dismissed = false;
       const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
       ctx.showWizard();
       await settle();
       ctx.dismissWizard = () => { dismissed = true; };
       ctx.api.lastError = 'Cannot finish setup without an admin credential.';
+      ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
       await ctx.wizardSkip();
       await settle();
       assert.equal(dismissed, false, 'a refused Skip must not dismiss');
       assert.equal(ctx.state.config.setupComplete, false, 'nor claim completion locally');
-      assert.match(ctx.document.getElementById('setupBody').innerHTML, /no login/i);
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /Admin Login/, 'must land on the step that fixes it');
+      assert.doesNotMatch(html, /Nothing is asking for a password/,
+        'must not assert an unprotected state it did not measure');
+      assert.doesNotMatch(html, /not exposed to your network/,
+        'must not assert an exposure state it did not measure');
+      assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none',
+        'Skip must stop offering the way past the gate the server just refused');
+    });
+
+    it('surfaces an unrelated failure without inventing a verdict about the gate', async () => {
+      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      let dismissed = false;
+      ctx.dismissWizard = () => { dismissed = true; };
+      ctx.api.lastError = 'Disk is full';
+      ctx.api.lastErrorCode = 'INTERNAL';
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(dismissed, false);
+      assert.equal(ctx.document.getElementById('setupCompleteError').textContent, 'Disk is full');
     });
 
     it('still dismisses when the server accepts', async () => {
