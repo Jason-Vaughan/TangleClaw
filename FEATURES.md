@@ -180,3 +180,8 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 
 - **TBD** — touched in this session: `test/tmux.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/ttyd-attach.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-29)
+
+- **TBD** — touched in this session: `docs/adr/0011-prawduct-boundary.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-hooks-merge.test.js`. <!-- describe -->
