@@ -790,7 +790,33 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await ctx.wizardSkip();
       await settle();
       assert.equal(dismissed, false);
-      assert.equal(ctx.document.getElementById('setupCompleteError').textContent, 'Disk is full');
+      assert.equal(ctx.document.getElementById('setupOverlayError').textContent, 'Disk is full');
+    });
+
+    it('writes that failure somewhere that exists on every step, not just the confirm step', () => {
+      // The harness's getElementById AUTO-CREATES a stub for any id, so the case
+      // above proves the write happened and says nothing about whether the target
+      // is in the markup. Skip lives in the overlay header and is reachable from
+      // every step, so an id rendered only by `renderConfirm` would be silent on the
+      // other six — a click that does nothing at all. Assert against the real HTML.
+      const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+      assert.match(html, /id="setupOverlayError"/,
+        'the persistent error target must exist in the overlay markup');
+      // And it must be OUTSIDE the step body, which every render replaces.
+      const overlay = html.slice(html.indexOf('id="setupOverlay"'));
+      const errAt = overlay.indexOf('id="setupOverlayError"');
+      const bodyAt = overlay.indexOf('id="setupBody"');
+      assert.ok(errAt >= 0 && bodyAt >= 0 && errAt < bodyAt,
+        'the error target must sit outside the body that step renders overwrite');
+      // The confirm-only id must NOT be what the persistent control writes to.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+      const skipFn = src.slice(src.indexOf('async function wizardSkip'), src.indexOf('// ── Step Rendering'));
+      // The CALL, not any mention — the comment above it names the wrong id
+      // deliberately, to explain why it is the wrong one.
+      assert.ok(!/getElementById\(\s*['"]setupCompleteError['"]/.test(skipFn),
+        'wizardSkip must not report into an element only the confirm step renders');
+      assert.ok(/getElementById\(\s*['"]setupOverlayError['"]/.test(skipFn),
+        'wizardSkip must report into the persistent overlay target');
     });
 
     it('still dismisses when the server accepts', async () => {
@@ -803,6 +829,39 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await settle();
       assert.equal(dismissed, true);
       assert.equal(ctx.state.config.setupComplete, true);
+    });
+  });
+
+  describe('a server-forced credential does not overwrite the server\'s own plan', () => {
+    /** Drive a refusal that forces the admin step even though the probe said adopt. */
+    async function forced() {
+      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      ctx.api.lastError = 'Cannot finish setup without an admin credential.';
+      ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
+      await ctx.wizardSkip();
+      await settle();
+      return ctx;
+    }
+
+    it('leaves ingressPlan as the server sent it', async () => {
+      // `plan.action` is the one field documented as never client-derived.
+      // Synthesizing 'provision' into it is what made the summary lie.
+      const ctx = await forced();
+      assert.equal(ctx.wizard.ingressPlan.action, 'adopt', 'the server\'s answer was overwritten');
+      assert.equal(ctx.wizard.adminStepForcedByServer, true, 'the override is its own signal');
+      assert.equal(ctx.wizardStepKeys().includes('admin'), true);
+    });
+
+    it('does not tell the operator a login "will be created" when it will only be saved', async () => {
+      const ctx = await forced();
+      ctx.wizard.adminUser = 'jason';
+      const label = ctx._loginSummaryLabel();
+      assert.doesNotMatch(label, /Will be created/,
+        'the server will store this credential and report the ingress unchanged');
+      assert.match(label, /not confirmed as enforced/);
+      assert.match(label, /jason/);
     });
   });
 

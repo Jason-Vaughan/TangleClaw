@@ -35,6 +35,11 @@ const wizard = {
   // from the server's and collect a credential nothing will enforce.
   ingressPlan: null,
   ingressPlanError: null,
+  // Set when the SERVER refused to finish setup without a credential on a machine
+  // whose probe said none was needed. Kept separate from `ingressPlan` so the
+  // server's answer is never overwritten by a client inference — the summary and
+  // the payload both read that answer.
+  adminStepForcedByServer: false,
   // Outcome of provisioning, once setup has been submitted.
   provision: null,
   // Which screen owns the wizard body: the step flow, or one of the terminal
@@ -57,6 +62,7 @@ const wizard = {
  * @returns {boolean}
  */
 function _adminStepRequired() {
+  if (wizard.adminStepForcedByServer) return true;
   return !!(wizard.ingressPlan && wizard.ingressPlan.action === 'provision');
 }
 
@@ -104,8 +110,9 @@ async function loadIngressPlan() {
  * probe is unawaited, so there is a window at startup where nothing is known yet,
  * and a failed probe leaves it unknown forever. Offering Skip in that window
  * offers a way past the login gate on exactly the machines where the answer has
- * not arrived. Both server routes that can finish setup refuse it anyway, so a
- * visible Skip there could only produce an error the operator cannot act on.
+ * not arrived. Both server routes that can finish setup refuse it anyway, and a
+ * refusal now routes the operator to the step that resolves it — but a button that
+ * only ever produces a refusal is still a button that should not be there.
  */
 function _syncSkipButton() {
   const skipBtn = document.getElementById('setupSkipBtn');
@@ -146,6 +153,7 @@ function showWizard() {
   wizard.step = 0;
   wizard.provision = null;
   wizard.view = 'steps';
+  wizard.adminStepForcedByServer = false;
 
   _syncSkipButton();
   // Ask what this machine can do about a login. Deliberately not awaited: the
@@ -237,7 +245,11 @@ async function wizardSkip() {
       await _recoverToAdminStep();
       return;
     }
-    const err = document.getElementById('setupCompleteError');
+    // #setupOverlayError, not #setupCompleteError: Skip is in the overlay header
+    // and reachable from every step, while that element is rendered only by the
+    // confirm step — so on welcome…https the message would have gone nowhere and
+    // the operator would have seen a click do nothing at all.
+    const err = document.getElementById('setupOverlayError');
     if (err) {
       err.textContent = api.lastError || 'Could not finish setup.';
       err.classList.remove('hidden');
@@ -944,6 +956,15 @@ function wizardAdminNext() {
  */
 function _loginSummaryLabel() {
   const plan = wizard.ingressPlan;
+  if (wizard.adminStepForcedByServer && !(plan && plan.action === 'provision')) {
+    // The server insists on a credential while the probe says a gate cannot be
+    // provisioned here. Both are true: it will be stored, and TangleClaw cannot say
+    // it will be enforced. Claiming "will be created" would be the more comforting
+    // and less accurate of the two.
+    return wizard.adminUser
+      ? `Will be saved for ${wizard.adminUser} — not confirmed as enforced`
+      : 'Required, not set';
+  }
   if (plan && plan.action === 'provision') {
     return wizard.adminUser ? `Will be created for ${wizard.adminUser}` : 'Not set';
   }
@@ -1142,12 +1163,17 @@ function _showAdoptedScreen(ingress, warnings) {
 async function _recoverToAdminStep() {
   await loadIngressPlan();
   if (!_adminStepRequired()) {
-    // The server demanded a credential and the probe disagrees — an install
-    // already behind Caddy whose credential would have come from adopting its
-    // Caddyfile is the reachable case. The server is authoritative about what it
-    // will accept, so show the step and say why, rather than leaving the operator
-    // on a screen with no way forward.
-    wizard.ingressPlan = { action: 'provision', reason: '', remedy: null, serverForced: true };
+    // The server demanded a credential and the probe disagrees — an install already
+    // behind Caddy whose credential would have come from adopting its Caddyfile is
+    // the reachable case. The server is authoritative about what it will accept, so
+    // show the step rather than leaving the operator with no way forward.
+    //
+    // Carried as its OWN signal, never by overwriting `ingressPlan`: that field is
+    // the server's answer and the one thing this file documents as never
+    // client-derived. Synthesizing `action: 'provision'` into it made the confirm
+    // summary read "Login: Will be created for <user>" on a machine where the
+    // server will instead store the credential and report the ingress unchanged.
+    wizard.adminStepForcedByServer = true;
   }
   _syncSkipButton();
   const keys = wizardStepKeys();

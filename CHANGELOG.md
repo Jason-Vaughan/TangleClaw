@@ -78,10 +78,11 @@ All notable changes to TangleClaw are documented in this file.
   outcome is often unobservable from the page that started it — both facts a future reader would
   otherwise have to rediscover from a deleted plan.
 
-  **Tests:** 5253 passing under the project's suite command (`node --test 'test/*.test.js'`). The
-  recorded evidence file reports 2795 for the same run — prawduct's ingest undercounts suites with
-  nested describes, filed upstream as brookstalley/prawduct#128; the per-file counts below are from
-  the runner, not the ingest. `test/ingress-provision.test.js` (31) — every Caddyfile state
+  **Tests:** 5256 passing under the project's suite command (`node --test 'test/*.test.js'`). The
+  recorded evidence file reports 2795 for the same run. The two disagree because the ingest counts
+  differently from the runner; the cause is the undercount filed upstream as
+  brookstalley/prawduct#128, which is that issue's diagnosis rather than something re-verified here.
+  The per-file counts below are the runner's. `test/ingress-provision.test.js` (31) — every Caddyfile state
   mapped to exactly one action, an unrecognized state failing closed, `provision` pinned to
   `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress each beating
   `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,
@@ -92,7 +93,7 @@ All notable changes to TangleClaw are documented in this file.
   first run, a caller-supplied `Host` discarded rather than echoed into the URL the wizard renders,
   the operator's Caddyfile unchanged byte-for-byte on adopt, adoption that no-opped not reported as
   "kept", and `provision-status` withholding a path planted in `error` — the field that can actually
-  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (44) —
+  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (47) —
   the step list against each plan (including the direct-mode flip), the payload sent under the same
   predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
   answered", a stored-but-unconfirmed login getting its own screen, recovery keyed on the error code,
