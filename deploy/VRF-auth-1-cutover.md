@@ -566,8 +566,9 @@ root-owned mode 000 as written. `~/.tangleclaw` prior state was generated with
 `classifyIngressState` → `generated`) since `install.sh` refuses on non-Darwin. Measured: exit `1`,
 refusal names path and permissions, **no stack trace**, `{"code":"unreadable","ok":false}`, no
 backup written, mtime identical before and after, `--force` still refused with `unreadable` at
-exit `1`, and permissions were restored to `600` (`-rw------- tcuser`) before moving on. Per the EPERM caveat in the spec, this is re-run in the macOS guest as confirmation and the
-guest wins on any disagreement.
+exit `1`, and permissions were restored to `600` (`-rw------- tcuser`) before moving on. Per the
+EPERM caveat in the spec, this is re-run in the macOS guest as confirmation and the guest wins on
+any disagreement.
 
 **Execution record — 7d, same container and branch, 2026-07-30.** Ran only after the fixture
 correction above; the original fixture could not reach the refusal at all. Prior state synthesized

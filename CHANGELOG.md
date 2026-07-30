@@ -90,31 +90,32 @@ All notable changes to TangleClaw are documented in this file.
   recorded evidence file reports 2797 for the same run. The two disagree because the ingest counts
   differently from the runner; the cause is the undercount filed upstream as
   brookstalley/prawduct#128, which is that issue's diagnosis rather than something re-verified here.
-  The per-file counts below are the runner's. `test/ingress-provision.test.js` (31) — every Caddyfile state
-  mapped to exactly one action, an unrecognized state failing closed, `provision` pinned to
-  `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress each beating
-  `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,
-  detach/unref, log-file stdio and self-clearing, and an interlock that refuses a REAL cutover from a
-  test process (a run rewrites launchd plists and restarts the machine's live server, so a missed stub
-  must fail rather than cause an outage). `test/setup-provisioning.test.js` (27) — the completion
-  matrix at the HTTP boundary, including refusal-with-no-credential-demanded, provisioning gated to a
-  first run, a caller-supplied `Host` discarded rather than echoed into the URL the wizard renders,
-  the operator's Caddyfile unchanged byte-for-byte on adopt, adoption that no-opped not reported as
-  "kept", and `provision-status` withholding a path planted in `error` — the field that can actually
-  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (49) —
-  the step list against each plan (including the direct-mode flip), the payload sent under the same
-  predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
-  answered", a stored-but-unconfirmed login getting its own screen, recovery keyed on the error code,
-  and no navigation without a click. Four properties are asserted across **every** terminal screen
-  rather than one — that each claims the view so an async re-render cannot repaint it, announces
-  itself since none is reached by an operator action, carries the server's warnings instead of
-  closing the overlay holding them, and clears the overlay error banner so a fixed problem stops
-  being reported. Each had been fixed on one screen and missed on its siblings, and
-  the fixture table now pins which screen every row actually lands on: two earlier versions of it did
-  not reach the screens they named, so two mutations survived a suite that claimed to cover them.
+  The per-file counts below are the runner's. `test/ingress-provision.test.js` (31) — every
+  Caddyfile state mapped to exactly one action, an unrecognized state failing closed, `provision`
+  pinned to `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress
+  each beating `adoptable`, absent vs malformed vs readable outcome files kept distinct, the
+  spawn's argv, detach/unref, log-file stdio and self-clearing, and an interlock that refuses a
+  REAL cutover from a test process (a run rewrites launchd plists and restarts the machine's live
+  server, so a missed stub must fail rather than cause an outage).
+  `test/setup-provisioning.test.js` (27) — the completion matrix at the HTTP boundary, including
+  refusal-with-no-credential-demanded, provisioning gated to a first run, a caller-supplied `Host`
+  discarded rather than echoed into the URL the wizard renders, the operator's Caddyfile unchanged
+  byte-for-byte on adopt, adoption that no-opped not reported as "kept", and `provision-status`
+  withholding a path planted in `error` — the field that can actually leak, which the first version
+  of that test skipped. `test/setup-wizard-login-gate.test.js` (49) — the step list against each
+  plan (including the direct-mode flip), the payload sent under the same predicate that collected
+  it, the deadline distinguishing "cannot see it" from "it has not answered", a
+  stored-but-unconfirmed login getting its own screen, recovery keyed on the error code, and no
+  navigation without a click. Four properties are asserted across **every** terminal screen rather
+  than one — that each claims the view so an async re-render cannot repaint it, announces itself
+  since none is reached by an operator action, carries the server's warnings instead of closing the
+  overlay holding them, and clears the overlay error banner so a fixed problem stops being
+  reported. Each had been fixed on one screen and missed on its siblings, and the fixture table now
+  pins which screen every row actually lands on: two earlier versions of it did not reach the
+  screens they named, so two mutations survived a suite that claimed to cover them.
   `test/auth2-setup-admin.test.js` (11) — the Skip route's refusal, against a stub that answers
-  `caddy version` rather than a real binary found on PATH, because CI has no Caddy and the guard for
-  the most important fix in this chunk was skipping exactly where it needed to run.
+  `caddy version` rather than a real binary found on PATH, because CI has no Caddy and the guard
+  for the most important fix in this chunk was skipping exactly where it needed to run.
   `test/setup-ingress-state-endpoint.test.js` (16) — the probe's six states plus the plan it now
   returns, and that no hash crosses the boundary in either ingress mode.
 
@@ -342,9 +343,9 @@ All notable changes to TangleClaw are documented in this file.
   that matters most. The push now happens once after the whole chain, scoped to the protection states
   that mean no login is in force. `existing` is excluded because its `reason` describes a gate that
   IS in force, and restating that as a warning invents a problem; `pending` is excluded too, but
-  harmlessly — the provision plan carries an empty reason, so there is nothing to push there. Both edges are
-  mutation-verified: removing the push and widening it to `existing` each turn a test red, the second
-  of which was green against the entire suite until this commit added the pin.
+  harmlessly — the provision plan carries an empty reason, so there is nothing to push there. Both
+  edges are mutation-verified: removing the push and widening it to `existing` each turn a test
+  red, the second of which was green against the entire suite until this commit added the pin.
 
   Making that push unconditional then exposed an older contradiction it had been hiding. The
   credential-saved warning ended "Run `node scripts/ingress-cutover.js --to caddy` to activate the
@@ -483,8 +484,9 @@ All notable changes to TangleClaw are documented in this file.
   `test/setup-ingress-state-endpoint.test.js` (10) — four of the six states at the HTTP boundary
   (`generated` and `unreadable` are covered at the unit level only), no bcrypt-shaped string in any
   response, no enumeration of a second account name, `users` never crossing the boundary, the
-  username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof that probing neither creates nor modifies a
-  Caddyfile.
+  username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an
+  empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof
+  that probing neither creates nor modifies a Caddyfile.
 
 ## [4.38.0] - 2026-07-28
 
