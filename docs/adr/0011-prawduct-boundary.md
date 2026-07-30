@@ -128,9 +128,9 @@ is reviewable.
 
 **#368 must be decided against decision 6, not on its own merits.** #368 proposes that
 `createProject` in `lib/projects.js` (which calls `engines.writeEngineConfig`, then
-`engines.syncEngineHooks`) also write the Prawduct activation reference for new Claude projects. Under decision 6 that is
-governance activation happening as a side effect of project creation, which is the seam #763 was
-closed on.
+`engines.syncEngineHooks`) also write the Prawduct activation reference for new Claude
+projects. Under decision 6 that is governance activation happening as a side effect of project
+creation, which is the seam #763 was closed on.
 
 The counter-argument is genuine and should be recorded: the machinery already exists
 (`engines.migrateToPlugin` writes exactly those keys), TangleClaw already writes them for itself, and
