@@ -324,6 +324,31 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().authEnabled, false);
     });
 
+    it('names the mismatch when a credential is typed on a machine that would adopt', async () => {
+      // Reachable through the wizard: the Skip route refuses in caddy mode without a
+      // configured credential, so the wizard forces the admin step and sends one on an
+      // adopt plan. Adoption runs first, then the typed credential overwrites it in
+      // config — while the hand-maintained Caddyfile still enforces the adopted hash.
+      // The operator's new password will not work and their old one will, so reporting
+      // "existing login kept" (and naming the ADOPTED user) is the wrong answer twice.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      caddyIsLive();
+      const res = await request(server, 'POST', '/api/setup/complete', {
+        projectsDir: tmpDir, adminUser: 'newadmin', adminPassword: 'correct-horse-battery'
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.protection, 'existing-unverified',
+        'must not report the existing login as simply kept');
+      assert.equal(res.data.ingress.user, 'newadmin', 'must name the account THEY set, not the adopted one');
+      assert.match(res.data.ingress.reason, /still enforcing the credential it already had/);
+      assert.match(res.data.ingress.remedy, /reset-admin/);
+      assert.ok(res.data.warnings.some((w) => /still enforcing/.test(w)),
+        'a warning is what stops the wizard dismissing straight to the dashboard');
+      assert.equal(cutovers.length, 0, 'the hand-maintained file must still not be regenerated');
+      assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), handEdited([`jason ${BCRYPT_A}`]),
+        'the operator\'s Caddyfile must be untouched');
+    });
+
     it('does not claim an existing login was kept when adoption no-opped', async () => {
       // computeCaddyfileAdoption never overwrites a credential already in config,
       // so on an install that has one, adoption is a no-op while the live

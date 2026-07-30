@@ -1408,7 +1408,26 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   } else if (ingressPlan.action === 'adopt') {
     // Adoption already ran, above the credential gates. Report what it answered.
     const after = config;
-    if (adoption && adoption.adopted) {
+    if (adminProvided) {
+      // The operator typed a credential on a machine whose plan was to ADOPT one.
+      // Reachable: the Skip route refuses in caddy mode without a configured
+      // credential, and the wizard then forces the admin step. Adoption ran first,
+      // then the typed credential overwrote it in config — so config now holds what
+      // they typed while the untouched hand-maintained Caddyfile still enforces what
+      // was adopted. Their new password will not work and the old one will.
+      //
+      // Reporting `existing` here (naming the ADOPTED user, which is what the code
+      // did) tells them their existing login was kept when in fact two credentials
+      // now disagree. Name the mismatch instead, and name the account THEY set.
+      ingress.protection = 'existing-unverified';
+      ingress.user = after.basicAuthUser || null;
+      ingress.reason = 'The login you just set has been saved, but the Caddy config in front of '
+        + 'TangleClaw is maintained by hand and was not changed — so it is still enforcing the '
+        + 'credential it already had, not the new one.';
+      ingress.remedy = 'Set both from one place with `node scripts/reset-admin.js`, which rewrites '
+        + 'the credential in the live Caddy config as well.';
+      warnings.push(ingress.reason);
+    } else if (adoption && adoption.adopted) {
       ingress.protection = 'existing';
       ingress.user = adoption.user || after.basicAuthUser || null;
     } else if (after.authEnabled && after.basicAuthUser && after.basicAuthHash) {

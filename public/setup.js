@@ -110,10 +110,30 @@ async function loadIngressPlan() {
  * probe is unawaited, so there is a window at startup where nothing is known yet,
  * and a failed probe leaves it unknown forever. Offering Skip in that window
  * offers a way past the login gate on exactly the machines where the answer has
- * not arrived. Both server routes that can finish setup refuse it anyway, and a
- * refusal now routes the operator to the step that resolves it — but a button that
- * only ever produces a refusal is still a button that should not be there.
+ * not arrived. A refusal now routes the operator to the step that resolves it, so
+ * the button is not a dead end — but offering a way past the gate before knowing
+ * whether there is a gate is the wrong default, and on a machine that CAN raise one
+ * the PATCH refuses. (It does not always refuse: with no Caddy present the same
+ * PATCH legitimately succeeds, which is why this hides on unknown rather than
+ * relying on the server to say no.)
  */
+/**
+ * Clear the overlay's persistent error banner.
+ *
+ * It sits ABOVE `#setupBody`, so unlike a message inside a step it is not removed
+ * by the next render — a failed Skip's "Could not finish setup." would otherwise
+ * still be on screen under a later "Your login is in force". Called from the
+ * navigation and terminal paths deliberately, and NOT from `renderWizardStep`:
+ * `loadIngressPlan` calls that unawaited, so a probe resolving late would wipe a
+ * message the operator has not read yet.
+ */
+function _clearOverlayError() {
+  const err = document.getElementById('setupOverlayError');
+  if (!err) return;
+  err.textContent = '';
+  err.classList.add('hidden');
+}
+
 function _syncSkipButton() {
   const skipBtn = document.getElementById('setupSkipBtn');
   if (!skipBtn) return;
@@ -154,6 +174,7 @@ function showWizard() {
   wizard.provision = null;
   wizard.view = 'steps';
   wizard.adminStepForcedByServer = false;
+  _clearOverlayError();
 
   _syncSkipButton();
   // Ask what this machine can do about a login. Deliberately not awaited: the
@@ -186,6 +207,7 @@ function dismissWizard() {
 // ── Step Navigation ──
 
 function wizardNext() {
+  _clearOverlayError();
   if (wizard.step === 1) {
     // Save projectsDir before moving on
     const input = document.getElementById('setupProjectsDir');
@@ -213,6 +235,7 @@ function wizardNext() {
 }
 
 function wizardBack() {
+  _clearOverlayError();
   if (wizard.step > 0) {
     wizard.step--;
     renderWizardStep();
@@ -1141,6 +1164,7 @@ async function wizardComplete() {
  * @param {string[]} warnings - Server warnings to restate here.
  */
 function _showAdoptedScreen(ingress, warnings) {
+  _clearOverlayError();
   wizard.view = 'adopted';
   const body = document.getElementById('setupBody');
   if (!body) return;
@@ -1250,6 +1274,7 @@ function _exposureSentence(exposed) {
  * @param {object} ingress - `ingress` block from POST /api/setup/complete.
  */
 function _showProvisioningScreen(ingress, warnings) {
+  _clearOverlayError();
   wizard.view = 'provisioning';
   wizard.provision = {
     phase: 'working',
@@ -1414,6 +1439,7 @@ async function _finishAfterProvisioning() {
  * @param {object} ingress - `ingress` block from POST /api/setup/complete.
  */
 function _showUnprotectedScreen(ingress, warnings) {
+  _clearOverlayError();
   wizard.view = 'unprotected';
   const body = document.getElementById('setupBody');
   if (!body) return;
@@ -1473,6 +1499,7 @@ function _httpsSummaryLabel() {
  *   replaces the body that reported them.
  */
 function _showRestartOverlay(redirectUrl, warnings) {
+  _clearOverlayError();
   // Every terminal screen owes the same three things, and this one was outside all
   // of them: claim the view (the ingress probe re-renders asynchronously and would
   // repaint it), announce itself (it appears without the operator acting), and

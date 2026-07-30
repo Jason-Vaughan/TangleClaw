@@ -78,8 +78,8 @@ All notable changes to TangleClaw are documented in this file.
   outcome is often unobservable from the page that started it — both facts a future reader would
   otherwise have to rediscover from a deleted plan.
 
-  **Tests:** 5256 passing under the project's suite command (`node --test 'test/*.test.js'`). The
-  recorded evidence file reports 2795 for the same run. The two disagree because the ingest counts
+  **Tests:** 5259 passing under the project's suite command (`node --test 'test/*.test.js'`). The
+  recorded evidence file reports 2797 for the same run. The two disagree because the ingest counts
   differently from the runner; the cause is the undercount filed upstream as
   brookstalley/prawduct#128, which is that issue's diagnosis rather than something re-verified here.
   The per-file counts below are the runner's. `test/ingress-provision.test.js` (31) — every Caddyfile state
@@ -88,12 +88,12 @@ All notable changes to TangleClaw are documented in this file.
   `adoptable`, absent vs malformed vs readable outcome files kept distinct, the spawn's argv,
   detach/unref, log-file stdio and self-clearing, and an interlock that refuses a REAL cutover from a
   test process (a run rewrites launchd plists and restarts the machine's live server, so a missed stub
-  must fail rather than cause an outage). `test/setup-provisioning.test.js` (26) — the completion
+  must fail rather than cause an outage). `test/setup-provisioning.test.js` (27) — the completion
   matrix at the HTTP boundary, including refusal-with-no-credential-demanded, provisioning gated to a
   first run, a caller-supplied `Host` discarded rather than echoed into the URL the wizard renders,
   the operator's Caddyfile unchanged byte-for-byte on adopt, adoption that no-opped not reported as
   "kept", and `provision-status` withholding a path planted in `error` — the field that can actually
-  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (47) —
+  leak, which the first version of that test skipped. `test/setup-wizard-login-gate.test.js` (49) —
   the step list against each plan (including the direct-mode flip), the payload sent under the same
   predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
   answered", a stored-but-unconfirmed login getting its own screen, recovery keyed on the error code,

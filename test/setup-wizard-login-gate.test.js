@@ -865,6 +865,49 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
   });
 
+  describe('the overlay banner does not outlive the failure it reports', () => {
+    it('is cleared when the operator navigates on', async () => {
+      // It sits ABOVE #setupBody, so unlike a message inside a step it is not removed
+      // by the next render.
+      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      ctx.api.lastError = 'Disk is full';
+      ctx.api.lastErrorCode = 'INTERNAL';
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(ctx.document.getElementById('setupOverlayError').textContent, 'Disk is full');
+      ctx.wizardNext();
+      assert.equal(ctx.document.getElementById('setupOverlayError').textContent, '');
+    });
+
+    it('is cleared by every terminal screen, so it cannot sit under a success message', async () => {
+      for (const ingress of [
+        { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443' },
+        { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' },
+        { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' }
+      ]) {
+        const ctx = loadSetup({
+          plan: REFUSE_PLAN,
+          statusFetch: () => ({ ok: true, json: async () => ({ state: 'done', ok: true, code: 'ok' }) }),
+          apiMutate: async () => ({
+            ok: true, setupComplete: true, attached: [],
+            warnings: ['Skipped "x": path does not exist'], restart: false, ingress
+          })
+        });
+        ctx.showWizard();
+        await settle();
+        const banner = ctx.document.getElementById('setupOverlayError');
+        banner.textContent = 'Could not finish setup.';
+        banner.classList.remove('hidden');
+        await ctx.wizardComplete();
+        await settle(2000);
+        assert.equal(banner.textContent, '',
+          `${ingress.protection}: a stale failure banner survived onto a terminal screen`);
+      }
+    });
+  });
+
   describe('Skip is offered only when the answer is known', () => {
     it('stays hidden while the plan is unknown, not just when it demands a credential', async () => {
       // Unknown is not "not required". The probe is unawaited, so there is a window
