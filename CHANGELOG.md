@@ -52,12 +52,18 @@ All notable changes to TangleClaw are documented in this file.
   operator chooses, so "reachable from this machine only" would have been a false reassurance handed
   to precisely the operator who is ungated *and* reachable.
 
+  Provisioning is gated to a **first run**. `/api/setup/complete` has never required setup to be
+  unfinished, and it can now rewrite launchd plists and restart the server — so on an install that is
+  ungated *and* network-reachable (the legacy grace state) a re-POST would have handed an
+  unauthenticated caller a service restart. A completed install reports the ingress state and acts on
+  nothing; changing a credential later is a settings action with its own surface.
+
   Descoped explicitly: the wizard does not **install** Caddy. Running a package manager from an HTTP
   handler is its own capability, and the honest degraded path was already required for provisioning
   failure — caddy-missing reaches the same end state for a different reason, told plainly with the
   two commands that fix it.
 
-  **Tests:** 5221 passing overall. `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
+  **Tests:** 5223 passing overall. `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
   action, an unrecognized state failing closed, caddy-missing beating `adoptable`, absent vs
   malformed vs readable outcome files kept distinct, the spawn's argv and its `detached`/`stdio:
   ignore`/`unref` trio, and an interlock that refuses a REAL cutover from a test process (a run

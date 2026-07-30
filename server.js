@@ -1087,6 +1087,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
 
   const config = store.config.load();
   const warnings = [];
+  // Captured before this handler sets it. Provisioning is a FIRST-RUN action: it
+  // rewrites launchd plists and restarts the server, and this route has never
+  // required setup to be unfinished. Re-POSTing it on a completed install must
+  // therefore not be a way to trigger an ingress cutover — on an install that is
+  // ungated and network-reachable (the legacy grace state) that would hand an
+  // unauthenticated caller a service restart. Changing the credential on a
+  // finished install is a settings action with its own surface, not this one.
+  const firstRun = config.setupComplete === false;
 
   // Snapshot HTTPS state before mutations so we can decide whether to restart
   const prevHttps = {
@@ -1147,11 +1155,17 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   //               storing a credential nothing enforces.
   const ingressDetection = caddy.detectCaddy();
   const ingressState = caddy.classifyIngressState();
-  const ingressPlan = ingressProvision.decideProvisioning({
-    state: ingressState.state,
-    caddyAvailable: ingressDetection.available,
-    user: ingressState.user
-  });
+  const ingressPlan = firstRun
+    ? ingressProvision.decideProvisioning({
+      state: ingressState.state,
+      caddyAvailable: ingressDetection.available,
+      user: ingressState.user
+    })
+    // Already-complete install: report the state, act on nothing. `refuse` is the
+    // no-op action, so a re-POST persists whatever config fields it carries and
+    // leaves the ingress exactly as it found it.
+    : { action: 'refuse', reason: 'Setup is already complete, so the ingress was left unchanged.',
+      remedy: null, user: null };
 
   // AUTH-2 — forced first-run admin in caddy ingress mode. The login gate lives at
   // Caddy (basic_auth), so completing setup behind Caddy with NO credential would

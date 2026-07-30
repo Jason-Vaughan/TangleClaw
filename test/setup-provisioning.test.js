@@ -364,6 +364,36 @@ describe('setup provisions a login by default', () => {
     });
   });
 
+  describe('provisioning is a first-run action only', () => {
+    it('does not start a cutover when setup is already complete', async () => {
+      // This route never required setup to be unfinished, and it can now rewrite
+      // launchd plists and restart the server. On an install that is ungated AND
+      // network-reachable (the legacy grace state) a re-POST would otherwise hand
+      // an unauthenticated caller a service restart.
+      const config = store.config.load();
+      config.setupComplete = true;
+      store.config.save(config);
+
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.action, 'refuse');
+      assert.match(res.data.ingress.reason, /already complete/);
+      assert.equal(cutovers.length, 0, 'a completed install must not be cut over by this route');
+    });
+
+    it('does not demand a credential from a completed install either', async () => {
+      // The demand exists to stop a FIRST run finishing unprotected. Applying it
+      // to a re-POST would make an unrelated field update impossible instead.
+      const config = store.config.load();
+      config.setupComplete = true;
+      store.config.save(config);
+
+      const res = await request(server, 'POST', '/api/setup/complete', { chimeEnabled: false });
+      assert.equal(res.status, 200);
+      assert.equal(store.config.load().chimeEnabled, false, 'the update still applied');
+    });
+  });
+
   describe('GET /api/setup/provision-status', () => {
     it('reports pending — not failed — while no outcome has been written', async () => {
       const res = await request(server, 'GET', '/api/setup/provision-status');
