@@ -573,9 +573,14 @@ the Admin Login step renders, that Skip is absent from the flow, and that the sc
 a reload. Those are frontend assertions and are covered by `test/setup-wizard-login-gate.test.js`,
 but they are not covered *here* and this row does not claim them.
 
-*Phase 8 (rollback):* **FAILS.** `--to direct` switches the ingress and then crashes in `pollHealth`,
-which hardcodes `https.get` while the direct health URL is `http://`. Exit 1 after a successful
-switch, and no result file written. Filed as **#789** — it is the break-glass path, so it matters.
+*Phase 8 (rollback):* **failed first, then passed after the fix.** `--to direct` switched the ingress
+and then crashed in `pollHealth`, which hardcoded `https.get` while the direct health URL is
+`http://` — exit 1 after a successful switch, no result file written. Filed as **#789** and fixed at
+`ad280a7`; the client is now chosen from the URL scheme. Re-run on this same guest, rolling back from
+the gated install 7e had just created: **exit 0**, no stack trace, health check passed,
+`{"ok":true,"code":"ok","target":"direct","healthOk":true}` written, caddy LaunchAgent unloaded,
+`ingressMode` back to `direct`, and `http://localhost:3102/api/health` answering 200. The before/after
+is the evidence, not the code review.
 
 | Check | Phase | Pass? |
 |---|---|---|
@@ -589,7 +594,7 @@ switch, and no result file written. Filed as **#789** — it is the break-glass 
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
 | #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | **PASS** — server PID 6053→6219, 401/401/200 |
 | #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
-| Rollback restores direct mode cleanly | 8 | **FAIL — #789** (switches, then crashes in `pollHealth`) |
+| Rollback restores direct mode cleanly | 8 | **PASS** — after the #789 fix; re-run @ad280a7 |
 
 **Every row above** green → `VRF-auth-1-cutover` PASSES. (Count the rows rather than trusting a
 number written here — the matrix grows as phases are added, and a stale count is how a phase gets
