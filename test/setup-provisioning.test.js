@@ -25,7 +25,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const provision = require('../lib/ingress-provision');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
-const { installCaddyStub } = require('./_caddy-stub');
+const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
 
 setLevel('error');
 
@@ -163,19 +163,6 @@ describe('setup provisions a login by default', () => {
     const p = caddy.getCaddyfilePath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, content);
-  }
-
-  /** Make caddy undetectable for the duration of `fn`. */
-  async function withoutCaddy(fn) {
-    const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-nocaddy-'));
-    const origPath = process.env.PATH;
-    process.env.PATH = emptyBin;
-    try {
-      return await fn();
-    } finally {
-      process.env.PATH = origPath;
-      fs.rmSync(emptyBin, { recursive: true, force: true });
-    }
   }
 
   describe('the credential is required, not optional', () => {

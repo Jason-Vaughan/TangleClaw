@@ -7,10 +7,13 @@
 // suite that does not control PATH inherits whatever the host happens to have.
 // Every developer machine here has Caddy — the live install uses it — and CI
 // does not. Three suites silently depended on that difference and passed
-// locally while failing 17 assertions on CI, which went unnoticen because CI
+// locally while failing 17 assertions on CI, which went unnoticed because CI
 // had never run the branch. The lesson is not "stub it in this file": it is that
 // the next suite to test an ingress decision must inherit the stub rather than
-// rediscover the problem, so the stub lives in one place.
+// rediscover the problem, so the stub lives in one place. All four suites that
+// need it consume this module — three want Caddy present, `auth2-setup-admin`
+// wants it absent and says so explicitly at the call site rather than relying on
+// a default, because flipping that one silently would gut its assertions.
 //
 // Deliberately NOT named `*.test.js`: the suite command is
 // `node --test 'test/*.test.js'`, and a helper collected as a test file would

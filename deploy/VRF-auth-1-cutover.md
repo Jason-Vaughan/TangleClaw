@@ -54,6 +54,11 @@ configured.
 > do NOT need macOS** — they refuse before any `launchctl` step, so they run in habitat's
 > `tc-cleanroom` Linux container with no egress window and no guest.
 
+> **Checkbox legend for this document.** `- [x]` measured on the run named in the execution
+> record. `- [~]` **not verified** — reachable only through a browser session this run did not
+> have, and NOT claimed by the matrix row above. `- [ ]` not run this pass. A ticked matrix row
+> whose boxes are blank is the contradiction this legend exists to prevent.
+
 ---
 
 ## Phase 0 — Confirm clean room + prereqs
@@ -301,14 +306,14 @@ node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-result.jso
 cat /tmp/cutover-result.json
 ```
 
-- [ ] Exit is **non-zero** and the message names the path and says permissions.
-- [ ] **No stack trace.** An `EACCES` traceback here is the regression this phase exists for —
+- [x] Exit is **non-zero** and the message names the path and says permissions.
+- [x] **No stack trace.** An `EACCES` traceback here is the regression this phase exists for —
       it means the file is being read before it is classified.
-- [ ] `/tmp/cutover-result.json` exists and reports `"code": "unreadable"`, `"ok": false`:
+- [x] `/tmp/cutover-result.json` exists and reports `"code": "unreadable"`, `"ok": false`:
       ```sh
       python3 -c "import json;d=json.load(open('/tmp/cutover-result.json'));assert d['code']=='unreadable' and d['ok'] is False, d;print('✓', d)"
       ```
-- [ ] The Caddyfile is **untouched** — nothing written, no backup attempted:
+- [x] The Caddyfile is **untouched** — nothing written, no backup attempted:
       ```sh
       ls -l ~/.tangleclaw/*.bak* 2>/dev/null && echo "UNEXPECTED backup" || echo "OK no backup taken"
       stat -f '%m %N' ~/.tangleclaw/Caddyfile   # mtime must predate this phase
@@ -324,9 +329,9 @@ python3 -c "import json;d=json.load(open('/tmp/cutover-forced.json'));assert d['
 sudo chmod 600 ~/.tangleclaw/Caddyfile
 ```
 
-- [ ] `--force` **still refuses**, with `"code": "unreadable"`. Force applies to a hand-edited
+- [x] `--force` **still refuses**, with `"code": "unreadable"`. Force applies to a hand-edited
       file (which can be backed up), never to an unreadable one (which cannot).
-- [ ] Permissions restored to `600` before continuing to the next phase.
+- [x] Permissions restored to `600` before continuing to the next phase.
 
 ## Phase 7c — A successful cutover writes its outcome  ← #710
 
@@ -340,11 +345,11 @@ node scripts/ingress-cutover.js --to caddy --result-file /tmp/cutover-ok.json ; 
 python3 -c "import json;d=json.load(open('/tmp/cutover-ok.json'));assert d['ok'] and d['code']=='ok',d;print('✓',d)"
 ```
 
-- [ ] Exit `0`, and the file reports `"ok": true`, `"code": "ok"`.
-- [ ] `healthUrl` is the HTTPS URL, and `healthOk` is a **boolean, not null** — the health poll
+- [x] Exit `0`, and the file reports `"ok": true`, `"code": "ok"`.
+- [x] `healthUrl` is the HTTPS URL, and `healthOk` is a **boolean, not null** — the health poll
       ran. (`healthOk: false` is a legitimate pass here; it means the cutover applied but the
       service had not come up yet. Only `null` is wrong.)
-- [ ] `finishedAt` is a timestamp from *this* run, not a stale file from an earlier one.
+- [x] `finishedAt` is a timestamp from *this* run, not a stale file from an earlier one.
 
 ## Phase 7d — An ungate refusal reports `ungate-refused`, not `failed`  ← #710
 
@@ -407,14 +412,14 @@ cp /tmp/config.before.json ~/.tangleclaw/config.json
 cp /tmp/Caddyfile.before ~/.tangleclaw/Caddyfile
 ```
 
-- [ ] Refuses with **`"code": "ungate-refused"`** — NOT `"failed"`. A `failed` here is the
+- [x] Refuses with **`"code": "ungate-refused"`** — NOT `"failed"`. A `failed` here is the
       regression this phase exists for.
-- [ ] The message names `scripts/reset-admin.js` as the way forward.
-- [ ] The Caddyfile still carries its `basic_auth` block (the gate was never dropped):
+- [x] The message names `scripts/reset-admin.js` as the way forward.
+- [x] The Caddyfile still carries its `basic_auth` block (the gate was never dropped):
       ```sh
       grep -c basic_auth ~/.tangleclaw/Caddyfile   # >= 1
       ```
-- [ ] Config restored before continuing.
+- [x] Config restored before continuing.
 
 ## Phase 7e — The wizard's own provisioning survives the restart it causes  ← #710
 
@@ -450,28 +455,32 @@ launchctl kickstart -k "gui/$(id -u)/com.tangleclaw.server"
 Then, in a browser at **`http://localhost:3102`** (deliberately plain-HTTP loopback — the one origin
 that survives the restart, so the poll can be observed resolving rather than timing out):
 
-- [ ] The wizard shows an **Admin Login** step, on an install whose `ingressMode` is `direct`. Its
+- [~] The wizard shows an **Admin Login** step, on an install whose `ingressMode` is `direct`. Its  
+      **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
       absence is the pre-#710 behaviour and the whole defect.
-- [ ] The confirm step's **Login** row names the credential that will be created.
-- [ ] **Skip is not offered** anywhere in the flow.
-- [ ] After *Complete Setup*: a "Putting your login in place…" screen appears, and the response
+- [~] The confirm step's **Login** row names the credential that will be created.  
+      **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
+- [~] **Skip is not offered** anywhere in the flow.  
+      **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
+- [x] After *Complete Setup*: a "Putting your login in place…" screen appears, and the response
       arrived — i.e. the browser is not showing a network error. (A response that never arrives means
       the spawn happened before the reply was written.)
-- [ ] The screen resolves on its own to **"Your login is in force"** without a reload. That is the
+- [~] The screen resolves on its own to **"Your login is in force"** without a reload. That is the  
+      **NOT VERIFIED — browser-only; this run drove `POST /api/setup/complete`, not the UI.**
       detached child surviving the restart and writing its outcome.
-- [ ] The outcome file exists and agrees:
+- [x] The outcome file exists and agrees:
       ```sh
       python3 -c "import json,os;d=json.load(open(os.path.expanduser('~/.tangleclaw/ingress-cutover-result.json')));assert d['ok'] and d['code']=='ok',d;print('✓',d)"
       ```
-- [ ] The child was **not** a child of the server any more (it outlived it). The server's PID
+- [x] The child was **not** a child of the server any more (it outlived it). The server's PID
       changed across the cutover, which is only survivable detached:
       ```sh
       launchctl print "gui/$(id -u)/com.tangleclaw.server" | grep -m1 pid
       ```
-- [ ] Opening the address the screen names **prompts for a username and password**, and the
+- [x] Opening the address the screen names **prompts for a username and password**, and the
       credential set in the wizard works. Nothing else in this phase substitutes for this check —
       it is the only end-to-end proof that a login is actually in force.
-- [ ] `http://localhost:3102` now serves plain HTTP behind Caddy (loopback), per
+- [x] `http://localhost:3102` now serves plain HTTP behind Caddy (loopback), per
       `bind-policy`'s caddy rule.
 
 Then the honest-failure half, which matters more than the success half:
@@ -481,11 +490,14 @@ Then the honest-failure half, which matters more than the success half:
 #       the service's PATH so detection fails, and re-run first-run setup.
 ```
 
-- [ ] With no `caddy` on the service PATH, the wizard shows **no** Admin Login step, and completing
+- [ ] With no `caddy` on the service PATH, the wizard shows **no** Admin Login step, and completing  
+      *(not run this pass)*
       setup lands on **"TangleClaw has no login"** — naming `brew install caddy` and the cutover
       command. It must NOT collect a password first.
-- [ ] That screen does not dismiss itself; it waits for *Continue*.
-- [ ] On an install whose `bindAllInterfaces` is `true`, the same screen says TangleClaw is
+- [ ] That screen does not dismiss itself; it waits for *Continue*.  
+      *(not run this pass)*
+- [ ] On an install whose `bindAllInterfaces` is `true`, the same screen says TangleClaw is  
+      *(not run this pass)*
       **reachable from your network** with no login — not "this machine only".
 
 ## Phase 8 — Roll back to direct (reversibility)
@@ -494,10 +506,12 @@ Then the honest-failure half, which matters more than the success half:
 node scripts/ingress-cutover.js --to direct      # or --rollback
 ```
 
-- [ ] `https://localhost:3102` serves again (direct HTTPS).
-- [ ] `lsof -nP -iTCP:3100 -sTCP:LISTEN` → ttyd back on TCP :3100.
-- [ ] `launchctl list | grep com.tangleclaw.caddy` → **gone** (caddy LaunchAgent unloaded).
-- [ ] `ingressMode` back to `direct` in config.json.
+- [ ] `https://localhost:3102` serves again (direct HTTPS).  
+      *(not run this pass)*
+- [ ] `lsof -nP -iTCP:3100 -sTCP:LISTEN` → ttyd back on TCP :3100.  
+      *(not run this pass)*
+- [x] `launchctl list | grep com.tangleclaw.caddy` → **gone** (caddy LaunchAgent unloaded).
+- [x] `ingressMode` back to `direct` in config.json.
 
 ```sh
 curl -k -so /dev/null -w "%{http_code}\n" https://localhost:3102   # 200

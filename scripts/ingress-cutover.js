@@ -602,12 +602,18 @@ function main() {
   process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n\n`);
 
   // 6. Best-effort health poll (non-fatal — the operator VRF confirms end-to-end).
-  pollHealth(plan.healthUrl, 6).then((ok) => {
-    process.stdout.write(ok ? '  ✓ health check passed\n' : '  ⚠ health check not green yet — check logs (~/.tangleclaw/logs/)\n');
+  // Captured so an unbuildable health URL reaches the RESULT FILE, not just
+  // stderr the detached child has nobody reading. Without it the caller sees
+  // healthOk:false with no error and is pointed at logs that say nothing.
+  let healthError = null;
+  pollHealth(plan.healthUrl, 6, (err) => { healthError = err.message; }).then((ok) => {
+    process.stdout.write(ok
+      ? '  ✓ health check passed\n'
+      : `  ⚠ health check not green yet${healthError ? `: ${healthError}` : ' — check logs (~/.tangleclaw/logs/)'}\n`);
     // The cutover itself succeeded either way — the plan was applied. healthOk
     // carries whether it came up, which is a separate fact a caller may want to
     // act on (retry, surface a warning) without being told the run failed.
-    finish(CUTOVER_CODES.OK, null, { healthUrl: plan.healthUrl, healthOk: ok });
+    finish(CUTOVER_CODES.OK, healthError, { healthUrl: plan.healthUrl, healthOk: ok });
   });
 }
 
@@ -631,21 +637,30 @@ function main() {
  * @param {number} tries
  * @returns {Promise<boolean>}
  */
-function pollHealth(url, tries) {
+function pollHealth(url, tries, onUnbuildable) {
   return new Promise((resolve) => {
     let n = 0;
-    const client = String(url).startsWith('https:') ? https : http;
     const attempt = () => {
       n++;
       let req;
       try {
+        // Parsed rather than prefix-matched: `new URL` is exact about the scheme
+        // (case, credentials, whitespace) where startsWith is not, and it throws
+        // on a malformed URL — which the catch below is already the right home for.
+        const client = new URL(url).protocol === 'https:' ? https : http;
         req = client.get(url, { rejectUnauthorized: false, timeout: 2000 }, (res) => {
           res.resume();
           if (res.statusCode === 200 || res.statusCode === 503) return resolve(true);
           retry();
         });
-      } catch {
-        // Unbuildable request (bad scheme, malformed URL). Not retryable.
+      } catch (err) {
+        // Unbuildable request (bad scheme, malformed URL). Not retryable — but not
+        // silent either. Resolving false mutely is the same information loss #789
+        // was about: the caller writes `healthOk:false` with no `error`, and the
+        // operator is told to check logs that say nothing. The detached child has
+        // no stdout anyone reads, so the reason has to reach the result file too.
+        process.stderr.write(`WARNING: health check could not be attempted: ${err.message}\n`);
+        if (typeof onUnbuildable === 'function') onUnbuildable(err);
         return resolve(false);
       }
       req.on('error', retry);

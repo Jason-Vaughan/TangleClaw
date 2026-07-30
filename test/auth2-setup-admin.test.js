@@ -16,6 +16,7 @@ const caddy = require('../lib/caddy');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { writeCaddyStub } = require('./_caddy-stub');
 
 setLevel('error');
 
@@ -49,36 +50,6 @@ function request(server, method, urlPath, body) {
   });
 }
 
-/**
- * Write a `caddy` stub that satisfies hash-password (bcrypt-shaped output, read
- * from stdin) so the admin happy-path is hermetic without a real Caddy.
- * @param {string} stubDir
- */
-function writeCaddyStub(stubDir, opts = {}) {
-  // `version` is opt-in. The default stub deliberately FAILS it, so most of this
-  // suite runs as "caddy not installed" — which is what makes its no-credential
-  // cases legitimate rather than a hole. One case needs the opposite and says so.
-  const versionCase = opts.answersVersion
-    ? `  version)
-    echo 'v2.8.4 h1:stub'
-    exit 0
-    ;;
-`
-    : '';
-  const script = `#!/bin/bash
-case "$1" in
-${versionCase}  hash-password)
-    read -r pw
-    echo '\$2a\$14\$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU'
-    exit 0
-    ;;
-esac
-echo "caddy stub: unknown args: $*" >&2
-exit 1
-`;
-  fs.writeFileSync(path.join(stubDir, 'caddy'), script, { mode: 0o755 });
-}
-
 describe('forced first-run admin credential', () => {
   let tmpDir;
   let server;
@@ -88,7 +59,11 @@ describe('forced first-run admin credential', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-auth2-'));
     const stubDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(stubDir, { recursive: true });
-    writeCaddyStub(stubDir);
+    // answersVersion:false ON PURPOSE — most of this suite runs as "caddy not
+    // installed", which is what makes its no-credential cases legitimate rather
+    // than a hole. The shared helper defaults to TRUE, so this must stay explicit:
+    // dropping it silently flips the suite to caddy-present and guts it.
+    writeCaddyStub(stubDir, { answersVersion: false });
     origPath = process.env.PATH;
     process.env.PATH = stubDir + path.delimiter + (origPath || '');
 

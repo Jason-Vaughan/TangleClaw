@@ -204,6 +204,14 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Internal
+- **CI now runs on pushes to `v5-baseline`, not only `main` (#710).** Chunk PRs target the v5
+  integration branch, and nothing validated it — so work merged there stayed unrun until it reached
+  `main`. That is not hypothetical: `feat/710-chunk2` accumulated **17 CI failures nobody had seen**,
+  because CI had never been triggered on the branch at all; opening the PR produced its first run,
+  after six Critic passes and a green local suite. The branch list stays pinned by name in
+  `test/ci-workflow.test.js` rather than loosened to "any list", so adding a branch remains a
+  deliberate act — verified by mutation: removing `v5-baseline` turns that assertion red.
+
 - **Three setup suites no longer depend on the host having Caddy installed (#710).** CI failed 17
   assertions on this branch while the same suites passed on every developer machine.
   `caddy.detectCaddy()` shells out to `caddy version`, so `test/setup-provisioning.test.js`,

@@ -1472,10 +1472,13 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     }
   } else if (adminConfigured) {
     // Refused, but a credential IS configured (an install already in caddy mode,
-    // or one the operator set earlier). It is stored and the live Caddyfile will
-    // not be regenerated from here, so the gate is only as active as that file
-    // already makes it — activating it belongs at a terminal, where the cutover's
-    // backup and rollback exist.
+    // or one the operator set earlier). It is stored, and the live Caddyfile will
+    // not be regenerated from here — so nothing at this point can confirm the
+    // credential is enforced. Deliberately NOT "as active as that file makes it":
+    // two states reaching this arm have nothing serving that file at all, and the
+    // warning below exists precisely because naming the Caddyfile as what governs
+    // protection is a false reassurance. Activating belongs at a terminal, where
+    // the cutover's backup and rollback exist.
     ingress.protection = 'unchanged';
     ingress.user = config.basicAuthUser || null;
     // States the situation and names no command. Every path here is refuse +
