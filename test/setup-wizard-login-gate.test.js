@@ -334,7 +334,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
 
     it('treats a corrupt outcome as a failure to confirm, not as success', async () => {
-      const ctx = await provisionWith([{ state: 'unparseable-result', hasError: true }]);
+      const ctx = await provisionWith([{ state: 'unparseable-result', hasError: true, logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }]);
       assert.equal(ctx.wizard.provision.phase, 'failed');
       assert.match(ctx.document.getElementById('setupBody').innerHTML, /No login is in force/);
     });

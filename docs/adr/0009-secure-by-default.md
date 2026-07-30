@@ -154,9 +154,25 @@ weaker rule left the stronger one unwritten and therefore unenforceable. Made ex
 
 - The setup wizard **never writes a Caddyfile that a human maintains** — not with a confirmation, not
   behind an "advanced" disclosure, not at all. It offers **no equivalent of the CLI's `--force`**.
-- Where a hand-maintained config already carries exactly one credential, the wizard **adopts** it —
-  reads it into canonical config, read-only on the file — and reports that it kept the operator's
-  existing login.
+- Where a hand-maintained config already carries exactly one credential **and Caddy is the active
+  ingress**, the wizard **adopts** it — reads it into canonical config, read-only on the file — and
+  reports that it kept the operator's existing login.
+
+  **Amended 2026-07-29 while building:** the original clause said only "already carries exactly one
+  credential", and that is not sufficient. A Caddyfile is a file; a *gate* is a running process. On a
+  direct-mode install the file is a config nothing is serving — a shape
+  `scripts/ingress-cutover.js --rollback` produces routinely, since it unloads Caddy and restores
+  `ingressMode: direct` while leaving the Caddyfile on disk. Adopting there would set `authEnabled`
+  on an install with nothing in front of it, which is the false-claim-of-protection this ADR exists
+  to forbid, arrived at from the opposite direction. So adoption requires the live ingress, and
+  otherwise **refuses** with the reason. The same reasoning already governed the caddy-binary-absent
+  case; it was simply not carried across to the ingress-mode case.
+
+  A second amendment from the same build: the wizard may only report "kept your existing login" when
+  adoption **actually adopted**. Credential adoption deliberately never overwrites a credential
+  already in config, so on an install that has one the call is a no-op while the hand-maintained file
+  may enforce a *different* credential — reporting success from a config predicate would make exactly
+  that drift invisible. That case reports a distinct, honest state instead.
 - Where it carries several credentials, or none, or cannot be read, the wizard **refuses and routes
   the operator to `scripts/ingress-cutover.js`**, where `--force`, `--rollback` and a timestamped
   backup exist. Destroying a working gate stays a deliberate act taken at a terminal, with an undo.

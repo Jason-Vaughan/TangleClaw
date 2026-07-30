@@ -201,11 +201,44 @@ describe('forced first-run admin credential', () => {
       assert.equal(store.config.load().setupComplete, false);
     });
 
-    it('allows setupComplete=true in direct mode', async () => {
+    it('allows setupComplete=true only because no gate can be put up here', async () => {
+      // Direct mode is NOT what makes Skip permissible (#710). This suite's caddy
+      // stub answers `hash-password` and nothing else, so `caddy version` fails and
+      // detection reports the binary absent — there is nothing to enforce a
+      // credential with, so finishing is allowed and the install is honestly
+      // ungated.
+      //
+      // The previous version of this case was titled "allows setupComplete=true in
+      // direct mode" and stood as evidence for exactly the hole #710 closed: on a
+      // real fresh install (direct mode, caddy PRESENT) Skip finished setup with no
+      // login. The companion case below covers that.
       resetConfig('direct');
       const { status } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
       assert.equal(status, 200);
       assert.equal(store.config.load().setupComplete, true);
+    });
+
+    it('refuses Skip on a direct-mode install that CAN run a gate', async (t) => {
+      // The default fresh install: direct mode, caddy installed. Skip is the other
+      // route that can finish setup, so it has to answer to the same rule as
+      // /api/setup/complete or it is a way past the login gate.
+      resetConfig('direct');
+      const realCaddy = ['/opt/homebrew/bin', '/usr/local/bin'].find(
+        (d) => fs.existsSync(path.join(d, 'caddy')));
+      // A silent `return` here would report a pass on a machine where the branch
+      // never ran — the shape this suite has already been burned by twice. Skip
+      // visibly instead.
+      if (!realCaddy) return t.skip('no caddy binary on this machine; branch unreachable');
+      const origPath = process.env.PATH;
+      process.env.PATH = realCaddy;
+      try {
+        const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+        assert.equal(status, 400);
+        assert.equal(data.code, 'ADMIN_REQUIRED');
+        assert.equal(store.config.load().setupComplete, false, 'a refused Skip must not finish setup');
+      } finally {
+        process.env.PATH = origPath;
+      }
     });
 
     it('allows an unrelated PATCH in caddy mode without an admin (only blocks the complete transition)', async () => {

@@ -768,16 +768,32 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     log.info('AUTH-4 service token auto-generated on enable');
   }
 
-  // AUTH-2 — the wizard's "Skip" closes setup via PATCH { setupComplete: true }.
-  // In caddy mode that path must honor the SAME forced-admin gate as
-  // /api/setup/complete, or Skip would slip past the login gate. Only the explicit
-  // complete-setup transition is guarded (body.setupComplete === true) so unrelated
-  // PATCHes in caddy mode aren't blocked.
-  if (body.setupComplete === true && config.ingressMode === 'caddy'
+  // The wizard's "Skip" closes setup via PATCH { setupComplete: true }, so this
+  // path must honor the SAME rule as /api/setup/complete or Skip is a way past the
+  // login gate. That rule is no longer "are we in caddy mode" — it is "can this
+  // machine enforce a credential", asked of the one derivation both routes share.
+  // Gating on `ingressMode === 'caddy'` here left the default fresh install
+  // (direct mode, caddy installed) able to finish setup with no login at all,
+  // which is the entire defect the sibling route was changed to close.
+  //
+  // Only the explicit complete-setup transition is guarded, so unrelated PATCHes
+  // are never blocked.
+  if (body.setupComplete === true
       && !(config.authEnabled && config.basicAuthUser && config.basicAuthHash)) {
-    return errorResponse(res, 400,
-      'Cannot finish setup behind the Caddy ingress without an admin credential (basic_auth login gate).',
-      'ADMIN_REQUIRED');
+    const skipState = caddy.classifyIngressState();
+    const skipPlan = ingressProvision.decideProvisioning({
+      state: skipState.state,
+      safeToWrite: skipState.safeToWrite,
+      caddyAvailable: caddy.detectCaddy().available,
+      ingressMode: config.ingressMode,
+      user: skipState.user
+    });
+    if (config.ingressMode === 'caddy' || skipPlan.action === 'provision') {
+      return errorResponse(res, 400,
+        'Cannot finish setup without an admin credential — TangleClaw puts a login in front of itself '
+        + 'by default, and this machine can run one.',
+        'ADMIN_REQUIRED');
+    }
   }
 
   store.config.save(config);
@@ -975,7 +991,7 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
       ok: null,
       code: null,
       hasError: true,
-      logPath: ingressProvision.cutoverLogPath()
+      logLocation: ingressProvision.CUTOVER_LOG_RELATIVE
     });
   }
   if (result.ok !== true && typeof result.error === 'string' && result.error) {
@@ -992,7 +1008,11 @@ route('GET', '/api/setup/provision-status', (_req, res) => {
     // `hasError` rather than the message: enough for the wizard to say the
     // cutover reported a reason and name where to read it.
     hasError: typeof result.error === 'string' && result.error.length > 0,
-    logPath: ingressProvision.cutoverLogPath(),
+    // A RELATIVE location, not the resolved path. Returning
+    // `cutoverLogPath()` here would have re-introduced the disclosure this route
+    // just removed — `/Users/<name>/…` names the OS account, on an endpoint with
+    // no setupComplete gate. The operator knows where their own home directory is.
+    logLocation: ingressProvision.CUTOVER_LOG_RELATIVE,
     finishedAt: typeof result.finishedAt === 'string' ? result.finishedAt : null
   });
 });

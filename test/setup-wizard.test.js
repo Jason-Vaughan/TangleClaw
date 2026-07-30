@@ -117,7 +117,18 @@ describe('Setup Wizard', () => {
   });
 
   describe('PATCH /api/config with setupComplete', () => {
-    it('should accept setupComplete: true', async () => {
+    it('should accept setupComplete: true once a login exists', async () => {
+      // This is the wizard's Skip path, and finishing setup through it now answers
+      // to the same rule as /api/setup/complete: a machine that can run a login
+      // gate must have a credential first (#710). Give the install one — the shape
+      // any second run has — so this case keeps testing the field it is about.
+      // The refusal itself is covered in test/auth2-setup-admin.test.js.
+      const seeded = store.config.load();
+      seeded.authEnabled = true;
+      seeded.basicAuthUser = 'admin';
+      seeded.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(seeded);
+
       const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
       assert.equal(status, 200);
       assert.equal(data.ok, true);

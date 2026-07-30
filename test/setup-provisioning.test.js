@@ -480,7 +480,7 @@ describe('setup provisions a login by default', () => {
       // disclosure case below). The wizard is told there IS one and where to read it.
       assert.equal(res.data.hasError, true);
       assert.equal(res.data.error, undefined);
-      assert.ok(res.data.logPath, 'the operator needs somewhere to read the reason');
+      assert.ok(res.data.logLocation, 'the operator needs somewhere to read the reason');
     });
 
     it('reports a corrupt outcome file as unparseable rather than as still pending', async () => {
@@ -493,7 +493,7 @@ describe('setup provisions a login by default', () => {
       assert.notEqual(res.data.state, 'unreadable');
       assert.equal(res.data.ok, null);
       assert.equal(res.data.hasError, true);
-      assert.ok(res.data.logPath, 'the operator needs somewhere to read what was in it');
+      assert.ok(res.data.logLocation, 'the operator needs somewhere to read what was in it');
     });
 
     it('discloses no paths, usernames or hashes — including through `error`', async () => {
@@ -516,14 +516,26 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.hasError, true, 'and the fact that there was a reason');
       assert.ok(!res.raw.includes('jason'), 'response leaked a username');
       assert.ok(!/\$2[aby]\$/.test(res.raw), 'response carried something bcrypt-shaped');
-      assert.ok(!res.raw.includes('/Users/'), 'response leaked a filesystem path');
       assert.ok(!res.raw.includes('failed validation'), 'response forwarded the raw error text');
+      // `/Users/` alone is blind here by construction: this suite's base path is a
+      // tmpdir, so an absolute path the ROUTE builds would sail past it. Assert
+      // against the paths this install actually resolves to.
+      assert.ok(!res.raw.includes(tmpDir), 'response leaked the install base path');
+      assert.ok(!res.raw.includes(provision.cutoverLogPath()), 'response leaked the log path');
+      assert.ok(!res.raw.includes(provision.resultPath()), 'response leaked the result path');
+      assert.ok(!res.raw.includes('/Users/'), 'response leaked a home-directory path');
     });
 
-    it('reports the log path so the withheld detail is still reachable by the operator', async () => {
+    it('names the log by a RELATIVE location, so the OS account name never crosses', async () => {
+      // The absolute path contains the account name, and this route answers with no
+      // setupComplete gate in front of it. Fixing the `error` leak by returning
+      // `cutoverLogPath()` would have re-introduced the same disclosure.
       fs.writeFileSync(provision.resultPath(), JSON.stringify({ ok: false, code: 'failed', error: 'x' }));
       const res = await request(server, 'GET', '/api/setup/provision-status');
-      assert.equal(res.data.logPath, provision.cutoverLogPath());
+      assert.equal(res.data.logLocation, provision.CUTOVER_LOG_RELATIVE);
+      assert.match(res.data.logLocation, /^~\//, 'must be relative to home, not resolved');
+      assert.equal(res.data.logPath, undefined, 'the resolved path must not be returned');
+      assert.ok(!res.raw.includes(tmpDir), 'the resolved base path leaked anyway');
     });
 
     it('never writes or creates the outcome file as a side effect of polling', async () => {

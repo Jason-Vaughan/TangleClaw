@@ -98,13 +98,20 @@ async function loadIngressPlan() {
 }
 
 /**
- * Hide Skip whenever an admin credential is mandatory, so the button cannot
- * offer a way past the login gate. The server enforces the same rule at
- * POST /api/setup/complete; hiding it keeps the UI honest about it.
+ * Show Skip only once the server has said a credential is NOT mandatory here.
+ *
+ * Fail closed on an unknown plan, which is not the same as "not required": the
+ * probe is unawaited, so there is a window at startup where nothing is known yet,
+ * and a failed probe leaves it unknown forever. Offering Skip in that window
+ * offers a way past the login gate on exactly the machines where the answer has
+ * not arrived. Both server routes that can finish setup refuse it anyway, so a
+ * visible Skip there could only produce an error the operator cannot act on.
  */
 function _syncSkipButton() {
   const skipBtn = document.getElementById('setupSkipBtn');
-  if (skipBtn) skipBtn.style.display = _adminStepRequired() ? 'none' : '';
+  if (!skipBtn) return;
+  const known = !!wizard.ingressPlan;
+  skipBtn.style.display = (known && !_adminStepRequired()) ? '' : 'none';
 }
 
 // ── Wizard Lifecycle ──
@@ -1125,14 +1132,20 @@ function _warningsBlock(warnings) {
  * whose config predates the loopback default is deliberately held on a wide
  * binding until its operator chooses, so "reachable from this machine only" is
  * false for exactly the person who most needs the truth — ungated AND reachable.
+ *
+ * Scoped to the DASHBOARD deliberately. `describeBindState` answers for
+ * TangleClaw's own listener, and that is the only thing this sentence may speak
+ * for: the terminal backend is a separate job with its own binding, and a claim
+ * that the machine is not exposed would be broader than the fact it rests on.
  * @param {boolean} exposed - Whether the server binds beyond loopback.
  * @returns {string}
  */
 function _exposureSentence(exposed) {
   return exposed
-    ? 'TangleClaw is currently reachable from your network with no login in front of it — anyone who can '
-      + 'reach this address can run commands as you. Close it from Settings, or put the login in place.'
-    : 'TangleClaw is reachable from this machine only, so it is not exposed to your network.';
+    ? 'The TangleClaw dashboard is currently reachable from your network with no login in front of it '
+      + '— anyone who can reach this address can run commands as you. Close it from Settings, or put '
+      + 'the login in place.'
+    : 'The TangleClaw dashboard is reachable from this machine only, so it is not exposed to your network.';
 }
 
 /**
@@ -1147,7 +1160,7 @@ function _showProvisioningScreen(ingress, warnings) {
     user: ingress.user || null,
     code: null,
     hasError: false,
-    logPath: null,
+    logLocation: null,
     reachable: true,
     networkExposed: ingress.networkExposed === true,
     warnings: Array.isArray(warnings) ? warnings : []
@@ -1182,7 +1195,7 @@ async function _pollProvisionOutcome() {
       wizard.provision.phase = data.ok ? 'gated' : 'failed';
       wizard.provision.code = data.code || null;
       wizard.provision.hasError = data.hasError === true;
-      wizard.provision.logPath = data.logPath || null;
+      wizard.provision.logLocation = data.logLocation || null;
       _renderProvisionScreen();
       return;
     }
@@ -1190,7 +1203,7 @@ async function _pollProvisionOutcome() {
       wizard.provision.phase = 'failed';
       wizard.provision.code = null;
       wizard.provision.hasError = true;
-      wizard.provision.logPath = data.logPath || null;
+      wizard.provision.logLocation = data.logLocation || null;
       _renderProvisionScreen();
       return;
     }
@@ -1232,6 +1245,7 @@ function _renderProvisionScreen() {
         <h2 class="setup-heading">Your login is in force</h2>
         <p class="setup-text">TangleClaw is now behind a login${p.user ? ` for <strong>${esc(p.user)}</strong>` : ''}. Every page will ask for it.</p>
         ${url ? `<p class="setup-text-muted">TangleClaw has moved to <code>${esc(url)}</code>. This address will not work any more.</p>` : ''}
+        ${_warningsBlock(p.warnings)}
         ${signIn}
       </div>`;
     return;
@@ -1242,7 +1256,7 @@ function _renderProvisionScreen() {
       <div class="setup-step" role="alert">
         <h2 class="setup-heading">No login is in force</h2>
         <p class="setup-text">Setup finished, but putting a login in front of TangleClaw did not work${p.code ? ` (<code>${esc(p.code)}</code>)` : ''}. <strong>Nothing is asking for a password right now.</strong></p>
-        ${p.hasError && p.logPath ? `<p class="setup-text-muted">It reported a reason, which is in <code>${esc(p.logPath)}</code> and in TangleClaw's log.</p>` : ''}
+        ${p.hasError && p.logLocation ? `<p class="setup-text-muted">It reported a reason, which is in <code>${esc(p.logLocation)}</code> and in TangleClaw's log.</p>` : ''}
         <p class="setup-text-muted">${_exposureSentence(p.networkExposed)} To put the login in place, run
           <code>node scripts/ingress-cutover.js --to caddy</code> at a terminal.</p>
         ${_warningsBlock(p.warnings)}
@@ -1266,7 +1280,7 @@ function _renderProvisionScreen() {
       <h2 class="setup-heading">Started — but it hasn't reported back</h2>
       <p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>
       ${openedCheck}
-      ${p.logPath ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logPath)}</code>.</p>` : ''}
+      ${p.logLocation ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logLocation)}</code>.</p>` : ''}
       ${rollback}
       ${_warningsBlock(p.warnings)}
       ${signIn}
@@ -1356,6 +1370,9 @@ function _httpsSummaryLabel() {
 }
 
 function _showRestartOverlay(redirectUrl) {
+  // Claims the view for the same reason the provisioning screens do: the ingress
+  // probe re-renders asynchronously and would otherwise repaint this one.
+  wizard.view = 'restarting';
   const body = document.getElementById('setupBody');
   if (!body) return;
   body.innerHTML = `
