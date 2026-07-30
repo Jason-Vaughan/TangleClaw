@@ -177,3 +177,13 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Engine selection + launch modes: `test/codex-launch-modes.test.js` — Codex Full Auto / Bypass flag sets (#731); `test/default-engine-wiring.test.js` — default-engine resolution against what is actually installed (#707); `test/engine-picker-gating.test.js` — gating on the converged engine picker; `test/setup-wizard-engines.test.js` — the first-run wizard's engine step.
 - `test/server-info.test.js` — runtime-vs-disk identity, staleness, and the startup-captured running version; `test/update-checker.test.js` — release-tag polling, semver comparison, and the cached-status shape; `test/logger.test.js` — level filtering and structured-field output; `test/api-setup-https.test.js` — the setup HTTPS route.
 - `test/sessionstart-prime-hook.test.js` — executes the generated `data/hooks/sessionstart-prime.sh` as a real shell script rather than asserting on its text, so a hook that parses but cannot run is caught (#103; the class of defect behind #759's spaced-install-path outage).
+
+## TODO (auto-stubbed 2026-07-29)
+
+- **TBD** — touched in this session: `test/tmux.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ttyd-attach.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-07-29)
+
+- **TBD** — touched in this session: `docs/adr/0011-prawduct-boundary.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-hooks-merge.test.js`. <!-- describe -->
