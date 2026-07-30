@@ -249,9 +249,9 @@ All notable changes to TangleClaw are documented in this file.
   wizard created. A fresh install ended up gated by default, which is the point of the chunk.
 
   **Running it found a defect in the phase itself.** 7d's fixture cleared config's credential and
-  left the Caddyfile gated — but `adoptCredentialIntoConfig` runs at `scripts/ingress-cutover.js:441`,
-  before `planCutover` at `:494`, and re-adopted the credential immediately, so `ungate-refused` was
-  unreachable. Platform-independent: it would have failed identically on macOS, after consuming a
+  left the Caddyfile gated — but in `scripts/ingress-cutover.js` the `adoptCredentialIntoConfig`
+  call precedes the `planCutover` call, so adoption re-adopted the credential immediately and
+  `ungate-refused` was unreachable. Platform-independent: it would have failed identically on macOS, after consuming a
   scheduled egress window. The fixture now makes the live gate ambiguous first, so adoption cannot
   adopt.
 

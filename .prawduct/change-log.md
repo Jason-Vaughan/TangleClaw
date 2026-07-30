@@ -2699,5 +2699,43 @@ live install, which on this machine is this clone. `spawnCutover` refuses a real
 process so a missed stub fails loudly rather than causing an outage, and the end-to-end proof is
 `deploy/VRF-auth-1-cutover.md` phase 7e on the clean-room image.
 
+**That proof has since been produced — 2026-07-30.** The VRF ran for the first time: 7b and 7d in
+habitat's `tc-cleanroom` Linux container, 7c/7e and Phase 8 on a purpose-built pristine macOS 26.3
+guest. All four #710 phases read `PASS`, so the chunk's real gate is met by measurement rather than
+by code review. 7e is the load-bearing one — the response arrived HTTP 200 in 1s (so the spawn
+followed the reply), the server PID changed 6053→6219, the outcome file was written by a child whose
+parent no longer existed, and the named address answered **401** with no credentials, **401** with
+wrong ones and **200** with the credential the wizard had just created. A fresh install ended up
+gated by default, which is the whole point of the chunk.
+
+**Running it found four defects that review had not.** The 7d fixture was unreachable as written
+(adoption runs before planning, so it re-adopted the credential the fixture had cleared); the
+README's first instruction fails on a clean Mac, where `/usr/bin/git` is a Command Line Tools stub
+(**#788**); a missing `mkcert` throws a stack trace instead of a tagged refusal (**#786**); and
+`--to direct` switched the ingress and *then* crashed, because `pollHealth` hardcoded `https.get`
+while the direct health URL is `http://` — the break-glass path out of a bad ingress state, exiting
+1 after succeeding, with no result file written (**#789**, fixed here and re-verified). CI had also
+never run this branch at all, which had accumulated **17 unseen failures**; the workflow now
+triggers on `v5-baseline` pushes, not only `main`.
+
+**What the last two Critic rounds changed.** The cumulative pass left three warnings, all now
+closed. The most instructive: the #789 regression tests never reached the line that carried the
+defect — they exercised `writeCutoverResult` and `pollHealth` directly, while the call site is a
+`finish(...)` closure inside `main()` that nothing importable can invoke, so reverting the fix left
+the whole file green. It is pinned by source assertion now, and the mutation was re-run alone to
+confirm exactly one test goes red. The original mutation check had been invalid: it changed the call
+site and the result-file key together and credited the wrong half. Green was twice not evidence in
+this chunk. Alongside that, `healthError` was missing from both result-file typedefs — and since
+`writeCutoverResult` names every key explicitly, that omission *is* the mechanism that produced the
+inversion, not cosmetic residue. The VRF matrix was also unscoreable (two spellings for one state,
+four blank rows, a criterion reading "every row green → PASSES"); it now defines four values scored
+from the execution records rather than inferred, and splits the criterion into the chunk 2 gate
+(met) and the whole-document gate (not met), which the single conflated criterion could not express.
+
+**Still owed, tracked not buried:** **#802** — 7e.1, the no-caddy honest-absence screen, never ran,
+and Phase 7e says that half "matters more than the success half". Its decision is unit-covered; the
+rendering is not. Same for 7e's browser-only assertions, which are marked NOT VERIFIED rather than
+claimed.
+
 **Classification:** feature
 **chunks:** 2
