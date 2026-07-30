@@ -34,6 +34,39 @@ All notable changes to TangleClaw are documented in this file.
   the scope that reproduces it.
 
 ### Fixed
+- **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
+  `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
+  entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
+  the **shareable, committable** hooks location the Claude Code docs point operators at, and the sync
+  runs on **every session launch**, so a `PreToolUse` guard or `PostToolUse` formatter vanished
+  silently and repeatedly; on a committed file, TangleClaw also dirtied the working tree each launch.
+  The same defect sat in the non-claude branch, which cleared stale hooks with `delete existing.hooks`
+  and took the operator's with them.
+
+  Both branches now reconcile only the entries TangleClaw itself emits. Ownership is decided by hook
+  script name rather than by the resolved install path, so a clone the operator has since **moved**
+  still recognizes its own old entries instead of leaving a duplicate beside them, and shapes this code
+  does not model are passed through untouched rather than normalized away.
+
+  **One rule was deliberately narrowed to make this possible, and it is worth stating.** #538/#570
+  retired the vendored governance layer, and part of the wholesale write's purpose was clearing a
+  leftover `Stop` hook so the retired gate could not fire alongside the plugin's. That cleanup was
+  unconditional — *any* `Stop` hook — which cannot tell a retired gate from something the operator
+  wrote. It is now scoped to the vendored script the V1 layer actually emitted
+  (`tools/product-hook`), which is the same marker `governanceState` already uses to classify a
+  project as `governed-vendored`. A leftover gate is still cleared; an operator's own `Stop` hook is
+  not. The pre-existing tests that asserted the unconditional rule used fixtures indistinguishable
+  from an operator's hook (`echo governance-gate`, a bare `Old` event), so they were standing in for
+  "TangleClaw's entry" with something that isn't one; they now use the real emitted shape, and a
+  companion case pins that an operator `Stop` hook survives.
+
+  **Tests:** new `test/engine-hooks-merge.test.js` (17) — ownership across both current scripts and a
+  relocated install, refusal to claim an operator hook that merely references the TangleClaw
+  directory, a foreign event preserved, a foreign entry preserved *inside* an event TangleClaw also
+  writes, no duplication across five repeated syncs, unmodelled shapes passed through, and the
+  non-claude branch not rewriting a file when it has nothing of its own to clear. Verified by reverting
+  each of the three changes and confirming the suite goes red.
+
 - **A session launch could kill, or type into, a different project's live session (#774).** tmux
   resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
   then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
