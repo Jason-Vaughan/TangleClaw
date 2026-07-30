@@ -542,19 +542,54 @@ refusal is raised inside `planCutover` at `:494`, before either is used again. M
 `{"code":"ungate-refused","ok":false}`, the error names `scripts/reset-admin.js`, the live Caddyfile
 still carries its `basic_auth` block, and **no stack trace**. Config and Caddyfile restored after.
 
+**Execution record — Phases 2-5, 7c, 7e and 8, macOS clean-room guest on habitat, 2026-07-30, @4e4e55e.**
+Guest: `tc-vrf`, macOS 26.3 build 25D125, cloned from `macos-tahoe-vanilla:26.3`, reached over SSH
+through habitat. Genuinely pristine at start — brew/node/npm/tmux/ttyd/caddy/mkcert all absent.
+
+*Before install:* `git clone` — the README's first instruction — **exited 1**, because `/usr/bin/git`
+is a Command Line Tools stub and any git invocation raises an install dialog. Filed as **#788**. CLT
+was then installed headlessly (`softwareupdate -i`, ~920 MB, ~90s) and the same clone succeeded.
+
+*Phase 2/5 (`install.sh`):* **exit 0, fully unattended.** It bootstrapped Homebrew in
+`NONINTERACTIVE` mode and installed node, ttyd, tmux, mkcert and caddy; one sudo access check fired
+and a keepalive covered it. **`mkcert -install` completed with no GUI click** — the CA is in the
+System keychain — so the "first run needs VNC" assumption this document and its spec both carried is
+**wrong for this path**. `launchctl list` shows `com.tangleclaw.server` and `com.tangleclaw.ttyd` at
+exit status **0**, not 126, which is Bug 2's condition.
+
+*7c:* exit 0, `{"ok":true,"code":"ok"}`, `healthUrl` HTTPS, `healthOk` a real boolean, `finishedAt`
+from this run.
+
+*7e — driven through the API rather than a browser, and this limits what it proves.* `POST
+/api/setup/complete` is the request the wizard's *Complete Setup* button issues, so the
+server-initiated path is exercised exactly. Response arrived in **1s with HTTP 200** (the spawn
+happened after the reply); `provision-status` reported `state: done, ok: true, code: ok`; the server
+**PID changed 6053 → 6219**; and the outcome file was written by a child that outlived the parent
+that spawned it — the one property no unit test can reach. Then the check nothing substitutes for:
+`https://localhost:8443/` returned **401** with no credentials, **401** with wrong ones, and **200**
+with the credential the wizard created. `/api/health` stayed open by design; `http://localhost:3102`
+serves plain HTTP behind Caddy on loopback. **Not verified, because no VNC session was used:** that
+the Admin Login step renders, that Skip is absent from the flow, and that the screen resolves without
+a reload. Those are frontend assertions and are covered by `test/setup-wizard-login-gate.test.js`,
+but they are not covered *here* and this row does not claim them.
+
+*Phase 8 (rollback):* **FAILS.** `--to direct` switches the ingress and then crashes in `pollHealth`,
+which hardcodes `https.get` while the direct health URL is `http://`. Exit 1 after a successful
+switch, and no result file written. Filed as **#789** — it is the break-glass path, so it matters.
+
 | Check | Phase | Pass? |
 |---|---|---|
-| Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | |
+| Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | **PASS (API-driven)** — 2026-07-30 |
 | Dry-run touches nothing | 4 | |
 | Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | |
-| Bug 2 — ttyd re-binds Unix socket across restarts | 6 | |
+| Bug 2 — ttyd re-binds Unix socket across restarts | 6 | **PASS** — exit status 0, not 126 |
 | Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
 | #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 |
-| #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | |
+| #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | **PASS** — habitat guest, 2026-07-30, @4e4e55e |
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
-| #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | |
+| #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | **PASS** — server PID 6053→6219, 401/401/200 |
 | #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
-| Rollback restores direct mode cleanly | 8 | |
+| Rollback restores direct mode cleanly | 8 | **FAIL — #789** (switches, then crashes in `pollHealth`) |
 
 **Every row above** green → `VRF-auth-1-cutover` PASSES. (Count the rows rather than trusting a
 number written here — the matrix grows as phases are added, and a stale count is how a phase gets
