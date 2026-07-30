@@ -1017,9 +1017,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
 
     it('is cleared by every terminal screen, so it cannot sit under a success message', async () => {
-      // All FOUR terminal screens, each pinned to the one it names — an earlier
-      // version covered three and asserted nothing about which screen it landed on,
-      // so a row could stop being evidence about its subject without failing.
+      // One row per CALL SITE of `_clearOverlayError`, not per screen — the two
+      // counts diverged once the unconfirmed phase grew a second screen, and it is
+      // the call sites that matter here: the banner is cleared once per entry
+      // point, so four rows cover every path that can clear it however many
+      // screens those paths render. Each row is still pinned to the screen it
+      // names; an earlier version asserted nothing about where it landed, so a row
+      // could stop being evidence about its subject without failing.
       const CASES = [
         { name: 'in force', expect: /Your login is in force/, restart: false,
           ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443' } },
