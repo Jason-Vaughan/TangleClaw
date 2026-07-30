@@ -1264,13 +1264,20 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // dropping a credential the caller believes it set is its own false report, and
   // the wizard would have no way to tell the difference.
   if (adminProvided && !firstRun) {
-    // Names `reset-admin.js` rather than a settings surface, deliberately: the
-    // settings surface is chunk 3b and is not built, so pointing at it would leave
-    // an install that is complete, in caddy mode and somehow without a credential
-    // with no way out at all — refused here for carrying one, refused below with
-    // ADMIN_REQUIRED for not. The script exists today, rewrites config and the
-    // Caddyfile together, and requires local shell access, which is the right bar
+    // Names `reset-admin.js` rather than a settings surface: the settings surface
+    // is chunk 3b and is not built, while the script exists today, rewrites config
+    // and the Caddyfile together, and requires local shell access — the right bar
     // for a route that authenticates nobody.
+    //
+    // It covers the case this refusal actually meets: an install that HAS a
+    // credential and wants a different one. It does NOT cover a completed,
+    // caddy-mode install with no credential at all — `resolveTargetUser` exits 1
+    // there, because it resets a gate rather than creating one. That state has no
+    // in-product way out (refused here for carrying a credential, refused below
+    // with ADMIN_REQUIRED for not carrying one) and is tracked as #806. It is not
+    // reachable from a first run on this code — setup will not complete in caddy
+    // mode without a credential — only from a legacy install that got there
+    // before this chunk.
     return errorResponse(res, 409,
       'Setup is already complete. To change the admin credential, run '
       + '`node scripts/reset-admin.js` at a terminal.',

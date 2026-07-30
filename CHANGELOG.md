@@ -155,8 +155,10 @@ All notable changes to TangleClaw are documented in this file.
   separate facts, and forwards both — but `_pollProvisionOutcome` branched on `ok` alone, so a
   cutover whose health probe never came back green rendered "Your login is in force. Every page
   will ask for it." That is the one claim this chunk exists to make only when observed. It now
-  lands on the existing "started — but it hasn't reported back" screen, which names which half is
-  unverified and tells the operator how to settle it themselves.
+  lands on its own screen — **"Applied — but the login could not be confirmed"** — which names
+  which half is unverified and tells the operator how to settle it themselves. Its own, rather
+  than the neighbouring "hasn't reported back": the cutover *did* report back here, and said the
+  plan was applied.
 
 - **The restart screen no longer navigates on a timer (#710, #98, #268).** `_showRestartOverlay`
   redirected as soon as a `no-cors` probe succeeded and then, at a 20-second deadline, redirected

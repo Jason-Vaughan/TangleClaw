@@ -72,7 +72,7 @@ Skip is available in the cases above where no credential is being collected.
 #### What you see at the end
 
 After *Complete Setup*, if TangleClaw is configuring the gate it restarts itself, so the wizard
-waits and then tells you one of four things:
+waits and then tells you one of five things:
 
 - **Your login is in force** — with the address to open and sign in at. Note this is **not** the
   address you started on: the gate answers on `https://<your-host>:8443` by default, and TangleClaw
@@ -83,6 +83,10 @@ waits and then tells you one of four things:
   force.** If it loads without asking, it is not.
 - **Started, but it hasn't reported back** — TangleClaw is still reachable here and the gate setup
   has not said how it ended. Same check applies.
+- **Applied, but the login could not be confirmed** — the gate was put in place, and TangleClaw
+  then could not reach the gated address to check that it answers. Different from the one above:
+  the setup *did* report back. Same check settles it — open the address it names and see whether
+  it asks.
 - **No login is in force** — said plainly, with what to run. TangleClaw is reachable from this
   machine only unless you have opted into a wider binding (see *Network Exposure* in Global
   Settings).

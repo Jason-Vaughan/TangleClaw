@@ -236,6 +236,52 @@ describe('cutover result file', () => {
 });
 
 describe('spawnCutover', () => {
+  // Base-path isolation, matching the block above. NOT optional here: this repo
+  // has no package.json, so the suite runs `node --test` straight against $HOME —
+  // and on this machine the clone IS the live install. Without it, the log-
+  // permission tests below rm and chmod the operator's REAL
+  // ~/.tangleclaw/logs/ingress-cutover.log: they would delete the file this whole
+  // chunk points operators at as their only durable evidence, and briefly leave it
+  // 0644, which is the exact exposure the code under test exists to close.
+  let tmpBase;
+  let prevBase;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-spawn-'));
+    store._setBasePath(tmpBase);
+  });
+
+  after(() => {
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  /**
+   * Refuse to touch a path outside this block's temp base.
+   *
+   * A failing assertion does not abort the rest of the file, so a guard that only
+   * *reports* lost isolation still lets the destructive tests below run against
+   * the operator's real `~/.tangleclaw`. This throws instead, at the top of each
+   * one, before any rm or chmod.
+   * @param {string} p - Path the test is about to write to.
+   * @returns {string} The same path, once proven sandboxed.
+   */
+  function requireSandboxed(p) {
+    if (!p.startsWith(tmpBase)) {
+      throw new Error(`refusing to touch ${p}: outside the test base ${tmpBase}. `
+        + 'Base-path isolation was lost — this clone is the live install.');
+    }
+    return p;
+  }
+
+  it('writes its log inside the configured base path, never the real one', () => {
+    // Guards the isolation itself, so losing it is a named failure rather than a
+    // silent deletion of the operator's log.
+    assert.ok(provision.cutoverLogPath().startsWith(tmpBase),
+      `the log path must resolve inside the test base, got ${provision.cutoverLogPath()}`);
+  });
+
   it('runs the repo\'s cutover script with the target and result file', () => {
     const calls = [];
     const res = provision.spawnCutover({
@@ -315,7 +361,7 @@ describe('spawnCutover', () => {
     // so this file can hold a credential hash without anything deliberately
     // writing one to it. The result file, same rationale, has been 0600 all along;
     // this one took the default until now.
-    const logPath = provision.cutoverLogPath();
+    const logPath = requireSandboxed(provision.cutoverLogPath());
     fs.rmSync(logPath, { force: true });
     provision.spawnCutover({
       resultFile: path.join(os.tmpdir(), 'tc-perm.json'),
@@ -330,7 +376,7 @@ describe('spawnCutover', () => {
     // and ignored when it already exists. Every install that ran a cutover before
     // this change already has a 0644 log, so create-time mode alone would leave
     // exactly the machines with real history unprotected.
-    const logPath = provision.cutoverLogPath();
+    const logPath = requireSandboxed(provision.cutoverLogPath());
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     fs.writeFileSync(logPath, 'from an earlier run\n', { mode: 0o644 });
     fs.chmodSync(logPath, 0o644);

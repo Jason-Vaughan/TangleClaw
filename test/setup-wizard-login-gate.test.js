@@ -334,6 +334,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         'an unobserved gate must not read as a confirmed one');
       assert.match(html, /could not reach the gated address/,
         'and the operator must be told which half is unverified');
+      // The heading, specifically. This path reuses the `unconfirmed` phase but is
+      // NOT the same situation: the cutover did report back, saying it applied the
+      // plan and could not confirm the gate. Without these two the ternary can be
+      // reverted and every other assertion here still passes.
+      assert.match(html, /Applied — but the login could not be confirmed/);
+      assert.ok(!/hasn't reported back/.test(html),
+        'it DID report back — that heading belongs to the deadline case, not this one');
       assert.match(html, /asks for a username and password/,
         'plus the check that settles it themselves');
     });
