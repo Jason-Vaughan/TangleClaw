@@ -68,7 +68,7 @@ exit 1
   fs.writeFileSync(path.join(stubDir, 'caddy'), script, { mode: 0o755 });
 }
 
-describe('AUTH-2 — forced first-run admin (caddy mode)', () => {
+describe('forced first-run admin credential', () => {
   let tmpDir;
   let server;
   let origPath;
@@ -165,14 +165,30 @@ describe('AUTH-2 — forced first-run admin (caddy mode)', () => {
     });
   });
 
-  describe('POST /api/setup/complete — direct mode', () => {
+  describe('POST /api/setup/complete — direct mode, with no Caddy to run a gate', () => {
     beforeEach(() => resetConfig('direct'));
 
-    it('completes without an admin (no gate in direct mode)', async () => {
+    // Direct mode is NO LONGER what makes a credential optional (#710): setup now
+    // demands one whenever the machine can actually run a login gate, in either
+    // ingress mode. What makes it optional here is this suite's caddy stub, which
+    // answers `hash-password` and nothing else — so `caddy version` fails and
+    // detection reports the binary as absent. Demanding a password with nothing
+    // to enforce it would strand the operator, so completion is allowed and the
+    // install finishes honestly ungated.
+    //
+    // The other half of that rule — direct mode WITH caddy present must refuse —
+    // is in test/setup-provisioning.test.js, which does not shadow the binary.
+    // Read this case as "no enforcer, no demand", never as "direct mode is exempt".
+    it('completes without an admin, because no gate could be put up at all', async () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
       assert.equal(status, 200);
       assert.equal(data.setupComplete, true);
       assert.equal(store.config.load().authEnabled, false);
+      // Pin the REASON, so this case cannot start passing because the demand was
+      // dropped rather than because there is nothing to enforce it.
+      assert.equal(data.ingress.action, 'refuse');
+      assert.match(data.ingress.reason, /not installed/);
+      assert.equal(data.ingress.protection, 'none');
     });
   });
 

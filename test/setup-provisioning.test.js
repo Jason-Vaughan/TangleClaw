@@ -62,6 +62,35 @@ function request(server, method, urlPath, body) {
   });
 }
 
+/**
+ * POST /api/setup/complete with an explicit Host header.
+ * @param {http.Server} server
+ * @param {string} host - Raw Host header value.
+ * @param {object} body
+ * @returns {Promise<{ status: number, data: any, raw: string }>}
+ */
+function requestWithHost(server, host, body) {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const req = http.request({
+      hostname: '127.0.0.1', port: addr.port, path: '/api/setup/complete', method: 'POST',
+      headers: { 'Content-Type': 'application/json', Host: host }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = raw; }
+        resolve({ status: res.statusCode, data, raw });
+      });
+    });
+    req.on('error', reject);
+    req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
 /** A hand-edited Caddyfile (no integrity stamp) carrying the given credential lines. */
 function handEdited(credentialLines) {
   return [
@@ -102,13 +131,18 @@ describe('setup provisions a login by default', () => {
     fs.rmSync(provision.resultPath(), { force: true });
     cutovers = [];
     _setCutoverSpawner((opts) => { cutovers.push(opts); return { ok: true, pid: 321, error: null }; });
-    // Fresh-install shape: setup not finished, no credential anywhere.
+    // Fresh-install shape: setup not finished, no credential anywhere. Every
+    // field any case in this suite mutates is restored here — a leaked
+    // caddyHttpsPort or bindAllInterfaces makes a later case assert against the
+    // previous one's state, which reads as a product bug.
     const config = store.config.load();
     config.setupComplete = false;
     config.ingressMode = 'direct';
     config.authEnabled = false;
     config.basicAuthUser = null;
     config.basicAuthHash = null;
+    config.caddyHttpsPort = 8443;
+    config.bindAllInterfaces = false;
     store.config.save(config);
   });
 
@@ -185,6 +219,27 @@ describe('setup provisions a login by default', () => {
         projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
       });
       assert.equal(res.data.ingress.url, 'https://127.0.0.1:9443');
+    });
+
+    it('discards a Host header that is not a hostname rather than echoing it into the URL', async () => {
+      // The URL goes back to the browser and is rendered into markup, including
+      // an inline event handler. `Host` is caller-supplied, so anything outside a
+      // hostname's alphabet is dropped — escaping would not do: an HTML-entity
+      // quote decodes back to a quote before the script sees it.
+      const res = await requestWithHost(server, "evil'+alert(1)+'.example", {
+        projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.url, 'https://localhost:8443',
+        'a malformed Host must fall back, not round-trip');
+      assert.ok(!/alert\(1\)/.test(res.raw), 'the response echoed script-shaped text back');
+    });
+
+    it('keeps a legitimate hostname, so a remote operator gets their own address', async () => {
+      const res = await requestWithHost(server, 'cursatory.tail123678.ts.net:8443', {
+        projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
+      });
+      assert.equal(res.data.ingress.url, 'https://cursatory.tail123678.ts.net:8443');
     });
 
     it('clears a previous run\'s outcome before starting, so a stale ok cannot be read as this one', async () => {

@@ -1279,7 +1279,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // — attaching projects above, writing the response below — must already be
   // done or in flight. Spawning earlier would race a restart against the work.
   const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
-  const requestHostname = hostHeader.split(':')[0] || 'localhost';
+  // Validated, not merely split. This value is echoed back into a URL the wizard
+  // renders into markup, and a `Host` header is caller-supplied — so anything
+  // outside a hostname's own alphabet is discarded rather than escaped. Escaping
+  // is the wrong tool here: HTML-entity-encoding a quote inside an inline event
+  // handler decodes back to a quote before the script sees it, which reopens the
+  // hole it was supposed to close. Same alphabet the mkcert host check uses.
+  const rawHostname = hostHeader.split(':')[0];
+  const requestHostname = (rawHostname && HOST_RE.test(rawHostname)) ? rawHostname : 'localhost';
   const ingress = {
     action: ingressPlan.action,
     provisioning: false,

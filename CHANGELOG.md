@@ -57,14 +57,15 @@ All notable changes to TangleClaw are documented in this file.
   failure — caddy-missing reaches the same end state for a different reason, told plainly with the
   two commands that fix it.
 
-  **Tests:** `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
+  **Tests:** 5221 passing overall. `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
   action, an unrecognized state failing closed, caddy-missing beating `adoptable`, absent vs
   malformed vs readable outcome files kept distinct, the spawn's argv and its `detached`/`stdio:
   ignore`/`unref` trio, and an interlock that refuses a REAL cutover from a test process (a run
   rewrites launchd plists and restarts the machine's live server, so a missed stub must fail rather
-  than cause an outage). `test/setup-provisioning.test.js` (19) — the completion matrix at the HTTP
+  than cause an outage). `test/setup-provisioning.test.js` (21) — the completion matrix at the HTTP
   boundary, including refusal-with-no-credential-demanded, a stale outcome cleared before spawning,
-  the operator's Caddyfile unchanged byte-for-byte on adopt, and no username, hash or path crossing
+  the operator's Caddyfile unchanged byte-for-byte on adopt, a caller-supplied `Host` discarded
+  rather than echoed into the URL the wizard renders, and no username, hash or path crossing
   `provision-status`. `test/setup-wizard-login-gate.test.js` (24) — the step list against each plan
   (including the direct-mode flip), the payload sent under the same predicate that collected it,
   every terminal screen's honesty, and no navigation without a click.
