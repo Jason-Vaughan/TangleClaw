@@ -882,17 +882,28 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     });
 
     it('is cleared by every terminal screen, so it cannot sit under a success message', async () => {
-      for (const ingress of [
-        { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443' },
-        { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' },
-        { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' }
-      ]) {
+      // All FOUR terminal screens, each pinned to the one it names — an earlier
+      // version covered three and asserted nothing about which screen it landed on,
+      // so a row could stop being evidence about its subject without failing.
+      const CASES = [
+        { name: 'in force', expect: /Your login is in force/, restart: false,
+          ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443' } },
+        { name: 'no login', expect: /TangleClaw has no login/, restart: false,
+          ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
+        { name: 'adopted', expect: /Setup finished/, restart: false,
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
+        { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
+      ];
+      for (const c of CASES) {
         const ctx = loadSetup({
           plan: REFUSE_PLAN,
           statusFetch: () => ({ ok: true, json: async () => ({ state: 'done', ok: true, code: 'ok' }) }),
           apiMutate: async () => ({
             ok: true, setupComplete: true, attached: [],
-            warnings: ['Skipped "x": path does not exist'], restart: false, ingress
+            warnings: ['Skipped "x": path does not exist'], restart: c.restart,
+            redirectUrl: c.restart ? 'https://host:3102' : null,
+            ingress: c.ingress
           })
         });
         ctx.showWizard();
@@ -902,8 +913,10 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         banner.classList.remove('hidden');
         await ctx.wizardComplete();
         await settle(2000);
+        assert.match(ctx.document.getElementById('setupBody').innerHTML, c.expect,
+          `fixture for "${c.name}" landed on a different screen`);
         assert.equal(banner.textContent, '',
-          `${ingress.protection}: a stale failure banner survived onto a terminal screen`);
+          `${c.name}: a stale failure banner survived onto a terminal screen`);
       }
     });
   });

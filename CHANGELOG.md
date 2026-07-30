@@ -64,6 +64,14 @@ All notable changes to TangleClaw are documented in this file.
   `setupComplete` in local state and dismissed — landing the operator on a dashboard as though setup
   had finished while the server still said it had not.
 
+  **One more honest state, because the credential and the gate can disagree.** If the operator supplies
+  a credential on a machine whose plan was to *adopt* one — reachable, since the Skip route refuses in
+  caddy mode without a configured credential and the wizard then forces the admin step — the typed
+  credential lands in config while the hand-maintained Caddyfile goes on enforcing the adopted one.
+  Their new password does not work and their old one does. Setup now reports that **mismatch** rather
+  than "existing login kept", names the account they actually set rather than the adopted one, and
+  routes them to `scripts/reset-admin.js`, which rewrites the live Caddy config too.
+
   Provisioning is gated to a **first run**. `/api/setup/complete` has never required setup to be
   unfinished, and it can now rewrite launchd plists and restart the server — so on an install that is
   ungated *and* network-reachable (the legacy grace state) a re-POST would have handed an

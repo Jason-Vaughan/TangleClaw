@@ -340,10 +340,15 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.protection, 'existing-unverified',
         'must not report the existing login as simply kept');
       assert.equal(res.data.ingress.user, 'newadmin', 'must name the account THEY set, not the adopted one');
+      assert.equal(store.config.load().basicAuthUser, 'newadmin',
+        'config holds the typed credential — which is precisely why the mismatch must be reported');
       assert.match(res.data.ingress.reason, /still enforcing the credential it already had/);
       assert.match(res.data.ingress.remedy, /reset-admin/);
-      assert.ok(res.data.warnings.some((w) => /still enforcing/.test(w)),
-        'a warning is what stops the wizard dismissing straight to the dashboard');
+      // Deliberately NOT in `warnings`: `existing-unverified` is itself what routes
+      // the wizard to a terminal screen, and that screen renders `reason` — pushing it
+      // as a warning printed the identical sentence twice on the same screen.
+      assert.ok(!res.data.warnings.some((w) => /still enforcing/.test(w)),
+        'the reason must not be duplicated into warnings');
       assert.equal(cutovers.length, 0, 'the hand-maintained file must still not be regenerated');
       assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), handEdited([`jason ${BCRYPT_A}`]),
         'the operator\'s Caddyfile must be untouched');

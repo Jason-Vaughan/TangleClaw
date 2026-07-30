@@ -168,6 +168,14 @@ weaker rule left the stronger one unwritten and therefore unenforceable. Made ex
   otherwise **refuses** with the reason. The same reasoning already governed the caddy-binary-absent
   case; it was simply not carried across to the ingress-mode case.
 
+  A third case, from the same build: when the operator supplies a credential on a machine whose plan
+  was to adopt — reachable, because the Skip route refuses in caddy mode without a configured
+  credential and the wizard then forces the admin step — the typed credential lands in config while
+  the hand-maintained Caddyfile goes on enforcing the adopted one. Two credentials then disagree and
+  the operator's new password does not work. The wizard reports the **mismatch**, names the account
+  they set rather than the adopted one, and routes them to `scripts/reset-admin.js`, which rewrites
+  the live config too. It does not report "kept".
+
   A second amendment from the same build: the wizard may only report "kept your existing login" when
   adoption **actually adopted**. Credential adoption deliberately never overwrites a credential
   already in config, so on an install that has one the call is a no-op while the hand-maintained file

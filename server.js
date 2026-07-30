@@ -1426,7 +1426,13 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         + 'credential it already had, not the new one.';
       ingress.remedy = 'Set both from one place with `node scripts/reset-admin.js`, which rewrites '
         + 'the credential in the live Caddy config as well.';
-      warnings.push(ingress.reason);
+      // NOT pushed into `warnings`: `existing-unverified` already routes the wizard to
+      // a terminal screen that renders `reason`, and the warnings block renders on the
+      // same screen — so pushing it printed the identical sentence twice. The log is
+      // where a copy belongs for an operator reading server output.
+      log.warn('Setup saved a credential the live Caddy config does not enforce', {
+        user: after.basicAuthUser || null
+      });
     } else if (adoption && adoption.adopted) {
       ingress.protection = 'existing';
       ingress.user = adoption.user || after.basicAuthUser || null;

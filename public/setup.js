@@ -1451,7 +1451,7 @@ function _showUnprotectedScreen(ingress, warnings) {
   const stored = ingress.protection === 'unchanged' || ingress.protection === 'existing-unverified';
   const heading = stored ? 'Your login is saved, but not confirmed' : 'TangleClaw has no login';
   const lead = stored
-    ? `<p class="setup-text">A login is saved, but TangleClaw <strong>cannot confirm anything is enforcing it</strong>, and it did not change the Caddy config to find out.</p>`
+    ? `<p class="setup-text">A login is saved, but TangleClaw <strong>cannot confirm anything is enforcing it</strong> — it did not change the Caddy config, which is maintained by hand.</p>`
     : `<p class="setup-text"><strong>Nothing is asking for a password.</strong> ${esc(ingress.reason || 'TangleClaw could not put a login in front of itself on this machine.')}</p>`;
 
   body.innerHTML = `
