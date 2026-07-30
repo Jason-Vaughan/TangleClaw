@@ -1285,6 +1285,16 @@ describe('engines', () => {
       });
     });
 
+    // A hook as TangleClaw actually emits it. Fixtures that used `echo stale` or a
+    // bare `Old` event were standing in for "TangleClaw's own entry" with something
+    // indistinguishable from an operator's hook — so once hooks are MERGED rather
+    // than replaced (#752) they no longer discriminate anything. Ownership is the
+    // whole question now, so the fixture has to carry it.
+    const tcOwnedHook = (script = 'sessionstart-prime.sh') => ({
+      matcher: 'startup',
+      hooks: [{ type: 'command', command: `"/Users/x/TangleClaw/data/hooks/${script}"` }]
+    });
+
     describe('syncEngineHooks defers GOVERNANCE but keeps TC L1 prime (#330)', () => {
       const staleGovHook = { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }] }] };
 
@@ -1336,7 +1346,15 @@ describe('engines', () => {
         // not the plugin is enabled. Ungoverned is the case that would regress
         // silently if this became conditional again, since that project has no
         // plugin to own the gate in TC's place.
-        const legacy = { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo governance-gate' }] }] };
+        // NARROWED by #752, deliberately: the rule is no longer "drop any Stop hook"
+        // but "drop the retired VENDORED gate", identified by the `tools/product-hook`
+        // script the V1 methodology layer emitted — the same marker `governanceState`
+        // uses for `governed-vendored`. The unconditional version could not tell that
+        // gate from a Stop hook the operator wrote in the committable settings file,
+        // and destroyed both on every session launch.
+        const legacy = {
+          Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'python3 "$CLAUDE_PROJECT_DIR/tools/product-hook" stop' }] }]
+        };
 
         for (const [label, settings] of [
           ['ungoverned', {}],
@@ -1347,6 +1365,17 @@ describe('engines', () => {
           const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
           assert.equal(written.hooks, undefined, `${label}: the legacy governance Stop hook must be cleared`);
         }
+      });
+
+      it('does NOT clear a Stop hook the operator wrote (#752)', () => {
+        // The other half of the narrowing above, and the reason for it. A Stop hook
+        // that is not the retired vendored gate belongs to whoever put it in the
+        // committable settings file, and this function runs on every session launch.
+        const own = { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'make verify' }] }] };
+        const p = mkProject({ hooks: own }, { engine: 'claude', silentPrime: false });
+        engines.syncEngineHooks(p);
+        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.deepEqual(written.hooks.Stop, own.Stop, 'an operator Stop hook was destroyed');
       });
     });
 
@@ -1361,7 +1390,7 @@ describe('engines', () => {
         // L1 SessionStart baseline hook; resolved-as-codex takes the cleanup
         // branch and removes the hooks block entirely.
         const p = mkProject(
-          { hooks: { SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stale' }] }] } },
+          { hooks: { SessionStart: [tcOwnedHook()] } },
           { methodology: 'minimal', silentPrime: true } // no engine key
         );
         store.projects.create({ name: `db-hooks-${path.basename(p)}`, path: p, engine: 'codex' });
@@ -1375,7 +1404,7 @@ describe('engines', () => {
 
       it('unregistered path still falls back to projConfig.engine', () => {
         const p = mkProject(
-          { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'echo stale' }] }] } },
+          { hooks: { SessionStart: [tcOwnedHook()] } },
           { engine: 'codex', methodology: 'minimal', silentPrime: false }
         );
         engines.syncEngineHooks(p);
@@ -1799,13 +1828,18 @@ describe('engines', () => {
         'resolved command should carry a real path');
     });
 
-    it('preserves existing non-hook settings and replaces the hooks block wholesale', () => {
+    it('preserves existing non-hook settings AND foreign hooks, reconciling only its own', () => {
+      // Was "replaces the hooks block wholesale". That is the #752 defect stated as a
+      // contract: `.claude/settings.json` is the committable, shareable hooks location,
+      // and a wholesale replacement discarded whatever the operator put there on every
+      // session launch. TangleClaw reconciles only the entries it emits.
       const claudeDir = path.join(projectDir, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
+      const operatorHook = { matcher: 'Bash', hooks: [{ type: 'command', command: 'npm run lint' }] };
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
         permissions: { allow: ['Bash(git status:*)'] },
         companyAnnouncements: ['Test announcement'],
-        hooks: { Old: [{ matcher: '', hooks: [] }] }
+        hooks: { PreToolUse: [operatorHook] }
       }, null, 2));
 
       engines.syncEngineHooks(projectDir);
@@ -1813,16 +1847,20 @@ describe('engines', () => {
       const settings = readSettings();
       assert.deepStrictEqual(settings.permissions, { allow: ['Bash(git status:*)'] });
       assert.deepStrictEqual(settings.companyAnnouncements, ['Test announcement']);
-      assert.ok(!settings.hooks.Old, 'old hooks should be replaced, not merged');
+      assert.deepStrictEqual(settings.hooks.PreToolUse, [operatorHook],
+        'a foreign hook event must survive TangleClaw\'s sync');
       assert.ok(settings.hooks.SessionStart, 'new hooks should be present');
     });
 
-    it('removes the hooks block when there are no hooks to write', () => {
+    it('removes the hooks block when nothing of its own is left to hold', () => {
+      // The fixture has to be a hook TangleClaw OWNS. It used to be a bare `Stop`
+      // entry, which under merge semantics (#752) is a hook belonging to whoever put
+      // it in the committable settings file — preserved, so the key correctly stays.
       const claudeDir = path.join(projectDir, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
         permissions: { allow: [] },
-        hooks: { Stop: [{ matcher: '', hooks: [] }] }
+        hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: '"/Users/x/TangleClaw/data/hooks/sessionstart-prime.sh"' }] }] }
       }, null, 2));
       fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), JSON.stringify({
         engine: 'claude',
