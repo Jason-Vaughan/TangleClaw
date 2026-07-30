@@ -198,6 +198,11 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.provisioning, true);
       assert.equal(res.data.ingress.protection, 'pending');
       assert.equal(res.data.ingress.user, 'jason');
+      // Delivered with the COMPLETION, not only from the poll. The cutover closes
+      // the address this response was served from, and for a remote operator that
+      // is the usual outcome — so this is the last message guaranteed to arrive,
+      // and the wizard's "can't see the result" screen has nothing else to name.
+      assert.equal(res.data.ingress.logLocation, provision.CUTOVER_LOG_RELATIVE);
       assert.equal(cutovers.length, 1);
       assert.equal(cutovers[0].target, 'caddy');
 
@@ -605,6 +610,11 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.state, 'pending');
       assert.equal(res.data.ok, null);
       assert.equal(res.data.code, null);
+      // `pending` is the answer that repeats forever when the child died before
+      // writing anything, so it is the one that most needs to say where to read
+      // the rest. Asserting the three fields above and stopping is what let that
+      // branch ship uncovered.
+      assert.equal(res.data.logLocation, provision.CUTOVER_LOG_RELATIVE);
     });
 
     it('reports the outcome and its code once the child has finished', async () => {

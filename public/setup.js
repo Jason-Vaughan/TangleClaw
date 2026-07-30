@@ -1293,13 +1293,13 @@ function _showProvisioningScreen(ingress, warnings) {
     user: ingress.user || null,
     code: null,
     hasError: false,
-    // Filled from whatever the poll answers, including `pending` — NOT seeded with
-    // a literal here, which would be a second copy of a server constant. It stays
-    // null only if no poll ever got a reply. This matters because the 'unconfirmed'
-    // phase is reached by the deadline expiring, which passes through no branch
-    // that assigns it, and that phase is the crash path where the log is the only
-    // durable evidence the operator has.
-    logLocation: null,
+    // Seeded from the COMPLETION response, then refreshed by any poll that
+    // answers. Never a literal here: that would be a second copy of a server
+    // constant. Seeding matters because the poll may never answer at all — the
+    // cutover closes the address this page was served from, which for a remote
+    // operator is the common case — and the screen that results is the one with
+    // the least information and the most need to say where the rest was written.
+    logLocation: ingress.logLocation || null,
     // Whether the cutover's own health probe came back green. `null` until a poll
     // answers. Distinct from `ok`, which says only that the plan was applied: an
     // applied plan whose gate never answered must not claim a login is in force.
@@ -1422,10 +1422,14 @@ function _renderProvisionScreen() {
     return;
   }
 
-  // 'unconfirmed' — the deadline passed. Which of the two things happened is the
-  // whole content of this screen, and `reachable` is the only evidence for it.
-  // Claiming the origin closed when it never did would send an operator whose
-  // cutover merely stalled to --rollback for no reason.
+  // 'unconfirmed' — three ways in, and which one it was IS the content of this
+  // screen. Two are deadline expiries, told apart by `reachable`, the only
+  // evidence available: claiming the origin closed when it never did would send an
+  // operator whose cutover merely stalled to --rollback for no reason. The third
+  // is different in kind — the cutover DID report, saying it applied the plan and
+  // could not then confirm the gate answers (`healthOk === false`). That one is
+  // not waiting on anything, so it gets its own heading rather than being
+  // described as not having reported back.
   const openedCheck = url
     ? `<p class="setup-text">Open <code>${esc(url)}</code>. <strong>If it asks for a username and password, your login is in force.</strong> If it loads without asking, it is not.</p>`
     : '';
@@ -1434,9 +1438,11 @@ function _renderProvisionScreen() {
   body.innerHTML = p.reachable
     ? `
     <div class="setup-step" role="alert">
-      <h2 class="setup-heading">Started — but it hasn't reported back</h2>
+      <h2 class="setup-heading">${p.healthOk === false
+        ? 'Applied — but the login could not be confirmed'
+        : 'Started — but it hasn\'t reported back'}</h2>
       ${p.healthOk === false
-        ? '<p class="setup-text">The login was applied, but TangleClaw could not reach the gated address afterwards to confirm it answers. <strong>It may or may not be asking for a password</strong> — this page did not observe it, so it will not claim it.</p>'
+        ? '<p class="setup-text">The login was applied, but TangleClaw could not reach the gated address afterwards to check that it answers. <strong>It may or may not be asking for a password</strong> — this page did not observe it, so it will not claim it.</p>'
         : '<p class="setup-text">TangleClaw is still reachable at this address and the login setup has not said how it ended. <strong>It may or may not have finished</strong> — this page cannot tell you which, so it will not guess.</p>'}
       ${openedCheck}
       ${p.logLocation ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logLocation)}</code>.</p>` : ''}
@@ -1450,6 +1456,7 @@ function _renderProvisionScreen() {
       <h2 class="setup-heading">Started — but this page can't see the result</h2>
       <p class="setup-text">The login setup was started and TangleClaw restarted. This page was served from an address the restart closes, so it cannot read the outcome.</p>
       ${openedCheck}
+      ${p.logLocation ? `<p class="setup-text-muted">What it was doing is in <code>${esc(p.logLocation)}</code>.</p>` : ''}
       ${rollback}
       ${_warningsBlock(p.warnings)}
       ${signIn}

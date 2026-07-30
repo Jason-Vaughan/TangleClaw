@@ -309,6 +309,41 @@ describe('spawnCutover', () => {
     assert.equal(res.logPath, provision.cutoverLogPath());
   });
 
+  it('opens the cutover log 0600, like the result file it sits beside', () => {
+    // The child's stderr lands here verbatim, and on the validate-failed path that
+    // text is `caddy validate` output quoting a `basic_auth <user> <hash>` line —
+    // so this file can hold a credential hash without anything deliberately
+    // writing one to it. The result file, same rationale, has been 0600 all along;
+    // this one took the default until now.
+    const logPath = provision.cutoverLogPath();
+    fs.rmSync(logPath, { force: true });
+    provision.spawnCutover({
+      resultFile: path.join(os.tmpdir(), 'tc-perm.json'),
+      spawnFn: () => ({ pid: 3, unref() {} })
+    });
+    assert.equal(fs.statSync(logPath).mode & 0o777, 0o600,
+      'a log that can carry a credential hash must not be world-readable');
+  });
+
+  it('tightens an EXISTING log too, since mode applies only on create', () => {
+    // The trap: fs.openSync's mode argument is honoured when the file is created
+    // and ignored when it already exists. Every install that ran a cutover before
+    // this change already has a 0644 log, so create-time mode alone would leave
+    // exactly the machines with real history unprotected.
+    const logPath = provision.cutoverLogPath();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, 'from an earlier run\n', { mode: 0o644 });
+    fs.chmodSync(logPath, 0o644);
+    assert.equal(fs.statSync(logPath).mode & 0o777, 0o644, 'precondition: the old log is loose');
+
+    provision.spawnCutover({
+      resultFile: path.join(os.tmpdir(), 'tc-perm2.json'),
+      spawnFn: () => ({ pid: 4, unref() {} })
+    });
+    assert.equal(fs.statSync(logPath).mode & 0o777, 0o600,
+      'an existing loose log must be tightened, not left as found');
+  });
+
   it('defaults to the caddy target and the shared result path', () => {
     let argv = null;
     provision.spawnCutover({ spawnFn: (_c, a) => { argv = a; return { pid: 1, unref() {} }; } });

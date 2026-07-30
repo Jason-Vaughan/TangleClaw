@@ -488,13 +488,25 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
   });
 
   describe('no timer-driven navigation survives anywhere in the wizard', () => {
-    it('has no unconditional deadline redirect', () => {
-      // Source-asserted: the deadline branch is reached only after 20s of real
-      // waiting, so no reasonable test drives it, and it is exactly the branch
-      // that used to navigate without evidence.
+    it('assigns location.href only from an onclick handler, never from script flow', () => {
+      // Structural, not textual. Grepping for the old comment ("Timeout fallback")
+      // or the old function name would pass the moment someone reintroduced
+      // `window.location.href = url` under any other wording — which is precisely
+      // how this defect returns. So instead: find EVERY assignment to
+      // location.href in the file and require each one to sit inside an onclick
+      // attribute, i.e. to be reached by an operator action.
       const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
-      assert.doesNotMatch(src, /Timeout fallback/,
-        'a timeout that navigates anyway is the #98/#268 defect');
+      const assignments = [...src.matchAll(/^.*\blocation\.href\s*=/gm)].map((m) => m[0]);
+      assert.ok(assignments.length > 0, 'the guard must not pass by finding nothing to check');
+      for (const line of assignments) {
+        assert.match(line, /onclick=/,
+          `location.href is assigned outside a click handler, which is timer-driven `
+          + `navigation (#98/#268): ${line.trim()}`);
+      }
+    });
+
+    it('has no unconditional deadline redirect', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
       assert.doesNotMatch(src, /_pollRestartAndRedirect/,
         'the redirecting poller must be gone, not merely unreferenced');
     });

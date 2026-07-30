@@ -131,6 +131,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The cutover log is named on every screen that cannot confirm the outcome, including the one
+  that can see least (#710).** `logLocation` was assigned only inside branches that return, so the
+  crash path — a child dying between the plist writes and `finish()`, which writes no result file
+  at all — always had `null`, and the line naming the log was dead in exactly the case where the
+  log is the only durable evidence. The server now sends it with the **completion**, not only from
+  the poll: the cutover closes the address the wizard was served from, which for a remote operator
+  is the usual outcome, so the completion is the last message guaranteed to arrive. Both
+  unconfirmed branches name it now.
+
 - **Setup can no longer overwrite the admin credential on an install that is already finished
   (#710).** `POST /api/setup/complete` authenticates nobody. The first-run guard added with the
   provisioning work scoped the detached cutover spawn but not the credential write, so the

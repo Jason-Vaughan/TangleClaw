@@ -1264,8 +1264,16 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // dropping a credential the caller believes it set is its own false report, and
   // the wizard would have no way to tell the difference.
   if (adminProvided && !firstRun) {
+    // Names `reset-admin.js` rather than a settings surface, deliberately: the
+    // settings surface is chunk 3b and is not built, so pointing at it would leave
+    // an install that is complete, in caddy mode and somehow without a credential
+    // with no way out at all — refused here for carrying one, refused below with
+    // ADMIN_REQUIRED for not. The script exists today, rewrites config and the
+    // Caddyfile together, and requires local shell access, which is the right bar
+    // for a route that authenticates nobody.
     return errorResponse(res, 409,
-      'Setup is already complete — change the admin credential from settings, not from setup.',
+      'Setup is already complete. To change the admin credential, run '
+      + '`node scripts/reset-admin.js` at a terminal.',
       'SETUP_ALREADY_COMPLETE');
   }
   if (adminProvided) {
@@ -1397,6 +1405,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   const ingress = {
     action: ingressPlan.action,
     provisioning: false,
+    // Sent with the completion, not only from the poll, because the poll is
+    // exactly what may never answer: the cutover restarts the server and closes
+    // the address this page was served from, and for a remote operator that is
+    // the COMMON case. The wizard then ends on a screen that knows least about
+    // what happened and most needs to say where the rest is written. Delivering
+    // it here means it arrives before the origin can close. Relative on purpose —
+    // the resolved path names the OS account.
+    logLocation: ingressProvision.CUTOVER_LOG_RELATIVE,
     // 'pending' only ever means "a cutover is running and the answer is not in
     // yet"; the wizard resolves it by polling /api/setup/provision-status.
     protection: 'none',

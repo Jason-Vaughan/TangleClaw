@@ -291,8 +291,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         },
         apiMutate: async () => ({
           ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          // `logLocation` is present because the real completion response carries
+          // it. The server sends it with the COMPLETION and not only from the
+          // poll, precisely because the poll may never answer — so a fixture that
+          // omits it cannot exercise the branch that exists for that case.
           ingress: { action: 'provision', provisioning: true, protection: 'pending',
-            url: 'https://host:8443', user: 'jason' }
+            url: 'https://host:8443', user: 'jason',
+            logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }
         })
       });
       ctx.showWizard();
@@ -458,8 +463,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         },
         apiMutate: async () => ({
           ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          // `logLocation` is present because the real completion response carries
+          // it. The server sends it with the COMPLETION and not only from the
+          // poll, precisely because the poll may never answer — so a fixture that
+          // omits it cannot exercise the branch that exists for that case.
           ingress: { action: 'provision', provisioning: true, protection: 'pending',
-            url: 'https://host:8443', user: 'jason' }
+            url: 'https://host:8443', user: 'jason',
+            logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }
         })
       });
       ctx.showWizard();
@@ -480,7 +490,14 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       // Reachable + no result means the child died before writing, or the cutover
       // ran past the deadline. Neither is "the address this page used has closed",
       // and claiming it would send the operator to --rollback for no reason.
-      const ctx = await provisionWith([{ state: 'pending', ok: null, code: null }]);
+      // The fixture carries `logLocation` because the REAL pending response does.
+      // Without it this scenario silently skipped the branch that consumes it, and
+      // the assertions below passed identically with that consumer reverted —
+      // a fixture narrower than the real input, hiding the code it was meant to
+      // cover.
+      const ctx = await provisionWith([
+        { state: 'pending', ok: null, code: null, logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }
+      ]);
       assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
       assert.equal(ctx.wizard.provision.reachable, true);
       const html = ctx.document.getElementById('setupBody').innerHTML;
@@ -488,6 +505,33 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.doesNotMatch(html, /an address the restart closes/,
         'a reachable origin must not be described as gone');
       assert.match(html, /may or may not have finished/, 'and it must not guess either way');
+    });
+
+    it('names the cutover log on the crash path, where it is the only evidence', async () => {
+      // A child that dies between writing the plists and calling finish() writes
+      // NO result file, so every poll answers `pending` until the deadline and the
+      // wizard lands here. logLocation was assigned only inside branches that
+      // return, so it was always null in this phase and the line naming the log
+      // was dead — in exactly the case where the log is all the operator has.
+      const ctx = await provisionWith([
+        { state: 'pending', ok: null, code: null, logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }
+      ]);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      assert.equal(ctx.wizard.provision.logLocation, '~/.tangleclaw/logs/ingress-cutover.log',
+        'the pending response carries it, and it must survive to the terminal screen');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML,
+        /ingress-cutover\.log/, 'the screen must name it');
+    });
+
+    it('names the log on the unreachable branch too — it has the least information', async () => {
+      // The branch where the origin closed knows the least about what happened, so
+      // it is the one that most needs to say where to read the rest. It named
+      // nothing at all.
+      const ctx = await provisionWith(['unreachable']);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      assert.equal(ctx.wizard.provision.reachable, false);
+      assert.match(ctx.document.getElementById('setupBody').innerHTML,
+        /ingress-cutover\.log/, 'the operator needs somewhere to read what happened');
     });
   });
 
@@ -637,8 +681,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         },
         apiMutate: async () => ({
           ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          // `logLocation` is present because the real completion response carries
+          // it. The server sends it with the COMPLETION and not only from the
+          // poll, precisely because the poll may never answer — so a fixture that
+          // omits it cannot exercise the branch that exists for that case.
           ingress: { action: 'provision', provisioning: true, protection: 'pending',
-            url: 'https://host:8443', user: 'jason' }
+            url: 'https://host:8443', user: 'jason',
+            logLocation: '~/.tangleclaw/logs/ingress-cutover.log' }
         })
       });
       ctx.showWizard();
