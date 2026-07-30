@@ -258,7 +258,13 @@ const CUTOVER_CODES = Object.freeze({
  * file is itself meaningful to the reader (the run died before finishing), so
  * silence here degrades honestly rather than misleading.
  * @param {string|null} resultFile - Path to write, or null to do nothing.
- * @param {{ok: boolean, code: string, target: string, error?: (string|null), healthUrl?: (string|null), healthOk?: (boolean|null)}} result
+ * @param {{ok: boolean, code: string, target: string, error?: (string|null), healthUrl?: (string|null), healthOk?: (boolean|null), healthError?: (string|null)}} result
+ *   `healthError` is why the health probe could not be *made*, and it is separate
+ *   from `error` on purpose: `error` means the cutover failed, while a probe that
+ *   could not run says nothing about whether the plan applied. Conflating them
+ *   reports a gated install as ungated. Since the builder below names every key
+ *   explicitly, a field absent from this type is a field that gets dropped — so
+ *   this list is the contract, not a summary of it.
  * @returns {boolean} Whether the file was written.
  */
 function writeCutoverResult(resultFile, result) {
@@ -354,8 +360,14 @@ function main() {
    * the arguments were never valid, so there is no run to report on) and
    * `--dry-run` (a preview must never be readable as a completed cutover).
    * @param {string} code - A CUTOVER_CODES value.
-   * @param {string|null} error - Operator-facing reason, or null on success.
-   * @param {{healthUrl?: string, healthOk?: boolean}} [extra]
+   * @param {string|null} error - Why the CUTOVER failed, or null on success.
+   *   Load-bearing beyond reporting: `ok` and the exit code are both derived from
+   *   it, so any non-null value here declares the run a failure. Reasons that are
+   *   not the cutover failing — a health probe that could not be built, say —
+   *   belong in `extra`, never here.
+   * @param {{healthUrl?: string, healthOk?: boolean, healthError?: (string|null)}} [extra]
+   *   Merged into the result file verbatim, and constrained by what
+   *   `writeCutoverResult` names: a key it does not list is dropped silently.
    * @returns {never}
    */
   const finish = (code, error, extra = {}) => {

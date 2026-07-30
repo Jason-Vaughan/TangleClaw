@@ -13,6 +13,13 @@ const DEPLOY_DIR = path.join(__dirname, '..', 'deploy');
 const TTYD_TEMPLATE = fs.readFileSync(path.join(DEPLOY_DIR, 'com.tangleclaw.ttyd.plist'), 'utf8');
 const CADDY_TEMPLATE = fs.readFileSync(path.join(DEPLOY_DIR, 'com.tangleclaw.caddy.plist'), 'utf8');
 
+// Read for the call sites that live inside `main()` as closures: `main()` runs
+// only under `require.main === module`, so nothing importable reaches them and a
+// behavioural test cannot pin them. Source assertion is this repo's answer —
+// see the ttyd bind pair in test/bind-policy-wiring.test.js and the adoption
+// delegation in test/auth-credential-durability.test.js.
+const CUTOVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
+
 /** Build a representative ctx for planCutover. */
 function makeCtx(overrides = {}) {
   return {
@@ -421,6 +428,18 @@ describe('ingress-cutover', () => {
     // maps to phase:'failed', rendering "No login is in force" on an install that
     // IS gated. That is the exact false-negative this whole chunk exists to prevent,
     // reached through the fix for it.
+
+    it('never hands the health reason to finish() as its `error`', () => {
+      // The tests below exercise `writeCutoverResult` and `pollHealth` directly,
+      // which is everything EXCEPT the line that carried the defect: the call site
+      // is `finish(...)` inside `main()`, a closure no test can invoke. Reverting
+      // it to `finish(CUTOVER_CODES.OK, healthError, …)` leaves every other
+      // assertion in this block green while restoring the inversion verbatim.
+      assert.doesNotMatch(CUTOVER_SRC, /finish\(CUTOVER_CODES\.OK,\s*healthError/,
+        'passing a health-probe reason as finish()\'s `error` flips `ok` to false and exits 1');
+      assert.match(CUTOVER_SRC, /finish\(CUTOVER_CODES\.OK,\s*null,\s*\{[^}]*\bhealthError\b[^}]*\}\)/,
+        'the reason must still reach the result file, as its own field in `extra`');
+    });
 
     it('reports the reason without saying the cutover failed', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-res-'));

@@ -211,6 +211,62 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Internal
+- **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
+  exercised `writeCutoverResult` and `pollHealth` directly — everything except the call site itself,
+  `finish(...)` inside `main()`, a closure nothing importable can invoke. Reverting that line to
+  `finish(CUTOVER_CODES.OK, healthError, …)` restored the inversion verbatim and left the whole file
+  green; the mutation now fails exactly one test, and only the new one. Pinned by source assertion,
+  the same way the ttyd bind pair and the Caddyfile-adoption delegation already are. The earlier
+  mutation check was invalid — it changed the call site and the result-file key together, saw red,
+  and credited the wrong half.
+
+- **`healthError` is in the cutover result-file contract, not just in the code that writes it
+  (#710, #789).** `writeCutoverResult` names every key explicitly, so a field absent from its
+  typedef is a field that gets dropped — which made the typedef read as *"`healthError` is not
+  honored"* to anyone consulting it, and that reading is the mechanism that produced the inversion.
+  Both typedefs now carry it, and `finish`'s `error` parameter says outright that `ok` and the exit
+  code are derived from it, so a reason that is not the cutover failing belongs in `extra`.
+
+- **The VRF result matrix is scoreable (#710).** Three rows read `PARTIAL`, `PARTIAL` and
+  `PASS (partial)` — two spellings for one state — while the criterion below still said "every row
+  green → PASSES", and four rows were blank, which reads as either not-run or not-yet-filled. The
+  matrix now has a legend defining exactly four values, scored from the execution records rather
+  than inferred, so walking a phase without recording an observation scores `NOT RUN` and the
+  document can only understate what was verified. The criterion splits into the #710 chunk 2 gate
+  (7b/7c/7d/7e, all `PASS` — **met**) and the whole-document gate (**not met**), which is what the
+  single conflated criterion could not express: the chunk is verified while the document is not a
+  clean bill of health. Filling the blanks surfaced **#802** — 7e.1, the no-caddy honest-absence
+  screen, never ran, and Phase 7e says that half "matters more than the success half".
+
+- **The #710 clean-room verification actually ran, and the gate is now 4 of 4 plus a verified
+  rollback (#710).** Chunk 2's real gate was always the VRF, not the code review — the document says
+  so at the top — and it had never been executed. Phases 7b and 7d ran in the `tc-cleanroom` Linux
+  container; 7c, 7e and Phase 8 ran on a pristine macOS 26.3 guest. 7e is the only proof that the
+  detached child outlives the server it restarts, since every unit test necessarily stubs the spawn:
+  the response arrived in 1s with HTTP 200 (so the spawn followed the reply), the server PID changed,
+  the outcome file was written by a child whose parent no longer existed, and the named address
+  answered **401** with no credentials, **401** with wrong ones and **200** with the credential the
+  wizard created. A fresh install ended up gated by default, which is the point of the chunk.
+
+  **Running it found a defect in the phase itself.** 7d's fixture cleared config's credential and
+  left the Caddyfile gated — but `adoptCredentialIntoConfig` runs at `scripts/ingress-cutover.js:441`,
+  before `planCutover` at `:494`, and re-adopted the credential immediately, so `ungate-refused` was
+  unreachable. Platform-independent: it would have failed identically on macOS, after consuming a
+  scheduled egress window. The fixture now makes the live gate ambiguous first, so adoption cannot
+  adopt.
+
+  The report-back matrix records every deviation rather than a bare tick, because the deviations
+  change what the results mean: the container runs as **root**, where a `chmod 000` file stays
+  readable, so 7b would have passed **vacuously** without a non-root user standing in for the macOS
+  operator; and 7e was driven through `POST /api/setup/complete` rather than a browser, so its
+  Admin-Login-renders, Skip-absent and resolves-without-reload assertions are marked NOT VERIFIED
+  rather than claimed. Three rows read PARTIAL for the same reason.
+
+  `deploy/VRF-auth-1-cutover.md` is also retargeted from elkaholic to a Tart macOS guest on habitat,
+  per an operator directive that everything runs there. It named elkaholic in eight places starting
+  with its title, and two mentions are kept deliberately so the retirement is legible rather than
+  silent.
+
 - **CI now runs on pushes to `v5-baseline`, not only `main` (#710).** Chunk PRs target the v5
   integration branch, and nothing validated it — so work merged there stayed unrun until it reached
   `main`. That is not hypothetical: `feat/710-chunk2` accumulated **17 CI failures nobody had seen**,

@@ -43,21 +43,41 @@ configured.
 > the machine-readable outcome channel and the server-spawned cutover the wizard drives.
 > Break-glass recovery is still verified separately.
 >
-> **STATUS 2026-07-29 — 7b/7c/7d/7e have not been run, deliberately, and running them is the gate
-> on #710 chunk 2.** They cannot be run from a session on the developer's machine: a real cutover
-> rewrites launchd plists and restarts the TangleClaw server, and there that server is the live
-> install serving the operator's own dashboard from the same clone. What stands in for them
-> meanwhile — unit coverage of the decisions, and an interlock refusing a real spawn from a test
-> process — does not observe the detached child surviving the restart and does not prove a login is
-> in force. **Chunk 2 must not be ticked, and its PR must not be treated as complete, on code
-> review alone.** Run **7c and 7e** on the habitat macOS guest and fill the report-back matrix. **7b and 7d
-> do NOT need macOS** — they refuse before any `launchctl` step, so they run in habitat's
-> `tc-cleanroom` Linux container with no egress window and no guest.
+> **STATUS 2026-07-30 — 7b/7c/7d/7e have all been run and all read `PASS`, so the #710 chunk 2 gate
+> is met.** See "How to score this matrix" at the bottom for the exact standing; Gate 2, the
+> document as a whole, is *not* met, and the two must not be conflated.
+>
+> They could not be run from a session on the developer's machine, which is why they went unrun
+> until now: a real cutover rewrites launchd plists and restarts the TangleClaw server, and there
+> that server is the live install serving the operator's own dashboard from the same clone. What
+> stood in for them meanwhile — unit coverage of the decisions, and an interlock refusing a real
+> spawn from a test process — does not observe the detached child surviving the restart and does not
+> prove a login is in force. **Chunk 2 must not be ticked, and its PR must not be treated as
+> complete, on code review alone.** That bar is now cleared by measurement, not waived. 7c and 7e
+> ran on the habitat macOS guest; **7b and 7d do NOT need macOS** — they refuse before any
+> `launchctl` step, so they ran in habitat's `tc-cleanroom` Linux container with no egress window
+> and no guest.
 
 > **Checkbox legend for this document.** `- [x]` measured on the run named in the execution
 > record. `- [~]` **not verified** — reachable only through a browser session this run did not
 > have, and NOT claimed by the matrix row above. `- [ ]` not run this pass. A ticked matrix row
 > whose boxes are blank is the contradiction this legend exists to prevent.
+>
+> **Matrix legend — the `Pass?` column takes exactly one of four values, spelled exactly this
+> way.** A second spelling for a state is how a partial result gets read as a whole one.
+>
+> | Value | Meaning |
+> |---|---|
+> | **PASS** | Every check in the phase was measured, and all of them held. |
+> | **PARTIAL** | Some checks were measured and held; others were not run. The qualifier says which — a `PARTIAL` with no explanation is unscoreable and is itself a defect. |
+> | **NOT RUN** | No verdict was recorded for this phase on this pass. |
+> | **FAIL** | A check was measured and did not hold. |
+>
+> A row is scored **from the execution records below, not from inference**: walking a phase
+> without recording an observation scores `NOT RUN`, even where a neighbouring record implies it
+> must have worked. The bias is deliberate — this document may understate what was verified, and
+> must never overstate it. `PARTIAL` is **not** a pass; see the criterion under the matrix for
+> which values clear which gate.
 
 ---
 
@@ -601,24 +621,44 @@ is the evidence, not the code review.
 | Check | Phase | Pass? |
 |---|---|---|
 | Setup wizard end-to-end (incl. mkcert cert-gen) | 3 | **PARTIAL** — completion + cert-gen exercised via the API; the per-step wizard walk (projects dir / engine / methodology / chime) was NOT run, so its boxes stay blank |
-| Dry-run touches nothing | 4 | |
-| Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | |
+| Dry-run touches nothing | 4 | **NOT RUN** — inside the `Phases 2-5` install walk, but no per-check observation was recorded, so it is not scored |
+| Bug 1 — cert staged, launchd Caddy serves 8443 despite TCC-resident source | 5 | **NOT RUN** — `install.sh` and `mkcert -install` are recorded, and 7e observed 8443 answering, but the TCC-resident source condition this phase exists to reproduce was never arranged on the guest |
 | Bug 2 — ttyd re-binds Unix socket across restarts | 6 | **PARTIAL** — ttyd observed at exit status 0 (not 126) across the restarts 7c/7e caused; the repeated-kickstart loop this phase specifies was NOT run |
-| Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | |
+| Bug 3 — clobber-guard backs up + refuses hand-edited Caddyfile | 7 | **NOT RUN** — no execution record covers this phase |
 | #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 |
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | **PASS** — habitat guest, 2026-07-30, @4e4e55e |
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
 | #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | **PASS** — server PID 6053→6219, 401/401/200 |
-| #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
-| Rollback restores direct mode cleanly | 8 | **PASS (partial)** — after the #789 fix, re-run @ad280a7: caddy unloaded, `ingressMode` direct, 3102 answering 200. The direct-HTTPS and ttyd-on-3100 checks were NOT run |
+| #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e.1 | **NOT RUN** — the guest had caddy installed and the run did not re-do first-run setup without it. The *decision* is unit-covered (`test/setup-wizard-login-gate.test.js`, `test/setup-provisioning.test.js`); what is unverified is that the honest-absence screen renders end-to-end — the same browser-only limit as 7e's `[~]` boxes |
+| Rollback restores direct mode cleanly | 8 | **PARTIAL** — after the #789 fix, re-run @ad280a7: caddy unloaded, `ingressMode` direct, 3102 answering 200. The direct-HTTPS and ttyd-on-3100 checks were NOT run |
 
-**Every row above** green → `VRF-auth-1-cutover` PASSES. (Count the rows rather than trusting a
-number written here — the matrix grows as phases are added, and a stale count is how a phase gets
-quietly dropped from the criterion.)
+### How to score this matrix
 
-Phases **7b, 7c, 7d and 7e are not optional**: they are the accepted substitute for unit coverage
-that cannot exist in-process (see #772). 7b/7c/7d cover the executor's ordering; **7e is the only
-end-to-end proof that a login is actually in force** after the wizard-driven, server-spawned path —
-everything in-process stubs that spawn, necessarily, because a real one restarts the machine's live
-install. A run that skips any of them has not verified the #710 work at all.
-Any red → capture the failing command's output + `~/.tangleclaw/logs/` and stop.
+Two gates, scored separately, because they have different consequences. Read every row's `Pass?`
+value against the matrix legend at the top of this document and apply:
+
+**Gate 1 — the #710 chunk 2 gate.** Rows **7b, 7c, 7d and 7e** must every one read `PASS`.
+Nothing else clears it: `PARTIAL` does not, and neither does unit coverage. These four are the
+accepted substitute for coverage that cannot exist in-process (see #772) — 7b/7c/7d cover the
+executor's ordering, and **7e is the only end-to-end proof that a login is actually in force**
+after the wizard-driven, server-spawned path, because everything in-process stubs that spawn
+(a real one restarts the machine's live install). A run that skips any of the four has not
+verified the #710 work at all.
+
+**Gate 2 — the document as a whole.** `VRF-auth-1-cutover` PASSES only when **every** row reads
+`PASS`. A single `PARTIAL` or `NOT RUN` means it does not — the document is then a record of what
+was checked, not a clean bill of health, and must not be cited as one. (Score by reading the rows,
+never by trusting a tally: the matrix grows as phases are added, and a stale count is how a phase
+gets quietly dropped from the criterion.)
+
+Any `FAIL` → capture the failing command's output + `~/.tangleclaw/logs/`, and stop.
+
+**Standing as of the 2026-07-30 run (@e20c1a3 / @4e4e55e / @ad280a7):**
+
+- **Gate 1 — MET.** 7b, 7c, 7d and 7e all read `PASS`, on the runs their rows name.
+- **Gate 2 — NOT MET.** Three rows read `PARTIAL` and four read `NOT RUN`; no row reads `FAIL`.
+
+The largest residual is **7e.1**, the honest-absence half of 7e — and Phase 7e says outright that
+it "matters more than the success half", so its being `NOT RUN` is a real gap rather than a
+formality. It sits outside Gate 1 because Gate 1 names phases, and 7e's own phase gate — proof
+that a login is in force — was measured and held. Tracked as **#802**.
