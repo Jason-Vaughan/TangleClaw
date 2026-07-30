@@ -183,6 +183,25 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Internal
+- **Three setup suites no longer depend on the host having Caddy installed (#710).** CI failed 17
+  assertions on this branch while the same suites passed on every developer machine.
+  `caddy.detectCaddy()` shells out to `caddy version`, so `test/setup-provisioning.test.js`,
+  `test/setup-ingress-state-endpoint.test.js` and `test/setup-wizard.test.js` were inheriting the
+  host's answer rather than stating it — and every machine here has Caddy, because the live install
+  uses it. The tests were asserting ingress decisions against an input they did not set.
+
+  Reproduced before being fixed, by running them with `caddy` hidden from `PATH`: exactly the 17 CI
+  failures, locally. The fix installs a stub `caddy` for the duration of each suite, which is the
+  pattern `test/auth2-setup-admin.test.js` already used for exactly this reason — it had learned the
+  lesson and three siblings had not, which is the same one-member-of-the-family shape this chunk hit
+  repeatedly. So the stub now lives once in `test/_caddy-stub.js` (`installCaddyStub`,
+  `withoutCaddy`) rather than being copied a fourth time, and the deliberately-absent cases stay
+  reachable through the shared helper. The filename is underscore-prefixed so the suite command's
+  `test/*.test.js` glob does not collect it as an empty test file.
+
+  Worth recording why it went unseen: CI had **never run on this branch**. The PR that opened it
+  triggered the first run, so six Critic passes and a green local suite had all been measuring a
+  machine that happened to satisfy an unstated precondition.
 - **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
   decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
   a Claude Code plugin — and the decision had since been made by what got built rather than by

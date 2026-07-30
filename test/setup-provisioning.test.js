@@ -25,6 +25,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const provision = require('../lib/ingress-provision');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
+const { installCaddyStub } = require('./_caddy-stub');
 
 setLevel('error');
 
@@ -111,11 +112,16 @@ function handEdited(credentialLines) {
 }
 
 describe('setup provisions a login by default', () => {
+  let caddyStub;
   let tmpDir;
   let server;
   let cutovers;
 
   before(async () => {
+    // Caddy must be PRESENT deterministically. detectCaddy() shells out to
+    // `caddy version`, so without this the suite inherits the host's answer —
+    // green on a dev Mac that has Caddy, 17 failures on CI that does not.
+    caddyStub = installCaddyStub();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-provisioning-'));
     store._setBasePath(tmpDir);
     store.init();
@@ -125,6 +131,7 @@ describe('setup provisions a login by default', () => {
   });
 
   after(async () => {
+    caddyStub.restore();
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });

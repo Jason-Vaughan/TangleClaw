@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
+const { installCaddyStub } = require('./_caddy-stub');
 
 setLevel('error');
 
@@ -56,11 +57,16 @@ function request(server, method, urlPath, body) {
 }
 
 describe('Setup Wizard', () => {
+  let caddyStub;
   let tmpDir;
   let server;
   let projectsDir;
 
   before(async () => {
+    // Caddy must be PRESENT deterministically. detectCaddy() shells out to
+    // `caddy version`, so without this the suite inherits the host's answer —
+    // green on a dev Mac that has Caddy, 17 failures on CI that does not.
+    caddyStub = installCaddyStub();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-setup-'));
     projectsDir = path.join(tmpDir, 'projects');
     fs.mkdirSync(projectsDir);
@@ -73,6 +79,7 @@ describe('Setup Wizard', () => {
   });
 
   after(async () => {
+    caddyStub.restore();
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
