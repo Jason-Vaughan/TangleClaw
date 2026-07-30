@@ -4,6 +4,35 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
+  decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
+  a Claude Code plugin — and the decision had since been made by what got built rather than by
+  anything written. Its most authoritative record was a parenthetical comment at
+  `lib/engines.js:1139`; the rest lived in per-machine session memory, which does not survive a fresh
+  clone and cannot be reviewed. Closing #330 in that state would have discarded the one thing it
+  existed for.
+
+  `docs/adr/0011-prawduct-boundary.md` ratifies option 3 of the issue — the plugin is another engine
+  capability — and maps the seam to exactly three items: the `prawduct@*` key in a project's
+  `.claude/settings.json`, `CLAUDE.md` as a plugin-owned anchor TangleClaw must not regenerate, and
+  `.prawduct/` as plugin-owned state TangleClaw reads at agreed paths and never authors. It records
+  the standing constraints that follow (a fourth seam item needs an amendment; no TangleClaw code
+  writes inside `.prawduct/`; no lifecycle operation enables governance without an explicit operator
+  action) and accepts, in the open, that agent invocation is Claude-only because the capability being
+  invoked is a Claude Code skill — a portable Critic would mean owning the methodology layer #538 and
+  #570 deliberately removed.
+
+  It also supplies the criterion that decides **#368**, which proposes writing the Prawduct activation
+  reference during `createProject`: that is governance activation as a side effect of an ordinary
+  lifecycle operation, which the boundary rules against. The counter-argument is recorded rather than
+  omitted, since #368 is narrower than the #763 case it resembles.
+
+  Authored by the roadmap-review session, which could not commit here; every line citation was
+  re-verified against `main` before landing (the four `lib/engines.js` function positions, the #330
+  comment, `invoke-critic`'s engine refusal, and `createProject`), and the "19 files" count now names
+  the scope that reproduces it.
+
 ### Fixed
 - **A session launch could kill, or type into, a different project's live session (#774).** tmux
   resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
