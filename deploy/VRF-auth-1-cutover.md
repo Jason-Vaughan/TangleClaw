@@ -26,10 +26,21 @@ Plus: the **first-run Setup Wizard** (projects dir / engine / methodology / chim
 **HTTPS mkcert cert-gen**) — only testable on a clean install, since it never re-fires once
 configured.
 
-> **Now in scope.** The forced-admin wizard step (`caddy hash-password`, no default
+> **Now in scope — and UNRUN.** The forced-admin wizard step (`caddy hash-password`, no default
 > credential) shipped, and setup provisions the gate itself — so phases **7b–7e** below cover
 > the machine-readable outcome channel and the server-spawned cutover the wizard drives.
 > Break-glass recovery is still verified separately.
+>
+> **STATUS 2026-07-29 — 7b/7c/7d/7e have not been run, deliberately, and running them is the gate
+> on #710 chunk 2.** They cannot be run from a session on the developer's machine: a real cutover
+> rewrites launchd plists and restarts the TangleClaw server, and there that server is the live
+> install serving the operator's own dashboard from the same clone. What stands in for them
+> meanwhile — unit coverage of the decisions, and an interlock refusing a real spawn from a test
+> process — does not observe the detached child surviving the restart and does not prove a login is
+> in force. **Chunk 2 must not be ticked, and its PR must not be treated as complete, on code
+> review alone.** Run all four on **elkaholic**, the clean-room Mac this document is written for,
+> and fill the report-back matrix. A Linux container is not an option for these phases:
+> `deploy/install.sh` refuses on non-Darwin, and every step below is `launchctl`.
 
 ---
 

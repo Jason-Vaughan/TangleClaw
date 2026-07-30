@@ -1235,11 +1235,22 @@ const PROVISION_DEADLINE_MS = 90000;
  * so each terminal screen re-states them. A skipped project or an unadoptable
  * credential must not vanish because the screen that would have shown it was
  * swapped out.
+ *
+ * `alreadyShown` is prose THIS screen has already printed above the block. The
+ * server puts the ingress `reason` in both `reason` and `warnings` on purpose —
+ * `warnings` is the complete list for clients that read nothing else — so a screen
+ * that prints the reason itself would otherwise show the identical sentence twice.
+ * Pass it only from a screen that actually renders the text: passing it from one
+ * that does not would delete the warning instead of de-duplicating it.
  * @param {string[]} warnings
+ * @param {string} [alreadyShown] - Text this screen already rendered; dropped from the list.
  * @returns {string} HTML, or '' when there is nothing to say.
  */
-function _warningsBlock(warnings) {
-  const list = Array.isArray(warnings) ? warnings.filter((w) => typeof w === 'string' && w) : [];
+function _warningsBlock(warnings, alreadyShown) {
+  const seen = typeof alreadyShown === 'string' ? alreadyShown.trim() : '';
+  const list = Array.isArray(warnings)
+    ? warnings.filter((w) => typeof w === 'string' && w && !(seen && w.trim() === seen))
+    : [];
   if (list.length === 0) return '';
   return `<div class="form-error" role="status"><strong>Also worth knowing:</strong><ul>`
     + list.map((w) => `<li>${esc(w)}</li>`).join('')
@@ -1461,7 +1472,7 @@ function _showUnprotectedScreen(ingress, warnings) {
       ${stored && ingress.reason ? `<p class="setup-text-muted">${esc(ingress.reason)}</p>` : ''}
       ${ingress.remedy ? `<p class="setup-text-muted">${esc(ingress.remedy)}</p>` : ''}
       <p class="setup-text-muted">${_exposureSentence(ingress.networkExposed === true)}</p>
-      ${_warningsBlock(warnings)}
+      ${_warningsBlock(warnings, ingress.reason)}
       <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue</button>
     </div>`;
 }

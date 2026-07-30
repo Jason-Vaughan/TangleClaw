@@ -344,11 +344,12 @@ describe('setup provisions a login by default', () => {
         'config holds the typed credential — which is precisely why the mismatch must be reported');
       assert.match(res.data.ingress.reason, /still enforcing the credential it already had/);
       assert.match(res.data.ingress.remedy, /reset-admin/);
-      // Deliberately NOT in `warnings`: `existing-unverified` is itself what routes
-      // the wizard to a terminal screen, and that screen renders `reason` — pushing it
-      // as a warning printed the identical sentence twice on the same screen.
-      assert.ok(!res.data.warnings.some((w) => /still enforcing/.test(w)),
-        'the reason must not be duplicated into warnings');
+      // In `warnings` as well as `reason`, like every other ungated outcome: a client
+      // that reads only `warnings` must still learn the saved credential is not the one
+      // being enforced. The wizard shows it once because `_warningsBlock` de-duplicates
+      // against what the screen already printed — the API does not narrow itself for it.
+      assert.ok(res.data.warnings.some((w) => /still enforcing/.test(w)),
+        'a client that reads only warnings must still learn the credential is not enforced');
       assert.equal(cutovers.length, 0, 'the hand-maintained file must still not be regenerated');
       assert.equal(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8'), handEdited([`jason ${BCRYPT_A}`]),
         'the operator\'s Caddyfile must be untouched');
@@ -371,6 +372,32 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.protection, 'existing-unverified');
       assert.match(res.data.ingress.reason, /cannot tell whether they carry the same/);
       assert.ok(res.data.warnings.some((w) => /cannot tell/.test(w)));
+    });
+
+    it('refuses outright when adoption declines and no credential is configured', async () => {
+      // Why the "could not be adopted" answer in the adopt block is unreachable, pinned
+      // as behavior rather than left as a comment someone can quietly invalidate.
+      //
+      // A config carrying basicAuthUser with no hash — an interrupted reset-admin, or a
+      // hand-edited config.json — makes adoption decline with 'config-already-has-credential'
+      // while the complete-credential branch does not match either. That is the only way to
+      // reach the final arm. But an `adopt` plan exists only in caddy mode, and the caddy-mode
+      // credential gate refuses BEFORE the ingress answer is composed, so the request never
+      // gets there: setup is refused instead of finishing ungated, which is the stronger
+      // behavior. If the gate is ever reordered, this goes red and that arm becomes live code.
+      writeLive(handEdited([`jason ${BCRYPT_A}`]));
+      caddyIsLive();
+      const c = store.config.load();
+      c.basicAuthUser = 'half-written';
+      c.basicAuthHash = null;
+      c.authEnabled = false;
+      store.config.save(c);
+
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(res.status, 400, 'an install that cannot confirm a login must not finish setup');
+      assert.equal(res.data.code, 'ADMIN_REQUIRED');
+      assert.equal(store.config.load().setupComplete !== true, true, 'setup must not be marked complete');
+      assert.equal(cutovers.length, 0, 'the hand-maintained file must not be regenerated');
     });
   });
 

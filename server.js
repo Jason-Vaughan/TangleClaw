@@ -1371,6 +1371,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // 'pending' only ever means "a cutover is running and the answer is not in
     // yet"; the wizard resolves it by polling /api/setup/provision-status.
     protection: 'none',
+    // Whenever `reason` explains why no login is in force, the same sentence also
+    // goes into `warnings` — every arm below, without exception. `warnings` is the
+    // complete machine-readable list, because a client that reads only that field
+    // must still learn the install is ungated; `reason` is the wizard's prose copy.
+    // The two therefore overlap by design, and de-duplicating belongs at the point
+    // of RENDER, not here: `_warningsBlock` in public/setup.js drops any warning a
+    // screen has already printed. Suppressing the push instead silently narrows the
+    // API for every non-wizard consumer.
     reason: ingressPlan.reason || null,
     remedy: ingressPlan.remedy || null,
     user: null,
@@ -1426,10 +1434,10 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         + 'credential it already had, not the new one.';
       ingress.remedy = 'Set both from one place with `node scripts/reset-admin.js`, which rewrites '
         + 'the credential in the live Caddy config as well.';
-      // NOT pushed into `warnings`: `existing-unverified` already routes the wizard to
-      // a terminal screen that renders `reason`, and the warnings block renders on the
-      // same screen — so pushing it printed the identical sentence twice. The log is
-      // where a copy belongs for an operator reading server output.
+      // Pushed like every other arm — see the note on `reason` above. The screen
+      // renders it once because `_warningsBlock` de-duplicates, not because this
+      // arm withholds it.
+      warnings.push(ingress.reason);
       log.warn('Setup saved a credential the live Caddy config does not enforce', {
         user: after.basicAuthUser || null
       });
@@ -1455,6 +1463,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
         + `${adoption && adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
       ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
       warnings.push(ingress.reason);
+      // Unreachable by construction, kept as the honest fallback if that ever changes.
+      // An `adopt` plan only exists in caddy mode, and the caddy-mode credential gate
+      // above refuses the request before this block runs whenever no complete credential
+      // is configured — which is exactly this branch's condition. Pinned by
+      // "refuses outright when adoption declines and no credential is configured".
+      log.warn('Setup could not adopt the existing Caddy login', {
+        reason: (adoption && adoption.reason) || null
+      });
     }
   } else if (adminConfigured) {
     // Refused, but a credential IS configured (an install already in caddy mode,

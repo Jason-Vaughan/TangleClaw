@@ -105,10 +105,11 @@ All notable changes to TangleClaw are documented in this file.
   the step list against each plan (including the direct-mode flip), the payload sent under the same
   predicate that collected it, the deadline distinguishing "cannot see it" from "it has not
   answered", a stored-but-unconfirmed login getting its own screen, recovery keyed on the error code,
-  and no navigation without a click. Three properties are asserted across **every** terminal screen
+  and no navigation without a click. Four properties are asserted across **every** terminal screen
   rather than one — that each claims the view so an async re-render cannot repaint it, announces
-  itself since none is reached by an operator action, and carries the server's warnings instead of
-  closing the overlay holding them. Each had been fixed on one screen and missed on its siblings, and
+  itself since none is reached by an operator action, carries the server's warnings instead of
+  closing the overlay holding them, and clears the overlay error banner so a fixed problem stops
+  being reported. Each had been fixed on one screen and missed on its siblings, and
   the fixture table now pins which screen every row actually lands on: two earlier versions of it did
   not reach the screens they named, so two mutations survived a suite that claimed to cover them.
   `test/auth2-setup-admin.test.js` (11) — the Skip route's refusal, against a stub that answers
@@ -150,6 +151,29 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Internal
+- **A setup outcome that explains why no login is in force is now printed once, without narrowing
+  what the API reports (#710).** Every arm of the ingress answer puts that sentence in both
+  `ingress.reason` and `warnings`, because a client reading only `warnings` must still learn the
+  install is ungated — but three of the four terminal-screen states render `reason` themselves on the
+  same screen as the warnings block, so the operator read the identical sentence twice.
+
+  The first attempt at this suppressed the push on one arm. That fixed the screen at the cost of the
+  field, and it fixed only the arm the finding named while three siblings kept duplicating — the
+  failure mode this chunk has now hit repeatedly. The duplication is a rendering concern, so it is
+  handled where the rendering happens: `_warningsBlock` in `public/setup.js` takes the prose its
+  caller has already printed and drops a warning matching it. That covers all four states at once and
+  any state added later, and the payload stays complete for every non-wizard consumer. The
+  de-duplication is keyed on what the caller actually rendered rather than on `reason` existing,
+  because a screen that never printed the reason would otherwise delete the operator's only copy —
+  pinned by a test that asserts the warning survives there.
+
+  Also recorded while covering the family: the adopt block's "could not be adopted" arm is
+  unreachable by construction. An `adopt` plan exists only in caddy mode, and the caddy-mode
+  credential gate refuses the request before the ingress answer is composed, which is exactly that
+  arm's condition — so setup is refused rather than finishing ungated. The branch is kept as an
+  honest fallback and the refusal is now pinned, so reordering the gate turns it back into live code
+  visibly rather than silently.
+
 - **The ingress cutover can now report how it ended to something that isn't a terminal
   (#710, v5 chunk 2 groundwork).** `scripts/ingress-cutover.js` takes `--result-file <path>` and
   writes a JSON outcome there: `ok`, a stable `code`, the `target`, an `error` string, the health URL

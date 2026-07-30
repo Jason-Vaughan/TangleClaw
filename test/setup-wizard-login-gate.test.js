@@ -708,6 +708,44 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       return { ctx, html, dismissed };
     }
 
+    it('prints an ingress reason once, though the server sends it in both fields', async () => {
+      // The server puts the reason in `warnings` as well as `reason`, deliberately: a
+      // client that reads only `warnings` must still learn the install is ungated. So a
+      // screen that prints the prose itself has to drop the duplicate, or the operator
+      // reads the identical sentence twice — once as the explanation, once under "Also
+      // worth knowing". De-duplicating at the render is what lets the API stay complete.
+      const REASON = 'A login is already configured and a hand-maintained Caddy config is in '
+        + 'front of TangleClaw.';
+      const OTHER = 'Skipped a project: path does not exist';
+      const printsTheReason = [
+        { name: 'unprotected', expect: /TangleClaw has no login/,
+          ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: REASON } },
+        { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
+          ingress: { action: 'refuse', provisioning: false, protection: 'existing-unverified', reason: REASON } }
+      ];
+      for (const screen of printsTheReason) {
+        const { html } = await endOn(screen, [REASON, OTHER]);
+        assert.equal(html.split(REASON).length - 1, 1,
+          `${screen.name} printed the reason ${html.split(REASON).length - 1} times, not once`);
+        assert.match(html, new RegExp(OTHER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+          `${screen.name} dropped an unrelated warning while de-duplicating`);
+      }
+    });
+
+    it('keeps a warning repeating a reason the screen never printed', async () => {
+      // The de-duplication is keyed on what the CALLER rendered, not on the reason
+      // field's existence. The adopted screen prints no reason, so suppressing there
+      // would delete the operator's only copy instead of removing a second one.
+      const REASON = 'An existing Caddy login was found but could not be adopted';
+      const { html } = await endOn(
+        { name: 'adopted', expect: /Setup finished/,
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason', reason: REASON } },
+        [REASON]
+      );
+      assert.equal(html.split(REASON).length - 1, 1,
+        'a screen that never printed the reason must still show it as a warning');
+    });
+
     it('claims the view, so an async re-render cannot repaint any of them', async () => {
       for (const screen of SCREENS) {
         const { ctx } = await endOn(screen, ['a warning keeps this screen up']);
