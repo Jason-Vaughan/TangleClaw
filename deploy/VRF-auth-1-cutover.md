@@ -1,14 +1,26 @@
-# VRF-auth-1-cutover — clean-room smoke test (elkaholic)
+# VRF-auth-1-cutover — clean-room smoke test (habitat macOS guest)
 
 Verifies the **#397 production-durability fixes** to the AUTH-1 Caddy ingress cutover
 (`scripts/ingress-cutover.js`, `lib/caddy.js`, `deploy/com.tangleclaw.ttyd.plist`) on a
 **fresh, throwaway TangleClaw install** — so nothing touches the live cursatory system, its
 projects, tags, DB, or hand-edited Caddyfile.
 
-**Why a separate machine:** TC's home dir (`~/.tangleclaw/`), SQLite DB, Caddyfile, and
-launchd labels (`com.tangleclaw.{server,ttyd,caddy}`) are all hardcoded/global per user
+**Why a separate macOS environment:** TC's home dir (`~/.tangleclaw/`), SQLite DB, Caddyfile,
+and launchd labels (`com.tangleclaw.{server,ttyd,caddy}`) are all hardcoded/global per user
 account. A second install on the *same* macOS user would unload the live services and
-share the live DB. A different Mac is the only no-code-change clean room.
+share the live DB. A distinct macOS instance is the only no-code-change clean room.
+
+> **Clean room = a Tart macOS guest on habitat, as of 2026-07-30.** elkaholic is **retired**
+> from this role by operator directive; it is also currently unreachable from cursatory (host
+> key verification failure), so it was not a viable fallback either. Read every `elkaholic`
+> below as *the habitat macOS guest*, reached with `tart exec` or SSH through habitat. The
+> guest is cloned per run and deleted after, so Phase 0's "confirm no existing state" is
+> satisfied by construction rather than by inspection — but run it anyway if you reuse a guest.
+>
+> **Everything is on habitat, and nothing is split across machines.** Phases 7b and 7d run in
+> the `tc-cleanroom` Linux container, which is a container *on the habitat Docker host* — not a
+> second machine. 7c and 7e need the macOS guest. One host, two environments.
+> Spec: `https://claude.ai/code/artifact/219ca487-dbd5-41ea-a466-b5a8db2829bd`
 
 **What this proves (the three #397 bugs):**
 1. **Cert-staging** — launchd Caddy (no Full Disk Access) can read a cert that originated
@@ -38,16 +50,17 @@ configured.
 > meanwhile — unit coverage of the decisions, and an interlock refusing a real spawn from a test
 > process — does not observe the detached child surviving the restart and does not prove a login is
 > in force. **Chunk 2 must not be ticked, and its PR must not be treated as complete, on code
-> review alone.** Run all four on **elkaholic**, the clean-room Mac this document is written for,
-> and fill the report-back matrix. A Linux container is not an option for these phases:
-> `deploy/install.sh` refuses on non-Darwin, and every step below is `launchctl`.
+> review alone.** Run **7c and 7e** on the habitat macOS guest and fill the report-back matrix. **7b and 7d
+> do NOT need macOS** — they refuse before any `launchctl` step, so they run in habitat's
+> `tc-cleanroom` Linux container with no egress window and no guest.
 
 ---
 
 ## Phase 0 — Confirm clean room + prereqs
 
 ```sh
-# 0.1  Confirm elkaholic has NO existing TangleClaw state (must be absent/empty for a clean test)
+# 0.1  Confirm the guest has NO existing TangleClaw state (absent/empty for a clean test).
+#      A freshly cloned guest satisfies this by construction; check anyway if reusing one.
 ls -la ~/.tangleclaw 2>/dev/null && echo "⚠ EXISTING STATE — stop, this is not a clean room" || echo "✓ clean"
 launchctl list | grep tangleclaw && echo "⚠ existing TC services — stop" || echo "✓ no TC services"
 
@@ -58,8 +71,9 @@ launchctl list | grep tangleclaw && echo "⚠ existing TC services — stop" || 
 # connection. (If you happen to already have some of these, install.sh skips them.)
 ```
 
-If 0.1 shows existing state and you DON'T care about it (elkaholic has no real TC use),
-you can reset with `Phase 9` first. If elkaholic *does* run a real TC, this test is not
+If 0.1 shows existing state and you DON'T care about it (a throwaway guest never does),
+you can reset with `Phase 9` first — or simply `tart delete` the guest and re-clone, which is
+strictly cleaner. If the environment *does* run a real TC, this test is not
 safe there either — use a VM instead.
 
 ---
@@ -116,7 +130,7 @@ curl -so /dev/null -w "%{http_code}\n" http://localhost:3102   # 200
 
 ## Phase 3 — Start-up wizard (incl. HTTPS cert-gen)  ← wizard test
 
-Open **http://localhost:3102** in a browser on elkaholic (**http**, not https — the
+Open **http://localhost:3102** in a browser on the guest's desktop (**http**, not https — the
 server is HTTP-only until the wizard's cert step runs). The first-run Setup Wizard should
 appear automatically (it fires only when `~/.tangleclaw/config.json` has no prior setup).
 
@@ -460,14 +474,14 @@ lsof -nP -iTCP:8443 -sTCP:LISTEN || echo "✓ nothing on 8443 (caddy stopped)"
 
 ---
 
-## Phase 9 — Teardown (optional, leaves elkaholic clean)
+## Phase 9 — Teardown (optional; `tart delete <guest>` supersedes it)
 
 ```sh
 launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist 2>/dev/null
 rm -f ~/Library/LaunchAgents/com.tangleclaw.*.plist
 rm -rf ~/.tangleclaw
 # optionally: rm -rf ~/Documents/Projects/TangleClaw
-mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
+mkcert -uninstall    # only if you don't want the test CA trusted in the guest
 ```
 
 ---
