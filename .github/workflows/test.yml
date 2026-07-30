@@ -3,7 +3,11 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [main]
+    # v5-baseline is a long-lived integration branch that chunk PRs target, so a
+    # push to it must be validated like a push to main. Without this, work merged
+    # into v5-baseline stays unrun until it reaches main — which is how this
+    # branch accumulated 17 CI failures nobody saw: CI had never run it at all.
+    branches: [main, v5-baseline]
 
 jobs:
   test:

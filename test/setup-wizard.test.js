@@ -8,7 +8,8 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { createServer } = require('../server');
+const { createServer, _setCutoverSpawner } = require('../server');
+const { installCaddyStub } = require('./_caddy-stub');
 
 setLevel('error');
 
@@ -56,11 +57,16 @@ function request(server, method, urlPath, body) {
 }
 
 describe('Setup Wizard', () => {
+  let caddyStub;
   let tmpDir;
   let server;
   let projectsDir;
 
   before(async () => {
+    // Caddy must be PRESENT deterministically. detectCaddy() shells out to
+    // `caddy version`, so without this the suite inherits the host's answer —
+    // green on a dev Mac that has Caddy, 17 failures on CI that does not.
+    caddyStub = installCaddyStub();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-setup-'));
     projectsDir = path.join(tmpDir, 'projects');
     fs.mkdirSync(projectsDir);
@@ -73,6 +79,7 @@ describe('Setup Wizard', () => {
   });
 
   after(async () => {
+    caddyStub.restore();
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -117,7 +124,18 @@ describe('Setup Wizard', () => {
   });
 
   describe('PATCH /api/config with setupComplete', () => {
-    it('should accept setupComplete: true', async () => {
+    it('should accept setupComplete: true once a login exists', async () => {
+      // This is the wizard's Skip path, and finishing setup through it now answers
+      // to the same rule as /api/setup/complete: a machine that can run a login
+      // gate must have a credential first (#710). Give the install one — the shape
+      // any second run has — so this case keeps testing the field it is about.
+      // The refusal itself is covered in test/auth2-setup-admin.test.js.
+      const seeded = store.config.load();
+      seeded.authEnabled = true;
+      seeded.basicAuthUser = 'admin';
+      seeded.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(seeded);
+
       const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
       assert.equal(status, 200);
       assert.equal(data.ok, true);
@@ -224,6 +242,57 @@ describe('Setup Wizard', () => {
       });
 
   describe('POST /api/setup/complete', () => {
+    // TangleClaw now puts a login in front of itself as the default outcome of
+    // setup, so completing it on a machine that can run one requires a
+    // credential and starts an ingress cutover. These cases are about config,
+    // projects and delete-protection rather than about the gate, so the machine
+    // is given a credential up front — the shape a real second run has — and the
+    // cutover is stubbed. Without the stub the real one would rewrite launchd
+    // plists and restart the developer's live server; lib/ingress-provision.js
+    // refuses that from a test process, which is why forgetting shows up as a
+    // failure rather than an outage.
+    let cutoverCalls;
+    before(() => {
+      const config = store.config.load();
+      config.authEnabled = true;
+      config.basicAuthUser = 'admin';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(config);
+      cutoverCalls = [];
+      _setCutoverSpawner((opts) => { cutoverCalls.push(opts); return { ok: true, pid: 999, error: null }; });
+    });
+
+    it('starts the ingress cutover and reports the login as pending', async () => {
+      await request(server, 'PATCH', '/api/config', { setupComplete: false });
+      cutoverCalls.length = 0;
+
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projectsDir: projectsDir
+      });
+
+      assert.equal(status, 200);
+      assert.equal(cutoverCalls.length, 1, 'a provisionable machine must start the cutover');
+      assert.equal(cutoverCalls[0].target, 'caddy');
+      assert.equal(data.ingress.action, 'provision');
+      assert.equal(data.ingress.provisioning, true);
+      assert.equal(data.ingress.protection, 'pending');
+      assert.ok(data.ingress.url, 'the operator needs the address the gate will listen on');
+    });
+
+    it('suppresses the HTTPS restart while a cutover is running, so the two cannot race', async () => {
+      await request(server, 'PATCH', '/api/config', { setupComplete: false });
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projectsDir: projectsDir,
+        httpsEnabled: false,
+        httpsCertPath: null,
+        httpsKeyPath: null
+      });
+      assert.equal(status, 200);
+      assert.equal(data.ingress.provisioning, true);
+      assert.equal(data.restart, false, 'the cutover restarts the server as its own last step');
+      assert.equal(data.redirectUrl, null);
+    });
+
     it('should update config and set setupComplete', async () => {
       // Reset setupComplete to false first
       await request(server, 'PATCH', '/api/config', { setupComplete: false });

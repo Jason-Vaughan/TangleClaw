@@ -32,10 +32,11 @@ once governance moved plugin-side (#570).
 *Ask: map the exact coupling points.* Done below.
 
 **The decision therefore already exists — as behavior, and as one inline code comment.**
-`lib/engines.js:1139` reads "Defer to the Prawduct V2 Claude Code plugin when it governs this project
-(#330 hybrid)." That comment is currently the most authoritative written record of the position, and
-it is a parenthetical inside a function about writing engine config files. The rest lives in
-per-machine session memory, which does not survive a fresh clone and is not reviewable.
+`lib/engines.js` reads "Defer to the Prawduct V2 Claude Code plugin when it governs this project
+(#330 hybrid)" — grep the comment rather than a line number, which moves. That comment is currently
+the most authoritative written record of the position, and it is a parenthetical inside a function
+about writing engine config files. The rest lives in per-machine session memory, which does not
+survive a fresh clone and is not reviewable.
 
 That is the actual problem this ADR fixes. #330 was filed to preserve a rationale; closing it while
 the rationale exists only as a code aside and a memory file would throw away the one thing it was
@@ -126,10 +127,10 @@ position that was in fact built.
 is reviewable.
 
 **#368 must be decided against decision 6, not on its own merits.** #368 proposes that
-`createProject` (`lib/projects.js:446`, which writes engine config at 555 and syncs hooks at 563)
-also write the Prawduct activation reference for new Claude projects. Under decision 6 that is
-governance activation happening as a side effect of project creation, which is the seam #763 was
-closed on.
+`createProject` in `lib/projects.js` (which calls `engines.writeEngineConfig`, then
+`engines.syncEngineHooks`) also write the Prawduct activation reference for new Claude
+projects. Under decision 6 that is governance activation happening as a side effect of project
+creation, which is the seam #763 was closed on.
 
 The counter-argument is genuine and should be recorded: the machinery already exists
 (`engines.migrateToPlugin` writes exactly those keys), TangleClaw already writes them for itself, and

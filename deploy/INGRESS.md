@@ -45,6 +45,47 @@ The local site reuses your existing mkcert certificate, so local HTTPS is
 unchanged (same already-trusted CA). Set `publicDomain` in config to also emit an
 ACME (Let's Encrypt) site block for a real domain.
 
+## Why setup runs the cutover as a detached child (#710)
+
+The setup wizard provisions this ingress itself, and it does so by spawning
+`scripts/ingress-cutover.js` as a **detached** child rather than executing the plan
+in-process. That is not a style choice — it is the only shape that works, and the
+reasoning belongs here rather than in a build plan that gets deleted:
+
+`planCutover`'s launchctl sequence ends with `kickstart -k` on
+`com.tangleclaw.server`. The cutover **restarts TangleClaw**, which it must, so the
+server re-binds plain HTTP behind the new ingress. A request handler that ran the
+same plan would therefore kill itself partway through: no response to the browser,
+no health poll, and no way to report whether provisioning worked. The degraded
+fallback the whole feature depends on is unimplementable in that shape, because the
+process that must report the failure is the one that dies.
+
+Two consequences fall out of the same fact:
+
+- **The outcome must be persisted, not returned.** Hence `--result-file`: a JSON
+  outcome with a stable `code`, written by every exit *after the run begins* —
+  refusals included — so an absent file legibly means "died before finishing". The
+  server reads it back at `GET /api/setup/provision-status`.
+- **The child's stdout/stderr must go somewhere.** They are appended to
+  `~/.tangleclaw/logs/ingress-cutover.log`. Discarding them would throw away the
+  cutover's own "could not write result file" warning — the diagnostic that matters
+  precisely when the result channel is the thing that failed.
+
+Alternatives rejected, recorded so they are not re-proposed: executing the plan
+in-process minus the kickstart leaves the server bound wrong until some later
+restart and forks a security-critical executor into two implementations; deferring
+the cutover to the next boot means the wizard cannot report success at all.
+
+**The outcome is often unobservable from the page that started it**, and that is
+expected rather than a bug. The cutover does not move TangleClaw's listen port, but
+it does change the protocol and the interface (plain HTTP, loopback), so the
+wizard's origin survives only when it was already `http://localhost:<port>`. From a
+LAN or tailnet address, or over direct HTTPS, that origin closes at the restart and
+the new perimeter address is a different port — cross-origin, where a probe cannot
+read a status and probing a `basic_auth` URL pops the browser's own credential
+prompt. The wizard therefore ends on an explicit "cannot confirm" screen naming the
+login prompt as the check that settles it. Do not "fix" that by assuming success.
+
 ## Credential durability (#397, added after the 2026-07-03 lockout)
 
 The `basic_auth` credential is canonical in **config** (`basicAuthUser` +

@@ -26,9 +26,94 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-29: setup provisions a login by default — the step-list flip plus the cutover it enforces (#710, chunk 2 slice 2-iii-b)
+
+<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default -->
+
+**Why:** the wizard's admin-credential step was gated on `ingressMode === 'caddy'`, which no fresh
+install says, so a first run collected nothing and finished with no password in front of a dashboard
+that can launch shell sessions. The step now follows a server-side decision about what this machine
+can actually enforce, and setup configures the Caddy gate itself.
+
+**The three things that shaped the design, each found by reading a mechanism rather than by testing
+one.** The cutover's launchctl sequence ends by restarting the TangleClaw server, so it cannot run
+in a request handler that must survive to report the outcome — hence a detached child plus a
+result-file channel. The cutover changes the server's protocol and interface but not its port, so
+the wizard's own origin survives only on plain-HTTP loopback: for the remote operator this project
+actually has, the outcome is usually **unobservable**, which made "cannot confirm" a first-class
+terminal state instead of a timeout rounded to success. And network exposure had to be read from
+`bindPolicy.describeBindState` rather than assumed, because an install held wide in the legacy grace
+state would otherwise have been told "reachable from this machine only" — a false reassurance handed
+to precisely the operator who is ungated *and* reachable.
+
+**What the Critic changed.** Three blocking findings, and the two that were real defects rather than
+docs both came from the same root: state that existed but was not consulted. The wizard had no model
+of which screen owned its body, so a late probe could repaint a live "no login is in force" screen
+while the poll kept writing into it, and an index into a step list that shrinks at runtime could
+fall through a `default`-less switch and leave a stale Confirm screen that re-submitted into a
+refusal loop. Both are now structural: one `wizard.view` field, and a clamped index with a default
+branch. Beyond those: `decideProvisioning` was re-deriving the write decision from state names
+instead of consuming `safeToWrite` (a second copy of the project's one overwrite rule); the adopt
+path claimed an existing login was "kept" from a config predicate rather than from the adoption
+result, and would adopt a Caddyfile on a direct-mode install where nothing was serving it — a shape
+`--rollback` produces; `provision-status` promised it disclosed no paths while forwarding the child's
+raw error, which names absolute paths on two wizard-reachable codes; and `stdio: 'ignore'` threw away
+the child's diagnostics, so when the result channel itself failed there was no channel at all.
+
+**A defect my own new test caught, which the review had not.** Moving adoption behind the credential
+gates meant a caddy-mode install whose hand-maintained Caddyfile held the only login was refused with
+`ADMIN_REQUIRED` — the exact shape the adopt path exists to serve. Adoption now runs before the
+gates, where it is what supplies the credential.
+
+**Not verified in process, deliberately.** A real cutover rewrites launchd plists and restarts the
+live install, which on this machine is this clone. `spawnCutover` refuses a real spawn from a test
+process so a missed stub fails loudly rather than causing an outage, and the end-to-end proof is
+`deploy/VRF-auth-1-cutover.md` phase 7e on the clean-room image.
+
+**That proof has since been produced — 2026-07-30.** The VRF ran for the first time: 7b and 7d in
+habitat's `tc-cleanroom` Linux container, 7c/7e and Phase 8 on a purpose-built pristine macOS 26.3
+guest. All four #710 phases read `PASS`, so the chunk's real gate is met by measurement rather than
+by code review. 7e is the load-bearing one — the response arrived HTTP 200 in 1s (so the spawn
+followed the reply), the server PID changed 6053→6219, the outcome file was written by a child whose
+parent no longer existed, and the named address answered **401** with no credentials, **401** with
+wrong ones and **200** with the credential the wizard had just created. A fresh install ended up
+gated by default, which is the whole point of the chunk.
+
+**Running it found four defects that review had not.** The 7d fixture was unreachable as written
+(adoption runs before planning, so it re-adopted the credential the fixture had cleared); the
+README's first instruction fails on a clean Mac, where `/usr/bin/git` is a Command Line Tools stub
+(**#788**); a missing `mkcert` throws a stack trace instead of a tagged refusal (**#786**); and
+`--to direct` switched the ingress and *then* crashed, because `pollHealth` hardcoded `https.get`
+while the direct health URL is `http://` — the break-glass path out of a bad ingress state, exiting
+1 after succeeding, with no result file written (**#789**, fixed here and re-verified). CI had also
+never run this branch at all, which had accumulated **17 unseen failures**; the workflow now
+triggers on `v5-baseline` pushes, not only `main`.
+
+**What the last two Critic rounds changed.** The cumulative pass left three warnings, all now
+closed. The most instructive: the #789 regression tests never reached the line that carried the
+defect — they exercised `writeCutoverResult` and `pollHealth` directly, while the call site is a
+`finish(...)` closure inside `main()` that nothing importable can invoke, so reverting the fix left
+the whole file green. It is pinned by source assertion now, and the mutation was re-run alone to
+confirm exactly one test goes red. The original mutation check had been invalid: it changed the call
+site and the result-file key together and credited the wrong half. Green was twice not evidence in
+this chunk. Alongside that, `healthError` was missing from both result-file typedefs — and since
+`writeCutoverResult` names every key explicitly, that omission *is* the mechanism that produced the
+inversion, not cosmetic residue. The VRF matrix was also unscoreable (two spellings for one state,
+four blank rows, a criterion reading "every row green → PASSES"); it now defines four values scored
+from the execution records rather than inferred, and splits the criterion into the chunk 2 gate
+(met) and the whole-document gate (not met), which the single conflated criterion could not express.
+
+**Still owed, tracked not buried:** **#802** — 7e.1, the no-caddy honest-absence screen, never ran,
+and Phase 7e says that half "matters more than the success half". Its decision is unit-covered; the
+rendering is not. Same for 7e's browser-only assertions, which are marked NOT VERIFIED rather than
+claimed.
+
+**Classification:** feature
+**chunks:** 2
+
 ## 2026-07-29: Quote the prime hook so a spaced install path stops breaking Claude startup (#759)
 
-<!-- prawduct: type=fix | chunks=01 | scope=759-hook-path-quoting -->
+<!-- prawduct: type=fix | scope=759-hook-path-quoting | status=shipped -->
 
 **Why:** TangleClaw wrote the silent-prime `SessionStart` command into `.claude/settings.json`
 unquoted (`lib/engines.js`), and `_resolveHookPlaceholders` substitutes the install path by literal
@@ -2614,6 +2699,8 @@ listed above.
 **Classification:** build
 
 ## 2026-07-29: tmux targets match a session name exactly — no prefix fallback (#774, PR #775)
+
+<!-- prawduct: type=fix | chunks=5 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** tmux resolves a `-t <name>` target by exact name, then by unique **prefix**, then by
 fnmatch. From code that silently retargets another project's session: with no `TangleClaw` session

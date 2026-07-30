@@ -551,6 +551,45 @@ describe('caddy', () => {
     });
   });
 
+  describe('redactHashes', () => {
+    const HASH = '$2a$14$' + 'x'.repeat(53);
+
+    it('removes a hash embedded mid-string, which the anchored RE cannot match', () => {
+      // BCRYPT_HASH_RE is anchored, so it validates a whole string and never
+      // matches a substring — the reason a separate pattern exists. If redaction
+      // were built on it, every case below would pass through untouched.
+      assert.equal(caddy.BCRYPT_HASH_RE.test(`basic_auth ops ${HASH}`), false);
+      const out = caddy.redactHashes(`basic_auth ops ${HASH}`);
+      assert.doesNotMatch(out, /\$2[aby]\$/, 'no hash may survive');
+      assert.match(out, /ops/, 'the username stays — it is what makes the failure diagnosable');
+    });
+
+    it('scrubs a real `caddy validate` failure string, the way the hash actually reaches a log', () => {
+      // This is the validate-failed shape: caddy quotes the offending line of the
+      // file it was given, and that file is the one the cutover just generated
+      // with the credential in it. Nobody writes the hash to the log deliberately.
+      const stderr = [
+        'Error: adapting config using caddyfile: /Users/x/.tangleclaw/Caddyfile:12:',
+        `unrecognized directive: basic_autth @protected { ops ${HASH} }`
+      ].join(' ');
+      const out = caddy.redactHashes(stderr);
+      assert.ok(!out.includes(HASH), 'the hash must not survive into the log');
+      assert.match(out, /\[redacted-hash\]/);
+      assert.match(out, /unrecognized directive/, 'the diagnosis must survive');
+    });
+
+    it('scrubs every occurrence, not just the first', () => {
+      const two = `${HASH} and also ${'$2b$12$' + 'y'.repeat(53)}`;
+      assert.doesNotMatch(caddy.redactHashes(two), /\$2[aby]\$/);
+    });
+
+    it('passes through text with no hash, and non-strings, unchanged', () => {
+      assert.equal(caddy.redactHashes('caddy not found on PATH'), 'caddy not found on PATH');
+      assert.equal(caddy.redactHashes(null), null);
+      assert.equal(caddy.redactHashes(undefined), undefined);
+    });
+  });
+
   describe('listBasicAuthUsers / replaceBasicAuthCredential (break-glass)', () => {
     const OLD = '$2a$14$' + 'o'.repeat(53);
     const NEW = '$2b$12$' + 'n'.repeat(53);

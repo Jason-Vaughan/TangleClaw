@@ -4,36 +4,196 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-### Internal
-- **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
-  decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
-  a Claude Code plugin — and the decision had since been made by what got built rather than by
-  anything written. Its most authoritative record was a parenthetical comment at
-  `lib/engines.js:1139`; the rest lived in per-machine session memory, which does not survive a fresh
-  clone and cannot be reviewed. Closing #330 in that state would have discarded the one thing it
-  existed for.
+### Changed
+- **BREAKING: setup puts a login in front of TangleClaw by default, and says plainly when it cannot
+  (#710, v5 chunk 2).** The admin-credential step used to appear only when config already said
+  `ingressMode: 'caddy'` — which no fresh install says — so a first run collected no credential and
+  finished with nothing asking for a password. The step now appears whenever the machine can
+  actually run a gate, and finishing setup without one is refused server-side. There is still no
+  default credential and TangleClaw never invents one; the operator sets it, or setup does not
+  complete.
 
-  `docs/adr/0011-prawduct-boundary.md` ratifies option 3 of the issue — the plugin is another engine
-  capability — and maps the seam to exactly three items: the `prawduct@*` key in a project's
-  `.claude/settings.json`, `CLAUDE.md` as a plugin-owned anchor TangleClaw must not regenerate, and
-  `.prawduct/` as plugin-owned state TangleClaw reads at agreed paths and never authors. It records
-  the standing constraints that follow (a fourth seam item needs an amendment; no TangleClaw code
-  writes inside `.prawduct/`; no lifecycle operation enables governance without an explicit operator
-  action) and accepts, in the open, that agent invocation is Claude-only because the capability being
-  invoked is a Claude Code skill — a portable Critic would mean owning the methodology layer #538 and
-  #570 deliberately removed.
+  Whether the step appears is one decision, made server-side
+  (`ingressProvision.decideProvisioning`) and returned to the wizard as `plan.action` on
+  `GET /api/setup/ingress-state`. The browser does not re-derive it: a second copy of a security
+  decision in front-end code could drift from the server's and start collecting a credential
+  nothing will enforce. Three actions over the six Caddyfile states, no default fall-through —
+  **provision** (`absent`/`generated`), **adopt** an existing single-credential config, **refuse**
+  anything ambiguous, ungated-but-hand-written, or unreadable. Caddy-not-installed is tested first
+  and beats every content state, including `adoptable`: a hand-written config on a machine with no
+  Caddy binary is a config nothing is running, and adopting its credential would mark the install
+  protected while nothing enforced the gate.
 
-  It also supplies the criterion that decides **#368**, which proposes writing the Prawduct activation
-  reference during `createProject`: that is governance activation as a side effect of an ordinary
-  lifecycle operation, which the boundary rules against. The counter-argument is recorded rather than
-  omitted, since #368 is narrower than the #763 case it resembles.
+  **The cutover runs as a detached child, because it restarts this server.** Its launchctl sequence
+  ends with `kickstart -k` on TangleClaw, so a request handler executing the plan in-process would
+  die partway and never learn the outcome. `lib/ingress-provision.js` spawns
+  `scripts/ingress-cutover.js` detached, with stdio ignored and unref'd, after clearing any previous
+  outcome so a stale `ok` cannot be read as this run's; the child reports through `--result-file` and
+  the wizard polls `GET /api/setup/provision-status`. Ordering is deliberate: credential persisted,
+  projects attached, then the spawn as the very last act before the response, so nothing is still in
+  flight when the restart lands. The HTTPS restart is suppressed while a cutover is running — two
+  restarts would race, and in caddy mode Caddy terminates TLS anyway, so the cert the wizard
+  generated is used by Caddy rather than by the listener.
 
-  Authored by the roadmap-review session, which could not commit here; every line citation was
-  re-verified against `main` before landing (the four `lib/engines.js` function positions, the #330
-  comment, `invoke-critic`'s engine refusal, and `createProject`), and the "19 files" count now names
-  the scope that reproduces it.
+  **"Cannot confirm" is a real outcome, not a timeout rounded to success.** The cutover re-binds the
+  server to plain HTTP on loopback, so the wizard's own origin survives only when it was already
+  `http://localhost:<port>`. An operator who reached setup over direct HTTPS or a LAN/tailnet
+  address loses that origin at the restart, and the new perimeter address is a different port —
+  cross-origin, where a probe cannot read a status and probing a `basic_auth` URL pops the browser's
+  own credential prompt. So the poll treats an unreachable origin as "still restarting", and at its
+  deadline says exactly that: the cutover was started, this page cannot see the result, here is the
+  address to open, and a login prompt is the check that settles it. Reporting a password as set
+  while nothing enforces it is the one outcome worse than today's honest absence, so no path claims
+  protection it did not observe. Failure lands in the loopback-only state and says so; nothing
+  resolves on a timer (#98/#268) — every end state waits for a click.
+
+  Network exposure in that copy is read from `bindPolicy.describeBindState`, not assumed. An install
+  whose config predates the loopback default is deliberately held on a wide binding until its
+  operator chooses, so "reachable from this machine only" would have been a false reassurance handed
+  to precisely the operator who is ungated *and* reachable.
+
+  **Both** routes that can finish setup answer to the rule, not just one. The wizard's Skip closes
+  setup via `PATCH /api/config { setupComplete: true }`, and that path was still gated on
+  `ingressMode === 'caddy'` — so on the default fresh install (direct mode, Caddy present) Skip
+  finished setup with no login at all, which is the whole defect the other route was changed to
+  close. It now consults the same derivation. Skip is also hidden while the plan is *unknown* rather
+  than only when it says a credential is required: the probe is unawaited, so there was a window at
+  startup — and, on a failed probe, forever — where the button offered a way past the gate on exactly
+  the machines whose answer had not arrived. And `wizardSkip` no longer reports a success the server
+  refused: `apiMutate` returns null on a non-2xx rather than throwing, so ignoring it set
+  `setupComplete` in local state and dismissed — landing the operator on a dashboard as though setup
+  had finished while the server still said it had not.
+
+  **One more honest state, because the credential and the gate can disagree.** If the operator supplies
+  a credential on a machine whose plan was to *adopt* one — reachable, since the Skip route refuses in
+  caddy mode without a configured credential and the wizard then forces the admin step — the typed
+  credential lands in config while the hand-maintained Caddyfile goes on enforcing the adopted one.
+  Their new password does not work and their old one does. Setup now reports that **mismatch** rather
+  than "existing login kept", names the account they actually set rather than the adopted one, and
+  routes them to `scripts/reset-admin.js`, which rewrites the live Caddy config too.
+
+  Provisioning is gated to a **first run**. `/api/setup/complete` has never required setup to be
+  unfinished, and it can now rewrite launchd plists and restart the server — so on an install that is
+  ungated *and* network-reachable (the legacy grace state) a re-POST would have handed an
+  unauthenticated caller a service restart. A completed install reports the ingress state and acts on
+  nothing; changing a credential later is a settings action with its own surface.
+
+  Descoped explicitly: the wizard does not **install** Caddy. Running a package manager from an HTTP
+  handler is its own capability, and the honest degraded path was already required for provisioning
+  failure — caddy-missing reaches the same end state for a different reason, told plainly with the
+  two commands that fix it. No issue filed for it yet; the reasoning is in the build plan and in
+  `deploy/INGRESS.md`, which also records why the cutover must run as a detached child and why its
+  outcome is often unobservable from the page that started it — both facts a future reader would
+  otherwise have to rediscover from a deleted plan.
+
+  **Tests:** 5259 passing under the project's suite command (`node --test 'test/*.test.js'`). The
+  recorded evidence file reports 2797 for the same run. The two disagree because the ingest counts
+  differently from the runner; the cause is the undercount filed upstream as
+  brookstalley/prawduct#128, which is that issue's diagnosis rather than something re-verified here.
+  The per-file counts below are the runner's. `test/ingress-provision.test.js` (34) — every
+  Caddyfile state mapped to exactly one action, an unrecognized state failing closed, `provision`
+  pinned to `safeToWrite` rather than to a state name, caddy-missing and not-the-active-ingress
+  each beating `adoptable`, absent vs malformed vs readable outcome files kept distinct, the
+  spawn's argv, detach/unref, log-file stdio and self-clearing, and an interlock that refuses a
+  REAL cutover from a test process (a run rewrites launchd plists and restarts the machine's live
+  server, so a missed stub must fail rather than cause an outage).
+  `test/setup-provisioning.test.js` (33) — the completion matrix at the HTTP boundary, including
+  refusal-with-no-credential-demanded, provisioning gated to a first run, a caller-supplied `Host`
+  discarded rather than echoed into the URL the wizard renders, the operator's Caddyfile unchanged
+  byte-for-byte on adopt, adoption that no-opped not reported as "kept", and `provision-status`
+  withholding a path planted in `error` — the field that can actually leak, which the first version
+  of that test skipped. `test/setup-wizard-login-gate.test.js` (55) — the step list against each
+  plan (including the direct-mode flip), the payload sent under the same predicate that collected
+  it, the deadline distinguishing "cannot see it" from "it has not answered", a
+  stored-but-unconfirmed login getting its own screen, recovery keyed on the error code, and no
+  navigation without a click. Four properties are asserted across **every** terminal screen rather
+  than one — that each claims the view so an async re-render cannot repaint it, announces itself
+  since none is reached by an operator action, carries the server's warnings instead of closing the
+  overlay holding them, and clears the overlay error banner so a fixed problem stops being
+  reported. Each had been fixed on one screen and missed on its siblings, and the fixture table now
+  pins which screen every row actually lands on: two earlier versions of it did not reach the
+  screens they named, so two mutations survived a suite that claimed to cover them.
+  `test/auth2-setup-admin.test.js` (11) — the Skip route's refusal, against a stub that answers
+  `caddy version` rather than a real binary found on PATH, because CI has no Caddy and the guard
+  for the most important fix in this chunk was skipping exactly where it needed to run.
+  `test/setup-ingress-state-endpoint.test.js` (16) — the probe's six states plus the plan it now
+  returns, and that no hash crosses the boundary in either ingress mode.
+
+- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
+  The install instructions were a bare `git clone` of the default branch, so a new install took
+  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
+  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
+  network binding are configured — a half-finished version of that is exactly the thing not to hand
+  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
+  moves to `v5.0.0` when it ships, and the accompanying note is removed.
+  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
+  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **The cutover log is named on every screen that cannot confirm the outcome, including the one
+  that can see least (#710).** `logLocation` was assigned only inside branches that return, so the
+  crash path — a child dying between the plist writes and `finish()`, which writes no result file
+  at all — always had `null`, and the line naming the log was dead in exactly the case where the
+  log is the only durable evidence. The server now sends it with the **completion**, not only from
+  the poll: the cutover closes the address the wizard was served from, which for a remote operator
+  is the usual outcome, so the completion is the last message guaranteed to arrive. Both
+  unconfirmed branches name it now.
+
+- **Setup can no longer overwrite the admin credential on an install that is already finished
+  (#710).** `POST /api/setup/complete` authenticates nobody. The first-run guard added with the
+  provisioning work scoped the detached cutover spawn but not the credential write, so the
+  credential branch still ran unconditionally — an unauthenticated caller could set an admin
+  credential of their choosing on a completed install, reachable from off-box on the ungated,
+  network-reachable legacy grace state. The handler's own comment already said this was a settings
+  action rather than a setup one; now the code enforces it, with `409 SETUP_ALREADY_COMPLETE`. It
+  refuses rather than ignoring the field on purpose: answering `200` while silently dropping a
+  credential tells the caller a login is in force when none is.
+
+- **The wizard no longer reports a login as in force when it never saw the gate answer (#710).**
+  The cutover records `ok` (the plan was applied) and `healthOk` (the gated address answered) as
+  separate facts, and forwards both — but `_pollProvisionOutcome` branched on `ok` alone, so a
+  cutover whose health probe never came back green rendered "Your login is in force. Every page
+  will ask for it." That is the one claim this chunk exists to make only when observed. It now
+  lands on its own screen — **"Applied — but the login could not be confirmed"** — which names
+  which half is unverified and tells the operator how to settle it themselves. Its own, rather
+  than the neighbouring "hasn't reported back": the cutover *did* report back here, and said the
+  plan was applied.
+
+- **The restart screen no longer navigates on a timer (#710, #98, #268).** `_showRestartOverlay`
+  redirected as soon as a `no-cors` probe succeeded and then, at a 20-second deadline, redirected
+  **anyway** — asserting a working server it had just spent 20 seconds failing to reach. No
+  timer-driven UI lifecycle is a standing project rule, and the same file already honors it on the
+  provisioning path. The probe stays, because knowing the server is back is genuinely useful; it
+  now only changes the words on screen. Leaving is the button, in all three states.
+- **The ingress rollback no longer crashes after succeeding (#789).**
+  `node scripts/ingress-cutover.js --to direct` switched the ingress correctly and then threw
+  `ERR_INVALID_PROTOCOL`, exiting 1 and writing no result file. `pollHealth` called `https.get`
+  unconditionally, which is right for `--to caddy` (health URL `https://localhost:8443`) and wrong for
+  `--to direct` (`http://localhost:3102`). The client is now chosen from the URL's scheme.
+
+  This matters more than a stray traceback. The rollback is the break-glass path out of a bad ingress
+  state — the tool prints it as the recovery hint two lines above where it crashed — and a caller
+  reading the exit code saw a successful rollback as a failure. With `--result-file`, the #710 outcome
+  channel got nothing at all, because the throw was uncaught.
+
+  The request construction also moved inside a `try`: `get()` rejects a bad scheme **synchronously**
+  rather than emitting `'error'`, so the throw escaped the promise's handlers entirely. A health poll
+  that cannot even build a request now reports "not healthy" and lets the caller decide, instead of
+  taking down a run whose actual work already finished.
+
+  The result file gains a **`healthError`** key, distinct from `error` on purpose. `finish` derives
+  both `ok` and the process exit code from `error`, so reporting a health-probe reason through it
+  would make a fully-applied cutover write `{"ok": false, "code": "ok"}` and exit 1 — which the wizard
+  maps to a failure screen reading "No login is in force" on an install that *is* gated. That is the
+  exact false negative this release exists to prevent, reachable through the fix for it. Whether the
+  cutover applied and whether the service answered are two facts, and they now have two fields.
+
+  Found by VRF Phase 8 on the macOS clean-room guest, immediately after Phase 7c passed against the
+  HTTPS path — which is exactly why the asymmetry survived: the only direction anyone exercises
+  regularly is the one that worked. `pollHealth` is now exported so it can be tested, and both halves
+  of the fix are pinned separately: reverting to `https.get` fails one assertion, removing the
+  `try` fails a different one.
 - **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
   `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
   entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
@@ -66,7 +226,6 @@ All notable changes to TangleClaw are documented in this file.
   writes, no duplication across five repeated syncs, unmodelled shapes passed through, and the
   non-claude branch not rewriting a file when it has nothing of its own to clear. Verified by reverting
   each of the three changes and confirming the suite goes red.
-
 - **A session launch could kill, or type into, a different project's live session (#774).** tmux
   resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
   then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
@@ -88,29 +247,297 @@ All notable changes to TangleClaw are documented in this file.
   Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
-  Tests: `test/tmux.test.js` gains a live-neighbour suite (a `X-neighbour` session with no `X`
-  present, asserting `hasSession`, `killSession`, `sendKeys`, `capturePane`, `getMouseState`,
-  `setMouse`, `unsetMouse` and `isAlternateScreen` all refuse it, the neighbour survives, and the
-  exact name still resolves when both exist), a mouse/hook round-trip that reads hooks back with
-  `show-hooks` because `setMouse` only `log.warn`s when `set-hook` fails, and a **source-level
-  structural pin** asserting all 20 `-t` sites are built by `_target()` while `new-session -s` stays
-  bare. The structural pin exists because every behavioural test enters through `hasSession`, so a
-  lost `=` on any other verb would otherwise stay green — reverting one `set-option` target trips
-  only that test. `test/ttyd-attach.test.js` pins the target *shape* per verb class, since the
-  script's `capture-pane` line ends in `2>/dev/null || true` and would have skipped the #322
-  scrollback replay silently. `.prawduct/artifacts/boundary-patterns.md` records the invariant, which
-  had been documenting the old bare-name wire form.
+### Security
+- **A credential hash can no longer reach the application log through a cutover failure (#710).**
+  `observability-strategy.md` forbids passwords plaintext or hashed at any level. On the
+  `validate-failed` path the cutover's error text is `caddy validate` stderr, which quotes the
+  offending Caddyfile line — and the file it had just generated carries
+  `basic_auth <user> <bcrypt-hash>`. `GET /api/setup/provision-status` correctly withheld that
+  string from its response and then logged it verbatim: filtered at one boundary, unfiltered at the
+  other. New `caddy.redactHashes` scrubs it. This needed a second, unanchored pattern —
+  `BCRYPT_HASH_RE` is anchored and cannot match a substring, so redaction built on it would have
+  been a silent no-op, which a test now pins directly. The username is deliberately not redacted:
+  it is already at the HTTP boundary and is what makes the failure diagnosable. The cutover log is
+  also opened `0600` to match the result file it sits beside, since the child's stderr copy of the
+  same text lands there.
 
-### Changed
-- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
-  The install instructions were a bare `git clone` of the default branch, so a new install took
-  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
-  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
-  network binding are configured — a half-finished version of that is exactly the thing not to hand
-  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
-  moves to `v5.0.0` when it ships, and the accompanying note is removed.
-  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
-  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
+### Internal
+- **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
+  exercised `writeCutoverResult` and `pollHealth` directly — everything except the call site itself,
+  `finish(...)` inside `main()`, a closure nothing importable can invoke. Reverting that line to
+  `finish(CUTOVER_CODES.OK, healthError, …)` restored the inversion verbatim and left the whole file
+  green; the mutation now fails exactly one test, and only the new one. Pinned by source assertion,
+  the same way the ttyd bind pair and the Caddyfile-adoption delegation already are. The earlier
+  mutation check was invalid — it changed the call site and the result-file key together, saw red,
+  and credited the wrong half.
+
+- **`healthError` is in the cutover result-file contract, not just in the code that writes it
+  (#710, #789).** `writeCutoverResult` names every key explicitly, so a field absent from its
+  typedef is a field that gets dropped — which made the typedef read as *"`healthError` is not
+  honored"* to anyone consulting it, and that reading is the mechanism that produced the inversion.
+  Both typedefs now carry it, and `finish`'s `error` parameter says outright that `ok` and the exit
+  code are derived from it, so a reason that is not the cutover failing belongs in `extra`.
+
+- **The VRF result matrix is scoreable (#710).** Three rows read `PARTIAL`, `PARTIAL` and
+  `PASS (partial)` — two spellings for one state — while the criterion below still said "every row
+  green → PASSES", and four rows were blank, which reads as either not-run or not-yet-filled. The
+  matrix now has a legend defining exactly four values, scored from the execution records rather
+  than inferred, so walking a phase without recording an observation scores `NOT RUN` and the
+  document can only understate what was verified. The criterion splits into the #710 chunk 2 gate
+  (7b/7c/7d/7e, all `PASS` — **met**) and the whole-document gate (**not met**), which is what the
+  single conflated criterion could not express: the chunk is verified while the document is not a
+  clean bill of health. Filling the blanks surfaced **#802** — 7e.1, the no-caddy honest-absence
+  screen, never ran, and Phase 7e says that half "matters more than the success half".
+
+- **The #710 clean-room verification actually ran, and the gate is now 4 of 4 plus a verified
+  rollback (#710).** Chunk 2's real gate was always the VRF, not the code review — the document says
+  so at the top — and it had never been executed. Phases 7b and 7d ran in the `tc-cleanroom` Linux
+  container; 7c, 7e and Phase 8 ran on a pristine macOS 26.3 guest. 7e is the only proof that the
+  detached child outlives the server it restarts, since every unit test necessarily stubs the spawn:
+  the response arrived in 1s with HTTP 200 (so the spawn followed the reply), the server PID changed,
+  the outcome file was written by a child whose parent no longer existed, and the named address
+  answered **401** with no credentials, **401** with wrong ones and **200** with the credential the
+  wizard created. A fresh install ended up gated by default, which is the point of the chunk.
+
+  **Running it found a defect in the phase itself.** 7d's fixture cleared config's credential and
+  left the Caddyfile gated — but in `scripts/ingress-cutover.js` the `adoptCredentialIntoConfig`
+  call precedes the `planCutover` call, so adoption re-adopted the credential immediately and
+  `ungate-refused` was unreachable. Platform-independent: it would have failed identically on
+  macOS, after consuming a scheduled egress window. The fixture now makes the live gate ambiguous
+  first, so adoption cannot adopt.
+
+  The report-back matrix records every deviation rather than a bare tick, because the deviations
+  change what the results mean: the container runs as **root**, where a `chmod 000` file stays
+  readable, so 7b would have passed **vacuously** without a non-root user standing in for the macOS
+  operator; and 7e was driven through `POST /api/setup/complete` rather than a browser, so its
+  Admin-Login-renders, Skip-absent and resolves-without-reload assertions are marked NOT VERIFIED
+  rather than claimed. Three rows read PARTIAL for the same reason.
+
+  `deploy/VRF-auth-1-cutover.md` is also retargeted from elkaholic to a Tart macOS guest on habitat,
+  per an operator directive that everything runs there. It named elkaholic in eight places starting
+  with its title, and two mentions are kept deliberately so the retirement is legible rather than
+  silent.
+
+- **CI now runs on pushes to `v5-baseline`, not only `main` (#710).** Chunk PRs target the v5
+  integration branch, and nothing validated it — so work merged there stayed unrun until it reached
+  `main`. That is not hypothetical: `feat/710-chunk2` accumulated **17 CI failures nobody had seen**,
+  because CI had never been triggered on the branch at all; opening the PR produced its first run,
+  after six Critic passes and a green local suite. The branch list stays pinned by name in
+  `test/ci-workflow.test.js` rather than loosened to "any list", so adding a branch remains a
+  deliberate act — verified by mutation: removing `v5-baseline` turns that assertion red.
+
+- **Three setup suites no longer depend on the host having Caddy installed (#710).** CI failed 17
+  assertions on this branch while the same suites passed on every developer machine.
+  `caddy.detectCaddy()` shells out to `caddy version`, so `test/setup-provisioning.test.js`,
+  `test/setup-ingress-state-endpoint.test.js` and `test/setup-wizard.test.js` were inheriting the
+  host's answer rather than stating it — and every machine here has Caddy, because the live install
+  uses it. The tests were asserting ingress decisions against an input they did not set.
+
+  Reproduced before being fixed, by running them with `caddy` hidden from `PATH`: exactly the 17 CI
+  failures, locally. The fix installs a stub `caddy` for the duration of each suite, which is the
+  pattern `test/auth2-setup-admin.test.js` already used for exactly this reason — it had learned the
+  lesson and three siblings had not, which is the same one-member-of-the-family shape this chunk hit
+  repeatedly. So the stub now lives once in `test/_caddy-stub.js` (`installCaddyStub`,
+  `withoutCaddy`) rather than being copied a fourth time, and the deliberately-absent cases stay
+  reachable through the shared helper. The filename is underscore-prefixed so the suite command's
+  `test/*.test.js` glob does not collect it as an empty test file.
+
+  Worth recording why it went unseen: CI had **never run on this branch**. The PR that opened it
+  triggered the first run, so six Critic passes and a green local suite had all been measuring a
+  machine that happened to satisfy an unstated precondition.
+- **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
+  decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
+  a Claude Code plugin — and the decision had since been made by what got built rather than by
+  anything written. Its most authoritative record was a parenthetical comment in `lib/engines.js`
+  (grep "Defer to the Prawduct"); the rest lived in per-machine session memory, which does not
+  survive a fresh clone and cannot be reviewed. Closing #330 in that state would have discarded
+  the one thing it existed for.
+
+  `docs/adr/0011-prawduct-boundary.md` ratifies option 3 of the issue — the plugin is another engine
+  capability — and maps the seam to exactly three items: the `prawduct@*` key in a project's
+  `.claude/settings.json`, `CLAUDE.md` as a plugin-owned anchor TangleClaw must not regenerate, and
+  `.prawduct/` as plugin-owned state TangleClaw reads at agreed paths and never authors. It records
+  the standing constraints that follow (a fourth seam item needs an amendment; no TangleClaw code
+  writes inside `.prawduct/`; no lifecycle operation enables governance without an explicit operator
+  action) and accepts, in the open, that agent invocation is Claude-only because the capability being
+  invoked is a Claude Code skill — a portable Critic would mean owning the methodology layer #538 and
+  #570 deliberately removed.
+
+  It also supplies the criterion that decides **#368**, which proposes writing the Prawduct activation
+  reference during `createProject`: that is governance activation as a side effect of an ordinary
+  lifecycle operation, which the boundary rules against. The counter-argument is recorded rather than
+  omitted, since #368 is narrower than the #763 case it resembles.
+
+  Authored by the roadmap-review session, which could not commit here; every line citation was
+  re-verified against `main` before landing (the four `lib/engines.js` function positions, the #330
+  comment, `invoke-critic`'s engine refusal, and `createProject`), and the "19 files" count now names
+  the scope that reproduces it.
+- **A setup outcome that explains why no login is in force is now printed once, without narrowing
+  what the API reports (#710).** Any outcome that ends ungated puts that sentence in both
+  `ingress.reason` and `warnings`, because a client reading only `warnings` must still learn the
+  install is ungated — but the terminal-screen states render `reason` themselves on the same screen
+  as the warnings block, so the operator read the identical sentence twice.
+
+  The first attempt suppressed the push on one arm. That fixed the screen at the cost of the field,
+  and it fixed only the arm the finding named while three siblings kept duplicating — the failure
+  mode this chunk has now hit repeatedly. The duplication is a rendering concern, so it is handled
+  where the rendering happens: `_warningsBlock` in `public/setup.js` takes the prose its caller has
+  already printed and drops a warning matching it, and the payload stays complete for every
+  non-wizard consumer. The de-duplication is keyed on what the caller actually rendered rather than on
+  `reason` being set, because a screen that never printed the reason would otherwise delete the
+  operator's only copy — pinned by a test that asserts the warning survives there.
+
+  The second attempt then pushed from all four arms, which was still wrong in the other direction:
+  the plainest ungated install of all — no Caddy installed, so no credential anywhere — reaches **no
+  arm**, taking its `reason` from the plan. A warnings-only client learned nothing in exactly the case
+  that matters most. The push now happens once after the whole chain, scoped to the protection states
+  that mean no login is in force. `existing` is excluded because its `reason` describes a gate that
+  IS in force, and restating that as a warning invents a problem; `pending` is excluded too, but
+  harmlessly — the provision plan carries an empty reason, so there is nothing to push there. Both
+  edges are mutation-verified: removing the push and widening it to `existing` each turn a test
+  red, the second of which was green against the entire suite until this commit added the pin.
+
+  Making that push unconditional then exposed an older contradiction it had been hiding. The
+  credential-saved warning ended "Run `node scripts/ingress-cutover.js --to caddy` to activate the
+  login gate" — but every path to that state is a refusal with a credential already configured, and in
+  almost all of them the live Caddyfile is hand-edited, which the cutover's own guard refuses without
+  `--force` (and for an unreadable file, `--force` is not honored at all). The plan's `remedy`, which
+  renders on the same screen, carries the correct `--force` form. So the screen offered one command in
+  two forms and put the failing one under "Also worth knowing". The warning now states the situation
+  and names no command, leaving the state-specific answer to `remedy` — pinned in both files that had
+  asserted the command's presence.
+
+  Removing that command then exposed two more problems, both of which the removal caused. Dropping it
+  left an **eighth** path with nothing actionable at all: when setup is already complete the plan is
+  built without `decideProvisioning`, so its `remedy` is null, and a re-POST rendered the situation
+  with no way to act on it — strictly worse than the wrong command. That path now falls back to the
+  cutover's `--dry-run`, the one instruction that writes nothing and reports honestly in every state.
+  And the replacement wording said the login was "only as active as that file already makes it",
+  naming the Caddyfile as what governs protection — false in the two states where nothing is serving
+  it at all (no Caddy binary; an adoptable config while the install runs in direct mode). It now
+  claims only what holds everywhere: the live ingress was not changed, so nothing here can confirm the
+  login is enforced. Both are mutation-verified, and the second was being asserted by a suite whose
+  own Caddy stub fails `version` — i.e. on a machine with no Caddy.
+
+  Also recorded while covering the family: the adopt block's "could not be adopted" arm is
+  unreachable by construction. An `adopt` plan exists only in caddy mode, and the caddy-mode
+  credential gate refuses the request before the ingress answer is composed, which is exactly that
+  arm's condition — so setup is refused rather than finishing ungated. The branch is kept as an
+  honest fallback and the refusal is now pinned, so reordering the gate turns it back into live code
+  visibly rather than silently.
+
+- **The ingress cutover can now report how it ended to something that isn't a terminal
+  (#710, v5 chunk 2 groundwork).** `scripts/ingress-cutover.js` takes `--result-file <path>` and
+  writes a JSON outcome there: `ok`, a stable `code`, the `target`, an `error` string, the health URL
+  and whether the health check passed, plus `finishedAt`.
+
+  This exists because of a constraint discovered while building the slice: the cutover's launchctl
+  sequence ends by restarting the TangleClaw server, so the server cannot run it in-process — it
+  would kill itself partway and never learn the result. Provisioning from the setup wizard therefore
+  has to happen in a detached child, and a detached child has no stdout anyone is reading. The codes
+  are the contract (`ok`, `caddy-missing`, `unreadable`, `hand-edited`, `ungate-refused`,
+  `validate-failed`, `failed`) — deliberately distinguishing "config has no credential to emit" from
+  "an existing file must not be touched", because a caller has to respond differently to each.
+
+  `writeCutoverResult` never throws. A status file that cannot be written is a reporting failure, and
+  a cutover that has already reloaded launchd must not abort over one; the failure goes to stderr and
+  the absent file is itself legible to the reader as "the run died before finishing". That reading
+  only holds because every exit *after the run begins* writes one — the refusals included — so a
+  caller can distinguish "refused, and here is why" from "died partway". Two exits deliberately write
+  nothing: a usage error (the arguments were never valid, so there is no run to report on) and
+  `--dry-run` (a preview changes nothing, and a caller polling a result file must never read a
+  rehearsal as a completed cutover). No behavior changes without the flag.
+
+  Two defects found by review in the preceding commits of this branch, fixed here rather than
+  shipped: the flag parsed but was never read, so the script's documented outcome file was never
+  written; and the present-but-unreadable Caddyfile refusal was **unreachable**, because building the
+  cutover context read that same file ~100 lines earlier and died on EACCES first. The classification
+  now happens once, before anything reads the file, and every later decision derives from it — which
+  also stops the CLI and the wizard from reaching different conclusions about one file. The dry-run
+  preview no longer offers `--force` for the unreadable case, which the executor refuses to honor.
+
+  **How this is verified, and where it cannot be.** The refusal's *tag* is unit-tested — the
+  `ungate-refused` marker must stay distinguishable from the five unrelated validation errors
+  `buildCaddyfileContent` raises, or a caller answers a missing-certificate fault by telling the
+  operator to reset their password. Everything else here is a property of the **order** the executor
+  does things in, which no unit test can observe: the executor rewrites launchd plists and restarts
+  the server, and on the developer's machine that is also the live install. So the coverage lives in
+  `deploy/VRF-auth-1-cutover.md` as three new clean-room phases, each naming the mutation it catches
+  — **7b** a chmod-000 Caddyfile must refuse with `unreadable` rather than an EACCES stack trace
+  (and `--force` must not rescue it, since a file that cannot be read cannot be backed up), **7c** a
+  successful run must leave a result file at all, **7d** an ungate refusal must report
+  `ungate-refused` rather than `failed`. The report-back matrix now gates on all of them; they are
+  not optional, because they are the whole substitute for coverage the executor cannot get in
+  process. Making that class unit-testable — by extracting the decisions from the effects — is
+  tracked as **#772**.
+
+- **One derivation of "may this Caddyfile be overwritten", and a probe the wizard can ask
+  (#710, v5 chunk 2 groundwork).** Chunk 2 makes the setup wizard put a login in front of TangleClaw
+  by default, so it will meet machines that already have a Caddy config. A terminal tool can afford
+  to ask "overwrite it?" because the answer arrives with a timestamped backup, a `--force` and a
+  `--rollback`. A browser has none of those, so the cases are separated before anything is offered.
+
+  `caddy.classifyCaddyfileContent()` (pure) and `caddy.classifyIngressState()` (its path-reading
+  wrapper) report `generated` — sha256-verified as ours, so regenerating reproduces it — `adoptable`
+  (a human maintains it, exactly one credential), `ambiguous` (several distinct users), `ungated` (no
+  credential), plus the two states that belong to the filesystem rather than any content: `absent`
+  and `unreadable`. One `safeToWrite` boolean carries the write decision, true only for `absent` and
+  `generated`.
+
+  Three distinctions are the point. **`ambiguous` is not `ungated`:** `extractBasicAuthCredential`
+  returns null for both, so a caller built on it would tell an operator who has two logins that they
+  have none, then offer to replace the file currently holding the door shut. **`unreadable` is not
+  `absent`:** not knowing what is in a file is not the same as knowing there is nothing in it, so a
+  present-but-unopenable config fails closed and logs the path, while a genuine ENOENT stays the
+  quiet first-run path. **A `generated` file still reports its credential** — it is usually gated, and
+  that is the one state where a caller is simultaneously told the file may be replaced.
+
+  `scripts/ingress-cutover.js` no longer carries its own `caddyfileIsHandEdited` predicate: the
+  executor branches on the classifier's `safeToWrite` directly, so the CLI and the wizard cannot
+  reach opposite conclusions about one file.
+  Behaviour is unchanged for every case it already handled. One case it did not handle is now
+  explicit: **the executor refuses an existing-but-unreadable Caddyfile outright, before attempting a
+  backup, and `--force` does not override it.** Forcing is survivable only because of the timestamped
+  backup, and a file that cannot be read cannot be copied — so forcing past it would replace a config
+  with no recovery.
+
+  Correcting this entry's original account of the prior behaviour: the run did **not** get as far as
+  `fs.copyFileSync`. It died earlier still, on the unguarded read that builds the cutover context, and
+  the refusal described above was itself unreachable until the ordering was fixed later on this
+  branch. Both the original claim and the guard were wrong in the same direction — describing a
+  protection that the control flow never reached.
+
+  Two derivations remain outside that single classification and are named rather than glossed:
+  `planCutover` still re-derives gated-vs-ungated from the raw text via `listBasicAuthUsers`, and
+  building the context re-opens the file once more. Both are narrowed, neither is eliminated;
+  collapsing them belongs with the decision-extraction refactor in #772.
+
+  **`GET /api/setup/ingress-state`** exposes the verdict to the wizard along with whether `caddy` is
+  installed at all. Detection only — it never writes the Caddyfile, never reloads, never provisions —
+  the sibling of `/api/setup/https-check`. It is deliberately narrower than the classifier: the
+  credential hash never crosses the boundary and the raw username list is reduced to a count. The one
+  username it can disclose is released **only while `setupComplete` is `false`**, because in direct
+  mode this route answers with no gate in front of it and an installed TangleClaw should not hand out
+  an account name for the asking; state and count stay honest either way.
+
+  Verified against the live hand-edited Caddyfile on the developer's own machine: classifies
+  `adoptable` / `safeToWrite: false`, i.e. the wizard will adopt that credential rather than
+  regenerate over it. Nothing in the wizard consumes this yet — the step-list change ships with
+  provisioning, because collecting a password that nothing enforces would be worse than today's
+  honest absence.
+
+  **Tests:** `test/caddy-ingress-state.test.js` (12) — every one of the six states, the
+  ungated-vs-ambiguous separation asserted directly against `extractBasicAuthCredential`'s collapse,
+  the credential reported for a `generated` file, purity of `classifyCaddyfileContent`, a sweep
+  proving no hand-edited state is ever `safeToWrite`, a chmod-000 fail-closed case that skips when
+  running privileged, and a live-file case that skips when no Caddyfile is present.
+  `test/setup-ingress-state-endpoint.test.js` (+10 with this slice; 16 in the file
+  now) — four of the six states at the HTTP boundary
+  (`generated` and `unreadable` are covered at the unit level only), no bcrypt-shaped string in any
+  response, no enumeration of a second account name, `users` never crossing the boundary, the
+  username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an
+  empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof
+  that probing neither creates nor modifies a Caddyfile.
 
 ## [4.38.0] - 2026-07-28
 
