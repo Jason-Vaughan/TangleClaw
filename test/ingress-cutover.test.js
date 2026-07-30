@@ -2,6 +2,7 @@
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -371,6 +372,44 @@ describe('ingress-cutover', () => {
     it('uses http in the health URL when HTTPS is not fully configured', () => {
       const p = cutover.planCutover('direct', makeCtx({ config: { httpsCertPath: null, httpsKeyPath: null } }));
       assert.equal(p.healthUrl, 'http://localhost:3102/api/health');
+    });
+  });
+
+  describe('pollHealth picks its client from the URL scheme (#789)', () => {
+    // The rollback regression. `pollHealth` used https.get unconditionally, so
+    // `--to caddy` (https://localhost:8443) worked and `--to direct`
+    // (http://localhost:3102) threw ERR_INVALID_PROTOCOL — AFTER the ingress had
+    // already switched. The operator saw a stack trace following a successful
+    // rollback, the exit code said failure, and no result file was written. This
+    // is the break-glass path, so it gets pinned in both directions.
+
+    it('resolves rather than throwing for an http:// URL', async () => {
+      // Mutation this catches: reverting to `https.get`. That throws
+      // synchronously here, and a throw inside the promise executor rejects —
+      // so `await` re-raises and this test fails rather than timing out.
+      const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      try {
+        const url = `http://127.0.0.1:${server.address().port}/api/health`;
+        assert.equal(await cutover.pollHealth(url, 2), true,
+          'a reachable http health endpoint must report healthy');
+      } finally {
+        await new Promise((r) => server.close(r));
+      }
+    });
+
+    it('reports unhealthy instead of crashing when the URL cannot be requested', async () => {
+      // A scheme `get()` refuses throws synchronously rather than emitting
+      // 'error', so it escaped the promise's handlers entirely. A health poll
+      // must never take down a run whose actual work already completed.
+      assert.equal(await cutover.pollHealth('ftp://localhost/api/health', 1), false);
+      assert.equal(await cutover.pollHealth('not a url at all', 1), false);
+    });
+
+    it('reports unhealthy for a well-formed URL nothing is serving', async () => {
+      // The honest-negative case: distinguishes "cannot build a request" from
+      // "built it and nobody answered". Both are false; only the first was a crash.
+      assert.equal(await cutover.pollHealth('http://127.0.0.1:1/api/health', 1), false);
     });
   });
 });

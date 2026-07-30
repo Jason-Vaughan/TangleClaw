@@ -129,6 +129,27 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+- **The ingress rollback no longer crashes after succeeding (#789).**
+  `node scripts/ingress-cutover.js --to direct` switched the ingress correctly and then threw
+  `ERR_INVALID_PROTOCOL`, exiting 1 and writing no result file. `pollHealth` called `https.get`
+  unconditionally, which is right for `--to caddy` (health URL `https://localhost:8443`) and wrong for
+  `--to direct` (`http://localhost:3102`). The client is now chosen from the URL's scheme.
+
+  This matters more than a stray traceback. The rollback is the break-glass path out of a bad ingress
+  state — the tool prints it as the recovery hint two lines above where it crashed — and a caller
+  reading the exit code saw a successful rollback as a failure. With `--result-file`, the #710 outcome
+  channel got nothing at all, because the throw was uncaught.
+
+  The request construction also moved inside a `try`: `get()` rejects a bad scheme **synchronously**
+  rather than emitting `'error'`, so the throw escaped the promise's handlers entirely. A health poll
+  that cannot even build a request now reports "not healthy" and lets the caller decide, instead of
+  taking down a run whose actual work already finished.
+
+  Found by VRF Phase 8 on the macOS clean-room guest, immediately after Phase 7c passed against the
+  HTTPS path — which is exactly why the asymmetry survived: the only direction anyone exercises
+  regularly is the one that worked. `pollHealth` is now exported so it can be tested, and both halves
+  of the fix are pinned separately: reverting to `https.get` fails one assertion, removing the
+  `try` fails a different one.
 - **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
   `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
   entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is

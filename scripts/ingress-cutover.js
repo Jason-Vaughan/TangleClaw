@@ -29,6 +29,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const http = require('node:http');
 const https = require('node:https');
 const { execFileSync } = require('node:child_process');
 
@@ -613,6 +614,19 @@ function main() {
 /**
  * Poll a health URL a few times; resolves true on HTTP 200/503. Accepts the
  * self-signed local cert (rejectUnauthorized:false).
+ *
+ * The client is chosen from the URL's scheme, not assumed. This used to call
+ * `https.get` unconditionally, which worked for `--to caddy` (whose health URL is
+ * `https://localhost:8443`) and threw `ERR_INVALID_PROTOCOL` for `--to direct`
+ * (`http://localhost:3102`) — so the rollback switched the ingress successfully
+ * and then crashed, exiting non-zero with no result file written. That is the
+ * break-glass path out of a bad ingress state, and the asymmetry survived because
+ * the only path anyone exercises regularly is the HTTPS one.
+ *
+ * The construction is also inside the try, because `get()` throws SYNCHRONOUSLY
+ * on a scheme mismatch rather than emitting 'error'. A health poll that cannot
+ * even build a request must report "not healthy" and let the caller decide — it
+ * must never take down a run whose actual work already completed.
  * @param {string} url
  * @param {number} tries
  * @returns {Promise<boolean>}
@@ -620,13 +634,20 @@ function main() {
 function pollHealth(url, tries) {
   return new Promise((resolve) => {
     let n = 0;
+    const client = String(url).startsWith('https:') ? https : http;
     const attempt = () => {
       n++;
-      const req = https.get(url, { rejectUnauthorized: false, timeout: 2000 }, (res) => {
-        res.resume();
-        if (res.statusCode === 200 || res.statusCode === 503) return resolve(true);
-        retry();
-      });
+      let req;
+      try {
+        req = client.get(url, { rejectUnauthorized: false, timeout: 2000 }, (res) => {
+          res.resume();
+          if (res.statusCode === 200 || res.statusCode === 503) return resolve(true);
+          retry();
+        });
+      } catch {
+        // Unbuildable request (bad scheme, malformed URL). Not retryable.
+        return resolve(false);
+      }
       req.on('error', retry);
       req.on('timeout', () => { req.destroy(); retry(); });
     };
@@ -642,4 +663,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, CUTOVER_CODES };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, CUTOVER_CODES };
