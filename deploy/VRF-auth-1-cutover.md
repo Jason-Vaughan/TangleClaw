@@ -358,6 +358,78 @@ cp /tmp/config.before.json ~/.tangleclaw/config.json
       ```
 - [ ] Config restored before continuing.
 
+## Phase 7e — The wizard's own provisioning survives the restart it causes  ← #710
+
+The single property no unit test can reach, and the reason the whole detached-child shape exists:
+the cutover's last launchctl step restarts the TangleClaw server, so the process that starts the
+cutover is the process the cutover kills. Every test stubs the spawn — necessarily, because a real
+one rewrites launchd plists and restarts the machine's live install. So what is verified in-process
+is that a cutover *would* be started with the right argv and the right detach flags. That it then
+**outlives its parent and still writes the outcome** is verified only here.
+
+Mutations this catches, each of which leaves the whole suite green:
+dropping `detached: true` (the child dies with the server, no result file is ever written, and the
+wizard reports a working gate as a crash); inheriting stdio instead of ignoring it (the child
+blocks or dies on closed pipes); and spawning before the response is written (the browser gets no
+answer at all, so the wizard cannot even start polling).
+
+Run on the clean-room image, from the setup wizard in a browser — **not** by invoking the CLI. The
+point is the server-initiated path.
+
+```sh
+# 7e.0  Fresh state: no Caddyfile, setup not complete, no credential.
+rm -f ~/.tangleclaw/ingress-cutover-result.json ~/.tangleclaw/Caddyfile
+node -e '
+  const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/config.json";
+  const c=JSON.parse(fs.readFileSync(p,"utf8"));
+  c.setupComplete=false; c.ingressMode="direct";
+  c.authEnabled=false; c.basicAuthUser=null; c.basicAuthHash=null;
+  fs.writeFileSync(p,JSON.stringify(c,null,2)); console.log("reset to first-run");
+'
+launchctl kickstart -k "gui/$(id -u)/com.tangleclaw.server"
+```
+
+Then, in a browser at **`http://localhost:3102`** (deliberately plain-HTTP loopback — the one origin
+that survives the restart, so the poll can be observed resolving rather than timing out):
+
+- [ ] The wizard shows an **Admin Login** step, on an install whose `ingressMode` is `direct`. Its
+      absence is the pre-#710 behaviour and the whole defect.
+- [ ] The confirm step's **Login** row names the credential that will be created.
+- [ ] **Skip is not offered** anywhere in the flow.
+- [ ] After *Complete Setup*: a "Putting your login in place…" screen appears, and the response
+      arrived — i.e. the browser is not showing a network error. (A response that never arrives means
+      the spawn happened before the reply was written.)
+- [ ] The screen resolves on its own to **"Your login is in force"** without a reload. That is the
+      detached child surviving the restart and writing its outcome.
+- [ ] The outcome file exists and agrees:
+      ```sh
+      python3 -c "import json,os;d=json.load(open(os.path.expanduser('~/.tangleclaw/ingress-cutover-result.json')));assert d['ok'] and d['code']=='ok',d;print('✓',d)"
+      ```
+- [ ] The child was **not** a child of the server any more (it outlived it). The server's PID
+      changed across the cutover, which is only survivable detached:
+      ```sh
+      launchctl print "gui/$(id -u)/com.tangleclaw.server" | grep -m1 pid
+      ```
+- [ ] Opening the address the screen names **prompts for a username and password**, and the
+      credential set in the wizard works. Nothing else in this phase substitutes for this check —
+      it is the only end-to-end proof that a login is actually in force.
+- [ ] `http://localhost:3102` now serves plain HTTP behind Caddy (loopback), per
+      `bind-policy`'s caddy rule.
+
+Then the honest-failure half, which matters more than the success half:
+
+```sh
+# 7e.1  Make provisioning fail in a way the server can observe: remove caddy from
+#       the service's PATH so detection fails, and re-run first-run setup.
+```
+
+- [ ] With no `caddy` on the service PATH, the wizard shows **no** Admin Login step, and completing
+      setup lands on **"TangleClaw has no login"** — naming `brew install caddy` and the cutover
+      command. It must NOT collect a password first.
+- [ ] That screen does not dismiss itself; it waits for *Continue*.
+- [ ] On an install whose `bindAllInterfaces` is `true`, the same screen says TangleClaw is
+      **reachable from your network** with no login — not "this machine only".
+
 ## Phase 8 — Roll back to direct (reversibility)
 
 ```sh
@@ -400,6 +472,8 @@ mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
 | #710 — unreadable Caddyfile refuses (no stack trace), reports `unreadable`; `--force` refused too | 7b | |
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | |
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | |
+| #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | |
+| #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e | |
 | Rollback restores direct mode cleanly | 8 | |
 
 All **nine** green → `VRF-auth-1-cutover` PASSES.

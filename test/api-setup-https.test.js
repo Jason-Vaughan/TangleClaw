@@ -124,6 +124,18 @@ describe('HTTPS Setup API', () => {
     store._setBasePath(baseDir);
     store.init();
 
+    // This suite is about the HTTPS restart and the redirect URL it produces —
+    // a path that exists only when setup does NOT start an ingress cutover,
+    // because a cutover restarts the server itself and the handler deliberately
+    // suppresses the HTTPS restart to avoid racing it. Park the machine in a
+    // state where no cutover can start (a hand-written Caddyfile with no login,
+    // which TangleClaw refuses to overwrite) so these cases keep testing their
+    // own subject. The suppression itself is asserted separately below.
+    fs.writeFileSync(
+      path.join(baseDir, 'Caddyfile'),
+      '# maintained by hand\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n'
+    );
+
     ({ createServer, _setRestartScheduler } = require('../server'));
 
     restartCalls = 0;

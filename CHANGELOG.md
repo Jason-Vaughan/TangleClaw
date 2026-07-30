@@ -5,6 +5,70 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **BREAKING: setup puts a login in front of TangleClaw by default, and says plainly when it cannot
+  (#710, v5 chunk 2).** The admin-credential step used to appear only when config already said
+  `ingressMode: 'caddy'` — which no fresh install says — so a first run collected no credential and
+  finished with nothing asking for a password. The step now appears whenever the machine can
+  actually run a gate, and finishing setup without one is refused server-side. There is still no
+  default credential and TangleClaw never invents one; the operator sets it, or setup does not
+  complete.
+
+  Whether the step appears is one decision, made server-side
+  (`ingressProvision.decideProvisioning`) and returned to the wizard as `plan.action` on
+  `GET /api/setup/ingress-state`. The browser does not re-derive it: a second copy of a security
+  decision in front-end code could drift from the server's and start collecting a credential
+  nothing will enforce. Three actions over the six Caddyfile states, no default fall-through —
+  **provision** (`absent`/`generated`), **adopt** an existing single-credential config, **refuse**
+  anything ambiguous, ungated-but-hand-written, or unreadable. Caddy-not-installed is tested first
+  and beats every content state, including `adoptable`: a hand-written config on a machine with no
+  Caddy binary is a config nothing is running, and adopting its credential would mark the install
+  protected while nothing enforced the gate.
+
+  **The cutover runs as a detached child, because it restarts this server.** Its launchctl sequence
+  ends with `kickstart -k` on TangleClaw, so a request handler executing the plan in-process would
+  die partway and never learn the outcome. `lib/ingress-provision.js` spawns
+  `scripts/ingress-cutover.js` detached, with stdio ignored and unref'd, after clearing any previous
+  outcome so a stale `ok` cannot be read as this run's; the child reports through `--result-file` and
+  the wizard polls `GET /api/setup/provision-status`. Ordering is deliberate: credential persisted,
+  projects attached, then the spawn as the very last act before the response, so nothing is still in
+  flight when the restart lands. The HTTPS restart is suppressed while a cutover is running — two
+  restarts would race, and in caddy mode Caddy terminates TLS anyway, so the cert the wizard
+  generated is used by Caddy rather than by the listener.
+
+  **"Cannot confirm" is a real outcome, not a timeout rounded to success.** The cutover re-binds the
+  server to plain HTTP on loopback, so the wizard's own origin survives only when it was already
+  `http://localhost:<port>`. An operator who reached setup over direct HTTPS or a LAN/tailnet
+  address loses that origin at the restart, and the new perimeter address is a different port —
+  cross-origin, where a probe cannot read a status and probing a `basic_auth` URL pops the browser's
+  own credential prompt. So the poll treats an unreachable origin as "still restarting", and at its
+  deadline says exactly that: the cutover was started, this page cannot see the result, here is the
+  address to open, and a login prompt is the check that settles it. Reporting a password as set
+  while nothing enforces it is the one outcome worse than today's honest absence, so no path claims
+  protection it did not observe. Failure lands in the loopback-only state and says so; nothing
+  resolves on a timer (#98/#268) — every end state waits for a click.
+
+  Network exposure in that copy is read from `bindPolicy.describeBindState`, not assumed. An install
+  whose config predates the loopback default is deliberately held on a wide binding until its
+  operator chooses, so "reachable from this machine only" would have been a false reassurance handed
+  to precisely the operator who is ungated *and* reachable.
+
+  Descoped explicitly: the wizard does not **install** Caddy. Running a package manager from an HTTP
+  handler is its own capability, and the honest degraded path was already required for provisioning
+  failure — caddy-missing reaches the same end state for a different reason, told plainly with the
+  two commands that fix it.
+
+  **Tests:** `test/ingress-provision.test.js` (25) — every Caddyfile state mapped to exactly one
+  action, an unrecognized state failing closed, caddy-missing beating `adoptable`, absent vs
+  malformed vs readable outcome files kept distinct, the spawn's argv and its `detached`/`stdio:
+  ignore`/`unref` trio, and an interlock that refuses a REAL cutover from a test process (a run
+  rewrites launchd plists and restarts the machine's live server, so a missed stub must fail rather
+  than cause an outage). `test/setup-provisioning.test.js` (19) — the completion matrix at the HTTP
+  boundary, including refusal-with-no-credential-demanded, a stale outcome cleared before spawning,
+  the operator's Caddyfile unchanged byte-for-byte on adopt, and no username, hash or path crossing
+  `provision-status`. `test/setup-wizard-login-gate.test.js` (24) — the step list against each plan
+  (including the direct-mode flip), the payload sent under the same predicate that collected it,
+  every terminal screen's honesty, and no navigation without a click.
+
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
   whatever happened to be on `main` at that moment. That is fine between releases and wrong during

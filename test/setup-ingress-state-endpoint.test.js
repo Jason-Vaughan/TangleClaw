@@ -225,4 +225,62 @@ describe('GET /api/setup/ingress-state', () => {
     await get(server, '/api/setup/ingress-state');
     assert.equal(fs.readFileSync(p, 'utf8'), before, 'the probe modified the file');
   });
+
+  // ── The step-list decision the wizard consumes ──
+  //
+  // The wizard shows or hides the admin step on `plan.action` and never derives
+  // it in the browser. These cases pin the decision to the route, so a change to
+  // the classification cannot quietly flip whether a credential gets collected.
+
+  it('tells the wizard to collect a credential when nothing a human maintains is at risk', async () => {
+    const res = await get(server, '/api/setup/ingress-state');
+    assert.equal(res.data.state, 'absent');
+    assert.equal(res.data.plan.action, 'provision');
+    assert.equal(res.data.plan.remedy, null);
+  });
+
+  it('tells the wizard to adopt, and names the user, when a single-login config exists', async () => {
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+    const res = await get(server, '/api/setup/ingress-state');
+    assert.equal(res.data.plan.action, 'adopt');
+    assert.match(res.data.plan.reason, /jason/);
+  });
+
+  it('tells the wizard to refuse — with a reason and a remedy — when it must not write', async () => {
+    for (const [content, label] of [
+      [handEdited([`jason ${BCRYPT_A}`, `alex ${BCRYPT_B}`]), 'ambiguous'],
+      ['# my own proxy\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n', 'ungated']
+    ]) {
+      writeLive(content);
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.equal(res.data.plan.action, 'refuse', label);
+      assert.ok(res.data.plan.reason, `${label} must say why`);
+      assert.ok(res.data.plan.remedy, `${label} must say what fixes it`);
+    }
+  });
+
+  it('refuses even an adoptable config when caddy is not installed', async () => {
+    // A gate nothing is running is not a gate. Adopting here would report the
+    // install as protected while no process enforces the login.
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+    const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-nopath-'));
+    const origPath = process.env.PATH;
+    process.env.PATH = emptyBin;
+    try {
+      const res = await get(server, '/api/setup/ingress-state');
+      assert.equal(res.data.state, 'adoptable', 'classification is unchanged');
+      assert.equal(res.data.plan.action, 'refuse');
+      assert.match(res.data.plan.reason, /not installed/);
+    } finally {
+      process.env.PATH = origPath;
+      fs.rmSync(emptyBin, { recursive: true, force: true });
+    }
+  });
+
+  it('never leaks the credential hash through the plan text', async () => {
+    writeLive(handEdited([`jason ${BCRYPT_A}`]));
+    const res = await get(server, '/api/setup/ingress-state');
+    assert.equal(res.data.plan.action, 'adopt');
+    assert.ok(!/\$2[aby]\$/.test(JSON.stringify(res.data.plan)), 'plan carried something bcrypt-shaped');
+  });
 });

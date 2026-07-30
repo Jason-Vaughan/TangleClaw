@@ -1,0 +1,458 @@
+'use strict';
+
+/*
+ * Frontend tests for the wizard's login gate (#710 chunk 2).
+ *
+ * The ordering constraint these pin: the admin step and the provisioning that
+ * enforces it may never come apart. A wizard that collects a username and
+ * password and then finishes with nothing enforcing them is worse than one that
+ * never asked — the operator who knows they have no login behaves accordingly,
+ * the one who believes they have one does not. So:
+ *
+ *   - the step appears exactly when the SERVER said a gate can be provisioned,
+ *     never on the browser's own reading of config;
+ *   - the credential is sent under the same predicate that collected it;
+ *   - every terminal screen states whether a login is actually in force, and
+ *     "cannot confirm" is one of the answers rather than being rounded to
+ *     success;
+ *   - nothing resolves on a timer (#98/#268) — each end state waits for a click.
+ *
+ * Same vm-plus-DOM-stub approach as setup-wizard-engines.test.js — setup.js is a
+ * plain <script> file, not a module.
+ */
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const SETUP_JS_PATH = path.join(__dirname, '..', 'public', 'setup.js');
+const RAW_SRC = fs.readFileSync(SETUP_JS_PATH, 'utf8');
+const SETUP_JS_SRC = RAW_SRC.replace(/^const wizard = /m, 'var wizard = ')
+  + '\n;globalThis.wizard = wizard;\n';
+
+const PROVISION_PLAN = { action: 'provision', reason: '', remedy: null };
+const ADOPT_PLAN = { action: 'adopt', reason: 'An existing Caddy login for "jason" …', remedy: null };
+const REFUSE_PLAN = {
+  action: 'refuse',
+  reason: 'Caddy is not installed, so TangleClaw cannot put a login in front of itself yet.',
+  remedy: 'Install Caddy (e.g. `brew install caddy`), then run `node scripts/ingress-cutover.js --to caddy`.'
+};
+
+/** Minimal element stub covering what these steps touch. */
+function makeElement(id) {
+  const classSet = new Set();
+  return {
+    id,
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    checked: false,
+    disabled: false,
+    style: {},
+    className: '',
+    classList: {
+      add: (c) => classSet.add(c),
+      remove: (c) => classSet.delete(c),
+      contains: (c) => classSet.has(c)
+    },
+    focus() {},
+    addEventListener() {},
+    dispatchEvent() {}
+  };
+}
+
+/**
+ * Load setup.js in a sandbox.
+ * @param {object} [opts]
+ * @param {object|null} [opts.plan] - `plan` the ingress-state probe returns; null
+ *   makes the probe fail.
+ * @param {object} [opts.config] - Partial global config.
+ * @param {Function} [opts.apiMutate] - Stub for POST /api/setup/complete.
+ * @param {Function} [opts.statusFetch] - Stub answering /api/setup/provision-status.
+ * @returns {object} sandbox, with `__nav` recording navigations and `__fetches`
+ *   the URLs requested.
+ */
+function loadSetup(opts = {}) {
+  const elements = new Map();
+  const fetches = [];
+  const nav = [];
+  let fakeNow = 1000000;
+
+  const sandbox = {
+    console,
+    // Immediate, so a poll loop advances without wall-clock waiting. Paired with
+    // a clock that only moves when the code asks the time, so the deadline is
+    // reached deterministically instead of by racing real time.
+    setTimeout: (fn) => { fakeNow += 1500; Promise.resolve().then(fn); return 0; },
+    clearTimeout() {},
+    Promise, Math, JSON, Object, Array, Set, Map, String, Number, Boolean, Error,
+    Date: { now: () => fakeNow },
+    esc: (str) => (typeof str !== 'string' ? '' : str
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;')),
+    apiMutate: opts.apiMutate || (async () => null),
+    api: Object.assign(async () => null, { lastError: null }),
+    loadConfig: async () => {}, loadProjects: async () => ({}), loadStats: async () => {},
+    loadPorts: async () => {}, maybeShowFilter: () => {}, startPolling: () => {},
+    state: {
+      engines: [{ id: 'claude', name: 'Claude Code', available: true }],
+      config: Object.assign({ setupComplete: false }, opts.config || {})
+    },
+    fetch: async (url) => {
+      fetches.push(url);
+      if (String(url).includes('/api/setup/ingress-state')) {
+        if (!opts.plan) throw new Error('probe unreachable');
+        return { ok: true, json: async () => ({ plan: opts.plan }) };
+      }
+      if (String(url).includes('/api/setup/provision-status')) {
+        if (!opts.statusFetch) throw new Error('unreachable');
+        return opts.statusFetch(fetches.filter((f) => String(f).includes('provision-status')).length);
+      }
+      return { ok: true, json: async () => ({}) };
+    }
+  };
+  sandbox.document = {
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, makeElement(id));
+      return elements.get(id);
+    },
+    querySelectorAll() { return []; },
+    body: { classList: { add() {}, remove() {} } }
+  };
+  sandbox.window = sandbox;
+  sandbox.location = {
+    origin: 'http://localhost:3102',
+    set href(v) { nav.push(v); },
+    get href() { return nav[nav.length - 1] || null; }
+  };
+
+  vm.createContext(sandbox);
+  vm.runInContext(SETUP_JS_SRC, sandbox);
+  sandbox.__elements = elements;
+  sandbox.__fetches = fetches;
+  sandbox.__nav = nav;
+  return sandbox;
+}
+
+/** Let queued microtasks (the probe, the poll) run to completion. */
+async function settle(rounds = 200) {
+  for (let i = 0; i < rounds; i++) await Promise.resolve();
+}
+
+describe('Setup wizard — the login gate is the default (#710)', () => {
+  describe('the admin step follows the server\'s plan, not the browser\'s guess', () => {
+    it('shows the step on a machine where a gate can be provisioned — in DIRECT mode', async () => {
+      // The flip. Before, the step appeared only when config already said
+      // ingressMode: 'caddy', so a fresh install never saw it and finished with
+      // no login at all.
+      const ctx = loadSetup({ plan: PROVISION_PLAN, config: { ingressMode: 'direct' } });
+      ctx.showWizard();
+      await settle();
+      assert.ok(ctx.wizardStepKeys().includes('admin'));
+    });
+
+    it('skips the step when an existing login will be adopted', async () => {
+      // Collecting a second credential would either clobber a working gate or
+      // leave two.
+      const ctx = loadSetup({ plan: ADOPT_PLAN, config: { ingressMode: 'direct' } });
+      ctx.showWizard();
+      await settle();
+      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+    });
+
+    it('skips the step when no gate can be put up', async () => {
+      const ctx = loadSetup({ plan: REFUSE_PLAN });
+      ctx.showWizard();
+      await settle();
+      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+    });
+
+    it('does not show the step in caddy mode when the server says it must not', async () => {
+      // The old predicate was `ingressMode === 'caddy'`. An install already in
+      // caddy mode whose Caddyfile must not be touched has to skip, so the
+      // config value cannot be the deciding fact any more.
+      const ctx = loadSetup({ plan: REFUSE_PLAN, config: { ingressMode: 'caddy' } });
+      ctx.showWizard();
+      await settle();
+      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+    });
+
+    it('does not collect a credential while the plan is unknown', async () => {
+      // A failed probe must not fail OPEN into asking for a password nothing
+      // may enforce.
+      const ctx = loadSetup({ plan: null });
+      ctx.showWizard();
+      await settle();
+      assert.equal(ctx.wizard.ingressPlan, null);
+      assert.ok(ctx.wizard.ingressPlanError, 'the failure is recorded, not swallowed');
+      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+    });
+
+    it('hides Skip when a credential is mandatory, and offers it otherwise', async () => {
+      const gated = loadSetup({ plan: PROVISION_PLAN });
+      gated.showWizard();
+      await settle();
+      assert.equal(gated.document.getElementById('setupSkipBtn').style.display, 'none',
+        'Skip must not offer a way past the login gate');
+
+      const open = loadSetup({ plan: REFUSE_PLAN });
+      open.showWizard();
+      await settle();
+      assert.equal(open.document.getElementById('setupSkipBtn').style.display, '');
+    });
+  });
+
+  describe('the confirm summary states what will actually be true', () => {
+    it('names the credential that will be created', async () => {
+      const ctx = loadSetup({ plan: PROVISION_PLAN });
+      ctx.showWizard();
+      await settle();
+      ctx.wizard.adminUser = 'jason';
+      assert.match(ctx._loginSummaryLabel(), /jason/);
+    });
+
+    it('says an existing login is kept', async () => {
+      const ctx = loadSetup({ plan: ADOPT_PLAN });
+      ctx.showWizard();
+      await settle();
+      assert.match(ctx._loginSummaryLabel(), /Existing login kept/);
+    });
+
+    it('says "None — not protected" rather than staying silent', async () => {
+      // The row used to render only in caddy mode, so the summary of an
+      // unprotected install simply omitted the subject.
+      const ctx = loadSetup({ plan: REFUSE_PLAN });
+      ctx.showWizard();
+      await settle();
+      assert.match(ctx._loginSummaryLabel(), /None/);
+      const body = ctx.document.getElementById('setupBody');
+      ctx.renderConfirm(body);
+      assert.match(body.innerHTML, /Login/);
+      assert.match(body.innerHTML, /not protected/);
+    });
+
+    it('admits when it could not check', async () => {
+      const ctx = loadSetup({ plan: null });
+      ctx.showWizard();
+      await settle();
+      assert.match(ctx._loginSummaryLabel(), /could not check/);
+    });
+  });
+
+  describe('the credential is sent under the same predicate that collected it', () => {
+    /** Run wizardComplete against a stubbed complete route and return the body sent. */
+    async function submit(plan, ingressResponse) {
+      let sent = null;
+      const ctx = loadSetup({
+        plan,
+        apiMutate: async (_url, _method, body) => {
+          sent = body;
+          return { ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+            ingress: ingressResponse || { action: 'refuse', provisioning: false, protection: 'unchanged' } };
+        }
+      });
+      ctx.showWizard();
+      await settle();
+      ctx.wizard.adminUser = 'jason';
+      ctx.wizard.adminPassword = 'correct-horse-battery';
+      ctx.wizard.adminPasswordConfirm = 'correct-horse-battery';
+      await ctx.wizardComplete();
+      await settle();
+      return { sent, ctx };
+    }
+
+    it('sends the credential when the step was shown', async () => {
+      const { sent } = await submit(PROVISION_PLAN,
+        { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' });
+      assert.equal(sent.adminUser, 'jason');
+      assert.equal(sent.adminPassword, 'correct-horse-battery');
+    });
+
+    it('does not send one when the step was skipped', async () => {
+      // Sending here would ask the server to store a credential the operator was
+      // never shown a field for.
+      const { sent } = await submit(ADOPT_PLAN);
+      assert.equal(sent.adminUser, undefined);
+      assert.equal(sent.adminPassword, undefined);
+    });
+  });
+
+  describe('the provisioning outcome is reported, never assumed', () => {
+    /** Start provisioning with a status route that answers `answers[n-1]` on poll n. */
+    async function provisionWith(answers) {
+      const ctx = loadSetup({
+        plan: PROVISION_PLAN,
+        statusFetch: (n) => {
+          const a = answers[Math.min(n, answers.length) - 1];
+          if (a === 'unreachable') throw new Error('ECONNREFUSED');
+          return { ok: true, json: async () => a };
+        },
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'provision', provisioning: true, protection: 'pending',
+            url: 'https://host:8443', user: 'jason' }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle(2000);
+      return ctx;
+    }
+
+    it('reports the login as in force only when the outcome says ok', async () => {
+      const ctx = await provisionWith([{ state: 'done', ok: true, code: 'ok' }]);
+      assert.equal(ctx.wizard.provision.phase, 'gated');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      // The affirmative heading specifically — /login is in force/i would also
+      // match the "No login is in force" failure screen.
+      assert.match(html, /Your login is in force/);
+      assert.match(html, /jason/);
+      assert.match(html, /host:8443/);
+    });
+
+    it('treats an unreachable origin as still restarting, not as failure', async () => {
+      // The server being polled is the one the cutover is kicking.
+      const ctx = await provisionWith([
+        'unreachable', 'unreachable', { state: 'done', ok: true, code: 'ok' }
+      ]);
+      assert.equal(ctx.wizard.provision.phase, 'gated');
+    });
+
+    it('says plainly that nothing is asking for a password when the cutover failed', async () => {
+      const ctx = await provisionWith([
+        { state: 'done', ok: false, code: 'ungate-refused', error: 'no credential in config' }
+      ]);
+      assert.equal(ctx.wizard.provision.phase, 'failed');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /No login is in force/);
+      assert.match(html, /Nothing is asking for a password/);
+      assert.match(html, /ungate-refused/);
+      assert.match(html, /ingress-cutover\.js/, 'the operator needs the command that fixes it');
+    });
+
+    it('treats a corrupt outcome as a failure to confirm, not as success', async () => {
+      const ctx = await provisionWith([{ state: 'unreadable', error: 'could not be parsed' }]);
+      assert.equal(ctx.wizard.provision.phase, 'failed');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /No login is in force/);
+    });
+
+    it('ends in "cannot see the result" when the origin never comes back', async () => {
+      // The common case for a remote operator: the restart closes the address
+      // this page was served from, and the new one is cross-origin.
+      const ctx = await provisionWith(['unreachable']);
+      assert.equal(ctx.wizard.provision.phase, 'unconfirmed');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /can't see the result/);
+      assert.match(html, /asks for a username and password/,
+        'the operator needs the check that settles it');
+      assert.match(html, /--rollback/, 'and the way back if nothing loads');
+    });
+
+    it('never claims success it did not observe', async () => {
+      // "Your login is in force" is the affirmative heading, and only the
+      // observed-ok path may render it. Matching on a looser phrase would pass
+      // against "NO login is in force" and prove nothing.
+      for (const answers of [['unreachable'], [{ state: 'done', ok: false, code: 'failed' }]]) {
+        const ctx = await provisionWith(answers);
+        const html = ctx.document.getElementById('setupBody').innerHTML;
+        assert.ok(!/Your login is in force/.test(html),
+          `unconfirmed or failed provisioning must not read as protected: ${html.slice(0, 200)}`);
+        assert.match(html, /Nothing is asking for a password|If it asks for a username/,
+          'the operator must be told what is actually true');
+      }
+    });
+
+    it('does not navigate or dismiss on its own — every end state waits for a click', async () => {
+      // #98/#268: no timer-driven UI lifecycle. The poll's interval advances the
+      // poll and nothing else.
+      for (const answers of [
+        [{ state: 'done', ok: true, code: 'ok' }],
+        [{ state: 'done', ok: false, code: 'failed' }],
+        ['unreachable']
+      ]) {
+        const ctx = await provisionWith(answers);
+        assert.deepEqual(ctx.__nav, [], 'provisioning redirected without being asked');
+      }
+    });
+  });
+
+  describe('how exposed an ungated install is, stated from the server\'s own answer', () => {
+    // An install whose config predates the loopback default is deliberately held
+    // on a WIDE binding until its operator chooses (lib/bind-policy.js grace
+    // state). Telling that operator "reachable from this machine only" would be a
+    // false reassurance handed to exactly the person at risk: ungated AND
+    // reachable.
+    it('says "this machine only" when the server reports a loopback bind', () => {
+      const ctx = loadSetup({ plan: REFUSE_PLAN });
+      assert.match(ctx._exposureSentence(false), /this machine only/);
+      assert.doesNotMatch(ctx._exposureSentence(false), /reachable from your network/);
+    });
+
+    it('warns plainly when the server reports a wide bind with no gate', () => {
+      const ctx = loadSetup({ plan: REFUSE_PLAN });
+      const s = ctx._exposureSentence(true);
+      assert.match(s, /reachable from your network/);
+      assert.match(s, /run commands as you/);
+      assert.doesNotMatch(s, /this machine only/);
+    });
+
+    it('carries the server\'s exposure answer onto the unprotected screen', async () => {
+      const ctx = loadSetup({
+        plan: REFUSE_PLAN,
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'refuse', provisioning: false, protection: 'none',
+            reason: REFUSE_PLAN.reason, remedy: REFUSE_PLAN.remedy, networkExposed: true }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle();
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /reachable from your network/);
+    });
+  });
+
+  describe('a setup that never attempts a gate says so', () => {
+    it('shows an unprotected screen instead of dismissing into a normal dashboard', async () => {
+      let dismissed = false;
+      const ctx = loadSetup({
+        plan: REFUSE_PLAN,
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'refuse', provisioning: false, protection: 'none',
+            reason: REFUSE_PLAN.reason, remedy: REFUSE_PLAN.remedy }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      ctx.dismissWizard = () => { dismissed = true; };
+      await ctx.wizardComplete();
+      await settle();
+
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /TangleClaw has no login/);
+      assert.match(html, /Nothing is asking for a password/);
+      assert.match(html, /brew install caddy/);
+      assert.equal(dismissed, false, 'an unprotected install must not slip past unremarked');
+    });
+
+    it('dismisses normally when an existing login was adopted', async () => {
+      const ctx = loadSetup({
+        plan: ADOPT_PLAN,
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' }
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      await ctx.wizardComplete();
+      await settle();
+      assert.equal(ctx.wizard.provision, null, 'nothing to poll — the gate already exists');
+    });
+  });
+});

@@ -46,6 +46,7 @@ const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
+const ingressProvision = require('./lib/ingress-provision');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const ttydBind = require('./lib/ttyd-bind');
@@ -86,6 +87,21 @@ let _scheduleRestart = () => {
  */
 function _setRestartScheduler(fn) {
   _scheduleRestart = fn;
+}
+
+// How setup starts the ingress cutover. A seam for the same reason the restart
+// scheduler is one: the real call rewrites launchd plists and restarts this
+// server. Tests replace it to assert that a cutover WOULD have been started,
+// without one happening. `lib/ingress-provision.js` additionally refuses a real
+// spawn from a test process, so forgetting to override fails loudly.
+let _spawnCutover = (opts) => ingressProvision.spawnCutover(opts);
+
+/**
+ * Override the ingress-cutover spawner (used by tests).
+ * @param {Function} fn - Receives `{ target }`, returns `{ ok, pid, error }`.
+ */
+function _setCutoverSpawner(fn) {
+  _spawnCutover = fn;
 }
 
 // ── Route Table ──
@@ -882,11 +898,21 @@ route('GET', '/api/setup/https-check', (_req, res) => {
 // answers with no gate in front of it and an installed, running TangleClaw
 // should not hand out an account name for the asking. The state and the count
 // still answer honestly, which is all any later caller needs.
+// `plan` is the wizard's step-list decision, derived HERE and never in the
+// browser. Whether the admin step appears is a security decision — a duplicate
+// of the six-state table in public/setup.js could drift from this one and start
+// collecting a credential nothing enforces. The wizard branches on
+// `plan.action` alone.
 route('GET', '/api/setup/ingress-state', (_req, res) => {
   const config = store.config.load();
   const duringSetup = config.setupComplete === false;
   const detection = caddy.detectCaddy();
   const state = caddy.classifyIngressState();
+  const plan = ingressProvision.decideProvisioning({
+    state: state.state,
+    caddyAvailable: detection.available,
+    user: duringSetup ? state.user : null
+  });
   jsonResponse(res, 200, {
     state: state.state,
     safeToWrite: state.safeToWrite,
@@ -896,7 +922,54 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
       available: detection.available,
       version: detection.version || null,
       error: detection.error || null
+    },
+    plan: {
+      action: plan.action,
+      reason: plan.reason,
+      remedy: plan.remedy
     }
+  });
+});
+
+// GET /api/setup/provision-status — how the ingress cutover the wizard started
+// ended, once it has ended.
+//
+// The cutover restarts this server, so it runs as a detached child and reports
+// through a file rather than a return value (see lib/ingress-provision.js). This
+// route is the read side of that channel.
+//
+// It deliberately needs no Caddy auth-bypass entry: pre-cutover the wizard is
+// served by TangleClaw directly, and the cutover does not move TangleClaw's
+// listen port — so a poll from that page never traverses the perimeter. What the
+// cutover DOES change is the protocol and the interface, which is why the wizard
+// must also handle its own origin disappearing (an operator who reached setup
+// over direct HTTPS, or over a LAN address, loses it at the restart).
+//
+// Nothing secret crosses this boundary: a coarse outcome code, the target, and
+// whether the health probe passed. No paths, no usernames, no hashes.
+route('GET', '/api/setup/provision-status', (_req, res) => {
+  const { present, malformed, result } = ingressProvision.readResult();
+  if (!present) {
+    // Not "failed" — the child may still be running, or may never have started.
+    // The wizard distinguishes those by its own deadline, not by this answer.
+    return jsonResponse(res, 200, { state: 'pending', ok: null, code: null });
+  }
+  if (malformed) {
+    return jsonResponse(res, 200, {
+      state: 'unreadable',
+      ok: null,
+      code: null,
+      error: 'The cutover wrote an outcome file that could not be parsed.'
+    });
+  }
+  jsonResponse(res, 200, {
+    state: 'done',
+    ok: result.ok === true,
+    code: typeof result.code === 'string' ? result.code : null,
+    target: typeof result.target === 'string' ? result.target : null,
+    healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
+    error: typeof result.error === 'string' ? result.error : null,
+    finishedAt: typeof result.finishedAt === 'string' ? result.finishedAt : null
   });
 });
 
@@ -1060,6 +1133,26 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
+  // A login is the DEFAULT outcome of setup, not something that happens only on a
+  // machine already running behind Caddy. The same derivation the wizard asked for
+  // at GET /api/setup/ingress-state decides what this install can have, so the two
+  // cannot disagree about a machine between the step list and the submission:
+  //
+  //   provision → the wizard collected a credential; persist it, then hand the
+  //               cutover to a detached child (it restarts this server, so this
+  //               handler cannot run it and live to report the outcome).
+  //   adopt     → a working hand-rolled gate is already in front of us; take its
+  //               credential into config and never collect a second one.
+  //   refuse    → nothing may be written. Finish honestly ungated rather than
+  //               storing a credential nothing enforces.
+  const ingressDetection = caddy.detectCaddy();
+  const ingressState = caddy.classifyIngressState();
+  const ingressPlan = ingressProvision.decideProvisioning({
+    state: ingressState.state,
+    caddyAvailable: ingressDetection.available,
+    user: ingressState.user
+  });
+
   // AUTH-2 — forced first-run admin in caddy ingress mode. The login gate lives at
   // Caddy (basic_auth), so completing setup behind Caddy with NO credential would
   // leave the box reachable AND unauthenticated. Require an admin: either supplied
@@ -1101,11 +1194,15 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       'An admin username and password are required to finish setup while running behind the Caddy ingress (basic_auth login gate).',
       'ADMIN_REQUIRED');
   }
-  if (inCaddyMode && adminProvided) {
-    // The credential is stored but the live Caddyfile is only regenerated by the
-    // cutover — surface that so the operator activates the gate at a terminal
-    // (where rollback is available) rather than assuming they're already protected.
-    warnings.push('Admin credential saved. Run `node scripts/ingress-cutover.js --to caddy` to regenerate the Caddyfile and activate the login gate.');
+  // The flip: on a machine where a gate CAN be put up, finishing setup without a
+  // credential is refused even though this install is still in direct mode. The
+  // wizard shows the step in exactly this case, so reaching here without one means
+  // the step was bypassed rather than answered.
+  if (ingressPlan.action === 'provision' && !adminConfigured) {
+    return errorResponse(res, 400,
+      'An admin username and password are required to finish setup. TangleClaw puts a login in front of '
+      + 'itself by default, and this machine can run one.',
+      'ADMIN_REQUIRED');
   }
 
   // Mark setup as complete
@@ -1175,21 +1272,100 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     }
   }
 
+  // ── Put the login in force (or say honestly that none is) ──
+  //
+  // Deliberately the LAST thing before the response. The cutover child's final
+  // act is `launchctl kickstart -k` on this server, so anything still to do here
+  // — attaching projects above, writing the response below — must already be
+  // done or in flight. Spawning earlier would race a restart against the work.
+  const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
+  const requestHostname = hostHeader.split(':')[0] || 'localhost';
+  const ingress = {
+    action: ingressPlan.action,
+    provisioning: false,
+    // 'pending' only ever means "a cutover is running and the answer is not in
+    // yet"; the wizard resolves it by polling /api/setup/provision-status.
+    protection: 'none',
+    reason: ingressPlan.reason || null,
+    remedy: ingressPlan.remedy || null,
+    user: null,
+    url: null,
+    // Whether the network can reach this server, read from the one classification
+    // rather than assumed. "Ungated but loopback-only" and "ungated and reachable"
+    // are different situations, and the wizard must not tell an install held wide
+    // in the legacy grace state that it is reachable from this machine only —
+    // that is the operator most at risk of believing a false reassurance.
+    networkExposed: bindPolicy.describeBindState(config).wide === true
+  };
+
+  if (ingressPlan.action === 'provision') {
+    // A leftover outcome from an earlier run would be read as this one's.
+    ingressProvision.clearResult();
+    const started = _spawnCutover({ target: 'caddy' });
+    if (started.ok) {
+      ingress.provisioning = true;
+      ingress.protection = 'pending';
+      ingress.user = config.basicAuthUser || null;
+      // Where the gate is about to listen. Built from the host the operator
+      // actually used, because a fresh Caddyfile's local site says `localhost`
+      // and that is not where a remote operator is standing.
+      ingress.url = `https://${requestHostname}:${config.caddyHttpsPort || 8443}`;
+      log.info('Setup started the ingress cutover', { pid: started.pid, host: requestHostname });
+    } else {
+      // The credential is stored and nothing enforces it. Say so — this is the
+      // one outcome this path exists to make impossible to mistake for success.
+      ingress.reason = `TangleClaw could not start the ingress cutover: ${started.error}. `
+        + 'Your login has been saved but nothing is enforcing it yet.';
+      ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy` at a terminal.';
+      warnings.push(ingress.reason);
+      log.error('Setup could not start the ingress cutover', { error: started.error });
+    }
+  } else if (ingressPlan.action === 'adopt') {
+    const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
+    // Re-read: adoption persists its own copy of config, so the local object is
+    // behind by exactly the fields we now want to report.
+    const after = store.config.load();
+    const gated = !!(after.authEnabled && after.basicAuthUser && after.basicAuthHash);
+    if (gated) {
+      ingress.protection = 'existing';
+      ingress.user = after.basicAuthUser;
+    } else {
+      ingress.reason = 'An existing Caddy login was found but could not be adopted'
+        + `${adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
+      ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
+      warnings.push(ingress.reason);
+    }
+  } else if (adminConfigured) {
+    // Refused, but a credential IS configured (an install already in caddy mode,
+    // or one the operator set earlier). It is stored and the live Caddyfile will
+    // not be regenerated from here, so the gate is only as active as that file
+    // already makes it — activating it belongs at a terminal, where the cutover's
+    // backup and rollback exist.
+    ingress.protection = 'unchanged';
+    ingress.user = config.basicAuthUser || null;
+    warnings.push('Admin credential saved, but the Caddy config was left untouched. '
+      + 'Run `node scripts/ingress-cutover.js --to caddy` to activate the login gate.');
+  }
+
   // Decide whether to schedule a restart so the server re-binds with the new protocol
   const prevWillServeHttps = !!(prevHttps.enabled && prevHttps.certPath && prevHttps.keyPath);
   const willServeHttps = !!(config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath);
   const httpsChanged = prevHttps.enabled !== !!config.httpsEnabled
     || prevHttps.certPath !== (config.httpsCertPath || null)
     || prevHttps.keyPath !== (config.httpsKeyPath || null);
-  const shouldRestart = httpsChanged && (willServeHttps || prevWillServeHttps);
+  // A running cutover restarts the server itself, as its last launchctl step. A
+  // second restart scheduled here would race it — and in caddy mode the HTTPS
+  // config it exists to apply is not what the listener uses anyway (Caddy
+  // terminates TLS; `effectiveServerProtocol` returns http). The cert the wizard
+  // generated is still used — by Caddy, via the cutover.
+  const shouldRestart = !ingress.provisioning
+    && httpsChanged && (willServeHttps || prevWillServeHttps);
 
   let redirectUrl = null;
   if (shouldRestart) {
-    const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
-    const hostname = hostHeader.split(':')[0] || 'localhost';
     const port = httpsSetup.effectiveServerPort(config);
     const protocol = willServeHttps ? 'https' : 'http';
-    redirectUrl = `${protocol}://${hostname}:${port}`;
+    redirectUrl = `${protocol}://${requestHostname}:${port}`;
     _scheduleRestart();
   }
 
@@ -1206,7 +1382,8 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     attached,
     warnings,
     restart: shouldRestart,
-    redirectUrl
+    redirectUrl,
+    ingress
   });
 });
 
@@ -5147,4 +5324,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines };

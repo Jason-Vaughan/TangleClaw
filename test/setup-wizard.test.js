@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { createServer } = require('../server');
+const { createServer, _setCutoverSpawner } = require('../server');
 
 setLevel('error');
 
@@ -224,6 +224,57 @@ describe('Setup Wizard', () => {
       });
 
   describe('POST /api/setup/complete', () => {
+    // TangleClaw now puts a login in front of itself as the default outcome of
+    // setup, so completing it on a machine that can run one requires a
+    // credential and starts an ingress cutover. These cases are about config,
+    // projects and delete-protection rather than about the gate, so the machine
+    // is given a credential up front — the shape a real second run has — and the
+    // cutover is stubbed. Without the stub the real one would rewrite launchd
+    // plists and restart the developer's live server; lib/ingress-provision.js
+    // refuses that from a test process, which is why forgetting shows up as a
+    // failure rather than an outage.
+    let cutoverCalls;
+    before(() => {
+      const config = store.config.load();
+      config.authEnabled = true;
+      config.basicAuthUser = 'admin';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(config);
+      cutoverCalls = [];
+      _setCutoverSpawner((opts) => { cutoverCalls.push(opts); return { ok: true, pid: 999, error: null }; });
+    });
+
+    it('starts the ingress cutover and reports the login as pending', async () => {
+      await request(server, 'PATCH', '/api/config', { setupComplete: false });
+      cutoverCalls.length = 0;
+
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projectsDir: projectsDir
+      });
+
+      assert.equal(status, 200);
+      assert.equal(cutoverCalls.length, 1, 'a provisionable machine must start the cutover');
+      assert.equal(cutoverCalls[0].target, 'caddy');
+      assert.equal(data.ingress.action, 'provision');
+      assert.equal(data.ingress.provisioning, true);
+      assert.equal(data.ingress.protection, 'pending');
+      assert.ok(data.ingress.url, 'the operator needs the address the gate will listen on');
+    });
+
+    it('suppresses the HTTPS restart while a cutover is running, so the two cannot race', async () => {
+      await request(server, 'PATCH', '/api/config', { setupComplete: false });
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        projectsDir: projectsDir,
+        httpsEnabled: false,
+        httpsCertPath: null,
+        httpsKeyPath: null
+      });
+      assert.equal(status, 200);
+      assert.equal(data.ingress.provisioning, true);
+      assert.equal(data.restart, false, 'the cutover restarts the server as its own last step');
+      assert.equal(data.redirectUrl, null);
+    });
+
     it('should update config and set setupComplete', async () => {
       // Reset setupComplete to false first
       await request(server, 'PATCH', '/api/config', { setupComplete: false });

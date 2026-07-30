@@ -1,0 +1,263 @@
+'use strict';
+
+// The wizard's provisioning decision, and the mechanics of observing an
+// operation that restarts the observer.
+//
+// Two properties earn their own suite here:
+//
+//   1. Every Caddyfile state maps to exactly one action, and an unknown state
+//      refuses. The wizard shows or hides a password field on this answer, so a
+//      state that fell through to a permissive default would collect a
+//      credential nothing enforces — the specific failure #710 chunk 2 exists
+//      to prevent.
+//
+//   2. The cutover child is spawned detached, with no inherited stdio, and any
+//      previous result is cleared FIRST. Each of those is load-bearing: the
+//      child restarts this server, so a child sharing the parent's fate (or a
+//      poller reading last week's `ok`) reports success for a cutover that has
+//      not happened.
+
+const { describe, it, before, after, beforeEach } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const store = require('../lib/store');
+const provision = require('../lib/ingress-provision');
+
+const ALL_STATES = ['absent', 'generated', 'adoptable', 'ambiguous', 'ungated', 'unreadable'];
+
+describe('decideProvisioning', () => {
+  it('provisions for the two states where nothing a human maintains is at risk', () => {
+    for (const state of ['absent', 'generated']) {
+      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      assert.equal(d.action, 'provision', `${state} should provision`);
+      assert.equal(d.remedy, null, `${state} has nothing to remedy`);
+    }
+  });
+
+  it('adopts an existing single-credential Caddyfile and names the user back', () => {
+    const d = provision.decideProvisioning({ state: 'adoptable', caddyAvailable: true, user: 'jason' });
+    assert.equal(d.action, 'adopt');
+    assert.equal(d.user, 'jason');
+    assert.match(d.reason, /jason/);
+    assert.equal(d.remedy, null);
+  });
+
+  it('adopts without a username when the state is adoptable but no user was passed', () => {
+    // classifyIngressState reports the user; a caller that omits it must still
+    // get the adopt action rather than falling through to a refusal.
+    const d = provision.decideProvisioning({ state: 'adoptable', caddyAvailable: true });
+    assert.equal(d.action, 'adopt');
+    assert.equal(d.user, null);
+    assert.ok(d.reason.length > 0);
+  });
+
+  it('refuses the three states it cannot act on safely, each with a remedy', () => {
+    for (const state of ['ambiguous', 'ungated', 'unreadable']) {
+      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      assert.equal(d.action, 'refuse', `${state} should refuse`);
+      assert.ok(d.reason.length > 0, `${state} must say why`);
+      assert.ok(d.remedy && d.remedy.length > 0, `${state} must say what fixes it`);
+    }
+  });
+
+  it('routes an ungated hand-written config to the CLI, where a backup and rollback exist', () => {
+    const d = provision.decideProvisioning({ state: 'ungated', caddyAvailable: true });
+    assert.match(d.remedy, /ingress-cutover\.js/);
+    assert.match(d.remedy, /--force/);
+    assert.match(d.remedy, /rollback/);
+  });
+
+  it('never offers --force for an unreadable config, which cannot be backed up', () => {
+    const d = provision.decideProvisioning({ state: 'unreadable', caddyAvailable: true });
+    assert.equal(d.action, 'refuse');
+    assert.ok(!/--force/.test(d.remedy), `unreadable must not suggest --force: ${d.remedy}`);
+  });
+
+  it('refuses an unrecognized state instead of guessing', () => {
+    for (const state of ['', null, undefined, 'partially-gated', 'GENERATED']) {
+      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      assert.equal(d.action, 'refuse', `${String(state)} must fail closed`);
+    }
+  });
+
+  it('refuses every state when caddy is not installed — including adoptable', () => {
+    // A hand-written Caddyfile on a machine with no caddy binary is a config
+    // nothing is running. Adopting its credential would mark TangleClaw
+    // protected while nothing enforces the gate.
+    for (const state of ALL_STATES) {
+      const d = provision.decideProvisioning({ state, caddyAvailable: false, user: 'jason' });
+      assert.equal(d.action, 'refuse', `${state} must refuse with no caddy`);
+      assert.match(d.reason, /not installed/);
+      assert.match(d.remedy, /install/i);
+      assert.equal(d.user, null, `${state} must not name a user it cannot honor`);
+    }
+  });
+
+  it('answers with an action for every state classifyIngressState can report', () => {
+    // Pins the two tables together: a state added to lib/caddy.js with no row
+    // here would otherwise land in the fail-closed default silently.
+    for (const state of ALL_STATES) {
+      const d = provision.decideProvisioning({ state, caddyAvailable: true });
+      assert.ok(['provision', 'adopt', 'refuse'].includes(d.action), `${state} → ${d.action}`);
+    }
+  });
+
+  it('is pure — the same facts give the same answer and the input is not mutated', () => {
+    const facts = { state: 'adoptable', caddyAvailable: true, user: 'jason' };
+    const frozen = JSON.stringify(facts);
+    const a = provision.decideProvisioning(facts);
+    const b = provision.decideProvisioning(facts);
+    assert.deepEqual(a, b);
+    assert.equal(JSON.stringify(facts), frozen);
+  });
+
+  it('does not throw on a missing facts object', () => {
+    const d = provision.decideProvisioning();
+    assert.equal(d.action, 'refuse');
+  });
+});
+
+describe('cutover result file', () => {
+  let tmpBase;
+  let prevBase;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-provision-'));
+    store._setBasePath(tmpBase);
+  });
+
+  after(() => {
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    fs.rmSync(provision.resultPath(), { force: true });
+  });
+
+  it('lives under the store base path, so it survives the restart the cutover performs', () => {
+    assert.equal(provision.resultPath(), path.join(tmpBase, provision.RESULT_FILENAME));
+  });
+
+  it('reports absent — not malformed — when no run has finished', () => {
+    assert.deepEqual(provision.readResult(), { present: false, malformed: false, result: null });
+  });
+
+  it('reads a real outcome back and leaves its codes untouched', () => {
+    fs.writeFileSync(provision.resultPath(), JSON.stringify({
+      ok: false, code: 'ungate-refused', target: 'caddy', error: 'no credential in config'
+    }));
+    const r = provision.readResult();
+    assert.equal(r.present, true);
+    assert.equal(r.malformed, false);
+    assert.equal(r.result.code, 'ungate-refused');
+    assert.equal(r.result.ok, false);
+  });
+
+  it('distinguishes malformed from absent, so a corrupt file is never read as pending', () => {
+    fs.writeFileSync(provision.resultPath(), '{ this is not json');
+    const r = provision.readResult();
+    assert.deepEqual(r, { present: true, malformed: true, result: null });
+  });
+
+  it('treats a JSON array or scalar as malformed, not as an outcome', () => {
+    for (const body of ['[]', '"ok"', 'null', '42']) {
+      fs.writeFileSync(provision.resultPath(), body);
+      const r = provision.readResult();
+      assert.equal(r.malformed, true, `${body} is not an outcome object`);
+      assert.equal(r.result, null);
+    }
+  });
+
+  it('clears a previous outcome so a stale ok cannot be read as this run', () => {
+    fs.writeFileSync(provision.resultPath(), JSON.stringify({ ok: true, code: 'ok' }));
+    assert.equal(provision.readResult().present, true);
+    const cleared = provision.clearResult();
+    assert.equal(cleared.cleared, true);
+    assert.equal(cleared.error, null);
+    assert.equal(provision.readResult().present, false);
+  });
+
+  it('clearing when there is nothing to clear succeeds rather than erroring', () => {
+    assert.deepEqual(provision.clearResult(), { cleared: true, error: null });
+  });
+});
+
+describe('spawnCutover', () => {
+  it('runs the repo\'s cutover script with the target and result file', () => {
+    const calls = [];
+    const res = provision.spawnCutover({
+      target: 'caddy',
+      resultFile: '/tmp/tc-result.json',
+      spawnFn: (cmd, argv, opts) => { calls.push({ cmd, argv, opts }); return { pid: 4242, unref() {} }; }
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.pid, 4242);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].argv, [
+      path.join(provision.repoDir(), 'scripts', 'ingress-cutover.js'),
+      '--to', 'caddy', '--result-file', '/tmp/tc-result.json'
+    ]);
+  });
+
+  it('runs the same node runtime as the server, not whatever `node` is on PATH', () => {
+    // Under launchd the service PATH is whatever install.sh captured; resolving
+    // `node` from it can pick a different runtime, or none.
+    let seen = null;
+    provision.spawnCutover({
+      resultFile: '/tmp/x.json',
+      spawnFn: (cmd) => { seen = cmd; return { pid: 1, unref() {} }; }
+    });
+    assert.equal(seen, process.execPath);
+  });
+
+  it('detaches, ignores stdio, and unrefs — the child restarts this server', () => {
+    let opts = null;
+    let unrefCalls = 0;
+    provision.spawnCutover({
+      resultFile: '/tmp/x.json',
+      spawnFn: (_cmd, _argv, o) => { opts = o; return { pid: 7, unref() { unrefCalls++; } }; }
+    });
+    assert.equal(opts.detached, true);
+    assert.equal(opts.stdio, 'ignore');
+    assert.equal(opts.cwd, provision.repoDir());
+    assert.equal(unrefCalls, 1, 'an un-unrefd child holds the event loop open past the response');
+  });
+
+  it('defaults to the caddy target and the shared result path', () => {
+    let argv = null;
+    provision.spawnCutover({ spawnFn: (_c, a) => { argv = a; return { pid: 1, unref() {} }; } });
+    assert.deepEqual(argv.slice(1), ['--to', 'caddy', '--result-file', provision.resultPath()]);
+  });
+
+  it('reports a spawn failure instead of throwing into the request handler', () => {
+    const res = provision.spawnCutover({
+      resultFile: '/tmp/x.json',
+      spawnFn: () => { throw new Error('EPERM'); }
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.pid, null);
+    assert.match(res.error, /EPERM/);
+  });
+
+  it('survives a spawn stub that returns nothing usable', () => {
+    const res = provision.spawnCutover({ resultFile: '/tmp/x.json', spawnFn: () => null });
+    assert.equal(res.ok, true);
+    assert.equal(res.pid, null);
+  });
+
+  it('refuses to start a REAL cutover from a test process', () => {
+    // The mutation this catches: someone reaches spawnCutover without a stub
+    // (directly, or through a route whose spawner was not overridden). A real run
+    // rewrites launchd plists and kickstarts the live server, so on a developer's
+    // machine that ends the suite by taking the install down.
+    assert.ok(process.env.NODE_TEST_CONTEXT, 'the interlock keys off the test runner marker');
+    const res = provision.spawnCutover({ target: 'caddy', resultFile: '/tmp/x.json' });
+    assert.equal(res.ok, false);
+    assert.equal(res.pid, null);
+    assert.match(res.error, /refusing to start a real ingress cutover/);
+  });
+});
