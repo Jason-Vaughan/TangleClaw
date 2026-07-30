@@ -751,8 +751,17 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       { name: 'provisioning (failed)', expect: /No login is in force/,
         status: { state: 'done', ok: false, code: 'failed' },
         ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
-      { name: 'provisioning (unconfirmed)', expect: /can't see the result|hasn't reported back/,
+      { name: 'provisioning (unconfirmed, origin gone)', expect: /can't see the result/,
         status: 'unreachable',
+        ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
+      // The `unconfirmed` phase renders from TWO template literals, picked by
+      // `reachable`. The row above only ever reaches the origin-gone one, so the
+      // reachable one — its own `role="alert"`, its own warnings block — was in
+      // the family in name only: deleting its role attribute left the suite green.
+      // This row lands on it, via a cutover that reported back with an unconfirmed
+      // health probe.
+      { name: 'provisioning (unconfirmed, origin reachable)', expect: /Applied — but the login could not be confirmed/,
+        status: { state: 'done', ok: true, code: 'ok', healthOk: false },
         ingress: { action: 'provision', provisioning: true, protection: 'pending', url: 'https://host:8443', user: 'jason' } },
       { name: 'unprotected', expect: /TangleClaw has no login/,
         ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
