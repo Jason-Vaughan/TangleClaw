@@ -92,8 +92,21 @@ describe('Global settings — Login section (#710 chunk 3b)', () => {
       assert.match(section, /type="text" class="form-input" id="gsCredUser"/);
     });
 
-    it('prefills the username so a password change does not require retyping it', () => {
-      assert.match(section, /value="\$\{esc\(info\.user \|\| ''\)\}"/);
+    it('shows the username READ-ONLY, and says why', () => {
+      // It is a selector, not a value: `replaceBasicAuthCredential` re-hashes the
+      // line it names and writes the MATCHED name back, so an editable field
+      // promised a rename that could only ever throw or silently keep the old name.
+      assert.match(section, /value="\$\{esc\(info\.user \|\| ''\)\}" readonly/);
+      assert.match(section, /aria-readonly="true"/);
+      assert.match(section, /cannot be changed\s*\n?\s*here/, 'and the form must say so');
+      assert.match(section, /reset-admin/, 'and name where a rename does happen');
+    });
+
+    it('does not send the username back, since the server resolves it from the gate', () => {
+      // Sending a read-only value back would be a field the client has no authority
+      // over — and a stale one whenever config and the live file have drifted.
+      assert.match(section, /apiMutate\('\/api\/auth\/credential', 'POST', \{ password \}\)/);
+      assert.doesNotMatch(section, /POST', \{ user/);
     });
   });
 
@@ -122,6 +135,16 @@ describe('Global settings — Login section (#710 chunk 3b)', () => {
       // moment they need to read which one.
       assert.doesNotMatch(section, /setTimeout|setInterval|location\.href|location\.reload/,
         'this screen must not move on its own');
+    });
+
+    it('does not claim a sign-out that has not happened', () => {
+      // Caddy holds the gate, so until it reloads the OLD password is still in
+      // force. The success text used to assert the re-prompt unconditionally,
+      // directly above the sentence saying the old password still worked.
+      const success = section.slice(section.indexOf('Your login is changed'));
+      assert.match(success, /res\.reloaded === false/);
+      assert.match(success, /OLD password is still in\s*\n?\s*force/);
+      assert.match(success, /you have not been signed out/);
     });
 
     it('names the finishing command when Caddy could not be reloaded', () => {

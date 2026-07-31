@@ -909,12 +909,18 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
     return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
   }
 
-  // An omitted username means "keep the one in force" — the common case is a
-  // password change, and making the operator retype a username to change a
-  // password is how a typo silently becomes a second account.
-  const rawUser = body.user === undefined ? config.basicAuthUser : body.user;
-  const user = typeof rawUser === 'string' ? rawUser.trim() : '';
-  if (!user) {
+  // The username is NOT changeable here, and the field is read-only in the UI for
+  // the same reason: `caddy.replaceBasicAuthCredential` takes a username as a
+  // SELECTOR of which credential line to re-hash, and writes back the matched
+  // name. A rename would therefore leave the gate on the old username while config
+  // recorded the new one — a config-vs-gate divergence, which is the failure this
+  // whole chunk exists to prevent. Renaming is a `reset-admin.js` job.
+  //
+  // Resolved from the LIVE FILE rather than from config, because those two drift
+  // (ADR 0009's amendment names that state) and the file is what the gate
+  // enforces. A caller sending a different name is refused, not obeyed.
+  const user = typeof body.user === 'string' ? body.user.trim() : '';
+  if (body.user !== undefined && !user) {
     return errorResponse(res, 400, 'A username is required', 'BAD_REQUEST');
   }
   const password = typeof body.password === 'string' ? body.password : '';
@@ -934,12 +940,22 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
 
   const result = adminCredential.applyCredentialChange({
     caddyfilePath: caddy.getCaddyfilePath(),
-    user,
+    // Undefined when the caller sent none: the module then resolves the single
+    // credential in the file itself.
+    user: user || undefined,
     hash,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')
   });
 
+  if (result.code === adminCredential.CREDENTIAL_CODES.RENAME_UNSUPPORTED) {
+    // Nothing was written. Says which name IS in force, because the caller's whole
+    // problem is that it disagrees with what they sent.
+    return errorResponse(res, 400,
+      `The username cannot be changed here — ${result.error}. `
+      + 'Run `node scripts/reset-admin.js` at a terminal to change it.',
+      adminCredential.httpCode(result.code));
+  }
   if (!result.ok) {
     // The gate and the recorded credential are both untouched — applyCredentialChange
     // restores the original before returning. Redacted for the same reason the
@@ -951,14 +967,16 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
       'The new login was rejected by Caddy, so nothing was changed.', 'VALIDATE_FAILED');
   }
 
-  log.info('Admin credential changed', { user, reloaded: result.reloaded });
+  log.info('Admin credential changed', { user: result.user, reloaded: result.reloaded });
   jsonResponse(res, 200, {
     ok: true,
-    user,
-    // The operator's browser still holds the OLD credential and basic_auth has no
-    // way to hand it new ones, so the next request 401s and re-prompts. Reported
-    // rather than hidden: a sign-out that arrives unexplained reads as a fault.
-    signedOut: true,
+    // The name the GATE carries, which is authoritative — not the one that was sent.
+    user: result.user,
+    // True only when the reload actually happened. Caddy holds the gate, so until
+    // it reloads the OLD password is still the one in force and the operator is
+    // NOT signed out — reporting otherwise would have the response contradict its
+    // own `reloaded: false` in the same body.
+    signedOut: result.reloaded,
     reloaded: result.reloaded,
     // Only when the reload failed — the change HAS taken, and this is the one
     // command left. Naming it unconditionally would imply work that isn't owed.

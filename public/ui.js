@@ -1412,7 +1412,14 @@ async function _loadCredentialSection() {
   box.innerHTML = `
     <label class="form-label" for="gsCredUser">Username</label>
     <input type="text" class="form-input" id="gsCredUser" autocomplete="username"
-           value="${esc(info.user || '')}" spellcheck="false" autocapitalize="none">
+           value="${esc(info.user || '')}" readonly aria-readonly="true"
+           spellcheck="false" autocapitalize="none">
+    <div class="form-hint">
+      Shown so you know which login you are changing. The username cannot be changed
+      here — it selects which credential to re-hash rather than setting one, so a
+      rename would leave the gate on the old name. Use
+      <code>node scripts/reset-admin.js</code> at a terminal to change it.
+    </div>
     <label class="form-label" for="gsCredPassword">New password</label>
     <input type="password" class="form-input" id="gsCredPassword" autocomplete="new-password">
     <label class="form-label" for="gsCredConfirm">Confirm new password</label>
@@ -1428,7 +1435,6 @@ async function _loadCredentialSection() {
   const saveBtn = document.getElementById('gsCredSaveBtn');
   saveBtn.addEventListener('click', async () => {
     const hint = document.getElementById('gsCredHint');
-    const user = document.getElementById('gsCredUser').value.trim();
     const password = document.getElementById('gsCredPassword').value;
     const confirm = document.getElementById('gsCredConfirm').value;
 
@@ -1443,7 +1449,10 @@ async function _loadCredentialSection() {
     }
 
     saveBtn.disabled = true;
-    const res = await apiMutate('/api/auth/credential', 'POST', { user, password });
+    // No `user` in the body. The field is read-only and the server resolves the
+    // target from the live gate — sending it back would be a value the client had
+    // no authority over, and a stale one if config and the file have drifted.
+    const res = await apiMutate('/api/auth/credential', 'POST', { password });
     saveBtn.disabled = false;
 
     if (!res) {
@@ -1456,11 +1465,11 @@ async function _loadCredentialSection() {
     box.innerHTML = `
       <div class="form-hint">
         <strong>Your login is changed${res.user ? ` for ${esc(res.user)}` : ''}.</strong>
-        The next page you load will ask for the new password.
         ${res.reloaded === false
-          ? `<br><br>Caddy could not be reloaded automatically, so the OLD password stays in force
-             until it is. Run <code>${esc(res.reloadCommand || '')}</code> at a terminal to finish.`
-          : ''}
+          ? `<br><br>But Caddy could not be reloaded, so the <strong>OLD password is still in
+             force</strong> and you have not been signed out. Run
+             <code>${esc(res.reloadCommand || '')}</code> at a terminal to apply it.`
+          : 'The next page you load will ask for the new password.'}
       </div>`;
   });
 }

@@ -208,40 +208,35 @@ async function main() {
     process.exit(1);
   }
 
-  const patched = caddy.replaceBasicAuthCredential(original, { hash, user: targetUser });
+  // The whole apply sequence — patch, fail-closed validated write, config sync,
+  // reload — is `adminCredential.applyCredentialChange`. This script proved it and
+  // the settings surface performs the identical one, so it is called rather than
+  // repeated: two copies of a sequence that rewrites the live gate is the drift
+  // the CAD-7X4V precedent already paid for once.
+  const result = adminCredential.applyCredentialChange({
+    caddyfilePath,
+    user: targetUser,
+    hash,
+    uid: process.getuid(),
+    stamp: new Date().toISOString().replace(/[:.]/g, '-')
+  });
 
-  // Back up + write + validate fail-closed (timestamped backup so repeated runs
-  // never clobber an earlier one; the original is restored if validation fails).
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const written = writeValidatedCaddyfile(caddyfilePath, patched.content, caddy.validateCaddyfile, stamp);
-  if (!written.ok) {
-    process.stderr.write(`ERROR: patched Caddyfile failed validation — restored the original (ingress untouched):\n  ${written.error}\n  Backup kept at: ${written.backup}\n`);
+  if (!result.ok) {
+    process.stderr.write(`ERROR: ${result.error}\n`);
+    if (result.backup) {
+      process.stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${result.backup}\n`);
+    }
     store.close();
     process.exit(1);
   }
-  const backup = written.backup;
 
-  // Sync persisted config so a future cutover regenerates the same credential.
-  const config = store.config.load();
-  config.authEnabled = true;
-  config.basicAuthUser = patched.user;
-  config.basicAuthHash = hash;
-  store.config.save(config);
-
-  // Reload Caddy in place. Non-fatal: the file is already patched + validated, so
-  // even if the reload can't run here the operator can finish it by hand.
-  const uid = process.getuid();
-  let reloaded = true;
-  try {
-    execFileSync('launchctl', reloadCaddyArgs(uid), { stdio: ['ignore', 'ignore', 'pipe'] });
-  } catch (err) {
-    reloaded = false;
-    process.stderr.write(`WARNING: could not reload Caddy automatically: ${err.message}\n  Run: launchctl ${reloadCaddyArgs(uid).join(' ')}\n`);
+  if (!result.reloaded) {
+    process.stderr.write(`WARNING: could not reload Caddy automatically.\n  Run: ${result.reloadCommand}\n`);
   }
 
-  process.stdout.write(`\nAdmin credential reset for '${patched.user}' (${patched.replaced} line(s) updated).\n`);
-  process.stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${backup}\n`);
-  if (reloaded) process.stdout.write('  ✓ Caddy reloaded — log in with the new password.\n\n');
+  process.stdout.write(`\nAdmin credential reset for '${result.user}' (${result.replaced} line(s) updated).\n`);
+  process.stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${result.backup}\n`);
+  if (result.reloaded) process.stdout.write('  ✓ Caddy reloaded — log in with the new password.\n\n');
   store.close();
 }
 

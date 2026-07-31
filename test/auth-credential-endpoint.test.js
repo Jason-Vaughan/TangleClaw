@@ -184,6 +184,39 @@ describe('POST /api/auth/credential', () => {
       assert.equal(store.config.load().basicAuthUser, 'jason');
     });
 
+    it('REFUSES a rename, naming the login that is actually in force', async () => {
+      // The defect this test exists for: `replaceBasicAuthCredential` takes a
+      // username as a SELECTOR of which line to re-hash and writes back the MATCHED
+      // name, so a rename either throws (500) or silently keeps the old name in the
+      // gate while config records the new one. Every earlier test here sent
+      // `user: 'jason'` — the fixture's OWN name — so the rename path was never
+      // once executed. The fixture has to contain the real shape.
+      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        { user: 'somebody-else', password: GOOD_PASSWORD });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'RENAME_UNSUPPORTED');
+      assert.match(data.error, /jason/, 'it must say which login IS in force');
+      assert.match(data.error, /reset-admin/, 'and where a rename actually happens');
+      // Nothing may have moved — not the gate, not config.
+      assert.equal(store.config.load().basicAuthUser, 'jason');
+      assert.equal(store.config.load().basicAuthHash, OLD_HASH);
+      assert.ok(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8').includes(OLD_HASH));
+    });
+
+    it('resolves the target from the FILE, not from config, when the two disagree', async () => {
+      // ADR 0009's amendment describes config and the live Caddyfile drifting. The
+      // file is what the gate enforces, so config naming someone else must not
+      // redirect the change — or send it to a 500.
+      const config = store.config.load();
+      config.basicAuthUser = 'stale-name-in-config';
+      store.config.save(config);
+      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        { password: GOOD_PASSWORD });
+      assert.equal(status, 200);
+      assert.equal(data.user, 'jason', 'the answer is the gate\'s name, not config\'s');
+      assert.equal(store.config.load().basicAuthUser, 'jason', 'and config is corrected to match');
+    });
+
     it('says plainly that the operator is about to be signed out', async () => {
       // Caddy reloads with the new hash and basic_auth cannot hand a browser new
       // credentials, so the re-prompt is certain. Unexplained, it reads as a fault.

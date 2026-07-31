@@ -325,11 +325,13 @@ All notable changes to TangleClaw are documented in this file.
   `scripts/reset-admin.js` had proved the sequence that actually changes a login — hash, patch the
   live Caddyfile, write with a timestamped backup and `caddy validate` fail-closed restoring the
   original on failure, sync config, reload Caddy — and the settings surface being built needs the
-  same one. It moves to `lib/admin-credential.js` and the script now consumes it, re-exporting so its
-  own contract is unchanged. Not a mirror: a hand-maintained copy of the Caddyfile-adoption logic
-  drifted from its original and produced a real defect, which is why adoption was collapsed to one
-  shared computation. Two places patch the live gate; only one may define how, and a structural test
-  pins that the script does not re-declare either helper.
+  same one. It moves to `lib/admin-credential.js` as `applyCredentialChange`, and `reset-admin.js`
+  **calls it** — the script keeps its prompts, dry-run and messaging, and hands the sequence itself
+  over. Not a mirror: a hand-maintained copy of the Caddyfile-adoption logic drifted from its
+  original and produced a real defect, which is why adoption was collapsed to one shared
+  computation. Two places patch the live gate; only one defines how. The structural test pins the
+  SEQUENCE and not merely the helpers — an earlier version of it checked only that two helper
+  functions were not re-declared, and so passed while the sequence still existed twice.
 
   The module also carries `canChangeCredential`, the single predicate that guards a remote credential
   change. It is one predicate rather than four checks because it does four jobs at once: a change is

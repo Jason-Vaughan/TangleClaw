@@ -203,6 +203,46 @@ describe('one implementation, not two', () => {
     assert.match(src, /require\(path\.join\(REPO_DIR, 'lib', 'admin-credential'\)\)/);
   });
 
+  it('reset-admin.js runs the SHARED apply sequence, not its own copy of it', () => {
+    // The earlier version of this test pinned only that two HELPERS were not
+    // re-declared, while the sequence they belong to — patch, validated write,
+    // config sync, reload — still existed twice. So the test passed while the drift
+    // it was named for was present, and the CHANGELOG claimed a single-sourcing
+    // that had not shipped. This pins the sequence itself.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'reset-admin.js'), 'utf8');
+    assert.match(src, /adminCredential\.applyCredentialChange\(/,
+      'the script must call the shared sequence');
+    assert.doesNotMatch(src, /caddy\.replaceBasicAuthCredential\(/,
+      'patching the gate belongs to the shared sequence');
+    assert.doesNotMatch(src, /writeValidatedCaddyfile\(caddyfilePath/,
+      'so does the fail-closed write');
+    assert.doesNotMatch(src, /execFileSync\('launchctl'/,
+      'and so does the reload');
+  });
+
+  it('refuses a rename rather than throwing, and touches nothing', () => {
+    // `user` is a SELECTOR. A name absent from the file used to reach
+    // replaceBasicAuthCredential and throw, surfacing as a 500 on a deliberate
+    // operator action.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-rename-'));
+    const file = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(file, gatedCaddyfile('jason', HASH_OLD));
+    try {
+      const r = cred.applyCredentialChange({
+        caddyfilePath: file, user: 'someone-new', hash: HASH_NEW, uid: 501, stamp: 'S',
+        execFn: () => {}, validateFn: () => ({ ok: true })
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'rename-unsupported');
+      assert.match(r.error, /jason/, 'it must name the login actually in force');
+      assert.equal(r.user, 'jason');
+      assert.equal(fs.readFileSync(file, 'utf8'), gatedCaddyfile('jason', HASH_OLD),
+        'the file must be byte-identical — nothing was attempted');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('still exports them, so its own callers and tests are unaffected', () => {
     const resetAdmin = require('../scripts/reset-admin');
     assert.equal(resetAdmin.reloadCaddyArgs, cred.reloadCaddyArgs);
