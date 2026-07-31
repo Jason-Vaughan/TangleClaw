@@ -70,12 +70,12 @@ describe('C1 — per-project plugin migration (#262)', () => {
   });
 
   describe('engines.PRAWDUCT_INSTALL_REFERENCE', () => {
-    // The literal is duplicated here on purpose. This is the tripwire: prawduct
-    // publishes INSTALL_REFERENCE in its plugin's lib/migrate_plugin.py, and if
-    // either side moves, this test fails loudly instead of the divergence
-    // reaching every project TangleClaw migrates. Upstream currently marks
-    // autoUpdate provisional, so a future change here is legitimate — but it
-    // must be a deliberate edit to this assertion, never a silent drift.
+    // The literal is duplicated here on purpose, and this assertion catches
+    // exactly ONE direction: TangleClaw's side changing. Both operands live in
+    // this repo, so it can say nothing about upstream — the upstream half is
+    // the separate test below that reads the installed plugin's source.
+    // Upstream marks autoUpdate provisional, so a future change here is
+    // legitimate; it must be a deliberate edit, never a silent drift.
     it('matches prawduct’s published install reference verbatim', () => {
       assert.deepEqual(engines.PRAWDUCT_INSTALL_REFERENCE, {
         enabledPlugins: { 'prawduct@prawduct': true },
@@ -86,6 +86,18 @@ describe('C1 — per-project plugin migration (#262)', () => {
           }
         }
       });
+    });
+
+    it('is frozen all the way down, not just at the top level', () => {
+      // Load-bearing: migrateToPlugin spreads the nested object into the
+      // caller's settings BY REFERENCE, so one mutation would ride into every
+      // subsequent migration. A shallow Object.freeze leaves this writable, so
+      // a refactor back to it must fail here rather than pass quietly.
+      const ref = engines.PRAWDUCT_INSTALL_REFERENCE;
+      assert.throws(() => { 'use strict'; ref.extraKnownMarketplaces.prawduct.source.ref = 'hacked'; });
+      assert.throws(() => { 'use strict'; ref.extraKnownMarketplaces.prawduct.autoUpdate = false; });
+      assert.equal(ref.extraKnownMarketplaces.prawduct.source.ref, 'main');
+      assert.equal(ref.extraKnownMarketplaces.prawduct.autoUpdate, true);
     });
 
     it('pins ref to a branch, never a version tag', () => {
@@ -113,8 +125,13 @@ describe('C1 — per-project plugin migration (#262)', () => {
         return;
       }
       const py = fs.readFileSync(src, 'utf8');
-      const block = py.slice(py.indexOf('INSTALL_REFERENCE'));
-      assert.ok(block, 'INSTALL_REFERENCE not found in upstream source');
+      const start = py.indexOf('INSTALL_REFERENCE');
+      assert.notEqual(start, -1, 'INSTALL_REFERENCE not found in upstream source');
+      // Bound the window to the dict literal. Reading to EOF happens to work
+      // today only because upstream defines nothing else matching these keys;
+      // stopping at the closing brace keeps that a fact rather than a wager.
+      const end = py.indexOf('\n}', start);
+      const block = py.slice(start, end === -1 ? undefined : end);
 
       const ours = engines.PRAWDUCT_INSTALL_REFERENCE.extraKnownMarketplaces.prawduct;
       const upstreamRef = /"ref":\s*"([^"]+)"/.exec(block);
@@ -149,6 +166,40 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(engines._isCompletePluginRef(null), false);
       assert.equal(engines._isCompletePluginRef({}), false);
       assert.equal(engines._isCompletePluginRef({ enabledPlugins: { 'other@x': true } }), false);
+    });
+
+    // The marketplace name is derived from each `plugin@marketplace` key rather
+    // than assumed to be "prawduct". Only prawduct@prawduct ships today, so
+    // without these two cases the derivation and a hardcoded `markets.prawduct`
+    // lookup are indistinguishable — every other case in this block passes
+    // under both.
+    it('resolves each plugin against its OWN marketplace, not a hardcoded one', () => {
+      // Marketplace present but not the one this key names → unresolvable.
+      assert.equal(
+        engines._isCompletePluginRef({
+          enabledPlugins: { 'prawduct@other': true },
+          extraKnownMarketplaces: { prawduct: { source: {} } }
+        }),
+        false
+      );
+      // Marketplace matching the key's suffix → resolvable.
+      assert.equal(
+        engines._isCompletePluginRef({
+          enabledPlugins: { 'prawduct@other': true },
+          extraKnownMarketplaces: { other: { source: {} } }
+        }),
+        true
+      );
+    });
+
+    it('requires EVERY enabled plugin to resolve, not merely one', () => {
+      assert.equal(
+        engines._isCompletePluginRef({
+          enabledPlugins: { 'prawduct@prawduct': true, 'prawduct@other': true },
+          extraKnownMarketplaces: { prawduct: { source: {} } } // `other` unresolvable
+        }),
+        false
+      );
     });
   });
 

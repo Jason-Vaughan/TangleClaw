@@ -1,6 +1,8 @@
 # ADR 0011: The Prawduct boundary — TangleClaw owns the plumbing, consumes the governance
 
-**Status:** Accepted (2026-07-29).
+**Status:** Accepted (2026-07-29). **Amended 2026-07-31 (#807, #816)** — the seam grew a fourth item:
+TangleClaw now embeds a copy of Prawduct's published install reference. The amendment is recorded
+against the standing constraint in decision 3, which required exactly this.
 **Source issue:** #330 — "Decouple Prawduct from TangleClaw: direct-integration drift risk as Prawduct moves to a Claude-embedded V2 skill." Filed explicitly *to capture the decision*.
 **Builds on:** #353 (governance moved to the V2 plugin; `governanceState` derived live), #262 (the migration action), #538/#570 (methodology layer removed, `critic-check` deleted), #763 (auto-onboarding declined as out-of-boundary).
 **Decides:** #330. Governs #368 and any future proposal that moves work across this seam.
@@ -99,11 +101,16 @@ position that was in fact built.
    governance, the Critic, learnings. TangleClaw does not carry its own copy of these concepts. The
    methodology layer that used to (#538, #570) is gone and does not come back.
 
-3. **The seam is exactly three things,** and anything crossing it is a decision, not an
+3. **The seam is exactly four things,** and anything crossing it is a decision, not an
    implementation detail:
    - the `prawduct@*` key in a project's `.claude/settings.json` (governance detection),
    - `CLAUDE.md` as a plugin-owned anchor TangleClaw must not regenerate when plugin-governed,
-   - `.prawduct/` as plugin-owned state TangleClaw reads at agreed paths and never authors.
+   - `.prawduct/` as plugin-owned state TangleClaw reads at agreed paths and never authors,
+   - **`PRAWDUCT_INSTALL_REFERENCE`** (added by the 2026-07-31 amendment, #807/#816) — an embedded
+     copy of Prawduct's published `INSTALL_REFERENCE`, kept in sync by review rather than read at
+     run time. It is a *value* copied across the seam, not a call across it, which is why it is a
+     manual-sync obligation: a test reads the installed plugin's source to detect upstream drift,
+     but production never does, because migrations run on machines where the plugin is absent.
 
 4. **Governance state is derived live, never persisted.** `governanceState` inspects the filesystem on
    every read, so it self-clears the moment a project migrates. A persisted mirror of an external
@@ -142,9 +149,12 @@ projects. Under decision 6 that is governance activation happening as a side eff
 creation, which is the seam #763 was closed on.
 
 The counter-argument is genuine and should be recorded: the machinery already exists
-(`engines.migrateToPlugin` writes exactly those keys), TangleClaw already writes them for itself, and
-#368 is narrower than #763 — it writes a *reference*, not a full onboarding run, and is opt-out and
-Claude-only by design. So #368 is not absurd; it is a real proposal that this boundary rules against.
+(`engines.migrateToPlugin` writes exactly those keys), and #368 is narrower than #763 — it writes a
+*reference*, not a full onboarding run, and is opt-out and Claude-only by design. So #368 is not
+absurd; it is a real proposal that this boundary rules against. (The original phrasing also cited
+"TangleClaw already writes them for itself" — that referred to the self-sourcing deleted by the
+2026-07-31 amendment, and is no longer a supporting fact. #368 was closed `NOT_PLANNED` on
+2026-07-30.)
 
 Leaving both open unexamined is the outcome to avoid: #763 closed on "the fix belongs on the Prawduct
 side of the seam," and #368 proposes crossing that same seam. Whichever way #368 goes, it should cite
@@ -157,7 +167,9 @@ from abstracting more. Future upstream changes should be met the same way: shrin
 widening the adapter.
 
 **Standing constraints this creates:**
-- Adding a fourth item to the seam (decision 3) requires an ADR amendment.
+- Adding a **fifth** item to the seam (decision 3) requires an ADR amendment. The fourth —
+  `PRAWDUCT_INSTALL_REFERENCE` — was added by the 2026-07-31 amendment (#807/#816) under exactly
+  this constraint; the count in decision 3 is the number to check against, not this sentence.
 - No TangleClaw code may write inside `.prawduct/`.
 - No lifecycle operation may enable governance without an explicit operator action.
 - Reimplementing a Prawduct capability natively — a TangleClaw Critic, a TangleClaw discovery flow —
@@ -178,7 +190,7 @@ methodology framework, which is a second product with its own roadmap. #538 and 
 deliberately in the opposite direction.
 
 **Option 4 — drop Prawduct coupling entirely.** Rejected. The governance is *useful*, TangleClaw's own
-development depends on it, and the seam turned out to be three items — a cost far below the capability
+development depends on it, and the seam turned out to be four items — a cost far below the capability
 it buys.
 
 **A portable, engine-agnostic Critic.** Rejected as option 2 wearing a smaller hat. The Critic's value
