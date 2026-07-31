@@ -262,6 +262,27 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The clean-room guest is reachable from a browser, and the procedure is written down (#808).** The
+  VRF's `[~]` rows were unverifiable for one reason: nothing but habitat's shell could reach the
+  guest, so every assertion about what a *screen* shows had to be marked NOT VERIFIED. `tc-cleanroom`
+  now joins the tailnet, so Screen Sharing and (once installed) TangleClaw open from any tailnet
+  device including the iPhone — no tunnel, no habitat hop.
+
+  New **Phase A** in `deploy/VRF-auth-1-cutover.md` documents it end to end. Three findings in it are
+  not recoverable by reading any doc: `tart run --vnc` provides no VNC server (it points at the
+  guest's own Screen Sharing, inactive on a vanilla image, giving a login prompt no password can
+  satisfy); the macsys Tailscale has **no unix socket**, so checking `/var/run/tailscale*` reports
+  "daemon down" while it is running (it listens on the TCP port named in `/Library/Tailscale/ipnport`);
+  and extension approval alone does **not** start the backend — the VPN profile is only created when a
+  sign-in is *attempted*, so the procedure is to start one and let it fail, never to complete it,
+  because a completed login creates the node identity the snapshot must not carry.
+
+  Also captures `tc-base-tailnet`: a derived base holding the approval and VPN profile but **no node
+  identity**, snapshotted between approval and join. Future runs clone it and skip the one GUI
+  approval entirely, while `tc-base` stays vanilla for testing a genuine first-ever install — the
+  #788 case. Whether the approval survives a clone is flagged in the doc as reasoned-but-unobserved,
+  for the next run to settle.
+
 - **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
   exercised `writeCutoverResult` and `pollHealth` directly — everything except the call site itself,
   `finish(...)` inside `main()`, a closure nothing importable can invoke. Reverting that line to
