@@ -435,57 +435,71 @@ describe('API endpoints', () => {
       assert.equal('basicAuthHash' in data, false); // redacted — credential hash never leaves the server
     });
 
-    it('should store basicAuthHash as-is (NOT re-hashed) but redact it from the API response', async () => {
-      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: 'jason', basicAuthHash: BCRYPT });
-      assert.equal(res.status, 200);
-      assert.equal(res.data.config.basicAuthUser, 'jason');
-      assert.equal(res.data.config.basicAuthConfigured, true);
-      assert.equal('basicAuthHash' in res.data.config, false); // redacted from the response
-      // …but persisted verbatim (the bcrypt hash is already hashed — never scrypt-re-hashed like deletePassword)
-      assert.equal(store.config.load().basicAuthHash, BCRYPT);
-      await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
+    // These six previously pinned PATCH /api/config WRITING the credential. That
+    // capability is gone, so the contract is replaced rather than deleted — and
+    // the replacement is strictly stronger: it asserted which writes were allowed,
+    // this asserts that none are. The route authenticates nobody and had no
+    // lifecycle gate, so on an ungated, network-reachable install an
+    // unauthenticated caller could set an admin credential and lock the owner out.
+
+    it('refuses every credential field, individually', async () => {
+      for (const body of [
+        { authEnabled: true },
+        { basicAuthUser: 'attacker' },
+        { basicAuthHash: BCRYPT }
+      ]) {
+        const { status, data } = await request(server, 'PATCH', '/api/config', body);
+        assert.equal(status, 409, `${Object.keys(body)[0]} must be refused here`);
+        assert.equal(data.code, 'CREDENTIAL_ROUTE_MOVED');
+      }
     });
 
-    it('should enable basic_auth when user + hash are present', async () => {
-      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: 'jason', basicAuthHash: BCRYPT, authEnabled: true });
-      assert.equal(res.status, 200);
-      assert.equal(res.data.config.authEnabled, true);
-      // restore: clear the flag first, then the creds (clearing creds while enabled would 400)
-      await request(server, 'PATCH', '/api/config', { authEnabled: false });
-      await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
+    it('refuses a WELL-FORMED bcrypt hash too — the objection is the route, not the shape', async () => {
+      // The old guard rejected plaintext and accepted a real hash. That is exactly
+      // backwards for this defect: a valid hash from an unauthenticated caller is
+      // the attack, not the mistake.
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        basicAuthUser: 'attacker', basicAuthHash: BCRYPT, authEnabled: true
+      });
+      assert.equal(status, 409);
+      assert.equal(data.code, 'CREDENTIAL_ROUTE_MOVED');
+      assert.equal(store.config.load().basicAuthHash, null, 'nothing may be persisted');
+      assert.equal(store.config.load().basicAuthUser, null);
+      assert.equal(store.config.load().authEnabled, false);
     });
 
-    it('should reject authEnabled=true with no credential (fail closed, symmetric with the generator)', async () => {
-      const { status, data } = await request(server, 'PATCH', '/api/config', { authEnabled: true });
-      assert.equal(status, 400);
-      assert.equal(data.code, 'BAD_REQUEST');
-      // and the flag must NOT have been persisted
-      const { data: cfg } = await request(server, 'GET', '/api/config');
-      assert.equal(cfg.authEnabled, false);
+    it('names both ways to actually change it, since refusing without one is a dead end', async () => {
+      const { data } = await request(server, 'PATCH', '/api/config', { basicAuthUser: 'jason' });
+      assert.match(data.error, /\/api\/auth\/credential/, 'the settings route');
+      assert.match(data.error, /reset-admin/, 'and the terminal recovery tool');
     });
 
-    it('should reject authEnabled=true with a user but no hash (half-set)', async () => {
-      const { status } = await request(server, 'PATCH', '/api/config', { authEnabled: true, basicAuthUser: 'jason' });
-      assert.equal(status, 400);
+    it('refuses the WHOLE patch, so an unrelated field does not slip through beside it', async () => {
+      // Atomicity matters here: applying the harmless half of a rejected body would
+      // report partial success as success, and the caller has no way to tell which
+      // half took.
+      const before = store.config.load().theme;
+      const nextTheme = before === 'light' ? 'dark' : 'light';
+      const { status } = await request(server, 'PATCH', '/api/config',
+        { theme: nextTheme, basicAuthUser: 'attacker' });
+      assert.equal(status, 409);
+      assert.equal(store.config.load().theme, before, 'the unrelated field must not have applied');
     });
 
-    it('should reject a plaintext (non-bcrypt) basicAuthHash', async () => {
-      const { status, data } = await request(server, 'PATCH', '/api/config', { basicAuthHash: 'hunter2' });
-      assert.equal(status, 400);
-      assert.equal(data.code, 'BAD_REQUEST');
+    it('still refuses when a credential field is explicitly null or empty', async () => {
+      // The blanking route. `null` reads as "clear it", which the Direction forbids
+      // from a settings surface: it would be a second way to reach "no password".
+      for (const body of [{ basicAuthUser: null }, { basicAuthHash: '' }, { authEnabled: false }]) {
+        const { status } = await request(server, 'PATCH', '/api/config', body);
+        assert.equal(status, 409, `${JSON.stringify(body)} must not be a way to blank the login`);
+      }
     });
 
-    it('should reject a non-boolean authEnabled', async () => {
-      const { status } = await request(server, 'PATCH', '/api/config', { authEnabled: 'yes' });
-      assert.equal(status, 400);
-    });
-
-    it('should normalize empty basicAuth strings to null', async () => {
-      const res = await request(server, 'PATCH', '/api/config', { basicAuthUser: '', basicAuthHash: '' });
-      assert.equal(res.status, 200);
-      assert.equal(res.data.config.basicAuthUser, null);
-      assert.equal(res.data.config.basicAuthConfigured, false);
-      assert.equal(store.config.load().basicAuthHash, null);
+    it('leaves the config API redacting the hash exactly as before', async () => {
+      // Unchanged by this work, re-asserted because the surrounding block moved.
+      const { data } = await request(server, 'GET', '/api/config');
+      assert.equal('basicAuthHash' in data, false);
+      assert.equal(data.basicAuthConfigured, false);
     });
   });
 

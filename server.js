@@ -47,6 +47,7 @@ const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ingressProvision = require('./lib/ingress-provision');
+const adminCredential = require('./lib/admin-credential');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const ttydBind = require('./lib/ttyd-bind');
@@ -623,9 +624,28 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
     'stripAiCoauthors', 'ingressMode', 'publicDomain', 'bindAllInterfaces',
     'caddyHttpsPort', 'caddyHttpPort',
-    'authEnabled', 'basicAuthUser', 'basicAuthHash',
+    // authEnabled / basicAuthUser / basicAuthHash are deliberately ABSENT. This
+    // route authenticates nobody, validated only the SHAPE of a hash, and had no
+    // lifecycle gate — so on an ungated, network-reachable install an
+    // unauthenticated caller could set an admin credential of their choosing and
+    // lock the owner out. Credential changes go through POST /api/auth/credential,
+    // which refuses unless a live gate is already authenticating the request.
     'serviceTokenEnabled', 'wrapDisabled', 'master'
   ];
+
+  // Refuse rather than ignore. Unknown keys below are silently skipped by design,
+  // which is right for a field this route never owned — but these three it DID
+  // own until now, so a caller still sending them would get 200 and no change,
+  // and "your password is updated" when it is not is the exact false report this
+  // work exists to end.
+  const CREDENTIAL_FIELDS = ['authEnabled', 'basicAuthUser', 'basicAuthHash'];
+  const sentCredential = CREDENTIAL_FIELDS.filter((k) => k in body);
+  if (sentCredential.length > 0) {
+    return errorResponse(res, 409,
+      `${sentCredential.join(', ')} cannot be set here. Change the login from settings, `
+      + 'which uses POST /api/auth/credential, or run `node scripts/reset-admin.js` at a terminal.',
+      'CREDENTIAL_ROUTE_MOVED');
+  }
 
   const validThemes = ['dark', 'light', 'high-contrast'];
   const validPeekModes = ['drawer', 'modal', 'alert'];
@@ -697,31 +717,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       return errorResponse(res, 400, `${key} must be a string or null`, 'BAD_REQUEST');
     }
     // AUTH-2 — basic_auth gate config.
-    if (key === 'authEnabled' && typeof value !== 'boolean') {
-      return errorResponse(res, 400, 'authEnabled must be a boolean', 'BAD_REQUEST');
-    }
-    if (key === 'basicAuthUser' && value !== null && value !== '' && typeof value !== 'string') {
-      return errorResponse(res, 400, 'basicAuthUser must be a string or null', 'BAD_REQUEST');
-    }
     // AUTH-4 — M2M service-token gate master switch. The raw `serviceToken` is
     // NOT patchable here (managed via the rotate endpoint + auto-generation);
     // only the enable flag is operator-settable.
     if (key === 'serviceTokenEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'serviceTokenEnabled must be a boolean', 'BAD_REQUEST');
     }
-    if (key === 'basicAuthHash' && value !== null && value !== '') {
-      // Must be a bcrypt hash, never a plaintext password — `caddy hash-password`
-      // produces `$2a$NN$…` (60 chars). Rejecting non-bcrypt input is the guard
-      // against a plaintext password being stored where a hash is expected.
-      if (typeof value !== 'string' || !caddy.BCRYPT_HASH_RE.test(value)) {
-        return errorResponse(res, 400, 'basicAuthHash must be a bcrypt hash (use `caddy hash-password`), not a plaintext password', 'BAD_REQUEST');
-      }
-    }
-
     // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
     let storedValue = value;
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain'
-         || key === 'basicAuthUser' || key === 'basicAuthHash') && (value === '' || value === null)) {
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain')
+        && (value === '' || value === null)) {
       storedValue = null;
     }
 
@@ -853,6 +858,113 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // basic_auth in caddy mode / localhost-only in direct mode, like the rest of
 // /api), deliberately OUTSIDE the M2M-gated path set — a service caller holding
 // the token must not be able to reveal or rotate its own gate credential.
+
+// GET /api/auth/credential — what the settings surface may offer, and why not.
+//
+// Answered BEFORE the operator types anything, so the form is never rendered for
+// an install that cannot use it. The refusal reasons are the same ones the POST
+// returns, from the same predicate, so the two can never disagree about a machine
+// between rendering the form and submitting it — the failure this chunk's sibling
+// (the wizard step list) already had to fix once.
+route('GET', '/api/auth/credential', (_req, res) => {
+  const config = store.config.load();
+  const check = adminCredential.canChangeCredential(config, caddy.classifyIngressState());
+  jsonResponse(res, 200, {
+    changeable: check.allowed,
+    // Same spelling the POST's refusal uses, from the same translator — a client
+    // comparing the two must never see one state under two names.
+    code: adminCredential.httpCode(check.code),
+    reason: check.reason,
+    remedy: check.remedy,
+    // The username currently in force, so the form can prefill it. Never the
+    // hash: it is a credential, and the redacted config API withholds it for the
+    // same reason.
+    user: check.allowed ? config.basicAuthUser : null
+  });
+});
+
+// POST /api/auth/credential — change the admin username/password after setup.
+//
+// The ONLY route that writes a credential outside first-run setup and the
+// terminal recovery tool. `PATCH /api/config` deliberately no longer accepts
+// these fields: a guarded front door beside an unguarded side one is not a gate,
+// and that side door was reachable unauthenticated on an ungated install.
+//
+// It may CHANGE a credential and never create or blank one. Creating is recovery
+// and belongs at a terminal, because a reset that lives behind the gate cannot
+// help someone the gate has locked out; blanking would be a second route to "no
+// password", and the Direction allows exactly one.
+//
+// There is no "current password" field, and its absence is a finding rather than
+// an oversight: `caddy hash-password` has no verify mode and no `--salt`, so a
+// stored bcrypt hash cannot be reproduced for comparison, and Node's stdlib has
+// no bcrypt. The server cannot check a typed current password, and a field that
+// does not verify is theatre. What authenticates this request is that Caddy
+// already did — which is exactly why the guard below refuses whenever no gate is
+// in force.
+route('POST', '/api/auth/credential', (_req, res, _params, body) => {
+  const config = store.config.load();
+  const check = adminCredential.canChangeCredential(config, caddy.classifyIngressState());
+  if (!check.allowed) {
+    return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
+  }
+
+  // An omitted username means "keep the one in force" — the common case is a
+  // password change, and making the operator retype a username to change a
+  // password is how a typo silently becomes a second account.
+  const rawUser = body.user === undefined ? config.basicAuthUser : body.user;
+  const user = typeof rawUser === 'string' ? rawUser.trim() : '';
+  if (!user) {
+    return errorResponse(res, 400, 'A username is required', 'BAD_REQUEST');
+  }
+  const password = typeof body.password === 'string' ? body.password : '';
+  const pwCheck = caddy.validateAdminPassword(password, user);
+  if (!pwCheck.ok) {
+    return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
+  }
+
+  let hash;
+  try {
+    hash = caddy.hashPassword(password);
+  } catch (err) {
+    // Never the plaintext; the message is the caddy failure, not the secret.
+    log.error('Admin credential hashing failed', { error: err.message });
+    return errorResponse(res, 500, `Could not hash the password: ${err.message}`, 'HASH_FAILED');
+  }
+
+  const result = adminCredential.applyCredentialChange({
+    caddyfilePath: caddy.getCaddyfilePath(),
+    user,
+    hash,
+    uid: process.getuid(),
+    stamp: new Date().toISOString().replace(/[:.]/g, '-')
+  });
+
+  if (!result.ok) {
+    // The gate and the recorded credential are both untouched — applyCredentialChange
+    // restores the original before returning. Redacted for the same reason the
+    // cutover's is: `caddy validate` output quotes the offending line, and that
+    // line carries a hash.
+    log.warn('Admin credential change rejected by caddy validate',
+      { error: caddy.redactHashes(result.error) });
+    return errorResponse(res, 400,
+      'The new login was rejected by Caddy, so nothing was changed.', 'VALIDATE_FAILED');
+  }
+
+  log.info('Admin credential changed', { user, reloaded: result.reloaded });
+  jsonResponse(res, 200, {
+    ok: true,
+    user,
+    // The operator's browser still holds the OLD credential and basic_auth has no
+    // way to hand it new ones, so the next request 401s and re-prompts. Reported
+    // rather than hidden: a sign-out that arrives unexplained reads as a fault.
+    signedOut: true,
+    reloaded: result.reloaded,
+    // Only when the reload failed — the change HAS taken, and this is the one
+    // command left. Naming it unconditionally would imply work that isn't owed.
+    reloadCommand: result.reloaded ? null : result.reloadCommand
+  });
+});
 
 // GET /api/service-token — reveal the raw fleet token for the Settings
 // "reveal" display. 404 when the gate is off or no token is set (nothing to

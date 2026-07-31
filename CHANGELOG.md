@@ -248,6 +248,21 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+- **`PATCH /api/config` can no longer set the admin credential (#805, #710 chunk 3b).** It carried
+  `authEnabled`, `basicAuthUser` and `basicAuthHash` in its allow-list, validated only the *shape*
+  of a hash, had no lifecycle gate and no authentication in front of it — so on an ungated,
+  network-reachable install an unauthenticated caller could set an admin credential of their
+  choosing and lock the owner out. This is the same hole that was closed at `POST /api/setup/complete`
+  one route over; it survived because the field is written through a generic allow-list loop, so a
+  grep for `basicAuthHash =` finds the four named writers and misses this one entirely.
+
+  The fields are gone, and the route **refuses** rather than ignoring them: unknown keys are
+  silently skipped by design, which would have turned a credential write into a `200` with no
+  change — "your password is updated" when it is not. It answers `409 CREDENTIAL_ROUTE_MOVED`,
+  names both real routes, and refuses the *whole* patch, so an unrelated field cannot slip through
+  beside the rejected one. Now-unreachable code went with it: the bcrypt-shape check, the
+  empty-string normalization for those keys, and two key validations.
+
 - **A credential hash can no longer reach the application log through a cutover failure (#710).**
   `observability-strategy.md` forbids passwords plaintext or hashed at any level. On the
   `validate-failed` path the cutover's error text is `caddy validate` stderr, which quotes the
@@ -262,6 +277,30 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **One route changes a login after setup, and it refuses more often than it acts (#710 chunk 3b).**
+  New `POST /api/auth/credential`, guarded by the single `canChangeCredential` predicate: a change
+  is allowed only in caddy mode, with a gate present in the LIVE Caddyfile, and with a credential
+  already recorded. It may change a login and never create or blank one — creating is recovery and
+  stays at a terminal, because a reset behind the gate cannot help someone the gate has locked out,
+  and blanking would be a second route to "no password" where the Direction allows exactly one.
+  `GET /api/auth/credential` answers from the same predicate so the form is never drawn for an
+  install that would refuse it — a client and server disagreeing about one machine is a defect this
+  chunk's sibling already had to fix once.
+
+  **There is no "current password" field, and that is a finding rather than an omission.** `caddy
+  hash-password` has no verify mode and no `--salt`, so a stored bcrypt hash cannot be reproduced
+  for comparison, and Node's stdlib has no bcrypt — under the zero-dep preference the server cannot
+  check a typed current password at all, and a field that does not verify is theatre. What
+  authenticates the request is that Caddy already did, which is why the guard refuses whenever no
+  gate is in force.
+
+  Tests: `test/auth-credential-endpoint.test.js` (14) — every refusal branch, the live gate actually
+  rewritten rather than only config, the username kept when only a password is sent, neither hash
+  nor plaintext crossing the HTTP boundary, GET and POST agreeing on the same machine, and a
+  fail-closed suite where `caddy validate` rejects and both the gate and the recorded credential are
+  found unchanged afterwards. `test/_caddy-stub.js` gains an `answersValidate` option (default on)
+  so that last case can exist.
+
 - **The credential-apply sequence has one implementation, ready for a second caller (#710 chunk 3b).**
   `scripts/reset-admin.js` had proved the sequence that actually changes a login — hash, patch the
   live Caddyfile, write with a timestamped backup and `caddy validate` fail-closed restoring the

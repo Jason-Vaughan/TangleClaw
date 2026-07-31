@@ -36,10 +36,22 @@ const path = require('node:path');
  * @param {string} dir - Directory to write the stub into. Must exist.
  * @param {object} [opts]
  * @param {boolean} [opts.answersVersion=true] - Whether `caddy version` succeeds.
+ * @param {boolean} [opts.answersValidate=true] - Whether `caddy validate` accepts the file.
  * @returns {string} Path to the stub.
  */
 function writeCaddyStub(dir, opts = {}) {
   const answersVersion = opts.answersVersion !== false;
+  const answersValidate = opts.answersValidate !== false;
+  // `validate` accepts by default. A stub that rejected everything would make any
+  // caller that writes a Caddyfile look like it produced a broken one, which is
+  // the opposite of the failure a test usually wants to isolate. Opt out to
+  // exercise the fail-closed restore path.
+  const validateCase = answersValidate
+    ? `  validate)
+    exit 0
+    ;;
+`
+    : '';
   const versionCase = answersVersion
     ? `  version)
     echo 'v2.8.4 h1:stub'
@@ -54,7 +66,7 @@ ${versionCase}  hash-password)
     echo '\$2a\$14\$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU'
     exit 0
     ;;
-esac
+${validateCase}esac
 echo "caddy stub: unknown args: $*" >&2
 exit 1
 `;
@@ -71,6 +83,7 @@ exit 1
  *
  * @param {object} [opts]
  * @param {boolean} [opts.answersVersion=true] - Passed through to `writeCaddyStub`.
+ * @param {boolean} [opts.answersValidate=true] - Passed through to `writeCaddyStub`.
  * @returns {{ dir: string, restore: Function }} The stub dir and its undo.
  */
 function installCaddyStub(opts = {}) {
