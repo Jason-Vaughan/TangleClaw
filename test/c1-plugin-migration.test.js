@@ -14,11 +14,6 @@ const engines = require('../lib/engines');
 const projects = require('../lib/projects');
 const sessionOwnership = require('../lib/session-ownership');
 
-// The reference TC actually writes. Not a local fixture: migrations are
-// expected to write exactly this, so the tests assert against the constant the
-// production code uses. The shape itself is pinned separately below.
-const SELF_REF = engines.PRAWDUCT_INSTALL_REFERENCE;
-
 describe('C1 — per-project plugin migration (#262)', () => {
   let tmpDir;
   let pluginsHomeInstalled; // installed_plugins.json names prawduct
@@ -99,6 +94,37 @@ describe('C1 — per-project plugin migration (#262)', () => {
       const { ref } = engines.PRAWDUCT_INSTALL_REFERENCE.extraKnownMarketplaces.prawduct.source;
       assert.equal(ref, 'main');
       assert.doesNotMatch(ref, /^v?\d+\.\d+\.\d+$/);
+    });
+
+    // The assertion above compares TC's constant against a literal in TC's own
+    // repo, so it only catches OUR side moving. Upstream drifting is the other
+    // half — and it is the half #807 actually got bitten by, since upstream
+    // marks autoUpdate provisional. This reads the installed plugin's own
+    // source. It is a TEST-only read: the production path deliberately does not
+    // read this file, because migrations run on machines where it is absent.
+    it('matches the installed plugin’s INSTALL_REFERENCE (skipped when not installed)', (t) => {
+      const home = os.homedir();
+      const candidates = [
+        path.join(home, '.claude', 'plugins', 'marketplaces', 'prawduct', 'plugin', 'lib', 'migrate_plugin.py')
+      ];
+      const src = candidates.find((f) => fs.existsSync(f));
+      if (!src) {
+        t.skip('prawduct plugin source not present on this machine');
+        return;
+      }
+      const py = fs.readFileSync(src, 'utf8');
+      const block = py.slice(py.indexOf('INSTALL_REFERENCE'));
+      assert.ok(block, 'INSTALL_REFERENCE not found in upstream source');
+
+      const ours = engines.PRAWDUCT_INSTALL_REFERENCE.extraKnownMarketplaces.prawduct;
+      const upstreamRef = /"ref":\s*"([^"]+)"/.exec(block);
+      const upstreamRepo = /"repo":\s*"([^"]+)"/.exec(block);
+      const upstreamAuto = /"autoUpdate":\s*(True|False)/.exec(block);
+      assert.ok(upstreamRef && upstreamRepo && upstreamAuto, 'could not parse upstream INSTALL_REFERENCE');
+
+      assert.equal(ours.source.ref, upstreamRef[1], 'ref drifted from upstream');
+      assert.equal(ours.source.repo, upstreamRepo[1], 'repo drifted from upstream');
+      assert.equal(ours.autoUpdate, upstreamAuto[1] === 'True', 'autoUpdate drifted from upstream');
     });
   });
 

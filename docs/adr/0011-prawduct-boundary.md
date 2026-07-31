@@ -49,17 +49,26 @@ TangleClaw references Prawduct in 19 files under `lib/` (`git grep -il prawduct 
 decision:
 
 **1. Governance detection and migration — the real interface, and it is narrow.**
-`lib/engines.js` holds it: `isPluginGoverned` (1318) keys off a `prawduct@*` entry in the project's
-`.claude/settings.json`; `governanceState` (1355) classifies a project as `governed-plugin` /
-`governed-vendored` / `ungoverned` / `not-applicable`; `migrateToPlugin` (1452) writes the plugin
-reference, sourced from TangleClaw's *own* pin (`_readSelfPluginRef`) so a migration never hardcodes
-a version. `writeEngineConfig` (1138) defers entirely when a project is plugin-governed, because the
-plugin owns `CLAUDE.md` as a thin `PRAWDUCT:ANCHOR` file and regenerating would clobber it every
+`lib/engines.js` holds it: `isPluginGoverned` keys off a `prawduct@*` entry in the project's
+`.claude/settings.json`; `governanceState` classifies a project as `governed-plugin` /
+`governed-vendored` / `ungoverned` / `not-applicable`; `migrateToPlugin` writes the plugin
+reference from `PRAWDUCT_INSTALL_REFERENCE`, a reviewed constant mirroring prawduct's published
+`INSTALL_REFERENCE`. `writeEngineConfig` defers entirely when a project is plugin-governed, because
+the plugin owns `CLAUDE.md` as a thin `PRAWDUCT:ANCHOR` file and regenerating would clobber it every
 launch.
 
+That reference used to be read from TangleClaw's own `.claude/settings.json` at migration time, on
+the reasoning that copying its own pin meant never hardcoding a version. The reasoning was sound and
+the source was not: that file is untracked and machine-local, so the "pin" was per-machine, invisible
+in review, and free to drift. It did — a stale `v2.1.5` reached eleven repositories, and once the
+marketplace half of that file went missing, migrations wrote an unresolvable reference (#807, #816).
+Hardcoding upstream's published contract and reviewing changes to it is the smaller risk.
+
 The total surface TangleClaw depends on here is: **one settings key prefix, one anchor file it must
-not overwrite, and one directory (`.prawduct/`) it must not treat as source.** That is a remarkably
-small contract for what #330 feared.
+not overwrite, and one directory (`.prawduct/`) it must not treat as source** — plus, since #816,
+**one embedded copy of upstream's install reference**, which is a standing manual-sync obligation
+rather than a read at run time. That is still a remarkably small contract for what #330 feared, but
+it is four things now, not three.
 
 **2. Agent invocation — Claude-only, and explicitly so.**
 `lib/actions/invoke-critic.js` sends `/critic` to the live session over tmux, polls for idle, and

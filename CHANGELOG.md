@@ -152,8 +152,12 @@ All notable changes to TangleClaw are documented in this file.
 
   `test/c1-plugin-migration.test.js` previously fixed the pinned, `autoUpdate: false` shape as its
   production fixture, so the suite asserted the defect was correct behaviour. It now pins the
-  upstream shape as an explicit contract — duplicated on purpose, so a divergence on either side
-  fails loudly instead of propagating — and covers the partial-reference refusal.
+  upstream shape as an explicit contract and covers the partial-reference refusal. Drift is checked
+  in both directions: a literal assertion catches TangleClaw's side changing, and a second test
+  reads the installed plugin's own `lib/migrate_plugin.py` to catch upstream's — the direction #807
+  was actually bitten by. That second check is test-only and skips when the plugin is not installed;
+  the production path still never reads that file, because migrations run on machines where it is
+  absent.
 
 - **The cutover log is named on every screen that cannot confirm the outcome, including the one
   that can see least (#710).** `logLocation` was assigned only inside branches that return, so the
