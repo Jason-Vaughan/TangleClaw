@@ -26,7 +26,12 @@ const { execFileSync } = require('node:child_process');
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 
-const CADDY_LABEL = 'com.tangleclaw.caddy';
+// The reload argv and the fail-closed write both live in lib/ now, because the
+// settings surface performs the same Caddyfile patch and a second copy of either
+// would be free to drift from this one. Re-exported below so this script's own
+// contract is unchanged.
+const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
+const { reloadCaddyArgs, writeValidatedCaddyfile } = adminCredential;
 const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
   '  Resets the Caddy basic_auth admin password (break-glass recovery).\n' +
@@ -74,17 +79,6 @@ function resolveTargetUser(users, requested) {
     throw new Error(`multiple admin users present (${users.join(', ')}); choose one with --user <name>`);
   }
   return users[0];
-}
-
-/**
- * Build the launchctl reload argv for the Caddy LaunchAgent. Pure/testable.
- * `kickstart -k` restarts the running job in place (the same reload primitive the
- * cutover and the EMERGENCY-RECOVERY runbook use).
- * @param {number} uid - The user's numeric uid (process.getuid()).
- * @returns {string[]} argv for execFileSync('launchctl', ...).
- */
-function reloadCaddyArgs(uid) {
-  return ['kickstart', '-k', `gui/${uid}/${CADDY_LABEL}`];
 }
 
 /**
@@ -137,29 +131,6 @@ function readPipedPassword() {
     process.stdin.on('data', (c) => { data += c; });
     process.stdin.on('end', () => resolve(data.split(/\r?\n/)[0]));
   });
-}
-
-/**
- * Write newContent over caddyfilePath behind a fail-closed guard: back the file
- * up first (timestamped), write, validate, and RESTORE the backup if validation
- * fails — so a recovery run can never itself leave a broken ingress. Validation
- * is injected, so the restore branch is unit-testable without a real Caddy.
- * @param {string} caddyfilePath
- * @param {string} newContent
- * @param {(p:string)=>{ok:boolean,error?:string}} validateFn - e.g. caddy.validateCaddyfile.
- * @param {string} stamp - filesystem-safe timestamp for the .bak name.
- * @returns {{ ok: boolean, backup: string, error: string|null }}
- */
-function writeValidatedCaddyfile(caddyfilePath, newContent, validateFn, stamp) {
-  const backup = `${caddyfilePath}.${stamp}.bak`;
-  fs.copyFileSync(caddyfilePath, backup);
-  fs.writeFileSync(caddyfilePath, newContent, { mode: 0o600 });
-  const v = validateFn(caddyfilePath);
-  if (!v.ok) {
-    fs.copyFileSync(backup, caddyfilePath); // restore — never leave a broken ingress
-    return { ok: false, backup, error: v.error || 'validation failed' };
-  }
-  return { ok: true, backup, error: null };
 }
 
 /**

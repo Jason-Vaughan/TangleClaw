@@ -262,6 +262,28 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The credential-apply sequence has one implementation, ready for a second caller (#710 chunk 3b).**
+  `scripts/reset-admin.js` had proved the sequence that actually changes a login — hash, patch the
+  live Caddyfile, write with a timestamped backup and `caddy validate` fail-closed restoring the
+  original on failure, sync config, reload Caddy — and the settings surface being built needs the
+  same one. It moves to `lib/admin-credential.js` and the script now consumes it, re-exporting so its
+  own contract is unchanged. Not a mirror: a hand-maintained copy of the Caddyfile-adoption logic
+  drifted from its original and produced a real defect, which is why adoption was collapsed to one
+  shared computation. Two places patch the live gate; only one may define how, and a structural test
+  pins that the script does not re-declare either helper.
+
+  The module also carries `canChangeCredential`, the single predicate that guards a remote credential
+  change. It is one predicate rather than four checks because it does four jobs at once: a change is
+  allowed only when the install is in caddy mode, the LIVE Caddyfile carries a gate, and a credential
+  already exists — which makes blanking unreachable, keeps recovery in the terminal where the
+  Direction puts it, refuses to let an ungated install be claimed by whoever reaches it, and means
+  Caddy has already authenticated the request. That last one is not a preference: `caddy
+  hash-password` has no verify mode and no `--salt`, and Node's stdlib has no bcrypt, so the server
+  cannot check a typed current password at all — and a confirm field that does not verify is theatre.
+  Tests: `test/admin-credential.test.js` (13) — every refusal branch including a sweep over all six
+  ingress states, config left untouched when validation fails, a failed reload reported without
+  calling the change a failure, and the anti-drift pin.
+
 - **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
   exercised `writeCutoverResult` and `pollHealth` directly — everything except the call site itself,
   `finish(...)` inside `main()`, a closure nothing importable can invoke. Reverting that line to
