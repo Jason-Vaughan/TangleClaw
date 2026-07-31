@@ -5,6 +5,26 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The admin login can be changed from settings (#710 chunk 3b).** Global settings gains a **Login**
+  section: username, new password, confirm. It appears only when the server says this install can
+  use it — `GET /api/auth/credential` answers from the same predicate the change itself uses, so the
+  form is never offered to a machine that would then refuse it, and where it refuses it shows the
+  server's own reason plus the command that does apply (`ingress-cutover` to put a login in place,
+  `reset-admin.js` to recover one).
+
+  **It says, before you commit, that saving signs you out** — the login is enforced by Caddy and a
+  browser cannot be handed new credentials, so the next page load asks for the new password. Stated
+  up front it is an instruction to have the password ready; discovered afterwards it reads as a
+  fault. If Caddy could not be reloaded, the screen says the OLD password is still in force and
+  names the one command that finishes the job, rather than leaving the operator to infer it.
+
+  **There is no "current password" field**, deliberately: the server cannot verify one (no bcrypt in
+  Node's stdlib, and `caddy hash-password` has no verify mode), and a field that does not verify is
+  theatre. The confirm field stays, because that one IS checkable in the browser and a mistyped
+  password locks the operator out of their own dashboard with only a terminal to get back in.
+  Mobile-first per the project rule — every control is a 44px target, and nothing on the screen moves
+  on a timer.
+
 - **BREAKING: setup puts a login in front of TangleClaw by default, and says plainly when it cannot
   (#710, v5 chunk 2).** The admin-credential step used to appear only when config already said
   `ingressMode: 'caddy'` — which no fresh install says — so a first run collected no credential and

@@ -1382,6 +1382,90 @@ async function confirmBypassHidden() {
 // ── Global Settings Modal ──
 
 /**
+ * Render the Login section from the server's own answer about this install.
+ *
+ * The form is drawn only when `GET /api/auth/credential` says a change is
+ * possible, and the refusal text comes from the same predicate the POST uses — so
+ * the surface can never offer a change that submitting would then refuse. That
+ * disagreement, between what a client decided and what the server decided about
+ * one machine, is a defect this work has already had to fix once elsewhere.
+ * @returns {Promise<void>}
+ */
+async function _loadCredentialSection() {
+  const box = document.getElementById('gsCredentialSection');
+  if (!box) return;
+  const info = await api('/api/auth/credential');
+  if (!info) {
+    box.innerHTML = `<div class="form-hint">Could not check the login setting: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  if (!info.changeable) {
+    // Not an error state — most of these are simply "there is nothing here to
+    // change", and each carries the command that does apply.
+    box.innerHTML = `
+      <div class="form-hint">
+        ${esc(info.reason || 'The login cannot be changed from here.')}
+        ${info.remedy ? `<br><br>${esc(info.remedy)}` : ''}
+      </div>`;
+    return;
+  }
+  box.innerHTML = `
+    <label class="form-label" for="gsCredUser">Username</label>
+    <input type="text" class="form-input" id="gsCredUser" autocomplete="username"
+           value="${esc(info.user || '')}" spellcheck="false" autocapitalize="none">
+    <label class="form-label" for="gsCredPassword">New password</label>
+    <input type="password" class="form-input" id="gsCredPassword" autocomplete="new-password">
+    <label class="form-label" for="gsCredConfirm">Confirm new password</label>
+    <input type="password" class="form-input" id="gsCredConfirm" autocomplete="new-password">
+    <div class="form-hint" id="gsCredHint">
+      <strong>Changing this signs you out.</strong> The login is enforced by Caddy, and a browser
+      cannot be handed new credentials — so the next page you load will ask for the new password.
+      Have it to hand before you save. If you lose it, run
+      <code>node scripts/reset-admin.js</code> at a terminal on this machine.
+    </div>
+    <button type="button" class="btn" id="gsCredSaveBtn">Change login</button>`;
+
+  const saveBtn = document.getElementById('gsCredSaveBtn');
+  saveBtn.addEventListener('click', async () => {
+    const hint = document.getElementById('gsCredHint');
+    const user = document.getElementById('gsCredUser').value.trim();
+    const password = document.getElementById('gsCredPassword').value;
+    const confirm = document.getElementById('gsCredConfirm').value;
+
+    // Confirm is checked HERE and only here. It is NOT the "current password"
+    // field a change form usually carries — the server cannot verify one of
+    // those, so asking would be theatre. This one catches a typo, which matters
+    // more than usual: a mistyped password locks the operator out of their own
+    // dashboard, and the only way back is a terminal on the box.
+    if (password !== confirm) {
+      hint.innerHTML = '<strong>Those two passwords do not match.</strong> Nothing was changed.';
+      return;
+    }
+
+    saveBtn.disabled = true;
+    const res = await apiMutate('/api/auth/credential', 'POST', { user, password });
+    saveBtn.disabled = false;
+
+    if (!res) {
+      hint.innerHTML = `<strong>The login was not changed.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      return;
+    }
+    // Terminal state, and it waits. No redirect, no auto-dismiss: the operator is
+    // about to be asked for a password, and a screen that moves on its own takes
+    // away the moment they need to read which one.
+    box.innerHTML = `
+      <div class="form-hint">
+        <strong>Your login is changed${res.user ? ` for ${esc(res.user)}` : ''}.</strong>
+        The next page you load will ask for the new password.
+        ${res.reloaded === false
+          ? `<br><br>Caddy could not be reloaded automatically, so the OLD password stays in force
+             until it is. Run <code>${esc(res.reloadCommand || '')}</code> at a terminal to finish.`
+          : ''}
+      </div>`;
+  });
+}
+
+/**
  * Open the global settings modal, loading current config values.
  */
 function openGlobalSettings() {
@@ -1540,6 +1624,11 @@ function openGlobalSettings() {
       <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
     </div>` : ''}
 
+    <div class="gs-section-label">Login</div>
+    <div class="form-group" id="gsCredentialSection">
+      <div class="form-hint">Checking what this install can change…</div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -1598,6 +1687,8 @@ function openGlobalSettings() {
   // AUTH-4b — reveal/rotate wiring. Buttons only exist when the gate is active
   // (tokenManageMarkup). Both render the raw token into #gsTokenDisplay via
   // textContent (XSS-safe, selectable for copy); rotate confirms first.
+  _loadCredentialSection();
+
   const revealTokenBtn = document.getElementById('gsRevealTokenBtn');
   if (revealTokenBtn) {
     revealTokenBtn.addEventListener('click', async () => {
