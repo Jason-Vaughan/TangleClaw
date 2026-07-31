@@ -14,33 +14,21 @@ const engines = require('../lib/engines');
 const projects = require('../lib/projects');
 const sessionOwnership = require('../lib/session-ownership');
 
-// The plugin reference TC writes into a migrated project (sourced from TC's own
-// settings.json in production; a fixture here so tests don't read the live repo).
-const SELF_REF = {
-  enabledPlugins: { 'prawduct@prawduct': true },
-  extraKnownMarketplaces: {
-    prawduct: { source: { source: 'github', repo: 'brookstalley/prawduct', ref: 'v2.1.5' }, autoUpdate: false }
-  }
-};
+// The reference TC actually writes. Not a local fixture: migrations are
+// expected to write exactly this, so the tests assert against the constant the
+// production code uses. The shape itself is pinned separately below.
+const SELF_REF = engines.PRAWDUCT_INSTALL_REFERENCE;
 
 describe('C1 — per-project plugin migration (#262)', () => {
   let tmpDir;
-  let selfGoverned; // self settings.json fixture WITH the plugin ref
-  let selfBare; // self settings.json fixture WITHOUT the plugin ref
   let pluginsHomeInstalled; // installed_plugins.json names prawduct
   let pluginsHomeEmpty; // no install marker
-  const origSelf = engines._internal.selfSettingsPath;
   const origHome = engines._internal.pluginsHome;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-c1-'));
     store._setBasePath(tmpDir);
     store.init();
-
-    selfGoverned = path.join(tmpDir, 'self-governed.json');
-    fs.writeFileSync(selfGoverned, JSON.stringify(SELF_REF, null, 2));
-    selfBare = path.join(tmpDir, 'self-bare.json');
-    fs.writeFileSync(selfBare, JSON.stringify({ permissions: { allow: [] } }, null, 2));
 
     pluginsHomeInstalled = path.join(tmpDir, 'plugins-installed');
     fs.mkdirSync(pluginsHomeInstalled, { recursive: true });
@@ -51,13 +39,11 @@ describe('C1 — per-project plugin migration (#262)', () => {
     pluginsHomeEmpty = path.join(tmpDir, 'plugins-empty');
     fs.mkdirSync(pluginsHomeEmpty, { recursive: true });
 
-    // Default seams: TC is governed + the plugin is installed on this machine.
-    engines._internal.selfSettingsPath = () => selfGoverned;
+    // Default seam: the plugin is installed on this machine.
     engines._internal.pluginsHome = () => pluginsHomeInstalled;
   });
 
   after(() => {
-    engines._internal.selfSettingsPath = origSelf;
     engines._internal.pluginsHome = origHome;
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -88,17 +74,55 @@ describe('C1 — per-project plugin migration (#262)', () => {
     });
   });
 
-  describe('engines._readSelfPluginRef', () => {
-    it('reads TC’s own prawduct reference (enabledPlugins + marketplace)', () => {
-      const ref = engines._readSelfPluginRef();
-      assert.deepEqual(ref.enabledPlugins, { 'prawduct@prawduct': true });
-      assert.equal(ref.extraKnownMarketplaces.prawduct.source.repo, 'brookstalley/prawduct');
+  describe('engines.PRAWDUCT_INSTALL_REFERENCE', () => {
+    // The literal is duplicated here on purpose. This is the tripwire: prawduct
+    // publishes INSTALL_REFERENCE in its plugin's lib/migrate_plugin.py, and if
+    // either side moves, this test fails loudly instead of the divergence
+    // reaching every project TangleClaw migrates. Upstream currently marks
+    // autoUpdate provisional, so a future change here is legitimate — but it
+    // must be a deliberate edit to this assertion, never a silent drift.
+    it('matches prawduct’s published install reference verbatim', () => {
+      assert.deepEqual(engines.PRAWDUCT_INSTALL_REFERENCE, {
+        enabledPlugins: { 'prawduct@prawduct': true },
+        extraKnownMarketplaces: {
+          prawduct: {
+            source: { source: 'github', repo: 'brookstalley/prawduct', ref: 'main' },
+            autoUpdate: true
+          }
+        }
+      });
     });
 
-    it('returns null when TC is not itself plugin-governed', () => {
-      engines._internal.selfSettingsPath = () => selfBare;
-      assert.equal(engines._readSelfPluginRef(), null);
-      engines._internal.selfSettingsPath = () => selfGoverned;
+    it('pins ref to a branch, never a version tag', () => {
+      // A version-pinned ref stranded 11 repos on a months-old release; the
+      // whole point of `main` is that consumers track the current one.
+      const { ref } = engines.PRAWDUCT_INSTALL_REFERENCE.extraKnownMarketplaces.prawduct.source;
+      assert.equal(ref, 'main');
+      assert.doesNotMatch(ref, /^v?\d+\.\d+\.\d+$/);
+    });
+  });
+
+  describe('engines._isCompletePluginRef', () => {
+    it('accepts a reference carrying both halves', () => {
+      assert.equal(engines._isCompletePluginRef(engines.PRAWDUCT_INSTALL_REFERENCE), true);
+    });
+
+    it('rejects enabledPlugins with no marketplace to resolve it', () => {
+      assert.equal(engines._isCompletePluginRef({ enabledPlugins: { 'prawduct@prawduct': true } }), false);
+      assert.equal(
+        engines._isCompletePluginRef({ enabledPlugins: { 'prawduct@prawduct': true }, extraKnownMarketplaces: {} }),
+        false
+      );
+    });
+
+    it('rejects a marketplace with no enabled plugin, and junk input', () => {
+      assert.equal(
+        engines._isCompletePluginRef({ extraKnownMarketplaces: { prawduct: { source: {} } } }),
+        false
+      );
+      assert.equal(engines._isCompletePluginRef(null), false);
+      assert.equal(engines._isCompletePluginRef({}), false);
+      assert.equal(engines._isCompletePluginRef({ enabledPlugins: { 'other@x': true } }), false);
     });
   });
 
@@ -152,13 +176,28 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(fs.readFileSync(bad, 'utf8'), '{ not valid json'); // untouched
     });
 
-    it('errors when no plugin reference is available (TC not governed)', () => {
-      engines._internal.selfSettingsPath = () => selfBare;
-      const p = mkProjectDir('noref');
-      const r = engines.migrateToPlugin(p);
+    it('always writes the marketplace entry alongside enabledPlugins', () => {
+      // The defect this guards: a project told to enable a plugin it has no
+      // way to resolve loads nothing, silently, on any machine where prawduct
+      // is not already registered — and looks fine on one where it is.
+      const p = mkProjectDir('resolvable');
+      engines.migrateToPlugin(p);
+      const s = readSettings(p);
+      assert.equal(s.enabledPlugins['prawduct@prawduct'], true);
+      assert.equal(s.extraKnownMarketplaces.prawduct.source.ref, 'main');
+      assert.equal(s.extraKnownMarketplaces.prawduct.autoUpdate, true);
+    });
+
+    it('refuses an incomplete reference and writes nothing at all', () => {
+      const p = mkProjectDir('halfref');
+      const r = engines.migrateToPlugin(p, {
+        pluginRef: { enabledPlugins: { 'prawduct@prawduct': true } } // no marketplace
+      });
       assert.equal(r.written, false);
-      assert.match(r.error, /no plugin reference/);
-      engines._internal.selfSettingsPath = () => selfGoverned;
+      assert.match(r.error, /incomplete plugin reference/);
+      // Nothing half-written: the project must not read as governed afterwards.
+      assert.equal(engines.isPluginGoverned(p), false);
+      assert.equal(fs.existsSync(path.join(p, '.claude', 'settings.json')), false);
     });
 
     it('neutralizes the vendored governance hook — no product-hook command survives in settings', () => {
