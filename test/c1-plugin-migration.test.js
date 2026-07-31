@@ -115,12 +115,14 @@ describe('C1 — per-project plugin migration (#262)', () => {
     // source. It is a TEST-only read: the production path deliberately does not
     // read this file, because migrations run on machines where it is absent.
     it('matches the installed plugin’s INSTALL_REFERENCE (skipped when not installed)', (t) => {
-      const home = os.homedir();
-      const candidates = [
-        path.join(home, '.claude', 'plugins', 'marketplaces', 'prawduct', 'plugin', 'lib', 'migrate_plugin.py')
-      ];
-      const src = candidates.find((f) => fs.existsSync(f));
-      if (!src) {
+      // The marketplace checkout, deliberately not the versioned cache dirs:
+      // several cache versions can coexist, so picking one would compare
+      // against whichever release happened to sort first rather than the
+      // installed contract.
+      const src = path.join(
+        os.homedir(), '.claude', 'plugins', 'marketplaces', 'prawduct', 'plugin', 'lib', 'migrate_plugin.py'
+      );
+      if (!fs.existsSync(src)) {
         t.skip('prawduct plugin source not present on this machine');
         return;
       }
