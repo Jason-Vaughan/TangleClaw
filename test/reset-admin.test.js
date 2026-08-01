@@ -177,3 +177,40 @@ describe('the dead end #806 left, and the signpost that replaces it', () => {
       'the default path must remain the credential change');
   });
 });
+
+describe('the preview cannot promise what the run refuses', () => {
+  // --dry-run exists so someone deciding whether to commit can look first, and on
+  // this tool that someone is often already locked out. Describing a rebuild the
+  // real path would refuse is the same false-report class the credential surface
+  // was built to eliminate — so the preview asks the SAME predicate, rather than
+  // a second one that happens to agree today.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'reset-admin.js'), 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  // The end delimiter is searched FROM the start offset, not from zero:
+  // `let password;` also occurs earlier inside acquirePassword, and anchoring on
+  // the first hit sliced backwards to an empty string that satisfied nothing.
+  const dryRunStart = code.indexOf('if (dryRun) {');
+  const dryRun = code.slice(dryRunStart, code.indexOf('let password;', dryRunStart));
+
+  it('the slice actually covers the dry-run branch', () => {
+    // Guards the two assertions below from silently measuring an empty string.
+    assert.ok(dryRunStart > -1, 'the dry-run branch must be findable');
+    assert.ok(dryRun.length > 200, `slice looks wrong (${dryRun.length} chars)`);
+    assert.match(dryRun, /\[dry-run\]/);
+  });
+
+  it('consults canCreateGate inside the dry-run branch', () => {
+    assert.match(dryRun, /adminCredential\.canCreateGate\(/,
+      'the preview must ask the shared predicate, not assume success');
+  });
+
+  it('reports the refusal and stops, instead of describing the steps anyway', () => {
+    const refusalAt = dryRun.indexOf('would REFUSE');
+    const stepsAt = dryRun.indexOf('would: prompt new password');
+    assert.ok(refusalAt > -1, 'a refused preview must say so');
+    assert.ok(refusalAt < stepsAt,
+      'the refusal must be handled before the would-do description is printed');
+    assert.match(dryRun.slice(refusalAt, stepsAt), /return;/,
+      'and it must stop, not fall through into describing a rebuild that will not happen');
+  });
+});

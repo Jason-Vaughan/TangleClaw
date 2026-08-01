@@ -807,3 +807,59 @@ describe('createGate — an install that completed setup with no login', () => {
     assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), noTls, 'nothing may be written');
   });
 });
+
+describe('canCreateGate — the preview and the real run answer the same question', () => {
+  // A --dry-run is read by someone deciding whether to commit, often already
+  // locked out. If it could describe a rebuild that the real run then refuses, it
+  // would be reporting an outcome nobody observed — on the one surface where that
+  // is least affordable.
+  const caddy = require('../lib/caddy');
+  let tmpBase; let prevBase; let caddyfilePath; let certPath; let keyPath;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cangate-'));
+    store._setBasePath(tmpBase);
+    store.init();
+    certPath = path.join(tmpBase, 'cert.pem');
+    keyPath = path.join(tmpBase, 'key.pem');
+    caddyfilePath = path.join(tmpBase, 'Caddyfile');
+  });
+
+  after(() => {
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  const generatedUngated = () => caddy.buildCaddyfileContent({
+    serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080
+  });
+
+  const cases = [
+    ['a generated ungated file, with a username', () => generatedUngated(), 'jason', true],
+    ['no username', () => generatedUngated(), undefined, false],
+    ['a file that already has a login', () => gatedCaddyfile('alice'), 'jason', false],
+    ['a hand-maintained ungated file', () => generatedUngated().split('\n').slice(1).join('\n'), 'jason', false]
+  ];
+
+  for (const [label, build, user, expected] of cases) {
+    it(`agrees with createGate on ${label}`, () => {
+      const content = build();
+      fs.writeFileSync(caddyfilePath, content);
+      const predicted = cred.canCreateGate(content, user);
+      assert.equal(predicted.allowed, expected, `predicate said ${predicted.allowed}`);
+
+      const actual = cred.createGate({
+        caddyfilePath, user, hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        execFn: () => {}, validateFn: () => ({ ok: true })
+      });
+      // The property is agreement, not two independently-correct answers: a
+      // preview that is right by coincidence drifts the moment either side moves.
+      assert.equal(actual.ok, predicted.allowed,
+        'the real run must reach the same verdict the preview showed');
+      if (!predicted.allowed) {
+        assert.equal(actual.code, predicted.code, 'and the same reason code');
+      }
+    });
+  }
+});

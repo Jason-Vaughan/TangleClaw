@@ -26,6 +26,74 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: break-glass recovery proven by running it, and a way out for an install with no login (#710, chunk 4)
+
+<!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status= -->
+
+**Why:** v5 makes a password mandatory. The recovery path out of a lockout was **built and
+unit-tested but never executed** — `test/reset-admin.test.js` asserts the `launchctl` reload's argv
+**as data** and never runs it, so everything past "the file is patched" was inference. A mandatory
+credential whose recovery is merely believed to work strands the operator on the day it matters.
+
+**The chunk's own spec was stale in three ways, corrected before any code was written.** The
+doc/wiring contradiction it said to resolve had already been resolved on 2026-07-29; the README
+sharpening it asked for was already done; and #806 — the thing that actually needed building — was
+not in it at all. Chunk 3's lesson (a plan written before an earlier chunk landed may name
+mechanisms that chunk changed) applied again, and re-reading against the code is what caught it.
+
+**Where the run happened, and the finding that decided it.** The habitat clean room was the obvious
+safe venue and **cannot prove what this chunk exists to prove**: `deploy/cleanroom/bake.sh` is
+`FROM node:22-bookworm`, and there is no `launchctl` on Linux — a run there would cover patch →
+validate → restore and stop exactly at the reload. Only a Mac with a live gate closes it. Run on
+cursatory against the **hand-edited** Caddyfile, the shape only that machine has and the one the tool
+claims to patch without reshaping.
+
+Measured: hash moved; the real LaunchAgent restarted (PID changed, exit 0); the gate re-authenticated
+and still 401s on `/`, `/api/health` and a wrong password; config and the live file agree; a
+timestamped backup preceded the swap. The load-bearing result: the file came out **byte-identical
+apart from the hash**, still classifying `adoptable`/`safeToWrite: false` — so it was not silently
+re-stamped as generated, and the cutover's clobber-guard keeps protecting the operator's edits.
+
+**Two defects in the documented procedure that only a real run could surface.** (1) Recovery enforces
+the *current* password policy, so a credential older than the policy cannot be restored — the live
+one predated the 12-character minimum and was refused, forcing a new password to be invented seconds
+before the connection drops. The guard was documented, not weakened. (2) "Run it under tmux" was
+wrong for how an operator reaches this machine: ttyd is already tmux-backed, but its window may run
+an AI session that cannot be typed into, and `tmux new -s` fails there as a nested/duplicate session.
+
+**#806 closed.** An install that reached `setupComplete` before a credential was mandatory and then
+moved to caddy mode had no route to a login: the setup route refuses as already-complete, adoption
+runs only on a first run, and `reset-admin.js` exited 1 because it *resets* a gate and cannot
+*create* one. `--create-gate` builds one, from the same local-shell tool as recovery — a first
+credential settable over the network reopens what making the gate mandatory closed. The rebuild
+recovers its inputs from the Caddyfile rather than from config (new
+`caddy.extractGeneratedCaddyfileOptions`), so it differs from what was there by exactly the gate;
+config and the live file are known to drift. The extractor **refuses rather than defaulting**, since
+every field it reads has a default and a silent fallback would move a working port or certificate
+while reporting success. A hand-maintained file is refused, never reshaped.
+
+**One implementation of the sequence, two entry points.** Creation and change share
+`_persistGatedCaddyfile` (write → validate fail-closed → record in config → reload). The ORDER is the
+safety property, not the individual steps, and a second copy would be free to drift out of it — which
+this project has already paid for once.
+
+**Self-review caught what the tests did not.** `--dry-run --create-gate` described a rebuild the real
+run would refuse — the same "report an outcome nobody observed" class this surface exists to
+eliminate, landing on someone already locked out and checking before they commit. Extracted
+`canCreateGate` so the preview and the run ask **one** predicate, with a test asserting agreement
+rather than two independently-correct answers.
+
+**Mutation testing found two inert tests on the central claim.** The fixture for "changes nothing but
+the gate" used the default ports 8443/8080, so a rebuild that silently fell back to defaults produced
+a byte-identical file and the test could not fail. Same species as the #749 lesson. Fixture moved to
+non-default ports and the missing-field case widened to every field; all mutations now red.
+
+Also filed: **#828** (`~/.tangleclaw` derived from both `process.env.HOME` and `os.homedir()`, so a
+HOME override half-relocates state) and **#829** (Master control — #755/#756/#768 — the first release
+after v5, deliberately kept out of it).
+
+**Tests:** 5435 pass / 0 fail / 1 skipped.
+
 ## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
 
 <!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default | status=shipped -->

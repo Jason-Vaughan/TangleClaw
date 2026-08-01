@@ -218,6 +218,17 @@ async function main() {
     process.stdout.write(`\n[dry-run] ${createGate ? 'create admin gate' : 'reset admin credential'}\n`);
     process.stdout.write(`  caddyfile:    ${caddyfilePath}\n`);
     process.stdout.write(`  admin user:   ${targetUser}\n`);
+    // A preview is read by someone deciding whether to commit, often already
+    // locked out. It asks the SAME predicate the real run will, so it can never
+    // describe a rebuild that would then be refused.
+    const verdict = createGate
+      ? adminCredential.canCreateGate(original, targetUser)
+      : { allowed: true, reason: null };
+    if (!verdict.allowed) {
+      process.stdout.write(`  would REFUSE: ${verdict.reason}\n\n`);
+      store.close();
+      return;
+    }
     process.stdout.write(createGate
       ? '  would: prompt new password → caddy hash-password → rebuild this generated Caddyfile\n'
         + '         from its own settings, adding the gate and changing nothing else\n'
