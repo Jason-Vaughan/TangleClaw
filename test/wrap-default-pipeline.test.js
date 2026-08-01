@@ -74,6 +74,14 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     assert.equal(step.verifySatisfiedBy, 'changelog-coverage');
   });
 
+  it('only learnings-capture permits a successful unchanged file outcome', () => {
+    const steps = defaultPipeline.steps();
+    const learnings = steps.find((s) => s.id === 'learnings-capture');
+    assert.equal(learnings.allowUnchanged, true);
+    assert.equal(steps.find((s) => s.id === 'changelog-update').allowUnchanged, undefined);
+    assert.equal(steps.find((s) => s.id === 'memory-update').allowUnchanged, undefined);
+  });
+
   it('every declared verifySatisfiedBy names a predicate the gate implements', () => {
     // An unrecognized name degrades to the mutation check rather than throwing, so
     // a typo here would be silent at runtime — this is the only thing that catches it.
