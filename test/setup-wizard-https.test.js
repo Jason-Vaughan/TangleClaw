@@ -549,8 +549,12 @@ describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
     // the LAST entry and has none, so `indexOf` returned -1 and the old slice
     // asserted against a single character. It could not have failed.
     const start = render.indexOf("'behind-proxy'");
-    const panel = render.slice(start, render.indexOf('}[state];', start));
-    assert.ok(panel.length > 200, 'the panel body must actually be in the slice');
+    const end = render.indexOf('}[state];', start);
+    // Relational, not a magic length: this catches the slice collapsing (what the
+    // old `indexOf('`,')` bound did) without pretending to know how long the copy
+    // should be, and it fails in both directions if the terminator moves.
+    assert.ok(start > -1 && end > start, 'the behind-proxy panel must be locatable and non-empty');
+    const panel = render.slice(start, end);
     assert.doesNotMatch(panel, /is back up/,
       'no readiness claim on the branch where readiness is unobservable');
     assert.match(panel, /asks for your username and password/,
