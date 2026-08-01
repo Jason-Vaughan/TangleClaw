@@ -25,6 +25,14 @@ All notable changes to TangleClaw are documented in this file.
   certificate path in the wizard took it and was sent to a port nothing answers on. That is the same
   shape as the pre-#654 dead `:3101`, which read to the operator as "HTTPS setup is broken".
 
+  **And the restart screen no longer claims a server is back when a proxy answered for it.** That
+  screen probes the address and says "TangleClaw is back up" on a reply — which proved something
+  while the address was TangleClaw's own listener, and proves nothing once it is Caddy's: the proxy
+  stays up across the restart and answers immediately, with a 502 that an opaque probe cannot tell
+  from success. The response now says who answers at that address (`redirectVia`), the probe runs
+  only where a reply means something, and behind a proxy the screen names what the operator *can*
+  check — whether it asks for their password — instead of asserting readiness nobody observed.
+
 - **The admin login can be changed from settings (#710).** Global settings gains a **Login**
   section: username, new password, confirm. It appears only when the server says this install can
   use it — `GET /api/auth/credential` answers from the same predicate the change itself uses, so the

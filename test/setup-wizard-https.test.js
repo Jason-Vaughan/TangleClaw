@@ -512,3 +512,48 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
     });
   });
 });
+
+describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
+  // Structural, matching how this repo pins setup.js elsewhere: the file renders
+  // via innerHTML strings and cannot be imported.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+  const strip = (t) => t.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const show = strip(src.slice(src.indexOf('function _showRestartOverlay'),
+    src.indexOf('function _renderRestartOverlay')));
+  const render = strip(src.slice(src.indexOf('function _renderRestartOverlay'),
+    src.indexOf('async function _pollRestartReady')));
+
+  it('does not probe an address a proxy answers for', () => {
+    // The defect this pins. `redirectUrl` used to be TangleClaw's own listener,
+    // so a response proved it was back. In caddy mode it is Caddy's port, and
+    // Caddy stays up across TangleClaw's restart and answers instantly — with a
+    // 502, which an opaque `no-cors` fetch cannot distinguish from success. The
+    // screen would assert readiness it never observed and send the operator into
+    // an error page.
+    assert.match(show, /via === 'proxy'/,
+      'the proxied case must be recognised before any probe');
+    const beforePoll = show.slice(0, show.indexOf('_pollRestartReady'));
+    assert.match(beforePoll, /return;/,
+      'and must return, so the probe never runs for it');
+  });
+
+  it('claims nothing it cannot observe, and names what the operator CAN check', () => {
+    const panel = render.slice(render.indexOf("'behind-proxy'"));
+    assert.doesNotMatch(panel.slice(0, panel.indexOf('`,') + 2 || undefined), /is back up/,
+      'no readiness claim on the branch where readiness is unobservable');
+    assert.match(panel, /asks for your username and password/,
+      'the password prompt is the one thing the operator can actually verify');
+  });
+
+  it('still offers the front door as the destination', () => {
+    // Not probing it is not the same as not linking it — the address is still
+    // where they are going.
+    assert.match(render, /window\.location\.href='\$\{esc\(redirectUrl\)\}'/);
+  });
+
+  it('carries `via` from the server rather than guessing at it', () => {
+    // The client cannot tell a proxy from a server by looking at a URL; the
+    // server derives both halves from one place and says which it is.
+    assert.match(src, /result\.redirectVia/);
+  });
+});

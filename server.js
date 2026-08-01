@@ -1685,7 +1685,11 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       // below, so the two answers to "where do I go now" cannot drift.
       ingress.url = httpsSetup.effectiveOperatorOrigin(
         { ...config, ingressMode: 'caddy' }, requestHostname);
-      log.info('Setup started the ingress cutover', { pid: started.pid, host: requestHostname });
+      // The whole address, not just the host: scheme and port are the two halves
+      // this derivation exists to get right, and the operator is almost never at
+      // this machine to read the browser that was told them.
+      log.info('Setup started the ingress cutover',
+        { pid: started.pid, host: requestHostname, operatorUrl: ingress.url });
     } else {
       // The credential is stored and nothing enforces it. Say so — this is the
       // one outcome this path exists to make impossible to mistake for success.
@@ -1825,6 +1829,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     && httpsChanged && (willServeHttps || prevWillServeHttps);
 
   let redirectUrl = null;
+  let redirectVia = null;
   if (shouldRestart) {
     // The same derivation the provisioning arm uses. It used to compose the
     // scheme from `willServeHttps` and the port from TC's own listener, which is
@@ -1833,7 +1838,15 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // reachable: a caddy-mode install whose operator changes a cert path in the
     // wizard satisfies `shouldRestart`, and the old expression sent them to a
     // port nothing answers on.
-    redirectUrl = httpsSetup.effectiveOperatorOrigin(config, requestHostname);
+    const frontDoor = httpsSetup.effectiveOperatorFrontDoor(config, requestHostname);
+    redirectUrl = frontDoor.origin;
+    // Who answers there, so the wizard does not read a response as proof the
+    // server is back. Behind Caddy it is not: Caddy stays up across TC's restart
+    // and answers immediately — with a 502, which an opaque `no-cors` probe
+    // cannot tell from success.
+    redirectVia = frontDoor.via;
+    log.info('Setup will restart; operator front door computed',
+      { redirectUrl, via: redirectVia });
     _scheduleRestart();
   }
 
@@ -1851,6 +1864,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     warnings,
     restart: shouldRestart,
     redirectUrl,
+    redirectVia,
     ingress
   });
 });

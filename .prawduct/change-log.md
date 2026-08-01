@@ -69,6 +69,22 @@ endpoint regression for the reachable caddy-mode restart. Three mutations (dropp
 restoring the old inline expression, asking the provisioning arm about the pre-cutover config) each
 go red.
 
+**The review caught the consumer this change broke, which is the same shape as everything else in
+this scope.** Changing what `redirectUrl` *means* left its reader believing the old meaning: the
+restart overlay probes that address and reports "TangleClaw is back up" on any reply. That was sound
+while the address was TC's own listener. Once it is Caddy's it is not — the proxy stays up across the
+restart and answers instantly, with a 502 that an opaque `no-cors` probe cannot distinguish from
+success — so the screen would assert readiness it never observed and click the operator into an error
+page. Newly reachable, too: the old caddy-mode value named a port nothing answered on, so the overlay
+correctly fell through to "unconfirmed". The fix keeps the pair together — `effectiveOperatorFrontDoor`
+returns `{ origin, via }` from ONE branch, because two derivations of "is this proxied" could disagree
+with the address they describe — and the wizard probes only where a reply means something.
+
+**A test of mine could not fail, again.** `via` was added, threaded through, and asserted nowhere:
+flipping caddy's `via` to `'server'` left the whole suite green. Caught by running the mutation rather
+than by reading the test. That is three in this scope, all the same shape — an assertion that watches
+something adjacent to the thing that changed.
+
 **A worktree trap worth knowing.** `.prawduct/` is almost entirely gitignored here, so a new
 worktree's governance state is set up by symlinking it back to the primary checkout — but
 `change-log.md` is the one **tracked** file in that directory. Blanket-symlinking the directory's

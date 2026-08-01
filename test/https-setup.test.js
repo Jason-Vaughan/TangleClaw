@@ -318,6 +318,41 @@ describe('https-setup', () => {
       }
     });
 
+    it('says WHO answers at that origin, not only where it is', () => {
+      // `via` is what stops a caller reading a response as proof the server is
+      // back. Behind Caddy it is not: the proxy stays up across TangleClaw's
+      // restart and answers immediately, so the wizard must not probe there.
+      assert.deepEqual(
+        httpsSetup.effectiveOperatorFrontDoor({ ingressMode: 'caddy' }, 'box', {}),
+        { origin: 'https://box:8443', via: 'proxy' }
+      );
+      assert.deepEqual(
+        httpsSetup.effectiveOperatorFrontDoor({ ingressMode: 'direct', serverPort: 3101 }, 'box', {}),
+        { origin: 'http://box:3101', via: 'server' }
+      );
+    });
+
+    it('derives the address and who answers it from ONE branch', () => {
+      // Two derivations of "is this proxied" would be free to disagree with the
+      // address they describe — a screen probing a proxy while calling it the
+      // server is exactly the defect this pair exists to prevent.
+      for (const config of [
+        { ingressMode: 'caddy' },
+        { ingressMode: 'caddy', caddyHttpsPort: 9443 },
+        { ingressMode: 'direct', serverPort: 3101 },
+        { ingressMode: 'direct', httpsEnabled: true, httpsCertPath: '/c', httpsKeyPath: '/k' },
+        {}
+      ]) {
+        const door = httpsSetup.effectiveOperatorFrontDoor(config, 'box', {});
+        const proxied = config.ingressMode === 'caddy';
+        assert.equal(door.via, proxied ? 'proxy' : 'server');
+        assert.equal(door.origin.startsWith('https://box:8443') || door.origin.startsWith('https://box:9443'),
+          proxied, `${JSON.stringify(config)} — the port must agree with who answers`);
+        assert.equal(httpsSetup.effectiveOperatorOrigin(config, 'box', {}), door.origin,
+          'the string form must be the same derivation, not a second one');
+      }
+    });
+
     it('emits an origin with no trailing slash or path', () => {
       // Callers append nothing and the wizard renders it verbatim in a button.
       for (const config of [{ ingressMode: 'caddy' }, { ingressMode: 'direct', serverPort: 3101 }]) {
