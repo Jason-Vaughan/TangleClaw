@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-01: break-glass recovery proven by running it, and a way out for an install with no login (#710, chunk 4)
 
-<!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status= -->
+<!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** v5 makes a password mandatory. The recovery path out of a lockout was **built and
 unit-tested but never executed** — `test/reset-admin.test.js` asserts the `launchctl` reload's argv
