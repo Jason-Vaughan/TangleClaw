@@ -999,6 +999,20 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
       + 'Run `node scripts/reset-admin.js` at a terminal on this machine to settle it.',
       adminCredential.httpCode(result.code));
   }
+  if (result.code === adminCredential.CREDENTIAL_CODES.GATE_BROKEN) {
+    // The credential did not change — but the write that failed could not be
+    // undone either, so the live Caddyfile is whatever it left behind and may not
+    // load. "Nothing was changed" would be true about the password and dangerously
+    // misleading about the ingress, on the one path where the operator is about to
+    // lose the dashboard entirely.
+    log.error('The Caddyfile could not be written or restored; the live gate may be broken',
+      { error: caddy.redactHashes(result.error), backup: result.backup });
+    return errorResponse(res, 500,
+      'Your login was NOT changed, but the Caddy config could not be written or put back, so the '
+      + `ingress may now be broken. A copy of the original is at ${result.backup} — restore it at a `
+      + 'terminal on this machine, or run `node scripts/reset-admin.js`.',
+      adminCredential.httpCode(result.code));
+  }
   if (!result.ok) {
     // The gate and the recorded credential are both untouched — applyCredentialChange
     // restores the original before returning, whether the write was rejected by

@@ -101,6 +101,9 @@ is a decision to take with the operator, not unilaterally. Also accepted: caller
 `stamp` (keeps the module pure, and both callers derive them identically); the re-exports left in
 `reset-admin.js` (its published contract is unchanged and the implementations are not duplicated);
 and `verify-chunk-refs`'s missing-ref, confirmed a worktree/symlink artifact tracked as PRW-6T2M.
+Two further notes accepted: the caddy-binary arm's call sites are exercised by the endpoint suite
+rather than pinned structurally, and backup retention is in scope precisely because this chunk's
+write path is what creates the credential-bearing backups.
 
 **The resolution pass found one more, and it was self-inflicted.** Fixing the inert username rule
 introduced a second version of the very drift it was fixing: the GET was moved onto the FILE's

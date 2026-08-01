@@ -288,6 +288,44 @@ describe('applyCredentialChange', () => {
       'the live gate must be exactly what it was — a truncated Caddyfile is a broken ingress');
   });
 
+  it('reports a broken gate distinctly from a rejected one', () => {
+    // Both are "the credential did not change", so an earlier version returned
+    // one code for both. They are not the same fact: after a rejected write the
+    // live file is exactly what it was, and after an unrestorable one it is
+    // whatever a failed write left behind — possibly a Caddyfile that will not
+    // load. Telling the operator "nothing was changed" is true about the password
+    // and misleading about the ingress, on the one path where they are about to
+    // lose the dashboard entirely.
+    const realWrite = fs.writeFileSync;
+    const realCopy = fs.copyFileSync;
+    fs.writeFileSync = (p, ...rest) => {
+      if (p === caddyfilePath) throw new Error('ENOSPC: no space left on device');
+      return realWrite(p, ...rest);
+    };
+    let r;
+    try {
+      // The backup copy succeeds; only the RESTORE copy fails, which is what
+      // leaves the file unrecoverable.
+      let copies = 0;
+      fs.copyFileSync = (from, to) => {
+        if (++copies > 1) throw new Error('EROFS: read-only file system');
+        return realCopy(from, to);
+      };
+      r = cred.applyCredentialChange({
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        execFn: () => {}, validateFn: () => ({ ok: true })
+      });
+    } finally {
+      fs.writeFileSync = realWrite;
+      fs.copyFileSync = realCopy;
+    }
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'gate-broken', 'not validate-failed — the file was not merely rejected');
+    assert.ok(r.backup, 'the operator needs the path to the copy they can restore by hand');
+    assert.equal(store.config.load().basicAuthHash, HASH_OLD, 'the credential still did not change');
+  });
+
   it('does not reload when the caller says it will do it later', () => {
     // An HTTP caller answers THROUGH this Caddy, so restarting it before the
     // response is out kills the connection carrying the response: the change
