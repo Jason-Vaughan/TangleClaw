@@ -231,6 +231,67 @@ describe('POST /api/auth/credential', () => {
       assert.ok(!raw.includes(STUB_HASH), 'a credential hash must not cross the HTTP boundary');
       assert.ok(!raw.includes(GOOD_PASSWORD), 'and neither must the plaintext');
     });
+
+    it('answers BEFORE restarting the Caddy the answer travels through', async () => {
+      // The defect this pins: the reply to this request goes back through the very
+      // Caddy the change restarts, so restarting first tears down the connection
+      // carrying it and a change that SUCCEEDED reaches the browser as a network
+      // error. The response arriving at all is the assertion; the reload following
+      // it is the second half.
+      fs.writeFileSync(caddyStub.launchctlLog, '');
+      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        { user: 'jason', password: GOOD_PASSWORD });
+
+      assert.equal(status, 200, 'the response must survive the change it reports');
+      assert.equal(data.signedOut, true);
+      // Deferred means the outcome is unknowable here, so the response must not
+      // pretend to carry it.
+      assert.ok(!('reloaded' in data),
+        'no reload result can exist yet — the restart has not been asked for');
+      assert.match(data.reloadCommand, /launchctl kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/,
+        'the operator\'s recourse ships unconditionally, since a failed restart cannot be reported');
+
+      // ...and the restart really is asked for, once the response is out. Polled
+      // because it is deliberately asynchronous — asserting immediately would pass
+      // against a version that never reloads at all.
+      const deadline = Date.now() + 5000;
+      let logged = '';
+      while (Date.now() < deadline) {
+        logged = fs.readFileSync(caddyStub.launchctlLog, 'utf8');
+        if (logged.includes('kickstart')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.match(logged, /kickstart -k gui\/\d+\/com\.tangleclaw\.caddy/,
+        'the reload must still happen — just after the response, not before it');
+    });
+
+    it('never restarts Caddy from inside the handler', () => {
+      // Pinned structurally rather than by timing, because the runtime assertion
+      // above cannot distinguish the two orders: the test client talks to the
+      // server directly, with no Caddy in between to tear the connection down. The
+      // operator's browser does not have that luxury, so the ORDER is the contract
+      // and this is where it is enforced.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      const start = src.indexOf("route('POST', '/api/auth/credential'");
+      assert.ok(start > -1, 'could not locate the credential route');
+      const handler = src.slice(start, src.indexOf("route('GET', '/api/service-token'", start));
+      assert.match(handler, /reload: false/,
+        'the apply call must not reload inline');
+      assert.match(handler, /res\.on\('finish'/,
+        'the reload must hang off the response finishing');
+      assert.doesNotMatch(handler, /adminCredential\.reloadCaddy\(/,
+        'the SYNCHRONOUS reload would hold the event loop for the length of a Caddy restart');
+    });
+
+    it('answers a bodyless POST with a refusal, not a crash', async () => {
+      // parseBody resolves null for an empty request, so every field read in the
+      // handler runs against null. A 500 there reads as "the server broke" for what
+      // is simply a malformed request.
+      const { status, data } = await request(server, 'POST', '/api/auth/credential');
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'and nothing may have changed');
+    });
   });
 
   describe('GET /api/auth/credential — the same answer, before the form is drawn', () => {

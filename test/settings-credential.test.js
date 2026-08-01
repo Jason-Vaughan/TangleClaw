@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * The Login section of the global settings modal (#710 chunk 3b).
+ * The Login section of the global settings modal (#710).
  *
  * `public/ui.js` renders via innerHTML strings and carries many top-level
  * dependencies (state, esc, api, apiMutate), so structural source assertions are
@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-describe('Global settings — Login section (#710 chunk 3b)', () => {
+describe('Global settings — Login section (#710)', () => {
   let src;
   /** Just the credential loader, so assertions cannot pass on unrelated code. */
   let section;
@@ -137,21 +137,25 @@ describe('Global settings — Login section (#710 chunk 3b)', () => {
         'this screen must not move on its own');
     });
 
-    it('does not claim a sign-out that has not happened', () => {
-      // Caddy holds the gate, so until it reloads the OLD password is still in
-      // force. The success text used to assert the re-prompt unconditionally,
-      // directly above the sentence saying the old password still worked.
+    it('does not report a reload outcome the server cannot know', () => {
+      // Caddy restarts as the response leaves, and every request after that needs
+      // the new password — so no reply can ever carry whether the restart worked.
+      // A screen that branches on it would be inventing the answer. An earlier
+      // version did branch, on a `reloaded` field the response no longer has.
       const success = section.slice(section.indexOf('Your login is changed'));
-      assert.match(success, /res\.reloaded === false/);
-      assert.match(success, /OLD password is still in\s*\n?\s*force/);
-      assert.match(success, /you have not been signed out/);
+      assert.doesNotMatch(success, /res\.reloaded/,
+        'the success text must not branch on a reload result the response cannot carry');
+      assert.match(success, /will ask for the new password/);
     });
 
-    it('names the finishing command when Caddy could not be reloaded', () => {
-      // The change HAS taken but the OLD password is still in force, which is the
-      // one outcome an operator must not have to infer.
-      assert.match(section, /res\.reloaded === false/);
-      assert.match(section, /esc\(res\.reloadCommand/);
+    it('names the symptom of a failed restart, and the command that fixes it', () => {
+      // What the operator CAN observe is the absence of the prompt. That symptom
+      // and its one remedy are the whole of what this screen can honestly offer
+      // about an outcome it never learns.
+      const success = section.slice(section.indexOf('Your login is changed'));
+      assert.match(success, /If you are never asked/);
+      assert.match(success, /old password still works/);
+      assert.match(success, /esc\(res\.reloadCommand\)/);
     });
 
     it('escapes every server-supplied value it interpolates', () => {

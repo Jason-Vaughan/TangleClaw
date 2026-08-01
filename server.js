@@ -754,14 +754,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
-  // AUTH-2 fail-closed gate: enabling basic_auth requires BOTH a user and a hash.
-  // Mirrors buildCaddyfileContent's both-or-neither guard so the config can never
-  // hold authEnabled=true with a missing credential — which would otherwise make
-  // the next cutover throw (or, if the guard were absent, emit an UNGATED ingress
-  // on a reachable box). Symmetric with the generator's predicate by design.
-  if (config.authEnabled && (!config.basicAuthUser || !config.basicAuthHash)) {
-    return errorResponse(res, 400, 'authEnabled requires both basicAuthUser and basicAuthHash', 'BAD_REQUEST');
-  }
+  // The AUTH-2 both-or-neither check that used to sit here is gone with the fields
+  // it guarded. This route no longer accepts authEnabled/basicAuthUser/
+  // basicAuthHash at all — it refuses them above — so no request reaching this
+  // line can create the half-credential state, and the check could only ever fire
+  // on a config that was ALREADY inconsistent on disk. There it did harm: it
+  // rejected every unrelated write (a theme, a port) with an instruction to send
+  // credential fields this same route refuses, which is an error with no exit.
+  // The invariant is enforced where the fields are now written — POST
+  // /api/auth/credential, first-run setup, and scripts/reset-admin.js — and by
+  // buildCaddyfileContent's own guard at generation.
 
   // AUTH-4 — enabling the M2M gate auto-generates a fleet token on first enable,
   // so the config can never hold serviceTokenEnabled=true with a null token (the
@@ -868,7 +870,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // (the wizard step list) already had to fix once.
 route('GET', '/api/auth/credential', (_req, res) => {
   const config = store.config.load();
-  const check = adminCredential.canChangeCredential(config, caddy.classifyIngressState());
+  const check = adminCredential.canChangeCredential(
+    config, caddy.classifyIngressState(), caddy.detectCaddy().available);
   jsonResponse(res, 200, {
     changeable: check.allowed,
     // Same spelling the POST's refusal uses, from the same translator — a client
@@ -903,8 +906,13 @@ route('GET', '/api/auth/credential', (_req, res) => {
 // already did — which is exactly why the guard below refuses whenever no gate is
 // in force.
 route('POST', '/api/auth/credential', (_req, res, _params, body) => {
+  // parseBody resolves null for an empty request, so every field read below would
+  // throw on a bodyless POST — a 500 that reads as "the server broke" for what is
+  // simply a malformed request.
+  const payload = body || {};
   const config = store.config.load();
-  const check = adminCredential.canChangeCredential(config, caddy.classifyIngressState());
+  const check = adminCredential.canChangeCredential(
+    config, caddy.classifyIngressState(), caddy.detectCaddy().available);
   if (!check.allowed) {
     return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
   }
@@ -919,11 +927,11 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
   // Resolved from the LIVE FILE rather than from config, because those two drift
   // (ADR 0009's amendment names that state) and the file is what the gate
   // enforces. A caller sending a different name is refused, not obeyed.
-  const user = typeof body.user === 'string' ? body.user.trim() : '';
-  if (body.user !== undefined && !user) {
+  const user = typeof payload.user === 'string' ? payload.user.trim() : '';
+  if (payload.user !== undefined && !user) {
     return errorResponse(res, 400, 'A username is required', 'BAD_REQUEST');
   }
-  const password = typeof body.password === 'string' ? body.password : '';
+  const password = typeof payload.password === 'string' ? payload.password : '';
   const pwCheck = caddy.validateAdminPassword(password, user);
   if (!pwCheck.ok) {
     return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
@@ -945,7 +953,12 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
     user: user || undefined,
     hash,
     uid: process.getuid(),
-    stamp: new Date().toISOString().replace(/[:.]/g, '-')
+    stamp: new Date().toISOString().replace(/[:.]/g, '-'),
+    // The reply to this request travels back through the very Caddy that has to
+    // restart, so restarting it first tears down the connection carrying the
+    // reply: the change succeeds and the browser is told the network failed.
+    // Deferred to after the response is flushed, below.
+    reload: false
   });
 
   if (result.code === adminCredential.CREDENTIAL_CODES.RENAME_UNSUPPORTED) {
@@ -956,31 +969,66 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
       + 'Run `node scripts/reset-admin.js` at a terminal to change it.',
       adminCredential.httpCode(result.code));
   }
+  if (result.code === adminCredential.CREDENTIAL_CODES.DIVERGED) {
+    // The gate carries the NEW password and config still records the old one, and
+    // the restore that should have undone it failed too. Says which password is
+    // live, because that is the one thing the operator needs in the next minute.
+    log.error('Admin credential change left the gate and config disagreeing',
+      { error: caddy.redactHashes(result.error) });
+    return errorResponse(res, 500,
+      'The new login was written to Caddy but could not be recorded, and the previous '
+      + 'Caddy config could not be put back. The NEW password is the one in force. '
+      + 'Run `node scripts/reset-admin.js` at a terminal on this machine to settle it.',
+      adminCredential.httpCode(result.code));
+  }
   if (!result.ok) {
     // The gate and the recorded credential are both untouched — applyCredentialChange
-    // restores the original before returning. Redacted for the same reason the
-    // cutover's is: `caddy validate` output quotes the offending line, and that
-    // line carries a hash.
-    log.warn('Admin credential change rejected by caddy validate',
-      { error: caddy.redactHashes(result.error) });
-    return errorResponse(res, 400,
-      'The new login was rejected by Caddy, so nothing was changed.', 'VALIDATE_FAILED');
+    // restores the original before returning, whether the write was rejected by
+    // `caddy validate` or the config could not be recorded afterwards. Redacted
+    // for the same reason the cutover's is: `caddy validate` output quotes the
+    // offending line, and that line carries a hash.
+    log.warn('Admin credential change did not complete; nothing was changed',
+      { code: result.code, error: caddy.redactHashes(result.error) });
+    const detail = result.code === adminCredential.CREDENTIAL_CODES.CONFIG_WRITE_FAILED
+      ? 'The new login could not be recorded, so nothing was changed.'
+      : 'The new login was rejected by Caddy, so nothing was changed.';
+    return errorResponse(res, 400, detail, adminCredential.httpCode(result.code));
   }
 
-  log.info('Admin credential changed', { user: result.user, reloaded: result.reloaded });
+  log.info('Admin credential changed; reloading Caddy once this response is out',
+    { user: result.user });
+
+  // The restart is hung off `finish` — after the response has left this process —
+  // and never before it. What cannot be reported is the reload's OUTCOME: by the
+  // time it is known, every further request needs the new password, so there is no
+  // response left to carry it. That is why `reloadCommand` ships unconditionally
+  // rather than only on failure: it is the operator's recourse for the one case
+  // this route cannot tell them about, a restart that did not happen.
+  // Asynchronous, because a synchronous restart here holds the event loop for as
+  // long as launchd takes — every unrelated request queued behind a Caddy restart.
+  res.on('finish', () => {
+    adminCredential.reloadCaddyAsync(process.getuid(), (reload) => {
+      if (reload.ok) {
+        log.info('Caddy reloaded; the new login is in force');
+      } else {
+        log.error('Caddy could not be reloaded, so the OLD login is still in force',
+          { error: reload.error, reloadCommand: reload.command });
+      }
+    });
+  });
+
   jsonResponse(res, 200, {
     ok: true,
     // The name the GATE carries, which is authoritative — not the one that was sent.
     user: result.user,
-    // True only when the reload actually happened. Caddy holds the gate, so until
-    // it reloads the OLD password is still the one in force and the operator is
-    // NOT signed out — reporting otherwise would have the response contradict its
-    // own `reloaded: false` in the same body.
-    signedOut: result.reloaded,
-    reloaded: result.reloaded,
-    // Only when the reload failed — the change HAS taken, and this is the one
-    // command left. Naming it unconditionally would imply work that isn't owed.
-    reloadCommand: result.reloaded ? null : result.reloadCommand
+    // The change is on disk and Caddy restarts as this response leaves, so the
+    // next request is challenged. Unconditional now, and honestly so: it is a
+    // statement about what has been done, not a claim about a restart this
+    // response is racing.
+    signedOut: true,
+    // What to run if the sign-in prompt never comes — the only symptom the
+    // operator can observe of a reload that failed after this reply was sent.
+    reloadCommand: result.reloadCommand
   });
 });
 
@@ -1394,10 +1442,10 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // dropping a credential the caller believes it set is its own false report, and
   // the wizard would have no way to tell the difference.
   if (adminProvided && !firstRun) {
-    // Names `reset-admin.js` rather than a settings surface: the settings surface
-    // is chunk 3b and is not built, while the script exists today, rewrites config
-    // and the Caddyfile together, and requires local shell access — the right bar
-    // for a route that authenticates nobody.
+    // Names both routes that can change a credential on a completed install: the
+    // settings surface, which refuses unless a live gate is already
+    // authenticating the caller, and the script, which requires local shell
+    // access. Either bar is the right one for a route that authenticates nobody.
     //
     // It covers the case this refusal actually meets: an install that HAS a
     // credential and wants a different one. It does NOT cover a completed,
@@ -1407,9 +1455,9 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // with ADMIN_REQUIRED for not carrying one) and is tracked as #806. It is not
     // reachable from a first run on this code — setup will not complete in caddy
     // mode without a credential — only from a legacy install that got there
-    // before this chunk.
+    // before the credential became mandatory.
     return errorResponse(res, 409,
-      'Setup is already complete. To change the admin credential, run '
+      'Setup is already complete. Change the admin login from global settings, or run '
       + '`node scripts/reset-admin.js` at a terminal.',
       'SETUP_ALREADY_COMPLETE');
   }

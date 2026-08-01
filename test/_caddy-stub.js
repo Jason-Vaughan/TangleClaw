@@ -76,7 +76,31 @@ exit 1
 }
 
 /**
- * Put a stubbed `caddy` on PATH for the duration of a suite.
+ * Write an executable `launchctl` stub that records its argv and succeeds.
+ *
+ * Not optional, and not cosmetic. Changing a credential ends in
+ * `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, and the real binary is
+ * on PATH on the machine that runs these tests — so without this, the suite
+ * restarts the developer's own live Caddy, dropping their remote access mid-run.
+ * That is a test reaching outside its sandbox and touching the machine, which no
+ * assertion is worth. Recording the argv means the reload can still be asserted:
+ * the stub proves the call was made without making it for real.
+ *
+ * @param {string} dir - Directory to write the stub into. Must exist.
+ * @returns {string} Path to the invocation log the stub appends to.
+ */
+function writeLaunchctlStub(dir) {
+  const logPath = path.join(dir, 'launchctl-invocations.log');
+  const script = `#!/bin/bash
+echo "$*" >> ${JSON.stringify(logPath)}
+exit 0
+`;
+  fs.writeFileSync(path.join(dir, 'launchctl'), script, { mode: 0o755 });
+  return logPath;
+}
+
+/**
+ * Put a stubbed `caddy` and `launchctl` on PATH for the duration of a suite.
  *
  * Returns a restore function rather than mutating global state irreversibly, so
  * a suite's `after` hook puts PATH back even when an assertion throws.
@@ -84,15 +108,18 @@ exit 1
  * @param {object} [opts]
  * @param {boolean} [opts.answersVersion=true] - Passed through to `writeCaddyStub`.
  * @param {boolean} [opts.answersValidate=true] - Passed through to `writeCaddyStub`.
- * @returns {{ dir: string, restore: Function }} The stub dir and its undo.
+ * @returns {{ dir: string, launchctlLog: string, restore: Function }} The stub
+ *   dir, the path the launchctl stub appends each invocation to, and the undo.
  */
 function installCaddyStub(opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-stub-'));
   writeCaddyStub(dir, opts);
+  const launchctlLog = writeLaunchctlStub(dir);
   const origPath = process.env.PATH;
   process.env.PATH = dir + path.delimiter + (origPath || '');
   return {
     dir,
+    launchctlLog,
     restore() {
       process.env.PATH = origPath;
       fs.rmSync(dir, { recursive: true, force: true });
@@ -122,4 +149,4 @@ async function withoutCaddy(fn) {
   }
 }
 
-module.exports = { writeCaddyStub, installCaddyStub, withoutCaddy };
+module.exports = { writeCaddyStub, writeLaunchctlStub, installCaddyStub, withoutCaddy };

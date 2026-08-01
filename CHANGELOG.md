@@ -5,7 +5,7 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- **The admin login can be changed from settings (#710 chunk 3b).** Global settings gains a **Login**
+- **The admin login can be changed from settings (#710).** Global settings gains a **Login**
   section: username, new password, confirm. It appears only when the server says this install can
   use it — `GET /api/auth/credential` answers from the same predicate the change itself uses, so the
   form is never offered to a machine that would then refuse it, and where it refuses it shows the
@@ -24,6 +24,15 @@ All notable changes to TangleClaw are documented in this file.
   password locks the operator out of their own dashboard with only a terminal to get back in.
   Mobile-first per the project rule — every control is a 44px target, and nothing on the screen moves
   on a timer.
+
+  **Caddy restarts only after the reply is out.** The response to a credential change travels back
+  through the very Caddy that has to restart, so restarting first tears down the connection carrying
+  it — a change that succeeded reaches the browser as a network error. The reload now runs when the
+  response finishes, and asynchronously, so it also cannot hold the event loop for the length of a
+  restart. What that costs is stated rather than hidden: the reload's outcome can never be reported,
+  because by the time it is known every further request needs the new password. So the screen names
+  the one thing the operator can observe — never being asked to sign in again — and ships the manual
+  reload command as the recourse, instead of claiming an outcome it did not see.
 
 - **BREAKING: setup puts a login in front of TangleClaw by default, and says plainly when it cannot
   (#710, v5 chunk 2).** The admin-credential step used to appear only when config already said
@@ -150,6 +159,17 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **A bodyless `POST /api/auth/credential` answers 400 instead of crashing (#710).** The body parser
+  resolves `null` for an empty request, so every field read in the handler ran against `null` — a
+  500 that reads as "the server broke" for what is simply a malformed request.
+
+- **An unrelated setting can be saved on a config that is already half-credentialed (#710).**
+  `PATCH /api/config` kept a both-or-neither credential invariant after the credential fields were
+  removed from it. Nothing reaching that line could create the state any more, so the check could
+  only fire on a config that arrived broken — and there it rejected a theme or port change with an
+  instruction to send credential fields the same route refuses. An error with no exit. The invariant
+  is enforced where those fields are now written, and by the Caddyfile generator's own guard.
 
 - **TangleClaw no longer stamps an unreviewed prawduct reference into the projects it migrates
   (#807, #816).** `migrateToPlugin` built the plugin reference by copying TangleClaw's own
@@ -296,6 +316,14 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+- **Caddyfile backups no longer accumulate one credential-bearing file per change (#710).** Every
+  credential change takes a timestamped backup of the live Caddyfile, and each one carries the
+  bcrypt hash that was in force when it was written — so the pile was a growing set of credential
+  copies nobody pruned. Only the five newest survive a write now, and the backup is explicitly
+  chmod'd `0600` rather than inheriting the source's mode: `copyFileSync` carries the source mode
+  across, and a hand-edited live Caddyfile at `0644` would have left a hash readable by every
+  account on the box.
+
 - **`PATCH /api/config` can no longer set the admin credential (#805, #710 chunk 3b).** It carried
   `authEnabled`, `basicAuthUser` and `basicAuthHash` in its allow-list, validated only the *shape*
   of a hash, had no lifecycle gate and no authentication in front of it — so on an ungated,
@@ -325,6 +353,14 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
+  in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
+  through PATH, and the shared test stub only stubbed `caddy` — so every full-suite run on a machine
+  that actually runs TangleClaw kickstarted its live Caddy job and dropped the operator's remote
+  access mid-run. A test reaching outside its sandbox to touch the machine is worth no assertion.
+  The shared stub now covers `launchctl` too and records each invocation, which is also what makes
+  the deferred reload assertable at all.
+
 - **One route changes a login after setup, and it refuses more often than it acts (#710 chunk 3b).**
   New `POST /api/auth/credential`, guarded by the single `canChangeCredential` predicate: a change
   is allowed only in caddy mode, with a gate present in the LIVE Caddyfile, and with a credential

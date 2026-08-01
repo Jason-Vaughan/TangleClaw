@@ -1462,14 +1462,20 @@ async function _loadCredentialSection() {
     // Terminal state, and it waits. No redirect, no auto-dismiss: the operator is
     // about to be asked for a password, and a screen that moves on its own takes
     // away the moment they need to read which one.
+    // The reload's outcome is deliberately NOT reported here, because the server
+    // cannot report it: Caddy restarts as this response leaves, and every request
+    // after that needs the new password, so there is no reply left to carry the
+    // answer. What the operator gets instead is the symptom to watch for and the
+    // command that fixes it — which is the whole of what they can act on.
     box.innerHTML = `
       <div class="form-hint">
         <strong>Your login is changed${res.user ? ` for ${esc(res.user)}` : ''}.</strong>
-        ${res.reloaded === false
-          ? `<br><br>But Caddy could not be reloaded, so the <strong>OLD password is still in
-             force</strong> and you have not been signed out. Run
-             <code>${esc(res.reloadCommand || '')}</code> at a terminal to apply it.`
-          : 'The next page you load will ask for the new password.'}
+        The next page you load will ask for the new password.
+        ${res.reloadCommand
+          ? `<br><br>If you are never asked, and the old password still works, Caddy did not
+             restart. Run <code>${esc(res.reloadCommand)}</code> at a terminal on this machine
+             to apply it.`
+          : ''}
       </div>`;
   });
 }

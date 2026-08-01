@@ -26,6 +26,56 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
+
+<!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default -->
+
+**Why:** setup forces a login, and until now nothing could change it except a terminal. A password
+that can only be rotated by someone with shell access on the box is a password that does not get
+rotated. The surface is `POST /api/auth/credential` plus a Login section in global settings, and it
+may **change** a login while being unable to create or blank one.
+
+**One predicate is the whole guard.** A change is allowed only when the install is in caddy mode,
+the LIVE Caddyfile carries a gate, a credential is already recorded, and the `caddy` binary is
+present. Written as one conjunction rather than four checks because it does four jobs at once: only
+something that exists can be changed (blanking unreachable), an ungated install cannot be claimed by
+whoever reaches it (no second remote door), first-credential creation stays at a terminal where a
+locked-out operator can still get in (**#806** is answered by `reset-admin.js` learning to create a
+gate, not by widening this), and the request is one Caddy has already authenticated — which matters
+because the server *cannot* verify a typed current password. `caddy hash-password` has no verify mode
+and no `--salt`, and Node's stdlib has no bcrypt, so the form has no current-password field: one that
+does not verify is theatre.
+
+**#805 closed by removing a door, not by guarding it.** `PATCH /api/config` no longer accepts
+`authEnabled`/`basicAuthUser`/`basicAuthHash` at all — it refuses the whole patch. That route
+authenticates nobody, and it wrote those fields through a generic `allowedFields` loop, so no grep
+for `basicAuthHash =` ever found it. The pinning tests now assert refusal, which is a strictly
+stronger claim than the write they asserted before.
+
+**The restart cannot happen before the reply.** The response to this request travels back through the
+very Caddy the change restarts, so reloading first tears down the connection carrying it: a change
+that SUCCEEDED reaches the browser as a network error. The reload now hangs off the response
+finishing, and asynchronously, so it cannot hold the event loop for the length of a Caddy restart
+either. The consequence is stated rather than hidden — the reload's outcome can never be reported,
+because by the time it is known every further request needs the new password, so the response ships
+the manual reload command unconditionally as the recourse for a restart that did not happen.
+
+**The tests were restarting the operator's live Caddy.** `execFileSync('launchctl', …)` resolves
+through PATH, the shared stub only stubbed `caddy`, and the real binary is on the machine that runs
+the suite — so every full-suite run kickstarted the live `com.tangleclaw.caddy` job and dropped the
+operator's remote access mid-run. The shared stub now covers `launchctl` too and records each
+invocation, which is also what lets the deferred reload be asserted at all.
+
+**A guard was removed for being a trap.** `PATCH /api/config` kept a both-or-neither credential
+invariant it could no longer break: with the fields refused above it, the check could only fire on a
+config that was already inconsistent on disk, where it rejected unrelated writes (a theme, a port)
+with an instruction to send credential fields the same route refuses. An error with no exit.
+
+**Mutation-checked.** Every guard added here was reverted and the suite watched go red before the
+test was kept: the deferred reload (both at the module and at the route), the null-body guard, the
+0600 backup mode, the gate restore after a failed config write, backup retention on the write path,
+the caddy-binary check, and re-adding the removed invariant.
+
 ## 2026-07-31: the prawduct install reference becomes a reviewed constant, not a copy of local state (#807, #816)
 
 <!-- prawduct: type=fix | scope=plugin-ref-807 -->

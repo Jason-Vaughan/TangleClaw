@@ -501,6 +501,35 @@ describe('API endpoints', () => {
       assert.equal('basicAuthHash' in data, false);
       assert.equal(data.basicAuthConfigured, false);
     });
+
+    it('still saves an unrelated field when the stored config is half-credentialed', async () => {
+      // A both-or-neither check used to run here and reject the whole request when
+      // config held authEnabled=true with no credential. Once the credential fields
+      // left this route, no request could CREATE that state — the check could only
+      // fire on a config that arrived broken, and there it rejected a theme change
+      // with an instruction to send credential fields this same route refuses. An
+      // error with no exit. The invariant now lives where the fields are written.
+      const stored = store.config.load();
+      const restore = {
+        authEnabled: stored.authEnabled,
+        basicAuthUser: stored.basicAuthUser,
+        basicAuthHash: stored.basicAuthHash
+      };
+      stored.authEnabled = true;
+      stored.basicAuthUser = null;
+      stored.basicAuthHash = null;
+      store.config.save(stored);
+
+      try {
+        const before = store.config.load().theme;
+        const nextTheme = before === 'light' ? 'dark' : 'light';
+        const { status } = await request(server, 'PATCH', '/api/config', { theme: nextTheme });
+        assert.equal(status, 200, 'an unrelated write must not be held hostage by a state it cannot fix');
+        assert.equal(store.config.load().theme, nextTheme);
+      } finally {
+        store.config.save({ ...store.config.load(), ...restore });
+      }
+    });
   });
 
   describe('PATCH /api/config HTTPS cert validation', () => {

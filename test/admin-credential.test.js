@@ -33,6 +33,19 @@ describe('reloadCaddyArgs', () => {
   it('targets the Caddy LaunchAgent for the given uid', () => {
     assert.deepEqual(cred.reloadCaddyArgs(501), ['kickstart', '-k', 'gui/501/com.tangleclaw.caddy']);
   });
+
+  it('names the job from one place, so a rename cannot reload nothing', () => {
+    // Two writers restart this job by label — the settings surface and the cutover.
+    // A second copy of the literal is a rename away from kickstarting a job that no
+    // longer exists, which exits 0 and changes nothing: a reload that reports
+    // success and leaves the old password in force.
+    const caddy = require('../lib/caddy');
+    assert.equal(caddy.CADDY_LABEL, 'com.tangleclaw.caddy');
+    const cutover = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
+    assert.doesNotMatch(cutover, /CADDY_LABEL = 'com\.tangleclaw\.caddy'/,
+      'the cutover must take the label from lib/caddy, not re-declare it');
+    assert.match(cutover, /CADDY_LABEL = caddy\.CADDY_LABEL/);
+  });
 });
 
 describe('canChangeCredential — the one predicate that guards this surface', () => {
@@ -53,6 +66,16 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'not-caddy-mode');
     assert.match(r.remedy, /ingress-cutover/, 'the operator needs the command that puts a login in place');
+  });
+
+  it('refuses when the caddy binary is gone, because nothing can hash the new password', () => {
+    // `caddy hash-password` is the only hasher this codebase has. Asked here so
+    // the form is never drawn for an install that would fail at submit with a 500
+    // from a shell-out — the sibling ingress-state endpoint checks the same thing.
+    const r = cred.canChangeCredential(configured, gated, false);
+    assert.equal(r.allowed, false);
+    assert.equal(r.code, 'no-caddy-binary');
+    assert.match(r.remedy, /install caddy/i);
   });
 
   it('refuses when the live Caddyfile carries no gate, even though config records one', () => {
@@ -186,6 +209,170 @@ describe('applyCredentialChange', () => {
     });
     assert.ok(fs.existsSync(`${caddyfilePath}.FIRST.bak`));
     assert.ok(fs.existsSync(`${caddyfilePath}.SECOND.bak`));
+  });
+
+  it('prunes old backups as it writes, so credential copies do not accumulate', () => {
+    // The retention has to be ON the write path, not merely available: a helper
+    // nobody calls leaves the pile growing exactly as before.
+    for (let i = 0; i < cred.BACKUP_RETENTION + 2; i++) {
+      cred.applyCredentialChange({
+        caddyfilePath,
+        user: 'jason',
+        hash: i % 2 ? HASH_NEW : HASH_OLD,
+        uid: 501,
+        // Stamp-shaped and ascending, which is what the pruner orders by.
+        stamp: `2026-01-0${i + 1}T00-00-00-000Z`,
+        execFn: () => {},
+        validateFn: () => ({ ok: true })
+      });
+    }
+    const backups = fs.readdirSync(path.dirname(caddyfilePath))
+      .filter((n) => n.startsWith('Caddyfile.') && n.endsWith('.bak'));
+    assert.equal(backups.length, cred.BACKUP_RETENTION,
+      `every change leaves a hash-bearing backup; only ${cred.BACKUP_RETENTION} may survive`);
+  });
+
+  it('writes the backup 0600, because it carries the hash that was in force', () => {
+    // copyFileSync carries the SOURCE's mode across, and the live file on this
+    // machine is hand-edited — so an inherited 0644 would leave a credential
+    // readable by every account on the box.
+    fs.chmodSync(caddyfilePath, 0o644);
+    cred.applyCredentialChange({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'MODE',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    const mode = fs.statSync(`${caddyfilePath}.MODE.bak`).mode & 0o777;
+    assert.equal(mode, 0o600, `the backup must not be world- or group-readable (got ${mode.toString(8)})`);
+  });
+
+  it('does not reload when the caller says it will do it later', () => {
+    // An HTTP caller answers THROUGH this Caddy, so restarting it before the
+    // response is out kills the connection carrying the response: the change
+    // succeeds and the browser is told the network failed.
+    let reloadAttempted = false;
+    const r = cred.applyCredentialChange({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      reload: false,
+      execFn: () => { reloadAttempted = true; },
+      validateFn: () => ({ ok: true })
+    });
+
+    assert.equal(r.ok, true);
+    assert.equal(reloadAttempted, false, 'the reload must not happen inside the call');
+    assert.equal(r.reloaded, false, 'and must not be reported as having happened');
+    assert.equal(r.reloadPending, true, 'the caller is told it still owes the reload');
+    assert.equal(store.config.load().basicAuthHash, HASH_NEW,
+      'everything up to the reload still happened');
+  });
+
+  it('puts the gate back when the credential cannot be recorded', () => {
+    // The write can fail — a full disk, a permission change — and by then the LIVE
+    // gate already carries the new password. Reporting a plain failure there would
+    // send the operator to sign in with a password the door no longer takes, so
+    // the file goes back to what the message says it is.
+    const realSave = store.config.save;
+    store.config.save = () => { throw new Error('ENOSPC: no space left on device'); };
+    let r;
+    try {
+      r = cred.applyCredentialChange({
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        execFn: () => {}, validateFn: () => ({ ok: true })
+      });
+    } finally {
+      store.config.save = realSave;
+    }
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'config-write-failed');
+    assert.match(fs.readFileSync(caddyfilePath, 'utf8'), new RegExp(HASH_OLD.replace(/\$/g, '\\$')),
+      'the live gate must carry the OLD hash again');
+    assert.equal(store.config.load().basicAuthHash, HASH_OLD, 'and config must agree with it');
+  });
+
+  it('says which password is live when it cannot put the gate back either', () => {
+    // Both writes failed, so the halves disagree and only a terminal settles it.
+    // Reported as its own state because the operator's next password differs from
+    // the case above — there it is the old one, here the new.
+    const realSave = store.config.save;
+    const realCopy = fs.copyFileSync;
+    store.config.save = () => { throw new Error('ENOSPC'); };
+    let r;
+    try {
+      r = cred.applyCredentialChange({
+        caddyfilePath,
+        user: 'jason',
+        hash: HASH_NEW,
+        uid: 501,
+        stamp: 'STAMP',
+        execFn: () => {},
+        validateFn: () => {
+          // Only the RESTORE copy fails; the backup taken before the write must
+          // still succeed or the write never happens and the case is unreachable.
+          fs.copyFileSync = () => { throw new Error('EROFS: read-only file system'); };
+          return { ok: true };
+        }
+      });
+    } finally {
+      store.config.save = realSave;
+      fs.copyFileSync = realCopy;
+    }
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'diverged');
+    assert.match(r.error, /ENOSPC/);
+    assert.match(r.error, /EROFS/, 'both failures must be named — they have different remedies');
+    assert.match(fs.readFileSync(caddyfilePath, 'utf8'), new RegExp(HASH_NEW.replace(/\$/g, '\\$')),
+      'the NEW hash is what the gate is enforcing, which is what the message claims');
+  });
+});
+
+describe('backup retention', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cred-bak-'));
+  });
+
+  it('keeps the newest backups and deletes the rest', () => {
+    // Each backup holds the bcrypt hash that was live when it was taken, so an
+    // unbounded pile is a growing set of credential-bearing files nobody prunes.
+    const caddyfilePath = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(caddyfilePath, gatedCaddyfile());
+    // Stamps are ISO timestamps with `:` and `.` swapped for `-`, so they sort in
+    // time order. Written out of order deliberately: retention must follow the
+    // stamp, not the order the files happened to be created in.
+    const stamps = ['2026-01-03T00-00-00-000Z', '2026-01-01T00-00-00-000Z',
+      '2026-01-05T00-00-00-000Z', '2026-01-02T00-00-00-000Z', '2026-01-04T00-00-00-000Z'];
+    for (const s of stamps) fs.writeFileSync(`${caddyfilePath}.${s}.bak`, 'x');
+
+    const removed = cred.pruneCaddyfileBackups(caddyfilePath, 2);
+
+    assert.equal(removed.length, 3);
+    const left = fs.readdirSync(dir).filter((n) => n.endsWith('.bak')).sort();
+    assert.deepEqual(left, [
+      'Caddyfile.2026-01-04T00-00-00-000Z.bak',
+      'Caddyfile.2026-01-05T00-00-00-000Z.bak'
+    ], 'the two newest by stamp survive');
+  });
+
+  it('leaves other files in the directory alone', () => {
+    // The Caddyfile sits beside certs and the ttyd socket on a real install.
+    const caddyfilePath = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(caddyfilePath, gatedCaddyfile());
+    fs.writeFileSync(path.join(dir, 'Caddyfile.other'), 'x');
+    fs.writeFileSync(path.join(dir, 'unrelated.bak'), 'x');
+    fs.writeFileSync(`${caddyfilePath}.STAMP.bak`, 'x');
+
+    cred.pruneCaddyfileBackups(caddyfilePath, 0);
+
+    const left = fs.readdirSync(dir).sort();
+    assert.deepEqual(left, ['Caddyfile', 'Caddyfile.other', 'unrelated.bak']);
+  });
+
+  it('does not throw when the directory cannot be read', () => {
+    // A credential change that worked must never be reported as failed because a
+    // stale backup could not be listed or unlinked.
+    assert.deepEqual(cred.pruneCaddyfileBackups(path.join(dir, 'nope', 'Caddyfile')), []);
   });
 });
 

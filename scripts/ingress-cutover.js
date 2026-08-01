@@ -41,7 +41,10 @@ const store = require(path.join(REPO_DIR, 'lib', 'store'));
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
 const TTYD_LABEL = 'com.tangleclaw.ttyd';
-const CADDY_LABEL = 'com.tangleclaw.caddy';
+// From lib/caddy, not a local literal: the settings surface reloads this same job
+// by label, and a second copy is a rename away from restarting nothing while
+// reporting success.
+const CADDY_LABEL = caddy.CADDY_LABEL;
 
 /**
  * Replace `__TOKEN__` placeholders in a plist template string.
