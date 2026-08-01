@@ -4,6 +4,47 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **An install with no login can now get one, from the same terminal tool that resets one (#806,
+  #710).** A machine that reached `setupComplete` before a credential was mandatory and then moved
+  to caddy mode had no way forward: the setup route answers `409 SETUP_ALREADY_COMPLETE`, the adopt
+  path only runs on a first run, and `reset-admin.js` exited 1 because it *resets* a gate and could
+  not *create* one. Closing #805 removed the unauthenticated `PATCH /api/config` escape that had
+  been masking it. `node scripts/reset-admin.js --create-gate --user <name>` builds the gate.
+
+  It stays the terminal tool deliberately. The alternative — letting an unauthenticated route set
+  the first credential — reopens exactly the hole that making the gate mandatory closed, and a
+  recovery path reachable over the network is not a recovery path for someone the network is
+  refusing.
+
+  **The rebuild reads its inputs back out of the file, not out of `config`.** New
+  `caddy.extractGeneratedCaddyfileOptions` recovers the ports, upstream and certificate a generated
+  Caddyfile was emitted from, so the result differs from what was there by exactly the gate.
+  Rebuilding from config instead would fold in every field that has since drifted — and config and
+  the live Caddyfile are known to drift; that is the state ADR 0009's amendment describes. Every
+  field involved has a default in `buildCaddyfileContent`, so the extractor **refuses rather than
+  defaulting**: a silent fallback would emit a plausible file that moves a working port or
+  certificate while reporting success.
+
+  A hand-maintained Caddyfile is **refused, not reshaped** — adding a gate means placing directives
+  inside site blocks this code did not write, and guessing wrong either drops the operator's
+  configuration or leaves an opening that looks closed. The refusal an operator hits on the reset
+  path now names the create command, but only when the file is one the tool could actually build in,
+  so it never advertises a command that would refuse them.
+
+  Creation and change share one implementation of the sequence that matters
+  (`_persistGatedCaddyfile`: write, validate fail-closed, only then record in config, then reload).
+  The order is the safety property rather than the individual steps, and a second copy would be free
+  to drift out of it — which this project has already paid for once.
+
+- **A setup guide for someone who has never heard of a reverse proxy (`docs/setup-guide.md`).**
+  `deploy/INGRESS.md` documents the same machinery for a reader who already knows what it is; this
+  one explains what the login protects (a browser that can run commands as you), what Caddy is and
+  why the password check happens before anything reaches TangleClaw, how to verify from a second
+  device that the gate is actually in force rather than trusting the dashboard, and what to do when
+  locked out — including that the reload restarts Caddy and will drop the connection you are reading
+  it through, so run it under `tmux`.
+
 ### Changed
 - **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The
   two questions "what is this server serving" and "where should the operator go" have different

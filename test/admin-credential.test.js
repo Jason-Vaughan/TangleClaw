@@ -625,3 +625,185 @@ describe('one implementation, not two', () => {
     assert.equal(resetAdmin.writeValidatedCaddyfile, cred.writeValidatedCaddyfile);
   });
 });
+
+describe('createGate — an install that completed setup with no login', () => {
+  // The #806 state: `setupComplete` reached in caddy mode carrying no credential.
+  // Every other route out refuses it, so this is the only way to put a login on
+  // such a machine — and it must do that without reshaping anything else.
+  const caddy = require('../lib/caddy');
+  let tmpBase; let prevBase; let caddyfilePath; let certPath; let keyPath;
+
+  /**
+   * An UNGATED Caddyfile in exactly the shape the generator emits.
+   *
+   * Deliberately on NON-DEFAULT ports. With 8443/8080 a rebuild that silently
+   * fell back to `buildCaddyfileContent`'s defaults would produce a
+   * byte-identical file, so the test that exists to catch exactly that drift
+   * could not fail. The fixture has to carry the values that distinguish
+   * "recovered from the file" from "guessed".
+   */
+  function ungenerated() {
+    return caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080
+    });
+  }
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-creategate-'));
+    store._setBasePath(tmpBase);
+    store.init();
+    certPath = path.join(tmpBase, 'cert.pem');
+    keyPath = path.join(tmpBase, 'key.pem');
+  });
+
+  after(() => {
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    caddyfilePath = path.join(tmpBase, 'Caddyfile');
+    fs.writeFileSync(caddyfilePath, ungenerated(), { mode: 0o600 });
+    const config = store.config.load();
+    config.ingressMode = 'caddy';
+    config.authEnabled = false;
+    config.basicAuthUser = null;
+    config.basicAuthHash = null;
+    store.config.save(config);
+  });
+
+  it('puts a working gate on the file and records it', () => {
+    const calls = [];
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: (cmd, argv) => { calls.push({ cmd, argv }); },
+      validateFn: () => ({ ok: true })
+    });
+
+    assert.equal(r.ok, true, r.error || '');
+    assert.equal(r.user, 'jason');
+    assert.ok(r.replaced >= 1, 'at least one credential line must have been written');
+    const live = fs.readFileSync(caddyfilePath, 'utf8');
+    assert.deepEqual(caddy.listBasicAuthUsers(live), ['jason'],
+      'the LIVE file is the gate — config alone is not a login');
+    const config = store.config.load();
+    assert.equal(config.authEnabled, true);
+    assert.equal(config.basicAuthUser, 'jason');
+    assert.equal(config.basicAuthHash, HASH_NEW);
+    assert.deepEqual(calls[0].argv, ['kickstart', '-k', 'gui/501/com.tangleclaw.caddy']);
+  });
+
+  it('changes NOTHING but the gate', () => {
+    // The promise this tool makes. Rebuilding from `config` instead of from the
+    // file would fold in every field that has since drifted — a moved port, a
+    // different certificate, a tailnet site the file never carried — and the
+    // operator asked for a login, not a reshaped ingress. Compared line-wise so
+    // a regression names the setting it moved.
+    const before = fs.readFileSync(caddyfilePath, 'utf8');
+    cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    const after = fs.readFileSync(caddyfilePath, 'utf8');
+
+    // The stamped header vouches for the body, so it legitimately differs; every
+    // other removed or altered line is a setting that moved.
+    const body = (s) => s.split('\n').slice(1);
+    // One line legitimately changes shape rather than surviving verbatim: gating
+    // turns `reverse_proxy <upstream>` into `reverse_proxy <upstream> {` so the
+    // authenticated username can be forwarded to TangleClaw. That is part of the
+    // gate. Anything else that disappears is a setting this rebuild dropped.
+    const survives = (l, out) => out.includes(l) || out.includes(`${l} {`);
+    const gone = body(before).filter((l) => !survives(l, body(after)));
+    assert.deepEqual(gone, [], `these settings were dropped or altered: ${JSON.stringify(gone)}`);
+
+    // Same transformation seen from the other side: the opened `reverse_proxy`
+    // line is not new content, it is a surviving line that grew a brace.
+    const opened = new Set(body(before).map((l) => `${l} {`));
+    const added = body(after).filter((l) => !body(before).includes(l) && !opened.has(l));
+    assert.ok(added.length > 0, 'a gate must actually have been added');
+    assert.ok(added.every((l) => /basic_auth|@protected|X-Auth-User|^\s*[}{]\s*$|jason/.test(l)),
+      `only gate lines may be added, got: ${JSON.stringify(added)}`);
+  });
+
+  it('stays fail-closed: a rejected file leaves no gate and no recorded credential', () => {
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => { throw new Error('reload must not be reached'); },
+      validateFn: () => ({ ok: false, error: 'bad directive' })
+    });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'validate-failed');
+    assert.deepEqual(caddy.listBasicAuthUsers(fs.readFileSync(caddyfilePath, 'utf8')), [],
+      'the original ungated file must be restored');
+    const config = store.config.load();
+    assert.equal(config.basicAuthHash, null, 'config must not claim a credential the gate lacks');
+    assert.notEqual(config.authEnabled, true);
+  });
+
+  it('refuses a file that already has a login, naming who holds it', () => {
+    fs.writeFileSync(caddyfilePath, gatedCaddyfile('alice'));
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'gate-exists');
+    assert.match(r.error, /alice/);
+  });
+
+  it('refuses to reshape a hand-maintained file rather than guessing where a gate goes', () => {
+    // The invariant the whole credential surface rests on: a file a human
+    // maintains is never rewritten by this code. Guessing wrong either drops
+    // their configuration or leaves an opening that looks closed.
+    const handEdited = ungenerated().split('\n').slice(1).join('\n') + '\n# operator note\n';
+    fs.writeFileSync(caddyfilePath, handEdited);
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'not-generated');
+    assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), handEdited, 'the file must be byte-identical');
+  });
+
+  it('requires a username, because there is no existing line to read one from', () => {
+    const r = cred.createGate({
+      caddyfilePath, hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'no-credential');
+  });
+
+  it('refuses a missing file instead of provisioning one from nothing', () => {
+    fs.rmSync(caddyfilePath);
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'unreadable');
+  });
+
+  it('treats a body edit as hand-maintained, because editing breaks the stamp first', () => {
+    // Worth pinning as its own fact: removing a setting from a generated file
+    // cannot produce a "generated but unreadable" file, because the sha256 header
+    // stops matching the moment the body changes. The unrecognized-shape guard is
+    // therefore forward-looking — it answers a FUTURE generator emitting a shape
+    // this extractor cannot read back — and today every edited file lands on the
+    // hand-maintained refusal instead. Both refuse without writing, which is the
+    // property that matters.
+    const noTls = ungenerated().split('\n').filter((l) => !/^\s*tls\s/.test(l)).join('\n');
+    fs.writeFileSync(caddyfilePath, noTls);
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'not-generated');
+    assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), noTls, 'nothing may be written');
+  });
+});

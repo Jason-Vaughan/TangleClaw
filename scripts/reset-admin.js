@@ -14,6 +14,9 @@
 //   node scripts/reset-admin.js --user jason      disambiguate when >1 user exists
 //   node scripts/reset-admin.js --password-stdin  read the new password from stdin (piped)
 //   node scripts/reset-admin.js --dry-run         show what would change, touch nothing
+//   node scripts/reset-admin.js --create-gate --user jason
+//                                                 put a FIRST login on an install that
+//                                                 completed setup without one
 //
 // Fail-closed: the patched Caddyfile is `caddy validate`d BEFORE the reload, and
 // the prior file is restored from a timestamped backup if validation fails — a
@@ -33,7 +36,9 @@ const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
 const { reloadCaddyArgs, writeValidatedCaddyfile } = adminCredential;
 const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
-  '  Resets the Caddy basic_auth admin password (break-glass recovery).\n' +
+  '       node scripts/reset-admin.js --create-gate --user <name>\n' +
+  '  Resets the Caddy basic_auth admin password (break-glass recovery), or with\n' +
+  '  --create-gate puts a first login on an install that completed setup without one.\n' +
   '  Run this at a terminal ON the TangleClaw host.\n';
 
 /**
@@ -46,14 +51,16 @@ function parseArgs(argv) {
   let dryRun = false;
   let passwordStdin = false;
   let help = false;
+  let createGate = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--user') { user = argv[++i] || null; }
     else if (a === '--dry-run') { dryRun = true; }
     else if (a === '--password-stdin') { passwordStdin = true; }
+    else if (a === '--create-gate') { createGate = true; }
     else if (a === '--help' || a === '-h') { help = true; }
   }
-  return { user, dryRun, passwordStdin, help };
+  return { user, dryRun, passwordStdin, help, createGate };
 }
 
 /**
@@ -159,7 +166,7 @@ async function acquirePassword({ passwordStdin, user }) {
 }
 
 async function main() {
-  const { user, dryRun, passwordStdin, help } = parseArgs(process.argv.slice(2));
+  const { user, dryRun, passwordStdin, help, createGate } = parseArgs(process.argv.slice(2));
   if (help) {
     process.stdout.write(USAGE);
     return;
@@ -176,21 +183,45 @@ async function main() {
   }
   const original = fs.readFileSync(caddyfilePath, 'utf8');
 
+  const existingUsers = caddy.listBasicAuthUsers(original);
+
   let targetUser;
-  try {
-    targetUser = resolveTargetUser(caddy.listBasicAuthUsers(original), user);
-  } catch (err) {
-    process.stderr.write(`ERROR: ${err.message}\n`);
-    store.close();
-    process.exit(1);
+  if (createGate) {
+    // No existing line to read a username from, so one must be supplied.
+    if (!user) {
+      process.stderr.write('ERROR: --create-gate needs a username\n'
+        + '  node scripts/reset-admin.js --create-gate --user <name>\n');
+      store.close();
+      process.exit(1);
+    }
+    targetUser = user;
+  } else {
+    try {
+      targetUser = resolveTargetUser(existingUsers, user);
+    } catch (err) {
+      process.stderr.write(`ERROR: ${err.message}\n`);
+      // An install with no gate used to stop here, which is where #806 stranded
+      // people: the message was true and led nowhere. Only offered when this file
+      // is one the tool can actually build in, so it never advertises a command
+      // that will refuse.
+      if (existingUsers.length === 0 && caddy.classifyCaddyfileContent(original).safeToWrite) {
+        process.stderr.write('\n  This install has no login yet. Create one with:\n'
+          + '    node scripts/reset-admin.js --create-gate --user <name>\n');
+      }
+      store.close();
+      process.exit(1);
+    }
   }
 
   if (dryRun) {
     const uid = process.getuid();
-    process.stdout.write(`\n[dry-run] reset admin credential\n`);
+    process.stdout.write(`\n[dry-run] ${createGate ? 'create admin gate' : 'reset admin credential'}\n`);
     process.stdout.write(`  caddyfile:    ${caddyfilePath}\n`);
     process.stdout.write(`  admin user:   ${targetUser}\n`);
-    process.stdout.write(`  would: prompt new password → caddy hash-password → patch credential line(s)\n`);
+    process.stdout.write(createGate
+      ? '  would: prompt new password → caddy hash-password → rebuild this generated Caddyfile\n'
+        + '         from its own settings, adding the gate and changing nothing else\n'
+      : '  would: prompt new password → caddy hash-password → patch credential line(s)\n');
     process.stdout.write(`         → backup + caddy validate (restore on failure) → sync config → launchctl ${reloadCaddyArgs(uid).join(' ')}\n\n`);
     store.close();
     return;
@@ -212,13 +243,16 @@ async function main() {
   // the settings surface performs the identical one, so it is called rather than
   // repeated: two copies of a sequence that rewrites the live gate is the drift
   // the CAD-7X4V precedent already paid for once.
-  const result = adminCredential.applyCredentialChange({
+  const applyOpts = {
     caddyfilePath,
     user: targetUser,
     hash,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')
-  });
+  };
+  const result = createGate
+    ? adminCredential.createGate(applyOpts)
+    : adminCredential.applyCredentialChange(applyOpts);
 
   if (!result.ok) {
     // Redacted for the same reason the HTTP path redacts it: `caddy validate`
@@ -256,7 +290,9 @@ async function main() {
     process.stderr.write(`WARNING: could not reload Caddy automatically.\n  Run: ${result.reloadCommand}\n`);
   }
 
-  process.stdout.write(`\nAdmin credential reset for '${result.user}' (${result.replaced} line(s) updated).\n`);
+  process.stdout.write(createGate
+    ? `\nAdmin login created for '${result.user}' (${result.replaced} gate line(s) written).\n`
+    : `\nAdmin credential reset for '${result.user}' (${result.replaced} line(s) updated).\n`);
   process.stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${result.backup}\n`);
   if (result.reloaded) process.stdout.write('  ✓ Caddy reloaded — log in with the new password.\n\n');
   store.close();

@@ -136,6 +136,34 @@ so a later cutover stays consistent. New passwords must be ≥12 chars, not a co
 weak password, and must not contain the username. The machine-local
 `~/.tangleclaw/EMERGENCY-RECOVERY.md` carries the full runbook + a manual fallback.
 
+**The reload is a restart, and it drops connections.** `admin off` is set in both
+the generated and the hand-edited Caddyfile, so Caddy's `localhost:2019` admin API
+is unavailable and the graceful `caddy reload` path does not exist here — the reload
+is `launchctl kickstart -k`. Anything arriving through Caddy (the dashboard, the
+browser terminal, a proxied OpenClaw UI) is interrupted while it comes back. Run the
+tool under `tmux`/`screen` when your terminal itself arrives through Caddy, so the
+sequence completes even if the connection carrying it does not.
+
+### Creating a gate where there is none
+
+An install that reached `setupComplete` before a credential was mandatory and then
+moved to caddy mode has no `basic_auth` line to patch, and every other route out of
+that state refuses it. `reset-admin.js` builds one:
+
+```bash
+node scripts/reset-admin.js --create-gate --user <name>
+```
+
+This rebuilds the Caddyfile **from its own current settings** — ports, upstream and
+certificate are read back out of the file rather than out of `config`, so the result
+differs from what was there by exactly the gate, and config drift cannot ride along.
+
+It applies only to a TangleClaw-generated Caddyfile. A hand-maintained one is
+**refused, not reshaped**: adding a gate means placing directives inside site blocks
+this code did not write, and guessing wrong either drops the operator's configuration
+or leaves an opening that looks closed. Add the `basic_auth` block by hand, then use
+the ordinary reset above.
+
 ## Public domain on 443/80 (root LaunchDaemon)
 
 Real Let's Encrypt issuance needs a public domain with ports 80/443 reachable

@@ -11,7 +11,15 @@ const { parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile }
 describe('reset-admin', () => {
   describe('parseArgs', () => {
     it('defaults: no user, no flags', () => {
-      assert.deepEqual(parseArgs([]), { user: null, dryRun: false, passwordStdin: false, help: false });
+      assert.deepEqual(parseArgs([]),
+        { user: null, dryRun: false, passwordStdin: false, help: false, createGate: false });
+    });
+
+    it('parses --create-gate, which is off unless asked for', () => {
+      // Opt-in on purpose. Creating a gate rewrites the whole Caddyfile, so it is
+      // never something a plain password reset falls into by accident.
+      assert.equal(parseArgs(['--create-gate']).createGate, true);
+      assert.equal(parseArgs(['--user', 'jason']).createGate, false);
     });
 
     it('parses --user <name>', () => {
@@ -136,5 +144,36 @@ describe('what the operator is told when it fails', () => {
       'the arm for an unrestorable write must not say the original was restored');
     assert.match(gateBrokenArm, /may now be broken/,
       'it must say what is actually true of the machine');
+  });
+});
+
+describe('the dead end #806 left, and the signpost that replaces it', () => {
+  // An install that completed setup in caddy mode with no credential used to hit
+  // `nothing to reset` and stop. The message was true and led nowhere, which is
+  // how that state stranded people. It must now name the way out — but only when
+  // this file is one the tool can actually build a gate in, or it would advertise
+  // a command that refuses.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'reset-admin.js'), 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  it('offers --create-gate on the no-gate path', () => {
+    assert.match(code, /--create-gate --user/,
+      'the no-gate refusal must name the command that resolves it');
+  });
+
+  it('gates that offer on the file being one it can write, not merely on there being no user', () => {
+    // `safeToWrite` is the single field the classifier exposes for this decision.
+    // Offering on the absence of a credential alone would send an operator with a
+    // hand-maintained Caddyfile to a command that refuses them.
+    const offer = code.slice(code.indexOf('existingUsers.length === 0'));
+    assert.match(offer.slice(0, 200), /safeToWrite/,
+      'the offer must be conditioned on the file being safe to rewrite');
+  });
+
+  it('routes --create-gate to createGate and everything else to applyCredentialChange', () => {
+    assert.match(code, /createGate\s*\n?\s*\?\s*adminCredential\.createGate/,
+      'the create path must call createGate, not the change path');
+    assert.match(code, /:\s*adminCredential\.applyCredentialChange/,
+      'the default path must remain the credential change');
   });
 });
