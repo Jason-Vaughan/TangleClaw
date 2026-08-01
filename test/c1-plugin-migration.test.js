@@ -50,7 +50,15 @@ function extractUpstreamInstallReference(src) {
     'else:',
     '    sys.exit("INSTALL_REFERENCE not found in " + sys.argv[1])'
   ].join('\n');
-  return execFileSync('python3', ['-c', program, src], { encoding: 'utf8' });
+  // Pipe stderr rather than letting it inherit: four of these tests deliberately
+  // provoke Python tracebacks, and an inherited stderr prints all four on every
+  // GREEN run. Tracebacks scrolling past a passing suite train the reader to
+  // ignore tracebacks. `err.message` still carries the child's stderr, so the
+  // matchers are unaffected.
+  return execFileSync('python3', ['-c', program, src], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
 }
 
 /**
