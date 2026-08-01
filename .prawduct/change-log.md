@@ -52,8 +52,8 @@ do an unparseable source, a renamed symbol, and a failing `python3`. "Not here" 
 read moved" are different facts, and only the first is a non-applicability; folding "I could not read
 it" into "not applicable" is how a detector dies quietly while still reporting green.
 
-**Test-only — no runtime path changes, so it did not gate the v5 cut.** Eight tests, each watched
-red against the specific mutation it exists to catch: swallowing reader errors turns the three
+**Test-only — no runtime path changes, so it did not gate the v5 cut.** Every guard added here was
+watched red against the specific mutation it exists to catch: swallowing reader errors turns the
 `THROWS` cases red; drifting the constant to `ref:"v9.9.9"` turns the cross-check red; converting
 the fail branch to a skip turns the fail-vs-skip test red; and collapsing `moved` back into
 `absent` turns the classification test red. Each `THROWS` case matches its **specific** error,
