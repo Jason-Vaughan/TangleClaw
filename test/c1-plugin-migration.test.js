@@ -256,7 +256,17 @@ describe('C1 — per-project plugin migration (#262)', () => {
     // stderr into err.message, so matching costs nothing.
     it('THROWS when the symbol is gone — never returns a default', () => {
       const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
-      assert.throws(() => extractUpstreamInstallReference(f), /INSTALL_REFERENCE not found/);
+      // Anchored on the interpolated PATH, not the bare sentence. execFileSync
+      // builds err.message from the argv it ran, and that argv contains the
+      // embedded program — including its own `sys.exit("INSTALL_REFERENCE not
+      // found in " + …)` source line. So the unanchored form matches its own
+      // source text on ANY nonzero exit, which is the identical hole this
+      // matcher was added to close, one layer deeper. Only the interpolated
+      // filename proves the program reached that exit for this file.
+      assert.throws(
+        () => extractUpstreamInstallReference(f),
+        /INSTALL_REFERENCE not found in \S*gone\.py/
+      );
     });
 
     it('THROWS on a syntax error rather than reporting no drift', () => {

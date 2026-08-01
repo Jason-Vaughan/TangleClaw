@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
 
-<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
 
 **Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
 weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.

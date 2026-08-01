@@ -8,12 +8,13 @@ Thanks for your interest in contributing to TangleClaw! This document covers how
 - **Node.js 22+** (`node:sqlite` and `node:test` are required)
 - **ttyd** (`brew install ttyd`)
 - **tmux** (`brew install tmux`)
-- **python3** (test-only) — `test/c1-plugin-migration.test.js` parses the installed Prawduct
-  plugin's `migrate_plugin.py` with Python's `ast` to check TangleClaw's install-reference constant
-  has not drifted from upstream's. Ships with macOS; no packages needed. The check is skipped, with
-  a printed reason, when the plugin source is not present — but an unreadable source **fails**
-  rather than skipping, so a missing `python3` on a machine that does have the plugin is a test
-  failure by design, not a silent pass.
+- **python3** (test-only, required) — `test/c1-plugin-migration.test.js` parses Python source with
+  `ast` to check TangleClaw's install-reference constant has not drifted from the Prawduct plugin's.
+  Ships with macOS; no packages needed. **Seven of its tests spawn `python3` unconditionally**,
+  against their own fixtures, so a missing interpreter fails them whether or not the plugin is
+  installed. Only the drift comparison against the *installed* plugin is conditional: absent plugin
+  source skips with a printed reason, while an unreadable source **fails** rather than skipping —
+  "I could not read it" must never be recorded as "not applicable".
 
 ## Getting Started
 

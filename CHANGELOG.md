@@ -492,10 +492,11 @@ All notable changes to TangleClaw are documented in this file.
   present but unparseable, symbol renamed, or `python3` failing → fail. Folding "I could not read it"
   into "not applicable" is how a detector dies quietly while still reporting green — and the likeliest
   cause of an unreadable literal is upstream restructuring it, the exact event the check exists to
-  catch. Six tests cover the reader directly, since the cross-check reads a fixed path under `$HOME`
-  and its failure branch is otherwise unreachable from a test; all six were watched red first. Their
-  fixtures nest under the suite's existing temp directory rather than taking a second `mkdtemp`,
-  which was leaking one directory per run.
+  catch. Seven tests cover the reader directly, because the cross-check reads a fixed path under
+  `$HOME`; the comparison is factored out so the fail-rather-than-skip contract is itself reachable
+  from a test, and converting that branch back to a skip turns one red. All seven were watched red
+  first. Their fixtures nest under the suite's existing temp directory rather than taking a second
+  `mkdtemp`, which was leaking one directory per run.
 
 - **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
   in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
