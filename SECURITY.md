@@ -21,13 +21,14 @@ Do **not** open a public issue for security vulnerabilities.
 
 TangleClaw is designed to run on a **trusted local network or VPN** — it is not a hardened internet-facing service. The security model reflects this:
 
-### User Authentication (optional gate, AUTH-2)
+### User Authentication (AUTH-2)
 
-By default TangleClaw does **not** authenticate users — anyone who can reach the server port can view projects and open terminal sessions. This default suits local-only use. The `deletePassword` config option protects destructive operations (project deletion, session kill/wrap) but does not gate read access.
+**A new install is protected out of the box.** It binds **loopback only** — nothing off the machine can reach it — until an operator explicitly opts into wider binding, and setup forces an admin login whenever the machine can actually enforce one. The two together are the posture: never reachable-and-unauthenticated. If ingress provisioning fails, setup lands in the loopback-only state and says so, rather than completing a network-reachable install with no password. (Earlier versions defaulted to no authentication and a wide bind; that opt-in posture is superseded — see `docs/adr/0009-secure-by-default.md`.)
 
-For remote / VPN-reachable installs, an **optional login gate** is available in caddy ingress mode (see "HTTPS / Ingress" below). When enabled (`authEnabled`), Caddy's built-in `basic_auth` fronts **every** surface at the single ingress — HTTP API, all three WebSocket routes, ttyd, and the proxied gateway — while leaving `/api/health` public for liveness probes. Properties:
+The gate itself is Caddy's built-in `basic_auth` at the single ingress (see "HTTPS / Ingress" below), fronting **every** surface — HTTP API, all three WebSocket routes, ttyd, and the proxied gateway — while leaving `/api/health` public for liveness probes. The `deletePassword` config option separately protects destructive operations (project deletion, session kill/wrap); it is not a read gate. Properties:
 
-- **No default credentials.** The first-run wizard forces a blocking admin-creation step in caddy mode; setup cannot complete without an admin (`ADMIN_REQUIRED`).
+- **No default credentials, ever.** The first-run wizard forces a blocking admin-creation step; setup cannot complete without one (`ADMIN_REQUIRED`). A shipped default credential with a change-me prompt was considered and rejected: this repository is public, so the default would be readable by anyone and every install pre-compromised until the operator acted.
+- **The login can be changed later, from global settings → Login** (`POST /api/auth/credential`), and only there or from the terminal tool. That route may **change** a login, never create or blank one: it refuses unless a live gate is already authenticating the request, which keeps first-credential creation and recovery at a terminal where a locked-out operator can still reach them. `PATCH /api/config` refuses credential fields outright. Changing the login signs you out — Caddy reloads with the new hash and Basic Auth cannot hand a browser new credentials — and the screen says so before you commit, not after.
 - **Password rules:** minimum 12 characters, a bundled weak-password denylist, no-username-match, no control characters.
 - **Hash storage:** only the bcrypt hash is stored (in `config.json` as `basicAuthHash`), produced by a `caddy hash-password` shell-out — the plaintext is passed on stdin and never logged, stored, or placed on a command line.
 - **No permanent lockout.** A lost admin password is recoverable from a terminal on the host via `scripts/reset-admin.js` (fail-closed; preserves a hand-edited Caddyfile). Recovery requires physical/SSH access by design — it opens no network reset path.
@@ -36,7 +37,7 @@ For remote / VPN-reachable installs, an **optional login gate** is available in 
 
 **Limitations:** HTTP Basic Auth has no server-side logout (the browser caches the credential until closed) and is a single shared identity. The gate is only as strong as the transport — always pair it with HTTPS, never plain HTTP.
 
-**Recommendation:** Run on a private network or behind a VPN (Tailscale, WireGuard) **and** enable the auth gate for any non-localhost exposure. Do not expose to the public internet without both.
+**Recommendation:** Run on a private network or behind a VPN (Tailscale, WireGuard). Keep the login gate in place for any non-localhost exposure — it is what a default install gives you, and turning it off is a deliberate act. Direct exposure to the public internet is **unsupported**: one shared credential, with no rate limiting, lockout, MFA or session revocation, in front of a surface that launches shells.
 
 ### Service Tokens — M2M API gate (optional, AUTH-4)
 

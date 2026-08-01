@@ -97,6 +97,16 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   automatically on the next boot.
 - **Byte-for-byte re-emission** — every regeneration path (cutover,
   `reset-admin`) emits the stored hash exactly; regression-tested.
+- **Three writers, one sequence** — the cutover, `reset-admin.js`, and
+  `POST /api/auth/credential` (global settings → Login) are the only things that
+  change a credential. The latter two share one implementation,
+  `lib/admin-credential.js applyCredentialChange`: patch the live Caddyfile,
+  `caddy validate` fail-closed restoring the original, only then record it in
+  config, then reload. `PATCH /api/config` refuses credential fields outright.
+  The settings route may **change** a login and never create or blank one — it
+  requires a live gate, which is what authenticates the request; creating a first
+  credential stays here, at a terminal, because a reset behind the gate cannot
+  help someone the gate has locked out.
 - **Refuse-to-ungate** — the cutover aborts rather than replace a gated
   Caddyfile with an ungated one when config carries no credential.
 - **Remote plain-HTTP catch-all** — set `caddyRemoteHttp: true` (adopted

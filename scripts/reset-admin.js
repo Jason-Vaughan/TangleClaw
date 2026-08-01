@@ -21,12 +21,16 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 
-const CADDY_LABEL = 'com.tangleclaw.caddy';
+// The reload argv and the fail-closed write both live in lib/ now, because the
+// settings surface performs the same Caddyfile patch and a second copy of either
+// would be free to drift from this one. Re-exported below so this script's own
+// contract is unchanged.
+const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
+const { reloadCaddyArgs, writeValidatedCaddyfile } = adminCredential;
 const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
   '  Resets the Caddy basic_auth admin password (break-glass recovery).\n' +
@@ -74,17 +78,6 @@ function resolveTargetUser(users, requested) {
     throw new Error(`multiple admin users present (${users.join(', ')}); choose one with --user <name>`);
   }
   return users[0];
-}
-
-/**
- * Build the launchctl reload argv for the Caddy LaunchAgent. Pure/testable.
- * `kickstart -k` restarts the running job in place (the same reload primitive the
- * cutover and the EMERGENCY-RECOVERY runbook use).
- * @param {number} uid - The user's numeric uid (process.getuid()).
- * @returns {string[]} argv for execFileSync('launchctl', ...).
- */
-function reloadCaddyArgs(uid) {
-  return ['kickstart', '-k', `gui/${uid}/${CADDY_LABEL}`];
 }
 
 /**
@@ -137,29 +130,6 @@ function readPipedPassword() {
     process.stdin.on('data', (c) => { data += c; });
     process.stdin.on('end', () => resolve(data.split(/\r?\n/)[0]));
   });
-}
-
-/**
- * Write newContent over caddyfilePath behind a fail-closed guard: back the file
- * up first (timestamped), write, validate, and RESTORE the backup if validation
- * fails — so a recovery run can never itself leave a broken ingress. Validation
- * is injected, so the restore branch is unit-testable without a real Caddy.
- * @param {string} caddyfilePath
- * @param {string} newContent
- * @param {(p:string)=>{ok:boolean,error?:string}} validateFn - e.g. caddy.validateCaddyfile.
- * @param {string} stamp - filesystem-safe timestamp for the .bak name.
- * @returns {{ ok: boolean, backup: string, error: string|null }}
- */
-function writeValidatedCaddyfile(caddyfilePath, newContent, validateFn, stamp) {
-  const backup = `${caddyfilePath}.${stamp}.bak`;
-  fs.copyFileSync(caddyfilePath, backup);
-  fs.writeFileSync(caddyfilePath, newContent, { mode: 0o600 });
-  const v = validateFn(caddyfilePath);
-  if (!v.ok) {
-    fs.copyFileSync(backup, caddyfilePath); // restore — never leave a broken ingress
-    return { ok: false, backup, error: v.error || 'validation failed' };
-  }
-  return { ok: true, backup, error: null };
 }
 
 /**
@@ -237,40 +207,58 @@ async function main() {
     process.exit(1);
   }
 
-  const patched = caddy.replaceBasicAuthCredential(original, { hash, user: targetUser });
+  // The whole apply sequence — patch, fail-closed validated write, config sync,
+  // reload — is `adminCredential.applyCredentialChange`. This script proved it and
+  // the settings surface performs the identical one, so it is called rather than
+  // repeated: two copies of a sequence that rewrites the live gate is the drift
+  // the CAD-7X4V precedent already paid for once.
+  const result = adminCredential.applyCredentialChange({
+    caddyfilePath,
+    user: targetUser,
+    hash,
+    uid: process.getuid(),
+    stamp: new Date().toISOString().replace(/[:.]/g, '-')
+  });
 
-  // Back up + write + validate fail-closed (timestamped backup so repeated runs
-  // never clobber an earlier one; the original is restored if validation fails).
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const written = writeValidatedCaddyfile(caddyfilePath, patched.content, caddy.validateCaddyfile, stamp);
-  if (!written.ok) {
-    process.stderr.write(`ERROR: patched Caddyfile failed validation — restored the original (ingress untouched):\n  ${written.error}\n  Backup kept at: ${written.backup}\n`);
+  if (!result.ok) {
+    // Redacted for the same reason the HTTP path redacts it: `caddy validate`
+    // quotes the offending line, and that line carries a bcrypt hash. A terminal
+    // is a friendlier place for it to land than an HTTP response, but it is still
+    // scrollback, and scrollback gets pasted into issues.
+    process.stderr.write(`ERROR: ${caddy.redactHashes(result.error || '')}\n`);
+    // Branch on the CODE, never on "a backup exists". `diverged` is the one
+    // failure that leaves the NEW password in force — the restore is exactly what
+    // failed — and a backup path is present there too. Saying "the original was
+    // restored" would send the operator to sign in with a password the door no
+    // longer takes, on the run where they are already in trouble.
+    if (result.code === adminCredential.CREDENTIAL_CODES.DIVERGED) {
+      process.stderr.write(
+        '  The Caddyfile now carries the NEW password, and it could not be put back.\n'
+        + `  The NEW password is the one in force. Backup of the original: ${result.backup}\n`
+        + '  Restore it by hand, or re-run this tool once the disk problem is fixed.\n');
+    } else if (result.code === adminCredential.CREDENTIAL_CODES.GATE_BROKEN) {
+      // Also carries a backup path, so without this arm it fell through to
+      // "the original was restored" — which is exactly what did NOT happen. This
+      // is the break-glass tool, read by someone already locked out.
+      process.stderr.write(
+        '  Your login was NOT changed, but the Caddyfile could not be written or put back,\n'
+        + '  so the ingress may now be broken and Caddy may not reload.\n'
+        + `  A copy of the original is at: ${result.backup}\n`
+        + '  Restore it by hand before restarting Caddy.\n');
+    } else if (result.backup) {
+      process.stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${result.backup}\n`);
+    }
     store.close();
     process.exit(1);
   }
-  const backup = written.backup;
 
-  // Sync persisted config so a future cutover regenerates the same credential.
-  const config = store.config.load();
-  config.authEnabled = true;
-  config.basicAuthUser = patched.user;
-  config.basicAuthHash = hash;
-  store.config.save(config);
-
-  // Reload Caddy in place. Non-fatal: the file is already patched + validated, so
-  // even if the reload can't run here the operator can finish it by hand.
-  const uid = process.getuid();
-  let reloaded = true;
-  try {
-    execFileSync('launchctl', reloadCaddyArgs(uid), { stdio: ['ignore', 'ignore', 'pipe'] });
-  } catch (err) {
-    reloaded = false;
-    process.stderr.write(`WARNING: could not reload Caddy automatically: ${err.message}\n  Run: launchctl ${reloadCaddyArgs(uid).join(' ')}\n`);
+  if (!result.reloaded) {
+    process.stderr.write(`WARNING: could not reload Caddy automatically.\n  Run: ${result.reloadCommand}\n`);
   }
 
-  process.stdout.write(`\nAdmin credential reset for '${patched.user}' (${patched.replaced} line(s) updated).\n`);
-  process.stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${backup}\n`);
-  if (reloaded) process.stdout.write('  ✓ Caddy reloaded — log in with the new password.\n\n');
+  process.stdout.write(`\nAdmin credential reset for '${result.user}' (${result.replaced} line(s) updated).\n`);
+  process.stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${result.backup}\n`);
+  if (result.reloaded) process.stdout.write('  ✓ Caddy reloaded — log in with the new password.\n\n');
   store.close();
 }
 

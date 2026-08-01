@@ -95,3 +95,46 @@ describe('reset-admin', () => {
     });
   });
 });
+
+describe('what the operator is told when it fails', () => {
+  // The script's main() is a CLI that exits, so its reporting is pinned
+  // structurally — the established pattern in this repo for code that cannot be
+  // called directly. What matters is not the wording but WHAT IT BRANCHES ON.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'reset-admin.js'), 'utf8');
+  // Comments stripped before matching. A structural test that greps source is one
+  // comment away from asserting the prose instead of the program — a future
+  // comment naming GATE_BROKEN above the generic arm would satisfy the ordering
+  // pin below with the arm itself deleted. Its sibling in
+  // test/settings-credential.test.js had exactly that hole.
+  const failure = src
+    .slice(src.indexOf('if (!result.ok) {'), src.indexOf('if (!result.reloaded)'))
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  it('branches on the CODE before it ever branches on "a backup exists"', () => {
+    // Every failure carries a backup path, including the two that mean the
+    // restore did NOT happen. A `result.backup` arm reached first prints "the
+    // original was restored (ingress untouched)" for exactly the cases where it
+    // was not — in the break-glass tool, read by someone already locked out.
+    // The CONDITION, not any mention: the DIVERGED message interpolates
+    // `${result.backup}` itself, so searching for the bare symbol finds the
+    // message rather than the arm and measures nothing.
+    const firstBackupArm = failure.indexOf('else if (result.backup)');
+    assert.ok(firstBackupArm > -1, 'the generic backup arm must still exist');
+    for (const code of ['DIVERGED', 'GATE_BROKEN']) {
+      const at = failure.indexOf(code);
+      assert.ok(at > -1, `${code} must have its own arm`);
+      assert.ok(at < firstBackupArm,
+        `${code} must be handled BEFORE the generic "a backup exists" arm`);
+    }
+  });
+
+  it('never claims the ingress is untouched on a code that means it is not', () => {
+    const reassurance = 'The original was restored';
+    const gateBrokenArm = failure.slice(failure.indexOf('GATE_BROKEN'),
+      failure.indexOf('else if (result.backup)'));
+    assert.ok(!gateBrokenArm.includes(reassurance),
+      'the arm for an unrestorable write must not say the original was restored');
+    assert.match(gateBrokenArm, /may now be broken/,
+      'it must say what is actually true of the machine');
+  });
+});

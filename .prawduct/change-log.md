@@ -26,9 +26,151 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
+
+<!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default -->
+
+**Why:** setup forces a login, and until now nothing could change it except a terminal. A password
+that can only be rotated by someone with shell access on the box is a password that does not get
+rotated. The surface is `POST /api/auth/credential` plus a Login section in global settings, and it
+may **change** a login while being unable to create or blank one.
+
+**One predicate is the whole guard.** A change is allowed only when the install is in caddy mode,
+the LIVE Caddyfile carries a gate, a credential is already recorded, and the `caddy` binary is
+present. Written as one conjunction rather than four checks because it does four jobs at once: only
+something that exists can be changed (blanking unreachable), an ungated install cannot be claimed by
+whoever reaches it (no second remote door), first-credential creation stays at a terminal where a
+locked-out operator can still get in (**#806** is answered by `reset-admin.js` learning to create a
+gate, not by widening this), and the request is one Caddy has already authenticated — which matters
+because the server *cannot* verify a typed current password. `caddy hash-password` has no verify mode
+and no `--salt`, and Node's stdlib has no bcrypt, so the form has no current-password field: one that
+does not verify is theatre.
+
+**#805 closed by removing a door, not by guarding it.** `PATCH /api/config` no longer accepts
+`authEnabled`/`basicAuthUser`/`basicAuthHash` at all — it refuses the whole patch. That route
+authenticates nobody, and it wrote those fields through a generic `allowedFields` loop, so no grep
+for `basicAuthHash =` ever found it. The pinning tests now assert refusal, which is a strictly
+stronger claim than the write they asserted before.
+
+**The restart cannot happen before the reply.** The response to this request travels back through the
+very Caddy the change restarts, so reloading first tears down the connection carrying it: a change
+that SUCCEEDED reaches the browser as a network error. The reload now hangs off the response
+finishing, and asynchronously, so it cannot hold the event loop for the length of a Caddy restart
+either. The consequence is stated rather than hidden — the reload's outcome can never be reported,
+because by the time it is known every further request needs the new password, so the response ships
+the manual reload command unconditionally as the recourse for a restart that did not happen.
+
+**The tests were restarting the operator's live Caddy.** `execFileSync('launchctl', …)` resolves
+through PATH, the shared stub only stubbed `caddy`, and the real binary is on the machine that runs
+the suite — so every full-suite run kickstarted the live `com.tangleclaw.caddy` job and dropped the
+operator's remote access mid-run. The shared stub now covers `launchctl` too and records each
+invocation, which is also what lets the deferred reload be asserted at all.
+
+**A guard was removed for being a trap.** `PATCH /api/config` kept a both-or-neither credential
+invariant it could no longer break: with the fields refused above it, the check could only fire on a
+config that was already inconsistent on disk, where it rejected unrelated writes (a theme, a port)
+with an instruction to send credential fields the same route refuses. An error with no exit.
+
+**Mutation-checked.** Every guard added here was reverted and the suite watched go red before the
+test was kept: the deferred reload (both at the module and at the route), the null-body guard, the
+0600 backup mode, the gate restore after a failed config write, backup retention on the write path,
+the caddy-binary check, re-adding the removed invariant, the write-failure restore, the retention
+namespace, validating the password against the request's username instead of the gate's, `finish`
+in place of `close`, deleting the hash-redaction line, and the multi-user refusal message.
+
+**What the cumulative Critic caught (0 blocking, 18 warning, 14 note) and what was done.** Fixed:
+the no-username-in-password rule was **inert on every request the product actually makes** — the UI
+sends no `user`, so validating against the request's copy checked nothing, and the parity test used
+a shape the UI never produces; `reset-admin.js` printed "the original was restored (ingress
+untouched)" on the one code meaning the restore FAILED and the new password is live, because it
+branched on a backup path rather than the code; the fail-closed write had an **unguarded window** —
+a mid-write ENOSPC truncates the live gate and throws before the validator, so the restore that
+makes the sequence safe was skipped; the hash-redaction assertion ran against a null hash, so
+deleting the redaction leaked a real one past a green suite; the deferred reload hung off `finish`,
+which an aborted response never emits, leaving the credential changed and Caddy never reloaded;
+retention pruned the **ingress cutover's** backups too, whose `--force` safety depends on them, so
+credential backups now carry their own suffix; the form showed config's username while the change
+targets the file's; a multi-user Caddyfile was told it "carries no login". Also the cutover's own
+backup now gets 0600, `reset-admin` redacts `caddy validate` output as the HTTP path does, and a
+dead import went.
+
+Accepted with reasons rather than fixed: **the guard proves a gate EXISTS, not that this request
+came through it.** Requiring `X-Auth-User` would prove it, and would also change ratified decision
+D3 mid-build — the accepted model already treats local shell access as total authorization, so this
+is a decision to take with the operator, not unilaterally. Also accepted: caller-supplied `uid`/
+`stamp` (keeps the module pure, and both callers derive them identically); the re-exports left in
+`reset-admin.js` (its published contract is unchanged and the implementations are not duplicated);
+and `verify-chunk-refs`'s missing-ref, confirmed a worktree/symlink artifact tracked as PRW-6T2M.
+Two further notes accepted: the caddy-binary arm's call sites are exercised by the endpoint suite
+rather than pinned structurally, and backup retention is in scope precisely because this chunk's
+write path is what creates the credential-bearing backups.
+
+**The resolution pass found one more, and it was self-inflicted.** Fixing the inert username rule
+introduced a second version of the very drift it was fixing: the GET was moved onto the FILE's
+username because config and the live gate drift, while the password validation was left on config's.
+The guard requires both to be non-empty and never requires them to AGREE — so in the drift state the
+password was checked against a name that is not the login in force, accepting a password containing
+the real username that setup would refuse. Both now read the same source. The lesson is the project's
+own "one call site isn't the family": the fix was applied where the finding pointed, not to every
+place that asks the same question.
+
+**Five review rounds, and the same lesson every time after the first: 18 warnings, then 1, then 3,
+then 2.** After round one, every finding was on code written in the previous round's *fix*, and the
+shape never varied — the fix landed at the site the finding named, not across the family that asks
+the same question. The full sequence is the point, so it is recorded rather than summarised: the
+`GATE_BROKEN` distinction — the
+credential did not change, but the Caddy config could not be written *or* put back, so the ingress
+may not load — was added at one site and not at the family. The review found the other three: the
+**validate-failure restore** was still unguarded, and it is the MORE reachable path (a `caddy
+validate` rejection is an ordinary outcome, and at that moment the live file holds the invalid
+content), so a restore that threw there escaped as a generic 500 with no backup path and no log
+line; `public/ui.js` still hard-coded a bold **"The login was not changed."** above the server's
+message, which is the precise framing the server had just stopped using, and the bold line is the one
+a scanning operator reads; and the new 500 arm was unpinned, though its position ABOVE the
+`!result.ok` catch-all is load-bearing — reordered, the route re-emits the old 400 with a green
+suite. Both restore sites now run through one guarded helper, the failure carries a `cause`
+(`write` | `validate`) so a full disk is no longer reported as a Caddy syntax error, and the route
+arms are pinned by tests that watch the reorder go red.
+
+Round five then found the **third** consumer — `scripts/reset-admin.js`, which branched on `DIVERGED`
+and fell through to "The original was restored (ingress untouched)" for `GATE_BROKEN`, whose whole
+meaning is that the restore failed; the file's own comment three lines above stated the rule it was
+violating. And the browser still led with a bold "The login was not changed" on `DIVERGED`, where the
+login DID change — a code the round-four finding had **explicitly named** alongside the one that was
+implemented. A repo-wide sweep of every `CREDENTIAL_CODES` consumer now confirms all three
+(`server.js`, `reset-admin.js`, `public/ui.js`) distinguish both codes.
+
+**Two tests could not fail, both of them mine.** One asserted `esc(api.lastError`, which the pre-fix
+hard-coded line also contained. The other matched `DIVERGED` in an explanatory *comment* rather than
+in the code, so deleting it from the list left the suite green — found only by running the mutation
+after the assertion had already reported green. Both now strip comments before matching. The
+mechanical rule worth keeping is narrower than "remember the family": when a fix changes **which
+source answers a question**, or **how an outcome is reported**, enumerate every caller before editing
+any of them.
+
+**The one open design question was decided by reading the mechanism, and the answer was no.** #822
+asked whether the route should require `X-Auth-User` to prove the request came through Caddy.
+Delegated by the operator with "secure the system in v5". It should not: in caddy mode TC *trusts*
+that header (`lib/auth-identity.js`), so any caller able to reach the route can forge it — and this
+machine's hand-edited Caddyfile has one gated `reverse_proxy` with no `header_up`, so requiring it
+would have locked the operator out of the surface on that site. What does hold is the **connection**,
+and asking it closed a path nothing else could see: caddy mode pins the listener to loopback, but at
+LISTEN time, while `ingressMode` is read per request — and a legacy grace-state install has an
+unauthenticated `PATCH /api/config` accepting `ingressMode`, so a network caller could flip config
+and reach the route over the still-wide socket. `canChangeCredential` now takes `fromLoopback` and
+refuses first, before any answer that would describe the machine. Recorded as D6 in the build plan.
+The count note carried forward from the last round is ACCEPTED and not re-litigated: the prose
+records the pattern, the evidence store holds the exact per-round numbers, and a further pass at the
+paragraph buys another round of the same.
+
+**Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
+which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
+against the shared evidence store mid-session is the thing the previous session's notes warn
+against. They are recorded here instead, and should be stamped after a relaunch picks up 3.2.x.
+
 ## 2026-07-31: the prawduct install reference becomes a reviewed constant, not a copy of local state (#807, #816)
 
-<!-- prawduct: type=fix | scope=plugin-ref-807 -->
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
 
 **Why:** `migrateToPlugin` built the reference by copying TangleClaw's own `.claude/settings.json`
 verbatim. That file is untracked, machine-local and freely editable, so whatever it held was stamped
@@ -61,7 +203,7 @@ The completeness guard is what is load-bearing, and bypassing it turns the parti
 
 ## 2026-07-29: setup provisions a login by default — the step-list flip plus the cutover it enforces (#710, chunk 2 slice 2-iii-b)
 
-<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default -->
+<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** the wizard's admin-credential step was gated on `ingressMode === 'caddy'`, which no fresh
 install says, so a first run collected nothing and finished with no password in front of a dashboard

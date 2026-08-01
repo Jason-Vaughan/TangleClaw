@@ -5,6 +5,36 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **The admin login can be changed from settings (#710).** Global settings gains a **Login**
+  section: username, new password, confirm. It appears only when the server says this install can
+  use it — `GET /api/auth/credential` answers from the same predicate the change itself uses, so the
+  form is never offered to a machine that would then refuse it, and where it refuses it shows the
+  server's own reason plus the command that does apply (`ingress-cutover` to put a login in place,
+  `reset-admin.js` to recover one).
+
+  **It says, before you commit, that saving signs you out** — the login is enforced by Caddy and a
+  browser cannot be handed new credentials, so the next page load asks for the new password. Stated
+  up front it is an instruction to have the password ready; discovered afterwards it reads as a
+  fault. If Caddy could not be reloaded, the screen says the OLD password is still in force and
+  names the one command that finishes the job, rather than leaving the operator to infer it.
+
+  **There is no "current password" field**, deliberately: the server cannot verify one (no bcrypt in
+  Node's stdlib, and `caddy hash-password` has no verify mode), and a field that does not verify is
+  theatre. The confirm field stays, because that one IS checkable in the browser and a mistyped
+  password locks the operator out of their own dashboard with only a terminal to get back in.
+  Nothing on the screen moves on a timer. The three fields are 44px targets; the Save button takes the
+  dashboard's shared `.btn` height (32px) rather than being made a one-off, so the mobile-first rule is
+  met by the fields and deferred to a global fix for the buttons.
+
+  **Caddy restarts only after the reply is out.** The response to a credential change travels back
+  through the very Caddy that has to restart, so restarting first tears down the connection carrying
+  it — a change that succeeded reaches the browser as a network error. The reload now runs when the
+  response finishes, and asynchronously, so it also cannot hold the event loop for the length of a
+  restart. What that costs is stated rather than hidden: the reload's outcome can never be reported,
+  because by the time it is known every further request needs the new password. So the screen names
+  the one thing the operator can observe — never being asked to sign in again — and ships the manual
+  reload command as the recourse, instead of claiming an outcome it did not see.
+
 - **BREAKING: setup puts a login in front of TangleClaw by default, and says plainly when it cannot
   (#710, v5 chunk 2).** The admin-credential step used to appear only when config already said
   `ingressMode: 'caddy'` — which no fresh install says — so a first run collected no credential and
@@ -130,6 +160,17 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **A bodyless `POST /api/auth/credential` answers 400 instead of crashing (#710).** The body parser
+  resolves `null` for an empty request, so every field read in the handler ran against `null` — a
+  500 that reads as "the server broke" for what is simply a malformed request.
+
+- **An unrelated setting can be saved on a config that is already half-credentialed (#710).**
+  `PATCH /api/config` kept a both-or-neither credential invariant after the credential fields were
+  removed from it. Nothing reaching that line could create the state any more, so the check could
+  only fire on a config that arrived broken — and there it rejected a theme or port change with an
+  instruction to send credential fields the same route refuses. An error with no exit. The invariant
+  is enforced where those fields are now written, and by the Caddyfile generator's own guard.
 
 - **TangleClaw no longer stamps an unreviewed prawduct reference into the projects it migrates
   (#807, #816).** `migrateToPlugin` built the plugin reference by copying TangleClaw's own
@@ -276,6 +317,43 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+- **Changing the login is refused on any connection that did not arrive over loopback (#710, #822).**
+  In caddy mode TangleClaw binds loopback only, so Caddy is the only way in — but that binding is
+  chosen when the server starts listening, while `ingressMode` is read per request. An install still
+  in the legacy wide-bound state has an unauthenticated `PATCH /api/config` that accepts
+  `ingressMode`, so a caller on the network could flip it to caddy and reach the credential route
+  over the still-wide socket, with every other condition satisfied on a machine whose Caddy config
+  genuinely carries a gate. The check runs first, before any refusal that would describe the install
+  to that caller.
+
+  **Deliberately a socket check and not an `X-Auth-User` check.** In caddy mode TangleClaw trusts
+  that header, so anyone able to reach the route can also set it — it proves nothing about how the
+  request arrived. It would also have cost real access: a hand-edited Caddyfile with one gated
+  `reverse_proxy` missing `header_up` would have refused its own operator.
+
+- **Caddyfile backups no longer accumulate one credential-bearing file per change (#710).** Every
+  credential change takes a timestamped backup of the live Caddyfile, and each one carries the
+  bcrypt hash that was in force when it was written — so the pile was a growing set of credential
+  copies nobody pruned. Only the five newest survive a write now, and the backup is explicitly
+  chmod'd `0600` rather than inheriting the source's mode: `copyFileSync` carries the source mode
+  across, and a hand-edited live Caddyfile at `0644` would have left a hash readable by every
+  account on the box.
+
+- **`PATCH /api/config` can no longer set the admin credential (#805, #710 chunk 3b).** It carried
+  `authEnabled`, `basicAuthUser` and `basicAuthHash` in its allow-list, validated only the *shape*
+  of a hash, had no lifecycle gate and no authentication in front of it — so on an ungated,
+  network-reachable install an unauthenticated caller could set an admin credential of their
+  choosing and lock the owner out. This is the same hole that was closed at `POST /api/setup/complete`
+  one route over; it survived because the field is written through a generic allow-list loop, so a
+  grep for `basicAuthHash =` finds the four named writers and misses this one entirely.
+
+  The fields are gone, and the route **refuses** rather than ignoring them: unknown keys are
+  silently skipped by design, which would have turned a credential write into a `200` with no
+  change — "your password is updated" when it is not. It answers `409 CREDENTIAL_ROUTE_MOVED`,
+  names both real routes, and refuses the *whole* patch, so an unrelated field cannot slip through
+  beside the rejected one. Now-unreachable code went with it: the bcrypt-shape check, the
+  empty-string normalization for those keys, and two key validations.
+
 - **A credential hash can no longer reach the application log through a cutover failure (#710).**
   `observability-strategy.md` forbids passwords plaintext or hashed at any level. On the
   `validate-failed` path the cutover's error text is `caddy validate` stderr, which quotes the
@@ -290,6 +368,61 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
+  in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
+  through PATH, and the shared test stub only stubbed `caddy` — so every full-suite run on a machine
+  that actually runs TangleClaw kickstarted its live Caddy job and dropped the operator's remote
+  access mid-run. A test reaching outside its sandbox to touch the machine is worth no assertion.
+  The shared stub now covers `launchctl` too and records each invocation, which is also what makes
+  the deferred reload assertable at all.
+
+- **One route changes a login after setup, and it refuses more often than it acts (#710 chunk 3b).**
+  New `POST /api/auth/credential`, guarded by the single `canChangeCredential` predicate: a change
+  is allowed only in caddy mode, with a gate present in the LIVE Caddyfile, and with a credential
+  already recorded. It may change a login and never create or blank one — creating is recovery and
+  stays at a terminal, because a reset behind the gate cannot help someone the gate has locked out,
+  and blanking would be a second route to "no password" where the Direction allows exactly one.
+  `GET /api/auth/credential` answers from the same predicate so the form is never drawn for an
+  install that would refuse it — a client and server disagreeing about one machine is a defect this
+  chunk's sibling already had to fix once.
+
+  **There is no "current password" field, and that is a finding rather than an omission.** `caddy
+  hash-password` has no verify mode and no `--salt`, so a stored bcrypt hash cannot be reproduced
+  for comparison, and Node's stdlib has no bcrypt — under the zero-dep preference the server cannot
+  check a typed current password at all, and a field that does not verify is theatre. What
+  authenticates the request is that Caddy already did, which is why the guard refuses whenever no
+  gate is in force.
+
+  Tests: `test/auth-credential-endpoint.test.js` (14) — every refusal branch, the live gate actually
+  rewritten rather than only config, the username kept when only a password is sent, neither hash
+  nor plaintext crossing the HTTP boundary, GET and POST agreeing on the same machine, and a
+  fail-closed suite where `caddy validate` rejects and both the gate and the recorded credential are
+  found unchanged afterwards. `test/_caddy-stub.js` gains an `answersValidate` option (default on)
+  so that last case can exist.
+
+- **The credential-apply sequence has one implementation, ready for a second caller (#710 chunk 3b).**
+  `scripts/reset-admin.js` had proved the sequence that actually changes a login — hash, patch the
+  live Caddyfile, write with a timestamped backup and `caddy validate` fail-closed restoring the
+  original on failure, sync config, reload Caddy — and the settings surface being built needs the
+  same one. It moves to `lib/admin-credential.js` as `applyCredentialChange`, and `reset-admin.js`
+  **calls it** — the script keeps its prompts, dry-run and messaging, and hands the sequence itself
+  over. Not a mirror: a hand-maintained copy of the Caddyfile-adoption logic drifted from its
+  original and produced a real defect, which is why adoption was collapsed to one shared
+  computation. Two places patch the live gate; only one defines how. The structural test pins the
+  SEQUENCE and not merely the helpers — an earlier version of it checked only that two helper
+  functions were not re-declared, and so passed while the sequence still existed twice.
+
+  The module also carries `canChangeCredential`, the single predicate that guards a remote credential
+  change. It is one predicate rather than four checks because it does four jobs at once: a change is
+  allowed only when the install is in caddy mode, the LIVE Caddyfile carries a gate, and a credential
+  already exists — which makes blanking unreachable, keeps recovery in the terminal where the
+  Direction puts it, refuses to let an ungated install be claimed by whoever reaches it, and means
+  Caddy has already authenticated the request. That last one is not a preference: `caddy
+  hash-password` has no verify mode and no `--salt`, and Node's stdlib has no bcrypt, so the server
+  cannot check a typed current password at all — and a confirm field that does not verify is theatre.
+  Tests: `test/admin-credential.test.js` (13) — every refusal branch including a sweep over all six
+  ingress states, config left untouched when validation fails, a failed reload reported without
+  calling the change a failure, and the anti-drift pin.
 - **The clean-room guest is reachable from a browser, and the procedure is written down (#808).** The
   VRF's `[~]` rows were unverifiable for one reason: nothing but habitat's shell could reach the
   guest, so every assertion about what a *screen* shows had to be marked NOT VERIFIED. `tc-cleanroom`

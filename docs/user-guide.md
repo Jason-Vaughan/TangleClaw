@@ -267,6 +267,28 @@ The settings modal lets you configure:
 - **Poll interval** — how often to check session status (2s–30s)
 - **Engine selector** — switch engine for next session
 - **Mouse mode** — toggle tmux mouse mode on/off
+- **Login** — change the password you sign in with (see below)
+
+#### Changing your login
+
+Global settings has a **Login** section for changing the password set during setup. It appears only
+on an install where a login is actually in force — where none is, it says so and names the command
+that puts one in place, rather than offering a change that would not take.
+
+Two things to know before you use it:
+
+- **Saving signs you out.** The login is enforced by Caddy, and a browser cannot be handed new
+  credentials, so the next page you load asks for the new password. Have it to hand before saving.
+- **The username cannot be changed here.** It names *which* login to re-hash rather than setting one,
+  so changing it in this form would leave the gate on the old name. To change a username, or to
+  recover a login you have lost entirely, run `node scripts/reset-admin.js` at a terminal on the
+  machine — recovery deliberately requires physical access, because a reset that lives behind the
+  gate cannot help someone the gate has locked out.
+
+There is no "current password" field, and that is deliberate rather than an oversight: the tools
+available here can hash a password but cannot verify one against a stored hash, and a field that
+does not check anything is theatre. What authenticates the change is that Caddy already asked you
+for the current password to let you reach this screen.
 
 See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
 
