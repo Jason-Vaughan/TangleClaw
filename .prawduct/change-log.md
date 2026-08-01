@@ -26,6 +26,84 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
+
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
+
+**Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
+weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.
+
+`29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo — which catches only
+TangleClaw's side moving — and added a companion check reading prawduct's own `migrate_plugin.py` for
+the upstream side. That companion **scraped the module as text**, bounding the literal with
+`indexOf('\n}')`. The bound is a guess, and a guess that lands wrong does not fail: it over-extends
+on a reformat and matches `ref`/`repo` from a neighbouring literal, comparing against values that
+were never the install reference. Reading the wrong constant quietly is worse than failing to read
+one loudly — a loud failure gets fixed, a quiet wrong answer gets believed — and quiet-wrong is the
+exact failure `PRAWDUCT_INSTALL_REFERENCE` exists to end, so the check guarding it must not
+reintroduce it one level up. The substring scan also matched `OLD_INSTALL_REFERENCE`.
+
+**What changed:** the module is parsed with Python's `ast` + `literal_eval` (a computed reference is
+unreadable by design rather than executed) and compared **whole** by `deepEqual`, so a key upstream
+adds or we stop writing counts as drift. Unreadable is a **finding, not a skip**, and the skip is
+drawn as narrowly as the facts allow: only prawduct **not installed at all** skips, with a printed
+reason. Installed-but-`migrate_plugin.py`-**missing** — the module moved or was renamed — fails, as
+do an unparseable source, a renamed symbol, and a failing `python3`. "Not here" and "here, but what I
+read moved" are different facts, and only the first is a non-applicability; folding "I could not read
+it" into "not applicable" is how a detector dies quietly while still reporting green.
+
+**Test-only — no runtime path changes, so it did not gate the v5 cut.** Every guard added here was
+watched red against the specific mutation it exists to catch: swallowing reader errors turns the
+`THROWS` cases red; drifting the constant to `ref:"v9.9.9"` turns the cross-check red; converting
+the fail branch to a skip turns the fail-vs-skip test red; and collapsing `moved` back into
+`absent` turns the classification test red. Each `THROWS` case matches its **specific** error,
+because a bare `assert.throws` accepts `python3: not found` too and would report green over a reader
+that parsed nothing.
+
+**Known limit:** the drift comparison against the *installed* plugin runs only where prawduct is
+installed — a developer machine, never CI, which has no marketplace checkout. The reader tests do run
+on the runner, but they prove the reader raises on crafted fixtures, not that our constant still
+matches upstream's. Closing it needs a CI-side checkout or a scheduled drift job — both
+commit-shaped — tracked as #835.
+
+**Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes).
+Rather than tally rounds here — a count that goes stale the moment another runs — the census is
+`prawduct-hook render-dispositions --scope plugin-ref-807`.
+
+**No single command shows all of it, and that is worth knowing before trusting any of them.**
+`render-dispositions` takes `[--review <id>|--scope <s>]` and has no all-scopes mode: with no
+argument it renders only the **latest** review fact, not the total. `--scope plugin-ref-807` is the
+best available census, but rounds on this branch went out under **four different scope strings**, so
+it too returns a subset. `prawduct-hook evidence list` (no `--scope` — it takes `--kind` and `-n`) is
+the unfiltered fact log.
+
+Findings were fixed where fixing them belonged to this branch, and otherwise accepted with a recorded
+reason — the CI drift gap (#835) is the standing example: closable in a commit, but by touching
+`.github/workflows/`, which is a different risk surface than a test-only change.
+Deliberately no count and no all-clear here: in an append-only record, any "all of them" claim is
+falsified by the next round that reads it, and a census that silently returns a subset is the same
+failure as a monitor that silently does not run — both report a number, neither reports that the
+number is partial. That is not incidental to this entry: it is the same failure the entry is about,
+and it was caught twice inside this paragraph. The findings worth carrying forward, because each is a
+general failure mode rather than a detail of this diff:
+
+- Test evidence had been recorded against the **pre-fix tree** — a green record whose
+  `evidence_tree` was the review's `base_tree`, not `head_tree`. Caught on the manifest's own tree
+  pair; `test-status` exits 0 straight through it.
+- The `THROWS` matchers were **bare `assert.throws`**, then unanchored. `execFileSync` builds
+  `err.message` from the argv it ran, and that argv carries the embedded program — including its own
+  `sys.exit("INSTALL_REFERENCE not found in " + …)` source line — so the matcher matched its own
+  source text on any nonzero exit. Guards against unexamined errors were themselves tolerating one.
+- The **fail-vs-skip contract was asserted by nobody** until the comparison was factored out; the
+  block comment then justified the block in terms that invited deleting that very test.
+- The entry's own tag line was stamped `status=shipped` **on an unmerged branch**, against ART-4K9M
+  recorded in this file's header — copied from the merged precedent below without reading the token.
+
+**Adjacent, filed not fixed:** #833 — whether a managed repo's install reference should be a
+committed artifact at all, rather than untracked machine state rewritten at every session launch.
+`syncEngineHooks` touches only the `hooks` block, so it is not a propagation vector today; that is a
+property of current code, not a guarantee.
+
 ## 2026-08-01: break-glass recovery proven by running it, and a way out for an install with no login (#710, chunk 4)
 
 <!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status=shipped -->

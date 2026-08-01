@@ -477,6 +477,39 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The upstream half of the install-reference contract test is parsed, not scraped (#807, #816).**
+  `29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo, which catches only
+  TangleClaw's side moving; the companion check that reads prawduct's own `migrate_plugin.py` scraped
+  it as text, bounding the literal with `indexOf('\n}')`. That bound is a guess, and a guess that
+  lands wrong does not fail — it over-extends on a reformat and matches `ref`/`repo` from a
+  neighbouring literal, comparing against values that were never the install reference. Silently
+  reading the wrong constant outranks loudly failing to read one: a loud failure gets fixed, a quiet
+  wrong answer gets believed. It now parses the module with Python's `ast` and `literal_eval` (a
+  computed reference is unreadable by design rather than executed) and compares the **whole**
+  reference, so a key upstream adds or we stop writing counts as drift too.
+
+  Unreadable is a **finding, not a skip**, and the skip is drawn as narrowly as the facts allow:
+  prawduct **not installed at all** skips with a printed reason, while prawduct installed with
+  `migrate_plugin.py` *missing* — the module moved or was renamed — **fails**, as do an unparseable
+  source and a failing `python3`. Those are different facts, and only the first is a
+  non-applicability; collapsing them would silence the check at the one moment it has anything to
+  say, since upstream restructuring the literal is the event it exists to catch. Folding "I could not
+  read it" into "not applicable" is how a detector dies quietly while still reporting green.
+
+  Eight tests cover the reader and the source classification directly, because the cross-check
+  resolves its own path under `$HOME` and no test can aim it at a chosen file. The comparison is
+  factored out so the fail-rather-than-skip contract is itself reachable, and each guard was watched
+  red against the specific mutation it exists to catch — converting the fail branch to a skip, and
+  collapsing "moved" back into "not installed", each turn one red. Their fixtures nest under the
+  suite's existing temp directory rather than taking a second `mkdtemp`, which was leaking one
+  directory per run.
+
+  **Known limit:** the drift comparison against the *installed* plugin only runs where prawduct is
+  installed — i.e. a developer machine, never CI, which has no marketplace checkout. The reader tests
+  do run on the runner, but they prove the reader raises on crafted fixtures, not that our constant
+  still matches upstream's. Closing that needs a CI-side checkout or a scheduled drift job, tracked
+  as #835.
+
 - **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
   in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
   through PATH, and the shared test stub only stubbed `caddy` — so every full-suite run on a machine
