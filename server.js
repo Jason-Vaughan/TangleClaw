@@ -868,11 +868,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // returns, from the same predicate, so the two can never disagree about a machine
 // between rendering the form and submitting it — the failure this chunk's sibling
 // (the wizard step list) already had to fix once.
-route('GET', '/api/auth/credential', (_req, res) => {
+route('GET', '/api/auth/credential', (req, res) => {
   const config = store.config.load();
   const ingressState = caddy.classifyIngressState();
   const check = adminCredential.canChangeCredential(
-    config, ingressState, caddy.detectCaddy().available);
+    config, ingressState, caddy.detectCaddy().available,
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
   jsonResponse(res, 200, {
     changeable: check.allowed,
     // Same spelling the POST's refusal uses, from the same translator — a client
@@ -909,15 +910,19 @@ route('GET', '/api/auth/credential', (_req, res) => {
 // does not verify is theatre. What authenticates this request is that Caddy
 // already did — which is exactly why the guard below refuses whenever no gate is
 // in force.
-route('POST', '/api/auth/credential', (_req, res, _params, body) => {
+route('POST', '/api/auth/credential', (req, res, _params, body) => {
   // parseBody resolves null for an empty request, so every field read below would
   // throw on a bodyless POST — a 500 that reads as "the server broke" for what is
   // simply a malformed request.
   const payload = body || {};
   const config = store.config.load();
   const ingressState = caddy.classifyIngressState();
+  // Both routes ask the same predicate the same way, including the socket — a
+  // GET that discloses the username to a caller the POST would refuse is the
+  // client-vs-server disagreement this surface already had to fix once.
   const check = adminCredential.canChangeCredential(
-    config, ingressState, caddy.detectCaddy().available);
+    config, ingressState, caddy.detectCaddy().available,
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
   if (!check.allowed) {
     return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
   }

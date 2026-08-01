@@ -148,6 +148,21 @@ mechanical rule worth keeping is narrower than "remember the family": when a fix
 source answers a question**, or **how an outcome is reported**, enumerate every caller before editing
 any of them.
 
+**The one open design question was decided by reading the mechanism, and the answer was no.** #822
+asked whether the route should require `X-Auth-User` to prove the request came through Caddy.
+Delegated by the operator with "secure the system in v5". It should not: in caddy mode TC *trusts*
+that header (`lib/auth-identity.js`), so any caller able to reach the route can forge it — and this
+machine's hand-edited Caddyfile has one gated `reverse_proxy` with no `header_up`, so requiring it
+would have locked the operator out of the surface on that site. What does hold is the **connection**,
+and asking it closed a path nothing else could see: caddy mode pins the listener to loopback, but at
+LISTEN time, while `ingressMode` is read per request — and a legacy grace-state install has an
+unauthenticated `PATCH /api/config` accepting `ingressMode`, so a network caller could flip config
+and reach the route over the still-wide socket. `canChangeCredential` now takes `fromLoopback` and
+refuses first, before any answer that would describe the machine. Recorded as D6 in the build plan.
+The count note carried forward from the last round is ACCEPTED and not re-litigated: the prose
+records the pattern, the evidence store holds the exact per-round numbers, and a further pass at the
+paragraph buys another round of the same.
+
 **Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
 which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
 against the shared evidence store mid-session is the thing the previous session's notes warn

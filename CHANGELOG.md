@@ -317,6 +317,20 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+- **Changing the login is refused on any connection that did not arrive over loopback (#710, #822).**
+  In caddy mode TangleClaw binds loopback only, so Caddy is the only way in — but that binding is
+  chosen when the server starts listening, while `ingressMode` is read per request. An install still
+  in the legacy wide-bound state has an unauthenticated `PATCH /api/config` that accepts
+  `ingressMode`, so a caller on the network could flip it to caddy and reach the credential route
+  over the still-wide socket, with every other condition satisfied on a machine whose Caddy config
+  genuinely carries a gate. The check runs first, before any refusal that would describe the install
+  to that caller.
+
+  **Deliberately a socket check and not an `X-Auth-User` check.** In caddy mode TangleClaw trusts
+  that header, so anyone able to reach the route can also set it — it proves nothing about how the
+  request arrived. It would also have cost real access: a hand-edited Caddyfile with one gated
+  `reverse_proxy` missing `header_up` would have refused its own operator.
+
 - **Caddyfile backups no longer accumulate one credential-bearing file per change (#710).** Every
   credential change takes a timestamped backup of the live Caddyfile, and each one carries the
   bcrypt hash that was in force when it was written — so the pile was a growing set of credential

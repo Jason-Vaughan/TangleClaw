@@ -376,6 +376,51 @@ describe('POST /api/auth/credential', () => {
       assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'and nothing changed');
     });
 
+    it('refuses a request that reached the listener from off-box', async () => {
+      // Exercised through the real socket rather than by calling the predicate:
+      // what is being pinned is that the ROUTE asks about the connection at all.
+      // The test server binds loopback, so the off-box case is simulated by the
+      // one thing the route reads — but both routes must read it, and the GET
+      // must refuse identically or it discloses the username to a caller the
+      // POST would turn away.
+      // `remoteAddress` is not redefinable on Socket.prototype, so the off-box
+      // case is produced at the seam the route calls. That pins the route's
+      // BEHAVIOUR; the assertion below pins that the value comes from the socket,
+      // and `isLoopbackRemote` itself is unit-tested on every address spelling.
+      const adminCredential = require('../lib/admin-credential');
+      const realCheck = adminCredential.isLoopbackRemote;
+      adminCredential.isLoopbackRemote = () => false;
+      try {
+        const post = await request(server, 'POST', '/api/auth/credential',
+          { password: GOOD_PASSWORD });
+        assert.equal(post.status, 409);
+        assert.equal(post.data.code, 'REMOTE_CONNECTION');
+        assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
+
+        const get = await request(server, 'GET', '/api/auth/credential');
+        assert.equal(get.data.changeable, false, 'the GET must refuse the same caller');
+        assert.equal(get.data.user, null, 'and must not disclose the username in force');
+      } finally {
+        adminCredential.isLoopbackRemote = realCheck;
+      }
+    });
+
+    it('feeds the loopback check from the SOCKET, not from a header', () => {
+      // The value has to come from the connection. A header would be
+      // caller-supplied and prove nothing — which is exactly why `X-Auth-User`
+      // was rejected for this job: in caddy mode TC trusts that header, so
+      // anyone able to make the request can also set it.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      const start = src.indexOf("route('GET', '/api/auth/credential'");
+      const both = src.slice(start, src.indexOf("route('GET', '/api/service-token'", start));
+      const calls = both.match(/adminCredential\.isLoopbackRemote\(/g) || [];
+      assert.equal(calls.length, 2, 'both the GET and the POST must ask');
+      assert.equal((both.match(/req\.socket && req\.socket\.remoteAddress/g) || []).length, 2,
+        'and both must read it from the socket');
+      assert.doesNotMatch(both, /x-auth-user/i,
+        'the identity header is forgeable by any caller that can reach this route');
+    });
+
     it('answers a bodyless POST with a refusal, not a crash', async () => {
       // parseBody resolves null for an empty request, so every field read in the
       // handler runs against null. A 500 there reads as "the server broke" for what

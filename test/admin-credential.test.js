@@ -68,6 +68,43 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     assert.match(r.remedy, /ingress-cutover/, 'the operator needs the command that puts a login in place');
   });
 
+  it('refuses a request that did not arrive on a loopback connection', () => {
+    // The path this closes, which none of the other conditions can see: in caddy
+    // mode the listener is loopback-only, but that bind is chosen at LISTEN time
+    // while `ingressMode` is read per request. An install running direct-and-wide
+    // (the legacy grace state) has an unauthenticated `PATCH /api/config` that
+    // accepts `ingressMode` — so a caller on the network can flip config to caddy
+    // and reach this route over the still-wide socket, with every other condition
+    // satisfied on a machine whose Caddyfile really does carry a gate.
+    const r = cred.canChangeCredential(configured, gated, true, false);
+    assert.equal(r.allowed, false);
+    assert.equal(r.code, 'remote-connection');
+    assert.match(r.remedy, /reset-admin/, 'and names a way that proves physical control');
+  });
+
+  it('refuses a remote connection FIRST, before any answer about the machine', () => {
+    // Order is the assertion. Every other refusal describes the install — which
+    // ingress mode it is in, whether a gate is live — and answering those to a
+    // caller who should not be talking to this route at all discloses the shape
+    // of the machine to exactly the party the check exists to turn away.
+    const r = cred.canChangeCredential(
+      { ...configured, ingressMode: 'direct' }, { state: 'ungated', user: null }, false, false);
+    assert.equal(r.code, 'remote-connection',
+      'the connection is refused before not-caddy-mode, no-gate, or no-caddy-binary');
+  });
+
+  it('treats every spelling of loopback as local', () => {
+    // Node reports IPv4 loopback as 127.0.0.1, IPv6 as ::1, and an IPv4 client on
+    // a dual-stack socket as ::ffff:127.0.0.1. A check that knew only the first
+    // would refuse a legitimate local caller.
+    for (const addr of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '127.0.0.53', '::FFFF:127.0.0.1']) {
+      assert.equal(cred.isLoopbackRemote(addr), true, `${addr} is the same machine`);
+    }
+    for (const addr of ['192.168.1.10', '10.0.0.4', '100.64.0.1', '::ffff:192.168.1.10', '', undefined, null]) {
+      assert.equal(cred.isLoopbackRemote(addr), false, `${addr} is not loopback`);
+    }
+  });
+
   it('refuses when the caddy binary is gone, because nothing can hash the new password', () => {
     // `caddy hash-password` is the only hasher this codebase has. Asked here so
     // the form is never drawn for an install that would fail at submit with a 500
