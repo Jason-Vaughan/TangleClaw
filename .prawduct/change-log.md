@@ -57,13 +57,20 @@ fail-vs-skip test red. Each `THROWS` case matches its **specific** error, becaus
 `assert.throws` accepts `python3: not found` too and would report green over a reader that parsed
 nothing.
 
-**Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes),
-ending with the cumulative gate `satisfied` and zero unresolved blocking findings. Rather than tally
-rounds here — a count that goes stale the moment another runs — the durable record is the evidence
-store: `prawduct-hook evidence list`, scope `plugin-ref-807`.
+**Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes).
+Rather than tally rounds here — a count that goes stale the moment another runs — the census is
+`prawduct-hook render-dispositions --scope plugin-ref-807`.
 
-Every finding was **fixed, none accepted**. The ones worth carrying forward, because each is a
-general failure mode rather than a detail of this diff:
+Read that with one caveat, stated because the alternative is a pointer that quietly under-reports:
+rounds on this branch were dispatched under **four different scope strings**, so a scope-filtered
+census does not reach all of them — including the `cumulative`, which carried the most findings.
+`prawduct-hook evidence list` (no `--scope`; it takes only `--kind` and `-n`) is the unfiltered view.
+
+Findings were **fixed where fixable and accepted with a recorded reason otherwise** — no finding was
+left undispositioned. The accepts are: three notes fixed in a later commit than the round that
+raised them, and the CI-execution gap, which no commit can close because the evidence has to come
+from a runner. The ones worth carrying forward, because each is a general failure mode rather than a
+detail of this diff:
 
 - Test evidence had been recorded against the **pre-fix tree** — a green record whose
   `evidence_tree` was the review's `base_tree`, not `head_tree`. Caught on the manifest's own tree
