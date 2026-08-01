@@ -80,10 +80,29 @@ correctly fell through to "unconfirmed". The fix keeps the pair together — `ef
 returns `{ origin, via }` from ONE branch, because two derivations of "is this proxied" could disagree
 with the address they describe — and the wizard probes only where a reply means something.
 
-**A test of mine could not fail, again.** `via` was added, threaded through, and asserted nowhere:
-flipping caddy's `via` to `'server'` left the whole suite green. Caught by running the mutation rather
-than by reading the test. That is three in this scope, all the same shape — an assertion that watches
-something adjacent to the thing that changed.
+**Tests of mine that could not fail — four now, and the review found what the mutations missed.**
+`via` was added, threaded through, and asserted nowhere: flipping caddy's `via` to `'server'` left the
+suite green. Then the same again one layer out — nothing pinned that the ROUTE *emits* `redirectVia`,
+so deleting the field from the response object kept every test green while a caddy-mode operator
+would be told "TangleClaw is back up" on the strength of a 502. My mutation run had stopped at the
+module boundary and never crossed the wire. And two of the six new wizard assertions were inert: one
+matched a `return;` satisfied by the function's own opening `if (!body) return;` — the exact trap the
+sibling credential test documents in a comment — and one sliced its panel with `indexOf('`,')` on the
+LAST map entry, which has no trailing delimiter, so `-1 + 2` asserted against a single character.
+
+All four are the same shape: an assertion watching something *adjacent* to what changed. The
+mechanical correction is narrower than "write better tests" — **mutate at every seam the value
+crosses, not only where it is produced**, and scope a structural assertion to the branch it names
+rather than to a span that contains it.
+
+**Filed rather than fixed: #825.** `wizardComplete` checks `ingress.protection` before
+`result.restart` and both branches return, so an install that is simultaneously "no login TangleClaw
+can confirm" and "about to restart" never reaches the overlay and lands on a Continue button that
+fetches a dying server. Reachable on a hand-maintained Caddyfile whose operator edits a cert path.
+Chunk 3 made it more visible — before, the caddy-mode redirect named a dead port, so the overlay was
+useless even when it rendered. Not fixed here because the change edits the copy of a screen whose
+whole purpose is a security warning, under chunk 2's rule that no path claims protection it did not
+observe; that compound state wants deliberate wording and its own review.
 
 **A worktree trap worth knowing.** `.prawduct/` is almost entirely gitignored here, so a new
 worktree's governance state is set up by symlinking it back to the primary checkout — but

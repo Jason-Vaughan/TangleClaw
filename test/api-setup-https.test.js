@@ -288,6 +288,8 @@ describe('HTTPS Setup API', () => {
         assert.equal(status, 200);
         assert.equal(data.restart, true);
         assert.match(data.redirectUrl, /^https:\/\/[^:/]+:3102$/);
+        assert.equal(data.redirectVia, 'server',
+          'in direct mode the address IS the server, so a reply there does mean it is back');
         assert.ok(
           !data.redirectUrl.endsWith(':3101'),
           'must not redirect to the config port when the environment overrides it'
@@ -334,6 +336,9 @@ describe('HTTPS Setup API', () => {
         assert.equal(status, 200);
         assert.match(data.redirectUrl, /^https:\/\/[^:/]+:8443$/,
           'the front door in caddy mode is Caddy, on its own port');
+        assert.equal(data.redirectVia, 'proxy',
+          'and the client must be TOLD a proxy answers there — it cannot tell from the URL, '
+          + 'and probing a proxy proves nothing about the server behind it');
         assert.ok(!/:3101$|:3102$/.test(data.redirectUrl),
           'never TC\'s own listener — behind Caddy that is the ungated loopback door');
       } finally {

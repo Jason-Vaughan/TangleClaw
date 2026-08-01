@@ -532,14 +532,26 @@ describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
     // an error page.
     assert.match(show, /via === 'proxy'/,
       'the proxied case must be recognised before any probe');
-    const beforePoll = show.slice(0, show.indexOf('_pollRestartReady'));
-    assert.match(beforePoll, /return;/,
-      'and must return, so the probe never runs for it');
+    // Scoped to the proxy BRANCH, not to everything before the probe: the
+    // function opens with `if (!body) return;`, so a bare /return;/ over that
+    // span passes with the proxy branch's own return deleted. The sibling test
+    // for the credential section carries this same warning; I reproduced the
+    // defect it documents.
+    const branch = show.slice(show.indexOf("via === 'proxy'"), show.indexOf('_pollRestartReady'));
+    assert.match(branch, /_renderRestartOverlay\([^)]*'behind-proxy'/,
+      'the proxied case paints its own panel');
+    assert.match(branch, /\breturn;/,
+      'and returns, so the probe never runs for it');
   });
 
   it('claims nothing it cannot observe, and names what the operator CAN check', () => {
-    const panel = render.slice(render.indexOf("'behind-proxy'"));
-    assert.doesNotMatch(panel.slice(0, panel.indexOf('`,') + 2 || undefined), /is back up/,
+    // Bounded by the end of the map, not by a trailing '`,' — 'behind-proxy' is
+    // the LAST entry and has none, so `indexOf` returned -1 and the old slice
+    // asserted against a single character. It could not have failed.
+    const start = render.indexOf("'behind-proxy'");
+    const panel = render.slice(start, render.indexOf('}[state];', start));
+    assert.ok(panel.length > 200, 'the panel body must actually be in the slice');
+    assert.doesNotMatch(panel, /is back up/,
       'no readiness claim on the branch where readiness is unobservable');
     assert.match(panel, /asks for your username and password/,
       'the password prompt is the one thing the operator can actually verify');
