@@ -54,6 +54,27 @@ function extractUpstreamInstallReference(src) {
 }
 
 /**
+ * Classify the installed plugin's source: is it absent, present, or *moved*?
+ *
+ * "Not installed" and "installed, but the module I read is gone" are different
+ * facts and only the first is a legitimate skip. A marketplace checkout that
+ * exists while `plugin/lib/migrate_plugin.py` does not means upstream
+ * relocated or renamed it — which is precisely the event this check exists to
+ * notice, so collapsing it into "not applicable" would silence the check at the
+ * only moment it was ever for. An honest skip reason in a log nobody reads is
+ * still a check that stopped checking.
+ *
+ * @param {string} marketplaceRoot - `~/.claude/plugins/marketplaces/prawduct`
+ * @returns {{state: 'absent'|'moved'|'present', src: string}}
+ */
+function classifyUpstreamSource(marketplaceRoot) {
+  const src = path.join(marketplaceRoot, 'plugin', 'lib', 'migrate_plugin.py');
+  if (!fs.existsSync(marketplaceRoot)) return { state: 'absent', src };
+  if (!fs.existsSync(src)) return { state: 'moved', src };
+  return { state: 'present', src };
+}
+
+/**
  * Assert TangleClaw's constant matches the upstream reference at `src`.
  *
  * Split out from the test that calls it with the real installed path so this
@@ -191,13 +212,19 @@ describe('C1 — per-project plugin migration (#262)', () => {
       // several cache versions can coexist, so picking one would compare
       // against whichever release happened to sort first rather than the
       // installed contract.
-      const src = path.join(
-        os.homedir(), '.claude', 'plugins', 'marketplaces', 'prawduct', 'plugin', 'lib', 'migrate_plugin.py'
-      );
-      if (!fs.existsSync(src)) {
-        t.skip('prawduct plugin source not present on this machine');
+      const root = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'prawduct');
+      const { state, src } = classifyUpstreamSource(root);
+      if (state === 'absent') {
+        t.skip('prawduct plugin not installed on this machine');
         return;
       }
+      // Installed, but the module is gone: upstream moved or renamed it. Only
+      // "not installed at all" earns a skip — see classifyUpstreamSource.
+      assert.notEqual(
+        state, 'moved',
+        `prawduct is installed at ${root} but ${src} is missing — the module moved or was renamed. `
+        + 'Retarget this check at its new home rather than letting it skip.'
+      );
       // Parsed as an AST, never scraped as text. A text window has to guess
       // where the literal ends, and a guess that lands wrong does not fail —
       // it silently matches keys from a NEIGHBOURING literal and compares
@@ -281,6 +308,25 @@ describe('C1 — per-project plugin migration (#262)', () => {
     it('THROWS on a syntax error rather than reporting no drift', () => {
       const f = write('broken.py', 'INSTALL_REFERENCE = {"a": \n');
       assert.throws(() => extractUpstreamInstallReference(f), /SyntaxError/);
+    });
+
+    it('distinguishes "not installed" from "installed but the module moved"', () => {
+      // The only legitimate skip is "prawduct is not here". A marketplace
+      // checkout that exists while the module does not means upstream
+      // relocated it — a finding, not a non-applicability. Collapsing the two
+      // would make this check go quiet precisely when upstream changes, which
+      // is the only time it has ever had anything to say.
+      const absent = path.join(pyDir, 'no-such-marketplace');
+      assert.equal(classifyUpstreamSource(absent).state, 'absent');
+
+      const moved = path.join(pyDir, 'installed-but-moved');
+      fs.mkdirSync(moved, { recursive: true });
+      assert.equal(classifyUpstreamSource(moved).state, 'moved');
+
+      const present = path.join(pyDir, 'installed-intact');
+      fs.mkdirSync(path.join(present, 'plugin', 'lib'), { recursive: true });
+      fs.writeFileSync(path.join(present, 'plugin', 'lib', 'migrate_plugin.py'), 'INSTALL_REFERENCE = {}\n');
+      assert.equal(classifyUpstreamSource(present).state, 'present');
     });
 
     it('an unreadable source FAILS the cross-check — it does not skip it', () => {
