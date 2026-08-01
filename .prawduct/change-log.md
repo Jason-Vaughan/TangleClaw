@@ -63,13 +63,14 @@ Rather than tally rounds here — a count that goes stale the moment another run
 
 Read that with one caveat, stated because the alternative is a pointer that quietly under-reports:
 rounds on this branch were dispatched under **four different scope strings**, so a scope-filtered
-census does not reach all of them — including the `cumulative`, which carried the most findings.
-`prawduct-hook evidence list` (no `--scope`; it takes only `--kind` and `-n`) is the unfiltered view.
+census does not reach all of them. `prawduct-hook render-dispositions` unfiltered is the whole view;
+`prawduct-hook evidence list` (no `--scope` — it takes only `--kind` and `-n`) is the raw fact log.
 
-Findings were **fixed where fixable and accepted with a recorded reason otherwise** — no finding was
-left undispositioned. The accepts are: three notes fixed in a later commit than the round that
-raised them, and the CI-execution gap, which no commit can close because the evidence has to come
-from a runner. The ones worth carrying forward, because each is a general failure mode rather than a
+Each round's findings were fixed where a commit could fix them, and otherwise accepted with a
+recorded reason — the CI-execution gap is the standing example, since no commit can close it and only
+a runner can. Deliberately no count or all-clear here: in an append-only record, "nothing is open" is
+falsified by the next round that reads it, so the census belongs in the tool and the *why* belongs in
+prose. The findings worth carrying forward, because each is a general failure mode rather than a
 detail of this diff:
 
 - Test evidence had been recorded against the **pre-fix tree** — a green record whose
