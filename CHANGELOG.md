@@ -131,6 +131,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **TangleClaw no longer stamps an unreviewed prawduct reference into the projects it migrates
+  (#807, #816).** `migrateToPlugin` built the plugin reference by copying TangleClaw's own
+  `.claude/settings.json` verbatim. That file is untracked, machine-local, and freely editable, so
+  whatever it happened to hold was written into every project migrated on that machine — invisible
+  in any diff, and different on every machine. Two defects came out of the one design. A stale
+  `ref: "v2.1.5"` pin reached eleven repositories and held them months behind upstream. Then the
+  marketplace half of that file was removed, after which a migration wrote `enabledPlugins` with no
+  `extraKnownMarketplaces` to resolve it from — a plugin that silently never loads anywhere prawduct
+  is not already registered, and that looks perfectly healthy on the machine that wrote it.
+
+  The reference is now a reviewed constant, `PRAWDUCT_INSTALL_REFERENCE`, mirroring prawduct's own
+  published `INSTALL_REFERENCE` (`ref: "main"`, `autoUpdate: true`). It is deliberately a literal
+  rather than a runtime read: TangleClaw migrates projects on machines where the plugin may be
+  absent, so deriving the reference from any file that can be missing, stale, or edited without
+  review reproduces the same defect class one layer up. Both halves are one atomic reference —
+  `_isCompletePluginRef` rejects a partial one and `migrateToPlugin` writes nothing at all rather
+  than a half-reference that reads as governed but resolves to nothing. `_readSelfPluginRef` and
+  the `selfSettingsPath` test seam are removed; they existed only to serve the read path.
+
+  `test/c1-plugin-migration.test.js` previously fixed the pinned, `autoUpdate: false` shape as its
+  production fixture, so the suite asserted the defect was correct behaviour. It now pins the
+  upstream shape as an explicit contract and covers the partial-reference refusal. Drift is checked
+  in both directions: a literal assertion catches TangleClaw's side changing, and a second test
+  reads the installed plugin's own `lib/migrate_plugin.py` to catch upstream's — the direction #807
+  was actually bitten by. That second check is test-only and skips when the plugin is not installed;
+  the production path still never reads that file, because migrations run on machines where it is
+  absent.
+
 - **The cutover log is named on every screen that cannot confirm the outcome, including the one
   that can see least (#710).** `logLocation` was assigned only inside branches that return, so the
   crash path — a child dying between the plist writes and `finish()`, which writes no result file
