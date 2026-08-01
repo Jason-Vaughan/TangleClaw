@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
 
-<!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default -->
+<!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** setup forces a login, and until now nothing could change it except a terminal. A password
 that can only be rotated by someone with shell access on the box is a password that does not get
