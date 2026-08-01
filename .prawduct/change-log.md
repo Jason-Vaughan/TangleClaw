@@ -26,6 +26,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-07-31: the prawduct install reference becomes a reviewed constant, not a copy of local state (#807, #816)
+
+<!-- prawduct: type=fix | scope=plugin-ref-807 -->
+
+**Why:** `migrateToPlugin` built the reference by copying TangleClaw's own `.claude/settings.json`
+verbatim. That file is untracked, machine-local and freely editable, so whatever it held was stamped
+into every project migrated on that machine — invisible in any diff, different per machine. One
+design, two defects: a stale `ref: "v2.1.5"` pin reached eleven repositories (#807), and once the
+marketplace half of that file went missing, migrations wrote `enabledPlugins` with nothing to resolve
+it from (#816) — a plugin that silently never loads anywhere prawduct is not already registered, and
+that looks perfectly healthy on the machine that wrote it.
+
+**The design point worth keeping.** The original intent — "don't hardcode a version" — was right; the
+source was wrong. Avoiding a hardcoded pin by reading an untracked local file does not remove the
+pin, it makes it invisible and per-machine. The fix hardcodes upstream's *published contract* and
+puts the change under review, which is the smaller risk. It is deliberately not a runtime read of the
+plugin's own source either: TangleClaw migrates projects on machines where the plugin is absent, so
+deriving the value from a file that may not exist reproduces the same defect class one layer up.
+
+**Two things the review caught that the build missed.** The contract test compared TangleClaw's
+constant against a literal in TangleClaw's own repo, so it could only catch our side moving — while
+the JSDoc, the test comment and the CHANGELOG all claimed it caught divergence "on either side."
+Upstream drift is the direction #807 was actually bitten by. A test-only read of the installed
+plugin's `migrate_plugin.py` now makes the claim true. Separately, ADR 0011 still described the
+deleted `_readSelfPluginRef` sourcing as the design; correcting one paragraph left every *normative*
+statement of the old three-item seam count standing, which is the half-fix pattern this project keeps
+hitting — the count is now amended everywhere it is asserted, and the ADR records the amendment.
+
+**Mutation-checked, and the first attempt failed honestly.** Restoring the original conditional
+marketplace merge left the suite green: once the reference is validated complete, the conditional and
+unconditional merges are equivalent, so the comment crediting the merge as the safeguard was false.
+The completeness guard is what is load-bearing, and bypassing it turns the partial-reference test red.
+
 ## 2026-07-29: setup provisions a login by default — the step-list flip plus the cutover it enforces (#710, chunk 2 slice 2-iii-b)
 
 <!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default -->

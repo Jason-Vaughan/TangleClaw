@@ -81,6 +81,189 @@ configured.
 
 ---
 
+## Phase A — Stand the guest up and make it reachable from a browser
+
+Do this before Phase 0. It is what turns the `[~]` browser-only rows into rows that
+can be scored at all: without it the guest is reachable only from habitat's shell,
+and every assertion about what a SCREEN shows has to be marked NOT VERIFIED.
+
+Established 2026-07-31 (#808). Every command below was run; none is from memory.
+
+### A.1 — Clone and boot
+
+```sh
+ssh habitat                       # see A.6 if this times out
+export PATH=$HOME/bin:$PATH       # tart is at ~/bin/tart, NOT on the non-interactive PATH
+
+tart clone tc-base-tailnet tc-vrf # ~90ms. See A.5 for which base to pick
+nohup tart run tc-vrf --no-graphics > ~/cleanroom-staging/tc-vrf-run.log 2>&1 &
+
+tart ip tc-vrf                    # returns as soon as the DHCP lease exists...
+nc -z 192.168.64.5 22             # ...which can PRECEDE sshd. Poll this at 5s, ~3min ceiling
+```
+
+Guest credentials are `admin` / `admin` (Cirrus vanilla default, unchanged on the
+bases). Same password for `sudo`. Inject a key once and stop typing it:
+
+```sh
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/tc_cleanroom -C tc-cleanroom
+# habitat has /usr/bin/expect but no sshpass; drive ssh-copy-id with expect
+```
+
+**Licence cap: two RUNNING macOS guests maximum** (Apple licence and the VZ
+framework both enforce it). Never script a second concurrent guest.
+
+### A.2 — Enable Screen Sharing IN THE GUEST
+
+`tart run --vnc` does **not** provide a VNC server. It points a viewer at the
+guest's *own* Screen Sharing, which on a vanilla image is registered but
+**inactive** — so a viewer gets a login prompt that no password can satisfy. It
+reads as a credentials problem and is not one.
+
+```sh
+sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+  -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers
+```
+
+Verify `screensharingd` is actually listening — as root, since a non-root `lsof`
+cannot see a root-owned socket and will wrongly report nothing:
+
+```sh
+sudo lsof -nP -iTCP:5900 -sTCP:LISTEN
+```
+
+### A.3 — Join the tailnet
+
+Sideload the pkg (habitat cannot reach `pkgs.tailscale.com`; see A.6):
+
+```sh
+scp ~/cleanroom-staging/Tailscale-*.pkg admin@192.168.64.5:~/
+sudo installer -pkg ~/Tailscale-*.pkg -target /
+open -a Tailscale
+```
+
+**Then the part that is not obvious.** Two separate approvals are needed, and the
+first alone is not enough:
+
+1. **The system extension.** `systemextensionsctl list` shows
+   `[activated waiting for user]`. Approve it in the GUI: System Settings →
+   General → Login Items & Extensions → Network Extensions. This CANNOT be done
+   headlessly — it is SIP-protected, which is the entire point of it.
+2. **The VPN configuration.** Approval alone does not start the backend. The app
+   only establishes the VPN profile when a sign-in is **attempted**. So: start a
+   sign-in, then let it fail or cancel it. **Do not complete it** — a completed
+   login creates a node identity, and A.5 depends on there being none.
+
+Confirm the backend is up. Note there is **no unix socket** — checking
+`/var/run/tailscale*` reports "daemon down" when it is running:
+
+```sh
+ls -l /Library/Tailscale/ipnport        # -> e.g. 49152, the TCP port it listens on
+/Applications/Tailscale.app/Contents/MacOS/Tailscale status   # expect "Logged out."
+```
+
+Then join with an **ephemeral, reusable** key (see A.4):
+
+```sh
+Tailscale up --auth-key="$(cat /tmp/tskey)" --hostname=tc-cleanroom --accept-dns=false
+rm -f /tmp/tskey                        # never leave a credential in the clean room
+```
+
+### A.4 — The auth key
+
+Mint at `https://login.tailscale.com/admin/settings/keys` — **ephemeral** (the node
+self-removes when the clone is deleted, so runs do not accrete stale devices) and
+**reusable** (the documented recovery from a mid-phase failure is delete-and-reclone,
+and a single-use key dies on the first join, stranding the retry). Keep the expiry
+short; reusable plus 90 days is a needlessly long-lived credential.
+
+There is no "pre-authorized" toggle on this tailnet — it only appears when device
+approval is enabled, which it is not, so keys are pre-authorized by default.
+
+No Tailscale **API token** exists on habitat or cursatory, so a key cannot be minted
+programmatically. This step needs a human with the admin console, and deliberately
+so: a minted-from-somewhere credential is the one thing a clean room must not carry.
+
+### A.5 — Which base to clone, and why the ordering matters
+
+| Base | Carries | Use for |
+|---|---|---|
+| `tc-base` | nothing — truly vanilla | testing a genuine first-ever install (e.g. reproducing #788) |
+| `tc-base-tailnet` | extension approval + VPN profile, **no node identity** | every normal run — skips the GUI click entirely |
+
+`tc-base-tailnet` was captured **after approval and before `tailscale up`**. That
+ordering is the whole trick: the guest had never logged in, so the snapshot carries
+the approval but no auth key and no node identity. Cloning a *joined* node would
+duplicate its identity, which is exactly what the ephemeral-key design prevents.
+
+If you ever have to rebuild it: approve, verify, snapshot, *then* join — in that
+order.
+
+> **Unverified as of 2026-07-31:** that the approval survives the clone. It is
+> reasoned from macOS storing it in `/Library/SystemExtensions`, not yet observed.
+> The first run to clone `tc-base-tailnet` settles it. If the guest boots back to
+> `[activated waiting for user]`, the cost is one click per fresh base — bounded,
+> not fatal. Record the outcome here either way.
+
+### A.6 — Reaching habitat, and what egress actually allows
+
+`ssh habitat` may resolve to a LAN address only one subnet can reach. **Use
+MagicDNS**, which works from anywhere:
+
+```sh
+ssh -o HostName=habitat.tail123678.ts.net habitat
+```
+
+Keep `habitat` as the final argument — that is what supplies `User` and
+`IdentityFile` from `~/.ssh/config`; `-o HostName=` only swaps the address. A bare
+`ssh habitat.tail123678.ts.net` loses both and fails with `Connection closed`
+(habitat has exactly one user, `habitat-admin`).
+
+**Egress from habitat is PARTIAL standing, not general** — verified by live probe:
+
+| Host | Standing? |
+|---|---|
+| `github.com`, `ghcr.io` | yes |
+| `controlplane.tailscale.com`, `login.tailscale.com` | yes — so the guest joins and STAYS joined with no window |
+| `swcdn.apple.com` (CLT) | **no** — needs the window |
+| `pkgs.tailscale.com` | **no** — sideload the pkg instead |
+
+Guests NAT through habitat, so pfSense sees their traffic as habitat's. **Tailnet
+access therefore survives the egress window closing** — which is what makes this
+access path durable rather than window-scoped.
+
+Request a **90-minute window** for the CLT (~920 MB) and TangleClaw's own downloads.
+Schedule **away from 07:00 PDT** — a daily LaunchAgent opens its own 90-minute
+window and will TRUNCATE an overlapping one, which looks like the window dying
+early — and away from the 11:00 CDT publish.
+
+### A.7 — Confirm before running any phase
+
+```sh
+tailscale ping tc-cleanroom            # from any tailnet device
+nc -z tc-cleanroom.tail123678.ts.net 5900
+```
+
+Browser and Screen Sharing then work from **any** tailnet device — iPhone included —
+with no tunnel and no habitat hop:
+
+- `vnc://tc-cleanroom.tail123678.ts.net` (macOS Screen Sharing opens this natively;
+  no client to install)
+- `https://tc-cleanroom.tail123678.ts.net:8443` once TangleClaw is installed
+
+If you must fall back to a tunnel, remember the LOCAL port is probably taken by your
+own Mac's Screen Sharing — use 5901:
+
+```sh
+ssh -L 5901:192.168.64.5:5900 -o HostName=habitat.tail123678.ts.net habitat -N
+open vnc://localhost:5901
+```
+
+Binding 5900 locally would connect you to **your own machine**, which looks like the
+guest failing to show the right screen.
+
+---
+
 ## Phase 0 — Confirm clean room + prereqs
 
 ```sh

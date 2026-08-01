@@ -151,6 +151,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **TangleClaw no longer stamps an unreviewed prawduct reference into the projects it migrates
+  (#807, #816).** `migrateToPlugin` built the plugin reference by copying TangleClaw's own
+  `.claude/settings.json` verbatim. That file is untracked, machine-local, and freely editable, so
+  whatever it happened to hold was written into every project migrated on that machine — invisible
+  in any diff, and different on every machine. Two defects came out of the one design. A stale
+  `ref: "v2.1.5"` pin reached eleven repositories and held them months behind upstream. Then the
+  marketplace half of that file was removed, after which a migration wrote `enabledPlugins` with no
+  `extraKnownMarketplaces` to resolve it from — a plugin that silently never loads anywhere prawduct
+  is not already registered, and that looks perfectly healthy on the machine that wrote it.
+
+  The reference is now a reviewed constant, `PRAWDUCT_INSTALL_REFERENCE`, mirroring prawduct's own
+  published `INSTALL_REFERENCE` (`ref: "main"`, `autoUpdate: true`). It is deliberately a literal
+  rather than a runtime read: TangleClaw migrates projects on machines where the plugin may be
+  absent, so deriving the reference from any file that can be missing, stale, or edited without
+  review reproduces the same defect class one layer up. Both halves are one atomic reference —
+  `_isCompletePluginRef` rejects a partial one and `migrateToPlugin` writes nothing at all rather
+  than a half-reference that reads as governed but resolves to nothing. `_readSelfPluginRef` and
+  the `selfSettingsPath` test seam are removed; they existed only to serve the read path.
+
+  `test/c1-plugin-migration.test.js` previously fixed the pinned, `autoUpdate: false` shape as its
+  production fixture, so the suite asserted the defect was correct behaviour. It now pins the
+  upstream shape as an explicit contract and covers the partial-reference refusal. Drift is checked
+  in both directions: a literal assertion catches TangleClaw's side changing, and a second test
+  reads the installed plugin's own `lib/migrate_plugin.py` to catch upstream's — the direction #807
+  was actually bitten by. That second check is test-only and skips when the plugin is not installed;
+  the production path still never reads that file, because migrations run on machines where it is
+  absent.
+
 - **The cutover log is named on every screen that cannot confirm the outcome, including the one
   that can see least (#710).** `logLocation` was assigned only inside branches that return, so the
   crash path — a child dying between the plist writes and `finish()`, which writes no result file
@@ -344,6 +372,26 @@ All notable changes to TangleClaw are documented in this file.
   Tests: `test/admin-credential.test.js` (13) — every refusal branch including a sweep over all six
   ingress states, config left untouched when validation fails, a failed reload reported without
   calling the change a failure, and the anti-drift pin.
+- **The clean-room guest is reachable from a browser, and the procedure is written down (#808).** The
+  VRF's `[~]` rows were unverifiable for one reason: nothing but habitat's shell could reach the
+  guest, so every assertion about what a *screen* shows had to be marked NOT VERIFIED. `tc-cleanroom`
+  now joins the tailnet, so Screen Sharing and (once installed) TangleClaw open from any tailnet
+  device including the iPhone — no tunnel, no habitat hop.
+
+  New **Phase A** in `deploy/VRF-auth-1-cutover.md` documents it end to end. Three findings in it are
+  not recoverable by reading any doc: `tart run --vnc` provides no VNC server (it points at the
+  guest's own Screen Sharing, inactive on a vanilla image, giving a login prompt no password can
+  satisfy); the macsys Tailscale has **no unix socket**, so checking `/var/run/tailscale*` reports
+  "daemon down" while it is running (it listens on the TCP port named in `/Library/Tailscale/ipnport`);
+  and extension approval alone does **not** start the backend — the VPN profile is only created when a
+  sign-in is *attempted*, so the procedure is to start one and let it fail, never to complete it,
+  because a completed login creates the node identity the snapshot must not carry.
+
+  Also captures `tc-base-tailnet`: a derived base holding the approval and VPN profile but **no node
+  identity**, snapshotted between approval and join. Future runs clone it and skip the one GUI
+  approval entirely, while `tc-base` stays vanilla for testing a genuine first-ever install — the
+  #788 case. Whether the approval survives a clone is flagged in the doc as reasoned-but-unobserved,
+  for the next run to settle.
 
 - **The #789 regression tests now reach the line that carried the defect (#710, #789).** All three
   exercised `writeCutoverResult` and `pollHealth` directly — everything except the call site itself,
