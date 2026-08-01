@@ -1456,15 +1456,19 @@ async function _loadCredentialSection() {
     saveBtn.disabled = false;
 
     if (!res) {
-      // The lead sentence is NOT hard-coded. Most refusals here really are "your
-      // login was not changed and nothing else happened" — but one of them means
-      // the Caddy config could not be written OR put back, and leading with a
-      // bold reassurance above that is the exact framing the server stopped
-      // using. A scanning operator reads the bold line and nothing else, so on
-      // that outcome the server's own sentence has to BE the bold line.
-      const broke = api.lastErrorCode === 'GATE_BROKEN';
-      hint.innerHTML = broke
-        ? `<strong>${esc(api.lastError || 'The Caddy config may be broken.')}</strong>`
+      // The lead sentence is NOT hard-coded, and the list below is the whole
+      // family rather than the first member of it. Most refusals here really are
+      // "your login was not changed and nothing else happened". Two are not:
+      // GATE_BROKEN means the Caddy config could not be written or put back, and
+      // DIVERGED means the login DID change and config disagrees — so leading
+      // with a bold "The login was not changed" is a reassurance above a warning
+      // in the first case and simply false in the second, directly above a body
+      // saying the new password is the one in force. A scanning operator reads
+      // the bold line and nothing else, so on both the server's own sentence has
+      // to BE the bold line.
+      const SERVER_LEADS = ['GATE_BROKEN', 'DIVERGED'];
+      hint.innerHTML = SERVER_LEADS.includes(api.lastErrorCode)
+        ? `<strong>${esc(api.lastError || 'The change did not complete cleanly.')}</strong>`
         : `<strong>The login was not changed.</strong> ${esc(api.lastError || 'Unknown error')}`;
       return;
     }

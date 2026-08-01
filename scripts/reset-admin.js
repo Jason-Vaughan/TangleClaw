@@ -236,6 +236,15 @@ async function main() {
         '  The Caddyfile now carries the NEW password, and it could not be put back.\n'
         + `  The NEW password is the one in force. Backup of the original: ${result.backup}\n`
         + '  Restore it by hand, or re-run this tool once the disk problem is fixed.\n');
+    } else if (result.code === adminCredential.CREDENTIAL_CODES.GATE_BROKEN) {
+      // Also carries a backup path, so without this arm it fell through to
+      // "the original was restored" — which is exactly what did NOT happen. This
+      // is the break-glass tool, read by someone already locked out.
+      process.stderr.write(
+        '  Your login was NOT changed, but the Caddyfile could not be written or put back,\n'
+        + '  so the ingress may now be broken and Caddy may not reload.\n'
+        + `  A copy of the original is at: ${result.backup}\n`
+        + '  Restore it by hand before restarting Caddy.\n');
     } else if (result.backup) {
       process.stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${result.backup}\n`);
     }

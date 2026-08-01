@@ -143,11 +143,24 @@ describe('Global settings — Login section (#710)', () => {
       // written or put back. A hard-coded bold "The login was not changed." above
       // that message is the exact framing the server abandoned — a scanning
       // operator reads the bold line and stops.
-      const failure = section.slice(section.indexOf('if (!res)'), section.indexOf('Your login is changed'));
-      assert.match(failure, /GATE_BROKEN/,
-        'the failure branch must distinguish the outcome where the ingress may be broken');
-      assert.match(failure, /esc\(api\.lastError/,
-        'and the server\'s own sentence is what gets shown');
+      // Comments STRIPPED before matching. The previous version of this test
+      // searched the raw slice, where the explanatory comment names both codes —
+      // so removing one from the actual list left it green. A pin that matches
+      // the prose describing the code is not a pin.
+      const failure = section
+        .slice(section.indexOf('if (!res)'), section.indexOf('Your login is changed'))
+        .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+      // Both codes, not just the first one found. DIVERGED is the worse of the
+      // two: there the login DID change, so a bold "not changed" would sit
+      // directly above a body saying the new password is in force.
+      assert.match(failure, /GATE_BROKEN/);
+      assert.match(failure, /DIVERGED/,
+        'the outcome where the login DID change must not lead with "not changed"');
+      // Pins the CONDITIONAL, not the mere presence of an escaped error — the
+      // hard-coded version contained `esc(api.lastError` too, so asserting that
+      // alone measured nothing it claimed to.
+      assert.match(failure, /\?\s*`<strong>\$\{esc\(api\.lastError/,
+        'on those codes the server\'s own sentence must BE the bold lead');
     });
 
     it('does not report a reload outcome the server cannot know', () => {
