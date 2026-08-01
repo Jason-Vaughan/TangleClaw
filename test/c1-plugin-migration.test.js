@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -13,6 +14,40 @@ const store = require('../lib/store');
 const engines = require('../lib/engines');
 const projects = require('../lib/projects');
 const sessionOwnership = require('../lib/session-ownership');
+
+/**
+ * Read `INSTALL_REFERENCE` out of prawduct's `migrate_plugin.py` by parsing the
+ * module as Python source, and return it as JSON text.
+ *
+ * Python's own `ast` does the parsing because the literal is Python, not JSON:
+ * `True` is not `true`, and quoting/formatting are the author's to change.
+ * `ast.literal_eval` evaluates only literals, so a hostile or broken module
+ * raises rather than executes.
+ *
+ * Throws on anything short of a clean read — missing symbol, syntax error, no
+ * usable `python3`. Every caller must treat a throw as a failure, never as a
+ * skip.
+ *
+ * @param {string} src - Absolute path to the installed plugin's `migrate_plugin.py`
+ * @returns {string} The reference as a JSON string
+ */
+function extractUpstreamInstallReference(src) {
+  // Matches both `NAME: ann = {...}` and a bare `NAME = {...}`, so upstream
+  // adding or dropping the type annotation is not mistaken for the symbol
+  // going away.
+  const program = [
+    'import ast, json, sys',
+    'tree = ast.parse(open(sys.argv[1]).read())',
+    'for n in ast.walk(tree):',
+    '    t = n.target if isinstance(n, ast.AnnAssign) else (n.targets[0] if isinstance(n, ast.Assign) and n.targets else None)',
+    '    if getattr(t, "id", "") == "INSTALL_REFERENCE":',
+    '        json.dump(ast.literal_eval(n.value), sys.stdout)',
+    '        break',
+    'else:',
+    '    sys.exit("INSTALL_REFERENCE not found in " + sys.argv[1])'
+  ].join('\n');
+  return execFileSync('python3', ['-c', program, src], { encoding: 'utf8' });
+}
 
 describe('C1 — per-project plugin migration (#262)', () => {
   let tmpDir;
@@ -126,24 +161,84 @@ describe('C1 — per-project plugin migration (#262)', () => {
         t.skip('prawduct plugin source not present on this machine');
         return;
       }
-      const py = fs.readFileSync(src, 'utf8');
-      const start = py.indexOf('INSTALL_REFERENCE');
-      assert.notEqual(start, -1, 'INSTALL_REFERENCE not found in upstream source');
-      // Bound the window to the dict literal. Reading to EOF happens to work
-      // today only because upstream defines nothing else matching these keys;
-      // stopping at the closing brace keeps that a fact rather than a wager.
-      const end = py.indexOf('\n}', start);
-      const block = py.slice(start, end === -1 ? undefined : end);
+      // Parsed as an AST, never scraped as text. A text window has to guess
+      // where the literal ends, and a guess that lands wrong does not fail —
+      // it silently matches keys from a NEIGHBOURING literal and compares
+      // against values that were never the install reference. Wrong-and-quiet
+      // is the failure mode this whole constant exists to prevent, so the
+      // check that guards it must not reintroduce it one level up.
+      let upstream;
+      try {
+        upstream = JSON.parse(extractUpstreamInstallReference(src));
+      } catch (err) {
+        // Deliberately NOT a skip. "I could not read it" folded into "not
+        // applicable" is how a detector dies quietly and keeps reporting
+        // green — and the likeliest cause of an unreadable literal is
+        // upstream restructuring it, which is exactly the event this test is
+        // here to catch.
+        assert.fail(`could not read upstream INSTALL_REFERENCE: ${err.message}`);
+      }
 
-      const ours = engines.PRAWDUCT_INSTALL_REFERENCE.extraKnownMarketplaces.prawduct;
-      const upstreamRef = /"ref":\s*"([^"]+)"/.exec(block);
-      const upstreamRepo = /"repo":\s*"([^"]+)"/.exec(block);
-      const upstreamAuto = /"autoUpdate":\s*(True|False)/.exec(block);
-      assert.ok(upstreamRef && upstreamRepo && upstreamAuto, 'could not parse upstream INSTALL_REFERENCE');
+      // Whole-reference comparison, not field-by-field: an upstream key we
+      // stopped writing, or one they added, is drift too, and naming three
+      // fields explicitly would wave both through.
+      assert.deepEqual(
+        engines.PRAWDUCT_INSTALL_REFERENCE,
+        upstream,
+        'TangleClaw’s install reference has drifted from the installed plugin’s INSTALL_REFERENCE'
+      );
+    });
+  });
 
-      assert.equal(ours.source.ref, upstreamRef[1], 'ref drifted from upstream');
-      assert.equal(ours.source.repo, upstreamRepo[1], 'repo drifted from upstream');
-      assert.equal(ours.autoUpdate, upstreamAuto[1] === 'True', 'autoUpdate drifted from upstream');
+  // The cross-check above reads a fixed path under the real home directory, so
+  // its unreadable branch cannot be reached from a test. These exercise the
+  // reader directly against crafted sources — the point is not that it parses
+  // valid Python, it is that every unreadable shape THROWS. A reader that
+  // returned a default, or an empty object, would let the cross-check pass
+  // while comparing against nothing.
+  describe('upstream INSTALL_REFERENCE reader', () => {
+    let pyDir;
+    before(() => { pyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-py-')); });
+
+    const write = (name, body) => {
+      const f = path.join(pyDir, name);
+      fs.writeFileSync(f, body);
+      return f;
+    };
+
+    it('reads an annotated assignment, the shape upstream ships today', () => {
+      const f = write('ann.py', 'INSTALL_REFERENCE: dict[str, dict] = {"a": {"b": True}}\n');
+      assert.deepEqual(JSON.parse(extractUpstreamInstallReference(f)), { a: { b: true } });
+    });
+
+    it('reads a bare assignment too — dropping the annotation is not the symbol vanishing', () => {
+      const f = write('bare.py', 'INSTALL_REFERENCE = {"a": {"b": False}}\n');
+      assert.deepEqual(JSON.parse(extractUpstreamInstallReference(f)), { a: { b: false } });
+    });
+
+    it('is not fooled by a name that merely contains the symbol', () => {
+      // `py.indexOf('INSTALL_REFERENCE')` matched this; an AST target compare
+      // does not. This is the substring class of bug that made text-scraping
+      // wrong, pinned so a revert to scraping fails here.
+      const f = write('near.py', 'OLD_INSTALL_REFERENCE = {"wrong": 1}\nINSTALL_REFERENCE = {"right": 2}\n');
+      assert.deepEqual(JSON.parse(extractUpstreamInstallReference(f)), { right: 2 });
+    });
+
+    it('THROWS when the symbol is gone — never returns a default', () => {
+      const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
+      assert.throws(() => extractUpstreamInstallReference(f));
+    });
+
+    it('THROWS on a syntax error rather than reporting no drift', () => {
+      const f = write('broken.py', 'INSTALL_REFERENCE = {"a": \n');
+      assert.throws(() => extractUpstreamInstallReference(f));
+    });
+
+    it('THROWS rather than executing a non-literal value', () => {
+      // literal_eval, not eval: a computed reference is unreadable BY DESIGN,
+      // and unreadable must surface as a failure rather than run.
+      const f = write('computed.py', 'import os\nINSTALL_REFERENCE = os.environ.copy()\n');
+      assert.throws(() => extractUpstreamInstallReference(f));
     });
   });
 

@@ -477,6 +477,24 @@ All notable changes to TangleClaw are documented in this file.
   same text lands there.
 
 ### Internal
+- **The upstream half of the install-reference contract test is parsed, not scraped (#807, #816).**
+  `29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo, which catches only
+  TangleClaw's side moving; the companion check that reads prawduct's own `migrate_plugin.py` scraped
+  it as text, bounding the literal with `indexOf('\n}')`. That bound is a guess, and a guess that
+  lands wrong does not fail — it over-extends on a reformat and matches `ref`/`repo` from a
+  neighbouring literal, comparing against values that were never the install reference. Silently
+  reading the wrong constant outranks loudly failing to read one: a loud failure gets fixed, a quiet
+  wrong answer gets believed. It now parses the module with Python's `ast` and `literal_eval` (a
+  computed reference is unreadable by design rather than executed) and compares the **whole**
+  reference, so a key upstream adds or we stop writing counts as drift too.
+
+  Unreadable is a **finding, not a skip**. Absent plugin source → skip with a printed reason;
+  present but unparseable, symbol renamed, or `python3` failing → fail. Folding "I could not read it"
+  into "not applicable" is how a detector dies quietly while still reporting green — and the likeliest
+  cause of an unreadable literal is upstream restructuring it, the exact event the check exists to
+  catch. Six tests cover the reader directly, since the cross-check reads a fixed path under `$HOME`
+  and its failure branch is otherwise unreachable from a test; all six were watched red first.
+
 - **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
   in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
   through PATH, and the shared test stub only stubbed `caddy` — so every full-suite run on a machine
