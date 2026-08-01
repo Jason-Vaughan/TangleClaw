@@ -26,6 +26,56 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
+
+<!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default -->
+
+**Why:** the post-setup redirect answered the wrong question. "What is this server serving" and
+"where should the operator go" have different answers behind Caddy, and the redirect computed the
+first. In caddy mode TC serves plain HTTP on the loopback — Caddy terminates TLS in front — so the
+expression named `http://<host>:3102`: TC's own door, unreachable from anywhere else and **ungated**.
+It would have sent an operator past the login their setup had just installed.
+
+**The spec said to reuse the wrong pair, and that was corrected before any code.** Chunk 3's
+paragraph read "`effectiveServerPort` and `effectiveServerProtocol` already exist for this — reuse,
+do not re-derive." Those helpers' own header says they predict what *TC's listener* serves, and the
+instruction predates chunk 2 making caddy the default install path; taken literally it produces the
+exact defect the chunk exists to fix. The build plan records the correction and keeps the
+direct-mode half, where the instruction was always right.
+
+**It also collapsed a duplicate that was already there.** `POST /api/setup/complete` answered "where
+do I go now" twice, with two inline expressions: `ingress.url` on the provisioning arm (correct) and
+`redirectUrl` on the HTTPS-restart arm (wrong in caddy mode). Both now come from
+`httpsSetup.effectiveOperatorOrigin`. The provisioning arm asks about `{ ...config, ingressMode:
+'caddy' }` — the state the cutover is moving to, since `ingressMode` on disk is still whatever it was
+while the child runs. Purity is what makes that askable.
+
+**The caddy-mode case was reachable.** `shouldRestart` requires only that the HTTPS config *changed*;
+it does not consider ingress mode. A caddy-mode install whose operator edits a certificate path in
+the wizard took that path and was sent to a port nothing answers on — the same shape as the pre-#654
+dead `:3101` that read to the operator as "HTTPS setup is broken".
+
+**The Skip path is exempt, and that is a finding rather than an omission.** The standing rule from
+chunk 2 is that completion-URL logic must exist on *both* finish paths. `PATCH /api/config
+{ setupComplete: true }` can only *refuse* on the provisioning question — it never spawns a cutover —
+so finishing through Skip never moves TangleClaw and the origin the operator is on stays correct.
+Recorded because the exemption is not visible from reading that route.
+
+**Tests sweep the producer rather than sampling it**, per the rule this repo already learned: every
+mode the derivation can be asked about — caddy at a default and a custom port, caddy ignoring both
+`TANGLECLAW_PORT` and the HTTPS flags, direct with certs, direct without, `TANGLECLAW_PORT` winning
+in direct mode, a not-yet-in-force config, a missing hostname, and the bare-origin shape — plus an
+endpoint regression for the reachable caddy-mode restart. Three mutations (dropping the caddy arm,
+restoring the old inline expression, asking the provisioning arm about the pre-cutover config) each
+go red.
+
+**A worktree trap worth knowing.** `.prawduct/` is almost entirely gitignored here, so a new
+worktree's governance state is set up by symlinking it back to the primary checkout — but
+`change-log.md` is the one **tracked** file in that directory. Blanket-symlinking the directory's
+contents replaced the branch's own copy with the primary checkout's, silently, and the primary is on
+a main-based branch that has none of the v5 entries. Caught when a heading that must exist did not.
+Symlink the untracked governance files only; `change-log.md` belongs to the branch.
+
 ## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
 
 <!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default | status=shipped -->

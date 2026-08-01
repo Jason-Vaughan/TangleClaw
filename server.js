@@ -1678,10 +1678,13 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       ingress.provisioning = true;
       ingress.protection = 'pending';
       ingress.user = config.basicAuthUser || null;
-      // Where the gate is about to listen. Built from the host the operator
-      // actually used, because a fresh Caddyfile's local site says `localhost`
-      // and that is not where a remote operator is standing.
-      ingress.url = `https://${requestHostname}:${config.caddyHttpsPort || 8443}`;
+      // Where the gate is about to listen. Asked of the config this cutover is
+      // MOVING to, not the one on disk — `ingressMode` is still whatever it was
+      // until the cutover writes it, and the question here is where the operator
+      // goes once this lands. One derivation, shared with the restart redirect
+      // below, so the two answers to "where do I go now" cannot drift.
+      ingress.url = httpsSetup.effectiveOperatorOrigin(
+        { ...config, ingressMode: 'caddy' }, requestHostname);
       log.info('Setup started the ingress cutover', { pid: started.pid, host: requestHostname });
     } else {
       // The credential is stored and nothing enforces it. Say so — this is the
@@ -1823,9 +1826,14 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
 
   let redirectUrl = null;
   if (shouldRestart) {
-    const port = httpsSetup.effectiveServerPort(config);
-    const protocol = willServeHttps ? 'https' : 'http';
-    redirectUrl = `${protocol}://${requestHostname}:${port}`;
+    // The same derivation the provisioning arm uses. It used to compose the
+    // scheme from `willServeHttps` and the port from TC's own listener, which is
+    // right in direct mode and wrong in caddy mode — where TC serves plain HTTP
+    // on the loopback and the front door is Caddy's HTTPS port. That case is
+    // reachable: a caddy-mode install whose operator changes a cert path in the
+    // wizard satisfies `shouldRestart`, and the old expression sent them to a
+    // port nothing answers on.
+    redirectUrl = httpsSetup.effectiveOperatorOrigin(config, requestHostname);
     _scheduleRestart();
   }
 

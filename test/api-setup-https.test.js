@@ -298,6 +298,51 @@ describe('HTTPS Setup API', () => {
       }
     });
 
+    it('sends a caddy-mode operator to Caddy, not to the port TC re-binds', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+
+      // The reachable version of the bug this chunk exists for. `shouldRestart`
+      // only needs the HTTPS config to have CHANGED — it does not care about
+      // ingress mode — so a caddy-mode install whose operator edits a cert path
+      // in the wizard takes this path. The old expression built the scheme from
+      // `willServeHttps` and the port from TC's own listener, which behind Caddy
+      // is plain HTTP on the loopback: it named a port nothing answers on, and
+      // an ungated one at that.
+      await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false, httpsCertPath: '', httpsKeyPath: ''
+      });
+      // A credential is required to finish setup in caddy mode (chunk 2's
+      // ADMIN_REQUIRED), so the fixture carries one — this test is about where
+      // the operator is SENT, on an install that legitimately completes.
+      store.config.save(Object.assign(store.config.load(), {
+        ingressMode: 'caddy',
+        caddyHttpsPort: 8443,
+        serverPort: 3101,
+        authEnabled: true,
+        basicAuthUser: 'jason',
+        basicAuthHash: '$2a$14$' + 'o'.repeat(53)
+      }));
+      restartCalls = 0;
+
+      try {
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+          httpsEnabled: true,
+          httpsCertPath: fixture.certPath,
+          httpsKeyPath: fixture.keyPath
+        });
+
+        assert.equal(status, 200);
+        assert.match(data.redirectUrl, /^https:\/\/[^:/]+:8443$/,
+          'the front door in caddy mode is Caddy, on its own port');
+        assert.ok(!/:3101$|:3102$/.test(data.redirectUrl),
+          'never TC\'s own listener — behind Caddy that is the ungated loopback door');
+      } finally {
+        store.config.save(Object.assign(store.config.load(), {
+          ingressMode: 'direct', authEnabled: false, basicAuthUser: null, basicAuthHash: null
+        }));
+      }
+    });
+
     it('returns 400 when cert files are invalid', async () => {
       restartCalls = 0;
       const badCert = path.join(tmpDir, 'bad-cert.pem');
