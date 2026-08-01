@@ -195,6 +195,18 @@ Run `--dry-run --create-gate --user <name>` first: the preview asks the identica
 predicate, so it reports the refusal you would actually get rather than describing a
 rebuild that will not happen.
 
+**Undoing a gate created with the wrong username.** There is no rename path — the
+ordinary reset refuses one (`rename-unsupported`, because the underlying replace
+writes back the *matched* username, so a "successful" rename would leave the gate on
+the old name while config recorded the new one), and a second `--create-gate` refuses
+with `gate-exists`. Restore the timestamped backup the run printed, then create again:
+
+```bash
+cp ~/.tangleclaw/Caddyfile.<stamp>.credential.bak ~/.tangleclaw/Caddyfile
+caddy validate --config ~/.tangleclaw/Caddyfile --adapter caddyfile
+node scripts/reset-admin.js --create-gate --user <correct-name>
+```
+
 ## Public domain on 443/80 (root LaunchDaemon)
 
 Real Let's Encrypt issuance needs a public domain with ports 80/443 reachable

@@ -49,8 +49,10 @@ cursatory against the **hand-edited** Caddyfile, the shape only that machine has
 claims to patch without reshaping.
 
 Measured: hash moved; the real LaunchAgent restarted (PID changed, exit 0); the gate re-authenticated
-and still 401s on `/`, `/api/health` and a wrong password; config and the live file agree; a
-timestamped backup preceded the swap. The load-bearing result: the file came out **byte-identical
+and still 401s on `/` and a wrong password; config and the live file agree; a
+timestamped backup preceded the swap. (`/api/health` answered 401 too and is deliberately NOT cited:
+it is in `AUTH_BYPASS_PATHS` and exempt on a generated ingress, so the 401 is an artifact of this
+machine's hand-edited file gating it anyway.) The load-bearing result: the file came out **byte-identical
 apart from the hash**, still classifying `adoptable`/`safeToWrite: false` — so it was not silently
 re-stamped as generated, and the cutover's clobber-guard keeps protecting the operator's edits.
 

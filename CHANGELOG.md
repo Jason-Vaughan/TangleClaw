@@ -4,40 +4,6 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-### Security
-- **Break-glass recovery is proven by execution, not by reading the code (#710).** The
-  no-permanent-lockout guarantee rested on a tool whose reload had never run: `test/reset-admin.test.js`
-  asserts the `launchctl` argv **as data** and never executes it, so every claim past "the file is
-  patched" was inference. Run on 2026-08-01 against a live, **hand-edited** Caddyfile — the shape the
-  tool promises to patch without reshaping.
-
-  Measured: the hash moved; the reload restarted the real LaunchAgent (PID changed, exit 0); the gate
-  re-authenticated and still returns 401 on `/` and on a wrong password; config and the live file
-  agree; a timestamped backup was written before the swap. (`/api/health` also returned 401 on this
-  machine, but that proves nothing portable and is not cited as evidence: the path is **exempt by
-  design** on a generated ingress, and the 401 is an artifact of this operator's hand-edited
-  Caddyfile gating it anyway.) The load-bearing one — the live
-  file came out **byte-identical apart from the hash**, and still classifies
-  `adoptable`/`safeToWrite: false`, so it was not silently re-stamped as generated and the cutover's
-  clobber-guard keeps protecting the operator's edits.
-
-  **Two defects in the documented procedure that only a real run could surface**, both now fixed in
-  `docs/setup-guide.md` and `deploy/INGRESS.md`:
-
-  - **Recovery enforces the current password policy, so a credential older than the policy cannot be
-    restored.** The live credential predated the 12-character minimum and was refused. The refusal is
-    right — recovery that installs a weak credential undermines a mandatory gate — but an operator
-    reaching for break-glass to reinstate a password they *know* is forced to invent one at the worst
-    moment, with the disconnect seconds away. Documented rather than relaxed: the guard is not
-    weakened to fit a legacy credential.
-  - **"Run it under tmux" was wrong for how an operator actually reaches the machine.** They arrive
-    through a browser terminal that is already tmux-backed — but whose window may be running an AI
-    session that cannot be typed into, and where `tmux new -s` fails as a nested/duplicate session.
-    The instruction is now to open a second window in the session they are already in.
-
-  `security-model.md` §2 records the run. Its "built, not yet proven" line is resolved the way it
-  demanded — by running the tool, not by editing the sentence a third time.
-
 ### Added
 - **An install with no login can now get one, from the same terminal tool that resets one (#806,
   #710).** A machine that reached `setupComplete` before a credential was mandatory and then moved
@@ -426,6 +392,40 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+
+- **Break-glass recovery is proven by execution, not by reading the code (#710).** The
+  no-permanent-lockout guarantee rested on a tool whose reload had never run: `test/reset-admin.test.js`
+  asserts the `launchctl` argv **as data** and never executes it, so every claim past "the file is
+  patched" was inference. Run on 2026-08-01 against a live, **hand-edited** Caddyfile — the shape the
+  tool promises to patch without reshaping.
+
+  Measured: the hash moved; the reload restarted the real LaunchAgent (PID changed, exit 0); the gate
+  re-authenticated and still returns 401 on `/` and on a wrong password; config and the live file
+  agree; a timestamped backup was written before the swap. (`/api/health` also returned 401 on this
+  machine, but that proves nothing portable and is not cited as evidence: the path is **exempt by
+  design** on a generated ingress, and the 401 is an artifact of this operator's hand-edited
+  Caddyfile gating it anyway.) The load-bearing one — the live
+  file came out **byte-identical apart from the hash**, and still classifies
+  `adoptable`/`safeToWrite: false`, so it was not silently re-stamped as generated and the cutover's
+  clobber-guard keeps protecting the operator's edits.
+
+  **Two defects in the documented procedure that only a real run could surface**, both now fixed in
+  `docs/setup-guide.md` and `deploy/INGRESS.md`:
+
+  - **Recovery enforces the current password policy, so a credential older than the policy cannot be
+    restored.** The live credential predated the 12-character minimum and was refused. The refusal is
+    right — recovery that installs a weak credential undermines a mandatory gate — but an operator
+    reaching for break-glass to reinstate a password they *know* is forced to invent one at the worst
+    moment, with the disconnect seconds away. Documented rather than relaxed: the guard is not
+    weakened to fit a legacy credential.
+  - **"Run it under tmux" was wrong for how an operator actually reaches the machine.** They arrive
+    through a browser terminal that is already tmux-backed — but whose window may be running an AI
+    session that cannot be typed into, and where `tmux new -s` fails as a nested/duplicate session.
+    The instruction is now to open a second window in the session they are already in.
+
+  `security-model.md` §2 records the run. Its "built, not yet proven" line is resolved the way it
+  demanded — by running the tool, not by editing the sentence a third time.
+
 - **Changing the login is refused on any connection that did not arrive over loopback (#710, #822).**
   In caddy mode TangleClaw binds loopback only, so Caddy is the only way in — but that binding is
   chosen when the server starts listening, while `ingressMode` is read per request. An install still

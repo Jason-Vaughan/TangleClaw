@@ -166,6 +166,11 @@ This only works on a Caddy configuration TangleClaw generated. If you maintain t
 file yourself, the tool will refuse rather than rewrite your work — add a
 `basic_auth` block to it by hand, then use the ordinary reset above.
 
+**If you typed the username wrong**, you cannot rename it: the ordinary reset changes
+a password, not a name, and running `--create-gate` a second time refuses because a
+login now exists. Restore the backup the run printed — its path is in the output —
+and create it again with the right name.
+
 ---
 
 ## Where you should and should not run this
