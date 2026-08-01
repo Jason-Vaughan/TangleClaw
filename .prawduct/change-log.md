@@ -45,17 +45,26 @@ reintroduce it one level up. The substring scan also matched `OLD_INSTALL_REFERE
 
 **What changed:** the module is parsed with Python's `ast` + `literal_eval` (a computed reference is
 unreadable by design rather than executed) and compared **whole** by `deepEqual`, so a key upstream
-adds or we stop writing counts as drift. Unreadable is a **finding, not a skip**: absent plugin
-source skips with a printed reason; unparseable source, a renamed symbol, or a failing `python3`
-fails. Folding "I could not read it" into "not applicable" is how a detector dies quietly while still
-reporting green.
+adds or we stop writing counts as drift. Unreadable is a **finding, not a skip**, and the skip is
+drawn as narrowly as the facts allow: only prawduct **not installed at all** skips, with a printed
+reason. Installed-but-`migrate_plugin.py`-**missing** — the module moved or was renamed — fails, as
+do an unparseable source, a renamed symbol, and a failing `python3`. "Not here" and "here, but what I
+read moved" are different facts, and only the first is a non-applicability; folding "I could not read
+it" into "not applicable" is how a detector dies quietly while still reporting green.
 
-**Test-only — no runtime path changes, so it did not gate the v5 cut.** Seven tests, each watched
-red first: swallowing reader errors turns the three `THROWS` cases red; drifting the constant to
-`ref:"v9.9.9"` turns the cross-check red; and converting the fail branch to a skip turns the
-fail-vs-skip test red. Each `THROWS` case matches its **specific** error, because a bare
-`assert.throws` accepts `python3: not found` too and would report green over a reader that parsed
-nothing.
+**Test-only — no runtime path changes, so it did not gate the v5 cut.** Eight tests, each watched
+red against the specific mutation it exists to catch: swallowing reader errors turns the three
+`THROWS` cases red; drifting the constant to `ref:"v9.9.9"` turns the cross-check red; converting
+the fail branch to a skip turns the fail-vs-skip test red; and collapsing `moved` back into
+`absent` turns the classification test red. Each `THROWS` case matches its **specific** error,
+because a bare `assert.throws` accepts `python3: not found` too and would report green over a reader
+that parsed nothing.
+
+**Known limit:** the drift comparison against the *installed* plugin runs only where prawduct is
+installed — a developer machine, never CI, which has no marketplace checkout. The reader tests do run
+on the runner, but they prove the reader raises on crafted fixtures, not that our constant still
+matches upstream's. Closing it needs a CI-side checkout or a scheduled drift job — both
+commit-shaped — tracked as #835.
 
 **Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes).
 Rather than tally rounds here — a count that goes stale the moment another runs — the census is
@@ -68,8 +77,9 @@ best available census, but rounds on this branch went out under **four different
 it too returns a subset. `prawduct-hook evidence list` (no `--scope` — it takes `--kind` and `-n`) is
 the unfiltered fact log.
 
-Findings were fixed where a commit could fix them, and otherwise accepted with a recorded reason —
-the CI-execution gap is the standing example, since no commit can close it and only a runner can.
+Findings were fixed where fixing them belonged to this branch, and otherwise accepted with a recorded
+reason — the CI drift gap (#835) is the standing example: closable in a commit, but by touching
+`.github/workflows/`, which is a different risk surface than a test-only change.
 Deliberately no count and no all-clear here: in an append-only record, any "all of them" claim is
 falsified by the next round that reads it, and a census that silently returns a subset is the same
 failure as a monitor that silently does not run — both report a number, neither reports that the

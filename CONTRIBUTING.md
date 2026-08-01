@@ -10,9 +10,9 @@ Thanks for your interest in contributing to TangleClaw! This document covers how
 - **tmux** (`brew install tmux`)
 - **python3** (test-only, required) — `test/c1-plugin-migration.test.js` parses Python source with
   `ast` to check TangleClaw's install-reference constant has not drifted from the Prawduct plugin's.
-  Ships with macOS; no packages needed. **Eight of its tests spawn `python3` unconditionally**,
-  against their own fixtures, so a missing interpreter fails them whether or not the plugin is
-  installed. Only the drift comparison against the *installed* plugin is conditional, and it skips
+  Ships with macOS; no packages needed. **Seven of its eight reader tests spawn `python3`
+  unconditionally**, against their own fixtures, so a missing interpreter fails them whether or not
+  the plugin is installed. (The eighth classifies the source path and touches only the filesystem.) Only the drift comparison against the *installed* plugin is conditional, and it skips
   in exactly one case: prawduct **not installed** (no marketplace checkout). Installed-but-relocated,
   unparseable, or a failing `python3` all **fail** — "I could not read it" must never be recorded as
   "not applicable". Note this comparison therefore does not run in CI, which has no marketplace
