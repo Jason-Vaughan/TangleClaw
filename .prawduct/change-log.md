@@ -57,12 +57,25 @@ fail-vs-skip test red. Each `THROWS` case matches its **specific** error, becaus
 `assert.throws` accepts `python3: not found` too and would report green over a reader that parsed
 nothing.
 
-**Reviewed:** `chunk` → 1 warning (test evidence recorded against the pre-fix tree — re-run and
-re-recorded, `evidence_tree` now byte-matches `head_tree`), 1 note (CHANGELOG omitted the temp-dir
-leak fix — clause added); `verify-resolutions` → 0/0/0; `cumulative` → 0 blocking, 3 warnings,
-2 notes, all fixed rather than accepted: `python3` declared in `CONTRIBUTING.md` as a test-only
-prerequisite, matchers added to the `THROWS` cases, `encoding="utf-8"` pinned on the Python read, the
-cross-check's failure branch made reachable from a test, and this entry.
+**Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes),
+ending with the cumulative gate `satisfied` and zero unresolved blocking findings. Rather than tally
+rounds here — a count that goes stale the moment another runs — the durable record is the evidence
+store: `prawduct-hook evidence list`, scope `plugin-ref-807`.
+
+Every finding was **fixed, none accepted**. The ones worth carrying forward, because each is a
+general failure mode rather than a detail of this diff:
+
+- Test evidence had been recorded against the **pre-fix tree** — a green record whose
+  `evidence_tree` was the review's `base_tree`, not `head_tree`. Caught on the manifest's own tree
+  pair; `test-status` exits 0 straight through it.
+- The `THROWS` matchers were **bare `assert.throws`**, then unanchored. `execFileSync` builds
+  `err.message` from the argv it ran, and that argv carries the embedded program — including its own
+  `sys.exit("INSTALL_REFERENCE not found in " + …)` source line — so the matcher matched its own
+  source text on any nonzero exit. Guards against unexamined errors were themselves tolerating one.
+- The **fail-vs-skip contract was asserted by nobody** until the comparison was factored out; the
+  block comment then justified the block in terms that invited deleting that very test.
+- The entry's own tag line was stamped `status=shipped` **on an unmerged branch**, against ART-4K9M
+  recorded in this file's header — copied from the merged precedent below without reading the token.
 
 **Adjacent, filed not fixed:** #833 — whether a managed repo's install reference should be a
 committed artifact at all, rather than untracked machine state rewritten at every session launch.

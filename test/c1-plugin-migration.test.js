@@ -208,12 +208,14 @@ describe('C1 — per-project plugin migration (#262)', () => {
     });
   });
 
-  // The cross-check above runs against a fixed path under the real home
-  // directory, so it can only ever exercise the readable case. These aim the
-  // reader at crafted sources instead — the point is not that it parses valid
-  // Python, it is that every unreadable shape THROWS. A reader that returned a
-  // default, or an empty object, would let the cross-check pass while comparing
-  // against nothing.
+  // The cross-check above resolves its source path itself, so no test can AIM
+  // it at a chosen file. On a real machine it does take the failure branch —
+  // that is the point of it — but only when upstream actually restructures the
+  // literal, which is not something a test can arrange. These aim the reader at
+  // crafted sources instead: the point is not that it parses valid Python, it
+  // is that every unreadable shape THROWS. A reader that returned a default, or
+  // an empty object, would let the cross-check pass while comparing against
+  // nothing.
   //
   // `an unreadable source FAILS the cross-check` below covers the branch that
   // decides between failing and skipping, by calling
