@@ -178,11 +178,22 @@ This rebuilds the Caddyfile **from its own current settings** — ports, upstrea
 certificate are read back out of the file rather than out of `config`, so the result
 differs from what was there by exactly the gate, and config drift cannot ride along.
 
-It applies only to a TangleClaw-generated Caddyfile. A hand-maintained one is
-**refused, not reshaped**: adding a gate means placing directives inside site blocks
-this code did not write, and guessing wrong either drops the operator's configuration
-or leaves an opening that looks closed. Add the `basic_auth` block by hand, then use
-the ordinary reset above.
+It refuses far more than it accepts, and each refusal names its own remedy:
+
+| Refusal | Meaning | What to do |
+|---|---|---|
+| `not-caddy-mode` | The install is not in caddy ingress mode, so nothing would enforce a gate written into this file. A Caddyfile left behind by `--to direct` is a file, not a live gate. | `ingress-cutover.js --to caddy` first |
+| `gate-exists` | A credential is already present. | Use the ordinary reset above |
+| `not-generated` | The Caddyfile is hand-maintained. **Refused, not reshaped** — adding a gate means placing directives inside site blocks this code did not write, and guessing wrong either drops your configuration or leaves an opening that looks closed. | Add the `basic_auth` block by hand, then reset |
+| `unrecognized-shape` | The file is TangleClaw-generated but the ungated rebuild does not reproduce it byte-for-byte, so something in it would be silently dropped. **A `publicDomain` ACME site is the common case** — see the section below. | `ingress-cutover.js`, which builds from your full config |
+
+The last one exists because rebuilding from a handful of recovered fields can only
+preserve what those fields model. The check is a round-trip rather than a field list,
+so it also covers whatever option the generator gains next.
+
+Run `--dry-run --create-gate --user <name>` first: the preview asks the identical
+predicate, so it reports the refusal you would actually get rather than describing a
+rebuild that will not happen.
 
 ## Public domain on 443/80 (root LaunchDaemon)
 

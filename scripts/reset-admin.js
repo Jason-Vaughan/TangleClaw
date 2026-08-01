@@ -44,7 +44,8 @@ const USAGE =
 /**
  * Parse CLI args. Pure — no I/O — so it is unit-testable.
  * @param {string[]} argv - process.argv.slice(2)
- * @returns {{ user: string|null, dryRun: boolean, passwordStdin: boolean, help: boolean }}
+ * @returns {{ user: string|null, dryRun: boolean, passwordStdin: boolean, help: boolean,
+ *   createGate: boolean }}
  */
 function parseArgs(argv) {
   let user = null;

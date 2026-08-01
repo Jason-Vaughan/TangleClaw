@@ -12,8 +12,11 @@ All notable changes to TangleClaw are documented in this file.
   tool promises to patch without reshaping.
 
   Measured: the hash moved; the reload restarted the real LaunchAgent (PID changed, exit 0); the gate
-  re-authenticated and still returns 401 on `/`, `/api/health` and a wrong password; config and the
-  live file agree; a timestamped backup was written before the swap. The load-bearing one — the live
+  re-authenticated and still returns 401 on `/` and on a wrong password; config and the live file
+  agree; a timestamped backup was written before the swap. (`/api/health` also returned 401 on this
+  machine, but that proves nothing portable and is not cited as evidence: the path is **exempt by
+  design** on a generated ingress, and the 401 is an artifact of this operator's hand-edited
+  Caddyfile gating it anyway.) The load-bearing one — the live
   file came out **byte-identical apart from the hash**, and still classifies
   `adoptable`/`safeToWrite: false`, so it was not silently re-stamped as generated and the cutover's
   clobber-guard keeps protecting the operator's edits.
