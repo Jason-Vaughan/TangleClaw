@@ -205,9 +205,11 @@ Quick answers, with links into the full docs:
 | Cut a release, or work out why one never reached installs | [Release Process](docs/release-process.md) |
 | Change any config setting | [Configuration Reference](docs/configuration-reference.md) |
 | Fix something that's broken | [User Guide — Troubleshooting](docs/user-guide.md#troubleshooting), or [Service Management](#service-management) below |
+| Set it up safely, or get back in when locked out | [Setup Guide](docs/setup-guide.md) |
 
 ## Documentation
 
+- **[Setup Guide](docs/setup-guide.md)** — setting up safely with no prior background: what the login protects, reaching it from another device, checking it worked, getting back in if you are locked out
 - **[User Guide](docs/user-guide.md)** — getting started, full UI walkthrough, sessions, groups, mobile setup, troubleshooting
 - **[Ingress Guide](deploy/INGRESS.md)** — Caddy reverse proxy, TLS, password gate, break-glass reset, public domains
 - **[Session Rules & Self-Improvement](docs/session-rules-self-improvement.md)** — durable session directives, the Critic gate, version history

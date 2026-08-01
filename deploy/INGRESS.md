@@ -136,6 +136,77 @@ so a later cutover stays consistent. New passwords must be ≥12 chars, not a co
 weak password, and must not contain the username. The machine-local
 `~/.tangleclaw/EMERGENCY-RECOVERY.md` carries the full runbook + a manual fallback.
 
+**The reload is a restart, and it drops connections.** `admin off` is set in both
+the generated and the hand-edited Caddyfile, so Caddy's `localhost:2019` admin API
+is unavailable and the graceful `caddy reload` path does not exist here — the reload
+is `launchctl kickstart -k`. Anything arriving through Caddy (the dashboard, the
+browser terminal, a proxied OpenClaw UI) is interrupted while it comes back.
+
+**Verified live on 2026-08-01** against this machine's hand-edited Caddyfile, which is
+what moved break-glass from "built and unit-tested" to proven: the reload executed on
+the real LaunchAgent (PID changed, exit 0), the gate re-authenticated on the new
+credential, config and the live file stayed in agreement, and the file came out
+**byte-identical apart from the hash** — still classified `adoptable`/`safeToWrite:
+false`, so the cutover's clobber-guard keeps protecting it. Two operational facts came
+out of that run and are worth knowing before you need this tool:
+
+- **It enforces the CURRENT password policy, so a credential predating the policy
+  cannot be restored as-is.** The rules (≥12 chars, not a common password, must not
+  contain the username) apply to whatever you type, including the password already in
+  force. An operator reaching for break-glass intending to reinstate a password they
+  know may be refused and forced to choose a new one mid-incident. Correct behaviour —
+  a recovery path that installs a weak credential undermines the mandatory gate — but
+  decide and record the new password *before* starting, because the disconnect follows
+  within seconds.
+- **"Run it under tmux" is not sufficient guidance when the operator arrives through
+  ttyd.** That terminal is already tmux-backed (so the process does survive the drop),
+  but its window may be running an AI session rather than a shell. Open a second window
+  (`Ctrl-b c`) and run it there; `tmux new -s <name>` from inside fails as a nested or
+  duplicate session.
+
+### Creating a gate where there is none
+
+An install that reached `setupComplete` before a credential was mandatory and then
+moved to caddy mode has no `basic_auth` line to patch, and every other route out of
+that state refuses it. `reset-admin.js` builds one:
+
+```bash
+node scripts/reset-admin.js --create-gate --user <name>
+```
+
+This rebuilds the Caddyfile **from its own current settings** — ports, upstream and
+certificate are read back out of the file rather than out of `config`, so the result
+differs from what was there by exactly the gate, and config drift cannot ride along.
+
+It refuses far more than it accepts, and each refusal names its own remedy:
+
+| Refusal | Meaning | What to do |
+|---|---|---|
+| `not-caddy-mode` | The install is not in caddy ingress mode, so nothing would enforce a gate written into this file. A Caddyfile left behind by `--to direct` is a file, not a live gate. | `ingress-cutover.js --to caddy` first |
+| `gate-exists` | A credential is already present. | Use the ordinary reset above |
+| `not-generated` | The Caddyfile is hand-maintained. **Refused, not reshaped** — adding a gate means placing directives inside site blocks this code did not write, and guessing wrong either drops your configuration or leaves an opening that looks closed. | Add the `basic_auth` block by hand, then reset |
+| `unrecognized-shape` | The file is TangleClaw-generated but the ungated rebuild does not reproduce it byte-for-byte, so something in it would be silently dropped. **A `publicDomain` ACME site is the common case** — see the section below. | `ingress-cutover.js`, which builds from your full config |
+
+The last one exists because rebuilding from a handful of recovered fields can only
+preserve what those fields model. The check is a round-trip rather than a field list,
+so it also covers whatever option the generator gains next.
+
+Run `--dry-run --create-gate --user <name>` first: the preview asks the identical
+predicate, so it reports the refusal you would actually get rather than describing a
+rebuild that will not happen.
+
+**Undoing a gate created with the wrong username.** There is no rename path — the
+ordinary reset refuses one (`rename-unsupported`, because the underlying replace
+writes back the *matched* username, so a "successful" rename would leave the gate on
+the old name while config recorded the new one), and a second `--create-gate` refuses
+with `gate-exists`. Restore the timestamped backup the run printed, then create again:
+
+```bash
+cp ~/.tangleclaw/Caddyfile.<stamp>.credential.bak ~/.tangleclaw/Caddyfile
+caddy validate --config ~/.tangleclaw/Caddyfile --adapter caddyfile
+node scripts/reset-admin.js --create-gate --user <correct-name>
+```
+
 ## Public domain on 443/80 (root LaunchDaemon)
 
 Real Let's Encrypt issuance needs a public domain with ports 80/443 reachable

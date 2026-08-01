@@ -4,6 +4,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **An install with no login can now get one, from the same terminal tool that resets one (#806,
+  #710).** A machine that reached `setupComplete` before a credential was mandatory and then moved
+  to caddy mode had no way forward: the setup route answers `409 SETUP_ALREADY_COMPLETE`, the adopt
+  path only runs on a first run, and `reset-admin.js` exited 1 because it *resets* a gate and could
+  not *create* one. Closing #805 removed the unauthenticated `PATCH /api/config` escape that had
+  been masking it. `node scripts/reset-admin.js --create-gate --user <name>` builds the gate.
+
+  It stays the terminal tool deliberately. The alternative — letting an unauthenticated route set
+  the first credential — reopens exactly the hole that making the gate mandatory closed, and a
+  recovery path reachable over the network is not a recovery path for someone the network is
+  refusing.
+
+  **The rebuild reads its inputs back out of the file, not out of `config`.** New
+  `caddy.extractGeneratedCaddyfileOptions` recovers the ports, upstream and certificate a generated
+  Caddyfile was emitted from, so the result differs from what was there by exactly the gate.
+  Rebuilding from config instead would fold in every field that has since drifted — and config and
+  the live Caddyfile are known to drift; that is the state ADR 0009's amendment describes. Every
+  field involved has a default in `buildCaddyfileContent`, so the extractor **refuses rather than
+  defaulting**: a silent fallback would emit a plausible file that moves a working port or
+  certificate while reporting success.
+
+  A hand-maintained Caddyfile is **refused, not reshaped** — adding a gate means placing directives
+  inside site blocks this code did not write, and guessing wrong either drops the operator's
+  configuration or leaves an opening that looks closed. The refusal an operator hits on the reset
+  path now names the create command, but only when the file is one the tool could actually build in,
+  so it never advertises a command that would refuse them.
+
+  Creation and change share one implementation of the sequence that matters
+  (`_persistGatedCaddyfile`: write, validate fail-closed, only then record in config, then reload).
+  The order is the safety property rather than the individual steps, and a second copy would be free
+  to drift out of it — which this project has already paid for once.
+
+- **A setup guide for someone who has never heard of a reverse proxy (`docs/setup-guide.md`).**
+  `deploy/INGRESS.md` documents the same machinery for a reader who already knows what it is; this
+  one explains what the login protects (a browser that can run commands as you), what Caddy is and
+  why the password check happens before anything reaches TangleClaw, how to verify from a second
+  device that the gate is actually in force rather than trusting the dashboard, and what to do when
+  locked out — including that the reload restarts Caddy and will drop the connection you are reading
+  it through, and how to get a shell that survives that (a second window in the session you are
+  already in, per the Security entry above — not a fresh `tmux new -s`).
+
+  It also names the three paths that are **exempt** from the gate — `/api/health`,
+  `/openclaw-direct/*`, `/manifest.json` — because "check a second URL to confirm the gate is on" is
+  useless advice if the reader picks `/api/health`, which is the obvious choice and answers without
+  a password by design.
+
 ### Changed
 - **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The
   two questions "what is this server serving" and "where should the operator go" have different
@@ -345,6 +392,40 @@ All notable changes to TangleClaw are documented in this file.
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
 
 ### Security
+
+- **Break-glass recovery is proven by execution, not by reading the code (#710).** The
+  no-permanent-lockout guarantee rested on a tool whose reload had never run: `test/reset-admin.test.js`
+  asserts the `launchctl` argv **as data** and never executes it, so every claim past "the file is
+  patched" was inference. Run on 2026-08-01 against a live, **hand-edited** Caddyfile — the shape the
+  tool promises to patch without reshaping.
+
+  Measured: the hash moved; the reload restarted the real LaunchAgent (PID changed, exit 0); the gate
+  re-authenticated and still returns 401 on `/` and on a wrong password; config and the live file
+  agree; a timestamped backup was written before the swap. (`/api/health` also returned 401 on this
+  machine, but that proves nothing portable and is not cited as evidence: the path is **exempt by
+  design** on a generated ingress, and the 401 is an artifact of this operator's hand-edited
+  Caddyfile gating it anyway.) The load-bearing one — the live
+  file came out **byte-identical apart from the hash**, and still classifies
+  `adoptable`/`safeToWrite: false`, so it was not silently re-stamped as generated and the cutover's
+  clobber-guard keeps protecting the operator's edits.
+
+  **Two defects in the documented procedure that only a real run could surface**, both now fixed in
+  `docs/setup-guide.md` and `deploy/INGRESS.md`:
+
+  - **Recovery enforces the current password policy, so a credential older than the policy cannot be
+    restored.** The live credential predated the 12-character minimum and was refused. The refusal is
+    right — recovery that installs a weak credential undermines a mandatory gate — but an operator
+    reaching for break-glass to reinstate a password they *know* is forced to invent one at the worst
+    moment, with the disconnect seconds away. Documented rather than relaxed: the guard is not
+    weakened to fit a legacy credential.
+  - **"Run it under tmux" was wrong for how an operator actually reaches the machine.** They arrive
+    through a browser terminal that is already tmux-backed — but whose window may be running an AI
+    session that cannot be typed into, and where `tmux new -s` fails as a nested/duplicate session.
+    The instruction is now to open a second window in the session they are already in.
+
+  `security-model.md` §2 records the run. Its "built, not yet proven" line is resolved the way it
+  demanded — by running the tool, not by editing the sentence a third time.
+
 - **Changing the login is refused on any connection that did not arrive over loopback (#710, #822).**
   In caddy mode TangleClaw binds loopback only, so Caddy is the only way in — but that binding is
   chosen when the server starts listening, while `ingressMode` is read per request. An install still
