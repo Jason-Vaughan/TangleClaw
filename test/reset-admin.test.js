@@ -101,7 +101,14 @@ describe('what the operator is told when it fails', () => {
   // structurally — the established pattern in this repo for code that cannot be
   // called directly. What matters is not the wording but WHAT IT BRANCHES ON.
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'reset-admin.js'), 'utf8');
-  const failure = src.slice(src.indexOf('if (!result.ok) {'), src.indexOf('if (!result.reloaded)'));
+  // Comments stripped before matching. A structural test that greps source is one
+  // comment away from asserting the prose instead of the program — a future
+  // comment naming GATE_BROKEN above the generic arm would satisfy the ordering
+  // pin below with the arm itself deleted. Its sibling in
+  // test/settings-credential.test.js had exactly that hole.
+  const failure = src
+    .slice(src.indexOf('if (!result.ok) {'), src.indexOf('if (!result.reloaded)'))
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
   it('branches on the CODE before it ever branches on "a backup exists"', () => {
     // Every failure carries a backup path, including the two that mean the

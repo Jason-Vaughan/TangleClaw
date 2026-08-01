@@ -114,7 +114,11 @@ the real username that setup would refuse. Both now read the same source. The le
 own "one call site isn't the family": the fix was applied where the finding pointed, not to every
 place that asks the same question.
 
-**A third review round, and the same lesson a third time.** The `GATE_BROKEN` distinction — the
+**Five review rounds, and the same lesson every time after the first: 18 warnings, then 1, then 3,
+then 2.** After round one, every finding was on code written in the previous round's *fix*, and the
+shape never varied — the fix landed at the site the finding named, not across the family that asks
+the same question. The full sequence is the point, so it is recorded rather than summarised: the
+`GATE_BROKEN` distinction — the
 credential did not change, but the Caddy config could not be written *or* put back, so the ingress
 may not load — was added at one site and not at the family. The review found the other three: the
 **validate-failure restore** was still unguarded, and it is the MORE reachable path (a `caddy
@@ -127,6 +131,22 @@ a scanning operator reads; and the new 500 arm was unpinned, though its position
 suite. Both restore sites now run through one guarded helper, the failure carries a `cause`
 (`write` | `validate`) so a full disk is no longer reported as a Caddy syntax error, and the route
 arms are pinned by tests that watch the reorder go red.
+
+Round five then found the **third** consumer — `scripts/reset-admin.js`, which branched on `DIVERGED`
+and fell through to "The original was restored (ingress untouched)" for `GATE_BROKEN`, whose whole
+meaning is that the restore failed; the file's own comment three lines above stated the rule it was
+violating. And the browser still led with a bold "The login was not changed" on `DIVERGED`, where the
+login DID change — a code the round-four finding had **explicitly named** alongside the one that was
+implemented. A repo-wide sweep of every `CREDENTIAL_CODES` consumer now confirms all three
+(`server.js`, `reset-admin.js`, `public/ui.js`) distinguish both codes.
+
+**Two tests could not fail, both of them mine.** One asserted `esc(api.lastError`, which the pre-fix
+hard-coded line also contained. The other matched `DIVERGED` in an explanatory *comment* rather than
+in the code, so deleting it from the list left the suite green — found only by running the mutation
+after the assertion had already reported green. Both now strip comments before matching. The
+mechanical rule worth keeping is narrower than "remember the family": when a fix changes **which
+source answers a question**, or **how an outcome is reported**, enumerate every caller before editing
+any of them.
 
 **Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
 which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
