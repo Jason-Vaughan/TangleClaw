@@ -26,6 +26,49 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
+
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
+
+**Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
+weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.
+
+`29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo — which catches only
+TangleClaw's side moving — and added a companion check reading prawduct's own `migrate_plugin.py` for
+the upstream side. That companion **scraped the module as text**, bounding the literal with
+`indexOf('\n}')`. The bound is a guess, and a guess that lands wrong does not fail: it over-extends
+on a reformat and matches `ref`/`repo` from a neighbouring literal, comparing against values that
+were never the install reference. Reading the wrong constant quietly is worse than failing to read
+one loudly — a loud failure gets fixed, a quiet wrong answer gets believed — and quiet-wrong is the
+exact failure `PRAWDUCT_INSTALL_REFERENCE` exists to end, so the check guarding it must not
+reintroduce it one level up. The substring scan also matched `OLD_INSTALL_REFERENCE`.
+
+**What changed:** the module is parsed with Python's `ast` + `literal_eval` (a computed reference is
+unreadable by design rather than executed) and compared **whole** by `deepEqual`, so a key upstream
+adds or we stop writing counts as drift. Unreadable is a **finding, not a skip**: absent plugin
+source skips with a printed reason; unparseable source, a renamed symbol, or a failing `python3`
+fails. Folding "I could not read it" into "not applicable" is how a detector dies quietly while still
+reporting green.
+
+**Test-only — no runtime path changes, so it did not gate the v5 cut.** Seven tests, each watched
+red first: swallowing reader errors turns the three `THROWS` cases red; drifting the constant to
+`ref:"v9.9.9"` turns the cross-check red; and converting the fail branch to a skip turns the
+fail-vs-skip test red. Each `THROWS` case matches its **specific** error, because a bare
+`assert.throws` accepts `python3: not found` too and would report green over a reader that parsed
+nothing.
+
+**Reviewed:** `chunk` → 1 warning (test evidence recorded against the pre-fix tree — re-run and
+re-recorded, `evidence_tree` now byte-matches `head_tree`), 1 note (CHANGELOG omitted the temp-dir
+leak fix — clause added); `verify-resolutions` → 0/0/0; `cumulative` → 0 blocking, 3 warnings,
+2 notes, all fixed rather than accepted: `python3` declared in `CONTRIBUTING.md` as a test-only
+prerequisite, matchers added to the `THROWS` cases, `encoding="utf-8"` pinned on the Python read, the
+cross-check's failure branch made reachable from a test, and this entry.
+
+**Adjacent, filed not fixed:** #833 — whether a managed repo's install reference should be a
+committed artifact at all, rather than untracked machine state rewritten at every session launch.
+`syncEngineHooks` touches only the `hooks` block, so it is not a propagation vector today; that is a
+property of current code, not a guarantee.
+
 ## 2026-08-01: break-glass recovery proven by running it, and a way out for an install with no login (#710, chunk 4)
 
 <!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status=shipped -->

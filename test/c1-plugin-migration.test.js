@@ -37,7 +37,11 @@ function extractUpstreamInstallReference(src) {
   // going away.
   const program = [
     'import ast, json, sys',
-    'tree = ast.parse(open(sys.argv[1]).read())',
+    // Explicit utf-8: the real migrate_plugin.py is non-ASCII from line 1, and
+    // open()'s locale default would turn a decode error under a non-UTF-8
+    // LC_CTYPE into a red "reference has drifted" — a true failure reported as
+    // the wrong failure.
+    'tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())',
     'for n in ast.walk(tree):',
     '    t = n.target if isinstance(n, ast.AnnAssign) else (n.targets[0] if isinstance(n, ast.Assign) and n.targets else None)',
     '    if getattr(t, "id", "") == "INSTALL_REFERENCE":',
@@ -47,6 +51,39 @@ function extractUpstreamInstallReference(src) {
     '    sys.exit("INSTALL_REFERENCE not found in " + sys.argv[1])'
   ].join('\n');
   return execFileSync('python3', ['-c', program, src], { encoding: 'utf8' });
+}
+
+/**
+ * Assert TangleClaw's constant matches the upstream reference at `src`.
+ *
+ * Split out from the test that calls it with the real installed path so this
+ * contract — that an unreadable source **fails** rather than skipping — is
+ * itself reachable from a test. Inlined, it could only ever run against a
+ * readable file under the real `$HOME`, leaving the failure branch asserted by
+ * nobody.
+ *
+ * @param {string} src - Absolute path to the plugin's `migrate_plugin.py`
+ * @returns {void} Throws an AssertionError on unreadable source or on drift.
+ */
+function assertMatchesUpstreamReference(src) {
+  let upstream;
+  try {
+    upstream = JSON.parse(extractUpstreamInstallReference(src));
+  } catch (err) {
+    // Deliberately NOT a skip. "I could not read it" folded into "not
+    // applicable" is how a detector dies quietly and keeps reporting green —
+    // and the likeliest cause of an unreadable literal is upstream
+    // restructuring it, which is exactly the event this exists to catch.
+    assert.fail(`could not read upstream INSTALL_REFERENCE: ${err.message}`);
+  }
+  // Whole-reference comparison, not field-by-field: an upstream key we stopped
+  // writing, or one they added, is drift too, and naming three fields
+  // explicitly would wave both through.
+  assert.deepEqual(
+    engines.PRAWDUCT_INSTALL_REFERENCE,
+    upstream,
+    'TangleClaw’s install reference has drifted from the installed plugin’s INSTALL_REFERENCE'
+  );
 }
 
 describe('C1 — per-project plugin migration (#262)', () => {
@@ -167,26 +204,7 @@ describe('C1 — per-project plugin migration (#262)', () => {
       // against values that were never the install reference. Wrong-and-quiet
       // is the failure mode this whole constant exists to prevent, so the
       // check that guards it must not reintroduce it one level up.
-      let upstream;
-      try {
-        upstream = JSON.parse(extractUpstreamInstallReference(src));
-      } catch (err) {
-        // Deliberately NOT a skip. "I could not read it" folded into "not
-        // applicable" is how a detector dies quietly and keeps reporting
-        // green — and the likeliest cause of an unreadable literal is
-        // upstream restructuring it, which is exactly the event this test is
-        // here to catch.
-        assert.fail(`could not read upstream INSTALL_REFERENCE: ${err.message}`);
-      }
-
-      // Whole-reference comparison, not field-by-field: an upstream key we
-      // stopped writing, or one they added, is drift too, and naming three
-      // fields explicitly would wave both through.
-      assert.deepEqual(
-        engines.PRAWDUCT_INSTALL_REFERENCE,
-        upstream,
-        'TangleClaw’s install reference has drifted from the installed plugin’s INSTALL_REFERENCE'
-      );
+      assertMatchesUpstreamReference(src);
     });
   });
 
@@ -229,21 +247,42 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.deepEqual(JSON.parse(extractUpstreamInstallReference(f)), { right: 2 });
     });
 
+    // Each THROWS case matches the SPECIFIC failure it is about. A bare
+    // `assert.throws(fn)` accepts any error — including `python3: not found`
+    // or a typo in the argv index — so on a machine without python3 these
+    // three would report green over a reader that parsed nothing at all.
+    // Tests whose whole subject is "unreadable must not be tolerated" are the
+    // last place to accept an unexamined error. execFileSync folds the child's
+    // stderr into err.message, so matching costs nothing.
     it('THROWS when the symbol is gone — never returns a default', () => {
       const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
-      assert.throws(() => extractUpstreamInstallReference(f));
+      assert.throws(() => extractUpstreamInstallReference(f), /INSTALL_REFERENCE not found/);
     });
 
     it('THROWS on a syntax error rather than reporting no drift', () => {
       const f = write('broken.py', 'INSTALL_REFERENCE = {"a": \n');
-      assert.throws(() => extractUpstreamInstallReference(f));
+      assert.throws(() => extractUpstreamInstallReference(f), /SyntaxError/);
+    });
+
+    it('an unreadable source FAILS the cross-check — it does not skip it', () => {
+      // The contract the whole design rests on, and until this it was asserted
+      // by nobody: the cross-check reads a fixed path under $HOME, so its
+      // failure branch is unreachable when called the way the real test calls
+      // it. Pointed at a source it cannot parse, it must raise — a skip here
+      // would mean upstream restructuring the literal reads as "not
+      // applicable" and the check goes quiet exactly when it matters.
+      const f = write('unreadable.py', 'INSTALL_REFERENCE = {"a": \n');
+      assert.throws(
+        () => assertMatchesUpstreamReference(f),
+        /could not read upstream INSTALL_REFERENCE/
+      );
     });
 
     it('THROWS rather than executing a non-literal value', () => {
       // literal_eval, not eval: a computed reference is unreadable BY DESIGN,
       // and unreadable must surface as a failure rather than run.
       const f = write('computed.py', 'import os\nINSTALL_REFERENCE = os.environ.copy()\n');
-      assert.throws(() => extractUpstreamInstallReference(f));
+      assert.throws(() => extractUpstreamInstallReference(f), /ValueError: malformed node/);
     });
   });
 
