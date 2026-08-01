@@ -61,17 +61,21 @@ nothing.
 Rather than tally rounds here — a count that goes stale the moment another runs — the census is
 `prawduct-hook render-dispositions --scope plugin-ref-807`.
 
-Read that with one caveat, stated because the alternative is a pointer that quietly under-reports:
-rounds on this branch were dispatched under **four different scope strings**, so a scope-filtered
-census does not reach all of them. `prawduct-hook render-dispositions` unfiltered is the whole view;
-`prawduct-hook evidence list` (no `--scope` — it takes only `--kind` and `-n`) is the raw fact log.
+**No single command shows all of it, and that is worth knowing before trusting any of them.**
+`render-dispositions` takes `[--review <id>|--scope <s>]` and has no all-scopes mode: with no
+argument it renders only the **latest** review fact, not the total. `--scope plugin-ref-807` is the
+best available census, but rounds on this branch went out under **four different scope strings**, so
+it too returns a subset. `prawduct-hook evidence list` (no `--scope` — it takes `--kind` and `-n`) is
+the unfiltered fact log.
 
-Each round's findings were fixed where a commit could fix them, and otherwise accepted with a
-recorded reason — the CI-execution gap is the standing example, since no commit can close it and only
-a runner can. Deliberately no count or all-clear here: in an append-only record, "nothing is open" is
-falsified by the next round that reads it, so the census belongs in the tool and the *why* belongs in
-prose. The findings worth carrying forward, because each is a general failure mode rather than a
-detail of this diff:
+Findings were fixed where a commit could fix them, and otherwise accepted with a recorded reason —
+the CI-execution gap is the standing example, since no commit can close it and only a runner can.
+Deliberately no count and no all-clear here: in an append-only record, any "all of them" claim is
+falsified by the next round that reads it, and a census that silently returns a subset is the same
+failure as a monitor that silently does not run — both report a number, neither reports that the
+number is partial. That is not incidental to this entry: it is the same failure the entry is about,
+and it was caught twice inside this paragraph. The findings worth carrying forward, because each is a
+general failure mode rather than a detail of this diff:
 
 - Test evidence had been recorded against the **pre-fix tree** — a green record whose
   `evidence_tree` was the review's `base_tree`, not `head_tree`. Caught on the manifest's own tree
