@@ -140,9 +140,29 @@ weak password, and must not contain the username. The machine-local
 the generated and the hand-edited Caddyfile, so Caddy's `localhost:2019` admin API
 is unavailable and the graceful `caddy reload` path does not exist here — the reload
 is `launchctl kickstart -k`. Anything arriving through Caddy (the dashboard, the
-browser terminal, a proxied OpenClaw UI) is interrupted while it comes back. Run the
-tool under `tmux`/`screen` when your terminal itself arrives through Caddy, so the
-sequence completes even if the connection carrying it does not.
+browser terminal, a proxied OpenClaw UI) is interrupted while it comes back.
+
+**Verified live on 2026-08-01** against this machine's hand-edited Caddyfile, which is
+what moved break-glass from "built and unit-tested" to proven: the reload executed on
+the real LaunchAgent (PID changed, exit 0), the gate re-authenticated on the new
+credential, config and the live file stayed in agreement, and the file came out
+**byte-identical apart from the hash** — still classified `adoptable`/`safeToWrite:
+false`, so the cutover's clobber-guard keeps protecting it. Two operational facts came
+out of that run and are worth knowing before you need this tool:
+
+- **It enforces the CURRENT password policy, so a credential predating the policy
+  cannot be restored as-is.** The rules (≥12 chars, not a common password, must not
+  contain the username) apply to whatever you type, including the password already in
+  force. An operator reaching for break-glass intending to reinstate a password they
+  know may be refused and forced to choose a new one mid-incident. Correct behaviour —
+  a recovery path that installs a weak credential undermines the mandatory gate — but
+  decide and record the new password *before* starting, because the disconnect follows
+  within seconds.
+- **"Run it under tmux" is not sufficient guidance when the operator arrives through
+  ttyd.** That terminal is already tmux-backed (so the process does survive the drop),
+  but its window may be running an AI session rather than a shell. Open a second window
+  (`Ctrl-b c`) and run it there; `tmux new -s <name>` from inside fails as a nested or
+  duplicate session.
 
 ### Creating a gate where there is none
 

@@ -117,11 +117,20 @@ being restarted, so anything arriving through it — the dashboard, the browser
 terminal — is interrupted while it comes back. Reconnect afterwards with the new
 password.
 
-Two things worth knowing before you run it:
+Three things worth knowing before you run it — all of them learned by actually doing it:
 
-- **Run it inside `tmux` or `screen`** if you are connected over SSH or through
-  TangleClaw's own browser terminal. The restart drops your connection, and you want
-  the reset to finish even if your terminal does not survive it.
+- **It has to be a genuinely new password, even if you still know the old one.** The tool enforces
+  today's rules on whatever you type: at least 12 characters, not a common password, and it must not
+  contain your username. A credential set before those rules existed will be **refused**, so if you
+  came here intending to reinstate a password you already have, you may not be able to. Decide the
+  new one and save it somewhere *before* you start — your connection drops seconds after you confirm
+  it, and the very next thing that happens is being asked for it.
+- **Get a shell that survives the restart, and notice where you are typing.** If you reach this
+  machine through TangleClaw's own browser terminal you are already inside a persistent `tmux`
+  session, so anything you run there survives the drop with no extra work. But that session's window
+  may be running an AI session rather than a shell, in which case open a second window with
+  `Ctrl-b` then `c` and work there. Running `tmux new -s <name>` from inside it does not help — that
+  nests one session in another, and fails outright if the name is already taken.
 - **It takes a backup first.** If the new configuration is invalid for any reason,
   the original is put back and your existing password keeps working. It will not
   leave you worse off than when you started.
