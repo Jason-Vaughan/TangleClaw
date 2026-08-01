@@ -208,12 +208,19 @@ describe('C1 — per-project plugin migration (#262)', () => {
     });
   });
 
-  // The cross-check above reads a fixed path under the real home directory, so
-  // its unreadable branch cannot be reached from a test. These exercise the
-  // reader directly against crafted sources — the point is not that it parses
-  // valid Python, it is that every unreadable shape THROWS. A reader that
-  // returned a default, or an empty object, would let the cross-check pass
-  // while comparing against nothing.
+  // The cross-check above runs against a fixed path under the real home
+  // directory, so it can only ever exercise the readable case. These aim the
+  // reader at crafted sources instead — the point is not that it parses valid
+  // Python, it is that every unreadable shape THROWS. A reader that returned a
+  // default, or an empty object, would let the cross-check pass while comparing
+  // against nothing.
+  //
+  // `an unreadable source FAILS the cross-check` below covers the branch that
+  // decides between failing and skipping, by calling
+  // `assertMatchesUpstreamReference` directly. That is the contract the whole
+  // design rests on — do not delete it as redundant with the reader tests; they
+  // prove the reader raises, and only that one proves the raise is not
+  // swallowed into a skip.
   describe('upstream INSTALL_REFERENCE reader', () => {
     // Nested under the suite's own tmpDir so the existing teardown reclaims it;
     // a second mkdtemp would leak a directory per run.
@@ -247,13 +254,13 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.deepEqual(JSON.parse(extractUpstreamInstallReference(f)), { right: 2 });
     });
 
-    // Each THROWS case matches the SPECIFIC failure it is about. A bare
+    // Each THROWS case below matches the SPECIFIC failure it is about. A bare
     // `assert.throws(fn)` accepts any error — including `python3: not found`
-    // or a typo in the argv index — so on a machine without python3 these
-    // three would report green over a reader that parsed nothing at all.
-    // Tests whose whole subject is "unreadable must not be tolerated" are the
-    // last place to accept an unexamined error. execFileSync folds the child's
-    // stderr into err.message, so matching costs nothing.
+    // or a typo in the argv index — so unmatched, they would report green over
+    // a reader that parsed nothing at all. Tests whose whole subject is
+    // "unreadable must not be tolerated" are the last place to accept an
+    // unexamined error. execFileSync folds the child's stderr into
+    // err.message, so matching costs nothing.
     it('THROWS when the symbol is gone — never returns a default', () => {
       const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
       // Anchored on the interpolated PATH, not the bare sentence. execFileSync
