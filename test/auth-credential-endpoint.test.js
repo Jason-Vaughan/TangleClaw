@@ -302,6 +302,29 @@ describe('POST /api/auth/credential', () => {
       assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
     });
 
+    it('checks the password against the GATE\'s username when config has drifted', async () => {
+      // The guard requires config AND the file to carry a credential, but never
+      // requires them to be the SAME name — and ADR 0009's amendment says they
+      // drift. Checking against config's copy in that state accepts a password
+      // containing the real login name, which setup would refuse. The GET was
+      // moved onto the file's username for this exact reason; the validation has
+      // to come from the same place or the two disagree about one machine.
+      const stored = store.config.load();
+      const had = stored.basicAuthUser;
+      stored.basicAuthUser = 'stale-name-in-config';
+      store.config.save(stored);
+      try {
+        const { status, data } = await request(server, 'POST', '/api/auth/credential',
+          { password: 'jason-jason-jason' });
+        assert.equal(status, 400, 'the gate\'s username is `jason`, so this must be refused');
+        assert.match(data.error, /username/i);
+      } finally {
+        const back = store.config.load();
+        back.basicAuthUser = had;
+        store.config.save(back);
+      }
+    });
+
     it('answers a bodyless POST with a refusal, not a crash', async () => {
       // parseBody resolves null for an empty request, so every field read in the
       // handler runs against null. A 500 there reads as "the server broke" for what

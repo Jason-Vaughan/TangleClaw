@@ -102,6 +102,15 @@ is a decision to take with the operator, not unilaterally. Also accepted: caller
 `reset-admin.js` (its published contract is unchanged and the implementations are not duplicated);
 and `verify-chunk-refs`'s missing-ref, confirmed a worktree/symlink artifact tracked as PRW-6T2M.
 
+**The resolution pass found one more, and it was self-inflicted.** Fixing the inert username rule
+introduced a second version of the very drift it was fixing: the GET was moved onto the FILE's
+username because config and the live gate drift, while the password validation was left on config's.
+The guard requires both to be non-empty and never requires them to AGREE — so in the drift state the
+password was checked against a name that is not the login in force, accepting a password containing
+the real username that setup would refuse. Both now read the same source. The lesson is the project's
+own "one call site isn't the family": the fix was applied where the finding pointed, not to every
+place that asks the same question.
+
 **Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
 which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
 against the shared evidence store mid-session is the thing the previous session's notes warn

@@ -915,8 +915,9 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
   // simply a malformed request.
   const payload = body || {};
   const config = store.config.load();
+  const ingressState = caddy.classifyIngressState();
   const check = adminCredential.canChangeCredential(
-    config, caddy.classifyIngressState(), caddy.detectCaddy().available);
+    config, ingressState, caddy.detectCaddy().available);
   if (!check.allowed) {
     return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
   }
@@ -942,7 +943,14 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
   // no-username-in-password rule inert on every request the product actually
   // makes. Setup enforces that rule; a change surface that did not would let the
   // rule be escaped simply by changing the password afterwards.
-  const pwCheck = caddy.validateAdminPassword(password, user || config.basicAuthUser);
+  //
+  // From the FILE, for the same reason the GET reads the file: config and the
+  // live gate drift (ADR 0009's amendment names that state), and the guard above
+  // requires both to be non-empty without requiring them to AGREE. Taking
+  // config's copy would check the password against a name that is not the login
+  // in force — accepting, in exactly the drift case, a password containing the
+  // real username that setup would have refused.
+  const pwCheck = caddy.validateAdminPassword(password, user || ingressState.user);
   if (!pwCheck.ok) {
     return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
   }
