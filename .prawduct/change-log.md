@@ -92,7 +92,24 @@ Also filed: **#828** (`~/.tangleclaw` derived from both `process.env.HOME` and `
 HOME override half-relocates state) and **#829** (Master control — #755/#756/#768 — the first release
 after v5, deliberately kept out of it).
 
-**Tests:** 5435 pass / 0 fail / 1 skipped.
+**Tests:** 5442 pass / 0 fail / 1 skipped. Evidence recorded against tree `52af13ab`.
+
+**Review:** one `cumulative` (3 blocking / 8 warning / 13 note, all three reviewers finding the same
+blocking defect independently) then two `verify-resolutions` passes, ending 0/0/0. Dispositions are
+prose here rather than evidence facts because `prawduct-hook` on PATH is 3.1.2 and has no
+`disposition` subcommand; stamp them if a relaunch picks up 3.2.x.
+
+- **ACCEPTED — the `--dry-run` structural test greps the script's source instead of executing the
+  branch.** Executing it in-suite needs either a `HOME` override, which half-relocates state (#828),
+  or the machine's real Caddyfile, which is the non-determinism just filed as #831. The contract is
+  covered from both sides instead: `canCreateGate`'s parity tests assert the preview and the run
+  reach the same verdict, and the branch itself was exercised live —
+  `--dry-run --create-gate --user bob` against the hand-edited Caddyfile printed
+  `would REFUSE: this Caddyfile already gates on 'jason'`, read-only. Revisit if the suite gains a
+  hermetic temp-repo helper (#831).
+- **FILED — #831** (bare `git init` in nine test files inherits the live global template dir).
+- **FILED — #828** (`~/.tangleclaw` derived from two different sources).
+- Remaining notes accepted as written; none touched behaviour.
 
 ## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
 
