@@ -197,8 +197,13 @@ describe('C1 — per-project plugin migration (#262)', () => {
   // returned a default, or an empty object, would let the cross-check pass
   // while comparing against nothing.
   describe('upstream INSTALL_REFERENCE reader', () => {
+    // Nested under the suite's own tmpDir so the existing teardown reclaims it;
+    // a second mkdtemp would leak a directory per run.
     let pyDir;
-    before(() => { pyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-py-')); });
+    before(() => {
+      pyDir = path.join(tmpDir, 'upstream-py');
+      fs.mkdirSync(pyDir, { recursive: true });
+    });
 
     const write = (name, body) => {
       const f = path.join(pyDir, name);
