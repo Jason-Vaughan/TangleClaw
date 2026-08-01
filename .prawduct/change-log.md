@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
 
-<!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default -->
+<!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** the post-setup redirect answered the wrong question. "What is this server serving" and
 "where should the operator go" have different answers behind Caddy, and the redirect computed the
