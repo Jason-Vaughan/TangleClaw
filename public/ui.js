@@ -1456,7 +1456,16 @@ async function _loadCredentialSection() {
     saveBtn.disabled = false;
 
     if (!res) {
-      hint.innerHTML = `<strong>The login was not changed.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      // The lead sentence is NOT hard-coded. Most refusals here really are "your
+      // login was not changed and nothing else happened" — but one of them means
+      // the Caddy config could not be written OR put back, and leading with a
+      // bold reassurance above that is the exact framing the server stopped
+      // using. A scanning operator reads the bold line and nothing else, so on
+      // that outcome the server's own sentence has to BE the bold line.
+      const broke = api.lastErrorCode === 'GATE_BROKEN';
+      hint.innerHTML = broke
+        ? `<strong>${esc(api.lastError || 'The Caddy config may be broken.')}</strong>`
+        : `<strong>The login was not changed.</strong> ${esc(api.lastError || 'Unknown error')}`;
       return;
     }
     // Terminal state, and it waits. No redirect, no auto-dismiss: the operator is

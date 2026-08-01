@@ -114,6 +114,20 @@ the real username that setup would refuse. Both now read the same source. The le
 own "one call site isn't the family": the fix was applied where the finding pointed, not to every
 place that asks the same question.
 
+**A third review round, and the same lesson a third time.** The `GATE_BROKEN` distinction — the
+credential did not change, but the Caddy config could not be written *or* put back, so the ingress
+may not load — was added at one site and not at the family. The review found the other three: the
+**validate-failure restore** was still unguarded, and it is the MORE reachable path (a `caddy
+validate` rejection is an ordinary outcome, and at that moment the live file holds the invalid
+content), so a restore that threw there escaped as a generic 500 with no backup path and no log
+line; `public/ui.js` still hard-coded a bold **"The login was not changed."** above the server's
+message, which is the precise framing the server had just stopped using, and the bold line is the one
+a scanning operator reads; and the new 500 arm was unpinned, though its position ABOVE the
+`!result.ok` catch-all is load-bearing — reordered, the route re-emits the old 400 with a green
+suite. Both restore sites now run through one guarded helper, the failure carries a `cause`
+(`write` | `validate`) so a full disk is no longer reported as a Caddy syntax error, and the route
+arms are pinned by tests that watch the reorder go red.
+
 **Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
 which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
 against the shared evidence store mid-session is the thing the previous session's notes warn

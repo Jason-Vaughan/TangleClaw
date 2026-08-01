@@ -137,6 +137,19 @@ describe('Global settings — Login section (#710)', () => {
         'this screen must not move on its own');
     });
 
+    it('does not lead with a reassurance the server has stopped leading with', () => {
+      // Most refusals here mean "your login was not changed and nothing else
+      // happened". One does not: GATE_BROKEN means the Caddy config could not be
+      // written or put back. A hard-coded bold "The login was not changed." above
+      // that message is the exact framing the server abandoned — a scanning
+      // operator reads the bold line and stops.
+      const failure = section.slice(section.indexOf('if (!res)'), section.indexOf('Your login is changed'));
+      assert.match(failure, /GATE_BROKEN/,
+        'the failure branch must distinguish the outcome where the ingress may be broken');
+      assert.match(failure, /esc\(api\.lastError/,
+        'and the server\'s own sentence is what gets shown');
+    });
+
     it('does not report a reload outcome the server cannot know', () => {
       // Caddy restarts as the response leaves, and every request after that needs
       // the new password — so no reply can ever carry whether the restart worked.

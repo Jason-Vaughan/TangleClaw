@@ -326,6 +326,57 @@ describe('applyCredentialChange', () => {
     assert.equal(store.config.load().basicAuthHash, HASH_OLD, 'the credential still did not change');
   });
 
+  it('reports a broken gate when the VALIDATE-failure restore cannot run either', () => {
+    // The more reachable of the two restore sites: a `caddy validate` rejection is
+    // an ordinary outcome, and at that moment the live file holds the invalid
+    // content. An unguarded restore there threw out of the function entirely, so
+    // it surfaced as a generic 500 with no backup path and no log line — on
+    // exactly the path this distinction exists to make legible.
+    const realCopy = fs.copyFileSync;
+    let copies = 0;
+    let r;
+    try {
+      fs.copyFileSync = (from, to) => {
+        if (++copies > 1) throw new Error('EROFS: read-only file system');
+        return realCopy(from, to);
+      };
+      r = cred.applyCredentialChange({
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        execFn: () => {}, validateFn: () => ({ ok: false, error: 'bad directive' })
+      });
+    } finally {
+      fs.copyFileSync = realCopy;
+    }
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'gate-broken', 'a restore that could not run is not a plain rejection');
+    assert.match(r.error, /bad directive/, 'the original cause survives');
+    assert.match(r.error, /EROFS/, 'and so does the reason it could not be undone');
+  });
+
+  it('says a WRITE failed differently from a REJECTED file', () => {
+    // Same outcome, different place to look: a full disk is not a syntax error,
+    // and "rejected by Caddy" sends the operator to audit a Caddyfile that is
+    // fine.
+    const realWrite = fs.writeFileSync;
+    let r;
+    try {
+      fs.writeFileSync = (p, ...rest) => {
+        if (p === caddyfilePath) throw new Error('ENOSPC: no space left on device');
+        return realWrite(p, ...rest);
+      };
+      r = cred.applyCredentialChange({
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        execFn: () => {}, validateFn: () => ({ ok: true })
+      });
+    } finally {
+      fs.writeFileSync = realWrite;
+    }
+
+    assert.equal(r.code, 'write-failed');
+    assert.notEqual(r.code, 'validate-failed', 'the parser is not what failed');
+  });
+
   it('does not reload when the caller says it will do it later', () => {
     // An HTTP caller answers THROUGH this Caddy, so restarting it before the
     // response is out kills the connection carrying the response: the change

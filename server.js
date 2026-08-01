@@ -1021,9 +1021,15 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
     // offending line, and that line carries a hash.
     log.warn('Admin credential change did not complete; nothing was changed',
       { code: result.code, error: caddy.redactHashes(result.error) });
-    const detail = result.code === adminCredential.CREDENTIAL_CODES.CONFIG_WRITE_FAILED
-      ? 'The new login could not be recorded, so nothing was changed.'
-      : 'The new login was rejected by Caddy, so nothing was changed.';
+    // Three failures that all leave the login unchanged, said three ways, because
+    // they send the operator to three different places. Blaming Caddy's parser
+    // for a full disk is a false report of the same family as the rest.
+    const CODES = adminCredential.CREDENTIAL_CODES;
+    const detail = {
+      [CODES.CONFIG_WRITE_FAILED]: 'The new login could not be recorded, so nothing was changed.',
+      [CODES.WRITE_FAILED]: 'The Caddy config could not be written, so nothing was changed. '
+        + 'This is usually a full disk or a permissions problem, not the password.'
+    }[result.code] || 'The new login was rejected by Caddy, so nothing was changed.';
     return errorResponse(res, 400, detail, adminCredential.httpCode(result.code));
   }
 

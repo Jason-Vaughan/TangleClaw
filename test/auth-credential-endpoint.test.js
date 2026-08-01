@@ -325,6 +325,57 @@ describe('POST /api/auth/credential', () => {
       }
     });
 
+    it('answers a broken gate with 500 and the backup path, not "nothing was changed"', async () => {
+      // Pins the ARM as well as the code. This branch sits above the generic
+      // `!result.ok` handler on purpose — reordered, the route re-emits the old
+      // 400 "nothing was changed" for a machine whose ingress may not load, and
+      // the module's unit tests stay green because they never see the response.
+      const realWrite = fs.writeFileSync;
+      const realCopy = fs.copyFileSync;
+      let copies = 0;
+      let res;
+      try {
+        fs.writeFileSync = (p, ...rest) => {
+          if (p === caddy.getCaddyfilePath()) throw new Error('ENOSPC: no space left on device');
+          return realWrite(p, ...rest);
+        };
+        fs.copyFileSync = (from, to) => {
+          if (++copies > 1) throw new Error('EROFS: read-only file system');
+          return realCopy(from, to);
+        };
+        res = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+      } finally {
+        fs.writeFileSync = realWrite;
+        fs.copyFileSync = realCopy;
+      }
+
+      assert.equal(res.status, 500);
+      assert.equal(res.data.code, 'GATE_BROKEN');
+      assert.match(res.data.error, /ingress may now be broken/);
+      assert.match(res.data.error, /\.credential\.bak/, 'the operator needs the file to restore');
+      assert.doesNotMatch(res.data.error, /rejected by Caddy/,
+        'the parser is not what failed, and saying so sends them to audit a fine Caddyfile');
+    });
+
+    it('blames the disk, not the Caddy parser, when the write itself fails', async () => {
+      const realWrite = fs.writeFileSync;
+      let res;
+      try {
+        fs.writeFileSync = (p, ...rest) => {
+          if (p === caddy.getCaddyfilePath()) throw new Error('ENOSPC: no space left on device');
+          return realWrite(p, ...rest);
+        };
+        res = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+      } finally {
+        fs.writeFileSync = realWrite;
+      }
+
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'WRITE_FAILED');
+      assert.match(res.data.error, /full disk or a permissions problem/);
+      assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'and nothing changed');
+    });
+
     it('answers a bodyless POST with a refusal, not a crash', async () => {
       // parseBody resolves null for an empty request, so every field read in the
       // handler runs against null. A 500 there reads as "the server broke" for what
