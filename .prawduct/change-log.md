@@ -74,11 +74,42 @@ with an instruction to send credential fields the same route refuses. An error w
 **Mutation-checked.** Every guard added here was reverted and the suite watched go red before the
 test was kept: the deferred reload (both at the module and at the route), the null-body guard, the
 0600 backup mode, the gate restore after a failed config write, backup retention on the write path,
-the caddy-binary check, and re-adding the removed invariant.
+the caddy-binary check, re-adding the removed invariant, the write-failure restore, the retention
+namespace, validating the password against the request's username instead of the gate's, `finish`
+in place of `close`, deleting the hash-redaction line, and the multi-user refusal message.
+
+**What the cumulative Critic caught (0 blocking, 18 warning, 14 note) and what was done.** Fixed:
+the no-username-in-password rule was **inert on every request the product actually makes** — the UI
+sends no `user`, so validating against the request's copy checked nothing, and the parity test used
+a shape the UI never produces; `reset-admin.js` printed "the original was restored (ingress
+untouched)" on the one code meaning the restore FAILED and the new password is live, because it
+branched on a backup path rather than the code; the fail-closed write had an **unguarded window** —
+a mid-write ENOSPC truncates the live gate and throws before the validator, so the restore that
+makes the sequence safe was skipped; the hash-redaction assertion ran against a null hash, so
+deleting the redaction leaked a real one past a green suite; the deferred reload hung off `finish`,
+which an aborted response never emits, leaving the credential changed and Caddy never reloaded;
+retention pruned the **ingress cutover's** backups too, whose `--force` safety depends on them, so
+credential backups now carry their own suffix; the form showed config's username while the change
+targets the file's; a multi-user Caddyfile was told it "carries no login". Also the cutover's own
+backup now gets 0600, `reset-admin` redacts `caddy validate` output as the HTTP path does, and a
+dead import went.
+
+Accepted with reasons rather than fixed: **the guard proves a gate EXISTS, not that this request
+came through it.** Requiring `X-Auth-User` would prove it, and would also change ratified decision
+D3 mid-build — the accepted model already treats local shell access as total authorization, so this
+is a decision to take with the operator, not unilaterally. Also accepted: caller-supplied `uid`/
+`stamp` (keeps the module pure, and both callers derive them identically); the re-exports left in
+`reset-admin.js` (its published contract is unchanged and the implementations are not duplicated);
+and `verify-chunk-refs`'s missing-ref, confirmed a worktree/symlink artifact tracked as PRW-6T2M.
+
+**Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
+which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
+against the shared evidence store mid-session is the thing the previous session's notes warn
+against. They are recorded here instead, and should be stamped after a relaunch picks up 3.2.x.
 
 ## 2026-07-31: the prawduct install reference becomes a reviewed constant, not a copy of local state (#807, #816)
 
-<!-- prawduct: type=fix | scope=plugin-ref-807 -->
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
 
 **Why:** `migrateToPlugin` built the reference by copying TangleClaw's own `.claude/settings.json`
 verbatim. That file is untracked, machine-local and freely editable, so whatever it held was stamped
@@ -111,7 +142,7 @@ The completeness guard is what is load-bearing, and bypassing it turns the parti
 
 ## 2026-07-29: setup provisions a login by default — the step-list flip plus the cutover it enforces (#710, chunk 2 slice 2-iii-b)
 
-<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default -->
+<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** the wizard's admin-credential step was gated on `ingressMode === 'caddy'`, which no fresh
 install says, so a first run collected nothing and finished with no password in front of a dashboard

@@ -496,10 +496,26 @@ describe('API endpoints', () => {
     });
 
     it('leaves the config API redacting the hash exactly as before', async () => {
-      // Unchanged by this work, re-asserted because the surrounding block moved.
-      const { data } = await request(server, 'GET', '/api/config');
-      assert.equal('basicAuthHash' in data, false);
-      assert.equal(data.basicAuthConfigured, false);
+      // Asserted with a hash ACTUALLY PRESENT. Both surviving versions of this
+      // check ran against a null one, where `'basicAuthHash' in data` is false
+      // and `basicAuthConfigured` is false whether or not the redaction line
+      // exists — so deleting the redaction would have leaked a real hash past a
+      // green suite. The fixture has to contain the thing being redacted.
+      const stored = store.config.load();
+      const had = stored.basicAuthHash;
+      stored.basicAuthHash = BCRYPT;
+      store.config.save(stored);
+      try {
+        const { data } = await request(server, 'GET', '/api/config');
+        assert.equal('basicAuthHash' in data, false, 'the hash must not be a field');
+        assert.ok(!JSON.stringify(data).includes(BCRYPT),
+          'and must not appear anywhere in the response, under any key');
+        assert.equal(data.basicAuthConfigured, true, 'only the boolean crosses the boundary');
+      } finally {
+        const back = store.config.load();
+        back.basicAuthHash = had;
+        store.config.save(back);
+      }
     });
 
     it('still saves an unrelated field when the stored config is half-credentialed', async () => {

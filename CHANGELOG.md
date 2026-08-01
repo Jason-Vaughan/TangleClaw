@@ -22,8 +22,9 @@ All notable changes to TangleClaw are documented in this file.
   Node's stdlib, and `caddy hash-password` has no verify mode), and a field that does not verify is
   theatre. The confirm field stays, because that one IS checkable in the browser and a mistyped
   password locks the operator out of their own dashboard with only a terminal to get back in.
-  Mobile-first per the project rule — every control is a 44px target, and nothing on the screen moves
-  on a timer.
+  Nothing on the screen moves on a timer. The three fields are 44px targets; the Save button takes the
+  dashboard's shared `.btn` height (32px) rather than being made a one-off, so the mobile-first rule is
+  met by the fields and deferred to a global fix for the buttons.
 
   **Caddy restarts only after the reply is out.** The response to a credential change travels back
   through the very Caddy that has to restart, so restarting first tears down the connection carrying

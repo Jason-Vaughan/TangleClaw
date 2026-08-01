@@ -99,6 +99,19 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     assert.match(r.remedy, /reset-admin/);
   });
 
+  it('says "more than one login" rather than "no login" when the file has several', () => {
+    // A multi-user file reaches this branch the same way an ungated one does —
+    // classifyIngressState reports no single user for both. Telling someone
+    // looking at three credentials that there are none reads as a bug in
+    // TangleClaw, and sends them to the wrong command.
+    const r = cred.canChangeCredential(configured,
+      { state: 'ambiguous', user: null, users: ['jason', 'ops', 'backup'] });
+    assert.equal(r.allowed, false);
+    assert.equal(r.code, 'no-gate');
+    assert.match(r.reason, /more than one login/);
+    assert.match(r.remedy, /--user <name>/, 'the disambiguating flag is the actual way out');
+  });
+
   it('refuses on an unreadable Caddyfile rather than guessing the gate is absent', () => {
     // Absent and unreadable are different facts. Treating unreadable as "no gate"
     // would route an operator whose file merely has bad permissions toward the
@@ -207,8 +220,8 @@ describe('applyCredentialChange', () => {
       caddyfilePath, user: 'jason', hash: HASH_OLD, uid: 501, stamp: 'SECOND',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
-    assert.ok(fs.existsSync(`${caddyfilePath}.FIRST.bak`));
-    assert.ok(fs.existsSync(`${caddyfilePath}.SECOND.bak`));
+    assert.ok(fs.existsSync(`${caddyfilePath}.FIRST.credential.bak`));
+    assert.ok(fs.existsSync(`${caddyfilePath}.SECOND.credential.bak`));
   });
 
   it('prunes old backups as it writes, so credential copies do not accumulate', () => {
@@ -227,7 +240,7 @@ describe('applyCredentialChange', () => {
       });
     }
     const backups = fs.readdirSync(path.dirname(caddyfilePath))
-      .filter((n) => n.startsWith('Caddyfile.') && n.endsWith('.bak'));
+      .filter((n) => n.startsWith('Caddyfile.') && n.endsWith('.credential.bak'));
     assert.equal(backups.length, cred.BACKUP_RETENTION,
       `every change leaves a hash-bearing backup; only ${cred.BACKUP_RETENTION} may survive`);
   });
@@ -241,8 +254,38 @@ describe('applyCredentialChange', () => {
       caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'MODE',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
-    const mode = fs.statSync(`${caddyfilePath}.MODE.bak`).mode & 0o777;
+    const mode = fs.statSync(`${caddyfilePath}.MODE.credential.bak`).mode & 0o777;
     assert.equal(mode, 0o600, `the backup must not be world- or group-readable (got ${mode.toString(8)})`);
+  });
+
+  it('restores the gate when the WRITE itself fails, not only when validation does', () => {
+    // A mid-write ENOSPC truncates the live Caddyfile and throws before the
+    // validator ever runs — so the fail-closed restore that makes this function
+    // safe would be skipped entirely. This is the one path that could leave a
+    // broken ingress behind, which is the failure the whole sequence exists to
+    // prevent.
+    const realWrite = fs.writeFileSync;
+    const original = fs.readFileSync(caddyfilePath, 'utf8');
+    let validated = false;
+    fs.writeFileSync = (p, ...rest) => {
+      if (p === caddyfilePath) {
+        realWrite(p, 'localhost:8443 {\n  basic_'); // truncated, as a real short write would be
+        throw new Error('ENOSPC: no space left on device');
+      }
+      return realWrite(p, ...rest);
+    };
+    let r;
+    try {
+      r = cred.writeValidatedCaddyfile(caddyfilePath, 'irrelevant', () => { validated = true; return { ok: true }; }, 'STAMP');
+    } finally {
+      fs.writeFileSync = realWrite;
+    }
+
+    assert.equal(r.ok, false);
+    assert.match(r.error, /ENOSPC/);
+    assert.equal(validated, false, 'the validator never ran, so it cannot be what restores');
+    assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), original,
+      'the live gate must be exactly what it was — a truncated Caddyfile is a broken ingress');
   });
 
   it('does not reload when the caller says it will do it later', () => {
@@ -343,15 +386,15 @@ describe('backup retention', () => {
     // stamp, not the order the files happened to be created in.
     const stamps = ['2026-01-03T00-00-00-000Z', '2026-01-01T00-00-00-000Z',
       '2026-01-05T00-00-00-000Z', '2026-01-02T00-00-00-000Z', '2026-01-04T00-00-00-000Z'];
-    for (const s of stamps) fs.writeFileSync(`${caddyfilePath}.${s}.bak`, 'x');
+    for (const s of stamps) fs.writeFileSync(`${caddyfilePath}.${s}.credential.bak`, 'x');
 
     const removed = cred.pruneCaddyfileBackups(caddyfilePath, 2);
 
     assert.equal(removed.length, 3);
     const left = fs.readdirSync(dir).filter((n) => n.endsWith('.bak')).sort();
     assert.deepEqual(left, [
-      'Caddyfile.2026-01-04T00-00-00-000Z.bak',
-      'Caddyfile.2026-01-05T00-00-00-000Z.bak'
+      'Caddyfile.2026-01-04T00-00-00-000Z.credential.bak',
+      'Caddyfile.2026-01-05T00-00-00-000Z.credential.bak'
     ], 'the two newest by stamp survive');
   });
 
@@ -360,13 +403,33 @@ describe('backup retention', () => {
     const caddyfilePath = path.join(dir, 'Caddyfile');
     fs.writeFileSync(caddyfilePath, gatedCaddyfile());
     fs.writeFileSync(path.join(dir, 'Caddyfile.other'), 'x');
-    fs.writeFileSync(path.join(dir, 'unrelated.bak'), 'x');
-    fs.writeFileSync(`${caddyfilePath}.STAMP.bak`, 'x');
+    fs.writeFileSync(path.join(dir, 'unrelated.credential.bak'), 'x');
+    fs.writeFileSync(`${caddyfilePath}.STAMP.credential.bak`, 'x');
 
     cred.pruneCaddyfileBackups(caddyfilePath, 0);
 
     const left = fs.readdirSync(dir).sort();
-    assert.deepEqual(left, ['Caddyfile', 'Caddyfile.other', 'unrelated.bak']);
+    assert.deepEqual(left, ['Caddyfile', 'Caddyfile.other', 'unrelated.credential.bak']);
+  });
+
+  it('leaves the ingress cutover\'s backups alone', () => {
+    // Both tools back the same file up into the same directory. The cutover's
+    // `--force` safety depends on its backup still being there, so five password
+    // changes must not be able to delete it — which is why credential backups
+    // carry their own suffix and retention only ever matches that one.
+    const caddyfilePath = path.join(dir, 'Caddyfile');
+    fs.writeFileSync(caddyfilePath, gatedCaddyfile());
+    const cutoverBackup = `${caddyfilePath}.2026-01-01T00-00-00-000Z.bak`;
+    fs.writeFileSync(cutoverBackup, 'the cutover needs this');
+    for (const s of ['2026-01-02', '2026-01-03', '2026-01-04']) {
+      fs.writeFileSync(`${caddyfilePath}.${s}T00-00-00-000Z.credential.bak`, 'x');
+    }
+
+    cred.pruneCaddyfileBackups(caddyfilePath, 1);
+
+    assert.ok(fs.existsSync(cutoverBackup), 'another tool\'s backup must survive');
+    const left = fs.readdirSync(dir).filter((n) => n.endsWith('.credential.bak'));
+    assert.deepEqual(left, ['Caddyfile.2026-01-04T00-00-00-000Z.credential.bak']);
   });
 
   it('does not throw when the directory cannot be read', () => {

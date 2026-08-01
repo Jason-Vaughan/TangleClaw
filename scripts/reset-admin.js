@@ -21,7 +21,6 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
@@ -222,8 +221,22 @@ async function main() {
   });
 
   if (!result.ok) {
-    process.stderr.write(`ERROR: ${result.error}\n`);
-    if (result.backup) {
+    // Redacted for the same reason the HTTP path redacts it: `caddy validate`
+    // quotes the offending line, and that line carries a bcrypt hash. A terminal
+    // is a friendlier place for it to land than an HTTP response, but it is still
+    // scrollback, and scrollback gets pasted into issues.
+    process.stderr.write(`ERROR: ${caddy.redactHashes(result.error || '')}\n`);
+    // Branch on the CODE, never on "a backup exists". `diverged` is the one
+    // failure that leaves the NEW password in force — the restore is exactly what
+    // failed — and a backup path is present there too. Saying "the original was
+    // restored" would send the operator to sign in with a password the door no
+    // longer takes, on the run where they are already in trouble.
+    if (result.code === adminCredential.CREDENTIAL_CODES.DIVERGED) {
+      process.stderr.write(
+        '  The Caddyfile now carries the NEW password, and it could not be put back.\n'
+        + `  The NEW password is the one in force. Backup of the original: ${result.backup}\n`
+        + '  Restore it by hand, or re-run this tool once the disk problem is fixed.\n');
+    } else if (result.backup) {
       process.stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${result.backup}\n`);
     }
     store.close();

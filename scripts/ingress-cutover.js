@@ -575,6 +575,10 @@ function main() {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backup = `${plan.caddyfile.path}.${stamp}.bak`;
       fs.copyFileSync(plan.caddyfile.path, backup);
+      // The file being backed up carries a bcrypt hash, and copyFileSync brings
+      // the source's mode with it — a hand-edited Caddyfile at 0644 would leave
+      // a credential readable by every account on the box.
+      fs.chmodSync(backup, 0o600);
       if (!force) {
         process.stderr.write(`ERROR: refusing to overwrite a hand-edited Caddyfile (ingress untouched).\n  Backed up to: ${backup}\n  Re-run with --force to replace it.\n`);
         finish(CUTOVER_CODES.HAND_EDITED, `refusing to overwrite a hand-edited Caddyfile (backup: ${backup})`);

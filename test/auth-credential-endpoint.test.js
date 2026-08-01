@@ -277,10 +277,29 @@ describe('POST /api/auth/credential', () => {
       const handler = src.slice(start, src.indexOf("route('GET', '/api/service-token'", start));
       assert.match(handler, /reload: false/,
         'the apply call must not reload inline');
-      assert.match(handler, /res\.on\('finish'/,
-        'the reload must hang off the response finishing');
+      // `close`, not `finish`. finish fires only when the response was fully
+      // sent, so a client that aborts mid-reply would leave the credential
+      // changed on disk with Caddy never reloaded — the old password still
+      // opening the door and nothing reporting it.
+      assert.match(handler, /res\.on\('close'/,
+        'the reload must hang off the response closing, which covers an abort too');
+      assert.doesNotMatch(handler, /res\.on\('finish'/,
+        'finish alone drops the reload on an aborted response');
       assert.doesNotMatch(handler, /adminCredential\.reloadCaddy\(/,
         'the SYNCHRONOUS reload would hold the event loop for the length of a Caddy restart');
+    });
+
+    it('applies the no-username-in-password rule to the login actually in force', async () => {
+      // The UI sends only `{ password }` — the username field is read-only and the
+      // server resolves the target itself — so validating against the REQUEST's
+      // username left this rule inert on every call the product actually makes.
+      // Setup enforces it; a change surface that did not would let it be escaped
+      // by simply changing the password afterwards.
+      const { status, data } = await request(server, 'POST', '/api/auth/credential',
+        { password: 'jason-jason-jason' });
+      assert.equal(status, 400);
+      assert.match(data.error, /username/i);
+      assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
     });
 
     it('answers a bodyless POST with a refusal, not a crash', async () => {

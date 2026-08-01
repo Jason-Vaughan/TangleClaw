@@ -870,8 +870,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // (the wizard step list) already had to fix once.
 route('GET', '/api/auth/credential', (_req, res) => {
   const config = store.config.load();
+  const ingressState = caddy.classifyIngressState();
   const check = adminCredential.canChangeCredential(
-    config, caddy.classifyIngressState(), caddy.detectCaddy().available);
+    config, ingressState, caddy.detectCaddy().available);
   jsonResponse(res, 200, {
     changeable: check.allowed,
     // Same spelling the POST's refusal uses, from the same translator — a client
@@ -879,10 +880,13 @@ route('GET', '/api/auth/credential', (_req, res) => {
     code: adminCredential.httpCode(check.code),
     reason: check.reason,
     remedy: check.remedy,
-    // The username currently in force, so the form can prefill it. Never the
-    // hash: it is a credential, and the redacted config API withholds it for the
-    // same reason.
-    user: check.allowed ? config.basicAuthUser : null
+    // The username currently in force, read from the FILE rather than from
+    // config, because the change itself resolves its target from the file and the
+    // two can drift (ADR 0009's amendment names that state). Showing config's
+    // copy would name one account in the form and re-hash a different one.
+    // Never the hash: it is a credential, and the redacted config API withholds
+    // it for the same reason.
+    user: check.allowed ? ingressState.user : null
   });
 });
 
@@ -932,7 +936,13 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
     return errorResponse(res, 400, 'A username is required', 'BAD_REQUEST');
   }
   const password = typeof payload.password === 'string' ? payload.password : '';
-  const pwCheck = caddy.validateAdminPassword(password, user);
+  // Validated against the username IN FORCE, not the one the caller sent. The UI
+  // deliberately sends no `user` — the field is read-only and the server resolves
+  // the target itself — so validating against the request's copy left the
+  // no-username-in-password rule inert on every request the product actually
+  // makes. Setup enforces that rule; a change surface that did not would let the
+  // rule be escaped simply by changing the password afterwards.
+  const pwCheck = caddy.validateAdminPassword(password, user || config.basicAuthUser);
   if (!pwCheck.ok) {
     return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
   }
@@ -1006,7 +1016,11 @@ route('POST', '/api/auth/credential', (_req, res, _params, body) => {
   // this route cannot tell them about, a restart that did not happen.
   // Asynchronous, because a synchronous restart here holds the event loop for as
   // long as launchd takes — every unrelated request queued behind a Caddy restart.
-  res.on('finish', () => {
+  // `close`, not `finish`: finish fires only when the response was fully sent, so
+  // a client that aborts mid-reply would leave the credential changed on disk and
+  // Caddy never reloaded — the old password still opening the door, with nothing
+  // reporting it. close fires either way, and after finish when both do.
+  res.on('close', () => {
     adminCredential.reloadCaddyAsync(process.getuid(), (reload) => {
       if (reload.ok) {
         log.info('Caddy reloaded; the new login is in force');
