@@ -512,3 +512,64 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
     });
   });
 });
+
+describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
+  // Structural, matching how this repo pins setup.js elsewhere: the file renders
+  // via innerHTML strings and cannot be imported.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+  const strip = (t) => t.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const show = strip(src.slice(src.indexOf('function _showRestartOverlay'),
+    src.indexOf('function _renderRestartOverlay')));
+  const render = strip(src.slice(src.indexOf('function _renderRestartOverlay'),
+    src.indexOf('async function _pollRestartReady')));
+
+  it('does not probe an address a proxy answers for', () => {
+    // The defect this pins. `redirectUrl` used to be TangleClaw's own listener,
+    // so a response proved it was back. In caddy mode it is Caddy's port, and
+    // Caddy stays up across TangleClaw's restart and answers instantly — with a
+    // 502, which an opaque `no-cors` fetch cannot distinguish from success. The
+    // screen would assert readiness it never observed and send the operator into
+    // an error page.
+    assert.match(show, /via === 'proxy'/,
+      'the proxied case must be recognised before any probe');
+    // Scoped to the proxy BRANCH, not to everything before the probe: the
+    // function opens with `if (!body) return;`, so a bare /return;/ over that
+    // span passes with the proxy branch's own return deleted. The sibling test
+    // for the credential section carries this same warning; I reproduced the
+    // defect it documents.
+    const branch = show.slice(show.indexOf("via === 'proxy'"), show.indexOf('_pollRestartReady'));
+    assert.match(branch, /_renderRestartOverlay\([^)]*'behind-proxy'/,
+      'the proxied case paints its own panel');
+    assert.match(branch, /\breturn;/,
+      'and returns, so the probe never runs for it');
+  });
+
+  it('claims nothing it cannot observe, and names what the operator CAN check', () => {
+    // Bounded by the end of the map, not by a trailing '`,' — 'behind-proxy' is
+    // the LAST entry and has none, so `indexOf` returned -1 and the old slice
+    // asserted against a single character. It could not have failed.
+    const start = render.indexOf("'behind-proxy'");
+    const end = render.indexOf('}[state];', start);
+    // Relational, not a magic length: this catches the slice collapsing (what the
+    // old `indexOf('`,')` bound did) without pretending to know how long the copy
+    // should be, and it fails in both directions if the terminator moves.
+    assert.ok(start > -1 && end > start, 'the behind-proxy panel must be locatable and non-empty');
+    const panel = render.slice(start, end);
+    assert.doesNotMatch(panel, /is back up/,
+      'no readiness claim on the branch where readiness is unobservable');
+    assert.match(panel, /asks for your username and password/,
+      'the password prompt is the one thing the operator can actually verify');
+  });
+
+  it('still offers the front door as the destination', () => {
+    // Not probing it is not the same as not linking it — the address is still
+    // where they are going.
+    assert.match(render, /window\.location\.href='\$\{esc\(redirectUrl\)\}'/);
+  });
+
+  it('carries `via` from the server rather than guessing at it', () => {
+    // The client cannot tell a proxy from a server by looking at a URL; the
+    // server derives both halves from one place and says which it is.
+    assert.match(src, /result\.redirectVia/);
+  });
+});

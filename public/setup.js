@@ -1136,7 +1136,8 @@ async function wizardComplete() {
     // to the current origin so the overlay still shows while the server
     // cycles — otherwise the normal dismiss flow would run fetches against
     // a process that's exiting.
-    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/', carried);
+    _showRestartOverlay(result.redirectUrl || (window.location && window.location.origin) || '/',
+      carried, result.redirectVia);
     return;
   }
 
@@ -1542,7 +1543,7 @@ function _httpsSummaryLabel() {
  * @param {string[]} [warnings] - Server warnings to restate here, since this screen
  *   replaces the body that reported them.
  */
-function _showRestartOverlay(redirectUrl, warnings) {
+function _showRestartOverlay(redirectUrl, warnings, via) {
   _clearOverlayError();
   // Every terminal screen owes the same three things, and this one was outside all
   // of them: claim the view (the ingress probe re-renders asynchronously and would
@@ -1552,7 +1553,17 @@ function _showRestartOverlay(redirectUrl, warnings) {
   wizard.view = 'restarting';
   const body = document.getElementById('setupBody');
   if (!body) return;
-  _renderRestartOverlay(redirectUrl, warnings, 'waiting');
+  _renderRestartOverlay(redirectUrl, warnings, 'waiting', via);
+  // Only probe when a response from that address would MEAN anything. Behind
+  // Caddy it does not: the proxy stays up across TangleClaw's restart and answers
+  // straight away — with a 502, which an opaque `no-cors` probe cannot tell from
+  // success. Probing there would paint "TangleClaw is back up" over a server that
+  // is still down, and send the operator into an error page. Not observing is the
+  // honest state, and this screen already has words for it.
+  if (via === 'proxy') {
+    _renderRestartOverlay(redirectUrl, warnings, 'behind-proxy', via);
+    return;
+  }
   _pollRestartReady(redirectUrl, warnings);
 }
 
@@ -1562,9 +1573,11 @@ function _showRestartOverlay(redirectUrl, warnings) {
  * Navigation is ALWAYS the button, never this function — see `_pollRestartReady`.
  * @param {string} redirectUrl - Where TangleClaw will be reachable.
  * @param {string[]} [warnings] - Server warnings to restate.
- * @param {'waiting'|'ready'|'unconfirmed'} state - What the probe has observed.
+ * @param {'waiting'|'ready'|'unconfirmed'|'behind-proxy'} state - What the probe
+ *   has observed, or `behind-proxy` where no probe can observe anything.
+ * @param {string} [via] - `'proxy'` when the address is fronted by Caddy.
  */
-function _renderRestartOverlay(redirectUrl, warnings, state) {
+function _renderRestartOverlay(redirectUrl, warnings, state, via) {
   const body = document.getElementById('setupBody');
   if (!body) return;
   const go = `<button class="btn btn-primary setup-btn" onclick="window.location.href='${esc(redirectUrl)}'">Open ${esc(redirectUrl)}</button>`;
@@ -1578,7 +1591,14 @@ function _renderRestartOverlay(redirectUrl, warnings, state) {
         <p class="setup-text-muted">This address will not work any more.</p>`,
     unconfirmed: `
         <p class="setup-text">The server was restarting, and this page has not seen it come back at <code>${esc(redirectUrl)}</code>.</p>
-        <p class="setup-text-muted">That may just mean this page cannot reach the new address — try opening it. If nothing loads, check <code>~/.tangleclaw/logs/</code>.</p>`
+        <p class="setup-text-muted">That may just mean this page cannot reach the new address — try opening it. If nothing loads, check <code>~/.tangleclaw/logs/</code>.</p>`,
+    // Deliberately claims nothing about readiness. Caddy answers at this address
+    // whether or not TangleClaw is back, so there is nothing this page could
+    // check that would mean anything — and saying "it is back up" on the strength
+    // of the proxy replying is a report of something never observed.
+    'behind-proxy': `
+        <p class="setup-text">TangleClaw is restarting behind your login at <code>${esc(redirectUrl)}</code>.</p>
+        <p class="setup-text-muted">Give it a moment, then open it. <strong>If it asks for your username and password, it is back.</strong> If you get an error page, it is still starting — wait and reload.</p>`
   }[state];
   // The heading names the operation and stays put across all three states; the
   // panel below carries what has been observed. A heading that changes underneath

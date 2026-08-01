@@ -26,6 +26,91 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
+
+<!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default -->
+
+**Why:** the post-setup redirect answered the wrong question. "What is this server serving" and
+"where should the operator go" have different answers behind Caddy, and the redirect computed the
+first. In caddy mode TC serves plain HTTP on the loopback — Caddy terminates TLS in front — so the
+expression named `http://<host>:3102`: TC's own door, unreachable from anywhere else and **ungated**.
+It would have sent an operator past the login their setup had just installed.
+
+**The spec said to reuse the wrong pair, and that was corrected before any code.** Chunk 3's
+paragraph read "`effectiveServerPort` and `effectiveServerProtocol` already exist for this — reuse,
+do not re-derive." Those helpers' own header says they predict what *TC's listener* serves, and the
+instruction predates chunk 2 making caddy the default install path; taken literally it produces the
+exact defect the chunk exists to fix. The build plan records the correction and keeps the
+direct-mode half, where the instruction was always right.
+
+**It also collapsed a duplicate that was already there.** `POST /api/setup/complete` answered "where
+do I go now" twice, with two inline expressions: `ingress.url` on the provisioning arm (correct) and
+`redirectUrl` on the HTTPS-restart arm (wrong in caddy mode). Both now come from
+`httpsSetup.effectiveOperatorOrigin`. The provisioning arm asks about `{ ...config, ingressMode:
+'caddy' }` — the state the cutover is moving to, since `ingressMode` on disk is still whatever it was
+while the child runs. Purity is what makes that askable.
+
+**The caddy-mode case was reachable.** `shouldRestart` requires only that the HTTPS config *changed*;
+it does not consider ingress mode. A caddy-mode install whose operator edits a certificate path in
+the wizard took that path and was sent to a port nothing answers on — the same shape as the pre-#654
+dead `:3101` that read to the operator as "HTTPS setup is broken".
+
+**The Skip path is exempt, and that is a finding rather than an omission.** The standing rule from
+chunk 2 is that completion-URL logic must exist on *both* finish paths. `PATCH /api/config
+{ setupComplete: true }` can only *refuse* on the provisioning question — it never spawns a cutover —
+so finishing through Skip never moves TangleClaw and the origin the operator is on stays correct.
+Recorded because the exemption is not visible from reading that route.
+
+**Tests sweep the producer rather than sampling it**, per the rule this repo already learned: every
+mode the derivation can be asked about — caddy at a default and a custom port, caddy ignoring both
+`TANGLECLAW_PORT` and the HTTPS flags, direct with certs, direct without, `TANGLECLAW_PORT` winning
+in direct mode, a not-yet-in-force config, a missing hostname, and the bare-origin shape — plus an
+endpoint regression for the reachable caddy-mode restart. Three mutations (dropping the caddy arm,
+restoring the old inline expression, asking the provisioning arm about the pre-cutover config) each
+go red.
+
+**The review caught the consumer this change broke, which is the same shape as everything else in
+this scope.** Changing what `redirectUrl` *means* left its reader believing the old meaning: the
+restart overlay probes that address and reports "TangleClaw is back up" on any reply. That was sound
+while the address was TC's own listener. Once it is Caddy's it is not — the proxy stays up across the
+restart and answers instantly, with a 502 that an opaque `no-cors` probe cannot distinguish from
+success — so the screen would assert readiness it never observed and click the operator into an error
+page. Newly reachable, too: the old caddy-mode value named a port nothing answered on, so the overlay
+correctly fell through to "unconfirmed". The fix keeps the pair together — `effectiveOperatorFrontDoor`
+returns `{ origin, via }` from ONE branch, because two derivations of "is this proxied" could disagree
+with the address they describe — and the wizard probes only where a reply means something.
+
+**Tests of mine that could not fail — four now, and the review found what the mutations missed.**
+`via` was added, threaded through, and asserted nowhere: flipping caddy's `via` to `'server'` left the
+suite green. Then the same again one layer out — nothing pinned that the ROUTE *emits* `redirectVia`,
+so deleting the field from the response object kept every test green while a caddy-mode operator
+would be told "TangleClaw is back up" on the strength of a 502. My mutation run had stopped at the
+module boundary and never crossed the wire. And two of the six new wizard assertions were inert: one
+matched a `return;` satisfied by the function's own opening `if (!body) return;` — the exact trap the
+sibling credential test documents in a comment — and one sliced its panel with `indexOf('`,')` on the
+LAST map entry, which has no trailing delimiter, so `-1 + 2` asserted against a single character.
+
+All four are the same shape: an assertion watching something *adjacent* to what changed. The
+mechanical correction is narrower than "write better tests" — **mutate at every seam the value
+crosses, not only where it is produced**, and scope a structural assertion to the branch it names
+rather than to a span that contains it.
+
+**Filed rather than fixed: #825.** `wizardComplete` checks `ingress.protection` before
+`result.restart` and both branches return, so an install that is simultaneously "no login TangleClaw
+can confirm" and "about to restart" never reaches the overlay and lands on a Continue button that
+fetches a dying server. Reachable on a hand-maintained Caddyfile whose operator edits a cert path.
+Chunk 3 made it more visible — before, the caddy-mode redirect named a dead port, so the overlay was
+useless even when it rendered. Not fixed here because the change edits the copy of a screen whose
+whole purpose is a security warning, under chunk 2's rule that no path claims protection it did not
+observe; that compound state wants deliberate wording and its own review.
+
+**A worktree trap worth knowing.** `.prawduct/` is almost entirely gitignored here, so a new
+worktree's governance state is set up by symlinking it back to the primary checkout — but
+`change-log.md` is the one **tracked** file in that directory. Blanket-symlinking the directory's
+contents replaced the branch's own copy with the primary checkout's, silently, and the primary is on
+a main-based branch that has none of the v5 entries. Caught when a heading that must exist did not.
+Symlink the untracked governance files only; `change-log.md` belongs to the branch.
+
 ## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
 
 <!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default | status=shipped -->

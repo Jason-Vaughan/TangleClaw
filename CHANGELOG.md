@@ -5,6 +5,34 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The
+  two questions "what is this server serving" and "where should the operator go" have different
+  answers behind Caddy, and the redirect was computing the first. In caddy mode TangleClaw serves
+  plain HTTP on the loopback — Caddy terminates TLS in front of it — so the old expression named
+  `http://<host>:3102`: TangleClaw's own door, reachable from nowhere else, and **ungated**. It would
+  have walked an operator straight past the login their setup had just installed.
+
+  The front door is now one derivation, `httpsSetup.effectiveOperatorOrigin`, asked by both places
+  that answer "where do I go now": the post-provisioning screen and the post-restart redirect. In
+  caddy mode it is Caddy's HTTPS port — every generated site listens there and the plain-HTTP site
+  redirects to it — and outside caddy mode it is the server's own scheme and port, which is what the
+  existing helpers were always right about. The host comes from the request, never from the
+  Caddyfile, whose freshly generated local site says `localhost` — not where a remote operator is
+  standing.
+
+  The caddy-mode case was reachable, not theoretical: the restart path fires whenever the HTTPS
+  config *changed*, regardless of ingress mode, so a caddy-mode install whose operator edits a
+  certificate path in the wizard took it and was sent to a port nothing answers on. That is the same
+  shape as the pre-#654 dead `:3101`, which read to the operator as "HTTPS setup is broken".
+
+  **And the restart screen no longer claims a server is back when a proxy answered for it.** That
+  screen probes the address and says "TangleClaw is back up" on a reply — which proved something
+  while the address was TangleClaw's own listener, and proves nothing once it is Caddy's: the proxy
+  stays up across the restart and answers immediately, with a 502 that an opaque probe cannot tell
+  from success. The response now says who answers at that address (`redirectVia`), the probe runs
+  only where a reply means something, and behind a proxy the screen names what the operator *can*
+  check — whether it asks for their password — instead of asserting readiness nobody observed.
+
 - **The admin login can be changed from settings (#710).** Global settings gains a **Login**
   section: username, new password, confirm. It appears only when the server says this install can
   use it — `GET /api/auth/credential` answers from the same predicate the change itself uses, so the
