@@ -493,7 +493,9 @@ All notable changes to TangleClaw are documented in this file.
   into "not applicable" is how a detector dies quietly while still reporting green — and the likeliest
   cause of an unreadable literal is upstream restructuring it, the exact event the check exists to
   catch. Six tests cover the reader directly, since the cross-check reads a fixed path under `$HOME`
-  and its failure branch is otherwise unreachable from a test; all six were watched red first.
+  and its failure branch is otherwise unreachable from a test; all six were watched red first. Their
+  fixtures nest under the suite's existing temp directory rather than taking a second `mkdtemp`,
+  which was leaking one directory per run.
 
 - **The test suite no longer restarts the developer's live Caddy (#710).** A credential change ends
   in `launchctl kickstart -k gui/<uid>/com.tangleclaw.caddy`, `execFileSync` resolves `launchctl`
