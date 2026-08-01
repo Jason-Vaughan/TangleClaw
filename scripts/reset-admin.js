@@ -222,7 +222,7 @@ async function main() {
     // locked out. It asks the SAME predicate the real run will, so it can never
     // describe a rebuild that would then be refused.
     const verdict = createGate
-      ? adminCredential.canCreateGate(original, targetUser)
+      ? adminCredential.canCreateGate(store.config.load(), original, targetUser)
       : { allowed: true, reason: null };
     if (!verdict.allowed) {
       process.stdout.write(`  would REFUSE: ${verdict.reason}\n\n`);

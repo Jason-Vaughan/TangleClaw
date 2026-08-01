@@ -13,6 +13,8 @@ const os = require('node:os');
 const store = require('../lib/store');
 const cred = require('../lib/admin-credential');
 
+const CADDY_CFG = Object.freeze({ ingressMode: 'caddy' });
+
 const HASH_OLD = '$2a$14$' + 'o'.repeat(53);
 const HASH_NEW = '$2b$12$' + 'n'.repeat(53);
 
@@ -821,6 +823,11 @@ describe('canCreateGate — the preview and the real run answer the same questio
     tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cangate-'));
     store._setBasePath(tmpBase);
     store.init();
+    // createGate reads config to confirm something is actually gating this
+    // file; without it the subject refuses as not-caddy-mode.
+    const cfg = store.config.load();
+    cfg.ingressMode = 'caddy';
+    store.config.save(cfg);
     certPath = path.join(tmpBase, 'cert.pem');
     keyPath = path.join(tmpBase, 'key.pem');
     caddyfilePath = path.join(tmpBase, 'Caddyfile');
@@ -846,7 +853,7 @@ describe('canCreateGate — the preview and the real run answer the same questio
     it(`agrees with createGate on ${label}`, () => {
       const content = build();
       fs.writeFileSync(caddyfilePath, content);
-      const predicted = cred.canCreateGate(content, user);
+      const predicted = cred.canCreateGate(CADDY_CFG, content, user);
       assert.equal(predicted.allowed, expected, `predicate said ${predicted.allowed}`);
 
       const actual = cred.createGate({
@@ -862,4 +869,122 @@ describe('canCreateGate — the preview and the real run answer the same questio
       }
     });
   }
+});
+
+describe('createGate refuses a file it cannot reproduce', () => {
+  // The Critic caught this, and it is the exact failure this surface exists to
+  // prevent: a rebuild that drops something, validates, restarts Caddy, and
+  // reports success. Rebuilding from an enumerated field list can only preserve
+  // what the list models; `buildCaddyfileContent` also takes `publicDomain`, and
+  // `scripts/ingress-cutover.js` passes it whether or not a gate is configured —
+  // so an ungated file with a public ACME site is squarely the population
+  // --create-gate serves. `tailnetHost` and `remoteHttpCatchAll` cannot appear
+  // (the generator throws for either without a gate); publicDomain has no such
+  // guard.
+  const caddy = require('../lib/caddy');
+  let tmpBase; let prevBase; let caddyfilePath; let certPath; let keyPath;
+
+  before(() => {
+    prevBase = store._getBasePath();
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-roundtrip-'));
+    store._setBasePath(tmpBase);
+    store.init();
+    // createGate reads config to confirm something is actually gating this
+    // file; without it the subject refuses as not-caddy-mode.
+    const cfg = store.config.load();
+    cfg.ingressMode = 'caddy';
+    store.config.save(cfg);
+    certPath = path.join(tmpBase, 'cert.pem');
+    keyPath = path.join(tmpBase, 'key.pem');
+    caddyfilePath = path.join(tmpBase, 'Caddyfile');
+  });
+
+  after(() => {
+    store._setBasePath(prevBase);
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  it('extracts cleanly from a publicDomain file — which is why a field list is not enough', () => {
+    // Pinning WHY the round-trip check is required rather than belt-and-braces:
+    // neither unanimity check notices the public block. It repeats the same
+    // upstream, and it carries no `tls` line at all (Caddy provisions ACME).
+    const withPublic = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, publicDomain: 'tc.example.com'
+    });
+    assert.ok(caddy.extractGeneratedCaddyfileOptions(withPublic),
+      'the extractor succeeds here — it cannot see a block it never modelled');
+    assert.match(withPublic, /tc\.example\.com/);
+  });
+
+  it('REFUSES rather than silently dropping a public-domain site', () => {
+    const withPublic = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, publicDomain: 'tc.example.com'
+    });
+    fs.writeFileSync(caddyfilePath, withPublic);
+
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => { throw new Error('Caddy must not be restarted'); },
+      validateFn: () => ({ ok: true })
+    });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'unrecognized-shape');
+    assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), withPublic, 'the file must be untouched');
+    assert.match(r.error, /public-domain site|cannot reproduce/,
+      'and it must say what it could not reproduce');
+  });
+
+  it('the preview refuses it too, for the same reason', () => {
+    const withPublic = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, publicDomain: 'tc.example.com'
+    });
+    const v = cred.canCreateGate(CADDY_CFG, withPublic, 'jason');
+    assert.equal(v.allowed, false);
+    assert.equal(v.code, 'unrecognized-shape');
+  });
+
+  it('still allows the plain ungated file, so the check is not just refusing everything', () => {
+    // A guard that refused every input would pass the three tests above.
+    const plain = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080
+    });
+    assert.equal(cred.canCreateGate(CADDY_CFG, plain, 'jason').allowed, true);
+  });
+});
+
+describe('createGate will not gate an install nothing is gating', () => {
+  // A Caddyfile left behind by a previous `--to direct` cutover is a file, not a
+  // live gate. Writing a credential into it and recording authEnabled: true would
+  // make config claim a protection no running process enforces — the same false
+  // report as the dropped public-domain block, arrived at from the other side.
+  // The HTTP sibling `canChangeCredential` already refuses this; creation must too.
+  const caddy = require('../lib/caddy');
+
+  it('refuses when ingressMode is not caddy, and says a leftover file is not a gate', () => {
+    const content = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem'
+    });
+    const r = cred.canCreateGate({ ingressMode: 'direct' }, content, 'jason');
+    assert.equal(r.allowed, false);
+    assert.equal(r.code, 'not-caddy-mode');
+    assert.match(r.reason, /not a live gate|ingress-cutover/);
+  });
+
+  it('refuses a missing config rather than treating it as permission', () => {
+    const content = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem'
+    });
+    assert.equal(cred.canCreateGate(null, content, 'jason').allowed, false);
+    assert.equal(cred.canCreateGate(undefined, content, 'jason').code, 'not-caddy-mode');
+  });
+
+  it('asks about the ingress BEFORE anything about the file', () => {
+    // Order matters for the same reason it does on the HTTP path: the other
+    // refusals describe the machine's Caddyfile, and there is no reason to
+    // report its shape when the answer is "nothing here is gating anything".
+    const gated = gatedCaddyfile('alice');
+    assert.equal(cred.canCreateGate({ ingressMode: 'direct' }, gated, 'jason').code,
+      'not-caddy-mode', 'not gate-exists');
+  });
 });

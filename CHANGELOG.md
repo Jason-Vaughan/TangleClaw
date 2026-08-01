@@ -74,7 +74,13 @@ All notable changes to TangleClaw are documented in this file.
   why the password check happens before anything reaches TangleClaw, how to verify from a second
   device that the gate is actually in force rather than trusting the dashboard, and what to do when
   locked out — including that the reload restarts Caddy and will drop the connection you are reading
-  it through, so run it under `tmux`.
+  it through, and how to get a shell that survives that (a second window in the session you are
+  already in, per the Security entry above — not a fresh `tmux new -s`).
+
+  It also names the three paths that are **exempt** from the gate — `/api/health`,
+  `/openclaw-direct/*`, `/manifest.json` — because "check a second URL to confirm the gate is on" is
+  useless advice if the reader picks `/api/health`, which is the obvious choice and answers without
+  a password by design.
 
 ### Changed
 - **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The

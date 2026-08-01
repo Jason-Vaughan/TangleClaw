@@ -90,7 +90,13 @@ the one TangleClaw runs on:
    anything. If you see the dashboard with no prompt, the gate is not in force —
    stop and fix that before going further.
 2. **Check a URL that is not the dashboard**, for example `/api/config`. It should
-   also ask for the password. The gate covers everything, not just the front page.
+   also ask for the password — the gate is not just on the front page.
+
+   Pick that URL deliberately. Three paths are **exempt by design** and will answer
+   without a password: `/api/health` (so an uptime monitor can check liveness without
+   a credential), `/openclaw-direct/*` (the OpenClaw gateway does its own token
+   authentication) and `/manifest.json` (browsers fetch PWA manifests anonymously).
+   Testing one of those and seeing a reply proves nothing about your gate.
 
 If you have a Tailscale or WireGuard tunnel, use the tunnel address for both checks —
 that is the perimeter you actually rely on.
@@ -131,9 +137,14 @@ Three things worth knowing before you run it — all of them learned by actually
   may be running an AI session rather than a shell, in which case open a second window with
   `Ctrl-b` then `c` and work there. Running `tmux new -s <name>` from inside it does not help — that
   nests one session in another, and fails outright if the name is already taken.
-- **It takes a backup first.** If the new configuration is invalid for any reason,
-  the original is put back and your existing password keeps working. It will not
-  leave you worse off than when you started.
+- **It takes a backup first, and tells you the truth about what happened.** In the
+  ordinary failure — the new configuration does not validate — the original is put
+  back and your existing password keeps working. Two rarer failures cannot promise
+  that, and the tool says so plainly rather than reassuring you: if the disk fails
+  midway it may report that the gate could not be written *or* restored (fix that by
+  hand from the backup path it prints, before restarting Caddy), or that the new
+  password is in force and could not be rolled back. Read the last thing it prints;
+  it distinguishes these deliberately, because they send you to different places.
 
 To see what it would do without changing anything:
 
