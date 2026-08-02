@@ -185,3 +185,22 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 
 - **TBD** — touched in this session: `docs/adr/0011-prawduct-boundary.md`. <!-- describe -->
 - **TBD** — touched in this session: `test/engine-hooks-merge.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-02)
+
+- **TBD** — touched in this session: `deploy/VRF-auth-1-cutover.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0004-auth-2-basic-auth-gate.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0007-project-map-freshness.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/adr/0012-enforcement-adds-no-install-step.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/session-ownership.js`. <!-- describe -->
+- **TBD** — touched in this session: `scripts/reset-admin.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/caddy.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/openclaw-cache.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/openclaw-detect.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/orchestration.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-ownership.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ssh-target-safety.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-doclocks.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-groups.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-shareddocs.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/version-bump-package-json.test.js`. <!-- describe -->
