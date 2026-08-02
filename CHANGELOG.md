@@ -73,9 +73,18 @@ All notable changes to TangleClaw are documented in this file.
   the configured port rather than a hardcoded `8443`. Both were confirmed to go red against the
   two real regressions: deleting the block fails both, hardcoding `8443` fails the port guard.
   **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`, including a
-  verified `caddy adapt` one-liner for checking whether a *live* listener actually carries the pin
-  and the safe manual remediation when it does not — the fix does not retrofit a Caddyfile already
-  on disk, and re-running the cutover is refused on a hand-edited file (tracked as #848).
+  verified `caddy adapt` one-liner for checking whether a *live* listener actually carries the pin,
+  because the fix does not retrofit a Caddyfile already on disk (programmatic detection is #848).
+
+  The remediation **branches on whether the live file is still generator-pristine**, and getting
+  that wrong is costly in the safe-looking direction. For a pristine file the cutover does *not*
+  refuse — `caddyfileIsHandEdited` is the negation of the sha256 body-stamp check — so re-running it
+  is both correct and lossless, there being no hand edits to lose. Telling that operator to hand-add
+  the block instead would invalidate the stamp and leave every future cutover refusing their file or
+  needing the lossy `--force`: a one-way door out of a healthy install. So the doc has them run
+  `--dry-run` first and read the refusal line, with the manual steps scoped to hand-edited files
+  only. Verified both directions against the real generator: a freshly generated file reports
+  `isGeneratedCaddyfile: true`, and a single added comment flips it to `false`.
   `docs/adr/0003-ingress-model.md` gains the consequence (caddy mode gives up h2/h3 entirely) and
   records `protocols h1 h2` as considered and rejected — the observed failures occur under h2 as
   well as h3, so keeping h2 would not prevent the incident.

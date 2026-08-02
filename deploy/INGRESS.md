@@ -115,9 +115,30 @@ drop at 1006. If instead you get a Python traceback, `caddy adapt` itself failed
 read its error above the traceback (usually `caddy` not in PATH, or no Caddyfile
 at that path); the check never ran.
 
-**To fix, hand-add the block to the live file,** then restart Caddy. Caddyfile
-syntax requires the opening brace at end-of-line, so it must be three lines — a
-one-line `servers :8443 { protocols h1 }` is a parse error:
+**Which fix you want depends on whether your Caddyfile is still generator-pristine.**
+Find out first — the answer decides the whole procedure:
+
+```bash
+node scripts/ingress-cutover.js --to caddy --dry-run
+```
+
+- **No "would REFUSE" line → your file is pristine.** Re-run the cutover without
+  `--dry-run`. It regenerates from the generator, which now emits the pin, and it
+  is **lossless**: a pristine file carries no hand edits to lose, by definition.
+  Stop here — do **not** hand-edit. A generated Caddyfile carries a sha256 of its
+  own body in the header, and any hand edit invalidates that stamp, after which
+  every future cutover either refuses your file or needs the lossy `--force`.
+  Hand-editing a healthy install is a one-way door.
+
+- **"would REFUSE: … is hand-edited" → use the manual steps below.** The cutover
+  will not overwrite your edits, and forcing past it with `--force` writes a
+  timestamped backup but still replaces the file, discarding every other hand edit
+  it carries (see the parity caveat below).
+
+**Manual fix — hand-edited files only.** Add the block to the live file, then
+restart Caddy. Caddyfile syntax requires the opening brace at end-of-line, so it
+must be three lines — a one-line `servers :8443 { protocols h1 }` is a parse
+error:
 
 ```
 {
@@ -135,11 +156,10 @@ options block (the other directives above are shown for placement, not to be
 retyped). **Match the port to your own `https_port`** — if that line says
 something other than `8443`, the `servers :` line must say the same thing.
 
-**Do not "fix" it by re-running the cutover.** If the live file is hand-edited
-(most are), the cutover refuses it; forcing past that with `--force` writes a
-timestamped backup but still replaces the file, discarding every other hand edit
-it carries. Regenerating is only safe once the generator reproduces the live file
-in full — see the parity caveat below.
+**Do not reach for `--force` to get past the refusal on a hand-edited file.** It
+writes a timestamped backup but still replaces the file, discarding every other
+hand edit it carries. For a hand-edited Caddyfile, regenerating is only safe once
+the generator reproduces the live file in full — see the parity caveat below.
 
 > **Parity is not yet complete.** The generator still cannot emit the access-log
 > block the live tailnet site carries, so a cutover today silently ends Caddy
