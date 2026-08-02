@@ -4,6 +4,29 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **`.gitignore` now refuses secret-bearing files by default.** This repo is public and the product
+  handles TLS private keys, a `basic_auth` credential, and API keys, so one careless `git add -A` is
+  an unrecoverable disclosure rather than a revert. Added prevention rules for environment files
+  (`.env`, `.env.*` — with `.env.example`/`.env.sample` deliberately still allowed so a contributor
+  can see which variables exist), private keys and certificates anywhere in the tree (`*.pem`,
+  `*.key`, `*.crt`, `*.p12`, `*.pfx` — `data/certs/` was already covered, these catch the same
+  material written elsewhere), self-describing secrets (`secrets.json`, `secrets.*.json`, `*.secret`,
+  `*.secrets`), and logs (`*.log`, `logs/`). Logs are a security rule here, not tidiness: the
+  ingress-cutover log is known to be able to capture a `basic_auth` credential hash (#821). Also
+  reconciled the prawduct session-file contract (`.prawduct/.handoff-notes.md`).
+
+  Verified that each rule matches (`git check-ignore`), that `.env.example` is still committable, and
+  that **no currently-tracked file is shadowed** (`git ls-files -i -c --exclude-standard` is empty) —
+  a new ignore rule that silently covers a tracked file is the usual way this change goes wrong.
+
+  **Scope, stated plainly:** `.gitignore` prevents *future* commits. It does not untrack anything and
+  it does not touch history — so this closes the intake path, it does not scrub what is already
+  committed. An audit of the 375 tracked files found no credentials, tokens, personal email
+  addresses, or non-loopback IPs; the four bcrypt-shaped strings are synthetic test fixtures. What it
+  did find is separately tracked: absolute home paths and a private tailnet endpoint in files that
+  are *deliberately* tracked, which no ignore rule can address.
+
 ### Internal
 - **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a
   ratified Direction keeps hard.** `.prawduct/artifacts/wrap-direction.md` (`last_ratified:
