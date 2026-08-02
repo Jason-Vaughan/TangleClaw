@@ -12,7 +12,7 @@ PIDX seeds `PROJECT-MAP.md` on toggle-on (slice 1) and records shared-doc group 
 
 **Amended:** the membership section no longer records *which* groups — only how many, plus a pointer. `PROJECT-MAP.md` is committed and often public, while membership is per-install configuration, so publishing group names leaked the operator's other projects. The step still reads the live store (below); only the identifying detail is withheld.
 
-The hard constraint: the file is **co-owned**. The directory skeleton and the shared-dir snapshot are machine-maintained, but the per-directory *descriptions* are curated by hand (that's the whole value — "what each area is for"), and an operator may add their own sections. A refresh that regenerates the file wholesale (the obvious implementation, reusing slice 1's `_buildProjectMapContent`) would erase every curated description and every operator section on the first wrap. That makes the feature actively hostile to the curation it's supposed to accumulate.
+The hard constraint: the file is **co-owned**. The directory skeleton and the shared-dir section are machine-maintained, but the per-directory *descriptions* are curated by hand (that's the whole value — "what each area is for"), and an operator may add their own sections. A refresh that regenerates the file wholesale (the obvious implementation, reusing slice 1's `_buildProjectMapContent`) would erase every curated description and every operator section on the first wrap. That makes the feature actively hostile to the curation it's supposed to accumulate.
 
 ## Decision
 
