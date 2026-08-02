@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 
 const { SAFE_HOST, SAFE_USER, SAFE_KEYPATH, unsafeReason } = require('../lib/ssh-target-safety');
 
-const GOOD = { host: '192.168.20.10', sshUser: 'habitat-admin', sshKeyPath: '~/.ssh/genesis_habitat' };
+const GOOD = { host: '192.0.2.10', sshUser: 'deploy-user', sshKeyPath: '~/.ssh/openclaw_key' };
 
 describe('ssh-target-safety (#314)', () => {
   describe('unsafeReason', () => {
@@ -44,7 +44,7 @@ describe('ssh-target-safety (#314)', () => {
       for (const bad of ['a;b', 'a b', 'a|b', 'a$(x)', 'a`x`', '']) assert.ok(!SAFE_HOST.test(bad), bad);
     });
     it('SAFE_USER allows usernames, rejects metacharacters', () => {
-      for (const ok of ['admin', 'habitat-admin', 'a.b_c']) assert.ok(SAFE_USER.test(ok), ok);
+      for (const ok of ['admin', 'deploy-user', 'a.b_c']) assert.ok(SAFE_USER.test(ok), ok);
       for (const bad of ['a$(x)', 'a b', 'a;b', '']) assert.ok(!SAFE_USER.test(bad), bad);
     });
     it('SAFE_KEYPATH allows ~ + path bodies, rejects metacharacters', () => {

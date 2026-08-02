@@ -76,3 +76,46 @@ __pycache__/
 .prawduct/.governance-ledger.jsonl
 .prawduct/.session-base-tree
 .prawduct/.work-model-index.json
+
+# Prawduct session files
+.prawduct/.handoff-notes.md
+
+# ---------------------------------------------------------------------------
+# Secrets, credentials, and machine-local state.
+#
+# This repo is PUBLIC, and it is a product that handles TLS material, a
+# basic_auth credential, and API keys — so the cost of one careless `git add -A`
+# is an unrecoverable disclosure, not a revert. These are prevention rules: they
+# stop a secret-bearing file from ever becoming tracked. They do NOT untrack or
+# scrub anything already committed (`.gitignore` never has).
+#
+# `data/certs/` is already covered above; these catch the same material written
+# anywhere else in the tree.
+# ---------------------------------------------------------------------------
+
+# Environment files — the standard home for tokens and API keys.
+# `.env.example` is deliberately allowed: a committed template with placeholder
+# values is how a contributor learns which variables exist.
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Private keys, certificates, and keystores, wherever they land.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Anything self-describing as a secret.
+secrets.json
+secrets.*.json
+*.secret
+*.secrets
+
+# Logs. Not merely noise: TangleClaw's own ingress-cutover log is known to be
+# able to capture a basic_auth credential hash (#821), so an uncommitted-by-
+# default posture for logs is a security property here, not tidiness.
+*.log
+logs/

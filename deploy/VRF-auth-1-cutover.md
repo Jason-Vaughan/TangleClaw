@@ -1,8 +1,8 @@
-# VRF-auth-1-cutover — clean-room smoke test (elkaholic)
+# VRF-auth-1-cutover — clean-room smoke test (run on a spare machine)
 
 Verifies the **#397 production-durability fixes** to the AUTH-1 Caddy ingress cutover
 (`scripts/ingress-cutover.js`, `lib/caddy.js`, `deploy/com.tangleclaw.ttyd.plist`) on a
-**fresh, throwaway TangleClaw install** — so nothing touches the live cursatory system, its
+**fresh, throwaway TangleClaw install** — so nothing touches the live production system, its
 projects, tags, DB, or hand-edited Caddyfile.
 
 **Why a separate machine:** TC's home dir (`~/.tangleclaw/`), SQLite DB, Caddyfile, and
@@ -35,7 +35,7 @@ configured.
 ## Phase 0 — Confirm clean room + prereqs
 
 ```sh
-# 0.1  Confirm elkaholic has NO existing TangleClaw state (must be absent/empty for a clean test)
+# 0.1  Confirm the clean-room machine has NO existing TangleClaw state (must be absent/empty for a clean test)
 ls -la ~/.tangleclaw 2>/dev/null && echo "⚠ EXISTING STATE — stop, this is not a clean room" || echo "✓ clean"
 launchctl list | grep tangleclaw && echo "⚠ existing TC services — stop" || echo "✓ no TC services"
 
@@ -46,8 +46,8 @@ launchctl list | grep tangleclaw && echo "⚠ existing TC services — stop" || 
 # connection. (If you happen to already have some of these, install.sh skips them.)
 ```
 
-If 0.1 shows existing state and you DON'T care about it (elkaholic has no real TC use),
-you can reset with `Phase 9` first. If elkaholic *does* run a real TC, this test is not
+If 0.1 shows existing state and you DON'T care about it (the clean-room machine has no real TC use),
+you can reset with `Phase 9` first. If the clean-room machine *does* run a real TC, this test is not
 safe there either — use a VM instead.
 
 ---
@@ -66,7 +66,7 @@ git log --oneline -3      # top 3 are the #397 fix commits (production-durable c
 ```
 
 Cloning under `~/Documents/Projects` is deliberate: it puts the repo (and any cert we
-place beside it) inside a **TCC-protected** tree, reproducing the cursatory condition that
+place beside it) inside a **TCC-protected** tree, reproducing the production condition that
 broke bug #1.
 
 ---
@@ -104,7 +104,7 @@ curl -so /dev/null -w "%{http_code}\n" http://localhost:3102   # 200
 
 ## Phase 3 — Start-up wizard (incl. HTTPS cert-gen)  ← wizard test
 
-Open **http://localhost:3102** in a browser on elkaholic (**http**, not https — the
+Open **http://localhost:3102** in a browser on the clean-room machine (**http**, not https — the
 server is HTTP-only until the wizard's cert step runs). The first-run Setup Wizard should
 appear automatically (it fires only when `~/.tangleclaw/config.json` has no prior setup).
 
@@ -157,7 +157,7 @@ mkdir -p tcc-cert
 mkcert -cert-file tcc-cert/cert.pem -key-file tcc-cert/key.pem localhost 127.0.0.1
 ABS=$(pwd)
 
-# 5.2  Point TC config at the TCC-resident cert (mimics cursatory's broken setup)
+# 5.2  Point TC config at the TCC-resident cert (mimics the broken production setup)
 node -e '
   const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/config.json";
   const c=JSON.parse(fs.readFileSync(p,"utf8"));
@@ -272,14 +272,14 @@ lsof -nP -iTCP:8443 -sTCP:LISTEN || echo "✓ nothing on 8443 (caddy stopped)"
 
 ---
 
-## Phase 9 — Teardown (optional, leaves elkaholic clean)
+## Phase 9 — Teardown (optional, leaves the clean-room machine clean)
 
 ```sh
 launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist 2>/dev/null
 rm -f ~/Library/LaunchAgents/com.tangleclaw.*.plist
 rm -rf ~/.tangleclaw
 # optionally: rm -rf ~/Documents/Projects/TangleClaw
-mkcert -uninstall    # only if you don't want the test CA trusted on elkaholic
+mkcert -uninstall    # only if you don't want the test CA trusted on the clean-room machine
 ```
 
 ---

@@ -282,11 +282,11 @@ describe('caddy', () => {
     });
 
     // #434 — tailnet HTTPS site + http→https redirect (codifies the 2026-07-04 hand-edit).
-    const TAILNET = 'cursatory.tail123678.ts.net';
+    const TAILNET = 'your-host.tailnet-name.ts.net';
 
     it('emits a gated tailnet HTTPS site reusing the mkcert cert when tailnetHost + auth are set', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET });
-      assert.match(out, /^cursatory\.tail123678\.ts\.net \{$/m);
+      assert.match(out, /^your-host\.tailnet-name\.ts\.net \{$/m);
       const siteBlock = out.slice(out.indexOf(`${TAILNET} {`));
       assert.match(siteBlock, /\ttls \/c\/cert\.pem \/c\/key\.pem/);
       assert.ok(siteBlock.includes(BYPASS_MATCHER));
@@ -295,8 +295,8 @@ describe('caddy', () => {
 
     it('emits an http→https redirect block for the tailnet host, pointing at the https port', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, httpsPort: 9443 });
-      assert.match(out, /^http:\/\/cursatory\.tail123678\.ts\.net \{$/m);
-      assert.match(out, /\tredir https:\/\/cursatory\.tail123678\.ts\.net:9443\{uri\}/);
+      assert.match(out, /^http:\/\/your-host\.tailnet-name\.ts\.net \{$/m);
+      assert.match(out, /\tredir https:\/\/your-host\.tailnet-name\.ts\.net:9443\{uri\}/);
     });
 
     it('adds auto_https disable_redirects when tailnetHost is set (so the explicit redirect governs)', () => {
@@ -574,7 +574,7 @@ describe('caddy', () => {
     const NEW = '$2b$12$' + 'n'.repeat(53);
     const certOpts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
 
-    /** A realistic hand-edited (NOT generated) Caddyfile mirroring the live cursatory file. */
+    /** A realistic hand-edited (NOT generated) Caddyfile mirroring a real hand-edited deployment. */
     function handEdited(user, hash) {
       return [
         '# Manually edited 2026-06-23 — basic_auth + Tailscale remote',

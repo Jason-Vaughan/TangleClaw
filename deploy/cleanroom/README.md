@@ -7,7 +7,7 @@ before declaring any install-affecting campaign done.
 
 ## Where it runs
 
-On the `habitat` Docker host, driven over SSH from the dev machine. The
+On a remote Docker host (set `TC_CLEANROOM_HOST`), driven over SSH from the dev machine. The
 container uses the pre-baked `tc-cleanroom-base` image (tmux, git, ttyd, node —
 TangleClaw's runtime deps) on an `internal: true` network: zero egress, no
 published ports, no reach to the host or the production stacks that share the
@@ -24,7 +24,7 @@ pulls.
 ```bash
 ./deploy/cleanroom/provision.sh     # bundle HEAD, ship, compose up, clone inside
 # drive the walkthrough:
-ssh habitat 'export PATH="/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"; \
+ssh "$TC_CLEANROOM_HOST" 'export PATH="/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"; \
   docker exec -w /root/TangleClaw tc-cleanroom-tc <cmd>'
 ./deploy/cleanroom/provision.sh --down   # teardown (image + staging dir remain)
 ```

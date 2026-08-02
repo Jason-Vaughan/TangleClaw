@@ -461,7 +461,7 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // RST (not FIN) on macOS, so any bytes still in the kernel TX buffer
   // are dropped without delivery. On localhost the handover is
   // sub-millisecond; on a Cloudflare tunnel to a remote browser
-  // (per the `reference_remote_setup` access path: elkaholic → cursatory)
+  // (the common setup: operator on a second machine, TangleClaw on the host)
   // RTT can be 50-150ms, so the 202 response needs a margin past the
   // pure kernel-flush time. 300ms covers typical tunnel RTT plus
   // queue/processing slack without being noticeably slow to the
@@ -3469,7 +3469,7 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
 
   // List pending devices via the gateway's WebSocket CLI.
   // Filter by published gateway port so we pick the right container on multi-tenant
-  // hosts (e.g. habitat runs RentalClaw, UCI services, and TiLT Claw side-by-side).
+  // hosts (a single Docker host often runs several unrelated stacks side-by-side).
   // Falls back to head -1 as a safety net if multiple containers somehow publish the
   // same port (shouldn't happen given PortHub registration).
   let pending;

@@ -99,7 +99,7 @@ but is inert until a caddy cutover passes the credential through. Single admin, 
 - **Authelia forward-auth (the original AUTH-2 plan).** Rejected: (1) no macOS binary — it assumes
   Docker/Linux, violating the zero-toolchain constraint; (2) it refuses to set a session cookie for
   `localhost` / `.local` / bare-IP hosts even inside Docker, which is exactly the host set TC runs on
-  (`localhost:8443`, `cursatory.local`, Tailscale IPs). It cannot gate this deployment at all.
+  (`localhost:8443`, the machine's `.local` name, Tailscale IPs). It cannot gate this deployment at all.
 - **caddy-security (greenpau) portal — "Path B".** Deferred, not rejected: it *does* work on
   localhost (omit the cookie domain) and would give a real login portal, multi-user, and MFA. But it
   is a **compile-time** Caddy plugin: it turns the ingress binary into a custom `xcaddy build`

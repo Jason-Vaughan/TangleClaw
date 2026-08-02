@@ -1374,7 +1374,7 @@ against the bundled JSON. `schemaRevision` 5→6, plus two guards that close the
 class: a step-order fingerprint keyed by revision (reorder without a bump now
 FAILS, verified by reverting), and a propagation test driving a stale live
 template through the real `_mergeBundledTemplate`. Full suite green. Plan:
-`/Users/jasonvaughan/Documents/Projects/TangleClaw/.prawduct/artifacts/wrap-v2-build-plan.md`.
+`~/Documents/Projects/TangleClaw/.prawduct/artifacts/wrap-v2-build-plan.md`.
 
 ## 2026-07-19: Chunk 04a — version-bump fails closed instead of bumping the wrong thing (#540, #571)
 

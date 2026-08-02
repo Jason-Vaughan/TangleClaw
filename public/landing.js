@@ -1504,8 +1504,8 @@ function checkPortImports() {
   // Identity is case-insensitive (#221) — TC's storage layer preserves
   // the operator's chosen capitalization for display, but two names
   // that differ only in case refer to the SAME project. Normalize both
-  // sides before comparison so a lease registered as "monad-1" against
-  // a TC project named "Monad-1" doesn't falsely advertise an import.
+  // sides before comparison so a lease registered as "web-api" against
+  // a TC project named "Web-API" doesn't falsely advertise an import.
   const registeredNames = new Set(state.projects.map(p => _canonicalProjectName(p.name)));
   const ignored = new Set([...getIgnoredLeaseProjects()].map(_canonicalProjectName));
 

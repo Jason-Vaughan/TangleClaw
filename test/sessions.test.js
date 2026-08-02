@@ -338,7 +338,7 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
 
-      const group = store.projectGroups.create({ name: 'habitat infra', description: 'shared habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra', description: 'shared infra' });
       store.projectGroups.addMember(group.id, project.id);
       store.sharedDocs.create({
         groupId: group.id,
