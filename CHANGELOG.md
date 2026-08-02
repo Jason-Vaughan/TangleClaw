@@ -47,11 +47,13 @@ All notable changes to TangleClaw are documented in this file.
   still not lossless**, and the perimeter-shaped v5 criteria should not be measured against a
   post-cutover config until #846 is resolved or explicitly accepted.
 
-  This also unblocks measurement: the perimeter-shaped v5 acceptance criteria were being checked
-  against a deployment the product could not reproduce, so neither a pass nor a fail was
-  trustworthy. With the generator caught up, all three `NOTE (manual, …)` edits in the live file
-  are now reproducible — the other two (2026-06-23 `basic_auth` + catch-all, 2026-07-09
-  `X-Auth-User`) were already emitted.
+  **This removes one obstacle to measurement but does not clear it.** The perimeter-shaped v5
+  acceptance criteria were being checked against a deployment the product could not reproduce, so
+  neither a pass nor a fail was trustworthy. All three annotated `NOTE (manual, …)` edits are now
+  reproducible — the other two (2026-06-23 `basic_auth` + catch-all, 2026-07-09 `X-Auth-User`) were
+  already emitted — but the un-annotated access-log edit above is not, so the config still is not
+  fully reproducible. **The instruction for a future measurement session is the one stated above:
+  do not measure the perimeter criteria against a post-cutover config until #846 closes.**
 
 ### Internal
 - **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a

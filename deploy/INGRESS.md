@@ -97,15 +97,43 @@ is still unpinned. Check it:
 
 ```bash
 # does the live HTTPS listener actually carry the pin?
-caddy adapt --config ~/.tangleclaw/Caddyfile 2>/dev/null \
+# stderr is left ON: if this fails, the reason matters more than the output
+caddy adapt --config ~/.tangleclaw/Caddyfile \
   | python3 -c 'import json,sys; s=json.load(sys.stdin)["apps"]["http"]["servers"]; [print(k, v.get("listen"), v.get("protocols")) for k,v in s.items()]'
 ```
 
-The HTTPS listener (`:8443`) should print `["h1"]`. If it prints `None`, it is
-unpinned and Chrome terminals will drop at 1006.
+Expected on a pinned install — the HTTPS listener reports `['h1']`, and the
+plain-HTTP listener reporting `None` is correct, not a second problem:
 
-**To fix, hand-add the block to the live file** — add `servers :8443 { protocols h1 }`
-inside the top-level `{ … }` global options block, then restart Caddy.
+```
+srv0 [':8080'] None
+srv1 [':8443'] ['h1']
+```
+
+If the HTTPS listener prints `None`, it is unpinned and Chrome terminals will
+drop at 1006. If instead you get a Python traceback, `caddy adapt` itself failed —
+read its error above the traceback (usually `caddy` not in PATH, or no Caddyfile
+at that path); the check never ran.
+
+**To fix, hand-add the block to the live file,** then restart Caddy. Caddyfile
+syntax requires the opening brace at end-of-line, so it must be three lines — a
+one-line `servers :8443 { protocols h1 }` is a parse error:
+
+```
+{
+	https_port 8443
+	http_port 8080
+	admin off
+	servers :8443 {
+		protocols h1
+	}
+}
+```
+
+Add only the `servers` block, inside the existing top-level `{ … }` global
+options block (the other directives above are shown for placement, not to be
+retyped). **Match the port to your own `https_port`** — if that line says
+something other than `8443`, the `servers :` line must say the same thing.
 
 **Do not "fix" it by re-running the cutover.** If the live file is hand-edited
 (most are), the cutover refuses it; forcing past that with `--force` writes a
