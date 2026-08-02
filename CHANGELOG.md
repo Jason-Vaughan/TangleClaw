@@ -22,13 +22,18 @@ All notable changes to TangleClaw are documented in this file.
   step as doing — only the identifying detail is withheld, so the ADR stays accurate and
   `_collectProjectGroups` stays live rather than being deleted as incidentally-dead.
 
-  **Contract revision, declared:** four tests that asserted membership *was* rendered were rewritten
-  to assert it is *not* — they now enumerate the specific strings that must not appear (group name,
-  shared dir, doc name, `$HOME`) rather than merely checking the new text. Strengthened, not relaxed.
-  Verified against this install's real store: 4 groups with real names in, a bare count out.
+  **Contract revision, declared:** six assertions pinned the old "membership is rendered" contract.
+  Three were **rewritten** to assert the opposite — enumerating the specific strings that must not
+  appear (group name, shared dir, doc name, `$HOME`) rather than merely matching the new text — and
+  three were **deleted**, because the branches they covered (per-group `sharedDir` formatting, the
+  "no docs registered" fallback) no longer exist. `tildeHomePath` keeps direct unit coverage in
+  `test/project-map.test.js` plus an end-to-end `~/` assertion in `test/engines.test.js`, so nothing
+  lost its guard in the deletion. Verified against this install's real store: 4 groups with real
+  names in, a bare count out.
 
-  Managed projects that want the membership visible locally still have it in the TangleClaw UI; the
-  open question of whether a local supplement file should carry it is #849.
+  Managed projects that want the membership still have it in the TangleClaw UI. Whether a *gitignored
+  local supplement* should carry it is a possible follow-up, deliberately not built here — no
+  evidence yet that anyone needs the map to restate what the UI already shows.
 
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
