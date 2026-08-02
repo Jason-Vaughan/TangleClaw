@@ -12,6 +12,7 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const projects = require('../lib/projects');
+const projectPaths = require('../lib/project-paths');
 
 describe('project-map (PIDX #360, #356, slice 1)', () => {
   let tmpDir;
@@ -177,67 +178,66 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
 
   // ── Slice 2 (#356): shared-dir / doc-group membership ──
 
+  // CONTRACT REVISION (deliberate, not a relaxation): this section used to render
+  // each group's name, shared directory, and doc names. PROJECT-MAP.md is a
+  // tracked file that managed projects push to public remotes, and the wrap step
+  // re-renders this section on every wrap — so publishing membership wrote the
+  // operator's other project names into a public repo and restored them after any
+  // hand-scrub. The contract is now: a count and a pointer, never an identifier.
   describe('_buildSharedDirsSection', () => {
+    const IDENTIFYING = [
+      { name: 'AI Inference', sharedDir: '/abs/Web-API', docs: [{ name: 'LITELLM' }, { name: 'DESIGN' }] },
+      { name: 'Tangle-Shared', sharedDir: path.join(os.homedir(), 'Documents/Projects/Shared'), docs: [] }
+    ];
+
     it('renders a "not a member" note for no groups', () => {
       assert.match(projects._buildSharedDirsSection([]), /not a member of any shared-doc group/);
       assert.match(projects._buildSharedDirsSection(undefined), /not a member/);
     });
 
-    it('renders a sharedDir outside $HOME verbatim, with nested registered docs', () => {
-      const md = projects._buildSharedDirsSection([
-        { name: 'AI Inference', sharedDir: '/abs/Web-API', docs: [{ name: 'LITELLM' }, { name: 'TANGLEBRAIN' }] }
-      ]);
-      assert.ok(md.includes('- **AI Inference** → `/abs/Web-API`'));
-      assert.ok(md.includes('  - `LITELLM`'));
-      assert.ok(md.includes('  - `TANGLEBRAIN`'));
+    it('publishes NO group name, doc name, or path — only a count and a pointer', () => {
+      const md = projects._buildSharedDirsSection(IDENTIFYING);
+      for (const leak of ['AI Inference', 'Tangle-Shared', 'LITELLM', 'DESIGN', '/abs/Web-API']) {
+        assert.ok(!md.includes(leak), `section must not publish "${leak}": ${md}`);
+      }
+      assert.ok(!md.includes(os.homedir()), 'must not publish the home path');
+      assert.ok(!md.includes('~/'), 'must not publish a path at all, tilde-relative or otherwise');
+      assert.match(md, /2 shared-doc groups/);
+      assert.match(md, /machine-local/);
     });
 
-    // PROJECT-MAP.md is committed and often pushed to a public remote, and this
-    // section is machine-refreshed on every wrap — so an absolute shared dir
-    // would republish the operator's OS username after any manual scrub.
-    it('renders a sharedDir under $HOME as ~-relative, never leaking the username', () => {
-      const home = os.homedir();
-      const md = projects._buildSharedDirsSection([
-        { name: 'Tangle-Shared', sharedDir: path.join(home, 'Documents/Projects/Shared/Tangle-Shared'), docs: [] }
-      ]);
-      assert.ok(md.includes('- **Tangle-Shared** → `~/Documents/Projects/Shared/Tangle-Shared`'));
-      assert.ok(!md.includes(home), 'rendered section must not contain the absolute home path');
-    });
-
-    it('notes a group with no sharedDir and a group with no docs', () => {
-      const md = projects._buildSharedDirsSection([
-        { name: 'NoDir', sharedDir: null, docs: [] }
-      ]);
-      assert.ok(md.includes('- **NoDir** → _(no shared directory)_'));
-      assert.ok(md.includes('  - _(no docs registered)_'));
+    it('singularizes the count for one group', () => {
+      const md = projects._buildSharedDirsSection([IDENTIFYING[0]]);
+      assert.match(md, /1 shared-doc group\./);
+      assert.ok(!md.includes('AI Inference'));
     });
   });
 
-  describe('_tildeHomePath', () => {
+  describe('tildeHomePath (lib/project-paths)', () => {
     const home = os.homedir();
 
     it('collapses a $HOME-prefixed path to ~', () => {
-      assert.equal(projects._tildeHomePath(path.join(home, 'Documents/x')), '~/Documents/x');
-      assert.equal(projects._tildeHomePath(home), '~');
+      assert.equal(projectPaths.tildeHomePath(path.join(home, 'Documents/x')), '~/Documents/x');
+      assert.equal(projectPaths.tildeHomePath(home), '~');
     });
 
     it('leaves a path outside $HOME untouched', () => {
-      assert.equal(projects._tildeHomePath('/opt/shared/docs'), '/opt/shared/docs');
-      assert.equal(projects._tildeHomePath('/tmp/x'), '/tmp/x');
+      assert.equal(projectPaths.tildeHomePath('/opt/shared/docs'), '/opt/shared/docs');
+      assert.equal(projectPaths.tildeHomePath('/tmp/x'), '/tmp/x');
     });
 
     // Prefix matching without a boundary check would turn `/Users/jane-old/x`
     // into `~-old/x` for a `/Users/jane` home — a path that resolves nowhere.
     it('only collapses at a path boundary, not a bare string prefix', () => {
-      assert.equal(projects._tildeHomePath(`${home}-old/x`), `${home}-old/x`);
-      assert.equal(projects._tildeHomePath(`${home}extra`), `${home}extra`);
+      assert.equal(projectPaths.tildeHomePath(`${home}-old/x`), `${home}-old/x`);
+      assert.equal(projectPaths.tildeHomePath(`${home}extra`), `${home}extra`);
     });
 
     it('passes through relative, already-tilde, and non-string input unchanged', () => {
-      assert.equal(projects._tildeHomePath('~/already'), '~/already');
-      assert.equal(projects._tildeHomePath('relative/path'), 'relative/path');
-      assert.equal(projects._tildeHomePath(''), '');
-      assert.equal(projects._tildeHomePath(null), null);
+      assert.equal(projectPaths.tildeHomePath('~/already'), '~/already');
+      assert.equal(projectPaths.tildeHomePath('relative/path'), 'relative/path');
+      assert.equal(projectPaths.tildeHomePath(''), '');
+      assert.equal(projectPaths.tildeHomePath(null), null);
     });
   });
 
@@ -259,20 +259,22 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   });
 
   describe('_buildProjectMapContent with membership', () => {
-    it('embeds the shared-dirs membership into the section', () => {
+    it('reports the membership count without embedding any identifier', () => {
       const p = path.join(tmpDir, 'content-with-groups');
       fs.mkdirSync(path.join(p, 'lib'), { recursive: true });
       const content = projects._buildProjectMapContent(p, [
         { name: 'GroupX', sharedDir: '/shared/x', docs: [{ name: 'DOC' }] }
       ]);
       assert.ok(content.includes('## Shared directories / doc groups'));
-      assert.ok(content.includes('- **GroupX** → `/shared/x`'));
-      assert.ok(content.includes('  - `DOC`'));
+      assert.match(content, /1 shared-doc group\./);
+      for (const leak of ['GroupX', '/shared/x', '`DOC`']) {
+        assert.ok(!content.includes(leak), `generated map must not embed "${leak}"`);
+      }
     });
   });
 
-  describe('updateProject — seeds PROJECT-MAP.md with real group membership', () => {
-    it('writes the project\'s shared-doc group membership on toggle-on', () => {
+  describe('updateProject — seeds PROJECT-MAP.md from real group membership', () => {
+    it('records the count on toggle-on without publishing membership', () => {
       const group = store.projectGroups.create({ name: 'PM Membership Group', sharedDir: '/abs/pm-shared' });
       const project = projects.createProject({ name: 'pm-with-membership' }).project;
       store.projectGroups.addMember(group.id, project.id);
@@ -280,9 +282,14 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
 
       projects.updateProject('pm-with-membership', { projectMapEnabled: true });
 
+      // End-to-end: real store membership, real seeded file on disk. The file is
+      // committed by managed projects, so it must carry the count and nothing that
+      // identifies the operator's other work.
       const content = fs.readFileSync(path.join(project.path, projects.PROJECT_MAP_FILENAME), 'utf8');
-      assert.ok(content.includes('- **PM Membership Group** → `/abs/pm-shared`'), 'group + sharedDir present');
-      assert.ok(content.includes('  - `NETWORK`'), 'registered doc present');
+      assert.match(content, /1 shared-doc group\./, 'count reported');
+      for (const leak of ['PM Membership Group', '/abs/pm-shared', 'NETWORK']) {
+        assert.ok(!content.includes(leak), `seeded PROJECT-MAP.md must not contain "${leak}"`);
+      }
     });
   });
 
@@ -370,9 +377,11 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       const out = projects._refreshProjectMapContent(seed, ['lib'], [
         { name: 'Backend', sharedDir: '/abs/be', docs: [{ name: 'NET' }] }
       ]);
-      assert.ok(out.includes('- **Backend** → `/abs/be`'), 'new membership rendered');
-      assert.ok(out.includes('  - `NET`'), 'registered doc rendered');
+      assert.match(out, /1 shared-doc group\./, 'count refreshed');
       assert.ok(!out.includes('not a member'), 'placeholder replaced');
+      for (const leak of ['Backend', '/abs/be', 'NET']) {
+        assert.ok(!out.includes(leak), `refresh must not render "${leak}"`);
+      }
     });
 
     it('preserves the header comment and any operator-added section verbatim', () => {

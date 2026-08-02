@@ -21,9 +21,5 @@ to file paths — this maps the layout itself.
 
 ## Shared directories / doc groups
 
-<!-- Intentionally not committed: this section is a snapshot of THIS machine's
-     shared-doc group membership — local state, not project structure. It named
-     private sibling projects when committed to a public repo. See issue #849. -->
-
-_(shared-doc group membership is machine-local and not published)_
+_This project belongs to 4 shared-doc groups. Membership is machine-local state, not project structure, so it is not published here — see the TangleClaw UI for this install's groups._
 

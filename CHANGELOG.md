@@ -4,6 +4,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **`PROJECT-MAP.md` no longer publishes shared-doc group membership — it reports a count and points
+  at the UI.** The section used to render each group's name, shared directory, and doc names. That
+  file is tracked, and managed projects push it to public remotes, but membership is *this install's*
+  configuration: two clones of the same project on different machines legitimately disagree about it.
+  In this repo it published the names of private sibling projects.
+
+  Hand-scrubbing the file could never fix it. `_replaceSectionBody` rewrites that section from the
+  live store on **every wrap**, so the names returned on the next wrap — the same self-reverting
+  failure the `~`-relative path fix below was written to avoid, missed in the neighbouring section.
+  The fix is therefore at the renderer: `_buildSharedDirsSection` now emits
+  `_This project belongs to N shared-doc groups. Membership is machine-local state…_` and never a
+  name or a path.
+
+  The count is still real data read from the live store, which is what `docs/adr/0007` records this
+  step as doing — only the identifying detail is withheld, so the ADR stays accurate and
+  `_collectProjectGroups` stays live rather than being deleted as incidentally-dead.
+
+  **Contract revision, declared:** four tests that asserted membership *was* rendered were rewritten
+  to assert it is *not* — they now enumerate the specific strings that must not appear (group name,
+  shared dir, doc name, `$HOME`) rather than merely checking the new text. Strengthened, not relaxed.
+  Verified against this install's real store: 4 groups with real names in, a bare count out.
+
+  Managed projects that want the membership visible locally still have it in the TangleClaw UI; the
+  open question of whether a local supplement file should carry it is #849.
+
 ### Fixed
 - **The generated `CLAUDE.md` no longer publishes home directories either — the second call site the
   first fix missed.** `lib/engines.js`'s `_buildSharedDocsSection` wrote each shared doc's absolute
@@ -95,7 +121,7 @@ All notable changes to TangleClaw are documented in this file.
   where past work happened. Those are historical records; rewriting them would be revisionism with no
   security benefit, since the repo has been public since 2026-03-30 and nothing there is a credential.
   The rule applied: **a record of what happened keeps its names; a value a reader will re-use does
-  not.** So the ADRs were scrubbed rather than exempted — `0003`, `0004`, and `0012` describe how the
+  not.** So the ADRs were scrubbed rather than exempted — `0004` and `0012` describe how the
   system is built and get read as current guidance, and `.prawduct/change-log.md`'s one absolute home
   path was rewritten `~`-relative because a path is not a historical fact.
 
