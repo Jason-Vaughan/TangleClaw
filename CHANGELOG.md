@@ -46,6 +46,65 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+- **`lib/caddy.js` now emits the HTTP/1.1 pin, so an ingress cutover can no longer silently
+  regress every Chrome terminal (#845).** The live `~/.tangleclaw/Caddyfile` carried
+  `servers :8443 { protocols h1 }` as a **hand edit only** — the generator had no such output
+  (the sole `h1` in the file was an unrelated comment about parsing `caddy version`). Because
+  `scripts/ingress-cutover.js --to caddy` regenerates the Caddyfile from the generator, a cutover
+  would have dropped the pin, returned `:8443` to h2/h3, and restarted the reconnect-loop incident
+  it was added to stop — Chrome aborts terminal WebSockets client-side (close code 1006, the
+  request never reaches Caddy) whenever the TLS origin negotiates h2 or h3.
+
+  `buildCaddyfileContent` now always appends `servers :${httpsPort} { protocols h1 }` to the
+  global options block. It is **unconditional and has no config flag**: terminals are the
+  product's primary surface, so a setting that could omit the pin would just regenerate a broken
+  perimeter in a new shape. The port tracks `httpsPort`, so a non-default listener is pinned too;
+  plain HTTP needs no pin because Caddy does not serve h2c unless explicitly asked. This remains a
+  **workaround, not a root-cause fix** — why Chrome aborts the upgrade under h2/h3 is still
+  unidentified — and both the inline comment and `deploy/INGRESS.md` say so, so the next reader
+  does not delete it as an unexplained setting.
+
+  **Verified against the real binary (Caddy v2.11.4), not a stub:** the generated file passes
+  `caddy validate` ("Valid configuration"), and `caddy adapt` shows the pin surviving into the
+  JSON config as `srv1 [":8443"] protocols ["h1"]` while the plain-HTTP `srv0 [":8080"]` correctly
+  carries none. The emitted global block is byte-identical to the live hand-edited file's.
+
+  **Tests:** +2 in `test/caddy.test.js` — the pin is emitted inside global options, and it tracks
+  the configured port rather than a hardcoded `8443`. Both were confirmed to go red against the
+  two real regressions: deleting the block fails both, hardcoding `8443` fails the port guard.
+  **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`, including a
+  verified `caddy adapt` one-liner for checking whether a *live* listener actually carries the pin,
+  because the fix does not retrofit a Caddyfile already on disk (programmatic detection is #848).
+
+  The remediation **branches on whether the live file is still generator-pristine**, and getting
+  that wrong is costly in the safe-looking direction. For a pristine file the cutover does *not*
+  refuse — `caddyfileIsHandEdited` is the negation of the sha256 body-stamp check — so re-running it
+  is both correct and lossless, there being no hand edits to lose. Telling that operator to hand-add
+  the block instead would invalidate the stamp and leave every future cutover refusing their file or
+  needing the lossy `--force`: a one-way door out of a healthy install. So the doc has them run
+  `--dry-run` first and read the refusal line, with the manual steps scoped to hand-edited files
+  only. Verified both directions against the real generator: a freshly generated file reports
+  `isGeneratedCaddyfile: true`, and a single added comment flips it to `false`.
+  `docs/adr/0003-ingress-model.md` gains the consequence (caddy mode gives up h2/h3 entirely) and
+  records `protocols h1 h2` as considered and rejected — the observed failures occur under h2 as
+  well as h3, so keeping h2 would not prevent the incident.
+
+  **Known gap, deliberately not fixed here (#846):** generator/deployment parity is still
+  incomplete — the live tailnet site carries an access-log block the generator cannot emit, so a
+  cutover would silently end Caddy access logging. #845's audit missed it by enumerating
+  `NOTE (manual, …)` markers, which only finds edits someone remembered to annotate; diffing a
+  generated file against the live one finds it immediately. **A cutover on this box is therefore
+  still not lossless**, and the perimeter-shaped v5 criteria should not be measured against a
+  post-cutover config until #846 is resolved or explicitly accepted.
+
+  **This removes one obstacle to measurement but does not clear it.** The perimeter-shaped v5
+  acceptance criteria were being checked against a deployment the product could not reproduce, so
+  neither a pass nor a fail was trustworthy. All three annotated `NOTE (manual, …)` edits are now
+  reproducible — the other two (2026-06-23 `basic_auth` + catch-all, 2026-07-09 `X-Auth-User`) were
+  already emitted — but the un-annotated access-log edit above is not, so the config still is not
+  fully reproducible. **The instruction for a future measurement session is the one stated above:
+  do not measure the perimeter criteria against a post-cutover config until #846 closes.**
+
 - **The generated `CLAUDE.md` no longer publishes home directories either — the second call site the
   first fix missed.** `lib/engines.js`'s `_buildSharedDocsSection` wrote each shared doc's absolute
   `filePath` straight into the engine config it generates for **every managed project**, and those
