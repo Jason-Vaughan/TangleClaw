@@ -5,6 +5,36 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
+- **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a
+  ratified Direction keeps hard.** `.prawduct/artifacts/wrap-direction.md` (`last_ratified:
+  2026-07-21`) names this gate explicitly among those that stay blocking: *"A content step reporting
+  'done' without editing its file (`verifyChanged`) — a false success. Stays hard; not
+  project-overridable."* The same artifact requires that departing from it be a recorded decision.
+  #826 merged with zero reviews, no linked issue, and no such record.
+
+  A retroactive `/prawduct:critic` cumulative review (4 blocking, 13 warning) traced the shipped
+  path and found the bypass wider than its own documentation claimed. `learnings-capture` declares
+  no `captureFields`, so no response validation runs for it; `detectIdle` reports "3 pane lines
+  unchanged for >10s", so a dead or prompt-blocked pane reads as *complete*; and the
+  `MIN_RESPONSE_CHARS = 20` floor is measured against `capturePane(…, { full: true })` — the full
+  scrollback — which any live session clears by thousands of characters. An AI that refused,
+  errored, or was cut off mid-turn was therefore indistinguishable from one that correctly found
+  nothing novel: both returned `{ ok: true, status: 'skipped' }` on a `blocker: true` step. The
+  prompt's mandated `no novel learnings; file unchanged` reply was read by no code.
+
+  The change also removed the *verifiable* no-op path it replaced. The prior prompt had the session
+  append `- YYYY-MM-DD: no novel learnings (routine work).`, which mutated the file and satisfied
+  the gate honestly; #826 deleted that and substituted a gate waiver. Its guard test
+  (`test/wrap-step-ai-content.test.js`, "BLOCKS a genuine execution failure") stubs `sendKeys` to
+  throw, which returns before `_verifyChangedGate` is consulted — the test passes with the entire
+  `allowUnchanged` branch deleted.
+
+  **The underlying complaint is real and stays open** — a `learnings-capture` that legitimately finds
+  nothing should not block a wrap, and re-running one whose entry already landed should not either.
+  Reverted rather than patched so a correct fix can be designed against the recorded Direction
+  instead of around it. Blast radius was contained: `allowUnchanged` was never reachable through
+  per-project `wrapStepOverrides`, and `v5-baseline` never carried this commit.
+
 - **How a norm may be enforced is written down (ADR 0012).** TangleClaw ratified its norm registry
   on 2026-08-01, and a registry needs an answer to "what checks each norm." The first answer —
   *enforcement mechanisms may not be bought with a dependency* — was justified by the claim that
@@ -58,10 +88,6 @@ All notable changes to TangleClaw are documented in this file.
   the scope that reproduces it.
 
 ### Fixed
-- **Wrap no longer blocks when learnings capture correctly finds nothing novel.** The
-  `learnings-capture` AI-content step now explicitly permits a successful unchanged-file outcome and
-  reports it as skipped, while execution errors and unchanged required changelog or memory output
-  remain blocking.
 - **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
   `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
   entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
