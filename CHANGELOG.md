@@ -5,6 +5,30 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Internal
+- **How a norm may be enforced is written down (ADR 0012).** TangleClaw ratified its norm registry
+  on 2026-08-01, and a registry needs an answer to "what checks each norm." The first answer —
+  *enforcement mechanisms may not be bought with a dependency* — was justified by the claim that
+  this product has "zero dependencies… runs on the Node.js standard library and nothing else." That
+  claim is false: `.prawduct/artifacts/dependency-manifest.md` inventories eleven external
+  dependencies (Node 22+, tmux, ttyd, Caddy, git, `gh`, launchd, mkcert, PortHub, the Medusa Bridge,
+  and a habitat Docker host), and orchestrating third-party binaries is what this product does. The
+  precise long-standing claim in the source artifacts is narrower and true — zero *npm*
+  dependencies — and the widened form was introduced while drafting the registry.
+
+  `docs/adr/0012-enforcement-adds-no-install-step.md` re-derives the ruling rather than renaming it:
+  **a norm's enforcement mechanism must add no installation step** — it runs inside the existing
+  `node --test` invocation as a source-scanning test (the `test/master.test.js:270` pattern), or the
+  norm is janitor-homed. The distinguishing principle is that every dependency TangleClaw has is
+  *product function* — the operator installs tmux because sessions cannot run without it — whereas a
+  governance check delivers nothing the operator asked for, so it may not push an install onto every
+  machine including the field install. A checker that is absent also does not fail cleanly: it
+  commonly skips and reports green, which is the substance of #835. The result forecloses npm and
+  brew linters alike, on the same basis, and answers the next case (`jq`, a Python package, a Docker
+  image) without a new ruling. CI-only enforcement is considered and rejected in the ADR.
+
+  No runtime behavior changes. Doc-only, and the ADR is deliberately in `docs/` rather than
+  `.prawduct/` — which is gitignored — so the constraint survives a fresh clone.
+
 - **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
   decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
   a Claude Code plugin — and the decision had since been made by what got built rather than by
