@@ -35,6 +35,28 @@ All notable changes to TangleClaw are documented in this file.
   instead of around it. Blast radius was contained: `allowUnchanged` was never reachable through
   per-project `wrapStepOverrides`, and `v5-baseline` never carried this commit.
 
+- **Wrap steps no longer promise a commit `git add -A` cannot make (#839).** The
+  `learnings-capture` and `memory-update` prompts both told the session "the commit step will pick
+  it up via `git add -A`". `git add -A` respects `.gitignore`, and TangleClaw's own clone ignores
+  `.tangleclaw/` wholesale (`.gitignore:14`, no exceptions — `git ls-files .tangleclaw` returns
+  nothing). So on this project the three files those steps write — `MEMORY.md`, `learnings.md`,
+  `wrap-log.md` — have never been committed by a wrap, and the 2026-08-01 wrap produced no commit
+  at all because it found zero tracked changes.
+
+  Both prompts in `lib/wrap-default-pipeline.js` now state the actual contract: the commit step
+  stages with `git add -A`, which respects `.gitignore`, so these files are committed only where
+  the project tracks `.tangleclaw/` — and where it is ignored they are local machine state, durable
+  on that machine, read at session start, and carried by no wrap commit. The wording is deliberately
+  conditional rather than TangleClaw-specific, because this pipeline ships to every managed project
+  and some do track that path.
+
+  **Deliberately not fixed by un-ignoring `.tangleclaw/`.** That was the other option on #839 and it
+  was rejected on evidence: this repository is public, and the ~874KB of session memory inventories
+  what this operator's perimeter does not protect — an unrotated ClawBridge `BRIDGE_TOKEN` exposure,
+  a described unauthenticated-shell path, currently-unauthenticated surfaces, named hosts, and a
+  third-party installer discussed by name. Publishing that is a worse outcome than memory being
+  machine-local. Prompt text only; no behavior change.
+
 - **How a norm may be enforced is written down (ADR 0012).** TangleClaw ratified its norm registry
   on 2026-08-01, and a registry needs an answer to "what checks each norm." The first answer —
   *enforcement mechanisms may not be bought with a dependency* — was justified by the claim that
