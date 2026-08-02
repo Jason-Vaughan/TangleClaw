@@ -30,6 +30,16 @@ All notable changes to TangleClaw are documented in this file.
   Managed projects that want the membership visible locally still have it in the TangleClaw UI; the
   open question of whether a local supplement file should carry it is #849.
 
+- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
+  The install instructions were a bare `git clone` of the default branch, so a new install took
+  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
+  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
+  network binding are configured — a half-finished version of that is exactly the thing not to hand
+  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
+  moves to `v5.0.0` when it ships, and the accompanying note is removed.
+  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
+  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
+
 ### Fixed
 - **The generated `CLAUDE.md` no longer publishes home directories either — the second call site the
   first fix missed.** `lib/engines.js`'s `_buildSharedDocsSection` wrote each shared doc's absolute
@@ -70,6 +80,73 @@ All notable changes to TangleClaw are documented in this file.
   pass-through, the path-boundary guard, relative/tilde/non-string input, and an end-to-end
   assertion that the rendered section contains no absolute home path). The end-to-end guard was
   confirmed to fail when the render is reverted to the raw `sharedDir`.
+
+- **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
+  `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
+  entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
+  the **shareable, committable** hooks location the Claude Code docs point operators at, and the sync
+  runs on **every session launch**, so a `PreToolUse` guard or `PostToolUse` formatter vanished
+  silently and repeatedly; on a committed file, TangleClaw also dirtied the working tree each launch.
+  The same defect sat in the non-claude branch, which cleared stale hooks with `delete existing.hooks`
+  and took the operator's with them.
+
+  Both branches now reconcile only the entries TangleClaw itself emits. Ownership is decided by hook
+  script name rather than by the resolved install path, so a clone the operator has since **moved**
+  still recognizes its own old entries instead of leaving a duplicate beside them, and shapes this code
+  does not model are passed through untouched rather than normalized away.
+
+  **One rule was deliberately narrowed to make this possible, and it is worth stating.** #538/#570
+  retired the vendored governance layer, and part of the wholesale write's purpose was clearing a
+  leftover `Stop` hook so the retired gate could not fire alongside the plugin's. That cleanup was
+  unconditional — *any* `Stop` hook — which cannot tell a retired gate from something the operator
+  wrote. It is now scoped to the vendored script the V1 layer actually emitted
+  (`tools/product-hook`), which is the same marker `governanceState` already uses to classify a
+  project as `governed-vendored`. A leftover gate is still cleared; an operator's own `Stop` hook is
+  not. The pre-existing tests that asserted the unconditional rule used fixtures indistinguishable
+  from an operator's hook (`echo governance-gate`, a bare `Old` event), so they were standing in for
+  "TangleClaw's entry" with something that isn't one; they now use the real emitted shape, and a
+  companion case pins that an operator `Stop` hook survives.
+
+  **Tests:** new `test/engine-hooks-merge.test.js` (17) — ownership across both current scripts and a
+  relocated install, refusal to claim an operator hook that merely references the TangleClaw
+  directory, a foreign event preserved, a foreign entry preserved *inside* an event TangleClaw also
+  writes, no duplication across five repeated syncs, unmodelled shapes passed through, and the
+  non-claude branch not rewriting a file when it has nothing of its own to clear. Verified by reverting
+  each of the three changes and confirming the suite goes red.
+
+- **A session launch could kill, or type into, a different project's live session (#774).** tmux
+  resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
+  then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
+  With no session named `TangleClaw` running, every `-t TangleClaw` silently retargeted
+  `TangleClaw-Roadmap`. Relaunching one project killed the other's live session; the prefix fallback
+  was verified on `send-keys` and `set-option` too, so it could equally have typed into or
+  reconfigured the neighbour, and `deploy/ttyd-attach.sh` would have attached the browser terminal
+  to that neighbour's pane.
+
+  Every tmux target now carries tmux's `=` exact-match prefix, so an absent session is an error
+  instead of whichever running session its name happens to prefix. The form is `'=name:'`: a bare
+  `=name` is honoured only by commands taking a *target-session* (`has-session`, `kill-session`),
+  while `send-keys`, `capture-pane`, `paste-buffer`, `set-option`, `show-option(s)` and `set-hook`
+  reject it outright and need the trailing colon — verified against tmux 3.6a, including that
+  `set-option -t '=name:'` still writes the session option rather than a window one. `display-message`
+  is the one command that cannot be protected this way, because it answers for the attached client
+  rather than failing on an absent session, so its caller checks existence explicitly.
+
+  Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
+  `RentalClaw-Project` — were the exposed cases; no rename is needed now.
+
+  Tests: `test/tmux.test.js` gains a live-neighbour suite (a `X-neighbour` session with no `X`
+  present, asserting `hasSession`, `killSession`, `sendKeys`, `capturePane`, `getMouseState`,
+  `setMouse`, `unsetMouse` and `isAlternateScreen` all refuse it, the neighbour survives, and the
+  exact name still resolves when both exist), a mouse/hook round-trip that reads hooks back with
+  `show-hooks` because `setMouse` only `log.warn`s when `set-hook` fails, and a **source-level
+  structural pin** asserting all 20 `-t` sites are built by `_target()` while `new-session -s` stays
+  bare. The structural pin exists because every behavioural test enters through `hasSession`, so a
+  lost `=` on any other verb would otherwise stay green — reverting one `set-option` target trips
+  only that test. `test/ttyd-attach.test.js` pins the target *shape* per verb class, since the
+  script's `capture-pane` line ends in `2>/dev/null || true` and would have skipped the #322
+  scrollback replay silently. `.prawduct/artifacts/boundary-patterns.md` records the invariant, which
+  had been documenting the old bare-name wire form.
 
 ### Security
 - **Stopped shipping the maintainer's private inference endpoint to every install.**
@@ -261,85 +338,6 @@ All notable changes to TangleClaw are documented in this file.
   re-verified against `main` before landing (the four `lib/engines.js` function positions, the #330
   comment, `invoke-critic`'s engine refusal, and `createProject`), and the "19 files" count now names
   the scope that reproduces it.
-
-### Fixed
-- **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
-  `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
-  entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
-  the **shareable, committable** hooks location the Claude Code docs point operators at, and the sync
-  runs on **every session launch**, so a `PreToolUse` guard or `PostToolUse` formatter vanished
-  silently and repeatedly; on a committed file, TangleClaw also dirtied the working tree each launch.
-  The same defect sat in the non-claude branch, which cleared stale hooks with `delete existing.hooks`
-  and took the operator's with them.
-
-  Both branches now reconcile only the entries TangleClaw itself emits. Ownership is decided by hook
-  script name rather than by the resolved install path, so a clone the operator has since **moved**
-  still recognizes its own old entries instead of leaving a duplicate beside them, and shapes this code
-  does not model are passed through untouched rather than normalized away.
-
-  **One rule was deliberately narrowed to make this possible, and it is worth stating.** #538/#570
-  retired the vendored governance layer, and part of the wholesale write's purpose was clearing a
-  leftover `Stop` hook so the retired gate could not fire alongside the plugin's. That cleanup was
-  unconditional — *any* `Stop` hook — which cannot tell a retired gate from something the operator
-  wrote. It is now scoped to the vendored script the V1 layer actually emitted
-  (`tools/product-hook`), which is the same marker `governanceState` already uses to classify a
-  project as `governed-vendored`. A leftover gate is still cleared; an operator's own `Stop` hook is
-  not. The pre-existing tests that asserted the unconditional rule used fixtures indistinguishable
-  from an operator's hook (`echo governance-gate`, a bare `Old` event), so they were standing in for
-  "TangleClaw's entry" with something that isn't one; they now use the real emitted shape, and a
-  companion case pins that an operator `Stop` hook survives.
-
-  **Tests:** new `test/engine-hooks-merge.test.js` (17) — ownership across both current scripts and a
-  relocated install, refusal to claim an operator hook that merely references the TangleClaw
-  directory, a foreign event preserved, a foreign entry preserved *inside* an event TangleClaw also
-  writes, no duplication across five repeated syncs, unmodelled shapes passed through, and the
-  non-claude branch not rewriting a file when it has nothing of its own to clear. Verified by reverting
-  each of the three changes and confirming the suite goes red.
-
-- **A session launch could kill, or type into, a different project's live session (#774).** tmux
-  resolves a `-t <name>` target by trying the exact session name, then a unique **prefix** of one,
-  then an fnmatch pattern — a convenience for people typing at a prompt, and destructive from code.
-  With no session named `TangleClaw` running, every `-t TangleClaw` silently retargeted
-  `TangleClaw-Roadmap`. Relaunching one project killed the other's live session; the prefix fallback
-  was verified on `send-keys` and `set-option` too, so it could equally have typed into or
-  reconfigured the neighbour, and `deploy/ttyd-attach.sh` would have attached the browser terminal
-  to that neighbour's pane.
-
-  Every tmux target now carries tmux's `=` exact-match prefix, so an absent session is an error
-  instead of whichever running session its name happens to prefix. The form is `'=name:'`: a bare
-  `=name` is honoured only by commands taking a *target-session* (`has-session`, `kill-session`),
-  while `send-keys`, `capture-pane`, `paste-buffer`, `set-option`, `show-option(s)` and `set-hook`
-  reject it outright and need the trailing colon — verified against tmux 3.6a, including that
-  `set-option -t '=name:'` still writes the session option rather than a window one. `display-message`
-  is the one command that cannot be protected this way, because it answers for the attached client
-  rather than failing on an absent session, so its caller checks existence explicitly.
-
-  Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
-  `RentalClaw-Project` — were the exposed cases; no rename is needed now.
-
-  Tests: `test/tmux.test.js` gains a live-neighbour suite (a `X-neighbour` session with no `X`
-  present, asserting `hasSession`, `killSession`, `sendKeys`, `capturePane`, `getMouseState`,
-  `setMouse`, `unsetMouse` and `isAlternateScreen` all refuse it, the neighbour survives, and the
-  exact name still resolves when both exist), a mouse/hook round-trip that reads hooks back with
-  `show-hooks` because `setMouse` only `log.warn`s when `set-hook` fails, and a **source-level
-  structural pin** asserting all 20 `-t` sites are built by `_target()` while `new-session -s` stays
-  bare. The structural pin exists because every behavioural test enters through `hasSession`, so a
-  lost `=` on any other verb would otherwise stay green — reverting one `set-option` target trips
-  only that test. `test/ttyd-attach.test.js` pins the target *shape* per verb class, since the
-  script's `capture-pane` line ends in `2>/dev/null || true` and would have skipped the #322
-  scrollback replay silently. `.prawduct/artifacts/boundary-patterns.md` records the invariant, which
-  had been documenting the old bare-name wire form.
-
-### Changed
-- **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
-  The install instructions were a bare `git clone` of the default branch, so a new install took
-  whatever happened to be on `main` at that moment. That is fine between releases and wrong during
-  one: the v5 Secure Baseline is being built on `main` now, and it changes how authentication and
-  network binding are configured — a half-finished version of that is exactly the thing not to hand
-  someone as their first experience. Cloning a tag gets a tree that was tested as a whole. The pin
-  moves to `v5.0.0` when it ships, and the accompanying note is removed.
-  Note this is a documentation control, not a structural one — a bare `git clone` still lands on
-  `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ## [4.38.0] - 2026-07-28
 
