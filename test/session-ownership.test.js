@@ -155,8 +155,8 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     it('reads the connection host AS-IS and uses db-only liveness', (t) => {
       const failIfCalled = t.mock.method(tmux, 'hasSession', () => true);
       const conn = store.openclawConnections.create({
-        name: 'cursatory',
-        host: 'cursatory.tail-scale.ts.net',
+        name: 'your-host',
+        host: 'your-host.tailnet-name.ts.net',
         sshUser: 'jason',
         sshKeyPath: '/tmp/key'
       });
@@ -170,11 +170,11 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       const own = ownership.resolveBySessionId(session.id);
       assert.equal(own.transport, 'openclaw');
       assert.equal(own.remote, true);
-      assert.equal(own.host, 'cursatory.tail-scale.ts.net');
+      assert.equal(own.host, 'your-host.tailnet-name.ts.net');
       assert.equal(own.mode, 'webui');
       assert.equal(own.livenessSource, 'db');
       assert.equal(own.live, true);
-      assert.equal(own.handle, `cursatory.tail-scale.ts.net/remote-proj#${session.id}`);
+      assert.equal(own.handle, `your-host.tailnet-name.ts.net/remote-proj#${session.id}`);
       assert.equal(failIfCalled.mock.calls.length, 0, 'remote liveness must not consult tmux');
     });
 
@@ -336,11 +336,11 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
   });
 
   describe('Slice 2a — local Magic DNS resolution', () => {
-    const TS_JSON = '{"Self":{"DNSName":"Cursatory.Tail123678.ts.net."}}';
+    const TS_JSON = '{"Self":{"DNSName":"Your-Host.Tailnet-Name.ts.net."}}';
 
     it('parses .Self.DNSName, strips the trailing dot, and lowercases', () => {
       ownership._internal.execSync = () => TS_JSON;
-      assert.equal(ownership._detectMagicDnsName(), 'cursatory.tail123678.ts.net');
+      assert.equal(ownership._detectMagicDnsName(), 'your-host.tailnet-name.ts.net');
     });
 
     it('returns null when tailscale output is unparseable or Self is absent', () => {
@@ -358,14 +358,14 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     it('_localHost prefers the Magic DNS name', () => {
       ownership._resetHostCacheForTest();
       ownership._internal.execSync = () => TS_JSON;
-      assert.equal(ownership._localHost(), 'cursatory.tail123678.ts.net');
+      assert.equal(ownership._localHost(), 'your-host.tailnet-name.ts.net');
     });
 
     it('_localHost falls back to the OS hostname when tailscale is unavailable', () => {
       ownership._resetHostCacheForTest();
       ownership._internal.execSync = () => { throw new Error('no tailscale'); };
-      ownership._internal.hostname = () => 'cursatory-local';
-      assert.equal(ownership._localHost(), 'cursatory-local');
+      ownership._internal.hostname = () => 'your-host-local';
+      assert.equal(ownership._localHost(), 'your-host-local');
     });
 
     it('_localHost falls back to localhost when neither is available', () => {
@@ -391,8 +391,8 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       const { session } = makeLocalSession('magic-dns-addr');
 
       const own = ownership.resolveBySessionId(session.id);
-      assert.equal(own.host, 'cursatory.tail123678.ts.net');
-      assert.equal(own.handle, `cursatory.tail123678.ts.net/magic-dns-addr#${session.id}`);
+      assert.equal(own.host, 'your-host.tailnet-name.ts.net');
+      assert.equal(own.handle, `your-host.tailnet-name.ts.net/magic-dns-addr#${session.id}`);
     });
   });
 
@@ -413,9 +413,9 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
     it('reflects the resolved Magic DNS host', () => {
       ownership._resetHostCacheForTest();
-      ownership._internal.execSync = () => '{"Self":{"DNSName":"cursatory.tail123678.ts.net."}}';
+      ownership._internal.execSync = () => '{"Self":{"DNSName":"your-host.tailnet-name.ts.net."}}';
       const lines = ownership.primeSection({ name: 'p', engineId: 'claude' });
-      assert.ok(lines.join('\n').includes('Host: `cursatory.tail123678.ts.net`'));
+      assert.ok(lines.join('\n').includes('Host: `your-host.tailnet-name.ts.net`'));
     });
 
     it('returns an empty block for a missing or nameless project', () => {
@@ -454,7 +454,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
     it('lists OTHER projects with a live session so the flag can name the likely tab', (t) => {
       const other1 = store.projects.create({ name: 'sg-portfolio', path: '/tmp/sg-portfolio' });
-      const other2 = store.projects.create({ name: 'sg-monad', path: '/tmp/sg-monad' });
+      const other2 = store.projects.create({ name: 'sg-other', path: '/tmp/sg-other' });
       t.mock.method(store.sessions, 'listLiveAll', () => [
         { id: 9001, projectId: other1.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
         { id: 9002, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' }
@@ -462,7 +462,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
       const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
       assert.ok(names.includes('sg-portfolio'), 'lists a live sibling session');
-      assert.ok(names.includes('sg-monad'), 'lists a wrapping sibling session (agent still running)');
+      assert.ok(names.includes('sg-other'), 'lists a wrapping sibling session (agent still running)');
     });
 
     it('never lists the owned project among the other live sessions', (t) => {

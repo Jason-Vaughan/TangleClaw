@@ -149,7 +149,7 @@ describe('AUTH-2 wizard admin step (frontend)', () => {
       assert.equal(ctx._adminRuleHint('admin', 'a-strong-passphrase-42', 'a-strong-passphrase-42'), null);
     });
 
-    it('reports the FIRST unmet rule when several fail (the elkaholic 11-char repro)', () => {
+    it('reports the FIRST unmet rule when several fail (an 11-char repro)', () => {
       const ctx = loadSetup({ config: { ingressMode: 'caddy' } });
       // Missing username outranks the short password.
       assert.equal(ctx._adminRuleHint('', 'short', 'other'), 'Enter a username.');

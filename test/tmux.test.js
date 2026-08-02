@@ -224,7 +224,7 @@ describe('tmux', () => {
         // the file will contain the values; if they were set after (the
         // pre-fix behavior), the file is missing them and the smoke
         // test for the Aider engine override breaks the same way it
-        // did during Monad-1 ↔ LiteLLM integration.
+        // did during Web-API ↔ LiteLLM integration.
         const fs = require('node:fs');
         const os = require('node:os');
         const path = require('node:path');

@@ -27,16 +27,16 @@ describe('store.projectGroups', () => {
 
   describe('create', () => {
     it('should create a group with name and description', () => {
-      const group = store.projectGroups.create({ name: 'habitat', description: 'Habitat infra' });
+      const group = store.projectGroups.create({ name: 'shared-infra', description: 'Shared infra' });
       assert.ok(group.id);
-      assert.equal(group.name, 'habitat');
-      assert.equal(group.description, 'Habitat infra');
+      assert.equal(group.name, 'shared-infra');
+      assert.equal(group.description, 'Shared infra');
       assert.ok(group.createdAt);
     });
 
     it('should trim whitespace from name', () => {
-      const group = store.projectGroups.create({ name: '  habitat  ' });
-      assert.equal(group.name, 'habitat');
+      const group = store.projectGroups.create({ name: '  shared-infra  ' });
+      assert.equal(group.name, 'shared-infra');
     });
 
     it('should reject empty name', () => {
@@ -45,16 +45,16 @@ describe('store.projectGroups', () => {
     });
 
     it('should reject duplicate name', () => {
-      store.projectGroups.create({ name: 'habitat' });
-      assert.throws(() => store.projectGroups.create({ name: 'habitat' }), { code: 'CONFLICT' });
+      store.projectGroups.create({ name: 'shared-infra' });
+      assert.throws(() => store.projectGroups.create({ name: 'shared-infra' }), { code: 'CONFLICT' });
     });
   });
 
   describe('get', () => {
     it('should return group by id', () => {
-      const created = store.projectGroups.create({ name: 'habitat' });
+      const created = store.projectGroups.create({ name: 'shared-infra' });
       const fetched = store.projectGroups.get(created.id);
-      assert.equal(fetched.name, 'habitat');
+      assert.equal(fetched.name, 'shared-infra');
     });
 
     it('should return null for non-existent id', () => {
@@ -98,7 +98,7 @@ describe('store.projectGroups', () => {
 
   describe('delete', () => {
     it('should delete a group', () => {
-      const group = store.projectGroups.create({ name: 'habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra' });
       store.projectGroups.delete(group.id);
       assert.equal(store.projectGroups.get(group.id), null);
     });
@@ -108,7 +108,7 @@ describe('store.projectGroups', () => {
     });
 
     it('should cascade delete members', () => {
-      const group = store.projectGroups.create({ name: 'habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra' });
       const proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
       store.projectGroups.addMember(group.id, proj.id);
       assert.equal(store.projectGroups.listMembers(group.id).length, 1);
@@ -144,7 +144,7 @@ describe('store.projectGroups', () => {
 
   describe('members', () => {
     it('should add and list members', () => {
-      const group = store.projectGroups.create({ name: 'habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra' });
       const proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
       store.projectGroups.addMember(group.id, proj.id);
       const members = store.projectGroups.listMembers(group.id);
@@ -153,7 +153,7 @@ describe('store.projectGroups', () => {
     });
 
     it('should be idempotent when adding same member twice', () => {
-      const group = store.projectGroups.create({ name: 'habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra' });
       const proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
       store.projectGroups.addMember(group.id, proj.id);
       store.projectGroups.addMember(group.id, proj.id); // No throw
@@ -161,7 +161,7 @@ describe('store.projectGroups', () => {
     });
 
     it('should remove a member', () => {
-      const group = store.projectGroups.create({ name: 'habitat' });
+      const group = store.projectGroups.create({ name: 'shared-infra' });
       const proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
       store.projectGroups.addMember(group.id, proj.id);
       store.projectGroups.removeMember(group.id, proj.id);

@@ -2125,4 +2125,39 @@ describe('engines', () => {
         'should not write .claude/settings.json for non-claude engine');
     });
   });
+
+  // The generated CLAUDE.md is committed by managed projects and routinely
+  // pushed to public remotes, so an absolute shared-doc path publishes the
+  // operator's OS username. The project-map renderer was fixed first and this
+  // one was missed — a second call site writing the same data class — so these
+  // pin BOTH the reference and inline-error paths.
+  describe('_buildSharedDocsSection — home paths never reach a committed file', () => {
+    const home = os.homedir();
+
+    it('renders a reference-mode doc path ~-relative', () => {
+      const md = engines._buildSharedDocsSection([
+        { name: 'NETWORK', groupName: 'infra', injectMode: 'reference',
+          filePath: path.join(home, 'Documents/Shared/NETWORK.md') }
+      ]);
+      assert.ok(md.includes('`~/Documents/Shared/NETWORK.md`'), md);
+      assert.ok(!md.includes(home), 'must not contain the absolute home path');
+    });
+
+    it('renders the inline-mode file-not-found path ~-relative', () => {
+      const missing = path.join(home, 'Documents/Shared/GONE.md');
+      const md = engines._buildSharedDocsSection([
+        { name: 'GONE', groupName: 'infra', injectMode: 'inline', filePath: missing }
+      ]);
+      assert.match(md, /File not found/);
+      assert.ok(!md.includes(home), 'the error branch must not leak the absolute path either');
+    });
+
+    it('leaves a path outside $HOME untouched', () => {
+      const md = engines._buildSharedDocsSection([
+        { name: 'OPS', groupName: 'infra', injectMode: 'reference', filePath: '/opt/shared/OPS.md' }
+      ]);
+      assert.ok(md.includes('`/opt/shared/OPS.md`'), md);
+    });
+  });
+
 });

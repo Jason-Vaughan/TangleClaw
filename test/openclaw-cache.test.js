@@ -45,11 +45,11 @@ function makeStorage(initial) {
 
 describe('clearStaleOpenclawCache (#162)', () => {
   const CURRENT = '90df52c9-3782-4ad0-8dc2-927ef4d57f89'; // Claw-Node-01
-  const STALE = '7923a71f-b6da-49a3-805a-b063c3b22af8';   // RentalClaw
+  const STALE = '7923a71f-b6da-49a3-805a-b063c3b22af8';   // ExampleApp
 
   it('removes localStorage entries whose values reference a different openclaw-direct connId', () => {
     const storage = makeStorage({
-      'oc-gateway-url': `wss://192.168.10.99:3102/openclaw-direct/${STALE}`,
+      'oc-gateway-url': `wss://192.0.2.99:3102/openclaw-direct/${STALE}`,
       'oc-pairing-token': 'abcdef'
     });
     const removed = clearStaleOpenclawCache(CURRENT, storage);
@@ -61,13 +61,13 @@ describe('clearStaleOpenclawCache (#162)', () => {
 
   it('preserves entries whose values match the current connId (idempotent on same connection)', () => {
     const storage = makeStorage({
-      'oc-gateway-url': `wss://192.168.10.99:3102/openclaw-direct/${CURRENT}`,
+      'oc-gateway-url': `wss://192.0.2.99:3102/openclaw-direct/${CURRENT}`,
       'oc-prefs': '{"theme":"dark"}'
     });
     const removed = clearStaleOpenclawCache(CURRENT, storage);
     assert.equal(removed, 0);
     assert.equal(storage.getItem('oc-gateway-url'),
-      `wss://192.168.10.99:3102/openclaw-direct/${CURRENT}`);
+      `wss://192.0.2.99:3102/openclaw-direct/${CURRENT}`);
     assert.equal(storage.getItem('oc-prefs'), '{"theme":"dark"}');
   });
 

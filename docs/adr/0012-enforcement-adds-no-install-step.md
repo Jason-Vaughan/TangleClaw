@@ -26,7 +26,7 @@ library and nothing else."
 **That justification was false, and the correction is why this ADR exists rather than a one-line
 note in an artifact.** `.prawduct/artifacts/dependency-manifest.md` inventories eleven external
 dependencies: Node.js 22+, tmux, ttyd, Caddy, git, `gh`, launchd, mkcert, PortHub, the Medusa
-Bridge, and a habitat Docker host for the acceptance gate. Caddy is recorded there as "effectively
+Bridge, and a remote Docker host for the acceptance gate. Caddy is recorded there as "effectively
 yes on a fresh install." Orchestrating third-party binaries is what this product *does*.
 
 The precise, long-standing claim in the source artifacts is narrower and true: **zero *npm*

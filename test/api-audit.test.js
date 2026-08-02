@@ -70,7 +70,7 @@ describe('API /api/audit', () => {
     auditSecret = 'test-audit-secret-12345';
     store.openclawConnections.create({
       name: 'test-openclaw',
-      host: '192.168.1.10',
+      host: '192.0.2.20',
       sshUser: 'user',
       sshKeyPath: '/tmp/key',
       auditSecret

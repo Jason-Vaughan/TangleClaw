@@ -351,7 +351,7 @@ describe('changelog-coverage — evaluate()', () => {
   });
 
   it('with no commits: COVERED when the tree is clean or only bookkeeping is dirty — nothing to log (#695)', () => {
-    // The RentalClaw shape: a session that ran the last wrap and only churned
+    // The ExampleApp shape: a session that ran the last wrap and only churned
     // framework state. Nothing shipped that needs a changelog entry, so the gate
     // must not false-block it into a manual "Skip & note" (the #645 false-block in
     // its no-commits form).
@@ -474,7 +474,7 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   }
 
   it('COVERED when a commit logged to a declared nested changelog (the #663 regression)', () => {
-    // RentalClaw's airbnb-gateway commits logged to skills/airbnb-gateway/CHANGELOG.md.
+    // ExampleApp's airbnb-gateway commits logged to skills/airbnb-gateway/CHANGELOG.md.
     // With that path declared, they satisfy coverage instead of blocking the wrap.
     scenario([
       { sha: 'aaa1111', subject: 'airbnb-gateway v0.1.0', files: ['skills/airbnb-gateway/CHANGELOG.md', 'skills/airbnb-gateway/SKILL.md'] },
@@ -497,7 +497,7 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   });
 
   it('COVERED via a glob-matched commit even when a sibling commit logs nowhere (session-level)', () => {
-    // The full RentalClaw shape: a skill commit logs to the nested file (covered
+    // The full ExampleApp shape: a skill commit logs to the nested file (covered
     // by the glob), a chore/docs commit logs nowhere. Session-level coverage: the
     // changelog was maintained for the session, so the sibling does not block.
     scenario([
