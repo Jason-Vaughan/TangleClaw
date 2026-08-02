@@ -174,6 +174,24 @@ describe('caddy', () => {
       assert.match(out, /^localhost \{$/m);
     });
 
+    // Chrome aborts terminal WebSockets client-side (1006) when the TLS origin
+    // negotiates h2/h3, so the HTTPS listener is pinned to HTTP/1.1. These guard
+    // the two ways the pin gets lost: dropped from the generator entirely, or
+    // hardcoded to 8443 so a non-default port silently goes unpinned.
+    it('pins the HTTPS listener to HTTP/1.1 (Chrome terminal WebSockets die under h2/h3)', () => {
+      const out = caddy.buildCaddyfileContent(opts);
+      assert.match(out, /\tservers :8443 \{\n\t\tprotocols h1\n\t\}/);
+      // must sit INSIDE global options — a floating block would not adapt
+      const globalBlock = out.slice(out.indexOf('{'), out.indexOf('\n}\n'));
+      assert.match(globalBlock, /protocols h1/);
+    });
+
+    it('pins h1 on the configured https port, not a hardcoded 8443', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, httpsPort: 443, httpPort: 80 });
+      assert.match(out, /\tservers :443 \{\n\t\tprotocols h1\n\t\}/);
+      assert.doesNotMatch(out, /servers :8443/);
+    });
+
     // AUTH-2 — basic_auth gate (bcrypt hash, never plaintext). The hash below is
     // a real bcrypt-shaped token; the stubbed `caddy validate` doesn't check it,
     // real `caddy validate` syntax is exercised in verification.

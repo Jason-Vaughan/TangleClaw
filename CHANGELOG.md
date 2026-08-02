@@ -4,6 +4,41 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`lib/caddy.js` now emits the HTTP/1.1 pin, so an ingress cutover can no longer silently
+  regress every Chrome terminal (#845).** The live `~/.tangleclaw/Caddyfile` carried
+  `servers :8443 { protocols h1 }` as a **hand edit only** — the generator had no such output
+  (the sole `h1` in the file was an unrelated comment about parsing `caddy version`). Because
+  `scripts/ingress-cutover.js --to caddy` regenerates the Caddyfile from the generator, a cutover
+  would have dropped the pin, returned `:8443` to h2/h3, and restarted the reconnect-loop incident
+  it was added to stop — Chrome aborts terminal WebSockets client-side (close code 1006, the
+  request never reaches Caddy) whenever the TLS origin negotiates h2 or h3.
+
+  `buildCaddyfileContent` now always appends `servers :${httpsPort} { protocols h1 }` to the
+  global options block. It is **unconditional and has no config flag**: terminals are the
+  product's primary surface, so a setting that could omit the pin would just regenerate a broken
+  perimeter in a new shape. The port tracks `httpsPort`, so a non-default listener is pinned too;
+  plain HTTP needs no pin because Caddy does not serve h2c unless explicitly asked. This remains a
+  **workaround, not a root-cause fix** — why Chrome aborts the upgrade under h2/h3 is still
+  unidentified — and both the inline comment and `deploy/INGRESS.md` say so, so the next reader
+  does not delete it as an unexplained setting.
+
+  **Verified against the real binary (Caddy v2.11.4), not a stub:** the generated file passes
+  `caddy validate` ("Valid configuration"), and `caddy adapt` shows the pin surviving into the
+  JSON config as `srv1 [":8443"] protocols ["h1"]` while the plain-HTTP `srv0 [":8080"]` correctly
+  carries none. The emitted global block is byte-identical to the live hand-edited file's.
+
+  **Tests:** +2 in `test/caddy.test.js` — the pin is emitted inside global options, and it tracks
+  the configured port rather than a hardcoded `8443`. Both were confirmed to go red against the
+  two real regressions: deleting the block fails both, hardcoding `8443` fails the port guard.
+  **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`.
+
+  This also unblocks measurement: the perimeter-shaped v5 acceptance criteria were being checked
+  against a deployment the product could not reproduce, so neither a pass nor a fail was
+  trustworthy. With the generator caught up, all three `NOTE (manual, …)` edits in the live file
+  are now reproducible — the other two (2026-06-23 `basic_auth` + catch-all, 2026-07-09
+  `X-Auth-User`) were already emitted.
+
 ### Internal
 - **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a
   ratified Direction keeps hard.** `.prawduct/artifacts/wrap-direction.md` (`last_ratified:

@@ -64,6 +64,32 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   plus `auto_https disable_redirects`. The generator refuses to emit the
   catch-all without a credential — an ungated one would be an open door.
 
+## HTTP/1.1 pin on the HTTPS listener
+
+The generated Caddyfile always pins the HTTPS listener to HTTP/1.1:
+
+```
+{
+	servers :8443 {
+		protocols h1
+	}
+}
+```
+
+**Why:** Chrome aborts terminal WebSockets client-side — close code 1006, the
+request never reaches Caddy — whenever the TLS origin negotiates h2 or h3. Every
+terminal WebSocket that has ever worked here ran over HTTP/1.1, and the
+reconnect-loop incidents this prevents recurred three times in two weeks. Since
+terminals are the product's primary surface, the pin is **unconditional** and has
+no config flag: a setting that could omit it would regenerate a broken perimeter.
+
+This is a workaround, not a root-cause fix — why Chrome aborts the upgrade under
+h2/h3 is still unidentified. **Do not remove it as an unexplained setting.** The
+port tracks `httpsPort`, so a custom port is pinned too. Plain HTTP needs no pin
+(Caddy does not serve h2c unless explicitly asked).
+
+If terminals start dying at 1006 after an ingress change, check this block first.
+
 ## Admin credential reset (break-glass, AUTH-2)
 
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,
