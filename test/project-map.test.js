@@ -185,9 +185,9 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
 
     it('renders a sharedDir outside $HOME verbatim, with nested registered docs', () => {
       const md = projects._buildSharedDirsSection([
-        { name: 'AI Inference', sharedDir: '/abs/Monad-1', docs: [{ name: 'LITELLM' }, { name: 'TANGLEBRAIN' }] }
+        { name: 'AI Inference', sharedDir: '/abs/Web-API', docs: [{ name: 'LITELLM' }, { name: 'TANGLEBRAIN' }] }
       ]);
-      assert.ok(md.includes('- **AI Inference** → `/abs/Monad-1`'));
+      assert.ok(md.includes('- **AI Inference** → `/abs/Web-API`'));
       assert.ok(md.includes('  - `LITELLM`'));
       assert.ok(md.includes('  - `TANGLEBRAIN`'));
     });

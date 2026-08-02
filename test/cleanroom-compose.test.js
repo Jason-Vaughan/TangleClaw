@@ -76,7 +76,7 @@ describe('tc-cleanroom lockdown contract', () => {
     }
   });
 
-  it('exports the ssh docker PATH (non-interactive habitat PATH lacks /usr/local/bin)', () => {
+  it('exports the ssh docker PATH (non-interactive ssh PATH lacks /usr/local/bin)', () => {
     assert.match(provision, /export PATH="\/usr\/local\/bin:\/Applications\/Docker\.app\/Contents\/Resources\/bin:\$PATH"/);
   });
 

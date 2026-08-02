@@ -1,6 +1,6 @@
 # tc-cleanroom — TangleClaw first-run acceptance-gate environment.
 #
-# Runs on the habitat Docker host as compose project `tc-cleanroom`. Binding
+# Runs on the remote Docker host as compose project `tc-cleanroom`. Binding
 # constraints (operator-ratified lockdown, 2026-07-18):
 #   - Dedicated network with `internal: true` — zero egress, no reach to the
 #     host or other stacks. Because Docker ignores published ports on

@@ -1,12 +1,12 @@
 #!/bin/sh
 # tc-cleanroom bake — the ONE egress batch for the tc-cleanroom acceptance-gate image.
-# Run INSIDE an open rc-research-mode window, on habitat (ssh habitat 'sh -s' < this,
-# or by RentalClaw verbatim if the TC session is not live when the window opens).
+# Run ON the Docker host, inside a session that permits network egress:
+#   ssh "$TC_CLEANROOM_HOST" 'sh -s' < deploy/cleanroom/bake.sh
 # Everything after this script completes needs ZERO egress: TC source arrives via
 # scp + docker cp, and TC has no npm dependencies.
 #
 # ttyd is installed from the upstream static aarch64 binary because the `ttyd`
-# apt package exists only in Debian sid — bookworm has none (RentalClaw verified
+# apt package exists only in Debian sid — bookworm has none (verified
 # against packages.debian.org, 2026-07-18). Release pinned for reproducibility;
 # the trailing --version makes a bad fetch fail loudly INSIDE the window.
 set -eux
@@ -14,11 +14,11 @@ set -eux
 # helper (docker-credential-desktop lives in Docker.app's Resources/bin and is
 # invoked even for anonymous Hub pulls) — without this export the first pull
 # dies with "executable file not found in $PATH". Applies to EVERY ssh-driven
-# docker command on habitat, not just this script. (RentalClaw, 2026-07-18.)
+# docker command on the Docker host, not just this script. (Learned 2026-07-18.)
 export PATH="/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
 DOCKER=/usr/local/bin/docker
 
-# 1. Base pulls (linux/arm64 — habitat's Docker Desktop VM is aarch64)
+# 1. Base pulls (linux/arm64 — the Docker Desktop VM is aarch64)
 $DOCKER pull node:22-bookworm
 $DOCKER pull node:22-slim
 

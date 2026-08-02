@@ -70,11 +70,11 @@ describe('orchestration.resolveKeyRef', () => {
   it('expands a leading ~ in a file: reference', () => {
     // Inject a fake readFile so we can assert the ~ was expanded to homedir.
     let seenPath = null;
-    const r = orchestration.resolveKeyRef('file:~/.config/monad/x.key', {
+    const r = orchestration.resolveKeyRef('file:~/.config/tangleclaw/x.key', {
       readFile: (p) => { seenPath = p; return 'sk-home'; }
     });
     assert.deepEqual(r, { value: 'sk-home' });
-    assert.equal(seenPath, path.join(os.homedir(), '.config/monad/x.key'));
+    assert.equal(seenPath, path.join(os.homedir(), '.config/tangleclaw/x.key'));
   });
 
   it('errors on an empty key file', () => {
@@ -283,7 +283,7 @@ describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
   it('does not flag a keyRef-style value (refs are not secrets)', () => {
     // A keyRef lives in a profile, not engine env, but assert it would not
     // false-trigger even if one appeared here — it does not match the key shape.
-    const engine = { id: 'x', launch: { env: { SOME_REF: 'file:~/.config/monad/tangleclaw-aider.key' } } };
+    const engine = { id: 'x', launch: { env: { SOME_REF: 'file:~/.config/tangleclaw/tangleclaw-aider.key' } } };
     assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
   });
 

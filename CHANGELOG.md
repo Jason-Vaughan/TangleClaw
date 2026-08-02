@@ -38,6 +38,16 @@ All notable changes to TangleClaw are documented in this file.
   host. No code branches on `status`, so the accompanying `real` → `provisional` correction is
   descriptive only. Existing installs are unaffected: the file is seeded once and then operator-owned.
 
+- **`deploy/cleanroom/provision.sh` takes its Docker host from `TC_CLEANROOM_HOST` instead of a
+  hardcoded hostname.** The host is **required with no default**, deliberately: a fallback would
+  either leak whichever machine the maintainer happens to use, or silently point a teardown at the
+  wrong box. Unset fails loudly with the variable name and an example. The strict argument gate now
+  runs **before** the host is resolved — argument validation needs no remote host, and without that
+  ordering a typoed flag on a machine with the variable unset would complain about the environment
+  and never mention the bad argument. That ordering is pinned by the existing "rejects unrecognized
+  provisioner arguments before touching the remote host" contract test, which caught the regression
+  when the check was introduced in the wrong order.
+
 - **Scrubbed maintainer machine identifiers out of source, tests, and operator instructions.** A real
   tailnet FQDN was used as the example value across `lib/` docstrings and test fixtures, and machine
   names appeared in a `server.js` comment (which also cited a private memory file no user can read),

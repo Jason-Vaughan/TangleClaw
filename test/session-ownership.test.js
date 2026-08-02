@@ -454,7 +454,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
     it('lists OTHER projects with a live session so the flag can name the likely tab', (t) => {
       const other1 = store.projects.create({ name: 'sg-portfolio', path: '/tmp/sg-portfolio' });
-      const other2 = store.projects.create({ name: 'sg-monad', path: '/tmp/sg-monad' });
+      const other2 = store.projects.create({ name: 'sg-other', path: '/tmp/sg-other' });
       t.mock.method(store.sessions, 'listLiveAll', () => [
         { id: 9001, projectId: other1.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
         { id: 9002, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' }
@@ -462,7 +462,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
       const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
       assert.ok(names.includes('sg-portfolio'), 'lists a live sibling session');
-      assert.ok(names.includes('sg-monad'), 'lists a wrapping sibling session (agent still running)');
+      assert.ok(names.includes('sg-other'), 'lists a wrapping sibling session (agent still running)');
     });
 
     it('never lists the owned project among the other live sessions', (t) => {

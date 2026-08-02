@@ -3469,7 +3469,7 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
 
   // List pending devices via the gateway's WebSocket CLI.
   // Filter by published gateway port so we pick the right container on multi-tenant
-  // hosts (e.g. habitat runs RentalClaw, UCI services, and TiLT Claw side-by-side).
+  // hosts (a single Docker host often runs several unrelated stacks side-by-side).
   // Falls back to head -1 as a safety net if multiple containers somehow publish the
   // same port (shouldn't happen given PortHub registration).
   let pending;
