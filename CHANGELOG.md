@@ -31,7 +31,21 @@ All notable changes to TangleClaw are documented in this file.
   **Tests:** +2 in `test/caddy.test.js` — the pin is emitted inside global options, and it tracks
   the configured port rather than a hardcoded `8443`. Both were confirmed to go red against the
   two real regressions: deleting the block fails both, hardcoding `8443` fails the port guard.
-  **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`.
+  **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`, including a
+  verified `caddy adapt` one-liner for checking whether a *live* listener actually carries the pin
+  and the safe manual remediation when it does not — the fix does not retrofit a Caddyfile already
+  on disk, and re-running the cutover is refused on a hand-edited file (tracked as #848).
+  `docs/adr/0003-ingress-model.md` gains the consequence (caddy mode gives up h2/h3 entirely) and
+  records `protocols h1 h2` as considered and rejected — the observed failures occur under h2 as
+  well as h3, so keeping h2 would not prevent the incident.
+
+  **Known gap, deliberately not fixed here (#846):** generator/deployment parity is still
+  incomplete — the live tailnet site carries an access-log block the generator cannot emit, so a
+  cutover would silently end Caddy access logging. #845's audit missed it by enumerating
+  `NOTE (manual, …)` markers, which only finds edits someone remembered to annotate; diffing a
+  generated file against the live one finds it immediately. **A cutover on this box is therefore
+  still not lossless**, and the perimeter-shaped v5 criteria should not be measured against a
+  post-cutover config until #846 is resolved or explicitly accepted.
 
   This also unblocks measurement: the perimeter-shaped v5 acceptance criteria were being checked
   against a deployment the product could not reproduce, so neither a pass nor a fail was

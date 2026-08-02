@@ -88,6 +88,37 @@ h2/h3 is still unidentified. **Do not remove it as an unexplained setting.** The
 port tracks `httpsPort`, so a custom port is pinned too. Plain HTTP needs no pin
 (Caddy does not serve h2c unless explicitly asked).
 
+### Checking and fixing an already-deployed Caddyfile
+
+The generator emitting the pin does **not** retrofit a Caddyfile that is already on
+disk — nothing rewrites a live Caddyfile except an operator-run cutover, and
+`validateCaddyfile` checks syntax only. Any install created before the pin landed
+is still unpinned. Check it:
+
+```bash
+# does the live HTTPS listener actually carry the pin?
+caddy adapt --config ~/.tangleclaw/Caddyfile 2>/dev/null \
+  | python3 -c 'import json,sys; s=json.load(sys.stdin)["apps"]["http"]["servers"]; [print(k, v.get("listen"), v.get("protocols")) for k,v in s.items()]'
+```
+
+The HTTPS listener (`:8443`) should print `["h1"]`. If it prints `None`, it is
+unpinned and Chrome terminals will drop at 1006.
+
+**To fix, hand-add the block to the live file** — add `servers :8443 { protocols h1 }`
+inside the top-level `{ … }` global options block, then restart Caddy.
+
+**Do not "fix" it by re-running the cutover.** If the live file is hand-edited
+(most are), the cutover refuses it; forcing past that with `--force` writes a
+timestamped backup but still replaces the file, discarding every other hand edit
+it carries. Regenerating is only safe once the generator reproduces the live file
+in full — see the parity caveat below.
+
+> **Parity is not yet complete.** The generator still cannot emit the access-log
+> block the live tailnet site carries, so a cutover today silently ends Caddy
+> access logging. Audit parity by **diffing** a generated file against the live
+> one — not by grepping for `NOTE (manual, …)` markers, which only finds edits
+> someone remembered to annotate.
+
 If terminals start dying at 1006 after an ingress change, check this block first.
 
 ## Admin credential reset (break-glass, AUTH-2)

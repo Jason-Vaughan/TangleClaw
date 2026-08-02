@@ -57,6 +57,13 @@ transport switch) is unit-tested.
 - PortHub keeps the ttyd `:3100` lease in caddy mode even though nothing binds it there. This is
   intentional: holding the port keeps it free so a rollback to `direct` rebinds cleanly instead of
   racing another project for `:3100`.
+- **The caddy-mode HTTPS listener is pinned to HTTP/1.1** (`servers :<httpsPort> { protocols h1 }`),
+  so caddy mode gives up HTTP/2 and HTTP/3 entirely. Chrome aborts terminal WebSockets client-side
+  (close code 1006, never reaching Caddy) when the TLS origin negotiates h2/h3; terminals are the
+  product's primary surface, so the pin is unconditional with no config flag. `direct` mode is
+  unaffected. The cost is losing h2 multiplexing for static assets — negligible against a dead
+  terminal — and the root cause of Chrome's behavior remains unidentified, so this is a durable
+  workaround rather than a settled design. Operator-facing detail: `deploy/INGRESS.md`.
 
 ## Alternatives considered
 
@@ -68,3 +75,8 @@ transport switch) is unit-tested.
   weakens the "rollback = exactly today" guarantee the operator asked for.
 - **Caddy on 443 by default (root LaunchDaemon).** Rejected as default: needs sudo and runs Caddy as
   root; the no-sudo `:8443` user-agent path is the default, with 443 documented for public domains.
+- **Pinning `protocols h1 h2` instead of `h1` alone** (dropping only HTTP/3, keeping h2 multiplexing).
+  Rejected: the observed terminal failures occur under **h2 as well as h3**, so keeping h2 would not
+  fix the incident it is meant to prevent. Since the root cause is unidentified, the pin is set to
+  the only configuration observed to work rather than the narrowest one that seems likely to. If the
+  root cause is ever found, revisit — h2 is the thing worth winning back.
