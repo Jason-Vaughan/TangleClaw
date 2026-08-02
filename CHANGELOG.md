@@ -58,6 +58,10 @@ All notable changes to TangleClaw are documented in this file.
   the scope that reproduces it.
 
 ### Fixed
+- **Wrap no longer blocks when learnings capture correctly finds nothing novel.** The
+  `learnings-capture` AI-content step now explicitly permits a successful unchanged-file outcome and
+  reports it as skipped, while execution errors and unchanged required changelog or memory output
+  remain blocking.
 - **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
   `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
   entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
