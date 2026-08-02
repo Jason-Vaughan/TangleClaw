@@ -5,6 +5,25 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **The generated `CLAUDE.md` no longer publishes home directories either — the second call site the
+  first fix missed.** `lib/engines.js`'s `_buildSharedDocsSection` wrote each shared doc's absolute
+  `filePath` straight into the engine config it generates for **every managed project**, and those
+  projects commit it. Same data class and a wider blast radius than the `PROJECT-MAP.md` leak below,
+  which was fixed first while this one kept emitting raw paths — a textbook instance of the project's
+  own "one call site isn't the family" rule.
+
+  The helper therefore moved out of `lib/projects.js` and into `lib/project-paths.js` as
+  `tildeHomePath`, so both generators share one implementation instead of each carrying a copy
+  (`lib/engines.js` cannot require `lib/projects.js` — that direction is already taken, so a shared
+  leaf module was the only non-circular home; `project-paths.js` documents itself as node-built-ins-only
+  for exactly this reason). All three render sites are sanitized — reference mode plus **both** inline
+  error branches, since a "file not found" warning leaks the path just as completely as a success.
+  The `fs.existsSync`/`readFileSync` calls deliberately still use the real path.
+
+  **Tests:** +3 in `test/engines.test.js` for a function that previously had none, covering reference
+  mode, the inline not-found branch, and non-`$HOME` pass-through; verified red against a reverted
+  render (2 of 3 fail; the third correctly still passes, being the outside-`$HOME` case).
+
 - **`PROJECT-MAP.md` no longer publishes the operator's home directory — a leak the product caused
   in *users'* repos, not just this one.** `_buildSharedDirsSection` rendered each shared-doc group's
   **absolute** `sharedDir`, and `PROJECT-MAP.md` is a tracked file that is routinely pushed to a
@@ -38,6 +57,21 @@ All notable changes to TangleClaw are documented in this file.
   host. No code branches on `status`, so the accompanying `real` → `provisional` correction is
   descriptive only. Existing installs are unaffected: the file is seeded once and then operator-owned.
 
+- **Both new prevention invariants now have regression guards, and the one that already existed was
+  environment-conditional.** Nothing asserted that the bundled profile template ships without an
+  endpoint, or that the cleanroom host has no hardcoded fallback — so either could have silently
+  regressed. Added: a test reading `data/orchestration-profiles.json` and asserting every `baseUrl` is
+  null **plus** that no host-shaped string, IP literal, or absolute home path appears anywhere in it
+  (this immediately caught a `.ts.net` example in the file's own setup note, which was reworded rather
+  than carve out an exception); and a test asserting `TC_CLEANROOM_HOST` has no `:-default` fallback
+  and fails loudly when unset.
+
+  The pre-existing "rejects unrecognized arguments before touching the remote host" test **inherited
+  `process.env`**, so with `TC_CLEANROOM_HOST` exported it passed under either ordering — it would
+  only have caught the reordering on a machine where that variable happened to be unset. It now sets
+  the environment explicitly in **both** directions and asserts the bad flag is named in the output.
+  A guard whose verdict depends on the developer's shell is not a guard.
+
 - **`deploy/cleanroom/provision.sh` takes its Docker host from `TC_CLEANROOM_HOST` instead of a
   hardcoded hostname.** The host is **required with no default**, deliberately: a fallback would
   either leak whichever machine the maintainer happens to use, or silently point a teardown at the
@@ -57,10 +91,13 @@ All notable changes to TangleClaw are documented in this file.
   because the assertion under it verifies lowercasing and trailing-dot stripping — replacing it with
   a lowercase placeholder would have quietly stopped the test from testing anything.
 
-  **Deliberately not scrubbed:** `CHANGELOG.md`, `.prawduct/change-log.md`, and
-  `docs/adr/0004-auth-2-basic-auth-gate.md` still name the machine where past work happened. Those
-  are historical records; rewriting them would be revisionism with no security benefit, since the
-  repo has been public since 2026-03-30 and nothing there is a credential.
+  **Deliberately not scrubbed:** `CHANGELOG.md` and `.prawduct/change-log.md` still name the machine
+  where past work happened. Those are historical records; rewriting them would be revisionism with no
+  security benefit, since the repo has been public since 2026-03-30 and nothing there is a credential.
+  The rule applied: **a record of what happened keeps its names; a value a reader will re-use does
+  not.** So the ADRs were scrubbed rather than exempted — `0003`, `0004`, and `0012` describe how the
+  system is built and get read as current guidance, and `.prawduct/change-log.md`'s one absolute home
+  path was rewritten `~`-relative because a path is not a historical fact.
 
 - **`.gitignore` now refuses secret-bearing files by default.** This repo is public and the product
   handles TLS private keys, a `basic_auth` credential, and API keys, so one careless `git add -A` is
@@ -79,10 +116,20 @@ All notable changes to TangleClaw are documented in this file.
 
   **Scope, stated plainly:** `.gitignore` prevents *future* commits. It does not untrack anything and
   it does not touch history — so this closes the intake path, it does not scrub what is already
-  committed. An audit of the 375 tracked files found no credentials, tokens, personal email
-  addresses, or non-loopback IPs; the four bcrypt-shaped strings are synthetic test fixtures. What it
-  did find is separately tracked: absolute home paths and a private tailnet endpoint in files that
-  are *deliberately* tracked, which no ignore rule can address.
+  committed.
+
+  An audit of the tracked files found **no credential, token, personal email address, or private key**
+  — and `git log --diff-filter=A` confirms none has ever been committed, so nothing needs rotating.
+  The bcrypt-shaped strings are synthetic fixtures. Real infrastructure identifiers *were* found and
+  are scrubbed in the entries above. What remains, deliberately, is **synthetic RFC 1918 test data**
+  (sequential `10.0.0.x` connection fixtures); real addresses were replaced with RFC 5737 TEST-NET-1.
+
+  That paragraph originally claimed the audit found "no non-loopback IPs," which was **false** — the
+  sweep that produced it used `git grep -E` with `\b` word boundaries and a `$(git ls-files)`
+  pathspec, neither of which works there, so it matched nothing and read as clean. Re-run with a
+  control pattern first, it found a real LAN IP, SSH username, private-key filename, and home paths.
+  Recorded because the claim shipped to a public changelog as fact: **a scan that returns zero proves
+  nothing until a pattern that must hit does.**
 
 ### Internal
 - **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a

@@ -431,7 +431,7 @@ describe('store schema v9 migration', () => {
   it('openclaw_connections has audit_secret column', () => {
     const conn = store.openclawConnections.create({
       name: 'test-conn',
-      host: '192.168.1.1',
+      host: '192.0.2.1',
       sshUser: 'user',
       sshKeyPath: '/tmp/key',
       auditSecret: 'secret-token-123'

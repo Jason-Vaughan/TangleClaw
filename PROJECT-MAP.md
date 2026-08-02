@@ -21,14 +21,9 @@ to file paths — this maps the layout itself.
 
 ## Shared directories / doc groups
 
-- **AI Inference** → _(no shared directory)_
-  - `LITELLM`
-  - `TANGLEBRAIN`
-  - `TANGLEBRAIN-C1-REPORT`
-  - `TANGLEBRAIN-PLAN`
-- **Claw Code - X** → `~/Documents/Projects/clawcode-x`
-  - `CHANGELOG`
-  - `CLAUDE`
-  - `CLAW_CODE_SETUP`
-- **Tangle-Shared** → `~/Documents/Projects/Shared/Tangle-Shared`
-  - _(no docs registered)_
+<!-- Intentionally not committed: this section is a snapshot of THIS machine's
+     shared-doc group membership — local state, not project structure. It named
+     private sibling projects when committed to a public repo. See issue #849. -->
+
+_(shared-doc group membership is machine-local and not published)_
+

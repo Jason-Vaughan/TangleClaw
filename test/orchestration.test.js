@@ -396,4 +396,31 @@ describe('orchestration — OpenAI-compat guarantee: endpoint swap needs no harn
     // The only arg added is `--model <model>` — no profile name, no endpoint flag.
     assert.deepEqual(out.launch.args, ['--foo', '--model', 'openai/qwen']);
   });
+
+  // The bundled template is seeded into every user's ~/.tangleclaw on first boot
+  // (lib/store.js), so anything concrete in it ships to strangers. It previously
+  // carried a private Tailscale endpoint, which both published the host and gave
+  // every new install a default profile pointing at a machine only one person
+  // could reach. Nothing guarded that, so this does.
+  describe('bundled orchestration-profiles template', () => {
+    const bundled = JSON.parse(
+      require('node:fs').readFileSync(
+        require('node:path').join(__dirname, '..', 'data', 'orchestration-profiles.json'), 'utf8'));
+
+    it('ships no concrete endpoint — every profile baseUrl is null', () => {
+      const named = Object.entries(bundled.profiles);
+      assert.ok(named.length > 0, 'template should define profiles');
+      for (const [name, p] of named) {
+        assert.equal(p.baseUrl, null, `profile "${name}" must ship without a baseUrl`);
+      }
+    });
+
+    it('ships no host-shaped or user-specific string anywhere in the template', () => {
+      const raw = JSON.stringify(bundled);
+      assert.doesNotMatch(raw, /\.ts\.net/, 'no Tailscale MagicDNS host may ship');
+      assert.doesNotMatch(raw, /([0-9]{1,3}\.){3}[0-9]{1,3}/, 'no IP literal may ship');
+      assert.doesNotMatch(raw, /\/Users\/|\/home\//, 'no absolute home path may ship');
+    });
+  });
+
 });
