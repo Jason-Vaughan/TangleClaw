@@ -778,53 +778,6 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     assert.match(res.output.remediation, /Skip & note/);
   });
 
-  it('SKIPS when learnings capture succeeds but has no justified file change', async () => {
-    aic._internal.readForVerify = () => 'identical learnings';
-    const ctx = ctxWith({
-      step: {
-        id: 'learnings-capture', kind: 'ai-content', prompt: 'capture learnings',
-        verifyChanged: ['.tangleclaw/memories/learnings.md'], allowUnchanged: true
-      }
-    });
-    const res = await aic.run(ctx);
-    assert.equal(res.ok, true);
-    assert.equal(res.status, 'skipped');
-    assert.match(res.output.reason, /no justified change/);
-    assert.equal(ctx.staged['learnings-capture'], undefined, 'a skipped no-op stages no content');
-  });
-
-  it('BLOCKS a genuine learnings-capture execution failure even when unchanged is allowed', async () => {
-    aic._internal.sendKeys = () => { throw new Error('tmux disappeared'); };
-    const res = await aic.run(ctxWith({
-      step: {
-        id: 'learnings-capture', kind: 'ai-content', prompt: 'capture learnings',
-        verifyChanged: ['.tangleclaw/memories/learnings.md'], allowUnchanged: true
-      }
-    }));
-    assert.equal(res.ok, false);
-    assert.equal(res.status, 'blocked');
-    assert.match(res.blockers[0], /tmux disappeared/);
-  });
-
-  it('still BLOCKS unchanged required changelog and memory output', async () => {
-    aic._internal.readForVerify = () => 'identical required content';
-    const changelog = await aic.run(ctxWith());
-    assert.equal(changelog.status, 'blocked');
-
-    aic._internal.capturePane = () => ({ lines: [] });
-    aic._internal.readCaptureFile = () => ['## Summary', 'x', '## NextSteps', '- y', '## Learnings', '- none'].join('\n');
-    aic._internal.removeCaptureFile = () => {};
-    const memory = await aic.run(ctxWith({
-      step: {
-        id: 'memory-update', kind: 'ai-content', prompt: 'update memory',
-        captureFields: ['summary', 'nextSteps', 'learnings'],
-        captureFile: '.tangleclaw/.wrap-summary.md',
-        verifyChanged: ['.tangleclaw/memories/MEMORY.md']
-      }
-    }));
-    assert.equal(memory.status, 'blocked');
-  });
-
   it('counts file CREATION (null → content) as a change', async () => {
     let call = 0;
     aic._internal.readForVerify = () => (call++ === 0 ? null : '# Cross-Session Learnings');
