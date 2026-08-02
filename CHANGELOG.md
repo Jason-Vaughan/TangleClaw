@@ -4,7 +4,54 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`PROJECT-MAP.md` no longer publishes the operator's home directory — a leak the product caused
+  in *users'* repos, not just this one.** `_buildSharedDirsSection` rendered each shared-doc group's
+  **absolute** `sharedDir`, and `PROJECT-MAP.md` is a tracked file that is routinely pushed to a
+  public remote. Any TangleClaw user who joins a shared-doc group therefore committed their OS
+  username and the layout of their private work to their own repo. Here it had published
+  `/Users/<name>/Documents/Projects/clawcode-x` and a second private project path.
+
+  Paths now render `~`-relative via a new `_tildeHomePath` helper. `~` is already this codebase's
+  display convention for machine-local paths (the orchestration profiles' `keyRef: file:~/…`) and
+  the readers that consume such paths expand it back (`resolveProjectsDir`, `lib/orchestration.js`),
+  so nothing loses resolvability on the machine that wrote it. Only a prefix ending at a **path
+  boundary** collapses — with `$HOME` of `/Users/jane`, `/Users/jane-old/x` is left alone instead of
+  becoming the unresolvable `~-old/x` — and an empty or `/` home never sanitizes at all.
+
+  **Sanitizing at the render boundary is what makes this stick:** the `project-map` wrap step
+  refreshes that section on *every* wrap, so scrubbing the committed file alone would have
+  re-leaked on the next wrap. Tests: +5 in `test/project-map.test.js` (collapse, non-`$HOME`
+  pass-through, the path-boundary guard, relative/tilde/non-string input, and an end-to-end
+  assertion that the rendered section contains no absolute home path). The end-to-end guard was
+  confirmed to fail when the render is reverted to the raw `sharedDir`.
+
 ### Security
+- **Stopped shipping the maintainer's private inference endpoint to every install.**
+  `data/orchestration-profiles.json` is seeded into every user's `~/.tangleclaw/` on first boot
+  (`lib/store.js`), and it hardcoded a private Tailscale MagicDNS endpoint and a maintainer-specific
+  key path. That published the host to anyone reading a public clone *and* gave every new install a
+  default profile pointing at a machine only one person can reach. All three profiles now ship with
+  `baseUrl: null`, which is the file's own documented convention for a not-yet-landed endpoint —
+  selectable but refusing to inject, "honest degradation, no silent fallback" — plus a `_setup` note
+  explaining that the refusal is the intended first-run behavior and how to point it at your own
+  host. No code branches on `status`, so the accompanying `real` → `provisional` correction is
+  descriptive only. Existing installs are unaffected: the file is seeded once and then operator-owned.
+
+- **Scrubbed maintainer machine identifiers out of source, tests, and operator instructions.** A real
+  tailnet FQDN was used as the example value across `lib/` docstrings and test fixtures, and machine
+  names appeared in a `server.js` comment (which also cited a private memory file no user can read),
+  in `deploy/cleanroom/provision.sh`'s run instructions, and in the `VRF-auth-1-cutover` runbook.
+  All now use neutral placeholders (`your-host.tailnet-name.ts.net`, "your TangleClaw host machine").
+  One test fixture deliberately keeps its **mixed-case** form (`Your-Host.Tailnet-Name.ts.net.`)
+  because the assertion under it verifies lowercasing and trailing-dot stripping — replacing it with
+  a lowercase placeholder would have quietly stopped the test from testing anything.
+
+  **Deliberately not scrubbed:** `CHANGELOG.md`, `.prawduct/change-log.md`, and
+  `docs/adr/0004-auth-2-basic-auth-gate.md` still name the machine where past work happened. Those
+  are historical records; rewriting them would be revisionism with no security benefit, since the
+  repo has been public since 2026-03-30 and nothing there is a credential.
+
 - **`.gitignore` now refuses secret-bearing files by default.** This repo is public and the product
   handles TLS private keys, a `basic_auth` credential, and API keys, so one careless `git add -A` is
   an unrecoverable disclosure rather than a revert. Added prevention rules for environment files

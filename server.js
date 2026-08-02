@@ -461,7 +461,7 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // RST (not FIN) on macOS, so any bytes still in the kernel TX buffer
   // are dropped without delivery. On localhost the handover is
   // sub-millisecond; on a Cloudflare tunnel to a remote browser
-  // (per the `reference_remote_setup` access path: elkaholic → cursatory)
+  // (the common setup: operator on a second machine, TangleClaw on the host)
   // RTT can be 50-150ms, so the 202 response needs a margin past the
   // pure kernel-flush time. 300ms covers typical tunnel RTT plus
   // queue/processing slack without being noticeably slow to the

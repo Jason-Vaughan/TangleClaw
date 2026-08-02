@@ -183,7 +183,7 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.match(projects._buildSharedDirsSection(undefined), /not a member/);
     });
 
-    it('renders each group with its absolute sharedDir and nested registered docs', () => {
+    it('renders a sharedDir outside $HOME verbatim, with nested registered docs', () => {
       const md = projects._buildSharedDirsSection([
         { name: 'AI Inference', sharedDir: '/abs/Monad-1', docs: [{ name: 'LITELLM' }, { name: 'TANGLEBRAIN' }] }
       ]);
@@ -192,12 +192,52 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       assert.ok(md.includes('  - `TANGLEBRAIN`'));
     });
 
+    // PROJECT-MAP.md is committed and often pushed to a public remote, and this
+    // section is machine-refreshed on every wrap — so an absolute shared dir
+    // would republish the operator's OS username after any manual scrub.
+    it('renders a sharedDir under $HOME as ~-relative, never leaking the username', () => {
+      const home = os.homedir();
+      const md = projects._buildSharedDirsSection([
+        { name: 'Tangle-Shared', sharedDir: path.join(home, 'Documents/Projects/Shared/Tangle-Shared'), docs: [] }
+      ]);
+      assert.ok(md.includes('- **Tangle-Shared** → `~/Documents/Projects/Shared/Tangle-Shared`'));
+      assert.ok(!md.includes(home), 'rendered section must not contain the absolute home path');
+    });
+
     it('notes a group with no sharedDir and a group with no docs', () => {
       const md = projects._buildSharedDirsSection([
         { name: 'NoDir', sharedDir: null, docs: [] }
       ]);
       assert.ok(md.includes('- **NoDir** → _(no shared directory)_'));
       assert.ok(md.includes('  - _(no docs registered)_'));
+    });
+  });
+
+  describe('_tildeHomePath', () => {
+    const home = os.homedir();
+
+    it('collapses a $HOME-prefixed path to ~', () => {
+      assert.equal(projects._tildeHomePath(path.join(home, 'Documents/x')), '~/Documents/x');
+      assert.equal(projects._tildeHomePath(home), '~');
+    });
+
+    it('leaves a path outside $HOME untouched', () => {
+      assert.equal(projects._tildeHomePath('/opt/shared/docs'), '/opt/shared/docs');
+      assert.equal(projects._tildeHomePath('/tmp/x'), '/tmp/x');
+    });
+
+    // Prefix matching without a boundary check would turn `/Users/jane-old/x`
+    // into `~-old/x` for a `/Users/jane` home — a path that resolves nowhere.
+    it('only collapses at a path boundary, not a bare string prefix', () => {
+      assert.equal(projects._tildeHomePath(`${home}-old/x`), `${home}-old/x`);
+      assert.equal(projects._tildeHomePath(`${home}extra`), `${home}extra`);
+    });
+
+    it('passes through relative, already-tilde, and non-string input unchanged', () => {
+      assert.equal(projects._tildeHomePath('~/already'), '~/already');
+      assert.equal(projects._tildeHomePath('relative/path'), 'relative/path');
+      assert.equal(projects._tildeHomePath(''), '');
+      assert.equal(projects._tildeHomePath(null), null);
     });
   });
 

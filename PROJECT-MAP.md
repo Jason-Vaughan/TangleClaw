@@ -26,9 +26,9 @@ to file paths — this maps the layout itself.
   - `TANGLEBRAIN`
   - `TANGLEBRAIN-C1-REPORT`
   - `TANGLEBRAIN-PLAN`
-- **Claw Code - X** → `/Users/jasonvaughan/Documents/Projects/clawcode-x`
+- **Claw Code - X** → `~/Documents/Projects/clawcode-x`
   - `CHANGELOG`
   - `CLAUDE`
   - `CLAW_CODE_SETUP`
-- **Tangle-Shared** → `/Users/jasonvaughan/Documents/Projects/Shared/Tangle-Shared`
+- **Tangle-Shared** → `~/Documents/Projects/Shared/Tangle-Shared`
   - _(no docs registered)_

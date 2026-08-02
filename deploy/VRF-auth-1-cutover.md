@@ -2,7 +2,7 @@
 
 Verifies the **#397 production-durability fixes** to the AUTH-1 Caddy ingress cutover
 (`scripts/ingress-cutover.js`, `lib/caddy.js`, `deploy/com.tangleclaw.ttyd.plist`) on a
-**fresh, throwaway TangleClaw install** — so nothing touches the live cursatory system, its
+**fresh, throwaway TangleClaw install** — so nothing touches the live production system, its
 projects, tags, DB, or hand-edited Caddyfile.
 
 **Why a separate machine:** TC's home dir (`~/.tangleclaw/`), SQLite DB, Caddyfile, and
@@ -66,7 +66,7 @@ git log --oneline -3      # top 3 are the #397 fix commits (production-durable c
 ```
 
 Cloning under `~/Documents/Projects` is deliberate: it puts the repo (and any cert we
-place beside it) inside a **TCC-protected** tree, reproducing the cursatory condition that
+place beside it) inside a **TCC-protected** tree, reproducing the production condition that
 broke bug #1.
 
 ---
@@ -157,7 +157,7 @@ mkdir -p tcc-cert
 mkcert -cert-file tcc-cert/cert.pem -key-file tcc-cert/key.pem localhost 127.0.0.1
 ABS=$(pwd)
 
-# 5.2  Point TC config at the TCC-resident cert (mimics cursatory's broken setup)
+# 5.2  Point TC config at the TCC-resident cert (mimics the broken production setup)
 node -e '
   const fs=require("fs"),p=process.env.HOME+"/.tangleclaw/config.json";
   const c=JSON.parse(fs.readFileSync(p,"utf8"));

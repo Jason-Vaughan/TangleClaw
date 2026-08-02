@@ -4,7 +4,7 @@ set -euo pipefail
 # tc-cleanroom provisioner — stands up (or tears down) the TangleClaw
 # first-run acceptance-gate container on the habitat Docker host.
 #
-# Run FROM the TangleClaw repo on cursatory:
+# Run FROM the TangleClaw repo on your TangleClaw host machine:
 #   ./deploy/cleanroom/provision.sh          # bundle repo, ship, compose up, clone inside
 #   ./deploy/cleanroom/provision.sh --down   # compose down tc-cleanroom ONLY
 #
