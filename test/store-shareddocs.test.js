@@ -19,7 +19,7 @@ describe('store.sharedDocs', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shareddocs-'));
     store._setBasePath(tmpDir);
     store.init();
-    group = store.projectGroups.create({ name: 'habitat', description: 'Infra docs' });
+    group = store.projectGroups.create({ name: 'shared-infra', description: 'Infra docs' });
   });
 
   afterEach(() => {
@@ -266,7 +266,7 @@ describe('store.sharedDocs', () => {
       const injectable = store.sharedDocs.getInjectableForProject(proj.id);
       assert.equal(injectable.length, 1);
       assert.equal(injectable[0].name, 'Net');
-      assert.equal(injectable[0].groupName, 'habitat');
+      assert.equal(injectable[0].groupName, 'shared-infra');
     });
 
     it('should deduplicate by file_path across groups', () => {

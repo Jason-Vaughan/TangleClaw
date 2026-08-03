@@ -11,7 +11,7 @@
  *   RC2  toggleSelect's mobile exit path hardcoded mouse OFF (and its 30s
  *        auto-revert timer violated the no-UI-timers rule, #98/#268) —
  *        one Select round-trip stranded a session-level `mouse off`
- *        override that nothing removed (live evidence: RentalClaw-Project).
+ *        override that nothing removed (live evidence: ExampleApp-Project).
  *   RC3  the touch-only "mouse guard" (3s poll) enforced mouse OFF, while
  *        the #443 touch-scroll shim REQUIRES mouse ON — mutually exclusive
  *        designs, so touch-scroll could never reliably work on a phone.

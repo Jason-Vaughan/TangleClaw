@@ -32,7 +32,7 @@ describe('store.openclawConnections', () => {
    */
   function createConnection(overrides = {}) {
     return store.openclawConnections.create({
-      name: 'RentalClaw',
+      name: 'ExampleApp',
       host: '198.51.100.10',
       sshUser: 'testuser',
       sshKeyPath: '~/.ssh/test_key',
@@ -44,7 +44,7 @@ describe('store.openclawConnections', () => {
     it('should create a connection with required fields', () => {
       const conn = createConnection();
       assert.ok(conn.id);
-      assert.equal(conn.name, 'RentalClaw');
+      assert.equal(conn.name, 'ExampleApp');
       assert.equal(conn.host, '198.51.100.10');
       assert.equal(conn.sshUser, 'testuser');
       assert.equal(conn.sshKeyPath, '~/.ssh/test_key');
@@ -88,8 +88,8 @@ describe('store.openclawConnections', () => {
     });
 
     it('should trim whitespace from name', () => {
-      const conn = createConnection({ name: '  RentalClaw  ' });
-      assert.equal(conn.name, 'RentalClaw');
+      const conn = createConnection({ name: '  ExampleApp  ' });
+      assert.equal(conn.name, 'ExampleApp');
     });
 
     it('should reject empty name', () => {
@@ -123,7 +123,7 @@ describe('store.openclawConnections', () => {
     it('should return connection by id', () => {
       const created = createConnection();
       const fetched = store.openclawConnections.get(created.id);
-      assert.equal(fetched.name, 'RentalClaw');
+      assert.equal(fetched.name, 'ExampleApp');
       assert.equal(fetched.host, '198.51.100.10');
     });
 
@@ -239,7 +239,7 @@ describe('store.openclawConnections', () => {
       store.init();
       const list = store.openclawConnections.list();
       assert.equal(list.length, 1);
-      assert.equal(list[0].name, 'RentalClaw');
+      assert.equal(list[0].name, 'ExampleApp');
     });
 
     it('v14→v15 migration preserves existing bridge_port row data verbatim (#160)', () => {

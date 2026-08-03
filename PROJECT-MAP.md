@@ -21,14 +21,4 @@ to file paths — this maps the layout itself.
 
 ## Shared directories / doc groups
 
-- **AI Inference** → _(no shared directory)_
-  - `LITELLM`
-  - `TANGLEBRAIN`
-  - `TANGLEBRAIN-C1-REPORT`
-  - `TANGLEBRAIN-PLAN`
-- **Claw Code - X** → `/Users/jasonvaughan/Documents/Projects/clawcode-x`
-  - `CHANGELOG`
-  - `CLAUDE`
-  - `CLAW_CODE_SETUP`
-- **Tangle-Shared** → `/Users/jasonvaughan/Documents/Projects/Shared/Tangle-Shared`
-  - _(no docs registered)_
+_This project belongs to 4 shared-doc groups. Membership is machine-local state, not project structure, so it is not published here — see the TangleClaw UI for this install's groups._

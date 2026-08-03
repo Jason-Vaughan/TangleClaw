@@ -380,7 +380,7 @@ describe('clawbridge.getStatus', () => {
 // ── CC-7 Slice B1: getFile (ClawBridge #18 / v1.9.1 capture-back) ──
 
 describe('clawbridge.getFile', () => {
-  it('GETs /v2/session/file with project + path and returns raw content verbatim', async () => {
+  it('POSTs /v2/session/file with project + path and returns raw content verbatim', async () => {
     let req = null;
     const raw = '## Next action\nship it — `##` and\nnewlines preserved\n';
     const stub = await startStubBridge((r) => {
@@ -396,7 +396,10 @@ describe('clawbridge.getFile', () => {
       assert.equal(result.bytes, Buffer.byteLength(raw));
       assert.equal(result.consumed, false);
       assert.equal(result.path, '.wrap-capture.md');
-      assert.equal(req.method, 'GET');
+      // ClawBridge v2.0.0 moved consuming reads GET → POST; this call site sends
+      // POST unconditionally, so a plain read must be POST too (200,
+      // consumed:false). A GET carrying consume=true is a hard 405 on 2.x.
+      assert.equal(req.method, 'POST');
       assert.equal(req.auth, 'Bearer tok');
       // No consume param when not requested.
       assert.match(req.path, /^\/v2\/session\/file\?project=demo&path=\.wrap-capture\.md$/);
@@ -405,10 +408,12 @@ describe('clawbridge.getFile', () => {
     }
   });
 
-  it('sends consume=true (literal string) only when consume is truthy', async () => {
+  it('sends consume=true (literal string) over POST, never GET', async () => {
     let path = null;
+    let method = null;
     const stub = await startStubBridge((r) => {
       path = r.url;
+      method = r.method;
       return { status: 200, body: { ok: true, content: 'x', bytes: 1, consumed: true } };
     });
     try {
@@ -416,6 +421,9 @@ describe('clawbridge.getFile', () => {
       assert.equal(result.ok, true);
       assert.equal(result.consumed, true);
       assert.match(path, /[?&]consume=true(&|$)/, 'consume must be the literal string "true"');
+      // The regression this pins: ClawBridge 2.x answers a consuming GET with a
+      // hard 405 (no deprecation window), which silently broke wrap capture-back.
+      assert.equal(method, 'POST', 'a consuming read must never go over GET');
     } finally {
       await stub.close();
     }

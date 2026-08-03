@@ -60,7 +60,7 @@ function liveShapedCaddyfile(hash = HASH_A, user = 'jason') {
   ].join('\n');
 }
 
-const TAILNET_HOST = 'cursatory.tail123678.ts.net';
+const TAILNET_HOST = 'your-host.tailnet-name.ts.net';
 
 /**
  * The live hand-edited shape from the 2026-07-04 incident file: tcauth snippet,
@@ -492,7 +492,7 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       assert.equal(fs.readFileSync(caddyfilePath, 'utf8'), original, 'file untouched');
     });
 
-    it('adopts the tailnet host even when the credential is ALREADY in config (the live-cursatory scenario)', () => {
+    it('adopts the tailnet host even when the credential is ALREADY in config (the credential-already-adopted scenario)', () => {
       // #463 adopted credential + caddyRemoteHttp on an earlier boot; the
       // tailnet site was hand-added later. Coupled adoption would orphan it.
       setConfig({

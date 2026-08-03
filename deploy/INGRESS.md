@@ -115,6 +115,111 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   plus `auto_https disable_redirects`. The generator refuses to emit the
   catch-all without a credential — an ungated one would be an open door.
 
+## HTTP/1.1 pin on the HTTPS listener
+
+The generated Caddyfile always pins the HTTPS listener to HTTP/1.1:
+
+```
+{
+	servers :8443 {
+		protocols h1
+	}
+}
+```
+
+**Why:** Chrome aborts terminal WebSockets client-side — close code 1006, the
+request never reaches Caddy — whenever the TLS origin negotiates h2 or h3. Every
+terminal WebSocket that has ever worked here ran over HTTP/1.1, and the
+reconnect-loop incidents this prevents recurred three times in two weeks. Since
+terminals are the product's primary surface, the pin is **unconditional** and has
+no config flag: a setting that could omit it would regenerate a broken perimeter.
+
+This is a workaround, not a root-cause fix — why Chrome aborts the upgrade under
+h2/h3 is still unidentified. **Do not remove it as an unexplained setting.** The
+port tracks `httpsPort`, so a custom port is pinned too. Plain HTTP needs no pin
+(Caddy does not serve h2c unless explicitly asked).
+
+### Checking and fixing an already-deployed Caddyfile
+
+The generator emitting the pin does **not** retrofit a Caddyfile that is already on
+disk — nothing rewrites a live Caddyfile except an operator-run cutover, and
+`validateCaddyfile` checks syntax only. Any install created before the pin landed
+is still unpinned. Check it:
+
+```bash
+# does the live HTTPS listener actually carry the pin?
+# stderr is left ON: if this fails, the reason matters more than the output
+caddy adapt --config ~/.tangleclaw/Caddyfile \
+  | python3 -c 'import json,sys; s=json.load(sys.stdin)["apps"]["http"]["servers"]; [print(k, v.get("listen"), v.get("protocols")) for k,v in s.items()]'
+```
+
+Expected on a pinned install — the HTTPS listener reports `['h1']`, and the
+plain-HTTP listener reporting `None` is correct, not a second problem:
+
+```
+srv0 [':8080'] None
+srv1 [':8443'] ['h1']
+```
+
+If the HTTPS listener prints `None`, it is unpinned and Chrome terminals will
+drop at 1006. If instead you get a Python traceback, `caddy adapt` itself failed —
+read its error above the traceback (usually `caddy` not in PATH, or no Caddyfile
+at that path); the check never ran.
+
+**Which fix you want depends on whether your Caddyfile is still generator-pristine.**
+Find out first — the answer decides the whole procedure:
+
+```bash
+node scripts/ingress-cutover.js --to caddy --dry-run
+```
+
+- **No "would REFUSE" line → your file is pristine.** Re-run the cutover without
+  `--dry-run`. It regenerates from the generator, which now emits the pin, and it
+  is **lossless**: a pristine file carries no hand edits to lose, by definition.
+  Stop here — do **not** hand-edit. A generated Caddyfile carries a sha256 of its
+  own body in the header, and any hand edit invalidates that stamp, after which
+  every future cutover either refuses your file or needs the lossy `--force`.
+  Hand-editing a healthy install is a one-way door.
+
+- **"would REFUSE: … is hand-edited" → use the manual steps below.** The cutover
+  will not overwrite your edits, and forcing past it with `--force` writes a
+  timestamped backup but still replaces the file, discarding every other hand edit
+  it carries (see the parity caveat below).
+
+**Manual fix — hand-edited files only.** Add the block to the live file, then
+restart Caddy. Caddyfile syntax requires the opening brace at end-of-line, so it
+must be three lines — a one-line `servers :8443 { protocols h1 }` is a parse
+error:
+
+```
+{
+	https_port 8443
+	http_port 8080
+	admin off
+	servers :8443 {
+		protocols h1
+	}
+}
+```
+
+Add only the `servers` block, inside the existing top-level `{ … }` global
+options block (the other directives above are shown for placement, not to be
+retyped). **Match the port to your own `https_port`** — if that line says
+something other than `8443`, the `servers :` line must say the same thing.
+
+**Do not reach for `--force` to get past the refusal on a hand-edited file.** It
+writes a timestamped backup but still replaces the file, discarding every other
+hand edit it carries. For a hand-edited Caddyfile, regenerating is only safe once
+the generator reproduces the live file in full — see the parity caveat below.
+
+> **Parity is not yet complete.** The generator still cannot emit the access-log
+> block the live tailnet site carries, so a cutover today silently ends Caddy
+> access logging. Audit parity by **diffing** a generated file against the live
+> one — not by grepping for `NOTE (manual, …)` markers, which only finds edits
+> someone remembered to annotate.
+
+If terminals start dying at 1006 after an ingress change, check this block first.
+
 ## Admin credential reset (break-glass, AUTH-2)
 
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,

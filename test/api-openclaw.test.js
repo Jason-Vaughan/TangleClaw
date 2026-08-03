@@ -75,7 +75,7 @@ describe('API /api/openclaw/connections', () => {
   });
 
   const validConnection = {
-    name: 'RentalClaw',
+    name: 'ExampleApp',
     host: '198.51.100.10',
     sshUser: 'testuser',
     sshKeyPath: '~/.ssh/test_key'
@@ -92,7 +92,7 @@ describe('API /api/openclaw/connections', () => {
     const { status, data } = await request(server, 'POST', '/api/openclaw/connections', validConnection);
     assert.equal(status, 201);
     assert.ok(data.id);
-    assert.equal(data.name, 'RentalClaw');
+    assert.equal(data.name, 'ExampleApp');
     assert.equal(data.host, '198.51.100.10');
     assert.equal(data.sshUser, 'testuser');
     assert.equal(data.port, 18789);
@@ -113,7 +113,7 @@ describe('API /api/openclaw/connections', () => {
     const { status, data } = await request(server, 'GET', '/api/openclaw/connections');
     assert.equal(status, 200);
     assert.ok(data.connections.length >= 1);
-    assert.equal(data.connections[0].name, 'RentalClaw');
+    assert.equal(data.connections[0].name, 'ExampleApp');
   });
 
   it('GET /api/openclaw/connections/:id returns a connection', async () => {
@@ -121,7 +121,7 @@ describe('API /api/openclaw/connections', () => {
     const id = list.data.connections[0].id;
     const { status, data } = await request(server, 'GET', `/api/openclaw/connections/${id}`);
     assert.equal(status, 200);
-    assert.equal(data.name, 'RentalClaw');
+    assert.equal(data.name, 'ExampleApp');
   });
 
   it('GET /api/openclaw/connections/:id returns 404 for unknown id', async () => {

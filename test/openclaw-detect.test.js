@@ -15,7 +15,7 @@ setLevel('error');
 
 const detect = require('../lib/openclaw-detect');
 
-const GOOD = { host: '192.168.20.10', sshUser: 'habitat-admin', sshKeyPath: '~/.ssh/genesis_habitat' };
+const GOOD = { host: '192.0.2.10', sshUser: 'deploy-user', sshKeyPath: '~/.ssh/openclaw_key' };
 
 describe('openclaw-detect (#306-followup)', () => {
   describe('unsafeReason', () => {
@@ -33,14 +33,14 @@ describe('openclaw-detect (#306-followup)', () => {
     });
     it('accepts IPv6 hosts and tailscale names', () => {
       assert.equal(detect.unsafeReason({ ...GOOD, host: 'fd7a::1' }), null);
-      assert.equal(detect.unsafeReason({ ...GOOD, host: 'kobold.tail1234.ts.net' }), null);
+      assert.equal(detect.unsafeReason({ ...GOOD, host: 'example-host.tailnet-name.ts.net' }), null);
     });
   });
 
   describe('parseDirs', () => {
     it('keeps absolute paths, trims, and dedups', () => {
-      const out = '/home/jason/workspace/openclaw\n/home/jason/workspace/openclaw\n  /Users/habitat-admin/openclaw  \n';
-      assert.deepEqual(detect.parseDirs(out), ['/home/jason/workspace/openclaw', '/Users/habitat-admin/openclaw']);
+      const out = '/home/dev/workspace/openclaw\n/home/dev/workspace/openclaw\n  /Users/deploy-user/openclaw  \n';
+      assert.deepEqual(detect.parseDirs(out), ['/home/dev/workspace/openclaw', '/Users/deploy-user/openclaw']);
     });
     it('drops non-absolute noise lines and handles empty/bad input', () => {
       assert.deepEqual(detect.parseDirs('docker not accessible\nopenclaw-* \n'), []);
@@ -54,7 +54,7 @@ describe('openclaw-detect (#306-followup)', () => {
       const cmd = detect._buildSshCmd(GOOD);
       assert.ok(!cmd.includes('-i "~/.ssh'), 'leading ~ must be expanded to $HOME');
       assert.match(cmd, /ssh -T .*-o BatchMode=yes/);
-      assert.match(cmd, /habitat-admin@192\.168\.20\.10 sh$/);
+      assert.match(cmd, /deploy-user@192\.0\.2\.10 sh$/);
     });
   });
 
@@ -84,10 +84,10 @@ describe('openclaw-detect (#306-followup)', () => {
     it('feeds the discovery script over stdin and returns parsed dirs', () => {
       detect._internal.exec = (cmd, opts) => {
         calls.push({ cmd, opts });
-        return '/Users/habitat-admin/openclaw\n';
+        return '/Users/deploy-user/openclaw\n';
       };
       const r = detect.detectInstanceDir(GOOD);
-      assert.deepEqual(r.dirs, ['/Users/habitat-admin/openclaw']);
+      assert.deepEqual(r.dirs, ['/Users/deploy-user/openclaw']);
       assert.equal(r.error, null);
       assert.equal(calls[0].opts.input, detect.DISCOVERY_SCRIPT, 'script is passed via stdin, not interpolated');
     });

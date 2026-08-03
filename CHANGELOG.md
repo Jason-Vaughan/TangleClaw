@@ -5,6 +5,7 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+
 - **An install with no login can now get one, from the same terminal tool that resets one (#806,
   #710).** A machine that reached `setupComplete` before a credential was mandatory and then moved
   to caddy mode had no way forward: the setup route answers `409 SETUP_ALREADY_COMPLETE`, the adopt
@@ -52,6 +53,7 @@ All notable changes to TangleClaw are documented in this file.
   a password by design.
 
 ### Changed
+
 - **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The
   two questions "what is this server serving" and "where should the operator go" have different
   answers behind Caddy, and the redirect was computing the first. In caddy mode TangleClaw serves
@@ -223,6 +225,35 @@ All notable changes to TangleClaw are documented in this file.
   for the most important fix in this chunk was skipping exactly where it needed to run.
   `test/setup-ingress-state-endpoint.test.js` (16) — the probe's six states plus the plan it now
   returns, and that no hash crosses the boundary in either ingress mode.
+- **`PROJECT-MAP.md` no longer publishes shared-doc group membership — it reports a count and points
+  at the UI.** The section used to render each group's name, shared directory, and doc names. That
+  file is tracked, and managed projects push it to public remotes, but membership is *this install's*
+  configuration: two clones of the same project on different machines legitimately disagree about it.
+  In this repo it published the names of private sibling projects.
+
+  Hand-scrubbing the file could never fix it. `_replaceSectionBody` rewrites that section from the
+  live store on **every wrap**, so the names returned on the next wrap — the same self-reverting
+  failure the `~`-relative path fix below was written to avoid, missed in the neighbouring section.
+  The fix is therefore at the renderer: `_buildSharedDirsSection` now emits
+  `_This project belongs to N shared-doc groups. Membership is machine-local state…_` and never a
+  name or a path.
+
+  The count is still real data read from the live store, which is what `docs/adr/0007` records this
+  step as doing — only the identifying detail is withheld, so the ADR stays accurate and
+  `_collectProjectGroups` stays live rather than being deleted as incidentally-dead.
+
+  **Contract revision, declared:** six assertions pinned the old "membership is rendered" contract.
+  Three were **rewritten** to assert the opposite — enumerating the specific strings that must not
+  appear (group name, shared dir, doc name, `$HOME`) rather than merely matching the new text — and
+  three were **deleted**, because the branches they covered (per-group `sharedDir` formatting, the
+  "no docs registered" fallback) no longer exist. `tildeHomePath` keeps direct unit coverage in
+  `test/project-map.test.js` plus an end-to-end `~/` assertion in `test/engines.test.js`, so nothing
+  lost its guard in the deletion. Verified against this install's real store: 4 groups with real
+  names in, a bare count out.
+
+  Managed projects that want the membership still have it in the TangleClaw UI. Whether a *gitignored
+  local supplement* should carry it is a possible follow-up, deliberately not built here — no
+  evidence yet that anyone needs the map to restate what the UI already shows.
 
 - **The README's Quick Start now installs from the `v4.38.0` tag rather than tracking `main` (#710).**
   The install instructions were a bare `git clone` of the default branch, so a new install took
@@ -235,6 +266,26 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **Wrap capture-back survives ClawBridge 2.x: `/v2/session/file` now sent as `POST`.** ClawBridge
+  v2.0.0 moved consuming reads from `GET` to `POST` (a side-effecting read must not be a `GET`) and
+  answers a `GET` carrying `consume=true` with a **hard 405 — no deprecation window**. `getFile` in
+  `lib/clawbridge.js` sent `GET` with `consume:true`, and `lib/wrap-steps/ai-content.js`
+  `_runGatewayCapture` is a live caller, so every webui/gateway wrap capture-back would have started
+  failing the moment any bridge it drives crossed to 2.x — silently degrading those wraps back to
+  `mechanical-only`, the exact #334 honest-skip Slice B1 was written to close.
+
+  The call site now sends `POST` **unconditionally** rather than branching on the `consume` flag:
+  `POST` without `consume` behaves exactly like the old `GET` (200, `consumed:false`), so one method
+  covers both read paths and the flag and the method can never disagree later. Contract is otherwise
+  byte-for-byte unchanged — same path, same query params, same response keys; `content` stays raw
+  UTF-8 and an empty body stays a literal `""` rather than `null`, which `_parseFields` depends on.
+
+  **Test contract updated deliberately, not weakened:** the plain-read assertion moved `GET` → `POST`
+  because the upstream contract itself moved, and the consume test — which previously asserted only
+  the query string — now also pins the method, so the regression that broke this is covered rather
+  than merely fixed.
+
 
 - **A bodyless `POST /api/auth/credential` answers 400 instead of crashing (#710).** The body parser
   resolves `null` for an empty request, so every field read in the handler ran against `null` — a
@@ -338,6 +389,105 @@ All notable changes to TangleClaw are documented in this file.
   regularly is the one that worked. `pollHealth` is now exported so it can be tested, and both halves
   of the fix are pinned separately: reverting to `https.get` fails one assertion, removing the
   `try` fails a different one.
+- **`lib/caddy.js` now emits the HTTP/1.1 pin, so an ingress cutover can no longer silently
+  regress every Chrome terminal (#845).** The live `~/.tangleclaw/Caddyfile` carried
+  `servers :8443 { protocols h1 }` as a **hand edit only** — the generator had no such output
+  (the sole `h1` in the file was an unrelated comment about parsing `caddy version`). Because
+  `scripts/ingress-cutover.js --to caddy` regenerates the Caddyfile from the generator, a cutover
+  would have dropped the pin, returned `:8443` to h2/h3, and restarted the reconnect-loop incident
+  it was added to stop — Chrome aborts terminal WebSockets client-side (close code 1006, the
+  request never reaches Caddy) whenever the TLS origin negotiates h2 or h3.
+
+  `buildCaddyfileContent` now always appends `servers :${httpsPort} { protocols h1 }` to the
+  global options block. It is **unconditional and has no config flag**: terminals are the
+  product's primary surface, so a setting that could omit the pin would just regenerate a broken
+  perimeter in a new shape. The port tracks `httpsPort`, so a non-default listener is pinned too;
+  plain HTTP needs no pin because Caddy does not serve h2c unless explicitly asked. This remains a
+  **workaround, not a root-cause fix** — why Chrome aborts the upgrade under h2/h3 is still
+  unidentified — and both the inline comment and `deploy/INGRESS.md` say so, so the next reader
+  does not delete it as an unexplained setting.
+
+  **Verified against the real binary (Caddy v2.11.4), not a stub:** the generated file passes
+  `caddy validate` ("Valid configuration"), and `caddy adapt` shows the pin surviving into the
+  JSON config as `srv1 [":8443"] protocols ["h1"]` while the plain-HTTP `srv0 [":8080"]` correctly
+  carries none. The emitted global block is byte-identical to the live hand-edited file's.
+
+  **Tests:** +2 in `test/caddy.test.js` — the pin is emitted inside global options, and it tracks
+  the configured port rather than a hardcoded `8443`. Both were confirmed to go red against the
+  two real regressions: deleting the block fails both, hardcoding `8443` fails the port guard.
+  **Docs:** new "HTTP/1.1 pin on the HTTPS listener" section in `deploy/INGRESS.md`, including a
+  verified `caddy adapt` one-liner for checking whether a *live* listener actually carries the pin,
+  because the fix does not retrofit a Caddyfile already on disk (programmatic detection is #848).
+
+  The remediation **branches on whether the live file is still generator-pristine**, and getting
+  that wrong is costly in the safe-looking direction. For a pristine file the cutover does *not*
+  refuse — `caddyfileIsHandEdited` is the negation of the sha256 body-stamp check — so re-running it
+  is both correct and lossless, there being no hand edits to lose. Telling that operator to hand-add
+  the block instead would invalidate the stamp and leave every future cutover refusing their file or
+  needing the lossy `--force`: a one-way door out of a healthy install. So the doc has them run
+  `--dry-run` first and read the refusal line, with the manual steps scoped to hand-edited files
+  only. Verified both directions against the real generator: a freshly generated file reports
+  `isGeneratedCaddyfile: true`, and a single added comment flips it to `false`.
+  `docs/adr/0003-ingress-model.md` gains the consequence (caddy mode gives up h2/h3 entirely) and
+  records `protocols h1 h2` as considered and rejected — the observed failures occur under h2 as
+  well as h3, so keeping h2 would not prevent the incident.
+
+  **Known gap, deliberately not fixed here (#846):** generator/deployment parity is still
+  incomplete — the live tailnet site carries an access-log block the generator cannot emit, so a
+  cutover would silently end Caddy access logging. #845's audit missed it by enumerating
+  `NOTE (manual, …)` markers, which only finds edits someone remembered to annotate; diffing a
+  generated file against the live one finds it immediately. **A cutover on this box is therefore
+  still not lossless**, and the perimeter-shaped v5 criteria should not be measured against a
+  post-cutover config until #846 is resolved or explicitly accepted.
+
+  **This removes one obstacle to measurement but does not clear it.** The perimeter-shaped v5
+  acceptance criteria were being checked against a deployment the product could not reproduce, so
+  neither a pass nor a fail was trustworthy. All three annotated `NOTE (manual, …)` edits are now
+  reproducible — the other two (2026-06-23 `basic_auth` + catch-all, 2026-07-09 `X-Auth-User`) were
+  already emitted — but the un-annotated access-log edit above is not, so the config still is not
+  fully reproducible. **The instruction for a future measurement session is the one stated above:
+  do not measure the perimeter criteria against a post-cutover config until #846 closes.**
+
+- **The generated `CLAUDE.md` no longer publishes home directories either — the second call site the
+  first fix missed.** `lib/engines.js`'s `_buildSharedDocsSection` wrote each shared doc's absolute
+  `filePath` straight into the engine config it generates for **every managed project**, and those
+  projects commit it. Same data class and a wider blast radius than the `PROJECT-MAP.md` leak below,
+  which was fixed first while this one kept emitting raw paths — a textbook instance of the project's
+  own "one call site isn't the family" rule.
+
+  The helper therefore moved out of `lib/projects.js` and into `lib/project-paths.js` as
+  `tildeHomePath`, so both generators share one implementation instead of each carrying a copy
+  (`lib/engines.js` cannot require `lib/projects.js` — that direction is already taken, so a shared
+  leaf module was the only non-circular home; `project-paths.js` documents itself as node-built-ins-only
+  for exactly this reason). All three render sites are sanitized — reference mode plus **both** inline
+  error branches, since a "file not found" warning leaks the path just as completely as a success.
+  The `fs.existsSync`/`readFileSync` calls deliberately still use the real path.
+
+  **Tests:** +3 in `test/engines.test.js` for a function that previously had none, covering reference
+  mode, the inline not-found branch, and non-`$HOME` pass-through; verified red against a reverted
+  render (2 of 3 fail; the third correctly still passes, being the outside-`$HOME` case).
+
+- **`PROJECT-MAP.md` no longer publishes the operator's home directory — a leak the product caused
+  in *users'* repos, not just this one.** `_buildSharedDirsSection` rendered each shared-doc group's
+  **absolute** `sharedDir`, and `PROJECT-MAP.md` is a tracked file that is routinely pushed to a
+  public remote. Any TangleClaw user who joins a shared-doc group therefore committed their OS
+  username and the layout of their private work to their own repo. Here it had published
+  `/Users/<name>/Documents/Projects/clawcode-x` and a second private project path.
+
+  Paths now render `~`-relative via a new `_tildeHomePath` helper. `~` is already this codebase's
+  display convention for machine-local paths (the orchestration profiles' `keyRef: file:~/…`) and
+  the readers that consume such paths expand it back (`resolveProjectsDir`, `lib/orchestration.js`),
+  so nothing loses resolvability on the machine that wrote it. Only a prefix ending at a **path
+  boundary** collapses — with `$HOME` of `/Users/jane`, `/Users/jane-old/x` is left alone instead of
+  becoming the unresolvable `~-old/x` — and an empty or `/` home never sanitizes at all.
+
+  **Sanitizing at the render boundary is what makes this stick:** the `project-map` wrap step
+  refreshes that section on *every* wrap, so scrubbing the committed file alone would have
+  re-leaked on the next wrap. Tests: +5 in `test/project-map.test.js` (collapse, non-`$HOME`
+  pass-through, the path-boundary guard, relative/tilde/non-string input, and an end-to-end
+  assertion that the rendered section contains no absolute home path). The end-to-end guard was
+  confirmed to fail when the render is reverted to the raw `sharedDir`.
+
 - **TangleClaw no longer deletes the hooks you wrote in `.claude/settings.json` (#752).**
   `syncEngineHooks` assigned `settings.hooks` wholesale from its own baseline, which emits exactly one
   entry — TangleClaw's `SessionStart` prime. Every other hook in the file was discarded. That file is
@@ -390,6 +540,19 @@ All notable changes to TangleClaw are documented in this file.
 
   Projects whose names prefix one another — `TangleClaw` / `TangleClaw-Roadmap`, `RentalClaw` /
   `RentalClaw-Project` — were the exposed cases; no rename is needed now.
+
+  Tests: `test/tmux.test.js` gains a live-neighbour suite (a `X-neighbour` session with no `X`
+  present, asserting `hasSession`, `killSession`, `sendKeys`, `capturePane`, `getMouseState`,
+  `setMouse`, `unsetMouse` and `isAlternateScreen` all refuse it, the neighbour survives, and the
+  exact name still resolves when both exist), a mouse/hook round-trip that reads hooks back with
+  `show-hooks` because `setMouse` only `log.warn`s when `set-hook` fails, and a **source-level
+  structural pin** asserting all 20 `-t` sites are built by `_target()` while `new-session -s` stays
+  bare. The structural pin exists because every behavioural test enters through `hasSession`, so a
+  lost `=` on any other verb would otherwise stay green — reverting one `set-option` target trips
+  only that test. `test/ttyd-attach.test.js` pins the target *shape* per verb class, since the
+  script's `capture-pane` line ends in `2>/dev/null || true` and would have skipped the #322
+  scrollback replay silently. `.prawduct/artifacts/boundary-patterns.md` records the invariant, which
+  had been documenting the old bare-name wire form.
 
 ### Security
 
@@ -476,7 +639,93 @@ All notable changes to TangleClaw are documented in this file.
   also opened `0600` to match the result file it sits beside, since the child's stderr copy of the
   same text lands there.
 
+- **Stopped shipping the maintainer's private inference endpoint to every install.**
+  `data/orchestration-profiles.json` is seeded into every user's `~/.tangleclaw/` on first boot
+  (`lib/store.js`), and it hardcoded a private Tailscale MagicDNS endpoint and a maintainer-specific
+  key path. That published the host to anyone reading a public clone *and* gave every new install a
+  default profile pointing at a machine only one person can reach. All three profiles now ship with
+  `baseUrl: null`, which is the file's own documented convention for a not-yet-landed endpoint —
+  selectable but refusing to inject, "honest degradation, no silent fallback" — plus a `_setup` note
+  explaining that the refusal is the intended first-run behavior and how to point it at your own
+  host. No code branches on `status`, so the accompanying `real` → `provisional` correction is
+  descriptive only. Existing installs are unaffected: the file is seeded once and then operator-owned.
+
+- **Both new prevention invariants now have regression guards, and the one that already existed was
+  environment-conditional.** Nothing asserted that the bundled profile template ships without an
+  endpoint, or that the cleanroom host has no hardcoded fallback — so either could have silently
+  regressed. Added: a test reading `data/orchestration-profiles.json` and asserting every `baseUrl` is
+  null **plus** that no host-shaped string, IP literal, or absolute home path appears anywhere in it
+  (this immediately caught a `.ts.net` example in the file's own setup note, which was reworded rather
+  than carve out an exception); and a test asserting `TC_CLEANROOM_HOST` has no `:-default` fallback
+  and fails loudly when unset.
+
+  The pre-existing "rejects unrecognized arguments before touching the remote host" test **inherited
+  `process.env`**, so with `TC_CLEANROOM_HOST` exported it passed under either ordering — it would
+  only have caught the reordering on a machine where that variable happened to be unset. It now sets
+  the environment explicitly in **both** directions and asserts the bad flag is named in the output.
+  A guard whose verdict depends on the developer's shell is not a guard.
+
+- **`deploy/cleanroom/provision.sh` takes its Docker host from `TC_CLEANROOM_HOST` instead of a
+  hardcoded hostname.** The host is **required with no default**, deliberately: a fallback would
+  either leak whichever machine the maintainer happens to use, or silently point a teardown at the
+  wrong box. Unset fails loudly with the variable name and an example. The strict argument gate now
+  runs **before** the host is resolved — argument validation needs no remote host, and without that
+  ordering a typoed flag on a machine with the variable unset would complain about the environment
+  and never mention the bad argument. That ordering is pinned by the existing "rejects unrecognized
+  provisioner arguments before touching the remote host" contract test, which caught the regression
+  when the check was introduced in the wrong order.
+
+- **Scrubbed maintainer machine identifiers out of source, tests, and operator instructions.** A real
+  tailnet FQDN was used as the example value across `lib/` docstrings and test fixtures, and machine
+  names appeared in a `server.js` comment (which also cited a private memory file no user can read),
+  in `deploy/cleanroom/provision.sh`'s run instructions, and in the `VRF-auth-1-cutover` runbook.
+  All now use neutral placeholders (`your-host.tailnet-name.ts.net`, "your TangleClaw host machine").
+  One test fixture deliberately keeps its **mixed-case** form (`Your-Host.Tailnet-Name.ts.net.`)
+  because the assertion under it verifies lowercasing and trailing-dot stripping — replacing it with
+  a lowercase placeholder would have quietly stopped the test from testing anything.
+
+  **Deliberately not scrubbed:** `CHANGELOG.md` and `.prawduct/change-log.md` still name the machine
+  where past work happened. Those are historical records; rewriting them would be revisionism with no
+  security benefit, since the repo has been public since 2026-03-30 and nothing there is a credential.
+  The rule applied: **a record of what happened keeps its names; a value a reader will re-use does
+  not.** So the ADRs were scrubbed rather than exempted — `0004` and `0012` describe how the
+  system is built and get read as current guidance, and `.prawduct/change-log.md`'s one absolute home
+  path was rewritten `~`-relative because a path is not a historical fact.
+
+- **`.gitignore` now refuses secret-bearing files by default.** This repo is public and the product
+  handles TLS private keys, a `basic_auth` credential, and API keys, so one careless `git add -A` is
+  an unrecoverable disclosure rather than a revert. Added prevention rules for environment files
+  (`.env`, `.env.*` — with `.env.example`/`.env.sample` deliberately still allowed so a contributor
+  can see which variables exist), private keys and certificates anywhere in the tree (`*.pem`,
+  `*.key`, `*.crt`, `*.p12`, `*.pfx` — `data/certs/` was already covered, these catch the same
+  material written elsewhere), self-describing secrets (`secrets.json`, `secrets.*.json`, `*.secret`,
+  `*.secrets`), and logs (`*.log`, `logs/`). Logs are a security rule here, not tidiness: the
+  ingress-cutover log is known to be able to capture a `basic_auth` credential hash (#821). Also
+  reconciled the prawduct session-file contract (`.prawduct/.handoff-notes.md`).
+
+  Verified that each rule matches (`git check-ignore`), that `.env.example` is still committable, and
+  that **no currently-tracked file is shadowed** (`git ls-files -i -c --exclude-standard` is empty) —
+  a new ignore rule that silently covers a tracked file is the usual way this change goes wrong.
+
+  **Scope, stated plainly:** `.gitignore` prevents *future* commits. It does not untrack anything and
+  it does not touch history — so this closes the intake path, it does not scrub what is already
+  committed.
+
+  An audit of the tracked files found **no credential, token, personal email address, or private key**
+  — and `git log --diff-filter=A` confirms none has ever been committed, so nothing needs rotating.
+  The bcrypt-shaped strings are synthetic fixtures. Real infrastructure identifiers *were* found and
+  are scrubbed in the entries above. What remains, deliberately, is **synthetic RFC 1918 test data**
+  (sequential `10.0.0.x` connection fixtures); real addresses were replaced with RFC 5737 TEST-NET-1.
+
+  That paragraph originally claimed the audit found "no non-loopback IPs," which was **false** — the
+  sweep that produced it used `git grep -E` with `\b` word boundaries and a `$(git ls-files)`
+  pathspec, neither of which works there, so it matched nothing and read as clean. Re-run with a
+  control pattern first, it found a real LAN IP, SSH username, private-key filename, and home paths.
+  Recorded because the claim shipped to a public changelog as fact: **a scan that returns zero proves
+  nothing until a pattern that must hit does.**
+
 ### Internal
+
 - **The upstream half of the install-reference contract test is parsed, not scraped (#807, #816).**
   `29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo, which catches only
   TangleClaw's side moving; the companion check that reads prawduct's own `migrate_plugin.py` scraped
@@ -676,6 +925,89 @@ All notable changes to TangleClaw are documented in this file.
   (grep "Defer to the Prawduct"); the rest lived in per-machine session memory, which does not
   survive a fresh clone and cannot be reviewed. Closing #330 in that state would have discarded
   the one thing it existed for.
+- **Revert "Allow no-op learnings capture to skip" (#826, `f62317c`) — it bypassed a gate a
+  ratified Direction keeps hard.** `.prawduct/artifacts/wrap-direction.md` (`last_ratified:
+  2026-07-21`) names this gate explicitly among those that stay blocking: *"A content step reporting
+  'done' without editing its file (`verifyChanged`) — a false success. Stays hard; not
+  project-overridable."* The same artifact requires that departing from it be a recorded decision.
+  #826 merged with zero reviews, no linked issue, and no such record.
+
+  A retroactive `/prawduct:critic` cumulative review (4 blocking, 13 warning) traced the shipped
+  path and found the bypass wider than its own documentation claimed. `learnings-capture` declares
+  no `captureFields`, so no response validation runs for it; `detectIdle` reports "3 pane lines
+  unchanged for >10s", so a dead or prompt-blocked pane reads as *complete*; and the
+  `MIN_RESPONSE_CHARS = 20` floor is measured against `capturePane(…, { full: true })` — the full
+  scrollback — which any live session clears by thousands of characters. An AI that refused,
+  errored, or was cut off mid-turn was therefore indistinguishable from one that correctly found
+  nothing novel: both returned `{ ok: true, status: 'skipped' }` on a `blocker: true` step. The
+  prompt's mandated `no novel learnings; file unchanged` reply was read by no code.
+
+  The change also removed the *verifiable* no-op path it replaced. The prior prompt had the session
+  append `- YYYY-MM-DD: no novel learnings (routine work).`, which mutated the file and satisfied
+  the gate honestly; #826 deleted that and substituted a gate waiver. Its guard test
+  (`test/wrap-step-ai-content.test.js`, "BLOCKS a genuine execution failure") stubs `sendKeys` to
+  throw, which returns before `_verifyChangedGate` is consulted — the test passes with the entire
+  `allowUnchanged` branch deleted.
+
+  **The underlying complaint is real and stays open** — a `learnings-capture` that legitimately finds
+  nothing should not block a wrap, and re-running one whose entry already landed should not either.
+  Reverted rather than patched so a correct fix can be designed against the recorded Direction
+  instead of around it. Blast radius was contained: `allowUnchanged` was never reachable through
+  per-project `wrapStepOverrides`, and `v5-baseline` never carried this commit.
+
+- **Wrap steps no longer promise a commit `git add -A` cannot make (#839).** The
+  `learnings-capture` and `memory-update` prompts both told the session "the commit step will pick
+  it up via `git add -A`". `git add -A` respects `.gitignore`, and TangleClaw's own clone ignores
+  `.tangleclaw/` wholesale (`.gitignore:14`, no exceptions — `git ls-files .tangleclaw` returns
+  nothing). So on this project the three files those steps write — `MEMORY.md`, `learnings.md`,
+  `wrap-log.md` — have never been committed by a wrap, and the 2026-08-01 wrap produced no commit
+  at all because it found zero tracked changes.
+
+  Both prompts in `lib/wrap-default-pipeline.js` now state the actual contract: the commit step
+  stages with `git add -A`, which respects `.gitignore`, so these files are committed only where
+  the project tracks `.tangleclaw/` — and where it is ignored they are local machine state, durable
+  on that machine, read at session start, and carried by no wrap commit. The wording is deliberately
+  conditional rather than TangleClaw-specific, because this pipeline ships to every managed project
+  and some do track that path.
+
+  **Deliberately not fixed by un-ignoring `.tangleclaw/`.** That was the other option on #839 and it
+  was rejected on evidence: this repository is public, and the ~874KB of session memory inventories
+  what this operator's perimeter does not protect — an unrotated ClawBridge `BRIDGE_TOKEN` exposure,
+  a described unauthenticated-shell path, currently-unauthenticated surfaces, named hosts, and a
+  third-party installer discussed by name. Publishing that is a worse outcome than memory being
+  machine-local. Prompt text only; no behavior change.
+
+- **How a norm may be enforced is written down (ADR 0012).** TangleClaw ratified its norm registry
+  on 2026-08-01, and a registry needs an answer to "what checks each norm." The first answer —
+  *enforcement mechanisms may not be bought with a dependency* — was justified by the claim that
+  this product has "zero dependencies… runs on the Node.js standard library and nothing else." That
+  claim is false: `.prawduct/artifacts/dependency-manifest.md` inventories eleven external
+  dependencies (Node 22+, tmux, ttyd, Caddy, git, `gh`, launchd, mkcert, PortHub, the Medusa Bridge,
+  and a habitat Docker host), and orchestrating third-party binaries is what this product does. The
+  precise long-standing claim in the source artifacts is narrower and true — zero *npm*
+  dependencies — and the widened form was introduced while drafting the registry.
+
+  `docs/adr/0012-enforcement-adds-no-install-step.md` re-derives the ruling rather than renaming it:
+  **a norm's enforcement mechanism must add no installation step** — it runs inside the existing
+  `node --test` invocation as a source-scanning test (the `test/master.test.js:270` pattern), or the
+  norm is janitor-homed. The distinguishing principle is that every dependency TangleClaw has is
+  *product function* — the operator installs tmux because sessions cannot run without it — whereas a
+  governance check delivers nothing the operator asked for, so it may not push an install onto every
+  machine including the field install. A checker that is absent also does not fail cleanly: it
+  commonly skips and reports green, which is the substance of #835. The result forecloses npm and
+  brew linters alike, on the same basis, and answers the next case (`jq`, a Python package, a Docker
+  image) without a new ruling. CI-only enforcement is considered and rejected in the ADR.
+
+  No runtime behavior changes. Doc-only, and the ADR is deliberately in `docs/` rather than
+  `.prawduct/` — which is gitignored — so the constraint survives a fresh clone.
+
+- **The Prawduct boundary is written down (ADR 0011, closes #330).** #330 was filed to *capture a
+  decision* — what TangleClaw owns versus consumes as Prawduct moved from a vendored file framework to
+  a Claude Code plugin — and the decision had since been made by what got built rather than by
+  anything written. Its most authoritative record was a parenthetical comment at
+  `lib/engines.js:1139`; the rest lived in per-machine session memory, which does not survive a fresh
+  clone and cannot be reviewed. Closing #330 in that state would have discarded the one thing it
+  existed for.
 
   `docs/adr/0011-prawduct-boundary.md` ratifies option 3 of the issue — the plugin is another engine
   capability — and maps the seam to exactly three items: the `prawduct@*` key in a project's

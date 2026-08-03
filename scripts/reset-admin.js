@@ -11,7 +11,7 @@
 // `ingress-cutover.js` stays consistent.
 //
 //   node scripts/reset-admin.js                   reset the (single) admin password
-//   node scripts/reset-admin.js --user jason      disambiguate when >1 user exists
+//   node scripts/reset-admin.js --user NAME      disambiguate when >1 user exists
 //   node scripts/reset-admin.js --password-stdin  read the new password from stdin (piped)
 //   node scripts/reset-admin.js --dry-run         show what would change, touch nothing
 //   node scripts/reset-admin.js --create-gate --user jason

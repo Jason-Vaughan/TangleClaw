@@ -174,6 +174,24 @@ describe('caddy', () => {
       assert.match(out, /^localhost \{$/m);
     });
 
+    // Chrome aborts terminal WebSockets client-side (1006) when the TLS origin
+    // negotiates h2/h3, so the HTTPS listener is pinned to HTTP/1.1. These guard
+    // the two ways the pin gets lost: dropped from the generator entirely, or
+    // hardcoded to 8443 so a non-default port silently goes unpinned.
+    it('pins the HTTPS listener to HTTP/1.1 (Chrome terminal WebSockets die under h2/h3)', () => {
+      const out = caddy.buildCaddyfileContent(opts);
+      assert.match(out, /\tservers :8443 \{\n\t\tprotocols h1\n\t\}/);
+      // must sit INSIDE global options — a floating block would not adapt
+      const globalBlock = out.slice(out.indexOf('{'), out.indexOf('\n}\n'));
+      assert.match(globalBlock, /protocols h1/);
+    });
+
+    it('pins h1 on the configured https port, not a hardcoded 8443', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, httpsPort: 443, httpPort: 80 });
+      assert.match(out, /\tservers :443 \{\n\t\tprotocols h1\n\t\}/);
+      assert.doesNotMatch(out, /servers :8443/);
+    });
+
     // AUTH-2 — basic_auth gate (bcrypt hash, never plaintext). The hash below is
     // a real bcrypt-shaped token; the stubbed `caddy validate` doesn't check it,
     // real `caddy validate` syntax is exercised in verification.
@@ -264,11 +282,11 @@ describe('caddy', () => {
     });
 
     // #434 — tailnet HTTPS site + http→https redirect (codifies the 2026-07-04 hand-edit).
-    const TAILNET = 'cursatory.tail123678.ts.net';
+    const TAILNET = 'your-host.tailnet-name.ts.net';
 
     it('emits a gated tailnet HTTPS site reusing the mkcert cert when tailnetHost + auth are set', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET });
-      assert.match(out, /^cursatory\.tail123678\.ts\.net \{$/m);
+      assert.match(out, /^your-host\.tailnet-name\.ts\.net \{$/m);
       const siteBlock = out.slice(out.indexOf(`${TAILNET} {`));
       assert.match(siteBlock, /\ttls \/c\/cert\.pem \/c\/key\.pem/);
       assert.ok(siteBlock.includes(BYPASS_MATCHER));
@@ -277,8 +295,8 @@ describe('caddy', () => {
 
     it('emits an http→https redirect block for the tailnet host, pointing at the https port', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, httpsPort: 9443 });
-      assert.match(out, /^http:\/\/cursatory\.tail123678\.ts\.net \{$/m);
-      assert.match(out, /\tredir https:\/\/cursatory\.tail123678\.ts\.net:9443\{uri\}/);
+      assert.match(out, /^http:\/\/your-host\.tailnet-name\.ts\.net \{$/m);
+      assert.match(out, /\tredir https:\/\/your-host\.tailnet-name\.ts\.net:9443\{uri\}/);
     });
 
     it('adds auto_https disable_redirects when tailnetHost is set (so the explicit redirect governs)', () => {
@@ -595,7 +613,7 @@ describe('caddy', () => {
     const NEW = '$2b$12$' + 'n'.repeat(53);
     const certOpts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
 
-    /** A realistic hand-edited (NOT generated) Caddyfile mirroring the live cursatory file. */
+    /** A realistic hand-edited (NOT generated) Caddyfile mirroring a real hand-edited deployment. */
     function handEdited(user, hash) {
       return [
         '# Manually edited 2026-06-23 — basic_auth + Tailscale remote',

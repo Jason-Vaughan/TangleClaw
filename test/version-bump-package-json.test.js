@@ -13,7 +13,7 @@ setLevel('error');
 const vb = require('../lib/wrap-steps/version-bump');
 
 const PKG = `{
-  "name": "rentalclaw",
+  "name": "example-app",
   "version": "1.4.2",
   "private": true,
   "scripts": { "build": "next build" },
@@ -59,7 +59,7 @@ describe('version-bump package.json support (#298)', () => {
       const out = s.makeContent('1.5.0');
       // Surgical: ONLY the top-level version value changed; rest byte-identical.
       assert.equal(out, PKG.replace('"version": "1.4.2"', '"version": "1.5.0"'));
-      assert.ok(out.includes('"name": "rentalclaw"'));
+      assert.ok(out.includes('"name": "example-app"'));
       assert.ok(out.includes('"next": "14.0.0"'), 'dependency untouched');
     });
 
@@ -98,7 +98,7 @@ describe('version-bump package.json support (#298)', () => {
       vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? PKG : CHANGELOG);
       vb._internal.todayIso = () => '2026-06-02';
 
-      const ctx = { project: { path: '/proj', name: 'rentalclaw' }, staged: {}, options: {} };
+      const ctx = { project: { path: '/proj', name: 'example-app' }, staged: {}, options: {} };
       const r = await vb.run(ctx);
 
       assert.equal(r.ok, true);

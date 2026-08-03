@@ -22,7 +22,7 @@ describe('store.documentLocks', () => {
     store._setBasePath(tmpDir);
     store.init();
 
-    group = store.projectGroups.create({ name: 'habitat' });
+    group = store.projectGroups.create({ name: 'shared-infra' });
     doc = store.sharedDocs.create({ groupId: group.id, name: 'Network', filePath: '/tmp/net.md' });
     proj = store.projects.create({ name: 'TestProj', path: '/tmp/tp' });
   });

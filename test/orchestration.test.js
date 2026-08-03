@@ -22,7 +22,7 @@ const sessions = require('../lib/sessions');
 const PROFILES = {
   profiles: {
     direct: {
-      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       model: 'openai/qwen2.5-coder-32b-fp16',
       keyRef: 'env:TB1_TEST_KEY',
       status: 'real'
@@ -34,7 +34,7 @@ const PROFILES = {
       status: 'provisional'
     },
     'no-model': {
-      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       model: null,
       keyRef: 'env:TB1_TEST_KEY'
     }
@@ -70,11 +70,11 @@ describe('orchestration.resolveKeyRef', () => {
   it('expands a leading ~ in a file: reference', () => {
     // Inject a fake readFile so we can assert the ~ was expanded to homedir.
     let seenPath = null;
-    const r = orchestration.resolveKeyRef('file:~/.config/monad/x.key', {
+    const r = orchestration.resolveKeyRef('file:~/.config/tangleclaw/x.key', {
       readFile: (p) => { seenPath = p; return 'sk-home'; }
     });
     assert.deepEqual(r, { value: 'sk-home' });
-    assert.equal(seenPath, path.join(os.homedir(), '.config/monad/x.key'));
+    assert.equal(seenPath, path.join(os.homedir(), '.config/tangleclaw/x.key'));
   });
 
   it('errors on an empty key file', () => {
@@ -120,7 +120,7 @@ describe('orchestration.resolveLaunchProfile', () => {
       { orchestrationProfile: 'direct' }, {}, PROFILES, okKeyDeps
     );
     assert.deepEqual(r, {
-      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       model: 'openai/qwen2.5-coder-32b-fp16',
       apiKey: 'sk-test-123',
       profileName: 'direct'
@@ -179,7 +179,7 @@ describe('orchestration.resolveLaunchProfile', () => {
 
 describe('orchestration.applyLaunchOverlay', () => {
   const resolved = {
-    baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+    baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
     model: 'openai/qwen2.5-coder-32b-fp16',
     apiKey: 'sk-test-123',
     profileName: 'direct'
@@ -191,7 +191,7 @@ describe('orchestration.applyLaunchOverlay', () => {
     assert.deepEqual(out.launch.args, ['--foo', '--model', 'openai/qwen2.5-coder-32b-fp16']);
     assert.deepEqual(out.launch.env, {
       EXISTING: '1',
-      OPENAI_API_BASE: 'http://monad-1.tail123678.ts.net:4000/v1',
+      OPENAI_API_BASE: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       OPENAI_API_KEY: 'sk-test-123'
     });
     assert.equal(out.launch.shellCommand, 'aider'); // unrelated fields preserved
@@ -224,7 +224,7 @@ describe('orchestration overlay → _buildLaunchCommand integration', () => {
   it('a bound profile injects --model into the launch command', () => {
     const engine = { launch: { shellCommand: 'aider', args: [] }, launchModes: {} };
     const resolved = {
-      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       model: 'openai/qwen2.5-coder-32b-fp16',
       apiKey: 'sk-test-123',
       profileName: 'direct'
@@ -276,14 +276,14 @@ describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
   });
 
   it('does not flag non-key env values', () => {
-    const engine = { id: 'x', launch: { env: { FOO: 'bar', OPENAI_API_BASE: 'http://monad-1.tail123678.ts.net:4000/v1' } } };
+    const engine = { id: 'x', launch: { env: { FOO: 'bar', OPENAI_API_BASE: 'http://inference-host.tailnet-name.ts.net:4000/v1' } } };
     assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
   });
 
   it('does not flag a keyRef-style value (refs are not secrets)', () => {
     // A keyRef lives in a profile, not engine env, but assert it would not
     // false-trigger even if one appeared here — it does not match the key shape.
-    const engine = { id: 'x', launch: { env: { SOME_REF: 'file:~/.config/monad/tangleclaw-aider.key' } } };
+    const engine = { id: 'x', launch: { env: { SOME_REF: 'file:~/.config/tangleclaw/tangleclaw-aider.key' } } };
     assert.deepEqual(orchestration.detectHardcodedKeys(engine), []);
   });
 
@@ -300,7 +300,7 @@ describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
     assert.deepEqual(orchestration.detectHardcodedKeys(base), []);
 
     const overlaid = orchestration.applyLaunchOverlay(base, {
-      baseUrl: 'http://monad-1.tail123678.ts.net:4000/v1',
+      baseUrl: 'http://inference-host.tailnet-name.ts.net:4000/v1',
       model: 'openai/qwen2.5-coder-32b-fp16',
       apiKey: MASTER_LITERAL, // resolved scoped key — legitimately injected
       profileName: 'direct'
@@ -319,7 +319,7 @@ describe('orchestration.detectHardcodedKeys (TB-2 #189)', () => {
 describe('orchestration.assertOpenAICompatEndpoint (TB-4 #359)', () => {
   it('accepts a well-formed http base URL with the /v1 convention', () => {
     assert.deepEqual(
-      orchestration.assertOpenAICompatEndpoint('http://monad-1.tail123678.ts.net:4000/v1'),
+      orchestration.assertOpenAICompatEndpoint('http://inference-host.tailnet-name.ts.net:4000/v1'),
       { ok: true }
     );
   });
@@ -356,7 +356,7 @@ describe('orchestration.resolveLaunchProfile — OpenAI-compat refusal (TB-4 #35
 
   it('still resolves a valid OpenAI-compat endpoint unchanged', () => {
     const r = orchestration.resolveLaunchProfile({ orchestrationProfile: 'direct' }, {}, PROFILES, okKeyDeps);
-    assert.equal(r.baseUrl, 'http://monad-1.tail123678.ts.net:4000/v1');
+    assert.equal(r.baseUrl, 'http://inference-host.tailnet-name.ts.net:4000/v1');
     assert.equal(r.refused, undefined);
   });
 });
@@ -372,7 +372,7 @@ describe('orchestration — OpenAI-compat guarantee: endpoint swap needs no harn
   }
 
   it('swapping base_url between two OpenAI-compat endpoints changes ONLY OPENAI_API_BASE', () => {
-    const a = overlayFor('http://monad-1.tail123678.ts.net:4000/v1');
+    const a = overlayFor('http://inference-host.tailnet-name.ts.net:4000/v1');
     const b = overlayFor('https://other-host.ts.net/v1');
 
     // The --model injection is identical — no endpoint-specific arg leaks.
@@ -387,7 +387,7 @@ describe('orchestration — OpenAI-compat guarantee: endpoint swap needs no harn
   });
 
   it('injects only the three generic OpenAI knobs — nothing engine/profile-specific leaks', () => {
-    const out = overlayFor('http://monad-1.tail123678.ts.net:4000/v1');
+    const out = overlayFor('http://inference-host.tailnet-name.ts.net:4000/v1');
     // Beyond the engine's own env, the only added keys are the two OpenAI vars.
     assert.deepEqual(
       Object.keys(out.launch.env).filter((k) => k !== 'EXISTING').sort(),
@@ -396,4 +396,31 @@ describe('orchestration — OpenAI-compat guarantee: endpoint swap needs no harn
     // The only arg added is `--model <model>` — no profile name, no endpoint flag.
     assert.deepEqual(out.launch.args, ['--foo', '--model', 'openai/qwen']);
   });
+
+  // The bundled template is seeded into every user's ~/.tangleclaw on first boot
+  // (lib/store.js), so anything concrete in it ships to strangers. It previously
+  // carried a private Tailscale endpoint, which both published the host and gave
+  // every new install a default profile pointing at a machine only one person
+  // could reach. Nothing guarded that, so this does.
+  describe('bundled orchestration-profiles template', () => {
+    const bundled = JSON.parse(
+      require('node:fs').readFileSync(
+        require('node:path').join(__dirname, '..', 'data', 'orchestration-profiles.json'), 'utf8'));
+
+    it('ships no concrete endpoint — every profile baseUrl is null', () => {
+      const named = Object.entries(bundled.profiles);
+      assert.ok(named.length > 0, 'template should define profiles');
+      for (const [name, p] of named) {
+        assert.equal(p.baseUrl, null, `profile "${name}" must ship without a baseUrl`);
+      }
+    });
+
+    it('ships no host-shaped or user-specific string anywhere in the template', () => {
+      const raw = JSON.stringify(bundled);
+      assert.doesNotMatch(raw, /\.ts\.net/, 'no Tailscale MagicDNS host may ship');
+      assert.doesNotMatch(raw, /([0-9]{1,3}\.){3}[0-9]{1,3}/, 'no IP literal may ship');
+      assert.doesNotMatch(raw, /\/Users\/|\/home\//, 'no absolute home path may ship');
+    });
+  });
+
 });

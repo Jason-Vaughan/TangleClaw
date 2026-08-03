@@ -76,17 +76,47 @@ describe('tc-cleanroom lockdown contract', () => {
     }
   });
 
-  it('exports the ssh docker PATH (non-interactive habitat PATH lacks /usr/local/bin)', () => {
+  it('exports the ssh docker PATH (non-interactive ssh PATH lacks /usr/local/bin)', () => {
     assert.match(provision, /export PATH="\/usr\/local\/bin:\/Applications\/Docker\.app\/Contents\/Resources\/bin:\$PATH"/);
   });
 
-  it('rejects unrecognized provisioner arguments before touching the remote host', () => {
-    const run = spawnSync('bash', [path.join(CLEANROOM_DIR, 'provision.sh'), '--dwon'], {
-      encoding: 'utf8',
-      timeout: 10000,
+  // Env is set explicitly in BOTH directions rather than inherited. Inheriting
+  // `process.env` made this assertion environment-conditional: with
+  // TC_CLEANROOM_HOST exported, the host lookup succeeds and the argument gate
+  // still reports usage, so the test passed under either ordering and only
+  // caught a reordering on a machine where the var happened to be unset.
+  for (const [label, extraEnv] of [
+    ['with the host unset', {}],
+    ['with the host set', { TC_CLEANROOM_HOST: 'test-docker-host' }]
+  ]) {
+    it(`rejects unrecognized provisioner arguments before touching the remote host (${label})`, () => {
+      const env = { ...process.env, ...extraEnv };
+      if (!('TC_CLEANROOM_HOST' in extraEnv)) delete env.TC_CLEANROOM_HOST;
+      const run = spawnSync('bash', [path.join(CLEANROOM_DIR, 'provision.sh'), '--dwon'], {
+        encoding: 'utf8',
+        timeout: 10000,
+        env,
+      });
+      assert.notEqual(run.status, 0, 'a typoed flag must not fall through to provisioning');
+      // The ARGUMENT must be what is reported — if the host lookup ran first, an
+      // unset host would report the environment and never name the bad flag.
+      assert.match(run.stderr + run.stdout, /usage/i);
+      assert.match(run.stderr + run.stdout, /--dwon/);
     });
-    assert.notEqual(run.status, 0, 'a typoed flag must not fall through to provisioning');
-    assert.match(run.stderr + run.stdout, /usage/i);
+  }
+
+  // No hardcoded fallback host: one would either leak whichever machine the
+  // maintainer uses, or silently point a teardown at the wrong box.
+  it('requires TC_CLEANROOM_HOST with no default, failing loudly when unset', () => {
+    assert.doesNotMatch(stripComments(provision), /TC_CLEANROOM_HOST:-/,
+      'a `:-default` fallback would reintroduce a hardcoded host');
+    const env = { ...process.env };
+    delete env.TC_CLEANROOM_HOST;
+    const run = spawnSync('bash', [path.join(CLEANROOM_DIR, 'provision.sh'), '--down'], {
+      encoding: 'utf8', timeout: 10000, env,
+    });
+    assert.notEqual(run.status, 0, 'an unset host must not proceed to ssh');
+    assert.match(run.stderr + run.stdout, /TC_CLEANROOM_HOST/);
   });
 
   it('tracks the image bake recipe beside the compose file (reproducible from a fresh clone)', () => {

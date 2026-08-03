@@ -855,7 +855,7 @@ describe('wrap-step priming-roll — governed plan pointer (#620)', () => {
       // and used to win by the "only .md in the dir" rule, priming the next
       // session onto stale work.
       writeLegacyPlan('unrelated.md', '### Chunk 01 — One-way auto-inject\n');
-      writeGovernedPlan('active.md', '### Chunk 08: Habitat clean-room ✅\n### Chunk 09: Phase B discovery\n');
+      writeGovernedPlan('active.md', '### Chunk 08: Clean-room ✅\n### Chunk 09: Phase B discovery\n');
       writeState('active_build_plan: artifacts/active.md\n');
 
       const ctx = buildContext({ id: 'next-session-prime' });
