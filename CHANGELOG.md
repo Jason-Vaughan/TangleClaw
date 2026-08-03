@@ -4,6 +4,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Wrap capture-back survives ClawBridge 2.x: `/v2/session/file` now sent as `POST`.** ClawBridge
+  v2.0.0 moved consuming reads from `GET` to `POST` (a side-effecting read must not be a `GET`) and
+  answers a `GET` carrying `consume=true` with a **hard 405 — no deprecation window**. `getFile` in
+  `lib/clawbridge.js` sent `GET` with `consume:true`, and `lib/wrap-steps/ai-content.js`
+  `_runGatewayCapture` is a live caller, so every webui/gateway wrap capture-back would have started
+  failing the moment any bridge it drives crossed to 2.x — silently degrading those wraps back to
+  `mechanical-only`, the exact #334 honest-skip Slice B1 was written to close.
+
+  The call site now sends `POST` **unconditionally** rather than branching on the `consume` flag:
+  `POST` without `consume` behaves exactly like the old `GET` (200, `consumed:false`), so one method
+  covers both read paths and the flag and the method can never disagree later. Contract is otherwise
+  byte-for-byte unchanged — same path, same query params, same response keys; `content` stays raw
+  UTF-8 and an empty body stays a literal `""` rather than `null`, which `_parseFields` depends on.
+
+  **Test contract updated deliberately, not weakened:** the plain-read assertion moved `GET` → `POST`
+  because the upstream contract itself moved, and the consume test — which previously asserted only
+  the query string — now also pins the method, so the regression that broke this is covered rather
+  than merely fixed.
+
 ### Changed
 - **`PROJECT-MAP.md` no longer publishes shared-doc group membership — it reports a count and points
   at the UI.** The section used to render each group's name, shared directory, and doc names. That
