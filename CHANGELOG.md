@@ -54,6 +54,25 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **Caddy access logging is now documented as deliberately NOT generator-owned, and a cutover onto a
+  hand-added `log` block will end it (#846, #821).** The generator emits no `log { … }` under any
+  option — so an ingress cutover onto a Caddyfile carrying one by hand silently ends Caddy access
+  logging. That was previously recorded in `deploy/INGRESS.md` as *"parity is not yet complete"*,
+  which reads as unfinished work and invites the next session to close the gap by teaching the
+  generator to emit a log block.
+
+  It is a decision, not a gap. An ingress log is not free: `ingress-cutover.log` already grows
+  without rotation and can capture a `basic_auth` credential hash (#821). Emitting an access log by
+  default would put a credential-adjacent, unrotated file on every new install whose operator never
+  asked for one — inheriting a hazard rather than opting into a gap. Operators who want access
+  logging add the block by hand and own its rotation; the doc now says so, says to back it up
+  across a cutover, and says to re-add it after.
+
+  Also corrected there: **audit generator/deployment parity by diffing** a generated file against
+  the live one using the cutover's own option assembly — never by grepping `NOTE (manual, …)`
+  markers, which finds only edits whose author remembered to annotate them. That method is what
+  made #845 report "the drift is one setting" when it was two, and it is the reusable lesson here.
+
 - **Setup sends you to an address that answers, not to the one TangleClaw is bound to (#710).** The
   two questions "what is this server serving" and "where should the operator go" have different
   answers behind Caddy, and the redirect was computing the first. In caddy mode TangleClaw serves

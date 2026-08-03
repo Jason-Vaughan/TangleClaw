@@ -212,11 +212,28 @@ writes a timestamped backup but still replaces the file, discarding every other
 hand edit it carries. For a hand-edited Caddyfile, regenerating is only safe once
 the generator reproduces the live file in full — see the parity caveat below.
 
-> **Parity is not yet complete.** The generator still cannot emit the access-log
-> block the live tailnet site carries, so a cutover today silently ends Caddy
-> access logging. Audit parity by **diffing** a generated file against the live
-> one — not by grepping for `NOTE (manual, …)` markers, which only finds edits
-> someone remembered to annotate.
+> **Access logging is deliberately NOT generator-owned (#846, decided 2026-08-03).**
+> The generator emits no `log { … }` block under any option, so a cutover onto a
+> Caddyfile that carries one by hand **ends Caddy access logging** — this is a real
+> loss, and it is not a bug to be fixed by teaching the generator to emit one.
+>
+> The reason is that an ingress log is not free: `~/.tangleclaw/logs/ingress-cutover.log`
+> already grows without rotation and can capture a `basic_auth` credential hash
+> (**#821**). Emitting an access-log block by default would propagate that hazard to
+> every new install, and TangleClaw would be writing a credential-adjacent, unrotated
+> file on machines whose operator never asked for one. A gap the operator opts into
+> is safer than a hazard they inherit.
+>
+> **If you want access logging, add the block by hand and own its rotation** — see
+> Caddy's `log` directive. Re-read this before any cutover on a machine that has one:
+> back the block up first, and re-add it afterwards.
+>
+> **Audit generator/deployment parity by *diffing* a generated file against the live
+> one** — build the content from live config using the cutover's own option assembly
+> (`scripts/ingress-cutover.js`) and diff. Do **not** audit by grepping for
+> `NOTE (manual, …)` markers: that method only finds edits whose author remembered to
+> annotate them, and it is what caused #845 to report "the drift is one setting" when
+> it was two.
 
 If terminals start dying at 1006 after an ingress change, check this block first.
 
