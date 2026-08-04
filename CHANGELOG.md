@@ -378,11 +378,18 @@ All notable changes to TangleClaw are documented in this file.
 
   `store.activity.log` swallows its own failures and no-ops without a database, so recording cannot
   break a wrap. The persisted `error` is raw `git`/`gh` stderr served back over `GET /api/activity`,
-  so it is redacted before storage — an embedded URL credential (`https://user:token@host/…`) is
-  stripped structurally, since a bare `user:password@` matches none of `secret-scan`'s patterns, and
-  anything still matching a known pattern is replaced by its type names rather than trimmed, because
-  a truncated secret is still a secret. The 200-character cap `pr-merge.js` already applies to the
-  same text is applied last: it bounds size, it is not redaction. Every guard is mutation-verified
+  and a failed push routinely echoes the remote URL — so **any** `//<userinfo>@` is stripped to
+  `//***@` before storage, whether or not it carries a colon. Both shapes matter and neither is
+  caught by pattern-matching: a bare `user:password@` matches none of `secret-scan`'s patterns, and
+  the password-less `https://<token>@host/…` that GitHub's own PAT-over-HTTPS instructions produce
+  survives unless that token happens to be one of the two GitHub forms `secret-scan` knows — not
+  `gho_`/`ghs_`/`ghu_`/`ghr_`, and nothing at all for GitLab, Bitbucket or self-hosted forges.
+  Stripping the whole userinfo also erases a harmless non-credential one (`ssh://git@host` becomes
+  `//***@host`), which is the intended trade: the host and the error text are what make the row
+  diagnostic, and a username is not worth a missed token. Anything still matching a known pattern
+  after that is replaced by its type names rather than trimmed, because a truncated secret is still
+  a secret. The 200-character cap `pr-merge.js` already applies to the same text is applied last: it
+  bounds size, it is not redaction. Every guard is mutation-verified
   rather than merely green: reverting the log predicate reddens the warn test alone, disabling the
   write reddens all four record tests, and drifting the drawer's copy of the predicate away from the
   server's reddens the agreement tests that exist to prevent exactly that.

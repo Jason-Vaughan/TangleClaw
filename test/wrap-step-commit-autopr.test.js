@@ -504,6 +504,15 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       assert.equal(commitStep._truncateForRecord(url), url);
     });
 
+    it('erases a harmless userinfo too, and that is the deliberate trade', () => {
+      // `ssh://git@host` loses the `git`. Documented as intended rather than
+      // narrowed: the host and the error text carry the diagnostic value, and
+      // preserving a username is not worth a pattern that misses a token.
+      const out = commitStep._truncateForRecord("fatal: 'ssh://git@github.com/x/y.git' not found");
+      assert.match(out, /\/\/\*\*\*@github\.com/);
+      assert.match(out, /not found/, 'the diagnostic text still survives');
+    });
+
     it('replaces — never truncates — text still matching a known secret pattern', () => {
       const out = commitStep._truncateForRecord(`remote: rejected, token ghp_${'a'.repeat(36)}`);
       assert.match(out, /^\[redacted — github-token detected/,
