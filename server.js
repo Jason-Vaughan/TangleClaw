@@ -1287,7 +1287,25 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 
   let result;
   try {
-    result = httpsSetup.generateCerts(hosts ? { hosts } : undefined);
+    // Regeneration is ADDITIVE here too. Nothing records the host list a cert was
+    // minted with, so the cert is its own only record — and this route's shipped
+    // caller (`public/setup.js`, the "Generate Certificates" button) sends `{}`,
+    // no hosts at all. Generating from the defaults therefore dropped every name
+    // added earlier, including a tailnet FQDN, silently un-covering the tailnet
+    // HTTPS site that reuses this same certificate. An explicit `hosts` list is
+    // still honoured verbatim: a caller naming its hosts is replacing them on
+    // purpose, which is a different intent from the button's "refresh my certs".
+    const effectiveHosts = hosts || (() => {
+      const existing = httpsSetup.certSanHosts(
+        path.join(httpsSetup.getCertsDir(), 'cert.pem'));
+      const mdns = httpsSetup.mdnsHostFor(os.hostname());
+      const cfg = store.config.load();
+      return [...new Set([
+        ...existing, ...httpsSetup.MKCERT_HOSTS_DEFAULT, mdns,
+        cfg.caddyTailnetHost || null, cfg.publicDomain || null
+      ].filter(Boolean))];
+    })();
+    result = httpsSetup.generateCerts({ hosts: effectiveHosts });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'MKCERT_FAILED');
   }

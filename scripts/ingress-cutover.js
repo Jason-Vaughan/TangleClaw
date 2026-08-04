@@ -46,10 +46,9 @@ const TTYD_LABEL = 'com.tangleclaw.ttyd';
 // reporting success.
 const CADDY_LABEL = caddy.CADDY_LABEL;
 // The names every TangleClaw cert must carry regardless of what an older cert
-// happened to include. Mirrors MKCERT_HOSTS_DEFAULT in lib/https-setup.js; kept
-// here as an explicit floor so an additive regeneration can never come out with
-// FEWER names than a fresh one.
-const MKCERT_BASE_HOSTS = ['localhost', '127.0.0.1', '::1'];
+// happened to include — the floor that stops an additive regeneration coming out
+// with FEWER names than a fresh one. Imported rather than re-listed: a local copy
+// of the same three strings drifts silently the moment one side gains a name.
 
 
 /**
@@ -80,7 +79,7 @@ function certHostUnion(certPath, config) {
   const carried = candidates.flatMap((p) => httpsSetup.certSanHosts(p));
   return [...new Set([
     ...carried,
-    ...MKCERT_BASE_HOSTS,
+    ...httpsSetup.MKCERT_HOSTS_DEFAULT,
     httpsSetup.mdnsHostFor(require('node:os').hostname()),
     (config && config.caddyTailnetHost) || null,
     (config && config.publicDomain) || null

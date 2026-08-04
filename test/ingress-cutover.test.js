@@ -335,6 +335,48 @@ describe('ingress-cutover', () => {
       const hosts = cutover.certHostUnion(null, { caddyTailnetHost: 'localhost' });
       assert.equal(hosts.length, new Set(hosts).size);
     });
+
+    // THE assertion the others were missing: that a name already in the cert is
+    // actually carried forward. Without this, deleting the SAN read leaves every
+    // other case in this block green — which is the exact gap that let the
+    // carry-forward ship broken twice. Hermetic: the base path is redirected to
+    // a temp dir, so it reads a cert this test minted rather than the
+    // developer's real ~/.tangleclaw, which would pass locally and prove nothing
+    // in CI.
+    it('carries a name FORWARD out of the existing certificate', () => {
+      const store2 = require('../lib/store');
+      const fsx = require('node:fs');
+      const pathx = require('node:path');
+      const osx = require('node:os');
+      const { execSync: execX } = require('node:child_process');
+
+      const base = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'tc-union-'));
+      fsx.mkdirSync(pathx.join(base, 'certs'), { recursive: true });
+      try {
+        execX(
+          `openssl req -x509 -newkey rsa:2048 -keyout "${pathx.join(base, 'certs', 'key.pem')}" `
+          + `-out "${pathx.join(base, 'certs', 'cert.pem')}" -days 2 -nodes -subj "/CN=localhost" `
+          + '-addext "subjectAltName=DNS:localhost,DNS:carried.tail9999.ts.net"',
+          { stdio: 'ignore', timeout: 20000 }
+        );
+      } catch {
+        return; // openssl unavailable; the hermetic cases above still ran
+      }
+
+      const prev = store2._getBasePath();
+      store2._setBasePath(base);
+      try {
+        // certPath null on purpose — this is exactly how the regenerating branch
+        // calls it (ctx.certPath is not assigned yet), and reading only the
+        // argument is what made the union silently degrade to the defaults.
+        const hosts = cutover.certHostUnion(null, {});
+        assert.ok(hosts.includes('carried.tail9999.ts.net'),
+          `existing SAN must be carried forward, got ${JSON.stringify(hosts)}`);
+      } finally {
+        store2._setBasePath(prev);
+        fsx.rmSync(base, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('planCutover → caddy LAN hostname forwarding (#863)', () => {

@@ -41,6 +41,20 @@ All notable changes to TangleClaw are documented in this file.
   "the login page is broken", which is worse than unreachable. This also repairs installs carrying
   the older `<host>.local.local` certificate.
 
+  **Regenerating a certificate is now ADDITIVE — your existing names survive it.** This is the part
+  worth knowing if you reach TangleClaw over a tailnet. Nothing records the host list a certificate
+  was created with, so the certificate is its own only record; regenerating from the defaults
+  silently dropped every name added later, including a tailnet FQDN, which un-covers the tailnet
+  HTTPS site that reuses that same certificate. New `certSanHosts` reads the names back out and they
+  are carried forward together with the sites your config says are about to be served. This applies
+  to **both** paths that can regenerate: the ingress cutover, and the wizard's **"Generate
+  Certificates"** button (`POST /api/setup/generate-cert`) — whose shipped caller sends no host list
+  at all, so it had the same defect. A caller that names its hosts explicitly still replaces them
+  verbatim; that is a deliberate "set these", not a refresh.
+
+  **`--dry-run` announces the regeneration** and lists the names it would carry. It is the one
+  destructive step in a cutover, and a flag advertising itself as changing nothing has to say so.
+
   *Known limitation, observed in the clean room:* a client that resolves the name to a **link-local**
   IPv6 address (`fe80::…`) still fails the handshake. That is a property of link-local addressing
   rather than of this configuration — on a network handing out IPv4 or global IPv6 the name works, as
