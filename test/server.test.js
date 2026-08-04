@@ -276,22 +276,31 @@ describe('server', () => {
           assert.equal(r.destroyed, true);
         });
 
-        for (const prefix of ['/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
-          it(`refuses a cross-origin upgrade to ${prefix} — the token-bearing proxies`, () => {
-            const { PassThrough } = require('node:stream');
-            const socket = new PassThrough();
-            socket.destroyed = false;
-            const orig = socket.destroy.bind(socket);
-            socket.destroy = () => { socket.destroyed = true; orig(); };
-            socket.remoteAddress = '127.0.0.1';
-            try {
-              handleUpgrade({ url: prefix, method: 'GET',
-                headers: { host: 'localhost:3102', origin: 'https://evil.example' }, socket },
-              socket, Buffer.alloc(0));
-            } catch { /* proxy setup is not what this asserts */ }
-            assert.equal(socket.destroyed, true, `${prefix} must be refused cross-origin`);
-          });
-        }
+        // STRUCTURAL pin, not a behavioural one, and deliberately so. The
+        // obvious test — upgrade to /openclaw-direct/... cross-origin, assert
+        // the socket dies — CANNOT FAIL: resolveOpenclawPortDirect returns null
+        // for an unknown connId and that branch destroys the socket too, so
+        // deleting the guard leaves it green. A pin that cannot go red on the
+        // mutation it exists to catch is worse than no pin, because it reads as
+        // coverage. What actually matters is POSITION: the guard must run before
+        // any branch dispatches, so every prefix is covered by construction
+        // rather than one test per prefix.
+        it('runs the origin check before any upgrade branch dispatches', () => {
+          const src = require('node:fs').readFileSync(
+            require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+          const body = src.slice(src.search(/function handleUpgrade\s*\(/));
+          const guardAt = body.search(/_isSameOriginUpgrade\(/);
+          assert.notEqual(guardAt, -1, 'handleUpgrade must consult the origin guard');
+          const firstBranchAt = Math.min(
+            ...[/startsWith\('\/openclaw-direct\//, /startsWith\('\/openclaw\//, /startsWith\('\/terminal\//]
+              .map((re) => body.search(re))
+              .filter((i) => i !== -1)
+          );
+          assert.notEqual(firstBranchAt, Infinity, 'expected the upgrade branches to still exist');
+          assert.ok(guardAt < firstBranchAt,
+            'the origin guard must precede every prefix branch — /terminal/* is a writable shell '
+            + 'and the OpenClaw branches attach the operator gateway token');
+        });
 
         it('refuses an unparseable Origin rather than waving it through', () => {
           const r = upgrade({ host: 'localhost:3102', origin: 'not a url' });

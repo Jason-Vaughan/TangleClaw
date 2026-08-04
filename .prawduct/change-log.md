@@ -48,7 +48,17 @@ because such a value "would restructure the Caddyfile". It arrives from the unau
 name characters allowlisted, because a real bcrypt hash contains `$`, `/` and `.`.
 
 `install.sh` still advertised the cutover as "optional" and as a single command — the exact sequence
-that produces a green health check and an unprotected dashboard.
+that produces a green health check and an unprotected dashboard. Both of these are user-visible and
+are now in `CHANGELOG.md` too: the username check is an input-contract change at an unauthenticated
+route (a name with a space is refused at setup where it used to be accepted), and the installer's
+closing instructions are what a first-time operator follows.
+
+The openclaw-prefix upgrade coverage is a STRUCTURAL pin, not a behavioural one, and deliberately:
+the behavioural version cannot fail. `resolveOpenclawPortDirect` returns null for an unknown connId
+and that branch destroys the socket too, so a test asserting "cross-origin upgrade dies" stays green
+with the guard deleted. What matters is position — the guard must precede every prefix branch, which
+covers them all by construction. Mutation-verified against both deleting the guard and moving it
+below the branches.
 
 **Not closed:** both guards decide "cross-site" relative to the request's own `Host`, so DNS
 rebinding satisfies them. Filed as **#864** rather than rushed: the fix changes which addresses an

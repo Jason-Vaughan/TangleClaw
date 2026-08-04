@@ -783,6 +783,25 @@ All notable changes to TangleClaw are documented in this file.
   premise, *"no session state in the browser"*, is exactly what shipping browser-cached HTTP Basic
   invalidates — are tracked at **#860**.
 
+- **Setup now REFUSES a username that would break the Caddy config, instead of writing it.**
+  `POST /api/setup/complete` is unauthenticated and only trimmed the admin username before it was
+  written verbatim into the generated Caddyfile — and setup applies that file automatically. A name
+  carrying a brace, quote, `#` or newline would end the `basic_auth` block and start something else.
+  The username, the password hash, `publicDomain` and `tailnetHost` are now all shape-checked, and
+  setup fails with a clear error rather than producing a file whose structure came from the input.
+
+  **What you may notice:** a username containing a space (or any of `"'{}#\`) is now rejected at
+  setup rather than accepted. Ordinary names are unaffected, and the check denies *structural*
+  characters rather than allow-listing name characters — a bcrypt hash legitimately contains `$`,
+  `/` and `.`, so an allowlist strict enough to feel safe would reject every real credential.
+
+- **`install.sh` no longer calls the login "optional", and prints both commands it takes.** Its
+  closing text advertised `ingress-cutover.js --to caddy` as an optional one-liner. That command
+  configures an ingress with **no password**, succeeds, and prints a green health check — the exact
+  sequence that produced a live unprotected install. It now prints the cutover and
+  `reset-admin.js --create-gate` together, says which one is the login, and names the window between
+  them where the dashboard is up unprotected.
+
 - **`canChangeCredential` now fails closed when the caller omits the connection answer.**
   `fromLoopback` defaulted to `true`, justified in the docstring by "non-request callers (the CLI
   has no socket)" — no such caller exists; both call sites are in `server.js` and both pass a real
