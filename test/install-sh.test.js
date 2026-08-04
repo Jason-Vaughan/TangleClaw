@@ -159,6 +159,10 @@ describe('deploy/install.sh', () => {
       assert.ok(/TCC_PROTECTED=""/.test(script), 'TCC_PROTECTED must be initialized');
       assert.ok(/RESOLVED_NODE="\$NODE_PATH"/.test(script), 'RESOLVED_NODE must be initialized');
       assert.ok(/TCC_PROJECTS_PROTECTED=""/.test(script), 'TCC_PROJECTS_PROTECTED must be initialized');
+      // PROJECTS_DIR is assigned inside the Darwin branch but read again in the
+      // completion summary, where the guard is a *different* variable. Under
+      // `set -u` that is a fatal error the moment the two disagree.
+      assert.ok(/^PROJECTS_DIR=""/m.test(script), 'PROJECTS_DIR must be initialized for set -u safety');
     });
   });
 

@@ -180,6 +180,11 @@ expand_tilde() {
 
 TCC_PROTECTED=""
 TCC_PROJECTS_PROTECTED=""
+# Assigned only inside the Darwin branch, but referenced again in the completion
+# summary far below. Under `set -u` an unset variable is a fatal error, and the
+# guard that keeps that reference unreachable is a different variable — so
+# initialize rather than rely on two flags staying in agreement.
+PROJECTS_DIR=""
 RESOLVED_NODE="$NODE_PATH"
 if [ "$(uname)" = "Darwin" ]; then
   # Resolve symlinks (Homebrew node is a symlink) — Full Disk Access is keyed on
@@ -207,7 +212,7 @@ if [ "$(uname)" = "Darwin" ]; then
   # one blocked open() takes down every route, with no error, no log and no
   # recovery, while launchd still reports the process healthy. Nothing downstream
   # can warn about it, which is why it is warned about here.
-  PROJECTS_DIR_RAW="$HOME/Documents/Projects"   # matches lib/store.js DEFAULTS.projectsDir
+  PROJECTS_DIR_RAW="$HOME/Documents/Projects"   # mirrors lib/store.js DEFAULT_CONFIG.projectsDir
   if [ -f "$HOME/.tangleclaw/config.json" ]; then
     PROJECTS_DIR_RAW="$("$NODE_PATH" -e '
       try {
