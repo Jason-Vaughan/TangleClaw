@@ -809,7 +809,7 @@ per request, loudest during the setup wizard. The warning now reports a change o
 `publicDomain`, `caddyTailnetHost`, the hostname, and the certificate's mtime/size — are
 mutation-pinned. They were not at first, and the record claimed otherwise before the tests existed,
 which is worse than the gap: the certificate term is load-bearing (a SAN from `generate-cert` lives
-in no config field), and the config terms are PATCHable on a running server.
+in no config field), and the config terms are both written on a RUNNING server — `publicDomain` via `PATCH /api/config`, `caddyTailnetHost` by the Caddyfile-adoption path.
 
 **Classification:** fix
 

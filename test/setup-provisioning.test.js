@@ -366,7 +366,8 @@ describe('setup provisions a login by default', () => {
      */
     describe('#864 — the served-host cache invalidates on the certificate', () => {
       it('recomputes when a configured public name changes — the terms the record claimed', () => {
-        // publicDomain and caddyTailnetHost are PATCHable on a running server,
+        // Both are written on a RUNNING server — publicDomain via
+        // PATCH /api/config, caddyTailnetHost by the Caddyfile-adoption path —
         // so a stale memo would refuse writes and terminal upgrades under the
         // very name the operator had just configured, until a restart. The code
         // keys on them correctly; nothing moved them, and the change-log then
