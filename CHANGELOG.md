@@ -286,6 +286,46 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **`install.sh` now warns when the PROJECTS directory sits under a TCC-protected folder — the case
+  where the install succeeds and the server still dies (#859, #324).** Found by running a first
+  install on a virgin macOS guest, which is the only place it is observable: on the maintainer's own
+  machine node already holds Full Disk Access.
+
+  The existing #324 preflight checks the **repo** path. `projectsDir` is a different path, it ships
+  as `~/Documents/Projects` (`lib/store.js`), and it fails later and more confusingly: the repo case
+  hangs node at startup and the health check catches it, but a protected *projects* directory lets
+  the whole install finish — health check green — and then wedges the server on the first request
+  that enumerates projects. That scan is a synchronous `readdir` on the event loop, so one blocked
+  `open()` takes down every route at once, with no error, no log line and no recovery, while
+  `launchctl` still reports the process healthy. Nothing downstream can warn about it, so the
+  warning has to happen at install time.
+
+  The warning says the thing that makes it useful — that the install **can pass its health check**
+  and the server still stop responding — because a generic "check Full Disk Access" line reads as
+  the repo warning and gets dismissed. It is printed twice, deliberately: the up-front notice is
+  emitted before dependency installation, which on a machine without Homebrew produces thousands of
+  lines and scrolls it out of view (that is exactly how it was missed during the run that found
+  this), so it repeats after the completion banner where an operator actually looks.
+
+  Two decisions extracted into shell functions so they could be tested by execution rather than by
+  grepping the script: `tcc_protected_path` (one classifier, since two callers now need the same
+  answer and duplicated `case` arms are how the second drifts from the first) and `expand_tilde`.
+  The second exists because config stores the value as the literal string `~/Documents/Projects`, and
+  a tilde inside a quoted shell variable is never expanded — passing it straight to the classifier
+  matches no arm and reports "safe", i.e. the quiet wrong answer on the one path that matters most.
+
+  Tests execute both functions out of the real script (they shell out to nothing, so running them is
+  safe in a way running the installer is not) and were verified by mutation: dropping the
+  `expand_tilde` call, widening the arms to any user's `Documents`, removing the end-of-run repeat,
+  and restoring the stale banner each turn the suite red.
+
+  Also corrected here: the completion banner said **"TangleClaw v3 installed successfully!"** on a v5
+  tree. It no longer claims a major version it cannot know.
+
+  **Not fixed here, and tracked at #859:** the synchronous directory scan itself. A blocked or slow
+  filesystem taking down every route is the underlying defect; TCC is merely the reliable way to
+  trigger it. This change makes the failure predictable, not impossible.
+
 - **Wrap capture-back survives ClawBridge 2.x: `/v2/session/file` now sent as `POST`.** ClawBridge
   v2.0.0 moved consuming reads from `GET` to `POST` (a side-effecting read must not be a `GET`) and
   answers a `GET` carrying `consume=true` with a **hard 405 — no deprecation window**. `getFile` in

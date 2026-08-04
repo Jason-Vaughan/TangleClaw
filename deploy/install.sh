@@ -154,25 +154,82 @@ echo ""
 # TCC.db itself requires Full Disk Access), so this is a non-blocking heads-up;
 # the post-reload health check below escalates to an actionable diagnosis if the
 # server doesn't come up. Non-blocking also keeps non-interactive runs working.
+# Answers "does this path sit under a TCC-protected folder?" for ONE path.
+# Kept as a function because two different paths need the same answer and they
+# fail in different ways (see below); duplicating the case arms is how the second
+# caller drifts from the first.
+tcc_protected_path() {
+  case "${1%/}/" in
+    "$HOME/Documents/"*|"$HOME/Desktop/"*|"$HOME/Downloads/"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Config stores the projects directory as a literal "~/..." string, and a tilde
+# inside a quoted shell variable is never expanded by the shell. Passing one
+# straight to tcc_protected_path matches no case arm and reports "safe" — the
+# quiet wrong answer, on the exact default the check exists for. Separated so it
+# can be exercised directly rather than only through its caller.
+expand_tilde() {
+  case "$1" in
+    "~/"*) printf '%s' "$HOME/${1#\~/}" ;;
+    "~")   printf '%s' "$HOME" ;;
+    *)     printf '%s' "$1" ;;
+  esac
+}
+
 TCC_PROTECTED=""
+TCC_PROJECTS_PROTECTED=""
 RESOLVED_NODE="$NODE_PATH"
 if [ "$(uname)" = "Darwin" ]; then
-  case "${REPO_DIR}/" in
-    "$HOME/Documents/"*|"$HOME/Desktop/"*|"$HOME/Downloads/"*)
-      TCC_PROTECTED="yes"
-      # Resolve symlinks (Homebrew node is a symlink) — Full Disk Access is keyed
-      # on the real binary path. Use node itself (already validated) for a
-      # portable realpath; BSD readlink lacks -f.
-      RESOLVED_NODE="$("$NODE_PATH" -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$NODE_PATH" 2>/dev/null || echo "$NODE_PATH")"
-      yellow "NOTE: repo is under a macOS TCC-protected folder:"
-      yellow "        $REPO_DIR"
-      yellow "      If the server hangs on startup with no log output, node lacks Full Disk Access."
-      yellow "      Fix: System Settings > Privacy & Security > Full Disk Access > '+' and add:"
-      yellow "        $RESOLVED_NODE"
-      yellow "      (Or move the repo outside ~/Documents, ~/Desktop, ~/Downloads — also fixes the SSH variant.)"
-      echo ""
-      ;;
-  esac
+  # Resolve symlinks (Homebrew node is a symlink) — Full Disk Access is keyed on
+  # the real binary path. Use node itself (already validated) for a portable
+  # realpath; BSD readlink lacks -f. Hoisted out of the repo branch because the
+  # projects-directory warning below names the same binary.
+  RESOLVED_NODE="$("$NODE_PATH" -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$NODE_PATH" 2>/dev/null || echo "$NODE_PATH")"
+
+  if tcc_protected_path "$REPO_DIR"; then
+    TCC_PROTECTED="yes"
+    yellow "NOTE: repo is under a macOS TCC-protected folder:"
+    yellow "        $REPO_DIR"
+    yellow "      If the server hangs on startup with no log output, node lacks Full Disk Access."
+    yellow "      Fix: System Settings > Privacy & Security > Full Disk Access > '+' and add:"
+    yellow "        $RESOLVED_NODE"
+    yellow "      (Or move the repo outside ~/Documents, ~/Desktop, ~/Downloads — also fixes the SSH variant.)"
+    echo ""
+  fi
+
+  # The projects directory is a SEPARATE path from the repo, and it fails later
+  # and louder: the repo case hangs node at startup (caught by the health check
+  # below), but a protected projects directory lets the whole install succeed —
+  # health check included — and then wedges the server on the first request that
+  # enumerates projects. That scan is a synchronous readdir on the event loop, so
+  # one blocked open() takes down every route, with no error, no log and no
+  # recovery, while launchd still reports the process healthy. Nothing downstream
+  # can warn about it, which is why it is warned about here.
+  PROJECTS_DIR_RAW="$HOME/Documents/Projects"   # matches lib/store.js DEFAULTS.projectsDir
+  if [ -f "$HOME/.tangleclaw/config.json" ]; then
+    PROJECTS_DIR_RAW="$("$NODE_PATH" -e '
+      try {
+        const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(typeof c.projectsDir === "string" && c.projectsDir ? c.projectsDir : "~/Documents/Projects");
+      } catch { process.stdout.write("~/Documents/Projects"); }
+    ' "$HOME/.tangleclaw/config.json" 2>/dev/null || echo "$HOME/Documents/Projects")"
+  fi
+  PROJECTS_DIR="$(expand_tilde "$PROJECTS_DIR_RAW")"
+
+  if tcc_protected_path "$PROJECTS_DIR"; then
+    TCC_PROJECTS_PROTECTED="yes"
+    yellow "NOTE: the projects directory is under a macOS TCC-protected folder:"
+    yellow "        $PROJECTS_DIR"
+    yellow "      This install can finish and pass its health check, and the server will still"
+    yellow "      stop responding the first time anything lists projects — with no error in any log."
+    yellow "      Fix: System Settings > Privacy & Security > Full Disk Access > '+' and add:"
+    yellow "        $RESOLVED_NODE"
+    yellow "      (Or point the projects directory outside ~/Documents, ~/Desktop, ~/Downloads"
+    yellow "       in TangleClaw's settings.)"
+    echo ""
+  fi
 fi
 
 # ── Generate plists ──
@@ -347,9 +404,22 @@ fi
 
 echo ""
 echo "======================================"
-green "TangleClaw v3 installed successfully!"
+green "TangleClaw installed successfully!"
 echo "======================================"
 echo ""
+
+# Repeated here on purpose. The heads-up above is printed before dependency
+# installation, which on a machine without Homebrew emits thousands of lines and
+# scrolls it far out of view — an operator reads the end of the run, not the
+# middle of it. This is the last thing between them and a server that will look
+# fine and then stop answering.
+if [ -n "$TCC_PROJECTS_PROTECTED" ]; then
+  yellow "  HEADS-UP: the projects directory sits under a TCC-protected folder:"
+  yellow "    $PROJECTS_DIR"
+  yellow "  If the dashboard stops responding after you open it, that is why."
+  yellow "  Fix: grant Full Disk Access to $RESOLVED_NODE, or move the projects directory."
+  echo ""
+fi
 echo "  Landing page:  ${PROTOCOL}://localhost:3102"
 echo "  Terminal:       http://localhost:3100"
 echo ""

@@ -158,6 +158,126 @@ describe('deploy/install.sh', () => {
     it('should initialize RESOLVED_NODE/TCC_PROTECTED (set -u safety)', () => {
       assert.ok(/TCC_PROTECTED=""/.test(script), 'TCC_PROTECTED must be initialized');
       assert.ok(/RESOLVED_NODE="\$NODE_PATH"/.test(script), 'RESOLVED_NODE must be initialized');
+      assert.ok(/TCC_PROJECTS_PROTECTED=""/.test(script), 'TCC_PROJECTS_PROTECTED must be initialized');
+    });
+  });
+
+  // The projects directory is a different path from the repo and fails in a
+  // different way, so it needs its own coverage. The repo case hangs node at
+  // startup and the health check catches it; a protected PROJECTS directory
+  // lets the install succeed — health check included — and then wedges the
+  // server on the first request that enumerates projects.
+  //
+  // These execute the real decision functions out of the real file rather than
+  // grepping for their text. A source-shape assertion cannot tell a working
+  // classifier from one that answers "safe" for everything, and the specific
+  // way this guard dies quietly is an unexpanded "~" matching no case arm.
+  // Running it is also safe in a way running the installer is not: both
+  // functions are pure string logic that shell out to nothing.
+  describe('macOS TCC preflight — projects directory (#859, executed not grepped)', () => {
+    const { execFileSync } = require('node:child_process');
+
+    /**
+     * Extract shell functions from install.sh and run an expression against
+     * them, with HOME pinned so the results are machine-independent.
+     * @param {string} fakeHome - value to use for $HOME
+     * @param {string} expr - shell expression evaluated after the functions load
+     * @returns {string} trimmed stdout
+     */
+    function runShellFn(fakeHome, expr) {
+      const fns = ['tcc_protected_path', 'expand_tilde']
+        .map((name) => {
+          const m = script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'));
+          assert.ok(m, `${name}() must be defined as a top-level shell function`);
+          return m[0];
+        })
+        .join('\n');
+      return execFileSync('/bin/bash', ['-c', `HOME=${JSON.stringify(fakeHome)}\n${fns}\n${expr}`], {
+        encoding: 'utf8'
+      }).trim();
+    }
+
+    /** @param {string} p @returns {boolean} */
+    const isProtected = (p) =>
+      runShellFn('/Users/tester', `tcc_protected_path ${JSON.stringify(p)} && echo YES || echo NO`) === 'YES';
+
+    it('classifies every TCC-protected root, and leaves other paths alone', () => {
+      for (const p of [
+        '/Users/tester/Documents/Projects',
+        '/Users/tester/Desktop/Projects',
+        '/Users/tester/Downloads/Projects',
+        '/Users/tester/Documents/Projects/'      // trailing slash must not change the answer
+      ]) {
+        assert.ok(isProtected(p), `${p} must be classified TCC-protected`);
+      }
+      for (const p of [
+        '/Users/tester/tc/TangleClaw',
+        '/Users/tester/Projects',
+        '/opt/tangleclaw',
+        '/Users/tester/DocumentsElsewhere/Projects'  // prefix-similar, must NOT match
+      ]) {
+        assert.ok(!isProtected(p), `${p} must NOT be classified TCC-protected`);
+      }
+    });
+
+    it('does not confuse another user\'s Documents with this user\'s', () => {
+      // The arms are anchored on $HOME; a rewrite to a bare */Documents/* glob
+      // would pass every test above and fail this one.
+      assert.ok(!isProtected('/Users/someone-else/Documents/Projects'),
+        'only the installing user\'s protected folders count');
+    });
+
+    it('expands a stored "~/" path before classifying it — the quiet-wrong-answer case', () => {
+      // This is the mutation the guard exists to survive. lib/store.js ships
+      // projectsDir as the literal "~/Documents/Projects"; classified without
+      // expansion it matches nothing and reports safe, so the default config —
+      // the one case that matters most — would silently skip the warning.
+      assert.equal(runShellFn('/Users/tester', 'expand_tilde "~/Documents/Projects"'),
+        '/Users/tester/Documents/Projects');
+      assert.equal(runShellFn('/Users/tester', 'expand_tilde "~"'), '/Users/tester');
+      assert.equal(runShellFn('/Users/tester', 'expand_tilde "/already/absolute"'), '/already/absolute');
+      // A literal tilde must NOT be treated as protected before expansion...
+      assert.ok(!isProtected('~/Documents/Projects'),
+        'an unexpanded tilde matches no case arm — this is why expansion must happen first');
+      // ...and MUST be once expanded. Composition is the actual contract.
+      assert.equal(
+        runShellFn('/Users/tester',
+          'tcc_protected_path "$(expand_tilde "~/Documents/Projects")" && echo YES || echo NO'),
+        'YES',
+        'the shipped default projectsDir must be classified TCC-protected once expanded'
+      );
+    });
+
+    it('reads projectsDir from config and falls back to the shipped default', () => {
+      assert.ok(/PROJECTS_DIR_RAW="\$HOME\/Documents\/Projects"/.test(script),
+        'must default to the same path lib/store.js ships as projectsDir');
+      assert.ok(/c\.projectsDir/.test(script), 'must read projectsDir out of config.json when it exists');
+      assert.ok(/PROJECTS_DIR="\$\(expand_tilde "\$PROJECTS_DIR_RAW"\)"/.test(script),
+        'the config value must go through expand_tilde before classification');
+    });
+
+    it('warns that the install can SUCCEED and the server still stop responding', () => {
+      // The warning's whole value is contradicting the health check, which
+      // passes in this scenario. A generic "check Full Disk Access" line would
+      // read as the repo warning and be dismissed.
+      assert.ok(/pass its health check/.test(script),
+        'must say the install can pass its health check and still be broken');
+      assert.ok(/lists projects/.test(script), 'must name the trigger (listing projects)');
+      assert.ok(/no error in any log/.test(script), 'must warn there will be no log evidence');
+    });
+
+    it('repeats the projects warning in the completion summary', () => {
+      // The up-front notice is printed before dependency installation, which on
+      // a bare machine emits thousands of lines and scrolls it out of view.
+      const summaryAt = script.search(/installed successfully!/);
+      const repeatAt = script.search(/HEADS-UP: the projects directory/);
+      assert.notEqual(repeatAt, -1, 'the projects warning must be repeated after the summary banner');
+      assert.ok(repeatAt > summaryAt, 'the repeat must come AFTER the completion banner, where it is read');
+    });
+
+    it('does not claim a major version it cannot know', () => {
+      assert.ok(!/TangleClaw v3 installed/.test(script),
+        'the completion banner must not hardcode a stale major version');
     });
   });
 
