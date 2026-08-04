@@ -823,8 +823,11 @@ All notable changes to TangleClaw are documented in this file.
   `ingressMode: 'direct'` — loopback only — so **no remote operator can reach the wizard at all**,
   and the only request that could arrive there under an unserved `Host` was the rebound one, on the
   route that sets the admin credential. The carve-out therefore also requires the install to be
-  genuinely reachable (a wide socket, or Caddy in front), so it applies exactly where the flow it
-  protects can occur and nowhere else. It covers `PATCH /api/config` as well as `/api/setup/*`,
+  genuinely reachable — a wide socket, and *only* that. Caddy mode looks like it qualifies and does
+  not: `bindPolicy` refuses the wide opt-in there, so the listener is loopback-only behind Caddy. A
+  remote operator arrives *through* Caddy under a name this list already holds, while a rebound page
+  reaches `127.0.0.1` without traversing Caddy at all — so accepting caddy mode would have exempted
+  only the attack, the same defect in the other arm. It covers `PATCH /api/config` as well as `/api/setup/*`,
   because the wizard has two terminators — Finish and Skip — and guarding one is guarding neither.
 
 - **BREAKING: cross-site requests can no longer change server state (#860).** A page on another

@@ -306,6 +306,24 @@ describe('setup provisions a login by default', () => {
         assert.match(res.raw, /HOST_NOT_SERVED/);
       });
 
+      it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
+        // Caddy mode looks like "remotely reachable", and an earlier version
+        // treated it as a second way to qualify. But bindPolicy REFUSES the wide
+        // opt-in in caddy mode, so the listener is loopback-only there too; a
+        // remote operator arrives through Caddy under a name this list already
+        // holds, while a rebound page reaches 127.0.0.1 without traversing Caddy
+        // at all. Exempting it would have re-opened the blocking defect in the
+        // other arm. Untested, this reverts silently.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = false;
+        c.ingressMode = 'caddy';
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'caddy mode is not a remote first run');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
       it('closes the moment setup completes, even on a wide install', async () => {
         const c = store.config.load();
         c.setupComplete = true;
