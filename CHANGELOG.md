@@ -783,6 +783,28 @@ All notable changes to TangleClaw are documented in this file.
   premise, *"no session state in the browser"*, is exactly what shipping browser-cached HTTP Basic
   invalidates — are tracked at **#860**.
 
+- **One unreadable folder can no longer take down the whole server (#859).** Listing projects ran a
+  **synchronous** directory read on the event loop, and the shipped default projects directory
+  (`~/Documents/Projects`) is TCC-protected on macOS. A launchd-started TangleClaw without Full Disk
+  Access does not get a permission error there — the read simply never returns. So a single
+  `GET /api/projects`, which is what the dashboard loads when you open it, killed **every** route:
+  `/api/health` answered normally seconds earlier and then nothing at all, with no error, no log
+  line and no recovery, while macOS still reported the process as running.
+
+  Measured on a clean install, before and after: `/api/projects` → `000` and every later request
+  dead; now `200` in ~5s with `/api/health` answering in 22ms immediately afterwards.
+
+  The read now happens off the main thread and gives up after 5 seconds, so a folder that will not
+  answer costs **that one request**, not the server. The reply then contains your registered
+  projects — those come from the database and are never affected — and the log says plainly what
+  happened and what to do: grant Full Disk Access, or choose a projects directory outside
+  `~/Documents`, `~/Desktop` and `~/Downloads`. Only the discovery of folders you have not
+  registered yet is lost, and you are told so rather than left guessing.
+
+  A regression test reproduces the real failure — a read that neither succeeds nor fails — because
+  a stub that merely errors would not have caught this: the defect was a call that never returned
+  at all, which is exactly why no error path ever saw it.
+
 - **Setup now REFUSES a username that would break the Caddy config, instead of writing it.**
   `POST /api/setup/complete` is unauthenticated and only trimmed the admin username before it was
   written verbatim into the generated Caddyfile — and setup applies that file automatically. A name

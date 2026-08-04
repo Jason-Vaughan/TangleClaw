@@ -2445,7 +2445,7 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
 });
 
 // GET /api/projects
-route('GET', '/api/projects', (req, res) => {
+route('GET', '/api/projects', async (req, res) => {
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
@@ -2453,7 +2453,7 @@ route('GET', '/api/projects', (req, res) => {
   if (query.tag) options.tag = query.tag;
   if (query.engine) options.engine = query.engine;
 
-  const list = projects.listAllProjects(options);
+  const list = await projects.listAllProjects(options);
   jsonResponse(res, 200, { projects: list });
 });
 
