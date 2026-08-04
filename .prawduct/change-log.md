@@ -3293,3 +3293,35 @@ that resolves itself. Both fixed; cross-file tests now pin the two predicates to
 and go red when either drifts.
 
 **Classification:** fix
+
+## 2026-08-04: A rebound name no longer satisfies the cross-site guards (#864)
+
+<!-- prawduct: type=fix | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** both v5 cross-site guards decide "is this cross-site?" relative to the request itself, so
+an attacker controlling DNS satisfies them without forging anything — the browser honestly reports
+`same-origin` for `evil.example` pointed at `127.0.0.1`. The payoff is the ungated loopback listener
+and a `--writable` ttyd.
+
+**What:** `servedHostAllowlist` derives the names the install already serves (mkcert defaults, mDNS
+name, `publicDomain`, `caddyTailnetHost`); both guards check `Host` against it. Scoped to
+state-changing requests and WS upgrades so a mis-derived list refuses writes rather than removing
+the dashboard. Startup logs the computed list.
+
+**Two decisions the build turned up, neither in the issue:**
+
+1. The issue's suggested fix cited `certHostUnion` as an existing helper to reuse. **There is no
+   such function** — the real pieces are `mdnsHostFor` and `MKCERT_HOSTS_DEFAULT`. Verifying before
+   building is what caught it; a filed diagnosis is a hypothesis.
+2. An existing test (`[fd7a:115c::1]` tailnet upgrade) went red and was right to. Enumerating the
+   machine's interface addresses would have fixed it but bound the allowlist to a network that
+   changes. **Bare IPs are allowed outright instead**: rebinding needs a NAME, and a cross-address
+   page yields `Origin` ≠ `Host`, already refused. Simpler and machine-independent.
+
+**And one the tests forced into the open:** `POST /api/setup/complete` legitimately arrives under a
+host the allowlist cannot know, because setup is what configures it. Two integration tests went red
+— including one named "keeps a legitimate hostname, so a remote operator gets their own address".
+Carve-out is the smallest that works: `/api/setup/*` only, and only while `setupComplete` is false.
+Operator chose that over exempting all pre-setup writes.
+
+**Classification:** fix

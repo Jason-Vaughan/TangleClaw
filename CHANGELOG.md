@@ -773,6 +773,47 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **A state-changing request or terminal socket must now arrive under a name this install
+  actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
+  Those guards decide "is this cross-site?" *relative to the request itself*: `Sec-Fetch-Site` is
+  what the browser computed from the page's own origin, and the upgrade check compares `Origin`
+  against the request's own `Host`. An attacker controlling DNS satisfies both without forging
+  anything — point `evil.example` at `127.0.0.1`, get the operator to load it, and the browser
+  honestly reports `same-origin`, because as far as it knows it is. `Origin` and `Host` agree, on a
+  lie. The request then reaches the ungated loopback listener that exists in caddy mode, where
+  `/terminal/*` proxies to a `--writable` ttyd.
+
+  The guards now check that agreement against an independent fact: `servedHostAllowlist` derives
+  the names this install is *already configured to serve* — the mkcert defaults, the mDNS name that
+  goes in the certificate, and `publicDomain` / `caddyTailnetHost`. Nothing new to maintain, and it
+  cannot drift from the certificate, because it is built from the same inputs.
+
+  **Bare IP addresses are allowed outright, and that is the shape of the attack rather than a
+  loophole.** Rebinding needs a *name* — the trick is making a name the browser already trusts
+  resolve elsewhere, and `Host` then carries that name. A request that reaches us same-origin as
+  `192.168.1.50` or a Tailscale `[fd7a:115c::1]` means the browser really is talking to that
+  address; a page at a *different* address posting here yields `Origin` ≠ `Host`, which the existing
+  guards already refuse. This also keeps the allowlist free of interface addresses that would
+  change with the network.
+
+  **Scoped to state-changing requests and WebSocket upgrades, deliberately — not to every
+  request.** This list is derived, and a derivation that misses a legitimate address (a proxy that
+  rewrites `Host`, a container name) then refuses writes from it. That degrades to "reads still
+  work, writes return a named `HOST_NOT_SERVED`" instead of taking the dashboard away from a remote
+  operator entirely — the silent-failure mode this release spent its cycle eliminating. Tightening
+  to an outright refusal is a separate decision, once the derivation has proven itself in the
+  field. The startup line now logs the computed list for the same reason: a wrong derivation should
+  be a diff against reality, not a mystery.
+
+  **First-run setup is exempt, on two axes at once.** Setup is what *configures* the public names,
+  so during first run the install genuinely does not know the address a remote operator reached it
+  by — the `Host` header is how it learns it, and the wizard names that address back. The carve-out
+  is therefore only `/api/setup/*`, and only while `setupComplete` is `false`; every other
+  state-changing route is guarded even before setup, and the setup routes rejoin the guard the
+  moment it flips. The window is real and bounded: a fresh install has no credential and no gate
+  yet — it is unprotected by construction until setup runs — so the guard begins protecting at
+  exactly the point there is something to protect.
+
 - **BREAKING: cross-site requests can no longer change server state (#860).** A page on another
   site could change the TangleClaw admin credential. Several routes authorize on "this request
   arrived over loopback" — most sharply `POST /api/auth/credential`, which treats loopback as proof

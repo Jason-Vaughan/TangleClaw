@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   matchRoute, route, parseQuery, reqUrl, handleUpgrade, handleRequest,
-  _openclawProxyHeaders, _openclawWsRequestLines
+  _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed
 } = require('../server');
 
 describe('server', () => {
@@ -205,6 +205,117 @@ describe('server', () => {
         });
       }
 
+      /*
+       * #864 — the Sec-Fetch-Site check above trusts the browser's own verdict,
+       * and under DNS rebinding the browser honestly reports `same-origin`: the
+       * page really is on `evil.example`, which really does resolve to
+       * 127.0.0.1. Nothing is forged, so nothing above catches it. The Host
+       * allowlist is the independent fact the guard checks against.
+       */
+      describe('#864 — Host allowlist (DNS rebinding)', () => {
+        it('refuses a state-changing request under a rebound name, with no Sec-Fetch-Site at all', async () => {
+          const res = await send('POST', '/api/auth/credential', { host: 'evil.example:3102' });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /HOST_NOT_SERVED/,
+            'this is the rebinding path — the cross-site guard cannot see it');
+        });
+
+        it('a rebound name reporting same-origin is still refused', async () => {
+          // Precisely what the browser sends when the attack works.
+          const res = await send('POST', '/api/config', {
+            host: 'evil.example:3102', 'sec-fetch-site': 'same-origin'
+          });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /HOST_NOT_SERVED/);
+        });
+
+        it('does NOT refuse a GET under an unserved Host — reads stay working', async () => {
+          // The deliberate scope. A wrongly-derived allowlist (a proxy that
+          // rewrites Host, a container name) must degrade to "writes refused",
+          // never "the dashboard is gone" for a remote operator.
+          const res = await send('GET', '/api/health', { host: 'weird-proxy-name:3102' });
+          assert.notEqual(res.statusCode, 403,
+            'refusing reads too would take the dashboard away on a bad derivation');
+        });
+
+        it('allows the served host it was already using', async () => {
+          const res = await send('POST', '/api/config', { host: 'localhost:3102' });
+          assert.notEqual(res.statusCode, 403, 'localhost must never be refused');
+        });
+
+        for (const [label, host] of [
+          ['a bracketed IPv6 tailnet address', '[::1]:3102'],
+          ['a bare loopback IP', '127.0.0.1:3102']
+        ]) {
+          it(`allows ${label} — it is the machine, not a name that can be rebound`, async () => {
+            const res = await send('POST', '/api/config', { host });
+            assert.notEqual(res.statusCode, 403, `${host} must be allowed`);
+          });
+        }
+
+        it('allows ANY IP literal, not just this machine\'s — an IP cannot be rebound', async () => {
+          // The design decision, stated so it is a contract. Rebinding needs a
+          // NAME to point somewhere else; a literal has no DNS step. A page on
+          // a different address posting here yields Origin != Host, which the
+          // two guards above already refuse — so narrowing this to "IPs we
+          // hold" would buy nothing and would require enumerating interface
+          // addresses that change with the network.
+          const res = await send('POST', '/api/config', { host: '10.11.12.13:3102' });
+          assert.notEqual(res.statusCode, 403,
+            'an IP-literal Host is not a rebinding vector; cross-origin is caught above');
+        });
+
+        /*
+         * The setup carve-out. Setup CONFIGURES the public names, so during
+         * first run the allowlist cannot contain the address a remote operator
+         * arrived by — the Host header is how the install learns it. Bounded on
+         * two axes, and both are pinned here: only /api/setup/*, and only while
+         * setupComplete is false.
+         */
+        describe('first-run setup carve-out', () => {
+          it('does not exempt a non-setup route, even before setup completes', async () => {
+            const res = await send('POST', '/api/config', { host: 'evil.example:3102' });
+            assert.equal(res.statusCode, 403,
+              'the carve-out is for the routes that cannot know the name, not for everything');
+            assert.match(res.body, /HOST_NOT_SERVED/);
+          });
+
+          it('does not exempt a setup-PREFIXED path outside the namespace', async () => {
+            // `/api/setupsomething` starts with the same letters; the check is
+            // on the `/api/setup/` path segment, not a bare prefix match.
+            const res = await send('POST', '/api/setupsomething', { host: 'evil.example:3102' });
+            assert.equal(res.statusCode, 403);
+            assert.match(res.body, /HOST_NOT_SERVED/);
+          });
+        });
+
+        it('refuses a state-changing request with no Host header at all', async () => {
+          const res = await send('POST', '/api/config', { host: undefined });
+          assert.equal(res.statusCode, 403, 'HTTP/1.1 requires Host; absent is not a pass');
+          assert.match(res.body, /HOST_NOT_SERVED/);
+        });
+
+        describe('_hostIsAllowed', () => {
+          const allow = new Set(['localhost', 'studio.local', 'fd7a:115c::1']);
+          it('compares the parsed hostname, never a split on ":"', () => {
+            assert.equal(_hostIsAllowed('[fd7a:115c::1]:3102', allow), true,
+              'splitting a bracketed IPv6 Host on ":" yields "[" and refuses every tailnet request');
+          });
+          it('ignores the port', () => {
+            assert.equal(_hostIsAllowed('studio.local:8443', allow), true);
+          });
+          it('is case-insensitive, as host names are', () => {
+            assert.equal(_hostIsAllowed('STUDIO.local', allow), true);
+          });
+          it('refuses an unparseable Host rather than waving it through', () => {
+            assert.equal(_hostIsAllowed('http://not a host', allow), false);
+          });
+          it('refuses a name outside the list', () => {
+            assert.equal(_hostIsAllowed('evil.example', allow), false);
+          });
+        });
+      });
+
       // The first version of this guard lived inside the `/api/` branch, which
       // left these open — and they are the worse half. `_openclawProxyHeaders`
       // rewrites origin/referer to the local origin and attaches
@@ -241,6 +352,26 @@ describe('server', () => {
           } catch { /* downstream proxy setup is not what this asserts */ }
           return { destroyed: socket.destroyed };
         }
+
+        /*
+         * #864 — DNS rebinding. Both guards above decide "is this cross-site?"
+         * relative to the request itself, so an attacker who controls DNS
+         * satisfies them: point `evil.example` at 127.0.0.1, get the operator to
+         * load it, and the browser reports same-origin because as far as it
+         * knows it IS. Origin and Host agree — on a lie. The fix is to require
+         * the name be one this install actually serves.
+         */
+        it('destroys the rebinding upgrade: Origin and Host AGREE, on a name we do not serve', () => {
+          const r = upgrade({ host: 'evil.example:3102', origin: 'http://evil.example:3102' });
+          assert.equal(r.destroyed, true,
+            'agreeing with itself is not proof — /terminal/* proxies to a --writable ttyd');
+        });
+
+        it('still allows a no-Origin client under an unserved Host (not a browser, not a vector)', () => {
+          const r = upgrade({ host: 'container-internal:3102' });
+          assert.equal(r.destroyed, false,
+            'headless consumers reach the socket by names no allowlist can know');
+        });
 
         it('destroys an upgrade whose Origin is another site', () => {
           const r = upgrade({ host: 'localhost:3102', origin: 'https://evil.example' });

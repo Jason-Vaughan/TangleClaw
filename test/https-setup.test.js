@@ -703,3 +703,56 @@ exit 1
     });
   });
 });
+
+/*
+ * #864 — the names a state-changing request or WebSocket upgrade is accepted
+ * under. Built from what the install is already configured to serve rather than
+ * a new setting, so it cannot drift from the certificate and the ingress config.
+ */
+describe('servedHostAllowlist (#864)', () => {
+  const { servedHostAllowlist } = require('../lib/https-setup');
+
+  it('always carries the mkcert defaults', () => {
+    const a = servedHostAllowlist({}, { hostname: 'studio' });
+    for (const h of ['localhost', '127.0.0.1', '::1']) {
+      assert.equal(a.has(h), true, `${h} must always be served`);
+    }
+  });
+
+  it('carries the mDNS name AND the bare machine name', () => {
+    // A browser sends whatever the operator typed, and the bare name resolves
+    // on many LANs without the suffix.
+    const a = servedHostAllowlist({}, { hostname: 'Studio.local' });
+    assert.equal(a.has('studio.local'), true);
+    assert.equal(a.has('studio'), true);
+  });
+
+  it('does not produce a doubled suffix from an already-.local hostname', () => {
+    const a = servedHostAllowlist({}, { hostname: 'Studio.local' });
+    assert.equal(a.has('studio.local.local'), false, 'the SAN bug, in allowlist form');
+  });
+
+  it('picks up both configured public names', () => {
+    const a = servedHostAllowlist(
+      { publicDomain: 'TC.example.com', caddyTailnetHost: 'Box.tail123.ts.net' },
+      { hostname: 'studio' }
+    );
+    assert.equal(a.has('tc.example.com'), true, 'lower-cased for comparison');
+    assert.equal(a.has('box.tail123.ts.net'), true);
+  });
+
+  it('degrades to the defaults when the machine has no usable hostname', () => {
+    const a = servedHostAllowlist(null, { hostname: null });
+    assert.deepEqual([...a].sort(), ['127.0.0.1', '::1', 'localhost']);
+  });
+
+  it('never contains an empty string, whatever the config holds', () => {
+    const a = servedHostAllowlist({ publicDomain: '   ', caddyTailnetHost: '' }, { hostname: '' });
+    assert.equal(a.has(''), false);
+  });
+
+  it('does not trust an arbitrary name', () => {
+    const a = servedHostAllowlist({ publicDomain: 'tc.example.com' }, { hostname: 'studio' });
+    assert.equal(a.has('evil.example'), false);
+  });
+});
