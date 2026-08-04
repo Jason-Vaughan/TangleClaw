@@ -69,6 +69,57 @@ const MAX_BODY_SIZE = 10 * 1024; // 10 KB
 const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
+ * Load config, or `null` if it cannot be read. Both Host-guard callers fail
+ * closed on `null` rather than letting a corrupt config throw out of a request.
+ * @returns {object|null}
+ */
+function _loadConfigOrNull() {
+  try { return store.config.load(); } catch { return null; }
+}
+
+/**
+ * The served-name allowlist, or an empty set if it cannot be computed.
+ *
+ * `servedHostAllowlist` reads the certificate to carry its names forward, so an
+ * unreadable or malformed cert must not take a request down with it. Empty
+ * fails closed for NAMES; an IP-literal `Host` still passes inside
+ * `_hostIsAllowed` on its own reasoning, which does not depend on this list.
+ *
+ * @param {object} config - Loaded config.
+ * @returns {Set<string>}
+ */
+function _servedHostsOrEmpty(config) {
+  try {
+    return httpsSetup.servedHostAllowlist(config);
+  } catch (err) {
+    log.warn('Could not compute the served-host allowlist; refusing named hosts', {
+      error: err.message
+    });
+    return new Set();
+  }
+}
+
+function _setupRouteNeedingHostExemption(pathname, config) {
+  // `/api/config` is here because the wizard has TWO terminators: Finish posts
+  // `/api/setup/complete`, and Skip sends `PATCH /api/config { setupComplete:
+  // true }` (ADR 0009 point 2). Guarding one and not the other is the
+  // half-swept-family defect this repo keeps re-learning — remote Skip would
+  // 403 while remote Finish worked.
+  //
+  // Including a general settings route looks wide until you note WHERE this can
+  // apply: an install that is pre-setup and remotely reachable has no credential
+  // and no gate, so anyone who can reach it can already PATCH config directly.
+  // Rebinding buys an attacker nothing there that direct access does not. That
+  // is precisely why the three-axis form is safe and the two-axis one was not.
+  const isSetupSurface = pathname.startsWith('/api/setup/') || pathname === '/api/config';
+  if (!isSetupSurface) return false;
+  // A config that could not be read is not a reason to open the carve-out.
+  if (!config || config.setupComplete !== false) return false;
+  // Reachable from another machine at all? If not, there is no remote first run.
+  return bindPolicy.describeBindState(config).wide === true || config.ingressMode === 'caddy';
+}
+
+/**
  * Is `Host` a name this install actually serves?
  *
  * The cross-site guards ask the request to vouch for itself: `Sec-Fetch-Site`
@@ -91,41 +142,32 @@ const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * @returns {boolean}
  */
 /**
- * Is this the first-run setup flow, which the Host allowlist cannot yet cover?
+ * Is this a first-run setup request the Host allowlist genuinely cannot cover?
  *
- * Setup is what *configures* `publicDomain` / `caddyTailnetHost`, so during
- * first run the install genuinely does not know the name a remote operator
- * reached it by — the `Host` header is how it learns it, and the wizard names
- * that address back so the operator knows where the gate will appear. Enforcing
- * the allowlist here would 403 the documented remote first-run flow, which is
- * the "reachable from another device" case this release exists to deliver.
+ * Setup is what *configures* `publicDomain` / `caddyTailnetHost`, so on an
+ * install a remote operator can actually reach, first run is the one moment the
+ * allowlist cannot contain the address they arrived by — the `Host` header is
+ * how the install learns it, and the wizard names that address back so the
+ * operator knows where the gate will appear.
  *
- * Deliberately the SMALLEST carve-out that works, on two axes at once: only the
- * setup routes, and only while setup is unfinished. Every other state-changing
- * route is guarded even before setup, and these routes rejoin the guard the
- * moment `setupComplete` flips.
+ * **Bounded on three axes, and the third is the one that matters.** An earlier
+ * version stopped at "a setup route, before `setupComplete`", reasoning that a
+ * fresh install is unprotected anyway. That reasoning was wrong: the default
+ * config is `bindAllInterfaces: false` with `ingressMode: 'direct'`, so the
+ * default install binds loopback only and **no remote operator can reach the
+ * wizard at all**. On that population the exemption protected no real flow, and
+ * the only request that could arrive at a setup route under an unserved `Host`
+ * was the rebound one — handing back exactly the attack this guard closes, on
+ * the route that sets the admin credential.
  *
- * The window it opens is real and bounded: on a fresh, network-reachable
- * install an attacker who can rebind DNS *and* get the operator to load their
- * page could complete setup with a credential of their choosing. That install
- * has no credential and no gate yet — it is unprotected by construction until
- * setup runs — so the guard begins protecting at exactly the point there is
- * something to protect. Narrowing it further means giving the wizard another
- * way to learn its own address (#864).
+ * So the carve-out applies only where the flow it exists for is possible: the
+ * socket is actually wide, or Caddy is in front. A loopback-only install gets
+ * no exemption, because it has no remote first run to protect.
  *
  * @param {string} pathname - Request path.
+ * @param {object} [config] - Loaded config; read from the store when omitted.
  * @returns {boolean}
  */
-function _setupRouteBeforeSetupComplete(pathname) {
-  if (!pathname.startsWith('/api/setup/')) return false;
-  try {
-    return store.config.load().setupComplete === false;
-  } catch {
-    // An unreadable config is not a reason to open the carve-out.
-    return false;
-  }
-}
-
 function _hostIsAllowed(host, allowlist) {
   if (!host) return false;
   let name;
@@ -4590,12 +4632,20 @@ function handleUpgrade(req, socket, head) {
   // not a cross-site vector. Without that gate this would refuse every
   // headless consumer that reaches the socket by an address the allowlist has
   // no way to know about.
-  if (origin && !_hostIsAllowed(req.headers.host)) {
-    log.warn('Refused WebSocket upgrade for an unserved Host', {
-      path: urlObj.pathname, origin, host: req.headers.host
-    });
-    socket.destroy();
-    return;
+  if (origin) {
+    const wsCfg = _loadConfigOrNull();
+    const wsAllowlist = wsCfg ? _servedHostsOrEmpty(wsCfg) : new Set();
+    // No setup carve-out here on purpose: the wizard completes over HTTP, and
+    // nothing in first run opens a terminal socket. An exemption would be dead
+    // code guarding the route with the worst payoff — `/terminal/*` proxies to
+    // a `--writable` ttyd.
+    if (!_hostIsAllowed(req.headers.host, wsAllowlist)) {
+      log.warn('Refused WebSocket upgrade for an unserved Host', {
+        path: urlObj.pathname, origin, host: req.headers.host
+      });
+      socket.destroy();
+      return;
+    }
   }
 
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
@@ -4838,14 +4888,31 @@ async function handleRequest(req, res) {
   // writes are refused with a named error" instead of taking the dashboard away
   // from a remote operator entirely. Tightening to an outright refusal is a
   // separate decision, to be made once the derivation has proven itself.
-  if (CSRF_UNSAFE_METHODS.has(method)
-      && !_setupRouteBeforeSetupComplete(pathname)
-      && !_hostIsAllowed(req.headers.host)) {
-    log.warn('Refused state-changing request for an unserved Host', {
-      method, path: pathname, host: req.headers.host
-    });
-    return errorResponse(res, 403,
-      'This server does not answer to that host name.', 'HOST_NOT_SERVED');
+  // Applied only to requests that look like they came from a browser, matching
+  // the contract both sibling guards state explicitly: `curl`, scripts and the
+  // agent-facing API in the project guide send neither header and are not a
+  // cross-site vector, so they keep working under any `Host` (a container name,
+  // a proxy rewrite). This costs the guard nothing — a rebound page IS a
+  // browser, and a browser cannot suppress `Sec-Fetch-Site` from script, so the
+  // attack always carries the marker that brings it back into scope.
+  const looksLikeBrowser = req.headers['sec-fetch-site'] !== undefined
+    || req.headers.origin !== undefined;
+  if (CSRF_UNSAFE_METHODS.has(method) && looksLikeBrowser) {
+    // ONE read of config, shared by both checks below. They used to load it
+    // separately and only one wrapped the call, so a corrupt config threw out
+    // of the request through the unguarded path instead of being refused.
+    // `null` here means "could not read it", which fails CLOSED: no exemption,
+    // and an empty name list (an IP-literal Host still passes on its own merit).
+    const cfg = _loadConfigOrNull();
+    const allowlist = cfg ? _servedHostsOrEmpty(cfg) : new Set();
+    if (!_setupRouteNeedingHostExemption(pathname, cfg)
+        && !_hostIsAllowed(req.headers.host, allowlist)) {
+      log.warn('Refused state-changing request for an unserved Host', {
+        method, path: pathname, host: req.headers.host
+      });
+      return errorResponse(res, 403,
+        'This server does not answer to that host name.', 'HOST_NOT_SERVED');
+    }
   }
 
   // API routes

@@ -3303,25 +3303,51 @@ an attacker controlling DNS satisfies them without forging anything — the brow
 `same-origin` for `evil.example` pointed at `127.0.0.1`. The payoff is the ungated loopback listener
 and a `--writable` ttyd.
 
-**What:** `servedHostAllowlist` derives the names the install already serves (mkcert defaults, mDNS
-name, `publicDomain`, `caddyTailnetHost`); both guards check `Host` against it. Scoped to
-state-changing requests and WS upgrades so a mis-derived list refuses writes rather than removing
-the dashboard. Startup logs the computed list.
+**What:** `servedHostAllowlist` derives the names this install serves and both guards check `Host`
+against it. Scoped to browser-shaped state-changing requests and WS upgrades, so a mis-derived list
+refuses writes rather than removing the dashboard, and header-less consumers keep working. Startup
+logs the computed list.
 
-**Two decisions the build turned up, neither in the issue:**
+**CORRECTION — this entry previously claimed `certHostUnion` does not exist. It does**, at
+`scripts/ingress-cutover.js`, exported and tested (#863). The claim came from grepping only `lib/`
+and `server.js` and reading that bounded window as absence — the exact failure the
+prove-absence-before-deleting rule names — and it was then recorded here as a *verified finding*,
+which made a confident falsehood look like diligence. The Critic caught it; all three reviewers
+found it independently.
 
-1. The issue's suggested fix cited `certHostUnion` as an existing helper to reuse. **There is no
-   such function** — the real pieces are `mdnsHostFor` and `MKCERT_HOSTS_DEFAULT`. Verifying before
-   building is what caught it; a filed diagnosis is a hypothesis.
-2. An existing test (`[fd7a:115c::1]` tailnet upgrade) went red and was right to. Enumerating the
+It was also a real defect, not just a bad record: the parallel union built here was a fourth copy
+and the only one omitting `certSanHosts`. An install whose cert carries an operator-added name
+(`POST /api/setup/generate-cert` takes a hosts array that lands in no config field, and the cert is
+its own only record) would have loaded the dashboard over a valid cert, served reads, then refused
+every write and destroyed every terminal upgrade. `certHostUnion` now lives in `lib/https-setup.js`
+beside the inputs it reads, the script delegates to it, and `servedHostAllowlist` derives FROM it —
+so "the names we serve cannot drift from the names the cert carries" is now true by construction
+rather than asserted.
+
+**The blocking finding, and why the first fix was wrong.** The first-run carve-out exempted
+`/api/setup/*` while `setupComplete === false`, justified as "a fresh install is unprotected
+anyway". That premise is false for the default population: `bindAllInterfaces: false` +
+`ingressMode: 'direct'` binds loopback only, so **no remote operator can reach the wizard**, and the
+only request that could arrive there under an unserved `Host` was the rebound one — on the route
+that sets the admin credential. The carve-out now also requires the install to actually be reachable
+(`describeBindState(config).wide` or caddy mode), so it applies exactly where the flow it protects
+can happen. It also covers `PATCH /api/config`, the wizard's OTHER terminator (ADR 0009 point 2) —
+guarding Finish but not Skip is the half-swept-family defect again.
+
+**Two more the build turned up:**
+
+1. An existing test (`[fd7a:115c::1]` tailnet upgrade) went red and was right to. Enumerating the
    machine's interface addresses would have fixed it but bound the allowlist to a network that
    changes. **Bare IPs are allowed outright instead**: rebinding needs a NAME, and a cross-address
-   page yields `Origin` ≠ `Host`, already refused. Simpler and machine-independent.
+   page yields `Origin` != `Host`, already refused.
+2. Two integration tests proved `POST /api/setup/complete` legitimately arrives under a host the
+   allowlist cannot know — including one named "keeps a legitimate hostname, so a remote operator
+   gets their own address". That is what forced the carve-out into the open.
 
-**And one the tests forced into the open:** `POST /api/setup/complete` legitimately arrives under a
-host the allowlist cannot know, because setup is what configures it. Two integration tests went red
-— including one named "keeps a legitimate hostname, so a remote operator gets their own address".
-Carve-out is the smallest that works: `/api/setup/*` only, and only while `setupComplete` is false.
-Operator chose that over exempting all pre-setup writes.
+**And the carve-out tests did not test the carve-out.** The first version posted only to
+`/api/config` and `/api/setupsomething` — neither is a `/api/setup/*` path, so no axis was pinned,
+including the one that makes it close. Rewritten against a real store: reachable-and-first-run is
+exempt, the loopback default is not, it closes on `setupComplete`, and Skip is covered. Each is
+mutation-verified, including reverting to the exact two-axis form that was the blocking defect.
 
 **Classification:** fix

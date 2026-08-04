@@ -784,9 +784,14 @@ All notable changes to TangleClaw are documented in this file.
   `/terminal/*` proxies to a `--writable` ttyd.
 
   The guards now check that agreement against an independent fact: `servedHostAllowlist` derives
-  the names this install is *already configured to serve* — the mkcert defaults, the mDNS name that
-  goes in the certificate, and `publicDomain` / `caddyTailnetHost`. Nothing new to maintain, and it
-  cannot drift from the certificate, because it is built from the same inputs.
+  the names this install is *already configured to serve*. It does not assemble that set itself — it
+  derives from `certHostUnion`, the function the cert paths already share, which is why it cannot
+  drift from the certificate. That matters more than it sounds: `POST /api/setup/generate-cert`
+  accepts a caller-supplied host list that lands in **no config field**, so the certificate is the
+  only record those names have. A list built from config alone would have loaded the dashboard over
+  a valid certificate, served reads, then refused every write and destroyed every terminal upgrade
+  on exactly the installs an operator had customised. `certHostUnion` moved to `lib/https-setup.js`
+  beside the inputs it reads; the cutover script delegates to it.
 
   **Bare IP addresses are allowed outright, and that is the shape of the attack rather than a
   loophole.** Rebinding needs a *name* — the trick is making a name the browser already trusts
@@ -796,8 +801,11 @@ All notable changes to TangleClaw are documented in this file.
   guards already refuse. This also keeps the allowlist free of interface addresses that would
   change with the network.
 
-  **Scoped to state-changing requests and WebSocket upgrades, deliberately — not to every
-  request.** This list is derived, and a derivation that misses a legitimate address (a proxy that
+  **Scoped to browser-shaped state-changing requests and WebSocket upgrades, deliberately — not to
+  every request.** `curl`, scripts and the agent-facing API send neither `Sec-Fetch-Site` nor
+  `Origin`, are not a cross-site vector, and keep working under any `Host` — the same exemption both
+  sibling guards already state. It costs the guard nothing, because a rebound page *is* a browser
+  and cannot suppress `Sec-Fetch-Site` from script. This list is derived, and a derivation that misses a legitimate address (a proxy that
   rewrites `Host`, a container name) then refuses writes from it. That degrades to "reads still
   work, writes return a named `HOST_NOT_SERVED`" instead of taking the dashboard away from a remote
   operator entirely — the silent-failure mode this release spent its cycle eliminating. Tightening
@@ -805,14 +813,19 @@ All notable changes to TangleClaw are documented in this file.
   field. The startup line now logs the computed list for the same reason: a wrong derivation should
   be a diff against reality, not a mystery.
 
-  **First-run setup is exempt, on two axes at once.** Setup is what *configures* the public names,
-  so during first run the install genuinely does not know the address a remote operator reached it
-  by — the `Host` header is how it learns it, and the wizard names that address back. The carve-out
-  is therefore only `/api/setup/*`, and only while `setupComplete` is `false`; every other
-  state-changing route is guarded even before setup, and the setup routes rejoin the guard the
-  moment it flips. The window is real and bounded: a fresh install has no credential and no gate
-  yet — it is unprotected by construction until setup runs — so the guard begins protecting at
-  exactly the point there is something to protect.
+  **First-run setup is exempt on three axes, and the third is the one that matters.** Setup is what
+  *configures* the public names, so on an install a remote operator can reach, first run is the one
+  moment the allowlist cannot contain the address they arrived by — the `Host` header is how the
+  install learns it, and the wizard names that address back.
+
+  An exemption keyed only on "a setup route, before `setupComplete`" would have been wrong, and
+  wrong in the dangerous direction. The default install is `bindAllInterfaces: false` with
+  `ingressMode: 'direct'` — loopback only — so **no remote operator can reach the wizard at all**,
+  and the only request that could arrive there under an unserved `Host` was the rebound one, on the
+  route that sets the admin credential. The carve-out therefore also requires the install to be
+  genuinely reachable (a wide socket, or Caddy in front), so it applies exactly where the flow it
+  protects can occur and nowhere else. It covers `PATCH /api/config` as well as `/api/setup/*`,
+  because the wizard has two terminators — Finish and Skip — and guarding one is guarding neither.
 
 - **BREAKING: cross-site requests can no longer change server state (#860).** A page on another
   site could change the TangleClaw admin credential. Several routes authorize on "this request

@@ -712,47 +712,65 @@ exit 1
 describe('servedHostAllowlist (#864)', () => {
   const { servedHostAllowlist } = require('../lib/https-setup');
 
-  it('always carries the mkcert defaults', () => {
-    const a = servedHostAllowlist({}, { hostname: 'studio' });
-    for (const h of ['localhost', '127.0.0.1', '::1']) {
-      assert.equal(a.has(h), true, `${h} must always be served`);
-    }
+  // `certHosts` stands in for `certHostUnion`, so these pin behaviour without
+  // minting a certificate or depending on whatever this machine happens to hold.
+  const CERT = ['localhost', '127.0.0.1', '::1'];
+
+  it('serves every name the certificate carries', () => {
+    const a = servedHostAllowlist({}, { hostname: 'studio', certHosts: CERT });
+    for (const h of CERT) assert.equal(a.has(h), true, `${h} is on the cert; it must be served`);
   });
 
-  it('carries the mDNS name AND the bare machine name', () => {
-    // A browser sends whatever the operator typed, and the bare name resolves
-    // on many LANs without the suffix.
-    const a = servedHostAllowlist({}, { hostname: 'Studio.local' });
+  it('serves an operator-added cert name that appears in NO config field', () => {
+    // The drift this derivation exists to prevent. `POST /api/setup/generate-cert`
+    // takes a caller-supplied hosts array that lands nowhere in config, and the
+    // cert is its own only record. A parallel allowlist built from config alone
+    // would load the dashboard over a valid cert, serve reads, then refuse every
+    // write and destroy every terminal upgrade.
+    const a = servedHostAllowlist({}, {
+      hostname: 'studio',
+      certHosts: [...CERT, 'box.tail123.ts.net']
+    });
+    assert.equal(a.has('box.tail123.ts.net'), true,
+      'a name only the certificate records must still be served');
+  });
+
+  it('adds the bare machine name, which a certificate has no reason to carry', () => {
+    const a = servedHostAllowlist({}, { hostname: 'Studio.local', certHosts: CERT });
     assert.equal(a.has('studio.local'), true);
-    assert.equal(a.has('studio'), true);
+    assert.equal(a.has('studio'), true, 'the short form resolves on many LANs');
   });
 
   it('does not produce a doubled suffix from an already-.local hostname', () => {
-    const a = servedHostAllowlist({}, { hostname: 'Studio.local' });
+    const a = servedHostAllowlist({}, { hostname: 'Studio.local', certHosts: CERT });
     assert.equal(a.has('studio.local.local'), false, 'the SAN bug, in allowlist form');
   });
 
-  it('picks up both configured public names', () => {
-    const a = servedHostAllowlist(
-      { publicDomain: 'TC.example.com', caddyTailnetHost: 'Box.tail123.ts.net' },
-      { hostname: 'studio' }
-    );
-    assert.equal(a.has('tc.example.com'), true, 'lower-cased for comparison');
-    assert.equal(a.has('box.tail123.ts.net'), true);
+  it('lower-cases everything, because host comparison is case-insensitive', () => {
+    const a = servedHostAllowlist({}, { hostname: 'studio', certHosts: [...CERT, 'TC.Example.COM'] });
+    assert.equal(a.has('tc.example.com'), true);
   });
 
-  it('degrades to the defaults when the machine has no usable hostname', () => {
-    const a = servedHostAllowlist(null, { hostname: null });
+  it('degrades to exactly the cert names when the machine has no usable hostname', () => {
+    const a = servedHostAllowlist(null, { hostname: null, certHosts: CERT });
     assert.deepEqual([...a].sort(), ['127.0.0.1', '::1', 'localhost']);
   });
 
-  it('never contains an empty string, whatever the config holds', () => {
-    const a = servedHostAllowlist({ publicDomain: '   ', caddyTailnetHost: '' }, { hostname: '' });
+  it('never contains an empty string, whatever it is handed', () => {
+    const a = servedHostAllowlist({}, { hostname: '', certHosts: [...CERT, '   ', ''] });
     assert.equal(a.has(''), false);
   });
 
   it('does not trust an arbitrary name', () => {
-    const a = servedHostAllowlist({ publicDomain: 'tc.example.com' }, { hostname: 'studio' });
+    const a = servedHostAllowlist({}, { hostname: 'studio', certHosts: CERT });
     assert.equal(a.has('evil.example'), false);
+  });
+
+  it('reads the real certHostUnion when no override is given', () => {
+    // Pins the WIRING, not the cert: without this, the override could be the
+    // only path anything ever exercises.
+    const a = servedHostAllowlist({ publicDomain: 'tc.example.com' }, { hostname: 'studio' });
+    assert.equal(a.has('tc.example.com'), true, 'publicDomain reaches the list via certHostUnion');
+    assert.equal(a.has('localhost'), true);
   });
 });

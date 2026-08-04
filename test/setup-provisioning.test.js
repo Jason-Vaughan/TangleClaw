@@ -70,6 +70,39 @@ function request(server, method, urlPath, body) {
  * @param {object} body
  * @returns {Promise<{ status: number, data: any, raw: string }>}
  */
+/**
+ * Like `requestWithHost`, but carrying the header a real browser sends. The
+ * #864 Host guard only applies to browser-shaped requests, so a carve-out test
+ * that omits this proves nothing — it would pass with the carve-out deleted.
+ * @param {object} server
+ * @param {string} host - Host header value.
+ * @param {object} body
+ * @param {string} [path] - Route to hit.
+ * @param {string} [method] - HTTP method; Skip uses PATCH, not POST.
+ * @returns {Promise<{status:number, data:*, raw:string}>}
+ */
+function browserRequestWithHost(server, host, body, path = '/api/setup/complete', method = 'POST') {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const req = http.request({
+      hostname: '127.0.0.1', port: addr.port, path, method,
+      headers: { 'Content-Type': 'application/json', Host: host, 'Sec-Fetch-Site': 'same-origin' }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = raw; }
+        resolve({ status: res.statusCode, data, raw });
+      });
+    });
+    req.on('error', reject);
+    req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
 function requestWithHost(server, host, body) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
@@ -237,6 +270,71 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.url, 'https://localhost:8443',
         'a malformed Host must fall back, not round-trip');
       assert.ok(!/alert\(1\)/.test(res.raw), 'the response echoed script-shaped text back');
+    });
+
+    /*
+     * #864 — the Host guard's first-run carve-out, exercised through a real
+     * /api/setup/* request. An earlier version of these tests posted only to
+     * /api/config and /api/setupsomething, so neither axis of the carve-out was
+     * pinned — including the axis that makes it CLOSE.
+     */
+    describe('#864 — the first-run Host carve-out', () => {
+      const BODY = { projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery' };
+
+      it('exempts a remote first run when the install is actually reachable', async () => {
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = true;   // wide: a remote operator can reach the wizard
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'cursatory.tail123678.ts.net:8443', BODY);
+        assert.notEqual(res.status, 403,
+          'this is the flow the carve-out exists for — setup is what learns this name');
+      });
+
+      it('does NOT exempt the loopback default, where no remote first run is possible', async () => {
+        // The blocking defect in the first version. Default config binds
+        // 127.0.0.1 only, so no remote operator can reach the wizard — which
+        // means the only request that can arrive here under an unserved Host is
+        // the rebound one, on the route that sets the admin credential.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = false;
+        c.ingressMode = 'direct';
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'a loopback-only install has no remote first run to protect');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
+      it('closes the moment setup completes, even on a wide install', async () => {
+        const c = store.config.load();
+        c.setupComplete = true;
+        c.bindAllInterfaces = true;
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'the carve-out is for FIRST run only');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
+      it('covers the wizard\'s OTHER terminator — Skip, via PATCH /api/config', async () => {
+        // Two routes finish setup (ADR 0009 point 2). Guarding one and not the
+        // other is the half-swept-family defect: remote Finish would work while
+        // remote Skip 403'd.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = true;
+        store.config.save(c);
+        const res = await browserRequestWithHost(
+          server, 'cursatory.tail123678.ts.net:8443', { setupComplete: true }, '/api/config', 'PATCH');
+        assert.notEqual(res.status, 403, 'remote Skip must work wherever remote Finish does');
+        // It then hits the route's OWN refusal — Skip cannot finish setup with
+        // no credential on a machine that can run one (#710 chunk 2). Asserting
+        // that specific 400 proves the request reached the handler rather than
+        // merely avoiding the Host guard, which a bare notEqual(403) would not.
+        assert.equal(res.status, 400);
+        assert.match(res.raw, /ADMIN_REQUIRED/,
+          'reaching the eyes-open guard is proof the carve-out let it through');
+      });
     });
 
     it('keeps a legitimate hostname, so a remote operator gets their own address', async () => {
