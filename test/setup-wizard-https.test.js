@@ -441,11 +441,135 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
     });
   });
 
-  describe('_pollRestartAndRedirect', () => {
-    it('navigates to the redirect URL once the server responds', async () => {
+  describe('_pollRestartReady', () => {
+    // Replaces the former `_pollRestartAndRedirect` contract, which pinned
+    // "navigates once the server responds". That behaviour was the defect, not the
+    // requirement: no timer-driven UI lifecycle (#98, #268) — a page must not move
+    // on its own, and the old deadline branch redirected with no evidence the
+    // server had come back at all. The probe survives because knowing the server
+    // is up is useful; only the navigation is gone. These assertions are strictly
+    // stronger than the one they replace: it checked that a navigation happened,
+    // these check that none does in either outcome, and that each still reports.
+
+    it('does not navigate when the server comes back — it says so and waits for the click', async () => {
       const ctx = loadSetup({ fetch: async () => ({ ok: true }) });
-      await ctx._pollRestartAndRedirect('https://localhost:3102');
-      assert.ok(ctx.__navigations.includes('https://localhost:3102'));
+      ctx.wizard.view = 'restarting';
+      await ctx._pollRestartReady('https://localhost:3102', []);
+      assert.deepEqual(ctx.__navigations, [], 'the page must never move on its own');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /back up/, 'readiness must still be reported');
+      assert.match(html, /https:\/\/localhost:3102/);
     });
+
+    it('renders the never-came-back state honestly, and with no navigation', () => {
+      // The deadline branch is what mattered: the old code redirected there
+      // regardless, asserting a working server it had just spent 20s failing to
+      // reach. Driving the real loop would take those 20s (the harness stubs
+      // setTimeout but not Date.now), so the render is exercised directly and the
+      // branch that reaches it is pinned by source assertion below.
+      const ctx = loadSetup();
+      ctx._renderRestartOverlay('https://localhost:3102', [], 'unconfirmed');
+      assert.deepEqual(ctx.__navigations, [], 'a page that cannot reach the server must not claim it is there');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /has not seen it come back/);
+      assert.match(html, /Open https:\/\/localhost:3102/, 'leaving is still offered — as a button');
+    });
+
+    it('leaves the body alone if the operator has moved on', async () => {
+      // The poll outlives the screen it was started for. Repainting a view the
+      // wizard no longer owns is the screen-ownership defect this chunk already
+      // fixed once, on the provisioning path.
+      const ctx = loadSetup({ fetch: async () => ({ ok: true }) });
+      ctx.wizard.view = 'somewhere-else';
+      ctx.document.getElementById('setupBody').innerHTML = '<p>other screen</p>';
+      await ctx._pollRestartReady('https://localhost:3102', []);
+      assert.equal(ctx.document.getElementById('setupBody').innerHTML, '<p>other screen</p>');
+    });
+  });
+
+  describe('no timer-driven navigation survives anywhere in the wizard', () => {
+    it('assigns location.href only from an onclick handler, never from script flow', () => {
+      // Structural, not textual. Grepping for the old comment ("Timeout fallback")
+      // or the old function name would pass the moment someone reintroduced
+      // `window.location.href = url` under any other wording — which is precisely
+      // how this defect returns. So instead: find EVERY assignment to
+      // location.href in the file and require each one to sit inside an onclick
+      // attribute, i.e. to be reached by an operator action.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+      const assignments = [...src.matchAll(/^.*\blocation\.href\s*=/gm)].map((m) => m[0]);
+      assert.ok(assignments.length > 0, 'the guard must not pass by finding nothing to check');
+      for (const line of assignments) {
+        assert.match(line, /onclick=/,
+          `location.href is assigned outside a click handler, which is timer-driven `
+          + `navigation (#98/#268): ${line.trim()}`);
+      }
+    });
+
+    it('has no unconditional deadline redirect', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+      assert.doesNotMatch(src, /_pollRestartAndRedirect/,
+        'the redirecting poller must be gone, not merely unreferenced');
+    });
+  });
+});
+
+describe('the restart overlay behind a proxy (#710 chunk 3)', () => {
+  // Structural, matching how this repo pins setup.js elsewhere: the file renders
+  // via innerHTML strings and cannot be imported.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'setup.js'), 'utf8');
+  const strip = (t) => t.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const show = strip(src.slice(src.indexOf('function _showRestartOverlay'),
+    src.indexOf('function _renderRestartOverlay')));
+  const render = strip(src.slice(src.indexOf('function _renderRestartOverlay'),
+    src.indexOf('async function _pollRestartReady')));
+
+  it('does not probe an address a proxy answers for', () => {
+    // The defect this pins. `redirectUrl` used to be TangleClaw's own listener,
+    // so a response proved it was back. In caddy mode it is Caddy's port, and
+    // Caddy stays up across TangleClaw's restart and answers instantly — with a
+    // 502, which an opaque `no-cors` fetch cannot distinguish from success. The
+    // screen would assert readiness it never observed and send the operator into
+    // an error page.
+    assert.match(show, /via === 'proxy'/,
+      'the proxied case must be recognised before any probe');
+    // Scoped to the proxy BRANCH, not to everything before the probe: the
+    // function opens with `if (!body) return;`, so a bare /return;/ over that
+    // span passes with the proxy branch's own return deleted. The sibling test
+    // for the credential section carries this same warning; I reproduced the
+    // defect it documents.
+    const branch = show.slice(show.indexOf("via === 'proxy'"), show.indexOf('_pollRestartReady'));
+    assert.match(branch, /_renderRestartOverlay\([^)]*'behind-proxy'/,
+      'the proxied case paints its own panel');
+    assert.match(branch, /\breturn;/,
+      'and returns, so the probe never runs for it');
+  });
+
+  it('claims nothing it cannot observe, and names what the operator CAN check', () => {
+    // Bounded by the end of the map, not by a trailing '`,' — 'behind-proxy' is
+    // the LAST entry and has none, so `indexOf` returned -1 and the old slice
+    // asserted against a single character. It could not have failed.
+    const start = render.indexOf("'behind-proxy'");
+    const end = render.indexOf('}[state];', start);
+    // Relational, not a magic length: this catches the slice collapsing (what the
+    // old `indexOf('`,')` bound did) without pretending to know how long the copy
+    // should be, and it fails in both directions if the terminator moves.
+    assert.ok(start > -1 && end > start, 'the behind-proxy panel must be locatable and non-empty');
+    const panel = render.slice(start, end);
+    assert.doesNotMatch(panel, /is back up/,
+      'no readiness claim on the branch where readiness is unobservable');
+    assert.match(panel, /asks for your username and password/,
+      'the password prompt is the one thing the operator can actually verify');
+  });
+
+  it('still offers the front door as the destination', () => {
+    // Not probing it is not the same as not linking it — the address is still
+    // where they are going.
+    assert.match(render, /window\.location\.href='\$\{esc\(redirectUrl\)\}'/);
+  });
+
+  it('carries `via` from the server rather than guessing at it', () => {
+    // The client cannot tell a proxy from a server by looking at a URL; the
+    // server derives both halves from one place and says which it is.
+    assert.match(src, /result\.redirectVia/);
   });
 });

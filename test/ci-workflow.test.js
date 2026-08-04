@@ -42,10 +42,27 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     );
   });
 
-  it('triggers on pull_request and push to main', () => {
+  it('triggers on pull_request and on push to every long-lived branch', () => {
+    // The branch list is pinned by NAME, not loosened to "any list", because the
+    // whole point is that a long-lived branch nobody validates accumulates silent
+    // failures. `feat/710-chunk2` reached 17 CI failures without a single run,
+    // because CI had never been triggered on it — the PR that opened it was the
+    // first. v5-baseline is the integration branch chunk PRs target, so a push to
+    // it must be validated like a push to main. Adding a branch here is a
+    // deliberate act; this assertion is what makes it one.
     const src = workflowSource();
     assert.match(src, /^\s*pull_request:/m);
-    assert.match(src, /^\s*push:\n\s*branches: \[main\]/m);
+    // Anchored to `push:` and tolerant of comment lines between the two, so this
+    // binds THREE facts the way the original did: push: exists, it carries a
+    // branch filter, and the filter is exactly this list. Matching `branches:`
+    // anywhere would pass green if `push:` were deleted and the filter left
+    // dangling under `pull_request:` — CI would stop running on pushes entirely
+    // while the test still said it triggered on them.
+    const branches = src.match(/^\s*push:\n(?:\s*#.*\n)*\s*branches: \[(.+)\]/m);
+    assert.ok(branches, 'push: must exist and carry an explicit branch list directly under it');
+    const listed = branches[1].split(',').map((b) => b.trim());
+    assert.deepEqual(listed, ['main', 'v5-baseline'],
+      'CI must run on pushes to main and to the v5 integration branch');
   });
 
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {

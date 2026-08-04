@@ -46,6 +46,8 @@ const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
+const ingressProvision = require('./lib/ingress-provision');
+const adminCredential = require('./lib/admin-credential');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const ttydBind = require('./lib/ttyd-bind');
@@ -58,6 +60,12 @@ const medusa = require('./lib/medusa');
 const log = createLogger('server');
 
 const MAX_BODY_SIZE = 10 * 1024; // 10 KB
+
+// Methods that can change server state, and so must not be accepted from a page
+// on another site. GET/HEAD are excluded because they are the ones a browser
+// issues while merely navigating; any route that mutates behind a GET is a bug
+// in that route, not something to paper over here.
+const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -86,6 +94,21 @@ let _scheduleRestart = () => {
  */
 function _setRestartScheduler(fn) {
   _scheduleRestart = fn;
+}
+
+// How setup starts the ingress cutover. A seam for the same reason the restart
+// scheduler is one: the real call rewrites launchd plists and restarts this
+// server. Tests replace it to assert that a cutover WOULD have been started,
+// without one happening. `lib/ingress-provision.js` additionally refuses a real
+// spawn from a test process, so forgetting to override fails loudly.
+let _spawnCutover = (opts) => ingressProvision.spawnCutover(opts);
+
+/**
+ * Override the ingress-cutover spawner (used by tests).
+ * @param {Function} fn - Receives `{ target }`, returns `{ ok, pid, error }`.
+ */
+function _setCutoverSpawner(fn) {
+  _spawnCutover = fn;
 }
 
 // ── Route Table ──
@@ -607,9 +630,28 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
     'stripAiCoauthors', 'ingressMode', 'publicDomain', 'bindAllInterfaces',
     'caddyHttpsPort', 'caddyHttpPort',
-    'authEnabled', 'basicAuthUser', 'basicAuthHash',
+    // authEnabled / basicAuthUser / basicAuthHash are deliberately ABSENT. This
+    // route authenticates nobody, validated only the SHAPE of a hash, and had no
+    // lifecycle gate — so on an ungated, network-reachable install an
+    // unauthenticated caller could set an admin credential of their choosing and
+    // lock the owner out. Credential changes go through POST /api/auth/credential,
+    // which refuses unless a live gate is already authenticating the request.
     'serviceTokenEnabled', 'wrapDisabled', 'master'
   ];
+
+  // Refuse rather than ignore. Unknown keys below are silently skipped by design,
+  // which is right for a field this route never owned — but these three it DID
+  // own until now, so a caller still sending them would get 200 and no change,
+  // and "your password is updated" when it is not is the exact false report this
+  // work exists to end.
+  const CREDENTIAL_FIELDS = ['authEnabled', 'basicAuthUser', 'basicAuthHash'];
+  const sentCredential = CREDENTIAL_FIELDS.filter((k) => k in body);
+  if (sentCredential.length > 0) {
+    return errorResponse(res, 409,
+      `${sentCredential.join(', ')} cannot be set here. Change the login from settings, `
+      + 'which uses POST /api/auth/credential, or run `node scripts/reset-admin.js` at a terminal.',
+      'CREDENTIAL_ROUTE_MOVED');
+  }
 
   const validThemes = ['dark', 'light', 'high-contrast'];
   const validPeekModes = ['drawer', 'modal', 'alert'];
@@ -681,31 +723,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       return errorResponse(res, 400, `${key} must be a string or null`, 'BAD_REQUEST');
     }
     // AUTH-2 — basic_auth gate config.
-    if (key === 'authEnabled' && typeof value !== 'boolean') {
-      return errorResponse(res, 400, 'authEnabled must be a boolean', 'BAD_REQUEST');
-    }
-    if (key === 'basicAuthUser' && value !== null && value !== '' && typeof value !== 'string') {
-      return errorResponse(res, 400, 'basicAuthUser must be a string or null', 'BAD_REQUEST');
-    }
     // AUTH-4 — M2M service-token gate master switch. The raw `serviceToken` is
     // NOT patchable here (managed via the rotate endpoint + auto-generation);
     // only the enable flag is operator-settable.
     if (key === 'serviceTokenEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'serviceTokenEnabled must be a boolean', 'BAD_REQUEST');
     }
-    if (key === 'basicAuthHash' && value !== null && value !== '') {
-      // Must be a bcrypt hash, never a plaintext password — `caddy hash-password`
-      // produces `$2a$NN$…` (60 chars). Rejecting non-bcrypt input is the guard
-      // against a plaintext password being stored where a hash is expected.
-      if (typeof value !== 'string' || !caddy.BCRYPT_HASH_RE.test(value)) {
-        return errorResponse(res, 400, 'basicAuthHash must be a bcrypt hash (use `caddy hash-password`), not a plaintext password', 'BAD_REQUEST');
-      }
-    }
-
     // Normalize empty-string cert paths to null so persisted shape matches /api/setup/complete
     let storedValue = value;
-    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain'
-         || key === 'basicAuthUser' || key === 'basicAuthHash') && (value === '' || value === null)) {
+    if ((key === 'httpsCertPath' || key === 'httpsKeyPath' || key === 'publicDomain')
+        && (value === '' || value === null)) {
       storedValue = null;
     }
 
@@ -733,14 +760,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
-  // AUTH-2 fail-closed gate: enabling basic_auth requires BOTH a user and a hash.
-  // Mirrors buildCaddyfileContent's both-or-neither guard so the config can never
-  // hold authEnabled=true with a missing credential — which would otherwise make
-  // the next cutover throw (or, if the guard were absent, emit an UNGATED ingress
-  // on a reachable box). Symmetric with the generator's predicate by design.
-  if (config.authEnabled && (!config.basicAuthUser || !config.basicAuthHash)) {
-    return errorResponse(res, 400, 'authEnabled requires both basicAuthUser and basicAuthHash', 'BAD_REQUEST');
-  }
+  // The AUTH-2 both-or-neither check that used to sit here is gone with the fields
+  // it guarded. This route no longer accepts authEnabled/basicAuthUser/
+  // basicAuthHash at all — it refuses them above — so no request reaching this
+  // line can create the half-credential state, and the check could only ever fire
+  // on a config that was ALREADY inconsistent on disk. There it did harm: it
+  // rejected every unrelated write (a theme, a port) with an instruction to send
+  // credential fields this same route refuses, which is an error with no exit.
+  // The invariant is enforced where the fields are now written — POST
+  // /api/auth/credential, first-run setup, and scripts/reset-admin.js — and by
+  // buildCaddyfileContent's own guard at generation.
 
   // AUTH-4 — enabling the M2M gate auto-generates a fleet token on first enable,
   // so the config can never hold serviceTokenEnabled=true with a null token (the
@@ -752,16 +781,32 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     log.info('AUTH-4 service token auto-generated on enable');
   }
 
-  // AUTH-2 — the wizard's "Skip" closes setup via PATCH { setupComplete: true }.
-  // In caddy mode that path must honor the SAME forced-admin gate as
-  // /api/setup/complete, or Skip would slip past the login gate. Only the explicit
-  // complete-setup transition is guarded (body.setupComplete === true) so unrelated
-  // PATCHes in caddy mode aren't blocked.
-  if (body.setupComplete === true && config.ingressMode === 'caddy'
+  // The wizard's "Skip" closes setup via PATCH { setupComplete: true }, so this
+  // path must honor the SAME rule as /api/setup/complete or Skip is a way past the
+  // login gate. That rule is no longer "are we in caddy mode" — it is "can this
+  // machine enforce a credential", asked of the one derivation both routes share.
+  // Gating on `ingressMode === 'caddy'` here left the default fresh install
+  // (direct mode, caddy installed) able to finish setup with no login at all,
+  // which is the entire defect the sibling route was changed to close.
+  //
+  // Only the explicit complete-setup transition is guarded, so unrelated PATCHes
+  // are never blocked.
+  if (body.setupComplete === true
       && !(config.authEnabled && config.basicAuthUser && config.basicAuthHash)) {
-    return errorResponse(res, 400,
-      'Cannot finish setup behind the Caddy ingress without an admin credential (basic_auth login gate).',
-      'ADMIN_REQUIRED');
+    const skipState = caddy.classifyIngressState();
+    const skipPlan = ingressProvision.decideProvisioning({
+      state: skipState.state,
+      safeToWrite: skipState.safeToWrite,
+      caddyAvailable: caddy.detectCaddy().available,
+      ingressMode: config.ingressMode,
+      user: skipState.user
+    });
+    if (config.ingressMode === 'caddy' || skipPlan.action === 'provision') {
+      return errorResponse(res, 400,
+        'Cannot finish setup without an admin credential — TangleClaw puts a login in front of itself '
+        + 'by default, and this machine can run one.',
+        'ADMIN_REQUIRED');
+    }
   }
 
   store.config.save(config);
@@ -822,6 +867,224 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // /api), deliberately OUTSIDE the M2M-gated path set — a service caller holding
 // the token must not be able to reveal or rotate its own gate credential.
 
+// GET /api/auth/credential — what the settings surface may offer, and why not.
+//
+// Answered BEFORE the operator types anything, so the form is never rendered for
+// an install that cannot use it. The refusal reasons are the same ones the POST
+// returns, from the same predicate, so the two can never disagree about a machine
+// between rendering the form and submitting it — the failure this chunk's sibling
+// (the wizard step list) already had to fix once.
+route('GET', '/api/auth/credential', (req, res) => {
+  const config = store.config.load();
+  const ingressState = caddy.classifyIngressState();
+  const check = adminCredential.canChangeCredential(
+    config, ingressState, caddy.detectCaddy().available,
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
+  jsonResponse(res, 200, {
+    changeable: check.allowed,
+    // Same spelling the POST's refusal uses, from the same translator — a client
+    // comparing the two must never see one state under two names.
+    code: adminCredential.httpCode(check.code),
+    reason: check.reason,
+    remedy: check.remedy,
+    // The username currently in force, read from the FILE rather than from
+    // config, because the change itself resolves its target from the file and the
+    // two can drift (ADR 0009's amendment names that state). Showing config's
+    // copy would name one account in the form and re-hash a different one.
+    // Never the hash: it is a credential, and the redacted config API withholds
+    // it for the same reason.
+    user: check.allowed ? ingressState.user : null
+  });
+});
+
+// POST /api/auth/credential — change the admin username/password after setup.
+//
+// The ONLY route that writes a credential outside first-run setup and the
+// terminal recovery tool. `PATCH /api/config` deliberately no longer accepts
+// these fields: a guarded front door beside an unguarded side one is not a gate,
+// and that side door was reachable unauthenticated on an ungated install.
+//
+// It may CHANGE a credential and never create or blank one. Creating is recovery
+// and belongs at a terminal, because a reset that lives behind the gate cannot
+// help someone the gate has locked out; blanking would be a second route to "no
+// password", and the Direction allows exactly one.
+//
+// There is no "current password" field, and its absence is a finding rather than
+// an oversight: `caddy hash-password` has no verify mode and no `--salt`, so a
+// stored bcrypt hash cannot be reproduced for comparison, and Node's stdlib has
+// no bcrypt. The server cannot check a typed current password, and a field that
+// does not verify is theatre. What authenticates this request is that Caddy
+// already did — which is exactly why the guard below refuses whenever no gate is
+// in force.
+route('POST', '/api/auth/credential', (req, res, _params, body) => {
+  // parseBody resolves null for an empty request, so every field read below would
+  // throw on a bodyless POST — a 500 that reads as "the server broke" for what is
+  // simply a malformed request.
+  const payload = body || {};
+  const config = store.config.load();
+  const ingressState = caddy.classifyIngressState();
+  // Both routes ask the same predicate the same way, including the socket — a
+  // GET that discloses the username to a caller the POST would refuse is the
+  // client-vs-server disagreement this surface already had to fix once.
+  const check = adminCredential.canChangeCredential(
+    config, ingressState, caddy.detectCaddy().available,
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
+  if (!check.allowed) {
+    return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
+  }
+
+  // The username is NOT changeable here, and the field is read-only in the UI for
+  // the same reason: `caddy.replaceBasicAuthCredential` takes a username as a
+  // SELECTOR of which credential line to re-hash, and writes back the matched
+  // name. A rename would therefore leave the gate on the old username while config
+  // recorded the new one — a config-vs-gate divergence, which is the failure this
+  // whole chunk exists to prevent. Renaming is a `reset-admin.js` job.
+  //
+  // Resolved from the LIVE FILE rather than from config, because those two drift
+  // (ADR 0009's amendment names that state) and the file is what the gate
+  // enforces. A caller sending a different name is refused, not obeyed.
+  const user = typeof payload.user === 'string' ? payload.user.trim() : '';
+  if (payload.user !== undefined && !user) {
+    return errorResponse(res, 400, 'A username is required', 'BAD_REQUEST');
+  }
+  const password = typeof payload.password === 'string' ? payload.password : '';
+  // Validated against the username IN FORCE, not the one the caller sent. The UI
+  // deliberately sends no `user` — the field is read-only and the server resolves
+  // the target itself — so validating against the request's copy left the
+  // no-username-in-password rule inert on every request the product actually
+  // makes. Setup enforces that rule; a change surface that did not would let the
+  // rule be escaped simply by changing the password afterwards.
+  //
+  // From the FILE, for the same reason the GET reads the file: config and the
+  // live gate drift (ADR 0009's amendment names that state), and the guard above
+  // requires both to be non-empty without requiring them to AGREE. Taking
+  // config's copy would check the password against a name that is not the login
+  // in force — accepting, in exactly the drift case, a password containing the
+  // real username that setup would have refused.
+  const pwCheck = caddy.validateAdminPassword(password, user || ingressState.user);
+  if (!pwCheck.ok) {
+    return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
+  }
+
+  let hash;
+  try {
+    hash = caddy.hashPassword(password);
+  } catch (err) {
+    // Never the plaintext; the message is the caddy failure, not the secret.
+    log.error('Admin credential hashing failed', { error: err.message });
+    return errorResponse(res, 500, `Could not hash the password: ${err.message}`, 'HASH_FAILED');
+  }
+
+  const result = adminCredential.applyCredentialChange({
+    caddyfilePath: caddy.getCaddyfilePath(),
+    // Undefined when the caller sent none: the module then resolves the single
+    // credential in the file itself.
+    user: user || undefined,
+    hash,
+    uid: process.getuid(),
+    stamp: new Date().toISOString().replace(/[:.]/g, '-'),
+    // The reply to this request travels back through the very Caddy that has to
+    // restart, so restarting it first tears down the connection carrying the
+    // reply: the change succeeds and the browser is told the network failed.
+    // Deferred to after the response is flushed, below.
+    reload: false
+  });
+
+  if (result.code === adminCredential.CREDENTIAL_CODES.RENAME_UNSUPPORTED) {
+    // Nothing was written. Says which name IS in force, because the caller's whole
+    // problem is that it disagrees with what they sent.
+    return errorResponse(res, 400,
+      `The username cannot be changed here — ${result.error}. `
+      + 'Run `node scripts/reset-admin.js` at a terminal to change it.',
+      adminCredential.httpCode(result.code));
+  }
+  if (result.code === adminCredential.CREDENTIAL_CODES.DIVERGED) {
+    // The gate carries the NEW password and config still records the old one, and
+    // the restore that should have undone it failed too. Says which password is
+    // live, because that is the one thing the operator needs in the next minute.
+    log.error('Admin credential change left the gate and config disagreeing',
+      { error: caddy.redactHashes(result.error) });
+    return errorResponse(res, 500,
+      'The new login was written to Caddy but could not be recorded, and the previous '
+      + 'Caddy config could not be put back. The NEW password is the one in force. '
+      + 'Run `node scripts/reset-admin.js` at a terminal on this machine to settle it.',
+      adminCredential.httpCode(result.code));
+  }
+  if (result.code === adminCredential.CREDENTIAL_CODES.GATE_BROKEN) {
+    // The credential did not change — but the write that failed could not be
+    // undone either, so the live Caddyfile is whatever it left behind and may not
+    // load. "Nothing was changed" would be true about the password and dangerously
+    // misleading about the ingress, on the one path where the operator is about to
+    // lose the dashboard entirely.
+    log.error('The Caddyfile could not be written or restored; the live gate may be broken',
+      { error: caddy.redactHashes(result.error), backup: result.backup });
+    return errorResponse(res, 500,
+      'Your login was NOT changed, but the Caddy config could not be written or put back, so the '
+      + `ingress may now be broken. A copy of the original is at ${result.backup} — restore it at a `
+      + 'terminal on this machine, or run `node scripts/reset-admin.js`.',
+      adminCredential.httpCode(result.code));
+  }
+  if (!result.ok) {
+    // The gate and the recorded credential are both untouched — applyCredentialChange
+    // restores the original before returning, whether the write was rejected by
+    // `caddy validate` or the config could not be recorded afterwards. Redacted
+    // for the same reason the cutover's is: `caddy validate` output quotes the
+    // offending line, and that line carries a hash.
+    log.warn('Admin credential change did not complete; nothing was changed',
+      { code: result.code, error: caddy.redactHashes(result.error) });
+    // Three failures that all leave the login unchanged, said three ways, because
+    // they send the operator to three different places. Blaming Caddy's parser
+    // for a full disk is a false report of the same family as the rest.
+    const CODES = adminCredential.CREDENTIAL_CODES;
+    const detail = {
+      [CODES.CONFIG_WRITE_FAILED]: 'The new login could not be recorded, so nothing was changed.',
+      [CODES.WRITE_FAILED]: 'The Caddy config could not be written, so nothing was changed. '
+        + 'This is usually a full disk or a permissions problem, not the password.'
+    }[result.code] || 'The new login was rejected by Caddy, so nothing was changed.';
+    return errorResponse(res, 400, detail, adminCredential.httpCode(result.code));
+  }
+
+  log.info('Admin credential changed; reloading Caddy once this response is out',
+    { user: result.user });
+
+  // The restart is hung off `finish` — after the response has left this process —
+  // and never before it. What cannot be reported is the reload's OUTCOME: by the
+  // time it is known, every further request needs the new password, so there is no
+  // response left to carry it. That is why `reloadCommand` ships unconditionally
+  // rather than only on failure: it is the operator's recourse for the one case
+  // this route cannot tell them about, a restart that did not happen.
+  // Asynchronous, because a synchronous restart here holds the event loop for as
+  // long as launchd takes — every unrelated request queued behind a Caddy restart.
+  // `close`, not `finish`: finish fires only when the response was fully sent, so
+  // a client that aborts mid-reply would leave the credential changed on disk and
+  // Caddy never reloaded — the old password still opening the door, with nothing
+  // reporting it. close fires either way, and after finish when both do.
+  res.on('close', () => {
+    adminCredential.reloadCaddyAsync(process.getuid(), (reload) => {
+      if (reload.ok) {
+        log.info('Caddy reloaded; the new login is in force');
+      } else {
+        log.error('Caddy could not be reloaded, so the OLD login is still in force',
+          { error: reload.error, reloadCommand: reload.command });
+      }
+    });
+  });
+
+  jsonResponse(res, 200, {
+    ok: true,
+    // The name the GATE carries, which is authoritative — not the one that was sent.
+    user: result.user,
+    // The change is on disk and Caddy restarts as this response leaves, so the
+    // next request is challenged. Unconditional now, and honestly so: it is a
+    // statement about what has been done, not a claim about a restart this
+    // response is racing.
+    signedOut: true,
+    // What to run if the sign-in prompt never comes — the only symptom the
+    // operator can observe of a reload that failed after this reply was sent.
+    reloadCommand: result.reloadCommand
+  });
+});
+
 // GET /api/service-token — reveal the raw fleet token for the Settings
 // "reveal" display. 404 when the gate is off or no token is set (nothing to
 // reveal); the redacted config API never carries the raw value.
@@ -864,6 +1127,146 @@ route('GET', '/api/setup/https-check', (_req, res) => {
   });
 });
 
+// GET /api/setup/ingress-state — What the wizard is allowed to do about a login.
+//
+// Two facts the wizard needs before it can offer to put a gate in front of this
+// install: whether Caddy is installed at all, and whether a Caddy config already
+// exists that a human maintains. Detection only — this never writes the
+// Caddyfile, never reloads, and never provisions; it is the sibling of
+// /api/setup/https-check, which reports on mkcert the same way.
+//
+// Deliberately narrower than `classifyIngressState` returns. The credential hash
+// never crosses the boundary, and the raw user list is reduced to a count.
+//
+// The one username this can disclose is released only while `setupComplete` is
+// false. The wizard needs it for a single sentence — "keeping your existing
+// login for <user>" — and that sentence is only ever shown during setup. Once
+// setup is finished the name is withheld, because in direct mode this route
+// answers with no gate in front of it and an installed, running TangleClaw
+// should not hand out an account name for the asking. The state and the count
+// still answer honestly, which is all any later caller needs.
+// `plan` is the wizard's step-list decision, derived HERE and never in the
+// browser. Whether the admin step appears is a security decision — a duplicate
+// of the six-state table in public/setup.js could drift from this one and start
+// collecting a credential nothing enforces. The wizard branches on
+// `plan.action` alone.
+route('GET', '/api/setup/ingress-state', (_req, res) => {
+  const config = store.config.load();
+  const duringSetup = config.setupComplete === false;
+  const detection = caddy.detectCaddy();
+  const state = caddy.classifyIngressState();
+  const plan = ingressProvision.decideProvisioning({
+    state: state.state,
+    safeToWrite: state.safeToWrite,
+    caddyAvailable: detection.available,
+    ingressMode: config.ingressMode,
+    user: duringSetup ? state.user : null
+  });
+  jsonResponse(res, 200, {
+    state: state.state,
+    safeToWrite: state.safeToWrite,
+    user: duringSetup ? state.user : null,
+    userCount: state.users.length,
+    caddy: {
+      available: detection.available,
+      version: detection.version || null,
+      error: detection.error || null
+    },
+    plan: {
+      action: plan.action,
+      reason: plan.reason,
+      remedy: plan.remedy
+    }
+  });
+});
+
+// GET /api/setup/provision-status — how the ingress cutover the wizard started
+// ended, once it has ended.
+//
+// The cutover restarts this server, so it runs as a detached child and reports
+// through a file rather than a return value (see lib/ingress-provision.js). This
+// route is the read side of that channel.
+//
+// It deliberately needs no Caddy auth-bypass entry: pre-cutover the wizard is
+// served by TangleClaw directly, and the cutover does not move TangleClaw's
+// listen port — so a poll from that page never traverses the perimeter. What the
+// cutover DOES change is the protocol and the interface, which is why the wizard
+// must also handle its own origin disappearing (an operator who reached setup
+// over direct HTTPS, or over a LAN address, loses it at the restart).
+//
+// Nothing secret crosses this boundary, and that is enforced by what is BUILT
+// rather than by what the child happened to write. The response is exactly:
+// `state`, `ok`, `code`, `target`, `healthOk`, `hasError`, `logLocation` (a
+// RELATIVE path — the resolved one names the OS account) and `finishedAt`.
+// The child's free-text `error` is
+// deliberately NOT forwarded — its producer fills that field with absolute
+// filesystem paths (an unreadable Caddyfile names its path, a backup names its
+// path, `caddy validate` stderr names the config and can quote the offending
+// line), and this route has no `setupComplete` gate in front of it. The detail is
+// not lost: it goes to the server log and to the cutover's own log file, where an
+// operator can read it and a stranger cannot.
+route('GET', '/api/setup/provision-status', (_req, res) => {
+  const { present, malformed, result } = ingressProvision.readResult();
+  if (!present) {
+    // Not "failed" — the child may still be running, or may never have started.
+    // The wizard distinguishes those by its own deadline, not by this answer.
+    //
+    // `logLocation` rides along even here, because the case it serves is the one
+    // where no better answer ever arrives: a child that dies between writing the
+    // plists and calling finish() leaves NO result file, so every poll gets this
+    // response until the wizard's deadline expires and it renders the crash
+    // screen. The log is then the only durable evidence of what happened, and
+    // without this the screen has no name to give for it. It discloses nothing —
+    // the constant is a relative path, chosen so it never names the OS account.
+    return jsonResponse(res, 200, {
+      state: 'pending', ok: null, code: null,
+      logLocation: ingressProvision.CUTOVER_LOG_RELATIVE
+    });
+  }
+  if (malformed) {
+    // `unparseable-result`, not `unreadable`: this surface already uses
+    // `unreadable` for a Caddyfile that cannot be read, and one word meaning two
+    // unrelated conditions on the same endpoint family is how a caller ends up
+    // answering the wrong one.
+    log.warn('Ingress cutover wrote an outcome file that could not be parsed',
+      { path: ingressProvision.resultPath() });
+    return jsonResponse(res, 200, {
+      state: 'unparseable-result',
+      ok: null,
+      code: null,
+      hasError: true,
+      logLocation: ingressProvision.CUTOVER_LOG_RELATIVE
+    });
+  }
+  if (result.ok !== true && typeof result.error === 'string' && result.error) {
+    // Logged, not returned. This is the operator's copy of the detail the
+    // response withholds — but "withheld from the response" is not the same as
+    // "safe to log": on the validate-failed path this string is `caddy validate`
+    // stderr, which quotes the offending Caddyfile line, and that line is
+    // `basic_auth <user> <bcrypt-hash>`. observability-strategy.md forbids
+    // passwords hashed or plaintext at any level, so it is redacted here rather
+    // than trusted to be hash-free.
+    log.warn('Ingress cutover reported a failure',
+      { code: result.code || null, error: caddy.redactHashes(result.error) });
+  }
+  jsonResponse(res, 200, {
+    state: 'done',
+    ok: result.ok === true,
+    code: typeof result.code === 'string' ? result.code : null,
+    target: typeof result.target === 'string' ? result.target : null,
+    healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
+    // `hasError` rather than the message: enough for the wizard to say the
+    // cutover reported a reason and name where to read it.
+    hasError: typeof result.error === 'string' && result.error.length > 0,
+    // A RELATIVE location, not the resolved path. Returning
+    // `cutoverLogPath()` here would have re-introduced the disclosure this route
+    // just removed — `/Users/<name>/…` names the OS account, on an endpoint with
+    // no setupComplete gate. The operator knows where their own home directory is.
+    logLocation: ingressProvision.CUTOVER_LOG_RELATIVE,
+    finishedAt: typeof result.finishedAt === 'string' ? result.finishedAt : null
+  });
+});
+
 // POST /api/setup/generate-cert — Run mkcert to produce cert.pem + key.pem
 // Valid host: letters/digits/dots/colons/hyphens, not starting with '-' so mkcert
 // can't mistake it for a flag. Max length 253 per RFC 1035 (plus IPv6 colons).
@@ -884,7 +1287,25 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 
   let result;
   try {
-    result = httpsSetup.generateCerts(hosts ? { hosts } : undefined);
+    // Regeneration is ADDITIVE here too. Nothing records the host list a cert was
+    // minted with, so the cert is its own only record — and this route's shipped
+    // caller (`public/setup.js`, the "Generate Certificates" button) sends `{}`,
+    // no hosts at all. Generating from the defaults therefore dropped every name
+    // added earlier, including a tailnet FQDN, silently un-covering the tailnet
+    // HTTPS site that reuses this same certificate. An explicit `hosts` list is
+    // still honoured verbatim: a caller naming its hosts is replacing them on
+    // purpose, which is a different intent from the button's "refresh my certs".
+    const effectiveHosts = hosts || (() => {
+      const existing = httpsSetup.certSanHosts(
+        path.join(httpsSetup.getCertsDir(), 'cert.pem'));
+      const mdns = httpsSetup.mdnsHostFor(os.hostname());
+      const cfg = store.config.load();
+      return [...new Set([
+        ...existing, ...httpsSetup.MKCERT_HOSTS_DEFAULT, mdns,
+        cfg.caddyTailnetHost || null, cfg.publicDomain || null
+      ].filter(Boolean))];
+    })();
+    result = httpsSetup.generateCerts({ hosts: effectiveHosts });
   } catch (err) {
     return errorResponse(res, 500, err.message, 'MKCERT_FAILED');
   }
@@ -976,8 +1397,60 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
-  const config = store.config.load();
+  let config = store.config.load();
   const warnings = [];
+  // Captured before this handler sets it. Provisioning is a FIRST-RUN action: it
+  // rewrites launchd plists and restarts the server, and this route has never
+  // required setup to be unfinished. Re-POSTing it on a completed install must
+  // therefore not be a way to trigger an ingress cutover — on an install that is
+  // ungated and network-reachable (the legacy grace state) that would hand an
+  // unauthenticated caller a service restart. Changing the credential on a
+  // finished install is a settings action with its own surface, not this one.
+  const firstRun = config.setupComplete === false;
+
+  // A login is the DEFAULT outcome of setup, not something that happens only on a
+  // machine already running behind Caddy. The same derivation the wizard asked for
+  // at GET /api/setup/ingress-state decides what this install can have, so the two
+  // cannot disagree about a machine between the step list and the submission:
+  //
+  //   provision → the wizard collected a credential; persist it, then hand the
+  //               cutover to a detached child (it restarts this server, so this
+  //               handler cannot run it and live to report the outcome).
+  //   adopt     → a working hand-rolled gate is already in front of us; take its
+  //               credential into config and never collect a second one.
+  //   refuse    → nothing may be written. Finish honestly ungated rather than
+  //               storing a credential nothing enforces.
+  const ingressDetection = caddy.detectCaddy();
+  const ingressState = caddy.classifyIngressState();
+  const ingressPlan = firstRun
+    ? ingressProvision.decideProvisioning({
+      state: ingressState.state,
+      safeToWrite: ingressState.safeToWrite,
+      caddyAvailable: ingressDetection.available,
+      ingressMode: config.ingressMode,
+      user: ingressState.user
+    })
+    // Already-complete install: report the state, act on nothing. `refuse` is the
+    // no-op action, so a re-POST persists whatever config fields it carries and
+    // leaves the ingress exactly as it found it.
+    : { action: 'refuse', reason: 'Setup is already complete, so the ingress was left unchanged.',
+      remedy: null, user: null };
+
+  // Adoption happens HERE, before the credential gates below, because it is what
+  // supplies the credential in this case. Run after them and a caddy-mode install
+  // whose hand-maintained Caddyfile already holds the only login would be refused
+  // with ADMIN_REQUIRED — the one shape the adopt path exists to serve.
+  //
+  // `adoptCredentialIntoConfig` persists its own copy of config, so re-read
+  // rather than carrying a stale object forward. Safe at this point precisely
+  // because nothing from the request body has been applied yet.
+  let adoption = null;
+  if (ingressPlan.action === 'adopt') {
+    // requireCaddyMode is off because the plan already established that Caddy IS
+    // the live ingress — the guard's own question, asked one layer up.
+    adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
+    if (adoption.changed) config = store.config.load();
+  }
 
   // Snapshot HTTPS state before mutations so we can decide whether to restart
   const prevHttps = {
@@ -1032,6 +1505,33 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // enforced server-side so it can't be bypassed.
   const inCaddyMode = config.ingressMode === 'caddy';
   const adminProvided = body.adminUser !== undefined || body.adminPassword !== undefined;
+  // The credential write is first-run only, for the same reason the cutover spawn
+  // above is: this route authenticates nobody. Without this, an unauthenticated
+  // caller could POST a credential of their choosing onto an ALREADY-COMPLETED
+  // install — and on the ungated, network-reachable legacy grace state that is
+  // reachable from off-box. Refuse loudly rather than ignoring the field: silently
+  // dropping a credential the caller believes it set is its own false report, and
+  // the wizard would have no way to tell the difference.
+  if (adminProvided && !firstRun) {
+    // Names both routes that can change a credential on a completed install: the
+    // settings surface, which refuses unless a live gate is already
+    // authenticating the caller, and the script, which requires local shell
+    // access. Either bar is the right one for a route that authenticates nobody.
+    //
+    // It covers the case this refusal actually meets: an install that HAS a
+    // credential and wants a different one. It does NOT cover a completed,
+    // caddy-mode install with no credential at all — `resolveTargetUser` exits 1
+    // there, because it resets a gate rather than creating one. That state has no
+    // in-product way out (refused here for carrying a credential, refused below
+    // with ADMIN_REQUIRED for not carrying one) and is tracked as #806. It is not
+    // reachable from a first run on this code — setup will not complete in caddy
+    // mode without a credential — only from a legacy install that got there
+    // before the credential became mandatory.
+    return errorResponse(res, 409,
+      'Setup is already complete. Change the admin login from global settings, or run '
+      + '`node scripts/reset-admin.js` at a terminal.',
+      'SETUP_ALREADY_COMPLETE');
+  }
   if (adminProvided) {
     const adminUser = typeof body.adminUser === 'string' ? body.adminUser.trim() : '';
     const adminPassword = typeof body.adminPassword === 'string' ? body.adminPassword : '';
@@ -1065,11 +1565,15 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       'An admin username and password are required to finish setup while running behind the Caddy ingress (basic_auth login gate).',
       'ADMIN_REQUIRED');
   }
-  if (inCaddyMode && adminProvided) {
-    // The credential is stored but the live Caddyfile is only regenerated by the
-    // cutover — surface that so the operator activates the gate at a terminal
-    // (where rollback is available) rather than assuming they're already protected.
-    warnings.push('Admin credential saved. Run `node scripts/ingress-cutover.js --to caddy` to regenerate the Caddyfile and activate the login gate.');
+  // The flip: on a machine where a gate CAN be put up, finishing setup without a
+  // credential is refused even though this install is still in direct mode. The
+  // wizard shows the step in exactly this case, so reaching here without one means
+  // the step was bypassed rather than answered.
+  if (ingressPlan.action === 'provision' && !adminConfigured) {
+    return errorResponse(res, 400,
+      'An admin username and password are required to finish setup. TangleClaw puts a login in front of '
+      + 'itself by default, and this machine can run one.',
+      'ADMIN_REQUIRED');
   }
 
   // Mark setup as complete
@@ -1139,21 +1643,234 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     }
   }
 
+  // ── Put the login in force (or say honestly that none is) ──
+  //
+  // Deliberately the LAST thing before the response. The cutover child's final
+  // act is `launchctl kickstart -k` on this server, so anything still to do here
+  // — attaching projects above, writing the response below — must already be
+  // done or in flight. Spawning earlier would race a restart against the work.
+  const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
+  // Validated, not merely split. This value is echoed back into a URL the wizard
+  // renders into markup, and a `Host` header is caller-supplied — so anything
+  // outside a hostname's own alphabet is discarded rather than escaped. Escaping
+  // is the wrong tool here: HTML-entity-encoding a quote inside an inline event
+  // handler decodes back to a quote before the script sees it, which reopens the
+  // hole it was supposed to close. Same alphabet the mkcert host check uses.
+  const rawHostname = hostHeader.split(':')[0];
+  const requestHostname = (rawHostname && HOST_RE.test(rawHostname)) ? rawHostname : 'localhost';
+  const ingress = {
+    action: ingressPlan.action,
+    provisioning: false,
+    // Sent with the completion, not only from the poll, because the poll is
+    // exactly what may never answer: the cutover restarts the server and closes
+    // the address this page was served from, and for a remote operator that is
+    // the COMMON case. The wizard then ends on a screen that knows least about
+    // what happened and most needs to say where the rest is written. Delivering
+    // it here means it arrives before the origin can close. Relative on purpose —
+    // the resolved path names the OS account.
+    logLocation: ingressProvision.CUTOVER_LOG_RELATIVE,
+    // 'pending' only ever means "a cutover is running and the answer is not in
+    // yet"; the wizard resolves it by polling /api/setup/provision-status.
+    protection: 'none',
+    // Whenever this ends with no login in force, the explanation goes into BOTH
+    // `reason` and `warnings`. `warnings` is the complete machine-readable list,
+    // because a client that reads only that field must still learn the install is
+    // ungated; `reason` is the wizard's prose copy. They overlap by design.
+    //
+    // The push happens once, after the whole if/else chain below — not per-arm. An
+    // outcome can reach no arm at all, and per-arm pushes left that case reporting
+    // nothing. De-duplicating belongs at the point of RENDER: `_warningsBlock` in
+    // public/setup.js drops any warning the screen has already printed. Suppressing
+    // the push instead silently narrows the API for every non-wizard consumer.
+    reason: ingressPlan.reason || null,
+    remedy: ingressPlan.remedy || null,
+    user: null,
+    url: null,
+    // Whether the network can reach this server, read from the one classification
+    // rather than assumed. "Ungated but loopback-only" and "ungated and reachable"
+    // are different situations, and the wizard must not tell an install held wide
+    // in the legacy grace state that it is reachable from this machine only —
+    // that is the operator most at risk of believing a false reassurance.
+    networkExposed: bindPolicy.describeBindState(config).wide === true
+  };
+
+  if (ingressPlan.action === 'provision') {
+    // spawnCutover clears any previous outcome itself, so the poller cannot read
+    // an earlier run's result as this one's.
+    const started = _spawnCutover({ target: 'caddy' });
+    if (started.ok) {
+      ingress.provisioning = true;
+      ingress.protection = 'pending';
+      ingress.user = config.basicAuthUser || null;
+      // Where the gate is about to listen. Asked of the config this cutover is
+      // MOVING to, not the one on disk — `ingressMode` is still whatever it was
+      // until the cutover writes it, and the question here is where the operator
+      // goes once this lands. One derivation, shared with the restart redirect
+      // below, so the two answers to "where do I go now" cannot drift.
+      ingress.url = httpsSetup.effectiveOperatorOrigin(
+        { ...config, ingressMode: 'caddy' }, requestHostname);
+      // The whole address, not just the host: scheme and port are the two halves
+      // this derivation exists to get right, and the operator is almost never at
+      // this machine to read the browser that was told them.
+      log.info('Setup started the ingress cutover',
+        { pid: started.pid, host: requestHostname, operatorUrl: ingress.url });
+    } else {
+      // The credential is stored and nothing enforces it. Say so — this is the
+      // one outcome this path exists to make impossible to mistake for success.
+      ingress.reason = `TangleClaw could not start the ingress cutover: ${started.error}. `
+        + 'Your login has been saved but nothing is enforcing it yet.';
+      ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy` at a terminal.';
+      log.error('Setup could not start the ingress cutover', { error: started.error });
+    }
+  } else if (ingressPlan.action === 'adopt') {
+    // Adoption already ran, above the credential gates. Report what it answered.
+    const after = config;
+    if (adminProvided) {
+      // The operator typed a credential on a machine whose plan was to ADOPT one.
+      // Reachable: the Skip route refuses in caddy mode without a configured
+      // credential, and the wizard then forces the admin step. Adoption ran first,
+      // then the typed credential overwrote it in config — so config now holds what
+      // they typed while the untouched hand-maintained Caddyfile still enforces what
+      // was adopted. Their new password will not work and the old one will.
+      //
+      // Reporting `existing` here (naming the ADOPTED user, which is what the code
+      // did) tells them their existing login was kept when in fact two credentials
+      // now disagree. Name the mismatch instead, and name the account THEY set.
+      ingress.protection = 'existing-unverified';
+      ingress.user = after.basicAuthUser || null;
+      ingress.reason = 'The login you just set has been saved, but the Caddy config in front of '
+        + 'TangleClaw is maintained by hand and was not changed — so it is still enforcing the '
+        + 'credential it already had, not the new one.';
+      ingress.remedy = 'Set both from one place with `node scripts/reset-admin.js`, which rewrites '
+        + 'the credential in the live Caddy config as well.';
+      // `reason` reaches `warnings` from the single push after this chain — see the
+      // note on `reason` above. The screen still shows it once because the render
+      // de-duplicates, not because any arm withholds it.
+      log.warn('Setup saved a credential the live Caddy config does not enforce', {
+        user: after.basicAuthUser || null
+      });
+    } else if (adoption && adoption.adopted) {
+      ingress.protection = 'existing';
+      ingress.user = adoption.user || after.basicAuthUser || null;
+    } else if (after.authEnabled && after.basicAuthUser && after.basicAuthHash) {
+      // Config already carried a credential, so adoption deliberately no-opped
+      // rather than overwriting it. The live Caddyfile may enforce a DIFFERENT
+      // one, and nothing here can tell — so this is not "your existing login was
+      // kept". Reporting it as such is how a config-vs-live mismatch becomes
+      // invisible, which this repo already ships an auth-drift warning for.
+      ingress.protection = 'existing-unverified';
+      ingress.user = after.basicAuthUser;
+      ingress.reason = 'A login is already configured and a hand-maintained Caddy config is in front '
+        + 'of TangleClaw. TangleClaw did not change either, and cannot tell whether they carry the '
+        + 'same credential.';
+      ingress.remedy = 'If your saved login does not work, set both from one place with '
+        + '`node scripts/reset-admin.js`.';
+    } else {
+      ingress.reason = 'An existing Caddy login was found but could not be adopted'
+        + `${adoption && adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
+      ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
+      // Unreachable by construction, kept as the honest fallback if that ever changes.
+      // An `adopt` plan only exists in caddy mode, and the caddy-mode credential gate
+      // above refuses the request before this block runs whenever no complete credential
+      // is configured — which is exactly this branch's condition. Pinned by
+      // "refuses outright when adoption declines and no credential is configured".
+      log.warn('Setup could not adopt the existing Caddy login', {
+        reason: (adoption && adoption.reason) || null
+      });
+    }
+  } else if (adminConfigured) {
+    // Refused, but a credential IS configured (an install already in caddy mode,
+    // or one the operator set earlier). It is stored, and the live Caddyfile will
+    // not be regenerated from here — so nothing at this point can confirm the
+    // credential is enforced. Deliberately NOT "as active as that file makes it":
+    // two states reaching this arm have nothing serving that file at all, and the
+    // warning below exists precisely because naming the Caddyfile as what governs
+    // protection is a false reassurance. Activating belongs at a terminal, where
+    // the cutover's backup and rollback exist.
+    ingress.protection = 'unchanged';
+    ingress.user = config.basicAuthUser || null;
+    // States the situation and names no command. Every path here is refuse +
+    // adminConfigured, and in almost all of them the live Caddyfile is hand-edited —
+    // so a bare `--to caddy` is the form the cutover's own guard REFUSES, and for an
+    // unreadable file `--force` is not honored at all. The plan's `remedy` is the
+    // state-specific answer and renders on this same screen; a fixed command here
+    // put the failing form under "Also worth knowing" beside the working one.
+    //
+    // It also must not name the Caddyfile as what determines whether the login is
+    // active. In two states nothing is serving that file at all — no Caddy binary, or
+    // an adoptable config while the install runs in direct mode — and claiming the file
+    // governs protection is the false-reassurance this endpoint exists to avoid. Say
+    // only what is true everywhere: the live ingress was not changed, so nothing here
+    // can confirm the login is enforced.
+    warnings.push('Admin credential saved, but TangleClaw did not change the live ingress '
+      + 'config — so it cannot confirm anything is enforcing this login.');
+    // A completed install re-POSTing here gets a plan built without `decideProvisioning`,
+    // whose `remedy` is null — so removing the command from the warning above left that
+    // path with no next step whatsoever. The dry-run is the one instruction that is both
+    // safe and honest in every state: it writes nothing, and it reports the situation it
+    // finds rather than assuming a gate can be activated.
+    if (!ingress.remedy) {
+      ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy --dry-run` at a '
+        + 'terminal to see what activating the login gate would do.';
+    }
+  }
+
+  // One place, after every branch, so the guarantee holds for outcomes that reach no
+  // branch at all — `refuse` with no credential anywhere (no Caddy installed, or a
+  // Caddyfile too ambiguous to adopt) sets `reason` from the plan and enters nothing
+  // below. Doing this per-arm left exactly that case — the plainest ungated install
+  // there is — telling a warnings-only client nothing.
+  //
+  // Only the states that mean "no login is in force" qualify. 'existing' is excluded
+  // because its `reason` describes a gate that IS in force ("will be kept rather than
+  // replaced") — restating that as a warning invents a problem. 'pending' is excluded
+  // too, but is inert rather than dangerous: `decideProvisioning` returns an empty
+  // reason for `provision`, so there is nothing to push in that state either way.
+  //
+  // The `includes` check is a forward interlock, not a live de-duplicator: no arm above
+  // pushes this exact string today, so it never fires. It is here so that adding an arm
+  // that does push `reason` cannot silently double it.
+  if (ingress.reason
+      && (ingress.protection === 'none'
+        || ingress.protection === 'unchanged'
+        || ingress.protection === 'existing-unverified')
+      && !warnings.includes(ingress.reason)) {
+    warnings.push(ingress.reason);
+  }
+
   // Decide whether to schedule a restart so the server re-binds with the new protocol
   const prevWillServeHttps = !!(prevHttps.enabled && prevHttps.certPath && prevHttps.keyPath);
   const willServeHttps = !!(config.httpsEnabled && config.httpsCertPath && config.httpsKeyPath);
   const httpsChanged = prevHttps.enabled !== !!config.httpsEnabled
     || prevHttps.certPath !== (config.httpsCertPath || null)
     || prevHttps.keyPath !== (config.httpsKeyPath || null);
-  const shouldRestart = httpsChanged && (willServeHttps || prevWillServeHttps);
+  // A running cutover restarts the server itself, as its last launchctl step. A
+  // second restart scheduled here would race it — and in caddy mode the HTTPS
+  // config it exists to apply is not what the listener uses anyway (Caddy
+  // terminates TLS; `effectiveServerProtocol` returns http). The cert the wizard
+  // generated is still used — by Caddy, via the cutover.
+  const shouldRestart = !ingress.provisioning
+    && httpsChanged && (willServeHttps || prevWillServeHttps);
 
   let redirectUrl = null;
+  let redirectVia = null;
   if (shouldRestart) {
-    const hostHeader = (req.headers && req.headers.host) ? String(req.headers.host) : '';
-    const hostname = hostHeader.split(':')[0] || 'localhost';
-    const port = httpsSetup.effectiveServerPort(config);
-    const protocol = willServeHttps ? 'https' : 'http';
-    redirectUrl = `${protocol}://${hostname}:${port}`;
+    // The same derivation the provisioning arm uses. It used to compose the
+    // scheme from `willServeHttps` and the port from TC's own listener, which is
+    // right in direct mode and wrong in caddy mode — where TC serves plain HTTP
+    // on the loopback and the front door is Caddy's HTTPS port. That case is
+    // reachable: a caddy-mode install whose operator changes a cert path in the
+    // wizard satisfies `shouldRestart`, and the old expression sent them to a
+    // port nothing answers on.
+    const frontDoor = httpsSetup.effectiveOperatorFrontDoor(config, requestHostname);
+    redirectUrl = frontDoor.origin;
+    // Who answers there, so the wizard does not read a response as proof the
+    // server is back. Behind Caddy it is not: Caddy stays up across TC's restart
+    // and answers immediately — with a 502, which an opaque `no-cors` probe
+    // cannot tell from success.
+    redirectVia = frontDoor.via;
+    log.info('Setup will restart; operator front door computed',
+      { redirectUrl, via: redirectVia });
     _scheduleRestart();
   }
 
@@ -1170,7 +1887,9 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     attached,
     warnings,
     restart: shouldRestart,
-    redirectUrl
+    redirectUrl,
+    redirectVia,
+    ingress
   });
 });
 
@@ -1726,7 +2445,7 @@ route('POST', '/api/ports/heartbeat', (_req, res, _params, body) => {
 });
 
 // GET /api/projects
-route('GET', '/api/projects', (req, res) => {
+route('GET', '/api/projects', async (req, res) => {
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
@@ -1734,7 +2453,7 @@ route('GET', '/api/projects', (req, res) => {
   if (query.tag) options.tag = query.tag;
   if (query.engine) options.engine = query.engine;
 
-  const list = projects.listAllProjects(options);
+  const list = await projects.listAllProjects(options);
   jsonResponse(res, 200, { projects: list });
 });
 
@@ -3715,8 +4434,63 @@ function proxyToTtyd(req, res, pathname) {
  * @param {import('net').Socket} socket
  * @param {Buffer} head
  */
+/**
+ * Does a WebSocket handshake's `Origin` name the same host we are serving?
+ *
+ * Compared by HOST, not by full origin string: the dashboard is reached over
+ * https through Caddy on one port and over http directly on another, and both
+ * are legitimately the same machine — a strict origin match would break the
+ * terminal on the install this release makes default. An unparseable Origin is
+ * refused rather than waved through.
+ *
+ * @param {string} origin - The `Origin` header.
+ * @param {string|undefined} host - The `Host` header.
+ * @returns {boolean}
+ */
+function _isSameOriginUpgrade(origin, host) {
+  let originHost;
+  let targetHost;
+  try {
+    originHost = new URL(origin).hostname;
+    // Parsed, never split on ':'. An IPv6 literal Host is bracketed
+    // (`[fd7a:115c::1]:3102`), so splitting yields `'['` while the Origin side
+    // yields the full `[fd7a:115c::1]` — they can never match, and every
+    // terminal socket gets destroyed for an operator whose dashboard is on an
+    // IPv6 address. Tailscale assigns every node an `fd7a:115c::/48` address,
+    // so that is a normal way to reach this product, not an edge case. The
+    // dashboard would load and the terminal would silently never connect.
+    targetHost = new URL(`http://${host || 'localhost'}`).hostname;
+  } catch {
+    return false;
+  }
+  return originHost === targetHost;
+}
+
 function handleUpgrade(req, socket, head) {
   const urlObj = reqUrl(req);
+
+  // The cross-site guard has to be here too, and this is the sharper half.
+  //
+  // WebSockets are NOT subject to the same-origin policy: any page can open one
+  // to any host, no preflight, no CORS. So the reasoning that protects the HTTP
+  // routes — loopback means it came through Caddy — fails harder here, because a
+  // page the operator merely visits can connect straight to the ungated
+  // 127.0.0.1:<serverPort> listener and then read AND write on the socket, which
+  // a cross-site form post cannot do. `/terminal/*` proxies to a `--writable`
+  // ttyd, so that is a shell; the OpenClaw branches attach the operator's
+  // gateway token.
+  //
+  // Browsers always send `Origin` on a WebSocket handshake and it cannot be
+  // forged from script, so this is the check that exists for exactly this case.
+  // Non-browser clients (the OpenClaw CLI, scripts) omit it and are allowed —
+  // they are not a cross-site vector — which keeps every existing consumer
+  // working, the same contract as the HTTP guard.
+  const origin = req.headers.origin;
+  if (origin && !_isSameOriginUpgrade(origin, req.headers.host)) {
+    log.warn('Refused cross-origin WebSocket upgrade', { path: urlObj.pathname, origin });
+    socket.destroy();
+    return;
+  }
 
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {
@@ -3901,8 +4675,56 @@ async function handleRequest(req, res) {
   const pathname = urlObj.pathname;
   const method = req.method.toUpperCase();
 
+  // Reject state-changing requests a browser tells us came from another site.
+  //
+  // Ahead of EVERY branch, not just `/api/`. The first version of this guard sat
+  // inside the `/api/` branch and left the proxies open, which was the more
+  // dangerous half: `_openclawProxyHeaders` rewrites `origin` and `referer` to
+  // the local origin and attaches `Bearer <gatewayToken>`, so a cross-site page
+  // POSTing to `/openclaw/:project/*` would have reached the OpenClaw gateway
+  // with the operator's token supplied and the tell-tale Origin laundered off
+  // the request. `/terminal/*` was open the same way. Scoping a CSRF check to
+  // one path prefix is how the exemption outlives the reason for it.
+  //
+  // Placed ahead of route matching on purpose too: a cross-site caller is
+  // refused whether or not the route exists, so the guard cannot be probed for
+  // which methods and paths this server implements, and adding a route later
+  // can never open a hole this guard was assumed to already cover.
+  //
+  // Several routes authorize on "the request arrived over loopback" — most
+  // sharply POST /api/auth/credential, which treats loopback as proof that the
+  // perimeter already authenticated the caller. That reasoning holds for
+  // traffic through Caddy, but in caddy mode this server still binds an
+  // ungated 127.0.0.1:<serverPort> listener, and a browser on the operator's
+  // machine can reach it directly. `parseBody` parses any body as JSON
+  // regardless of Content-Type, so a form with enctype="text/plain" is a CORS
+  // *simple* request: no preflight, it is sent, and its body parses. The
+  // attacker cannot read the reply, which does not matter for a write — the
+  // admin credential is already changed.
+  //
+  // Sec-Fetch-Site is the cheap correct check: every current browser sends it
+  // and it cannot be forged from script. Non-browser callers (curl, scripts,
+  // the agent-facing API in the project guide) omit it entirely, and they are
+  // not a CSRF vector, so an absent header is allowed — this closes the
+  // browser path without breaking a single existing API consumer.
+  //
+  // Deliberately narrow: only `cross-site` is refused. Rejecting `same-site`
+  // as well would need an attacker controlling a sibling subdomain of the
+  // operator's own host, and would risk breaking a legitimate multi-subdomain
+  // deployment. The residual, plus the broader question of enforcing
+  // Content-Type on JSON bodies and re-ratifying the blanket CSRF acceptance
+  // in security-model.md — whose stated premise, "no session state in the
+  // browser", is exactly what shipping browser-cached HTTP Basic invalidates —
+  // is tracked separately.
+  if (CSRF_UNSAFE_METHODS.has(method) && req.headers['sec-fetch-site'] === 'cross-site') {
+    log.warn('Refused cross-site state-changing request', { method, path: pathname });
+    return errorResponse(res, 403,
+      'Cross-site requests may not change server state.', 'CROSS_SITE_FORBIDDEN');
+  }
+
   // API routes
   if (pathname.startsWith('/api/')) {
+
     const matched = matchRoute(method, pathname);
     if (!matched) {
       log.debug('Route not found', { method, path: pathname });
@@ -5111,4 +5933,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines };

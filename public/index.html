@@ -556,6 +556,11 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <div class="step-dot"></div>
         <div class="step-dot"></div>
       </div>
+      <!-- Persistent error target for the overlay's own controls. Skip lives in the
+           header and is reachable from every step, so a failure it reports cannot be
+           written into an element that only one step's body renders — it would be
+           silent on the other six. -->
+      <div id="setupOverlayError" class="form-error hidden" role="alert"></div>
       <div class="setup-body" id="setupBody"></div>
     </div>
   </div>

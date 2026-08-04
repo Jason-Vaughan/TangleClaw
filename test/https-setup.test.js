@@ -76,6 +76,109 @@ function makeSelfSignedCert(dir) {
   return { certPath, keyPath };
 }
 
+describe('mdnsHostFor — the certificate SAN that lets another device connect', () => {
+  // Required here rather than reusing the outer `httpsSetup`: that one is
+  // assigned in a `before` hook belonging to the other describe block, which has
+  // not run when these cases execute. These are pure string logic and need none
+  // of that block's stubbed PATH or temp dirs.
+  const { mdnsHostFor } = require('../lib/https-setup');
+  const httpsSetup = { mdnsHostFor };
+  // A clean-room install generated a cert whose SAN list contained
+  // `Manageds-Virtual-Machine.local.local`. `os.hostname()` on macOS usually
+  // already carries the suffix, and the code appended another unconditionally,
+  // so the SAN matched nothing — costing the certificate the one name a phone or
+  // laptop on the same network can actually resolve. It failed silently: cert
+  // generation succeeded, and the name simply never worked.
+  it('does not double a suffix the hostname already has', () => {
+    assert.equal(httpsSetup.mdnsHostFor('Manageds-Virtual-Machine.local'), 'Manageds-Virtual-Machine.local');
+    assert.equal(httpsSetup.mdnsHostFor('box.LOCAL'), 'box.LOCAL', 'suffix check is case-insensitive');
+  });
+
+  it('appends the suffix when it is genuinely absent', () => {
+    assert.equal(httpsSetup.mdnsHostFor('studio'), 'studio.local');
+  });
+
+  it('never emits a bare ".local" for an empty or unusable hostname', () => {
+    // `.local` as a SAN would be worse than no SAN — it matches nothing and
+    // looks deliberate to whoever reads the certificate later.
+    for (const bad of ['', '   ', null, undefined, 42]) {
+      assert.equal(httpsSetup.mdnsHostFor(bad), null, `${JSON.stringify(bad)} must yield no mDNS host`);
+    }
+  });
+
+  it('strips trailing dots (a fully-qualified mDNS name is written "host.local.")', () => {
+    assert.equal(httpsSetup.mdnsHostFor('studio.local.'), 'studio.local');
+    assert.equal(httpsSetup.mdnsHostFor('studio.'), 'studio.local');
+  });
+});
+
+describe('certCoversHost — only advertise a name the certificate vouches for (#863)', () => {
+  const { certCoversHost } = require('../lib/https-setup');
+  const os2 = require('node:os');
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const { execSync } = require('node:child_process');
+
+  // A site served under a name the cert does not carry fails in the browser with
+  // a name mismatch the operator cannot fix — which reads as "the login page is
+  // broken" rather than "unreachable". So the Caddyfile only advertises a name
+  // once the cert covers it, and this is the check that decides.
+  const dir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'tc-cert-cover-'));
+  const certPath = path2.join(dir, 'c.pem');
+  let made = false;
+  try {
+    execSync(
+      `openssl req -x509 -newkey rsa:2048 -keyout "${path2.join(dir, 'k.pem')}" -out "${certPath}" `
+      + '-days 2 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:studio.local"',
+      { stdio: 'ignore', timeout: 20000 }
+    );
+    made = true;
+  } catch { /* openssl unavailable — the negative cases below still run */ }
+
+  it('answers true for a name in the SAN list', { skip: !made ? 'openssl unavailable' : false }, () => {
+    assert.equal(certCoversHost(certPath, 'studio.local'), true);
+    assert.equal(certCoversHost(certPath, 'localhost'), true);
+  });
+
+  it('answers false for a name the cert does NOT carry', { skip: !made ? 'openssl unavailable' : false }, () => {
+    // The exact shape of the bug this exists to catch: the old code wrote
+    // `<host>.local.local` into the SAN, so the real mDNS name was uncovered.
+    assert.equal(certCoversHost(certPath, 'studio.local.local'), false);
+    assert.equal(certCoversHost(certPath, 'other-machine.local'), false);
+  });
+
+  it('certSanHosts reads back every name, so regeneration can be additive',
+    { skip: !made ? 'openssl unavailable' : false }, () => {
+      // Nothing records the host list a cert was minted with, so the cert is its
+      // own only record. A regeneration that passes the defaults instead of the
+      // union silently drops a tailnet FQDN added later, and the tailnet HTTPS
+      // site — which reuses this cert — stops matching.
+      const { certSanHosts } = require('../lib/https-setup');
+      const hosts = certSanHosts(certPath);
+      assert.ok(hosts.includes('localhost'), `expected localhost in ${JSON.stringify(hosts)}`);
+      assert.ok(hosts.includes('studio.local'), `expected studio.local in ${JSON.stringify(hosts)}`);
+      assert.ok(hosts.every((h) => !h.includes(':')), 'the DNS:/IP Address: prefix must be stripped');
+    });
+
+  it('certSanHosts returns [] rather than throwing on an unusable cert', () => {
+    const { certSanHosts } = require('../lib/https-setup');
+    assert.deepEqual(certSanHosts(path2.join(dir, 'nope.pem')), []);
+    assert.deepEqual(certSanHosts(null), []);
+  });
+
+  it('fails SAFE — false, never a throw — on a missing or unparseable cert', () => {
+    // The caller's next move is "then don't advertise that name", so false is
+    // the safe direction. Throwing here would abort a cutover over a cosmetic
+    // question about an extra hostname.
+    const junk = path2.join(dir, 'junk.pem');
+    fs2.writeFileSync(junk, 'not a certificate');
+    assert.equal(certCoversHost(path2.join(dir, 'nope.pem'), 'studio.local'), false);
+    assert.equal(certCoversHost(junk, 'studio.local'), false);
+    assert.equal(certCoversHost(null, 'studio.local'), false);
+    assert.equal(certCoversHost(certPath, ''), false);
+  });
+});
+
 describe('https-setup', () => {
   let tmpDir;
   let stubDir;
@@ -224,6 +327,140 @@ describe('https-setup', () => {
       } finally {
         if (had) process.env.TANGLECLAW_PORT = prev;
         else delete process.env.TANGLECLAW_PORT;
+      }
+    });
+  });
+
+  describe('effectiveOperatorOrigin (#710)', () => {
+    // The producer is swept, not sampled: every mode this function can be asked
+    // about appears below. A guard for a class that exercises one member is the
+    // defect this repo already learned once.
+
+    it('sends a caddy-mode operator to CADDY, not to the server behind it', () => {
+      // The whole reason this function exists. In caddy mode the server itself
+      // serves plain HTTP on the loopback — `effectiveServerProtocol` says so —
+      // so composing the two "what is TC serving" helpers yields
+      // http://host:3102, which is TC's loopback-only and UNGATED door. Sending
+      // an operator there walks them past the login gate setup just installed,
+      // and from another device it is dead.
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin({ ingressMode: 'caddy' }, 'box.tail123.ts.net', {}),
+        'https://box.tail123.ts.net:8443'
+      );
+    });
+
+    it('honours a custom caddy HTTPS port', () => {
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin(
+          { ingressMode: 'caddy', caddyHttpsPort: 9443 }, 'box', {}),
+        'https://box:9443'
+      );
+    });
+
+    it('ignores TC\'s own port and scheme entirely in caddy mode', () => {
+      // Caddy terminates TLS and listens on its own port; nothing about TC's
+      // listener changes where the operator knocks. TANGLECLAW_PORT is the
+      // sharpest version of this — it is what the installed plist sets, so a
+      // derivation that leaked it would be wrong on every standard install.
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin(
+          { ingressMode: 'caddy', serverPort: 3101, httpsEnabled: false },
+          'box',
+          { TANGLECLAW_PORT: '3102' }
+        ),
+        'https://box:8443'
+      );
+    });
+
+    it('is the server\'s own origin in direct mode with certs', () => {
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin({
+          ingressMode: 'direct', httpsEnabled: true, httpsCertPath: '/c', httpsKeyPath: '/k', serverPort: 3101
+        }, 'box', {}),
+        'https://box:3101'
+      );
+    });
+
+    it('is http in direct mode when the certs are missing, since that is what binds', () => {
+      // `httpsEnabled` defaults to true, so a no-cert install still serves HTTP
+      // via createServer's fallback — the ENG-5R2W defect was trusting the flag.
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin(
+          { ingressMode: 'direct', httpsEnabled: true, serverPort: 3101 }, 'box', {}),
+        'http://box:3101'
+      );
+    });
+
+    it('follows TANGLECLAW_PORT in direct mode, where it IS the front door', () => {
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin(
+          { ingressMode: 'direct', serverPort: 3101 }, 'box', { TANGLECLAW_PORT: '3102' }),
+        'http://box:3102'
+      );
+    });
+
+    it('answers about a config that is not in force yet', () => {
+      // The setup route asks while a cutover is still running: `ingressMode` on
+      // disk is whatever it was, and the question is where the operator goes
+      // once it lands. Purity is what makes that askable.
+      const onDisk = { ingressMode: 'direct', serverPort: 3101, caddyHttpsPort: 8443 };
+      assert.equal(
+        httpsSetup.effectiveOperatorOrigin({ ...onDisk, ingressMode: 'caddy' }, 'box', {}),
+        'https://box:8443'
+      );
+      assert.equal(httpsSetup.effectiveOperatorOrigin(onDisk, 'box', {}), 'http://box:3101',
+        'and the on-disk config still answers for itself');
+    });
+
+    it('falls back to localhost rather than emitting a hostless origin', () => {
+      for (const host of ['', null, undefined]) {
+        assert.equal(
+          httpsSetup.effectiveOperatorOrigin({ ingressMode: 'caddy' }, host, {}),
+          'https://localhost:8443'
+        );
+      }
+    });
+
+    it('says WHO answers at that origin, not only where it is', () => {
+      // `via` is what stops a caller reading a response as proof the server is
+      // back. Behind Caddy it is not: the proxy stays up across TangleClaw's
+      // restart and answers immediately, so the wizard must not probe there.
+      assert.deepEqual(
+        httpsSetup.effectiveOperatorFrontDoor({ ingressMode: 'caddy' }, 'box', {}),
+        { origin: 'https://box:8443', via: 'proxy' }
+      );
+      assert.deepEqual(
+        httpsSetup.effectiveOperatorFrontDoor({ ingressMode: 'direct', serverPort: 3101 }, 'box', {}),
+        { origin: 'http://box:3101', via: 'server' }
+      );
+    });
+
+    it('derives the address and who answers it from ONE branch', () => {
+      // Two derivations of "is this proxied" would be free to disagree with the
+      // address they describe — a screen probing a proxy while calling it the
+      // server is exactly the defect this pair exists to prevent.
+      for (const config of [
+        { ingressMode: 'caddy' },
+        { ingressMode: 'caddy', caddyHttpsPort: 9443 },
+        { ingressMode: 'direct', serverPort: 3101 },
+        { ingressMode: 'direct', httpsEnabled: true, httpsCertPath: '/c', httpsKeyPath: '/k' },
+        {}
+      ]) {
+        const door = httpsSetup.effectiveOperatorFrontDoor(config, 'box', {});
+        const proxied = config.ingressMode === 'caddy';
+        assert.equal(door.via, proxied ? 'proxy' : 'server');
+        assert.equal(door.origin.startsWith('https://box:8443') || door.origin.startsWith('https://box:9443'),
+          proxied, `${JSON.stringify(config)} — the port must agree with who answers`);
+        assert.equal(httpsSetup.effectiveOperatorOrigin(config, 'box', {}), door.origin,
+          'the string form must be the same derivation, not a second one');
+      }
+    });
+
+    it('emits an origin with no trailing slash or path', () => {
+      // Callers append nothing and the wizard renders it verbatim in a button.
+      for (const config of [{ ingressMode: 'caddy' }, { ingressMode: 'direct', serverPort: 3101 }]) {
+        const origin = httpsSetup.effectiveOperatorOrigin(config, 'box', {});
+        assert.match(origin, /^https?:\/\/[^/]+$/, `${origin} must be a bare origin`);
       }
     });
   });

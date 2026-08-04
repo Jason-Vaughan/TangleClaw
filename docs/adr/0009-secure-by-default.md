@@ -147,6 +147,51 @@ that misdescribed the socket. Consumers render the answer; they do not restate t
 hand-edited config or refuses; it never clobbers one (the refuse-to-ungate guard from #463 is the
 existing precedent).
 
+**Amendment 2026-07-29 — "preserve or refuse" is not enough on its own, and the wizard gets no
+override.** The clause above is satisfied by a user interface that asks "overwrite your existing
+config?" and proceeds when the operator clicks yes. That is not the intent, and stating only the
+weaker rule left the stronger one unwritten and therefore unenforceable. Made explicit:
+
+- The setup wizard **never writes a Caddyfile that a human maintains** — not with a confirmation, not
+  behind an "advanced" disclosure, not at all. It offers **no equivalent of the CLI's `--force`**.
+- Where a hand-maintained config already carries exactly one credential **and Caddy is the active
+  ingress**, the wizard **adopts** it — reads it into canonical config, read-only on the file — and
+  reports that it kept the operator's existing login.
+
+  **Amended 2026-07-29 while building:** the original clause said only "already carries exactly one
+  credential", and that is not sufficient. A Caddyfile is a file; a *gate* is a running process. On a
+  direct-mode install the file is a config nothing is serving — a shape
+  `scripts/ingress-cutover.js --rollback` produces routinely, since it unloads Caddy and restores
+  `ingressMode: direct` while leaving the Caddyfile on disk. Adopting there would set `authEnabled`
+  on an install with nothing in front of it, which is the false-claim-of-protection this ADR exists
+  to forbid, arrived at from the opposite direction. So adoption requires the live ingress, and
+  otherwise **refuses** with the reason. The same reasoning already governed the caddy-binary-absent
+  case; it was simply not carried across to the ingress-mode case.
+
+  A third case, from the same build: when the operator supplies a credential on a machine whose plan
+  was to adopt — reachable, because the Skip route refuses in caddy mode without a configured
+  credential and the wizard then forces the admin step — the typed credential lands in config while
+  the hand-maintained Caddyfile goes on enforcing the adopted one. Two credentials then disagree and
+  the operator's new password does not work. The wizard reports the **mismatch**, names the account
+  they set rather than the adopted one, and routes them to `scripts/reset-admin.js`, which rewrites
+  the live config too. It does not report "kept".
+
+  A second amendment from the same build: the wizard may only report "kept your existing login" when
+  adoption **actually adopted**. Credential adoption deliberately never overwrites a credential
+  already in config, so on an install that has one the call is a no-op while the hand-maintained file
+  may enforce a *different* credential — reporting success from a config predicate would make exactly
+  that drift invisible. That case reports a distinct, honest state instead.
+- Where it carries several credentials, or none, or cannot be read, the wizard **refuses and routes
+  the operator to `scripts/ingress-cutover.js`**, where `--force`, `--rollback` and a timestamped
+  backup exist. Destroying a working gate stays a deliberate act taken at a terminal, with an undo.
+
+The reasoning is the same as the no-default-credential rule: a prompt that can be clicked through
+during first-run setup is not a control. The difference from the CLI is not trust in the operator, it
+is that the terminal path carries a backup and a rollback and the browser path carries neither.
+
+Recorded here rather than in the build plan because build plans are deleted when their work ships,
+and `.prawduct/` is gitignored — the same failure mode this ADR's closing paragraph describes.
+
 **Why this ADR exists at all.** The superseded posture was written down — in a project artifact under
 `.prawduct/`, which is gitignored. It was therefore invisible to a fresh clone, to contributors, and
 to review. A security posture that only exists on one machine cannot be checked, inherited, or

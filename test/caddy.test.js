@@ -122,6 +122,102 @@ describe('caddy', () => {
   describe('buildCaddyfileContent', () => {
     const opts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
 
+    // #863 — a default install generated exactly ONE site, `localhost`, so every
+    // other address failed the TLS handshake and the dashboard could not be
+    // reached from a phone or a second machine. The fix adds the mDNS name to
+    // the SAME site header rather than emitting a second block.
+    describe('LAN hostname (#863)', () => {
+      const gated = { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: '$2a$14$abcdefghijklmnopqrstuv' };
+
+      it('serves the LAN name from the same block as localhost', () => {
+        const out = caddy.buildCaddyfileContent({ ...gated, lanHost: 'studio.local' });
+        assert.match(out, /^localhost, studio\.local \{$/m,
+          'the LAN name must ride in the local site header');
+        // One block, so exactly one tls/proxy pair — a second block would be a
+        // copy of the same config, free to drift.
+        assert.equal((out.match(/^\ttls /gm) || []).length, 1, 'must not emit a duplicate tls directive');
+        assert.equal((out.match(/reverse_proxy/g) || []).length, 1, 'must not emit a second proxy');
+      });
+
+      it('NEVER adds the LAN name to an ungated install', () => {
+        // Caddy already listens on every interface, so this opens no socket —
+        // but it turns a name that failed the handshake into one that serves the
+        // dashboard, and an ungated dashboard answering the LAN is the open door
+        // the catch-all and tailnet guards refuse. Ungated stays loopback-only.
+        const out = caddy.buildCaddyfileContent({ ...opts, lanHost: 'studio.local' });
+        assert.match(out, /^localhost \{$/m);
+        assert.ok(!out.includes('studio.local'), 'an ungated site must not answer to the LAN name');
+      });
+
+      it('refuses a hostname that could restructure the Caddyfile', () => {
+        // The value derives from os.hostname(), which an operator can set to
+        // anything, and it is interpolated into a file Caddy parses. A name with
+        // a brace, comma or space would not merely fail to match — it would
+        // change the file's structure.
+        for (const hostile of ['evil {\n} bad.local', 'a b.local', 'x,y.local', '', 'nodot', '../../etc.local']) {
+          const out = caddy.buildCaddyfileContent({ ...gated, lanHost: hostile });
+          assert.match(out, /^localhost \{$/m, `must fall back to localhost for ${JSON.stringify(hostile)}`);
+        }
+      });
+
+      it('stays invisible to extractTailnetHost — the reason it is not its own block', () => {
+        // A bare-FQDN site block carrying a `tls` directive is exactly what
+        // extractTailnetHost hunts for. Emitted separately, the mDNS site would
+        // be adopted as the tailnet host and written into config.caddyTailnetHost.
+        // FQDN_SITE_HEADER_RE excludes multi-address headers, so this form is
+        // correctly ignored. This is the regression that shaped the design.
+        const out = caddy.buildCaddyfileContent({ ...gated, lanHost: 'studio.local' });
+        assert.equal(caddy.extractTailnetHost(out), null,
+          'the LAN name must never be mistaken for the tailnet site');
+      });
+
+      it('still finds a real tailnet host when both are present', () => {
+        const out = caddy.buildCaddyfileContent({
+          ...gated, lanHost: 'studio.local', tailnetHost: 'box.tail1234.ts.net'
+        });
+        assert.match(out, /^localhost, studio\.local \{$/m);
+        assert.equal(caddy.extractTailnetHost(out), 'box.tail1234.ts.net',
+          'the tailnet site is still its own block and still discoverable');
+      });
+    });
+
+    // Everything interpolated into a site block is shape-checked, not just the
+    // hostname. basicAuthUser arrives from the UNAUTHENTICATED
+    // POST /api/setup/complete, which only trims it — and setup now writes AND
+    // APPLIES the generated file automatically, so a username carrying a brace
+    // or a newline would close the basic_auth block and open whatever followed.
+    describe('Caddyfile injection guards', () => {
+      const base = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+
+      it('accepts a real bcrypt hash — the guard must not reject legitimate credentials', () => {
+        // A bcrypt hash legitimately contains $ / and . — an allowlist tight
+        // enough to feel safe would reject every real credential, so the check
+        // denies STRUCTURAL characters instead.
+        assert.ok(caddy.buildCaddyfileContent({ ...base, basicAuthUser: 'tcadmin', basicAuthHash: HASH }));
+      });
+
+      for (const bad of ['ev il', 'a{b', 'a}b', 'a"b', "a'b", 'a#b', 'a\nb', 'a\\b']) {
+        it(`refuses a username containing ${JSON.stringify(bad)}`, () => {
+          assert.throws(
+            () => caddy.buildCaddyfileContent({ ...base, basicAuthUser: bad, basicAuthHash: HASH }),
+            /not safe in a Caddyfile/);
+        });
+      }
+
+      it('refuses a structural character in the hash too', () => {
+        assert.throws(
+          () => caddy.buildCaddyfileContent({ ...base, basicAuthUser: 'ok', basicAuthHash: 'x }\nevil.com {' }),
+          /not safe in a Caddyfile/);
+      });
+
+      it('refuses a publicDomain or tailnetHost that is not a hostname', () => {
+        const gated = { ...base, basicAuthUser: 'ok', basicAuthHash: HASH };
+        assert.throws(() => caddy.buildCaddyfileContent({ ...gated, publicDomain: 'evil {' }), /publicDomain/);
+        assert.throws(() => caddy.buildCaddyfileContent({ ...gated, tailnetHost: 'a b.ts.net' }), /tailnetHost/);
+      });
+    });
+
     it('requires serverPort', () => {
       assert.throws(() => caddy.buildCaddyfileContent({ certPath: '/c/cert.pem', keyPath: '/c/key.pem' }), /serverPort/);
     });
@@ -566,6 +662,45 @@ describe('caddy', () => {
 
     it('throws when caddy returns a non-bcrypt value', () => {
       assert.throws(() => caddy.hashPassword('BADHASH-please-123'), /did not return a bcrypt hash/);
+    });
+  });
+
+  describe('redactHashes', () => {
+    const HASH = '$2a$14$' + 'x'.repeat(53);
+
+    it('removes a hash embedded mid-string, which the anchored RE cannot match', () => {
+      // BCRYPT_HASH_RE is anchored, so it validates a whole string and never
+      // matches a substring — the reason a separate pattern exists. If redaction
+      // were built on it, every case below would pass through untouched.
+      assert.equal(caddy.BCRYPT_HASH_RE.test(`basic_auth ops ${HASH}`), false);
+      const out = caddy.redactHashes(`basic_auth ops ${HASH}`);
+      assert.doesNotMatch(out, /\$2[aby]\$/, 'no hash may survive');
+      assert.match(out, /ops/, 'the username stays — it is what makes the failure diagnosable');
+    });
+
+    it('scrubs a real `caddy validate` failure string, the way the hash actually reaches a log', () => {
+      // This is the validate-failed shape: caddy quotes the offending line of the
+      // file it was given, and that file is the one the cutover just generated
+      // with the credential in it. Nobody writes the hash to the log deliberately.
+      const stderr = [
+        'Error: adapting config using caddyfile: /Users/x/.tangleclaw/Caddyfile:12:',
+        `unrecognized directive: basic_autth @protected { ops ${HASH} }`
+      ].join(' ');
+      const out = caddy.redactHashes(stderr);
+      assert.ok(!out.includes(HASH), 'the hash must not survive into the log');
+      assert.match(out, /\[redacted-hash\]/);
+      assert.match(out, /unrecognized directive/, 'the diagnosis must survive');
+    });
+
+    it('scrubs every occurrence, not just the first', () => {
+      const two = `${HASH} and also ${'$2b$12$' + 'y'.repeat(53)}`;
+      assert.doesNotMatch(caddy.redactHashes(two), /\$2[aby]\$/);
+    });
+
+    it('passes through text with no hash, and non-strings, unchanged', () => {
+      assert.equal(caddy.redactHashes('caddy not found on PATH'), 'caddy not found on PATH');
+      assert.equal(caddy.redactHashes(null), null);
+      assert.equal(caddy.redactHashes(undefined), undefined);
     });
   });
 

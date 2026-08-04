@@ -603,3 +603,70 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
     });
   });
 });
+
+describe('extractGeneratedCaddyfileOptions — reading a generated file back into its own inputs', () => {
+  // Adding a first login to an install that completed setup without one rebuilds
+  // the Caddyfile. Rebuilding from `config` would fold in every field that has
+  // since drifted from the file, so the inputs are recovered from the file
+  // itself. That only works if the recovery is exact, which is what this pins.
+
+  it('round-trips the ungated shape an install with no login actually has', () => {
+    const opts = buildOpts({ httpsPort: 9443, httpPort: 9080 });
+    const content = caddy.buildCaddyfileContent(opts);
+    assert.deepEqual(caddy.extractGeneratedCaddyfileOptions(content), {
+      serverPort: 3102,
+      certPath: '/c/cert.pem',
+      keyPath: '/c/key.pem',
+      httpsPort: 9443,
+      httpPort: 9080
+    });
+  });
+
+  it('round-trips a multi-site file, where every site states the same upstream', () => {
+    // Several sites agreeing is the normal case, not ambiguity — the unanimity
+    // rule must not mistake repetition for conflict.
+    const content = caddy.buildCaddyfileContent(buildOpts({
+      basicAuthUser: 'jason', basicAuthHash: HASH_A,
+      tailnetHost: TAILNET_HOST, remoteHttpCatchAll: true
+    }));
+    const got = caddy.extractGeneratedCaddyfileOptions(content);
+    assert.equal(got.serverPort, 3102);
+    assert.equal(got.certPath, '/c/cert.pem');
+    assert.equal(got.httpsPort, 8443);
+  });
+
+  it('refuses rather than defaulting when ANY field is missing', () => {
+    // Every field here has a default in buildCaddyfileContent, so guessing would
+    // emit a plausible file that silently moves a working certificate or port.
+    // Each field is dropped in turn: a guard that covered only the certificate
+    // would still let a missing port fall back to 8443 on a machine serving 9443.
+    const content = caddy.buildCaddyfileContent(buildOpts({ httpsPort: 9443, httpPort: 9080 }));
+    const drop = (re) => content.split('\n').filter((l) => !re.test(l)).join('\n');
+    for (const [field, re] of [
+      ['tls', /^\s*tls\s/],
+      ['https_port', /^\s*https_port\s/],
+      ['http_port', /^\s*http_port\s/],
+      ['reverse_proxy', /^\s*reverse_proxy\s/]
+    ]) {
+      assert.equal(caddy.extractGeneratedCaddyfileOptions(drop(re)), null,
+        `a file with no ${field} must be refused, not defaulted`);
+    }
+  });
+
+  it('refuses when two sites disagree about the upstream', () => {
+    const content = caddy.buildCaddyfileContent(buildOpts({
+      basicAuthUser: 'jason', basicAuthHash: HASH_A, tailnetHost: TAILNET_HOST
+    })).replace('reverse_proxy 127.0.0.1:3102', 'reverse_proxy 127.0.0.1:3999');
+    assert.equal(caddy.extractGeneratedCaddyfileOptions(content), null);
+  });
+
+  it('does not read settings out of comments', () => {
+    const content = caddy.buildCaddyfileContent(buildOpts())
+      .replace('\tadmin off', '\tadmin off\n\t# https_port 1234');
+    assert.equal(caddy.extractGeneratedCaddyfileOptions(content).httpsPort, 8443);
+  });
+
+  it('returns null for a non-string', () => {
+    assert.equal(caddy.extractGeneratedCaddyfileOptions(null), null);
+  });
+});

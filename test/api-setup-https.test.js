@@ -124,6 +124,18 @@ describe('HTTPS Setup API', () => {
     store._setBasePath(baseDir);
     store.init();
 
+    // This suite is about the HTTPS restart and the redirect URL it produces —
+    // a path that exists only when setup does NOT start an ingress cutover,
+    // because a cutover restarts the server itself and the handler deliberately
+    // suppresses the HTTPS restart to avoid racing it. Park the machine in a
+    // state where no cutover can start (a hand-written Caddyfile with no login,
+    // which TangleClaw refuses to overwrite) so these cases keep testing their
+    // own subject. The suppression itself is asserted separately below.
+    fs.writeFileSync(
+      path.join(baseDir, 'Caddyfile'),
+      '# maintained by hand\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n'
+    );
+
     ({ createServer, _setRestartScheduler } = require('../server'));
 
     restartCalls = 0;
@@ -276,6 +288,8 @@ describe('HTTPS Setup API', () => {
         assert.equal(status, 200);
         assert.equal(data.restart, true);
         assert.match(data.redirectUrl, /^https:\/\/[^:/]+:3102$/);
+        assert.equal(data.redirectVia, 'server',
+          'in direct mode the address IS the server, so a reply there does mean it is back');
         assert.ok(
           !data.redirectUrl.endsWith(':3101'),
           'must not redirect to the config port when the environment overrides it'
@@ -283,6 +297,54 @@ describe('HTTPS Setup API', () => {
       } finally {
         if (had) process.env.TANGLECLAW_PORT = prev;
         else delete process.env.TANGLECLAW_PORT;
+      }
+    });
+
+    it('sends a caddy-mode operator to Caddy, not to the port TC re-binds', async (t) => {
+      if (!hasOpenssl) return t.skip('openssl not available');
+
+      // The reachable version of the bug this chunk exists for. `shouldRestart`
+      // only needs the HTTPS config to have CHANGED — it does not care about
+      // ingress mode — so a caddy-mode install whose operator edits a cert path
+      // in the wizard takes this path. The old expression built the scheme from
+      // `willServeHttps` and the port from TC's own listener, which behind Caddy
+      // is plain HTTP on the loopback: it named a port nothing answers on, and
+      // an ungated one at that.
+      await request(server, 'PATCH', '/api/config', {
+        httpsEnabled: false, httpsCertPath: '', httpsKeyPath: ''
+      });
+      // A credential is required to finish setup in caddy mode (chunk 2's
+      // ADMIN_REQUIRED), so the fixture carries one — this test is about where
+      // the operator is SENT, on an install that legitimately completes.
+      store.config.save(Object.assign(store.config.load(), {
+        ingressMode: 'caddy',
+        caddyHttpsPort: 8443,
+        serverPort: 3101,
+        authEnabled: true,
+        basicAuthUser: 'jason',
+        basicAuthHash: '$2a$14$' + 'o'.repeat(53)
+      }));
+      restartCalls = 0;
+
+      try {
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+          httpsEnabled: true,
+          httpsCertPath: fixture.certPath,
+          httpsKeyPath: fixture.keyPath
+        });
+
+        assert.equal(status, 200);
+        assert.match(data.redirectUrl, /^https:\/\/[^:/]+:8443$/,
+          'the front door in caddy mode is Caddy, on its own port');
+        assert.equal(data.redirectVia, 'proxy',
+          'and the client must be TOLD a proxy answers there — it cannot tell from the URL, '
+          + 'and probing a proxy proves nothing about the server behind it');
+        assert.ok(!/:3101$|:3102$/.test(data.redirectUrl),
+          'never TC\'s own listener — behind Caddy that is the ungated loopback door');
+      } finally {
+        store.config.save(Object.assign(store.config.load(), {
+          ingressMode: 'direct', authEnabled: false, basicAuthUser: null, basicAuthHash: null
+        }));
       }
     });
 

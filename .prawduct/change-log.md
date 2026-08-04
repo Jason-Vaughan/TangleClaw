@@ -26,9 +26,620 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-04: one unreadable folder can no longer take down the server (#859)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+`listAllProjects` ran `fs.readdirSync` on the event loop over the operator-chosen projects
+directory, and the shipped default (`~/Documents/Projects`) is TCC-protected on macOS. A launchd
+node without Full Disk Access does not get `EPERM` there — the `open()` never returns — so a single
+`GET /api/projects`, the route the dashboard loads on open, killed every other route with no error
+and no recovery while launchd still reported the process alive.
+
+Confirmed reachable on a default install: the wedge needs only that the directory EXISTS, which it
+does for any real user. An earlier probe that did NOT reproduce it had simply never created it, so
+the read failed fast with `ENOENT` — worth recording, because that first measurement said "fine"
+for a reason unrelated to the fix.
+
+Now `fs.promises` (libuv threadpool) bounded by a 5s deadline, degrading to the registered projects
+with a log line naming Full Disk Access and the directory. `listAllProjects` is async; one
+production caller. Verified on the clean-room guest: before `/api/projects` 000 and `/api/health`
+000; after 200 in 5007ms and 200 in 22ms.
+
+Still synchronous, deliberately out of scope: the per-directory `git.getInfo` loop that follows,
+each call separately bounded. It can make this route slow; it can no longer stop the server.
+
+## 2026-08-04: cross-site guards extended to WebSockets, and Caddyfile inputs shape-checked (#860, #864)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+**Why:** the cumulative review's reachable findings, plus the delta review that followed it. Recorded
+here because the previous entry's own lesson was that CHANGELOG-only updates leave every derived
+view blind.
+
+`handleUpgrade` had no cross-site check, which is the sharper half of the hole the HTTP guard closed:
+WebSockets are exempt from the same-origin policy entirely, so a page the operator merely visits
+could open one to the ungated `127.0.0.1` listener and then read AND write on it — and `/terminal/*`
+proxies to a `--writable` ttyd. Origin is compared by host, parsed rather than split on `:`, because
+an IPv6 literal arrives bracketed and splitting would have destroyed every terminal socket for an
+operator on a tailnet address.
+
+`basicAuthUser` reached `_pushSiteBlock` unvalidated while `lanHost` beside it was checked precisely
+because such a value "would restructure the Caddyfile". It arrives from the unauthenticated
+`POST /api/setup/complete` and setup now applies the generated file automatically. User, hash,
+`publicDomain` and `tailnetHost` are all shape-checked; structural characters are denied rather than
+name characters allowlisted, because a real bcrypt hash contains `$`, `/` and `.`.
+
+`install.sh` still advertised the cutover as "optional" and as a single command — the exact sequence
+that produces a green health check and an unprotected dashboard. Both of these are user-visible and
+are now in `CHANGELOG.md` too: the username check is an input-contract change at an unauthenticated
+route (a name with a space is refused at setup where it used to be accepted), and the installer's
+closing instructions are what a first-time operator follows.
+
+The openclaw-prefix upgrade coverage is a STRUCTURAL pin, not a behavioural one, and deliberately:
+the behavioural version cannot fail. `resolveOpenclawPortDirect` returns null for an unknown connId
+and that branch destroys the socket too, so a test asserting "cross-origin upgrade dies" stays green
+with the guard deleted. What matters is position — the guard must precede every prefix branch, which
+covers them all by construction. Mutation-verified against both deleting the guard and moving it
+below the branches.
+
+**Not closed:** both guards decide "cross-site" relative to the request's own `Host`, so DNS
+rebinding satisfies them. Filed as **#864** rather than rushed: the fix changes which addresses an
+install answers to, and too tight an allowlist fails in the silent way this release exists to
+eliminate.
+
+## 2026-08-04: the dashboard answers to the machine's own name, and cert regeneration stops shrinking (#863, #862, #859, #846)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+**Why:** four issues' worth of shipped v5 behaviour reached `CHANGELOG.md` and never reached this
+file, so every view that derives from these tags — Status, `release-notes.md`, `scope_rollups` —
+was blind to it, and record-lint had no `chunks=` tag to grade. Recorded here as one entry covering
+the step-7 acceptance work rather than backfilling four.
+
+**#863** — a default caddy install generated exactly one Caddy site, `localhost`, so every other
+address failed the TLS handshake before a password was asked for. Measured from a second machine:
+`tlsv1 alert internal error`, not a login prompt. The mDNS name now rides in the same site header
+(`localhost, studio.local {`) — one block, so one `tls`/gate/upstream with no copy free to drift,
+and invisible to `extractTailnetHost`, which would otherwise have adopted a separate block as the
+tailnet site. Gated installs only; an install with no credential stays loopback-only. Verified
+end-to-end from a different host: `/` and `/api/config` went 000 → 401.
+
+Certificate regeneration is now **additive** at all three sites (both cutover branches and
+`POST /api/setup/generate-cert`). Nothing records the host list a cert was minted with, so the cert
+is its own only record; regenerating from the defaults dropped a tailnet FQDN and un-covered the
+tailnet HTTPS site that reuses it. This shipped broken twice before a clean-room run caught it —
+first because only the new branch was fixed, then because the surviving branch calls the union
+before `ctx.certPath` is assigned.
+
+**#862** — the setup guide's recovery recipe for "no login" produced a green health check and an
+ungated dashboard, and the corrected version was then ordered backwards (`--create-gate` exits
+before it is read when no Caddyfile exists). Both fixed; the order is now cutover → create-gate,
+with the unprotected window between them stated plainly.
+
+**#859** — `install.sh` warns when `projectsDir` sits under a TCC-protected folder: the install
+passes its health check and the server then wedges on the first request that lists projects.
+
+**#846** — access logging recorded as deliberately not generator-owned, because #821 shows ingress
+logging grows unrotated and can capture a `basic_auth` hash.
+
+Also: the cutover now restores the previous Caddyfile when `caddy validate` rejects a generated one
+— it wrote before validating and left the invalid file in place while reporting "ingress untouched",
+which was true of the running service and false of the file it reloads from.
+
+## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
+
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
+
+**Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
+weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.
+
+`29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo — which catches only
+TangleClaw's side moving — and added a companion check reading prawduct's own `migrate_plugin.py` for
+the upstream side. That companion **scraped the module as text**, bounding the literal with
+`indexOf('\n}')`. The bound is a guess, and a guess that lands wrong does not fail: it over-extends
+on a reformat and matches `ref`/`repo` from a neighbouring literal, comparing against values that
+were never the install reference. Reading the wrong constant quietly is worse than failing to read
+one loudly — a loud failure gets fixed, a quiet wrong answer gets believed — and quiet-wrong is the
+exact failure `PRAWDUCT_INSTALL_REFERENCE` exists to end, so the check guarding it must not
+reintroduce it one level up. The substring scan also matched `OLD_INSTALL_REFERENCE`.
+
+**What changed:** the module is parsed with Python's `ast` + `literal_eval` (a computed reference is
+unreadable by design rather than executed) and compared **whole** by `deepEqual`, so a key upstream
+adds or we stop writing counts as drift. Unreadable is a **finding, not a skip**, and the skip is
+drawn as narrowly as the facts allow: only prawduct **not installed at all** skips, with a printed
+reason. Installed-but-`migrate_plugin.py`-**missing** — the module moved or was renamed — fails, as
+do an unparseable source, a renamed symbol, and a failing `python3`. "Not here" and "here, but what I
+read moved" are different facts, and only the first is a non-applicability; folding "I could not read
+it" into "not applicable" is how a detector dies quietly while still reporting green.
+
+**Test-only — no runtime path changes, so it did not gate the v5 cut.** Every guard added here was
+watched red against the specific mutation it exists to catch: swallowing reader errors turns the
+`THROWS` cases red; drifting the constant to `ref:"v9.9.9"` turns the cross-check red; converting
+the fail branch to a skip turns the fail-vs-skip test red; and collapsing `moved` back into
+`absent` turns the classification test red. Each `THROWS` case matches its **specific** error,
+because a bare `assert.throws` accepts `python3: not found` too and would report green over a reader
+that parsed nothing.
+
+**Known limit:** the drift comparison against the *installed* plugin runs only where prawduct is
+installed — a developer machine, never CI, which has no marketplace checkout. The reader tests do run
+on the runner, but they prove the reader raises on crafted fixtures, not that our constant still
+matches upstream's. Closing it needs a CI-side checkout or a scheduled drift job — both
+commit-shaped — tracked as #835.
+
+**Reviewed** across several rounds (`chunk`, `cumulative`, and repeated `verify-resolutions` passes).
+Rather than tally rounds here — a count that goes stale the moment another runs — the census is
+`prawduct-hook render-dispositions --scope plugin-ref-807`.
+
+**No single command shows all of it, and that is worth knowing before trusting any of them.**
+`render-dispositions` takes `[--review <id>|--scope <s>]` and has no all-scopes mode: with no
+argument it renders only the **latest** review fact, not the total. `--scope plugin-ref-807` is the
+best available census, but rounds on this branch went out under **four different scope strings**, so
+it too returns a subset. `prawduct-hook evidence list` (no `--scope` — it takes `--kind` and `-n`) is
+the unfiltered fact log.
+
+Findings were fixed where fixing them belonged to this branch, and otherwise accepted with a recorded
+reason — the CI drift gap (#835) is the standing example: closable in a commit, but by touching
+`.github/workflows/`, which is a different risk surface than a test-only change.
+Deliberately no count and no all-clear here: in an append-only record, any "all of them" claim is
+falsified by the next round that reads it, and a census that silently returns a subset is the same
+failure as a monitor that silently does not run — both report a number, neither reports that the
+number is partial. That is not incidental to this entry: it is the same failure the entry is about,
+and it was caught twice inside this paragraph. The findings worth carrying forward, because each is a
+general failure mode rather than a detail of this diff:
+
+- Test evidence had been recorded against the **pre-fix tree** — a green record whose
+  `evidence_tree` was the review's `base_tree`, not `head_tree`. Caught on the manifest's own tree
+  pair; `test-status` exits 0 straight through it.
+- The `THROWS` matchers were **bare `assert.throws`**, then unanchored. `execFileSync` builds
+  `err.message` from the argv it ran, and that argv carries the embedded program — including its own
+  `sys.exit("INSTALL_REFERENCE not found in " + …)` source line — so the matcher matched its own
+  source text on any nonzero exit. Guards against unexamined errors were themselves tolerating one.
+- The **fail-vs-skip contract was asserted by nobody** until the comparison was factored out; the
+  block comment then justified the block in terms that invited deleting that very test.
+- The entry's own tag line was stamped `status=shipped` **on an unmerged branch**, against ART-4K9M
+  recorded in this file's header — copied from the merged precedent below without reading the token.
+
+**Adjacent, filed not fixed:** #833 — whether a managed repo's install reference should be a
+committed artifact at all, rather than untracked machine state rewritten at every session launch.
+`syncEngineHooks` touches only the `hooks` block, so it is not a propagation vector today; that is a
+property of current code, not a guarantee.
+
+## 2026-08-01: break-glass recovery proven by running it, and a way out for an install with no login (#710, chunk 4)
+
+<!-- prawduct: type=feat | chunks=4 | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** v5 makes a password mandatory. The recovery path out of a lockout was **built and
+unit-tested but never executed** — `test/reset-admin.test.js` asserts the `launchctl` reload's argv
+**as data** and never runs it, so everything past "the file is patched" was inference. A mandatory
+credential whose recovery is merely believed to work strands the operator on the day it matters.
+
+**The chunk's own spec was stale in three ways, corrected before any code was written.** The
+doc/wiring contradiction it said to resolve had already been resolved on 2026-07-29; the README
+sharpening it asked for was already done; and #806 — the thing that actually needed building — was
+not in it at all. Chunk 3's lesson (a plan written before an earlier chunk landed may name
+mechanisms that chunk changed) applied again, and re-reading against the code is what caught it.
+
+**Where the run happened, and the finding that decided it.** The habitat clean room was the obvious
+safe venue and **cannot prove what this chunk exists to prove**: `deploy/cleanroom/bake.sh` is
+`FROM node:22-bookworm`, and there is no `launchctl` on Linux — a run there would cover patch →
+validate → restore and stop exactly at the reload. Only a Mac with a live gate closes it. Run on
+cursatory against the **hand-edited** Caddyfile, the shape only that machine has and the one the tool
+claims to patch without reshaping.
+
+Measured: hash moved; the real LaunchAgent restarted (PID changed, exit 0); the gate re-authenticated
+and still 401s on `/` and a wrong password; config and the live file agree; a
+timestamped backup preceded the swap. (`/api/health` answered 401 too and is deliberately NOT cited:
+it is in `AUTH_BYPASS_PATHS` and exempt on a generated ingress, so the 401 is an artifact of this
+machine's hand-edited file gating it anyway.) The load-bearing result: the file came out **byte-identical
+apart from the hash**, still classifying `adoptable`/`safeToWrite: false` — so it was not silently
+re-stamped as generated, and the cutover's clobber-guard keeps protecting the operator's edits.
+
+**Two defects in the documented procedure that only a real run could surface.** (1) Recovery enforces
+the *current* password policy, so a credential older than the policy cannot be restored — the live
+one predated the 12-character minimum and was refused, forcing a new password to be invented seconds
+before the connection drops. The guard was documented, not weakened. (2) "Run it under tmux" was
+wrong for how an operator reaches this machine: ttyd is already tmux-backed, but its window may run
+an AI session that cannot be typed into, and `tmux new -s` fails there as a nested/duplicate session.
+
+**#806 closed.** An install that reached `setupComplete` before a credential was mandatory and then
+moved to caddy mode had no route to a login: the setup route refuses as already-complete, adoption
+runs only on a first run, and `reset-admin.js` exited 1 because it *resets* a gate and cannot
+*create* one. `--create-gate` builds one, from the same local-shell tool as recovery — a first
+credential settable over the network reopens what making the gate mandatory closed. The rebuild
+recovers its inputs from the Caddyfile rather than from config (new
+`caddy.extractGeneratedCaddyfileOptions`), so it differs from what was there by exactly the gate;
+config and the live file are known to drift. The extractor **refuses rather than defaulting**, since
+every field it reads has a default and a silent fallback would move a working port or certificate
+while reporting success. A hand-maintained file is refused, never reshaped.
+
+**One implementation of the sequence, two entry points.** Creation and change share
+`_persistGatedCaddyfile` (write → validate fail-closed → record in config → reload). The ORDER is the
+safety property, not the individual steps, and a second copy would be free to drift out of it — which
+this project has already paid for once.
+
+**Self-review caught what the tests did not.** `--dry-run --create-gate` described a rebuild the real
+run would refuse — the same "report an outcome nobody observed" class this surface exists to
+eliminate, landing on someone already locked out and checking before they commit. Extracted
+`canCreateGate` so the preview and the run ask **one** predicate, with a test asserting agreement
+rather than two independently-correct answers.
+
+**Mutation testing found two inert tests on the central claim.** The fixture for "changes nothing but
+the gate" used the default ports 8443/8080, so a rebuild that silently fell back to defaults produced
+a byte-identical file and the test could not fail. Same species as the #749 lesson. Fixture moved to
+non-default ports and the missing-field case widened to every field; all mutations now red.
+
+Also filed: **#828** (`~/.tangleclaw` derived from both `process.env.HOME` and `os.homedir()`, so a
+HOME override half-relocates state) and **#829** (Master control — #755/#756/#768 — the first release
+after v5, deliberately kept out of it).
+
+**Tests:** 5442 pass / 0 fail / 1 skipped. Evidence recorded against tree `52af13ab`.
+
+**Review:** one `cumulative` (3 blocking / 8 warning / 13 note, all three reviewers finding the same
+blocking defect independently) then two `verify-resolutions` passes, ending 0/0/0. Dispositions are
+prose here rather than evidence facts because `prawduct-hook` on PATH is 3.1.2 and has no
+`disposition` subcommand; stamp them if a relaunch picks up 3.2.x.
+
+- **ACCEPTED — the `--dry-run` structural test greps the script's source instead of executing the
+  branch.** Executing it in-suite needs either a `HOME` override, which half-relocates state (#828),
+  or the machine's real Caddyfile, which is the non-determinism just filed as #831. The contract is
+  covered from both sides instead: `canCreateGate`'s parity tests assert the preview and the run
+  reach the same verdict, and the branch itself was exercised live —
+  `--dry-run --create-gate --user bob` against the hand-edited Caddyfile printed
+  `would REFUSE: this Caddyfile already gates on 'jason'`, read-only. Revisit if the suite gains a
+  hermetic temp-repo helper (#831).
+- **FILED — #831** (bare `git init` in nine test files inherits the live global template dir).
+- **FILED — #828** (`~/.tangleclaw` derived from two different sources).
+- Remaining notes accepted as written; none touched behaviour.
+
+## 2026-08-01: setup lands the operator on an address that answers (#710, chunk 3)
+
+<!-- prawduct: type=fix | chunks=3 | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** the post-setup redirect answered the wrong question. "What is this server serving" and
+"where should the operator go" have different answers behind Caddy, and the redirect computed the
+first. In caddy mode TC serves plain HTTP on the loopback — Caddy terminates TLS in front — so the
+expression named `http://<host>:3102`: TC's own door, unreachable from anywhere else and **ungated**.
+It would have sent an operator past the login their setup had just installed.
+
+**The spec said to reuse the wrong pair, and that was corrected before any code.** Chunk 3's
+paragraph read "`effectiveServerPort` and `effectiveServerProtocol` already exist for this — reuse,
+do not re-derive." Those helpers' own header says they predict what *TC's listener* serves, and the
+instruction predates chunk 2 making caddy the default install path; taken literally it produces the
+exact defect the chunk exists to fix. The build plan records the correction and keeps the
+direct-mode half, where the instruction was always right.
+
+**It also collapsed a duplicate that was already there.** `POST /api/setup/complete` answered "where
+do I go now" twice, with two inline expressions: `ingress.url` on the provisioning arm (correct) and
+`redirectUrl` on the HTTPS-restart arm (wrong in caddy mode). Both now come from
+`httpsSetup.effectiveOperatorOrigin`. The provisioning arm asks about `{ ...config, ingressMode:
+'caddy' }` — the state the cutover is moving to, since `ingressMode` on disk is still whatever it was
+while the child runs. Purity is what makes that askable.
+
+**The caddy-mode case was reachable.** `shouldRestart` requires only that the HTTPS config *changed*;
+it does not consider ingress mode. A caddy-mode install whose operator edits a certificate path in
+the wizard took that path and was sent to a port nothing answers on — the same shape as the pre-#654
+dead `:3101` that read to the operator as "HTTPS setup is broken".
+
+**The Skip path is exempt, and that is a finding rather than an omission.** The standing rule from
+chunk 2 is that completion-URL logic must exist on *both* finish paths. `PATCH /api/config
+{ setupComplete: true }` can only *refuse* on the provisioning question — it never spawns a cutover —
+so finishing through Skip never moves TangleClaw and the origin the operator is on stays correct.
+Recorded because the exemption is not visible from reading that route.
+
+**Tests sweep the producer rather than sampling it**, per the rule this repo already learned: every
+mode the derivation can be asked about — caddy at a default and a custom port, caddy ignoring both
+`TANGLECLAW_PORT` and the HTTPS flags, direct with certs, direct without, `TANGLECLAW_PORT` winning
+in direct mode, a not-yet-in-force config, a missing hostname, and the bare-origin shape — plus an
+endpoint regression for the reachable caddy-mode restart. Three mutations (dropping the caddy arm,
+restoring the old inline expression, asking the provisioning arm about the pre-cutover config) each
+go red.
+
+**The review caught the consumer this change broke, which is the same shape as everything else in
+this scope.** Changing what `redirectUrl` *means* left its reader believing the old meaning: the
+restart overlay probes that address and reports "TangleClaw is back up" on any reply. That was sound
+while the address was TC's own listener. Once it is Caddy's it is not — the proxy stays up across the
+restart and answers instantly, with a 502 that an opaque `no-cors` probe cannot distinguish from
+success — so the screen would assert readiness it never observed and click the operator into an error
+page. Newly reachable, too: the old caddy-mode value named a port nothing answered on, so the overlay
+correctly fell through to "unconfirmed". The fix keeps the pair together — `effectiveOperatorFrontDoor`
+returns `{ origin, via }` from ONE branch, because two derivations of "is this proxied" could disagree
+with the address they describe — and the wizard probes only where a reply means something.
+
+**Tests of mine that could not fail — four now, and the review found what the mutations missed.**
+`via` was added, threaded through, and asserted nowhere: flipping caddy's `via` to `'server'` left the
+suite green. Then the same again one layer out — nothing pinned that the ROUTE *emits* `redirectVia`,
+so deleting the field from the response object kept every test green while a caddy-mode operator
+would be told "TangleClaw is back up" on the strength of a 502. My mutation run had stopped at the
+module boundary and never crossed the wire. And two of the six new wizard assertions were inert: one
+matched a `return;` satisfied by the function's own opening `if (!body) return;` — the exact trap the
+sibling credential test documents in a comment — and one sliced its panel with `indexOf('`,')` on the
+LAST map entry, which has no trailing delimiter, so `-1 + 2` asserted against a single character.
+
+All four are the same shape: an assertion watching something *adjacent* to what changed. The
+mechanical correction is narrower than "write better tests" — **mutate at every seam the value
+crosses, not only where it is produced**, and scope a structural assertion to the branch it names
+rather than to a span that contains it.
+
+**Filed rather than fixed: #825.** `wizardComplete` checks `ingress.protection` before
+`result.restart` and both branches return, so an install that is simultaneously "no login TangleClaw
+can confirm" and "about to restart" never reaches the overlay and lands on a Continue button that
+fetches a dying server. Reachable on a hand-maintained Caddyfile whose operator edits a cert path.
+Chunk 3 made it more visible — before, the caddy-mode redirect named a dead port, so the overlay was
+useless even when it rendered. Not fixed here because the change edits the copy of a screen whose
+whole purpose is a security warning, under chunk 2's rule that no path claims protection it did not
+observe; that compound state wants deliberate wording and its own review.
+
+**A worktree trap worth knowing.** `.prawduct/` is almost entirely gitignored here, so a new
+worktree's governance state is set up by symlinking it back to the primary checkout — but
+`change-log.md` is the one **tracked** file in that directory. Blanket-symlinking the directory's
+contents replaced the branch's own copy with the primary checkout's, silently, and the primary is on
+a main-based branch that has none of the v5 entries. Caught when a heading that must exist did not.
+Symlink the untracked governance files only; `change-log.md` belongs to the branch.
+
+## 2026-08-01: the login can be changed after setup, through one guarded route (#710, #805, #806)
+
+<!-- prawduct: type=feat | chunks=3b | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** setup forces a login, and until now nothing could change it except a terminal. A password
+that can only be rotated by someone with shell access on the box is a password that does not get
+rotated. The surface is `POST /api/auth/credential` plus a Login section in global settings, and it
+may **change** a login while being unable to create or blank one.
+
+**One predicate is the whole guard.** A change is allowed only when the install is in caddy mode,
+the LIVE Caddyfile carries a gate, a credential is already recorded, and the `caddy` binary is
+present. Written as one conjunction rather than four checks because it does four jobs at once: only
+something that exists can be changed (blanking unreachable), an ungated install cannot be claimed by
+whoever reaches it (no second remote door), first-credential creation stays at a terminal where a
+locked-out operator can still get in (**#806** is answered by `reset-admin.js` learning to create a
+gate, not by widening this), and the request is one Caddy has already authenticated — which matters
+because the server *cannot* verify a typed current password. `caddy hash-password` has no verify mode
+and no `--salt`, and Node's stdlib has no bcrypt, so the form has no current-password field: one that
+does not verify is theatre.
+
+**#805 closed by removing a door, not by guarding it.** `PATCH /api/config` no longer accepts
+`authEnabled`/`basicAuthUser`/`basicAuthHash` at all — it refuses the whole patch. That route
+authenticates nobody, and it wrote those fields through a generic `allowedFields` loop, so no grep
+for `basicAuthHash =` ever found it. The pinning tests now assert refusal, which is a strictly
+stronger claim than the write they asserted before.
+
+**The restart cannot happen before the reply.** The response to this request travels back through the
+very Caddy the change restarts, so reloading first tears down the connection carrying it: a change
+that SUCCEEDED reaches the browser as a network error. The reload now hangs off the response
+finishing, and asynchronously, so it cannot hold the event loop for the length of a Caddy restart
+either. The consequence is stated rather than hidden — the reload's outcome can never be reported,
+because by the time it is known every further request needs the new password, so the response ships
+the manual reload command unconditionally as the recourse for a restart that did not happen.
+
+**The tests were restarting the operator's live Caddy.** `execFileSync('launchctl', …)` resolves
+through PATH, the shared stub only stubbed `caddy`, and the real binary is on the machine that runs
+the suite — so every full-suite run kickstarted the live `com.tangleclaw.caddy` job and dropped the
+operator's remote access mid-run. The shared stub now covers `launchctl` too and records each
+invocation, which is also what lets the deferred reload be asserted at all.
+
+**A guard was removed for being a trap.** `PATCH /api/config` kept a both-or-neither credential
+invariant it could no longer break: with the fields refused above it, the check could only fire on a
+config that was already inconsistent on disk, where it rejected unrelated writes (a theme, a port)
+with an instruction to send credential fields the same route refuses. An error with no exit.
+
+**Mutation-checked.** Every guard added here was reverted and the suite watched go red before the
+test was kept: the deferred reload (both at the module and at the route), the null-body guard, the
+0600 backup mode, the gate restore after a failed config write, backup retention on the write path,
+the caddy-binary check, re-adding the removed invariant, the write-failure restore, the retention
+namespace, validating the password against the request's username instead of the gate's, `finish`
+in place of `close`, deleting the hash-redaction line, and the multi-user refusal message.
+
+**What the cumulative Critic caught (0 blocking, 18 warning, 14 note) and what was done.** Fixed:
+the no-username-in-password rule was **inert on every request the product actually makes** — the UI
+sends no `user`, so validating against the request's copy checked nothing, and the parity test used
+a shape the UI never produces; `reset-admin.js` printed "the original was restored (ingress
+untouched)" on the one code meaning the restore FAILED and the new password is live, because it
+branched on a backup path rather than the code; the fail-closed write had an **unguarded window** —
+a mid-write ENOSPC truncates the live gate and throws before the validator, so the restore that
+makes the sequence safe was skipped; the hash-redaction assertion ran against a null hash, so
+deleting the redaction leaked a real one past a green suite; the deferred reload hung off `finish`,
+which an aborted response never emits, leaving the credential changed and Caddy never reloaded;
+retention pruned the **ingress cutover's** backups too, whose `--force` safety depends on them, so
+credential backups now carry their own suffix; the form showed config's username while the change
+targets the file's; a multi-user Caddyfile was told it "carries no login". Also the cutover's own
+backup now gets 0600, `reset-admin` redacts `caddy validate` output as the HTTP path does, and a
+dead import went.
+
+Accepted with reasons rather than fixed: **the guard proves a gate EXISTS, not that this request
+came through it.** Requiring `X-Auth-User` would prove it, and would also change ratified decision
+D3 mid-build — the accepted model already treats local shell access as total authorization, so this
+is a decision to take with the operator, not unilaterally. Also accepted: caller-supplied `uid`/
+`stamp` (keeps the module pure, and both callers derive them identically); the re-exports left in
+`reset-admin.js` (its published contract is unchanged and the implementations are not duplicated);
+and `verify-chunk-refs`'s missing-ref, confirmed a worktree/symlink artifact tracked as PRW-6T2M.
+Two further notes accepted: the caddy-binary arm's call sites are exercised by the endpoint suite
+rather than pinned structurally, and backup retention is in scope precisely because this chunk's
+write path is what creates the credential-bearing backups.
+
+**The resolution pass found one more, and it was self-inflicted.** Fixing the inert username rule
+introduced a second version of the very drift it was fixing: the GET was moved onto the FILE's
+username because config and the live gate drift, while the password validation was left on config's.
+The guard requires both to be non-empty and never requires them to AGREE — so in the drift state the
+password was checked against a name that is not the login in force, accepting a password containing
+the real username that setup would refuse. Both now read the same source. The lesson is the project's
+own "one call site isn't the family": the fix was applied where the finding pointed, not to every
+place that asks the same question.
+
+**Five review rounds, and the same lesson every time after the first: 18 warnings, then 1, then 3,
+then 2.** After round one, every finding was on code written in the previous round's *fix*, and the
+shape never varied — the fix landed at the site the finding named, not across the family that asks
+the same question. The full sequence is the point, so it is recorded rather than summarised: the
+`GATE_BROKEN` distinction — the
+credential did not change, but the Caddy config could not be written *or* put back, so the ingress
+may not load — was added at one site and not at the family. The review found the other three: the
+**validate-failure restore** was still unguarded, and it is the MORE reachable path (a `caddy
+validate` rejection is an ordinary outcome, and at that moment the live file holds the invalid
+content), so a restore that threw there escaped as a generic 500 with no backup path and no log
+line; `public/ui.js` still hard-coded a bold **"The login was not changed."** above the server's
+message, which is the precise framing the server had just stopped using, and the bold line is the one
+a scanning operator reads; and the new 500 arm was unpinned, though its position ABOVE the
+`!result.ok` catch-all is load-bearing — reordered, the route re-emits the old 400 with a green
+suite. Both restore sites now run through one guarded helper, the failure carries a `cause`
+(`write` | `validate`) so a full disk is no longer reported as a Caddy syntax error, and the route
+arms are pinned by tests that watch the reorder go red.
+
+Round five then found the **third** consumer — `scripts/reset-admin.js`, which branched on `DIVERGED`
+and fell through to "The original was restored (ingress untouched)" for `GATE_BROKEN`, whose whole
+meaning is that the restore failed; the file's own comment three lines above stated the rule it was
+violating. And the browser still led with a bold "The login was not changed" on `DIVERGED`, where the
+login DID change — a code the round-four finding had **explicitly named** alongside the one that was
+implemented. A repo-wide sweep of every `CREDENTIAL_CODES` consumer now confirms all three
+(`server.js`, `reset-admin.js`, `public/ui.js`) distinguish both codes.
+
+**Two tests could not fail, both of them mine.** One asserted `esc(api.lastError`, which the pre-fix
+hard-coded line also contained. The other matched `DIVERGED` in an explanatory *comment* rather than
+in the code, so deleting it from the list left the suite green — found only by running the mutation
+after the assertion had already reported green. Both now strip comments before matching. The
+mechanical rule worth keeping is narrower than "remember the family": when a fix changes **which
+source answers a question**, or **how an outcome is reported**, enumerate every caller before editing
+any of them.
+
+**The one open design question was decided by reading the mechanism, and the answer was no.** #822
+asked whether the route should require `X-Auth-User` to prove the request came through Caddy.
+Delegated by the operator with "secure the system in v5". It should not: in caddy mode TC *trusts*
+that header (`lib/auth-identity.js`), so any caller able to reach the route can forge it — and this
+machine's hand-edited Caddyfile has one gated `reverse_proxy` with no `header_up`, so requiring it
+would have locked the operator out of the surface on that site. What does hold is the **connection**,
+and asking it closed a path nothing else could see: caddy mode pins the listener to loopback, but at
+LISTEN time, while `ingressMode` is read per request — and a legacy grace-state install has an
+unauthenticated `PATCH /api/config` accepting `ingressMode`, so a network caller could flip config
+and reach the route over the still-wide socket. `canChangeCredential` now takes `fromLoopback` and
+refuses first, before any answer that would describe the machine. Recorded as D6 in the build plan.
+The count note carried forward from the last round is ACCEPTED and not re-litigated: the prose
+records the pattern, the evidence store holds the exact per-round numbers, and a further pass at the
+paragraph buys another round of the same.
+
+**Dispositions could not be recorded as facts this session.** The `prawduct-hook` on PATH is 3.1.2,
+which has no `disposition` / `render-dispositions` subcommand; invoking a newer binary by path
+against the shared evidence store mid-session is the thing the previous session's notes warn
+against. They are recorded here instead, and should be stamped after a relaunch picks up 3.2.x.
+
+## 2026-07-31: the prawduct install reference becomes a reviewed constant, not a copy of local state (#807, #816)
+
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
+
+**Why:** `migrateToPlugin` built the reference by copying TangleClaw's own `.claude/settings.json`
+verbatim. That file is untracked, machine-local and freely editable, so whatever it held was stamped
+into every project migrated on that machine — invisible in any diff, different per machine. One
+design, two defects: a stale `ref: "v2.1.5"` pin reached eleven repositories (#807), and once the
+marketplace half of that file went missing, migrations wrote `enabledPlugins` with nothing to resolve
+it from (#816) — a plugin that silently never loads anywhere prawduct is not already registered, and
+that looks perfectly healthy on the machine that wrote it.
+
+**The design point worth keeping.** The original intent — "don't hardcode a version" — was right; the
+source was wrong. Avoiding a hardcoded pin by reading an untracked local file does not remove the
+pin, it makes it invisible and per-machine. The fix hardcodes upstream's *published contract* and
+puts the change under review, which is the smaller risk. It is deliberately not a runtime read of the
+plugin's own source either: TangleClaw migrates projects on machines where the plugin is absent, so
+deriving the value from a file that may not exist reproduces the same defect class one layer up.
+
+**Two things the review caught that the build missed.** The contract test compared TangleClaw's
+constant against a literal in TangleClaw's own repo, so it could only catch our side moving — while
+the JSDoc, the test comment and the CHANGELOG all claimed it caught divergence "on either side."
+Upstream drift is the direction #807 was actually bitten by. A test-only read of the installed
+plugin's `migrate_plugin.py` now makes the claim true. Separately, ADR 0011 still described the
+deleted `_readSelfPluginRef` sourcing as the design; correcting one paragraph left every *normative*
+statement of the old three-item seam count standing, which is the half-fix pattern this project keeps
+hitting — the count is now amended everywhere it is asserted, and the ADR records the amendment.
+
+**Mutation-checked, and the first attempt failed honestly.** Restoring the original conditional
+marketplace merge left the suite green: once the reference is validated complete, the conditional and
+unconditional merges are equivalent, so the comment crediting the merge as the safeguard was false.
+The completeness guard is what is load-bearing, and bypassing it turns the partial-reference test red.
+
+## 2026-07-29: setup provisions a login by default — the step-list flip plus the cutover it enforces (#710, chunk 2 slice 2-iii-b)
+
+<!-- prawduct: type=feat | chunks=2 | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** the wizard's admin-credential step was gated on `ingressMode === 'caddy'`, which no fresh
+install says, so a first run collected nothing and finished with no password in front of a dashboard
+that can launch shell sessions. The step now follows a server-side decision about what this machine
+can actually enforce, and setup configures the Caddy gate itself.
+
+**The three things that shaped the design, each found by reading a mechanism rather than by testing
+one.** The cutover's launchctl sequence ends by restarting the TangleClaw server, so it cannot run
+in a request handler that must survive to report the outcome — hence a detached child plus a
+result-file channel. The cutover changes the server's protocol and interface but not its port, so
+the wizard's own origin survives only on plain-HTTP loopback: for the remote operator this project
+actually has, the outcome is usually **unobservable**, which made "cannot confirm" a first-class
+terminal state instead of a timeout rounded to success. And network exposure had to be read from
+`bindPolicy.describeBindState` rather than assumed, because an install held wide in the legacy grace
+state would otherwise have been told "reachable from this machine only" — a false reassurance handed
+to precisely the operator who is ungated *and* reachable.
+
+**What the Critic changed.** Three blocking findings, and the two that were real defects rather than
+docs both came from the same root: state that existed but was not consulted. The wizard had no model
+of which screen owned its body, so a late probe could repaint a live "no login is in force" screen
+while the poll kept writing into it, and an index into a step list that shrinks at runtime could
+fall through a `default`-less switch and leave a stale Confirm screen that re-submitted into a
+refusal loop. Both are now structural: one `wizard.view` field, and a clamped index with a default
+branch. Beyond those: `decideProvisioning` was re-deriving the write decision from state names
+instead of consuming `safeToWrite` (a second copy of the project's one overwrite rule); the adopt
+path claimed an existing login was "kept" from a config predicate rather than from the adoption
+result, and would adopt a Caddyfile on a direct-mode install where nothing was serving it — a shape
+`--rollback` produces; `provision-status` promised it disclosed no paths while forwarding the child's
+raw error, which names absolute paths on two wizard-reachable codes; and `stdio: 'ignore'` threw away
+the child's diagnostics, so when the result channel itself failed there was no channel at all.
+
+**A defect my own new test caught, which the review had not.** Moving adoption behind the credential
+gates meant a caddy-mode install whose hand-maintained Caddyfile held the only login was refused with
+`ADMIN_REQUIRED` — the exact shape the adopt path exists to serve. Adoption now runs before the
+gates, where it is what supplies the credential.
+
+**Not verified in process, deliberately.** A real cutover rewrites launchd plists and restarts the
+live install, which on this machine is this clone. `spawnCutover` refuses a real spawn from a test
+process so a missed stub fails loudly rather than causing an outage, and the end-to-end proof is
+`deploy/VRF-auth-1-cutover.md` phase 7e on the clean-room image.
+
+**That proof has since been produced — 2026-07-30.** The VRF ran for the first time: 7b and 7d in
+habitat's `tc-cleanroom` Linux container, 7c/7e and Phase 8 on a purpose-built pristine macOS 26.3
+guest. All four #710 phases read `PASS`, so the chunk's real gate is met by measurement rather than
+by code review. 7e is the load-bearing one — the response arrived HTTP 200 in 1s (so the spawn
+followed the reply), the server PID changed 6053→6219, the outcome file was written by a child whose
+parent no longer existed, and the named address answered **401** with no credentials, **401** with
+wrong ones and **200** with the credential the wizard had just created. A fresh install ended up
+gated by default, which is the whole point of the chunk.
+
+**Running it found four defects that review had not.** The 7d fixture was unreachable as written
+(adoption runs before planning, so it re-adopted the credential the fixture had cleared); the
+README's first instruction fails on a clean Mac, where `/usr/bin/git` is a Command Line Tools stub
+(**#788**); a missing `mkcert` throws a stack trace instead of a tagged refusal (**#786**); and
+`--to direct` switched the ingress and *then* crashed, because `pollHealth` hardcoded `https.get`
+while the direct health URL is `http://` — the break-glass path out of a bad ingress state, exiting
+1 after succeeding, with no result file written (**#789**, fixed here and re-verified). CI had also
+never run this branch at all, which had accumulated **17 unseen failures**; the workflow now
+triggers on `v5-baseline` pushes, not only `main`.
+
+**What the last two Critic rounds changed.** The cumulative pass left three warnings, all now
+closed. The most instructive: the #789 regression tests never reached the line that carried the
+defect — they exercised `writeCutoverResult` and `pollHealth` directly, while the call site is a
+`finish(...)` closure inside `main()` that nothing importable can invoke, so reverting the fix left
+the whole file green. It is pinned by source assertion now, and the mutation was re-run alone to
+confirm exactly one test goes red. The original mutation check had been invalid: it changed the call
+site and the result-file key together and credited the wrong half. Green was twice not evidence in
+this chunk. Alongside that, `healthError` was missing from both result-file typedefs — and since
+`writeCutoverResult` names every key explicitly, that omission *is* the mechanism that produced the
+inversion, not cosmetic residue. The VRF matrix was also unscoreable (two spellings for one state,
+four blank rows, a criterion reading "every row green → PASSES"); it now defines four values scored
+from the execution records rather than inferred, and splits the criterion into the chunk 2 gate
+(met) and the whole-document gate (not met), which the single conflated criterion could not express.
+
+**Still owed, tracked not buried:** **#802** — 7e.1, the no-caddy honest-absence screen, never ran,
+and Phase 7e says that half "matters more than the success half". Its decision is unit-covered; the
+rendering is not. Same for 7e's browser-only assertions, which are marked NOT VERIFIED rather than
+claimed.
+
+**Classification:** feature
+**chunks:** 2
+
 ## 2026-07-29: Quote the prime hook so a spaced install path stops breaking Claude startup (#759)
 
-<!-- prawduct: type=fix | chunks=01 | scope=759-hook-path-quoting -->
+<!-- prawduct: type=fix | scope=759-hook-path-quoting | status=shipped -->
 
 **Why:** TangleClaw wrote the silent-prime `SessionStart` command into `.claude/settings.json`
 unquoted (`lib/engines.js`), and `_resolveHookPlaceholders` substitutes the install path by literal
@@ -2614,6 +3225,8 @@ listed above.
 **Classification:** build
 
 ## 2026-07-29: tmux targets match a session name exactly — no prefix fallback (#774, PR #775)
+
+<!-- prawduct: type=fix | chunks=5 | scope=auth-6-secure-by-default | status=shipped -->
 
 **Why:** tmux resolves a `-t <name>` target by exact name, then by unique **prefix**, then by
 fnmatch. From code that silently retargets another project's session: with no `TangleClaw` session

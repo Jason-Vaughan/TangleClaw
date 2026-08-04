@@ -160,6 +160,197 @@ describe('server', () => {
       });
     }
 
+    // POST /api/auth/credential authorizes on "arrived over loopback", treating
+    // that as proof Caddy already authenticated the caller. In caddy mode the
+    // server still binds an ungated 127.0.0.1 listener the operator's own
+    // browser can reach, and parseBody parses any body as JSON whatever the
+    // Content-Type — so a form with enctype="text/plain" is a CORS *simple*
+    // request: no preflight, delivered, body parses, credential changed. The
+    // reply is unreadable cross-origin, which is irrelevant to a write.
+    describe('cross-site state-change guard', () => {
+      /**
+       * Drive one request through the real handler.
+       * @param {string} method
+       * @param {string} url
+       * @param {Record<string,string>} extraHeaders
+       * @returns {Promise<{statusCode:number, body:string, contentType:string}>}
+       */
+      async function send(method, url, extraHeaders) {
+        const req = {
+          url, method,
+          headers: Object.assign({ host: 'localhost:3102' }, extraHeaders),
+          // parseBody attaches data/end listeners; end immediately with no body.
+          on(event, cb) { if (event === 'end') cb(); },
+          socket: { remoteAddress: '127.0.0.1' }
+        };
+        const res = mockRes();
+        await handleRequest(req, res);
+        return res;
+      }
+
+      it('refuses the actual attack: a cross-site text/plain form POST to the credential route', async () => {
+        const res = await send('POST', '/api/auth/credential', {
+          'sec-fetch-site': 'cross-site',
+          'content-type': 'text/plain;charset=UTF-8'   // what a form enctype produces
+        });
+        assert.equal(res.statusCode, 403, 'a cross-site credential write must be refused');
+        assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+      });
+
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        it(`refuses cross-site ${method} on any API route, not just the credential one`, async () => {
+          const res = await send(method, '/api/config', { 'sec-fetch-site': 'cross-site' });
+          assert.equal(res.statusCode, 403, `${method} must be refused cross-site`);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+      }
+
+      // The first version of this guard lived inside the `/api/` branch, which
+      // left these open — and they are the worse half. `_openclawProxyHeaders`
+      // rewrites origin/referer to the local origin and attaches
+      // `Bearer <gatewayToken>`, so a cross-site POST here would reach the
+      // OpenClaw gateway carrying the operator's token with the tell-tale Origin
+      // stripped off. Pinned per-prefix so re-scoping the guard to `/api/` fails
+      // loudly instead of silently reopening the proxies.
+      for (const prefix of ['/terminal/x', '/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
+        it(`refuses cross-site POST to ${prefix} — the guard is not /api/-only`, async () => {
+          const res = await send('POST', prefix, { 'sec-fetch-site': 'cross-site' });
+          assert.equal(res.statusCode, 403, `${prefix} must be refused cross-site`);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+      }
+
+      // WebSockets are NOT subject to the same-origin policy: any page can open
+      // one to any host, no preflight, no CORS. So this is the sharper half of
+      // the guard — a cross-site page can READ AND WRITE on the socket, which a
+      // form post cannot, and /terminal/* proxies to a `--writable` ttyd.
+      describe('WebSocket upgrades', () => {
+        // A real duplex stream, not a stub: the ALLOWED path continues into the
+        // proxy, which pipes to this socket. A plain object passes the refusal
+        // cases and then explodes asynchronously on the ones that should succeed.
+        /** @returns {{destroyed: boolean}} */
+        function upgrade(headers) {
+          const { PassThrough } = require('node:stream');
+          const socket = new PassThrough();
+          socket.destroyed = false;
+          const orig = socket.destroy.bind(socket);
+          socket.destroy = () => { socket.destroyed = true; orig(); };
+          socket.remoteAddress = '127.0.0.1';
+          try {
+            handleUpgrade({ url: '/terminal/ws', method: 'GET', headers, socket }, socket, Buffer.alloc(0));
+          } catch { /* downstream proxy setup is not what this asserts */ }
+          return { destroyed: socket.destroyed };
+        }
+
+        it('destroys an upgrade whose Origin is another site', () => {
+          const r = upgrade({ host: 'localhost:3102', origin: 'https://evil.example' });
+          assert.equal(r.destroyed, true, 'a cross-origin terminal socket must be refused');
+        });
+
+        it('allows a same-host Origin across scheme and port', () => {
+          // The dashboard is reached over https through Caddy on one port and
+          // http directly on another; both are the same machine. A strict origin
+          // match would break the terminal on the install v5 makes default.
+          const r = upgrade({ host: 'localhost:3102', origin: 'https://localhost:8443' });
+          assert.equal(r.destroyed, false, 'same host over a different scheme/port must be allowed');
+        });
+
+        it('allows an upgrade with no Origin at all (non-browser clients)', () => {
+          const r = upgrade({ host: 'localhost:3102' });
+          assert.equal(r.destroyed, false, 'a header-less client is not a cross-site vector');
+        });
+
+        it('allows an IPv6-literal host — a tailnet address must not kill the terminal', () => {
+          // Host arrives bracketed as `[fd7a:115c::1]:3102`. Splitting on ':'
+          // yields '[', which can never equal the Origin side's
+          // '[fd7a:115c::1]', so every terminal socket would be destroyed for an
+          // operator whose dashboard is on IPv6 — dashboard loads, terminal
+          // silently dead. Tailscale assigns every node an fd7a:115c::/48
+          // address, so this is a normal way to reach TangleClaw.
+          const r = upgrade({ host: '[fd7a:115c::1]:3102', origin: 'http://[fd7a:115c::1]:3102' });
+          assert.equal(r.destroyed, false, 'an IPv6-literal same-host upgrade must be allowed');
+        });
+
+        it('still refuses a DIFFERENT IPv6 host', () => {
+          const r = upgrade({ host: '[fd7a:115c::1]:3102', origin: 'http://[fd7a:115c::2]:3102' });
+          assert.equal(r.destroyed, true);
+        });
+
+        // STRUCTURAL pin, not a behavioural one, and deliberately so. The
+        // obvious test — upgrade to /openclaw-direct/... cross-origin, assert
+        // the socket dies — CANNOT FAIL: resolveOpenclawPortDirect returns null
+        // for an unknown connId and that branch destroys the socket too, so
+        // deleting the guard leaves it green. A pin that cannot go red on the
+        // mutation it exists to catch is worse than no pin, because it reads as
+        // coverage. What actually matters is POSITION: the guard must run before
+        // any branch dispatches, so every prefix is covered by construction
+        // rather than one test per prefix.
+        it('runs the origin check before any upgrade branch dispatches', () => {
+          const src = require('node:fs').readFileSync(
+            require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+          // Bound the slice to handleUpgrade's own body. Running to EOF lets a
+          // later function satisfy the branch search, which would make the
+          // sanity assert below unfireable — the same "cannot fail" defect this
+          // pin replaced.
+          const fnStart = src.search(/function handleUpgrade\s*\(/);
+          assert.notEqual(fnStart, -1, 'handleUpgrade must exist');
+          const after = src.slice(fnStart + 1);
+          const nextFn = after.search(/^function /m);
+          const body = nextFn === -1 ? after : after.slice(0, nextFn);
+
+          const guardAt = body.search(/_isSameOriginUpgrade\(/);
+          assert.notEqual(guardAt, -1, 'handleUpgrade must consult the origin guard');
+          // No trailing slash on /terminal: the real branch tests
+          // startsWith('/terminal'), and a stricter pattern here matched nothing
+          // inside the function.
+          const firstBranchAt = Math.min(
+            ...[/startsWith\('\/openclaw-direct/, /startsWith\('\/openclaw/, /startsWith\('\/terminal/]
+              .map((re) => body.search(re))
+              .filter((i) => i !== -1)
+          );
+          assert.notEqual(firstBranchAt, Infinity,
+            'expected the upgrade branches to still exist inside handleUpgrade');
+          assert.ok(guardAt < firstBranchAt,
+            'the origin guard must precede every prefix branch — /terminal/* is a writable shell '
+            + 'and the OpenClaw branches attach the operator gateway token');
+        });
+
+        it('refuses an unparseable Origin rather than waving it through', () => {
+          const r = upgrade({ host: 'localhost:3102', origin: 'not a url' });
+          assert.equal(r.destroyed, true, 'an Origin we cannot parse must fail closed');
+        });
+      });
+
+      it('does NOT block a cross-site GET — navigation must keep working', async () => {
+        // GET is excluded on purpose; a mutating GET is a bug in that route.
+        const res = await send('GET', '/api/health', { 'sec-fetch-site': 'cross-site' });
+        assert.notEqual(res.statusCode, 403, 'reads must not be refused by the CSRF guard');
+      });
+
+      it('allows a request with NO Sec-Fetch-Site — curl, scripts, the agent-facing API', async () => {
+        // This is the compatibility contract: non-browser callers omit the
+        // header entirely and are not a CSRF vector. If this ever 403s, every
+        // documented curl example in the project guide breaks at once.
+        const res = await send('POST', '/api/config', {});
+        assert.notEqual(res.statusCode, 403, 'a header-less caller must not be refused');
+        assert.doesNotMatch(res.body, /CROSS_SITE_FORBIDDEN/);
+      });
+
+      it('allows same-origin — the dashboard\'s own fetches', async () => {
+        const res = await send('POST', '/api/config', { 'sec-fetch-site': 'same-origin' });
+        assert.notEqual(res.statusCode, 403);
+      });
+
+      it('allows same-site, and that narrowness is deliberate', async () => {
+        // Refusing same-site too would need an attacker holding a sibling
+        // subdomain of the operator's own host, and would break a legitimate
+        // multi-subdomain deployment. Pinned so a future widening is a decision
+        // someone makes on purpose rather than a silent tightening.
+        const res = await send('POST', '/api/config', { 'sec-fetch-site': 'same-site' });
+        assert.notEqual(res.statusCode, 403);
+      });
+    });
+
     it('still serves the real /manifest.json file (a genuine bypass path with a handler)', async () => {
       const res = await get('/manifest.json');
       assert.equal(res.statusCode, 200);

@@ -71,7 +71,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Session continuity** *(new in 4.0)* — every session ends with a structured wrap: a per-session summary, an updated project changelog, and a resume prime so the next session starts with "we left off at X — continue?" instead of a cold open. Full transcripts are snapshotted at wrap and everything is searchable from a per-project **Session History & Search** drawer — filter by date, tags, type, or files touched, then drill from summary into the raw transcript
 - **Four local engines, plus remote OpenClaw** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/) (Google's Gemini CLI successor), and [Aider](https://aider.chat) run locally; [OpenClaw](https://github.com/Jason-Vaughan/OpenClaw) sessions run on a remote host and attach through its connection registry. Write rules once — TangleClaw generates engine-native config so every agent gets the same instructions
 - **Launch mode selector** — pick a permission mode when you start a session: Interactive, Accept Edits, Plan Only, Auto, or Bypass. The mode propagates to the engine natively, including remote OpenClaw sessions via ClawBridge
-- **Secure remote access** *(new in 4.0)* — an optional, reversible [Caddy ingress](deploy/INGRESS.md) puts TLS and a password gate in front of everything (dashboard, terminals, APIs), with a break-glass admin reset and machine-to-machine **service tokens** so other projects' scripts can still call the PortHub and shared-docs APIs
+- **Secure remote access** *(new in 4.0)* — a reversible [Caddy ingress](deploy/INGRESS.md), set up for you during first-run setup, puts TLS and a password gate in front of everything (dashboard, terminals, APIs), with a break-glass admin reset and machine-to-machine **service tokens** so other projects' scripts can still call the PortHub and shared-docs APIs
 - **Project Master** *(new in 4.0)* — a persistent, fleet-aware assistant session (🧠 in the header) that sees cross-project status: what's running, what's idle, what shipped. Available as a landing-page pane and an in-session drawer
 - **Session Switchboard** *(beta)* — direct session-to-session messaging, so sessions coordinate with each other instead of routing everything through you. A two-head control in the session banner shows honest listener status and lights up on inbound *and* outbound messages, with a per-project auto-enable toggle. **Functionally in beta:** receiving, status, and **outbound send** (pick another session from a live roster; honest delivered-vs-queued feedback) are all live; deeper v2 automation (auto-inject, swarm stats) is still ahead
 - **Governance delegation** — first-class [Prawduct](https://github.com/brookstalley/prawduct) integration: projects governed by the Prawduct V2 plugin get their governance from the plugin itself, with TangleClaw detecting the install, deferring automatically, and flagging projects still on the legacy vendored hook
@@ -126,8 +126,9 @@ What started as session persistence grew into a full orchestration platform — 
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
 ### Security & Remote Access
-- **Caddy ingress** — optional, reversible reverse-proxy mode (`scripts/ingress-cutover.js`) that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
-- **Forced admin setup** — behind the ingress, the first-run wizard requires creating an admin login before anything else works
+- **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
+- **Forced admin setup** — the first-run wizard requires creating an admin login on any machine that can enforce one, which is the default; there is no default credential and no way to skip past it
+- **Change it from settings** — global settings has a Login section for changing the password later; it may change a login but never create or blank one, and it tells you it will sign you out before you commit
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
 - **User attribution** — when the ingress authenticates a user, TangleClaw records who did what
@@ -141,7 +142,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Technical
 - **115+ registered routes** — full REST API for everything TangleClaw does
-- **3,600+ tests** — comprehensive suite using `node:test`, zero test dependencies
+- **5,500+ tests** — comprehensive suite using `node:test`, zero test dependencies
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
 - **ADRs** — durable design decisions live in [docs/adr/](docs/adr/)
 
@@ -150,33 +151,66 @@ What started as session persistence grew into a full orchestration platform — 
 ## Quick Start
 
 ```bash
-git clone --branch v4.38.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.0.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
 
-> **Install from the tag, not from `main`.** `v4.38.0` is the current supported release.
-> `main` is where the next release is built, and while a major is in progress it carries
-> partly-finished work — right now that includes changes to how authentication and network
-> binding are set up, which is not something to meet halfway through. Cloning the tag gets
-> you a version that was tested as a whole. This note goes away when the next release ships.
+**Before that first line works, you need `git`** — and a brand-new Mac does not have it. Running
+`git clone` on a machine that has never had developer tools installed prints
+`xcode-select: note: No developer tools were found, requesting install.` and stops. On a desktop
+Mac a dialog appears: click **Install**, wait for it (it is a large download — budget 15–30
+minutes), then run the clone again. Over SSH with no desktop session, install them first with
+`xcode-select --install`. This is the one prerequisite the installer cannot handle for you, because
+you need it to *get* the installer.
 
 The install script:
-1. Checks prerequisites (node 22+, ttyd, tmux)
+1. **Installs everything else for you** — Homebrew if it is missing, then Node 22+, ttyd, tmux,
+   mkcert and Caddy. You do not need to install these by hand; the list below is what ends up on
+   your machine, not a set of chores to do first.
 2. Generates launchd plists with correct paths
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3102** on a new or HTTP-only install, or **https://localhost:3102** after enabling HTTPS. Port 3102 serves one protocol at a time; opening the HTTP URL after HTTPS is enabled produces empty responses and can look like a dashboard refresh loop. See [Troubleshooting](docs/user-guide.md#dashboard-constantly-refreshes-after-enabling-https) to verify the protocol or return a localhost-only install to HTTP. (The installed launchd service uses port 3102; running `node server.js` by hand instead listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
+Access the landing page at **http://localhost:3102**. That is where setup starts, and where the
+dashboard stays if you opt out of the login gate.
+
+**Once setup has installed the login gate — the default — the address changes to
+`https://localhost:8443`.** Caddy takes over the front door on its own port; `3102` stays bound to
+the loopback interface behind it and is *not* the address to use or share. `https://localhost:3102`
+does not work in that mode and never will: TangleClaw serves plain HTTP there and Caddy terminates
+the TLS. Setup tells you the address it landed on — trust that over this paragraph, since it knows
+which mode you chose.
+
+If you opted out of the gate and enabled HTTPS directly, `https://localhost:3102` is correct. Port
+3102 serves one protocol at a time; opening the HTTP URL after HTTPS is enabled produces empty responses and can look like a dashboard refresh loop. See [Troubleshooting](docs/user-guide.md#dashboard-constantly-refreshes-after-enabling-https) to verify the protocol or return a localhost-only install to HTTP. (The installed launchd service uses port 3102; running `node server.js` by hand instead listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
 ### Prerequisites
 
+**You install these two:**
+
 - **macOS** — TangleClaw uses launchd for service management. Linux support is not yet available
+- **git / Xcode Command Line Tools** — needed to clone this repository at all. See the note above
+  the install script's steps; `xcode-select --install` if you have no desktop session
+
+**`deploy/install.sh` installs the rest** — listed so you know what lands on your machine, not as
+work to do first:
+
 - **Node.js 22+** — required for `node:sqlite` and `node:test`
-- **ttyd** — browser-based terminal access (`brew install ttyd`)
-- **tmux** — session multiplexer (`brew install tmux`)
-- **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/), or [Aider](https://aider.chat)
-- **Caddy** *(optional)* — for the password-gated TLS ingress (`brew install caddy`, see [deploy/INGRESS.md](deploy/INGRESS.md))
+- **ttyd** — browser-based terminal access
+- **tmux** — session multiplexer
+- **mkcert** — generates the local TLS certificate
+- **Caddy** — serves the password-gated TLS ingress that setup provisions by default (see
+  [deploy/INGRESS.md](deploy/INGRESS.md)). If it is somehow absent, setup finishes with **no login**
+  and says so
+
+**You also need at least one AI CLI engine**, which TangleClaw does not install — it drives whichever
+you already use, with your own account: [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
+[Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/), or
+[Aider](https://aider.chat). TangleClaw installs and runs without one; you just cannot launch a
+session until an engine is present.
+
+**Optional integrations:**
 - **[Prawduct](https://github.com/brookstalley/prawduct)** *(optional)* — governed workflows with discovery, planning, building phases, and independent Critic review
 - **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** *(optional)* — remote AI agent sessions (requires SSH access to the OpenClaw host)
 - **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** *(optional)* — background-process visibility on OpenClaw instances
@@ -194,6 +228,7 @@ Quick answers, with links into the full docs:
 | End a session properly (and why wraps matter) | [User Guide — Wrapping a Session](docs/user-guide.md#wrapping-a-session) |
 | Find what a past session did, or search old transcripts | [User Guide — Session History](docs/user-guide.md#session-history) |
 | Put a password and TLS in front of everything | [Ingress Guide](deploy/INGRESS.md) |
+| Change the password you sign in with | [User Guide — Changing your login](docs/user-guide.md#changing-your-login) |
 | Reset a lost admin password | [Ingress Guide — break-glass reset](deploy/INGRESS.md#admin-credential-reset-break-glass-auth-2) |
 | Share docs between related projects | [User Guide — Project Groups and Shared Documents](docs/user-guide.md#project-groups-and-shared-documents) |
 | Connect a remote OpenClaw machine | [OpenClaw Setup](docs/openclaw-setup.md) |
@@ -203,9 +238,11 @@ Quick answers, with links into the full docs:
 | Cut a release, or work out why one never reached installs | [Release Process](docs/release-process.md) |
 | Change any config setting | [Configuration Reference](docs/configuration-reference.md) |
 | Fix something that's broken | [User Guide — Troubleshooting](docs/user-guide.md#troubleshooting), or [Service Management](#service-management) below |
+| Set it up safely, or get back in when locked out | [Setup Guide](docs/setup-guide.md) |
 
 ## Documentation
 
+- **[Setup Guide](docs/setup-guide.md)** — setting up safely with no prior background: what the login protects, reaching it from another device, checking it worked, getting back in if you are locked out
 - **[User Guide](docs/user-guide.md)** — getting started, full UI walkthrough, sessions, groups, mobile setup, troubleshooting
 - **[Ingress Guide](deploy/INGRESS.md)** — Caddy reverse proxy, TLS, password gate, break-glass reset, public domains
 - **[Session Rules & Self-Improvement](docs/session-rules-self-improvement.md)** — durable session directives, the Critic gate, version history
@@ -221,9 +258,16 @@ TangleClaw runs a local server with browser-based terminal access, so reaching t
 
 **Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by enabling the login gate below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
 
+**A fresh install sets a login during setup.** The wizard asks for a username and password and then
+configures the Caddy gate itself, so the password-gated ingress below is the **default outcome of
+installing**, not something you go and turn on afterwards. There is no default credential — you set
+one, or setup does not finish. TangleClaw skips the step only where it could not enforce a
+credential anyway (Caddy not installed, or a Caddy config it must not overwrite), and then says
+plainly that no login is in force rather than implying one.
+
 To reach TangleClaw from another device, pick one of two things — never neither:
 
-- **The Caddy ingress** (recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. See [deploy/INGRESS.md](deploy/INGRESS.md).
+- **The Caddy ingress** (the default, and recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. Setup provisions this for you; `scripts/ingress-cutover.js` is the manual path for upgrades and recovery. See [deploy/INGRESS.md](deploy/INGRESS.md).
 - **`"bindAllInterfaces": true`** in `~/.tangleclaw/config.json` (or Settings → Network Exposure): accept connections from every interface **with no password**. Only sensible on a network you fully control, and it is the deliberate opt-out from the protection above. Requires a restart.
 
 **Recommendations:**
@@ -286,7 +330,7 @@ node --test 'test/*.test.js'
 ### Architecture
 
 ```
-[optional] launchd (com.tangleclaw.caddy)          ← 4.0 ingress mode
+[default]  launchd (com.tangleclaw.caddy)          ← ingress mode, provisioned by setup
   └─ caddy: TLS + basic_auth gate
      └─ reverse proxy → TangleClaw server
 

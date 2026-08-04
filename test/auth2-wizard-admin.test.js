@@ -1,9 +1,17 @@
 'use strict';
 
-// AUTH-2 slice 2b — frontend wizard admin step. public/setup.js is a plain
-// <script>-loaded file, so (like setup-wizard-https.test.js) it's loaded into a
-// `vm` context with a minimal DOM stub. These tests cover the caddy-only step
-// insertion, the client-side password gate, and the completion payload.
+// Frontend wizard admin step. public/setup.js is a plain <script>-loaded file,
+// so (like setup-wizard-https.test.js) it's loaded into a `vm` context with a
+// minimal DOM stub. These tests cover step insertion, the client-side password
+// gate, and the completion payload.
+//
+// Step insertion is no longer keyed on `ingressMode === 'caddy'`. A login is the
+// default outcome of setup, so the step appears whenever the SERVER says a gate
+// can be provisioned here (GET /api/setup/ingress-state → `plan.action`) — which
+// on a fresh install means direct mode. Keying it on config was how a fresh
+// install finished with no login at all. The probe-driven behaviour and the
+// provisioning outcome live in setup-wizard-login-gate.test.js; these cases pin
+// the step list, the gate and the payload against the plan.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,10 +40,23 @@ function makeElement(id) {
   };
 }
 
+// What GET /api/setup/ingress-state answers with. `provision` is the default
+// install's answer: nothing a human maintains is in the way, so TangleClaw puts
+// a login up.
+const PROVISION_PLAN = { action: 'provision', reason: '', remedy: null };
+const REFUSE_PLAN = {
+  action: 'refuse',
+  reason: 'Caddy is not installed, so TangleClaw cannot put a login in front of itself yet.',
+  remedy: 'Install Caddy, then run `node scripts/ingress-cutover.js --to caddy`.'
+};
+
 /**
  * Load public/setup.js into a sandbox.
  * @param {object} [opts]
  * @param {object} [opts.config] - state.config contents (e.g. { ingressMode: 'caddy' }).
+ * @param {object} [opts.plan] - `plan` the ingress-state probe returns; defaults
+ *   to PROVISION_PLAN. Tests that read the step list synchronously should also
+ *   seed `wizard.ingressPlan`, since the probe is asynchronous.
  * @param {Function} [opts.apiMutate] - apiMutate override.
  * @returns {object} sandbox context, with __apiCalls captured.
  */
@@ -58,6 +79,14 @@ function loadSetup(opts = {}) {
     state: {
       engines: [], methodologies: [],
       config: Object.assign({ setupComplete: false }, opts.config || {})
+    },
+    // showWizard probes for the login plan. Answer it, so the probe neither
+    // throws nor leaves the step list depending on a race.
+    fetch: async (url) => {
+      if (String(url).includes('/api/setup/ingress-state')) {
+        return { ok: true, json: async () => ({ plan: opts.plan || PROVISION_PLAN }) };
+      }
+      throw new Error('unreachable');
     }
   };
   sandbox.document = {
@@ -80,13 +109,13 @@ function loadSetup(opts = {}) {
 
 describe('AUTH-2 wizard admin step (frontend)', () => {
   describe('step insertion', () => {
-    it('adds the admin step only in caddy mode', () => {
-      const direct = loadSetup({ config: { ingressMode: 'direct' } });
-      assert.equal(direct.wizardStepKeys().includes('admin'), false);
-      assert.equal(direct.wizardStepKeys().length, 7);
-
-      const caddy = loadSetup({ config: { ingressMode: 'caddy' } });
-      const keys = caddy.wizardStepKeys();
+    it('adds the admin step when a gate can be provisioned — including in direct mode', () => {
+      // The flip. `ingressMode: 'direct'` used to mean "no admin step", which is
+      // the state every fresh install is in, so no fresh install was ever asked
+      // for a login.
+      const ctx = loadSetup({ config: { ingressMode: 'direct' } });
+      ctx.wizard.ingressPlan = PROVISION_PLAN;
+      const keys = ctx.wizardStepKeys();
       assert.equal(keys.includes('admin'), true);
       assert.equal(keys.length, 8);
       // admin must sit immediately before the final confirm step.
@@ -94,14 +123,26 @@ describe('AUTH-2 wizard admin step (frontend)', () => {
       assert.equal(keys[keys.length - 1], 'confirm');
     });
 
-    it('hides the Skip button in caddy mode', () => {
-      const caddy = loadSetup({ config: { ingressMode: 'caddy' } });
-      caddy.showWizard();
-      assert.equal(caddy.document.getElementById('setupSkipBtn').style.display, 'none');
+    it('omits the admin step when no gate can be put up, even in caddy mode', () => {
+      // Config is no longer the deciding fact in either direction: an install
+      // already behind Caddy whose config must not be touched has to skip too,
+      // or the wizard collects a credential nothing will enforce.
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' }, plan: REFUSE_PLAN });
+      ctx.wizard.ingressPlan = REFUSE_PLAN;
+      assert.equal(ctx.wizardStepKeys().includes('admin'), false);
+      assert.equal(ctx.wizardStepKeys().length, 7);
+    });
 
-      const direct = loadSetup({ config: { ingressMode: 'direct' } });
-      direct.showWizard();
-      assert.equal(direct.document.getElementById('setupSkipBtn').style.display, '');
+    it('hides the Skip button when a credential is mandatory', () => {
+      const gated = loadSetup({ config: { ingressMode: 'direct' } });
+      gated.wizard.ingressPlan = PROVISION_PLAN;
+      gated._syncSkipButton();
+      assert.equal(gated.document.getElementById('setupSkipBtn').style.display, 'none');
+
+      const open = loadSetup({ plan: REFUSE_PLAN });
+      open.wizard.ingressPlan = REFUSE_PLAN;
+      open._syncSkipButton();
+      assert.equal(open.document.getElementById('setupSkipBtn').style.display, '');
     });
   });
 
@@ -216,8 +257,12 @@ describe('AUTH-2 wizard admin step (frontend)', () => {
   });
 
   describe('completion payload', () => {
-    it('includes adminUser + adminPassword in caddy mode', async () => {
-      const ctx = loadSetup({ config: { ingressMode: 'caddy' }, apiMutate: async () => ({ ok: true }) });
+    // Sent under exactly the predicate that collected it. A payload keyed on a
+    // different fact from the step list is how a wizard ends up either asking for
+    // a password it never sends, or sending one it never asked for.
+    it('includes adminUser + adminPassword when the admin step was shown', async () => {
+      const ctx = loadSetup({ config: { ingressMode: 'direct' }, apiMutate: async () => ({ ok: true }) });
+      ctx.wizard.ingressPlan = PROVISION_PLAN;
       ctx.wizard.adminUser = 'admin';
       ctx.wizard.adminPassword = 'a-strong-passphrase-42';
       await ctx.wizardComplete();
@@ -227,8 +272,10 @@ describe('AUTH-2 wizard admin step (frontend)', () => {
       assert.equal(call.body.adminPassword, 'a-strong-passphrase-42');
     });
 
-    it('omits admin fields in direct mode', async () => {
-      const ctx = loadSetup({ config: { ingressMode: 'direct' }, apiMutate: async () => ({ ok: true }) });
+    it('omits admin fields when the step was skipped', async () => {
+      const ctx = loadSetup({ config: { ingressMode: 'caddy' }, plan: REFUSE_PLAN,
+        apiMutate: async () => ({ ok: true }) });
+      ctx.wizard.ingressPlan = REFUSE_PLAN;
       ctx.wizard.adminUser = 'admin';
       ctx.wizard.adminPassword = 'a-strong-passphrase-42';
       await ctx.wizardComplete();
