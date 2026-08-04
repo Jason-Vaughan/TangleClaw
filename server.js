@@ -158,8 +158,9 @@ function _servedHostsOrEmpty(config) {
  * the route that sets the admin credential.
  *
  * So the carve-out applies only where the flow it exists for is possible: the
- * socket is actually wide, or Caddy is in front. A loopback-only install gets
- * no exemption, because it has no remote first run to protect.
+ * socket is actually wide. A loopback-only install gets no exemption, because it
+ * has no remote first run to protect — and neither does caddy mode, which reads
+ * like a second qualifier and is not (see the reasoning at the return below).
  *
  * @param {string} pathname - Request path.
  * @param {object|null} config - Loaded config, or `null` when it could not be

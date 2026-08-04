@@ -356,7 +356,7 @@ describe('setup provisions a login by default', () => {
       });
     });
 
-      /*
+    /*
      * #864 — the allowlist is cached because computing it parses the
      * certificate, and the cache's certificate term is load-bearing: a SAN
      * added by `POST /api/setup/generate-cert` lands in NO config field, so the
@@ -365,6 +365,38 @@ describe('setup provisions a login by default', () => {
      * failure the derivation exists to prevent.
      */
     describe('#864 — the served-host cache invalidates on the certificate', () => {
+      it('recomputes when a configured public name changes — the terms the record claimed', () => {
+        // publicDomain and caddyTailnetHost are PATCHable on a running server,
+        // so a stale memo would refuse writes and terminal upgrades under the
+        // very name the operator had just configured, until a restart. The code
+        // keys on them correctly; nothing moved them, and the change-log then
+        // claimed every key term was pinned — which is what made the gap worse
+        // than an ordinary missing test.
+        const httpsSetup = require('../lib/https-setup');
+        const realFn = httpsSetup.servedHostAllowlist;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        try {
+          const cfg = store.config.load();
+          cfg.publicDomain = 'first.example.com';
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged config must be served from cache');
+
+          cfg.publicDomain = 'second.example.com';
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1, 'a new publicDomain must invalidate the memo');
+
+          cfg.caddyTailnetHost = 'box.tail123.ts.net';
+          const afterDomain = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterDomain + 1, 'a new caddyTailnetHost must invalidate it too');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+        }
+      });
+
       it('recomputes when the machine is renamed — the term nothing else moves', () => {
         // Same mutation class as the certificate term, one term over. Both
         // certHostUnion and servedHostAllowlist derive names from os.hostname(),

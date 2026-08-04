@@ -813,6 +813,15 @@ All notable changes to TangleClaw are documented in this file.
   field. The startup line now logs the computed list for the same reason: a wrong derivation should
   be a diff against reality, not a mystery.
 
+  The list is memoized on the configured names, the machine's hostname, and the certificate's mtime
+  and size — which changes what you *see*, not only what it costs. Computing it reads and parses the
+  certificate, so an uncached version did that on every guarded write and every terminal upgrade,
+  and on an install with no certificate yet it logged a warning about certificate *regeneration* on
+  each one — loudest during the setup wizard, about an operation the request path is not performing.
+  That warning now fires once per change of state, which is what it was written to report. A
+  regenerated certificate invalidates the memo by itself, which matters because the names
+  `generate-cert` adds live nowhere else.
+
   **First-run setup is exempt on three axes, and the third is the one that matters.** Setup is what
   *configures* the public names, so on an install a remote operator can reach, first run is the one
   moment the allowlist cannot contain the address they arrived by — the `Host` header is how the

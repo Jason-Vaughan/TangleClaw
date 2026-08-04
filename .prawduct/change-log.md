@@ -805,9 +805,11 @@ as the fallback, so all three consumers now derive it from one place.
 **Also:** the allowlist is memoized on the configured names, the hostname, and the certificate's
 mtime/size. That is not only a cost fix — computing it read and X.509-parsed the cert on every
 guarded write and upgrade, and on an install with no cert yet emitted a warning about *regeneration*
-per request, loudest during the setup wizard. The warning now reports a change of state. Each key
-term is mutation-pinned, because the first two were added without one and the certificate term is
-load-bearing: a SAN from `generate-cert` lives in no config field.
+per request, loudest during the setup wizard. The warning now reports a change of state. All four key terms —
+`publicDomain`, `caddyTailnetHost`, the hostname, and the certificate's mtime/size — are
+mutation-pinned. They were not at first, and the record claimed otherwise before the tests existed,
+which is worse than the gap: the certificate term is load-bearing (a SAN from `generate-cert` lives
+in no config field), and the config terms are PATCHable on a running server.
 
 **Classification:** fix
 
