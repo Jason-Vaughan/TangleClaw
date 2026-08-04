@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [4.39.0] - 2026-08-03
+
 ### Fixed
 - **Wrap capture-back survives ClawBridge 2.x: `/v2/session/file` now sent as `POST`.** ClawBridge
   v2.0.0 moved consuming reads from `GET` to `POST` (a side-effecting read must not be a `GET`) and

@@ -204,3 +204,7 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `test/store-groups.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/store-shareddocs.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/version-bump-package-json.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-03)
+
+- **TBD** — touched in this session: `test/clawbridge.test.js`. <!-- describe -->
