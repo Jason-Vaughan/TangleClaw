@@ -706,10 +706,37 @@ function main() {
       }
       process.stdout.write(`WARNING: overwriting hand-edited Caddyfile (--force). Backup: ${backup}\n`);
     }
+    // `caddy validate` runs against a PATH, so the candidate has to be on disk
+    // before it can be judged — which means the live file is briefly the
+    // unvalidated one. Hold the previous bytes so a rejection can put them back:
+    // without this the run aborted saying "ingress untouched" while leaving
+    // invalid content in place, which is true of the running service and false
+    // of the file it reloads from. The lie only surfaces at the next restart,
+    // when Caddy refuses to start and nothing points at this moment as the cause.
+    // Reachable without any bug of ours — Caddy renamed `basicauth` to
+    // `basic_auth` in 2.8, so a version skew alone produces it.
+    const priorCaddyfile = fs.existsSync(plan.caddyfile.path)
+      ? fs.readFileSync(plan.caddyfile.path)
+      : null;
     fs.writeFileSync(plan.caddyfile.path, plan.caddyfile.content, { mode: 0o600 });
     const v = caddy.validateCaddyfile(plan.caddyfile.path);
     if (!v.ok) {
-      process.stderr.write(`ERROR: generated Caddyfile failed validation — aborting (ingress untouched):\n  ${v.error}\n`);
+      let restored = 'no Caddyfile existed before this run, so the invalid one was removed';
+      try {
+        if (priorCaddyfile === null) {
+          fs.unlinkSync(plan.caddyfile.path);
+        } else {
+          fs.writeFileSync(plan.caddyfile.path, priorCaddyfile, { mode: 0o600 });
+          restored = 'the previous Caddyfile has been restored';
+        }
+      } catch (restoreErr) {
+        // Say so rather than swallowing it: the operator is now the only thing
+        // standing between this file and a Caddy that will not start.
+        restored = `COULD NOT restore the previous Caddyfile (${restoreErr.message}) — `
+          + `${plan.caddyfile.path} currently holds invalid content`;
+      }
+      process.stderr.write(
+        `ERROR: generated Caddyfile failed validation — aborting (ingress untouched; ${restored}):\n  ${v.error}\n`);
       finish(CUTOVER_CODES.VALIDATE_FAILED, `generated Caddyfile failed validation: ${v.error}`);
     }
   }

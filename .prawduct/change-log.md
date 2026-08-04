@@ -26,6 +26,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-04: the dashboard answers to the machine's own name, and cert regeneration stops shrinking (#863, #862, #859, #846)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+**Why:** four issues' worth of shipped v5 behaviour reached `CHANGELOG.md` and never reached this
+file, so every view that derives from these tags — Status, `release-notes.md`, `scope_rollups` —
+was blind to it, and record-lint had no `chunks=` tag to grade. Recorded here as one entry covering
+the step-7 acceptance work rather than backfilling four.
+
+**#863** — a default caddy install generated exactly one Caddy site, `localhost`, so every other
+address failed the TLS handshake before a password was asked for. Measured from a second machine:
+`tlsv1 alert internal error`, not a login prompt. The mDNS name now rides in the same site header
+(`localhost, studio.local {`) — one block, so one `tls`/gate/upstream with no copy free to drift,
+and invisible to `extractTailnetHost`, which would otherwise have adopted a separate block as the
+tailnet site. Gated installs only; an install with no credential stays loopback-only. Verified
+end-to-end from a different host: `/` and `/api/config` went 000 → 401.
+
+Certificate regeneration is now **additive** at all three sites (both cutover branches and
+`POST /api/setup/generate-cert`). Nothing records the host list a cert was minted with, so the cert
+is its own only record; regenerating from the defaults dropped a tailnet FQDN and un-covered the
+tailnet HTTPS site that reuses it. This shipped broken twice before a clean-room run caught it —
+first because only the new branch was fixed, then because the surviving branch calls the union
+before `ctx.certPath` is assigned.
+
+**#862** — the setup guide's recovery recipe for "no login" produced a green health check and an
+ungated dashboard, and the corrected version was then ordered backwards (`--create-gate` exits
+before it is read when no Caddyfile exists). Both fixed; the order is now cutover → create-gate,
+with the unprotected window between them stated plainly.
+
+**#859** — `install.sh` warns when `projectsDir` sits under a TCC-protected folder: the install
+passes its health check and the server then wedges on the first request that lists projects.
+
+**#846** — access logging recorded as deliberately not generator-owned, because #821 shows ingress
+logging grows unrotated and can capture a `basic_auth` hash.
+
+Also: the cutover now restores the previous Caddyfile when `caddy validate` rejects a generated one
+— it wrote before validating and left the invalid file in place while reporting "ingress untouched",
+which was true of the running service and false of the file it reloads from.
+
 ## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
 
 <!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
