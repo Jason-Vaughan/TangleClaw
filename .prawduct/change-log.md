@@ -802,6 +802,13 @@ concludes "up to date", and (given the same commit's hide-on-real-answer branch)
 down while old code is still serving. Pointed at `getRunningVersion()` with the disk read kept
 as the fallback, so all three consumers now derive it from one place.
 
+**Also:** the allowlist is memoized on the configured names, the hostname, and the certificate's
+mtime/size. That is not only a cost fix — computing it read and X.509-parsed the cert on every
+guarded write and upgrade, and on an install with no cert yet emitted a warning about *regeneration*
+per request, loudest during the setup wizard. The warning now reports a change of state. Each key
+term is mutation-pinned, because the first two were added without one and the certificate term is
+load-bearing: a SAN from `generate-cert` lives in no config field.
+
 **Classification:** fix
 
 ## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)
@@ -3329,9 +3336,12 @@ rather than asserted.
 anyway". That premise is false for the default population: `bindAllInterfaces: false` +
 `ingressMode: 'direct'` binds loopback only, so **no remote operator can reach the wizard**, and the
 only request that could arrive there under an unserved `Host` was the rebound one — on the route
-that sets the admin credential. The carve-out now also requires the install to actually be reachable
-(`describeBindState(config).wide` or caddy mode), so it applies exactly where the flow it protects
-can happen. It also covers `PATCH /api/config`, the wizard's OTHER terminator (ADR 0009 point 2) —
+that sets the admin credential. The carve-out now also requires the install to actually be reachable —
+`describeBindState(config).wide`, and *only* that. Caddy mode looks like a second way to qualify and
+is not: `bindPolicy` refuses the wide opt-in there, so the listener is loopback-only behind Caddy, a
+remote operator arrives THROUGH Caddy under an allowlisted name, and a rebound page reaches
+127.0.0.1 without traversing Caddy at all. Accepting it would have exempted only the attack — the
+same defect in the other arm, and it was caught only because the Critic noticed the arm had no test. It also covers `PATCH /api/config`, the wizard's OTHER terminator (ADR 0009 point 2) —
 guarding Finish but not Skip is the half-swept-family defect again.
 
 **Two more the build turned up:**

@@ -307,46 +307,7 @@ describe('setup provisions a login by default', () => {
         assert.match(res.raw, /HOST_NOT_SERVED/);
       });
 
-      /*
-     * #864 — the allowlist is cached because computing it parses the
-     * certificate, and the cache's certificate term is load-bearing: a SAN
-     * added by `POST /api/setup/generate-cert` lands in NO config field, so the
-     * cert is its only record. Key on config alone and a freshly added name
-     * never enters the allowlist for the life of the process — the exact
-     * failure the derivation exists to prevent.
-     */
-    describe('#864 — the served-host cache invalidates on the certificate', () => {
-      it('recomputes when cert.pem changes, not just when config does', () => {
-        const httpsSetup = require('../lib/https-setup');
-        const certsDir = httpsSetup.getCertsDir();
-        fs.mkdirSync(certsDir, { recursive: true });
-        const certPath = path.join(certsDir, 'cert.pem');
-
-        const realFn = httpsSetup.servedHostAllowlist;
-        let calls = 0;
-        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
-        try {
-          const cfg = store.config.load();
-          fs.writeFileSync(certPath, 'FIRST');
-          server864._servedHostsOrEmpty(cfg);
-          const afterFirst = calls;
-          server864._servedHostsOrEmpty(cfg);
-          assert.equal(calls, afterFirst, 'an unchanged cert must be served from cache');
-
-          // Rewrite with a DIFFERENT length so the key moves even if the
-          // filesystem's mtime resolution rounds two fast writes together.
-          fs.writeFileSync(certPath, 'SECOND-AND-LONGER');
-          server864._servedHostsOrEmpty(cfg);
-          assert.equal(calls, afterFirst + 1,
-            'a regenerated certificate must invalidate the cache — its SANs live nowhere else');
-        } finally {
-          httpsSetup.servedHostAllowlist = realFn;
-          fs.rmSync(certPath, { force: true });
-        }
-      });
-    });
-
-    it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
+      it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
         // Caddy mode looks like "remotely reachable", and an earlier version
         // treated it as a second way to qualify. But bindPolicy REFUSES the wide
         // opt-in in caddy mode, so the listener is loopback-only there too; a
@@ -392,6 +353,75 @@ describe('setup provisions a login by default', () => {
         assert.equal(res.status, 400);
         assert.match(res.raw, /ADMIN_REQUIRED/,
           'reaching the eyes-open guard is proof the carve-out let it through');
+      });
+    });
+
+      /*
+     * #864 — the allowlist is cached because computing it parses the
+     * certificate, and the cache's certificate term is load-bearing: a SAN
+     * added by `POST /api/setup/generate-cert` lands in NO config field, so the
+     * cert is its only record. Key on config alone and a freshly added name
+     * never enters the allowlist for the life of the process — the exact
+     * failure the derivation exists to prevent.
+     */
+    describe('#864 — the served-host cache invalidates on the certificate', () => {
+      it('recomputes when the machine is renamed — the term nothing else moves', () => {
+        // Same mutation class as the certificate term, one term over. Both
+        // certHostUnion and servedHostAllowlist derive names from os.hostname(),
+        // so without it in the key a machine renamed mid-run keeps answering to
+        // its old .local name and refuses every write under its new one until a
+        // restart. The JSDoc calls the key complete; this is what makes that true.
+        const os = require('node:os');
+        const httpsSetup = require('../lib/https-setup');
+        const realFn = httpsSetup.servedHostAllowlist;
+        const realHostname = os.hostname;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        os.hostname = () => 'before-rename';
+        try {
+          const cfg = store.config.load();
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged hostname must be served from cache');
+
+          os.hostname = () => 'after-rename';
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1,
+            'a renamed machine must invalidate the cache — its names derive from the hostname');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+          os.hostname = realHostname;
+        }
+      });
+
+      it('recomputes when cert.pem changes, not just when config does', () => {
+        const httpsSetup = require('../lib/https-setup');
+        const certsDir = httpsSetup.getCertsDir();
+        fs.mkdirSync(certsDir, { recursive: true });
+        const certPath = path.join(certsDir, 'cert.pem');
+
+        const realFn = httpsSetup.servedHostAllowlist;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        try {
+          const cfg = store.config.load();
+          fs.writeFileSync(certPath, 'FIRST');
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged cert must be served from cache');
+
+          // Rewrite with a DIFFERENT length so the key moves even if the
+          // filesystem's mtime resolution rounds two fast writes together.
+          fs.writeFileSync(certPath, 'SECOND-AND-LONGER');
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1,
+            'a regenerated certificate must invalidate the cache — its SANs live nowhere else');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+          fs.rmSync(certPath, { force: true });
+        }
       });
     });
 
