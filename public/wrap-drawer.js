@@ -338,6 +338,20 @@
         // the branch may dangle and nothing is armed to land it.
         return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: pr.error, pr };
       }
+      if (pr && pr.stranded) {
+        // #867 — pushed, but no PR exists and none is armed. Without this the
+        // shape fell through to the plain-success return below, which also
+        // discards `pr`: the banner said "Wrap committed" in success tone for a
+        // branch nothing will ever land. It is the same class as the `pr.error`
+        // case above — committed, with nothing to merge it — so it reads the
+        // same way, and only the operator can rescue it.
+        return {
+          label: 'Wrap committed — branch left on origin, no PR',
+          tone: 'warning',
+          detail: pr.skippedReason || 'the wrap branch was pushed but no PR was opened',
+          pr
+        };
+      }
       if (pr && (pr.armed || pr.prUrl)) {
         // Honest provisional state; the drawer resolves merged/pending/blocked
         // via GET /wrap/pr-status after the pipeline returns.

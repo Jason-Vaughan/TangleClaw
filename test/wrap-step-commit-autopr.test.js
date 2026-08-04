@@ -464,6 +464,25 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       assert.equal(commitStep._truncateForRecord(null), null);
     });
 
+    it('strips a credential embedded in a remote URL before persisting it', () => {
+      // A failed `git push` echoes the remote. These rows are served over
+      // GET /api/activity, and a bare `user:password@` matches none of
+      // secret-scan's patterns — so truncation alone would have stored it.
+      const out = commitStep._truncateForRecord(
+        "fatal: could not read from 'https://jason:hunter2@github.com/x/y.git'"
+      );
+      assert.doesNotMatch(out, /hunter2/, 'the password must not reach the database');
+      assert.match(out, /\/\/\*\*\*:\*\*\*@github\.com/);
+      assert.match(out, /could not read from/, 'the diagnostic value must survive redaction');
+    });
+
+    it('replaces — never truncates — text still matching a known secret pattern', () => {
+      const out = commitStep._truncateForRecord(`remote: rejected, token ghp_${'a'.repeat(36)}`);
+      assert.match(out, /^\[redacted — github-token detected/,
+        'a truncated secret is still a secret, so the text is replaced wholesale');
+      assert.doesNotMatch(out, /ghp_/);
+    });
+
     it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {
       const cfg = store.projectConfig.load(projectPath);
       cfg.wrapAutoPrEnabled = false;

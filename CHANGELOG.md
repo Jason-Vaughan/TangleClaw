@@ -361,10 +361,12 @@ All notable changes to TangleClaw are documented in this file.
 
   **The operator-facing half moved with it.** The wrap drawer rendered a stranded wrap as
   `wrap PR skipped: …` — the same neutral wording as a deliberate `wrapAutoPrEnabled: false`
-  opt-out — and `wrapPrInfo` returned `null`, so no banner appeared. The drawer is the surface an
-  operator is actually watching in the one moment the branch can still be rescued, and it called the
-  failure benign. It now names the branch as left on the remote and returns a PR handle so the
-  banner fires.
+  opt-out — and the wrap banner reported `Wrap committed` in plain **success** tone, because the
+  status summary recognised only "the close-loop errored" and "a PR exists", and a stranded wrap is
+  neither. The drawer is the surface an operator is actually watching in the one moment the branch
+  can still be rescued, and every part of it called the failure benign. The commit row now names the
+  branch as left on the remote, and the banner reads `Wrap committed — branch left on origin, no
+  PR` in warning tone, alongside the existing "release NOT armed" case it belongs with.
 
   **The `gh`-unavailable path also logged at `info`,** identical in level to a PR that actually
   opened. Both the server and the drawer now derive from one predicate — pushed, no PR URL, and
@@ -374,9 +376,13 @@ All notable changes to TangleClaw are documented in this file.
   resolves itself. The pre-push refusals push nothing, so they stay at `info` — warning on a
   deliberate opt-out trains the warning away.
 
-  `store.activity.log` swallows its own failures and no-ops without a database, and the persisted
-  `error` is bounded at 200 characters the way `pr-merge.js` already bounds the same text, so
-  recording cannot break a wrap or grow the database without limit. Every guard is mutation-verified
+  `store.activity.log` swallows its own failures and no-ops without a database, so recording cannot
+  break a wrap. The persisted `error` is raw `git`/`gh` stderr served back over `GET /api/activity`,
+  so it is redacted before storage — an embedded URL credential (`https://user:token@host/…`) is
+  stripped structurally, since a bare `user:password@` matches none of `secret-scan`'s patterns, and
+  anything still matching a known pattern is replaced by its type names rather than trimmed, because
+  a truncated secret is still a secret. The 200-character cap `pr-merge.js` already applies to the
+  same text is applied last: it bounds size, it is not redaction. Every guard is mutation-verified
   rather than merely green: reverting the log predicate reddens the warn test alone, disabling the
   write reddens all four record tests, and drifting the drawer's copy of the predicate away from the
   server's reddens the agreement tests that exist to prevent exactly that.
