@@ -45,6 +45,52 @@ const TTYD_LABEL = 'com.tangleclaw.ttyd';
 // by label, and a second copy is a rename away from restarting nothing while
 // reporting success.
 const CADDY_LABEL = caddy.CADDY_LABEL;
+// The names every TangleClaw cert must carry regardless of what an older cert
+// happened to include. Mirrors MKCERT_HOSTS_DEFAULT in lib/https-setup.js; kept
+// here as an explicit floor so an additive regeneration can never come out with
+// FEWER names than a fresh one.
+const MKCERT_BASE_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
+
+/**
+ * Every hostname a regenerated certificate must carry.
+ *
+ * Regenerating is destructive to names nothing else records: no config field
+ * stores the host list a cert was minted with, so generating from the defaults
+ * discards a tailnet FQDN supplied through `POST /api/setup/generate-cert` — and
+ * the tailnet HTTPS site reuses this very cert. Measured on a clean-room
+ * install, so this is not a theoretical hazard. Both generation paths and the
+ * dry-run preview call THIS, because the two paths drifted once already: the
+ * union was added to one of them and the other silently kept dropping names.
+ *
+ * @param {string|null} certPath - Existing cert to carry names forward from.
+ * @param {object} config - Loaded TangleClaw config.
+ * @returns {string[]} Deduplicated host list for mkcert.
+ */
+function certHostUnion(certPath, config) {
+  const httpsSetup = httpsSetupModule();
+  // Read from the standard cert location as well as whatever the caller has
+  // resolved so far. The "no valid cert configured" branch calls this BEFORE
+  // ctx.certPath is assigned — it is still null there — and that is precisely
+  // the branch that regenerates, so reading only the argument carried nothing
+  // forward and dropped every name anyway. Verified by running it: a cert
+  // holding a tailnet FQDN still came out with only the defaults until this
+  // fallback existed.
+  const candidates = [certPath, path.join(httpsSetup.getCertsDir(), 'cert.pem')].filter(Boolean);
+  const carried = candidates.flatMap((p) => httpsSetup.certSanHosts(p));
+  return [...new Set([
+    ...carried,
+    ...MKCERT_BASE_HOSTS,
+    httpsSetup.mdnsHostFor(require('node:os').hostname()),
+    (config && config.caddyTailnetHost) || null,
+    (config && config.publicDomain) || null
+  ].filter(Boolean))];
+}
+
+/** @returns {object} lib/https-setup, resolved lazily (REPO_DIR-relative like the others). */
+function httpsSetupModule() {
+  return require(path.join(REPO_DIR, 'lib', 'https-setup'));
+}
 
 /**
  * Replace `__TOKEN__` placeholders in a plist template string.
@@ -124,7 +170,15 @@ function planCutover(target, ctx) {
       remoteHttpCatchAll: config.caddyRemoteHttp === true,
       // #434 — preserve the tailnet HTTPS site + http→https redirect (adopted
       // from the live file or set explicitly). Generator enforces gate-required.
-      tailnetHost: config.caddyTailnetHost || null
+      tailnetHost: config.caddyTailnetHost || null,
+      // #863 — the machine's own mDNS name, so the dashboard answers to
+      // something other than `localhost`. Without it the generated Caddyfile has
+      // exactly one site and every other address fails the TLS handshake, which
+      // made "reach it from your phone" impossible on a default install. The
+      // generator adds it only when a gate exists and only if it parses as a
+      // hostname; `ctx.lanHost` is already null when the cert cannot vouch for
+      // the name.
+      lanHost: ctx.lanHost
     });
     const ttydPlist = fillTemplate(ctx.ttydTemplate, {
       TTYD_PATH: env.ttydPath, HOME: env.home,
@@ -436,6 +490,11 @@ function main() {
     ttydTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${TTYD_LABEL}.plist`), 'utf8'),
     caddyTemplate: fs.readFileSync(path.join(DEPLOY_DIR, `${CADDY_LABEL}.plist`), 'utf8'),
     certPath: null,
+    // #863 — resolved below once a cert exists to vouch for the name. Declared
+    // here so the shape is complete before any early return: planCutover reads
+    // it unconditionally, and an undefined would advertise the name on a
+    // dry-run path that never ran the coverage check.
+    lanHost: null,
     keyPath: null,
     // #397 — the existing Caddyfile's text (null if absent OR unreadable) feeds
     // the refuse-to-ungate guard in planCutover. Read only in the states the
@@ -493,9 +552,72 @@ function main() {
       ctx.keyPath = path.join(certsDir, 'key.pem');
     } else {
       process.stdout.write('No valid mkcert cert configured — generating one (mkcert)...\n');
-      const gen = httpsSetup.generateCerts();
+      // Additive for the same reason the regeneration below is: "no VALID cert
+      // configured" includes the case where a perfectly good cert exists but
+      // config does not point at it, and generating from the defaults there
+      // discards every name it carried. Measured on a clean-room install: a cert
+      // holding a tailnet FQDN came out of this branch holding only the
+      // defaults, silently un-covering the tailnet HTTPS site that reuses it.
+      // `certSanHosts` returns [] for a cert that genuinely is not there, so a
+      // true first run is unaffected.
+      const gen = httpsSetup.generateCerts({ hosts: certHostUnion(ctx.certPath, config) });
       ctx.certPath = gen.certPath;
       ctx.keyPath = gen.keyPath;
+    }
+
+    // #863 — the name the dashboard answers to besides `localhost`.
+    //
+    // A certificate that does not carry the name is worse than no extra site: the
+    // handshake succeeds and the browser rejects the name, which reads as "the
+    // password page is broken" rather than "unreachable". So the name is only
+    // advertised once the cert vouches for it. Older installs carry a cert whose
+    // mDNS SAN was written `<host>.local.local` and covers nothing, so a plain
+    // coverage check would leave exactly those installs stuck — regenerate
+    // instead. mkcert generation is unprivileged and this function already does
+    // it when no valid cert exists; the CA is untouched, so nothing needs
+    // re-trusting that was trusted before.
+    ctx.lanHost = httpsSetup.mdnsHostFor(require('node:os').hostname());
+    // A preview must describe the destructive step, not omit it. Regenerating
+    // the certificate is the one thing in this run that overwrites a file the
+    // operator did not ask about, and `--dry-run` advertises itself as changing
+    // nothing — so it has to SAY that a real run would rewrite the cert, and
+    // which names it would carry forward. A preview that stays silent about a
+    // rebuild is the inversion of the rule this project already holds itself to.
+    if (ctx.lanHost && dryRun && !httpsSetup.certCoversHost(ctx.certPath, ctx.lanHost)) {
+      const wouldCarry = certHostUnion(ctx.certPath, config);
+      process.stdout.write(
+        `NOTE: would REGENERATE the certificate (${ctx.certPath}) — it does not cover ${ctx.lanHost}.\n`
+        + `      Names it would carry: ${wouldCarry.join(', ')}\n`
+        + '      (existing names are preserved; the CA is untouched, so nothing needs re-trusting)\n');
+    }
+    if (ctx.lanHost && !dryRun && !httpsSetup.certCoversHost(ctx.certPath, ctx.lanHost)) {
+      process.stdout.write(
+        `Certificate does not cover ${ctx.lanHost} — regenerating so the dashboard can be reached by name...\n`);
+      try {
+        // ADDITIVE, never a replacement. Nothing records the host list a cert was
+        // minted with, so regenerating from the defaults silently drops every
+        // name added later — including a tailnet FQDN supplied through
+        // `POST /api/setup/generate-cert`, whose HTTPS site reuses THIS cert and
+        // would stop matching. The cert is its own only record, so the existing
+        // SANs are read back out and carried forward, together with the sites
+        // config says we are about to emit.
+        const regen = httpsSetup.generateCerts({ hosts: certHostUnion(ctx.certPath, config) });
+        ctx.certPath = regen.certPath;
+        ctx.keyPath = regen.keyPath;
+      } catch (e) {
+        // Honest degradation: keep the working localhost cert and drop the extra
+        // name, rather than emitting a site the browser will reject.
+        process.stdout.write(
+          `WARNING: could not regenerate the certificate (${e.message}). Continuing with `
+          + 'localhost only — the dashboard will not be reachable by name from another device.\n');
+        ctx.lanHost = null;
+      }
+      if (ctx.lanHost && !httpsSetup.certCoversHost(ctx.certPath, ctx.lanHost)) {
+        process.stdout.write(
+          `WARNING: the regenerated certificate still does not cover ${ctx.lanHost}. Continuing with `
+          + 'localhost only.\n');
+        ctx.lanHost = null;
+      }
     }
 
     // #397 bug 1: the launchd caddy binary has no Full Disk Access, so a cert
@@ -711,4 +833,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, CUTOVER_CODES };
+module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };

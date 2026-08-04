@@ -112,6 +112,73 @@ describe('mdnsHostFor — the certificate SAN that lets another device connect',
   });
 });
 
+describe('certCoversHost — only advertise a name the certificate vouches for (#863)', () => {
+  const { certCoversHost } = require('../lib/https-setup');
+  const os2 = require('node:os');
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const { execSync } = require('node:child_process');
+
+  // A site served under a name the cert does not carry fails in the browser with
+  // a name mismatch the operator cannot fix — which reads as "the login page is
+  // broken" rather than "unreachable". So the Caddyfile only advertises a name
+  // once the cert covers it, and this is the check that decides.
+  const dir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'tc-cert-cover-'));
+  const certPath = path2.join(dir, 'c.pem');
+  let made = false;
+  try {
+    execSync(
+      `openssl req -x509 -newkey rsa:2048 -keyout "${path2.join(dir, 'k.pem')}" -out "${certPath}" `
+      + '-days 2 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:studio.local"',
+      { stdio: 'ignore', timeout: 20000 }
+    );
+    made = true;
+  } catch { /* openssl unavailable — the negative cases below still run */ }
+
+  it('answers true for a name in the SAN list', { skip: !made ? 'openssl unavailable' : false }, () => {
+    assert.equal(certCoversHost(certPath, 'studio.local'), true);
+    assert.equal(certCoversHost(certPath, 'localhost'), true);
+  });
+
+  it('answers false for a name the cert does NOT carry', { skip: !made ? 'openssl unavailable' : false }, () => {
+    // The exact shape of the bug this exists to catch: the old code wrote
+    // `<host>.local.local` into the SAN, so the real mDNS name was uncovered.
+    assert.equal(certCoversHost(certPath, 'studio.local.local'), false);
+    assert.equal(certCoversHost(certPath, 'other-machine.local'), false);
+  });
+
+  it('certSanHosts reads back every name, so regeneration can be additive',
+    { skip: !made ? 'openssl unavailable' : false }, () => {
+      // Nothing records the host list a cert was minted with, so the cert is its
+      // own only record. A regeneration that passes the defaults instead of the
+      // union silently drops a tailnet FQDN added later, and the tailnet HTTPS
+      // site — which reuses this cert — stops matching.
+      const { certSanHosts } = require('../lib/https-setup');
+      const hosts = certSanHosts(certPath);
+      assert.ok(hosts.includes('localhost'), `expected localhost in ${JSON.stringify(hosts)}`);
+      assert.ok(hosts.includes('studio.local'), `expected studio.local in ${JSON.stringify(hosts)}`);
+      assert.ok(hosts.every((h) => !h.includes(':')), 'the DNS:/IP Address: prefix must be stripped');
+    });
+
+  it('certSanHosts returns [] rather than throwing on an unusable cert', () => {
+    const { certSanHosts } = require('../lib/https-setup');
+    assert.deepEqual(certSanHosts(path2.join(dir, 'nope.pem')), []);
+    assert.deepEqual(certSanHosts(null), []);
+  });
+
+  it('fails SAFE — false, never a throw — on a missing or unparseable cert', () => {
+    // The caller's next move is "then don't advertise that name", so false is
+    // the safe direction. Throwing here would abort a cutover over a cosmetic
+    // question about an extra hostname.
+    const junk = path2.join(dir, 'junk.pem');
+    fs2.writeFileSync(junk, 'not a certificate');
+    assert.equal(certCoversHost(path2.join(dir, 'nope.pem'), 'studio.local'), false);
+    assert.equal(certCoversHost(junk, 'studio.local'), false);
+    assert.equal(certCoversHost(null, 'studio.local'), false);
+    assert.equal(certCoversHost(certPath, ''), false);
+  });
+});
+
 describe('https-setup', () => {
   let tmpDir;
   let stubDir;

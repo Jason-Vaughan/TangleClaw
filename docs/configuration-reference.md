@@ -52,11 +52,20 @@ Defaults below are read from `DEFAULT_CONFIG` in `lib/store.js`.
 | `caddyTailnetHost` | string\|null | `null` | Tailnet FQDN to emit as an additional gated HTTPS site. The generator refuses to emit this site without a credential — an ungated remote HTTPS door is not a supported state. Re-run the cutover after setting it. |
 | `publicDomain` | string\|null | `null` | Public domain for an ACME/Let's Encrypt site on 443/80. Requires real DNS pointing at this machine and relocates Caddy to a root LaunchDaemon — see [deploy/INGRESS.md](../deploy/INGRESS.md). Not needed for LAN or tailnet access. |
 
-> **Reaching the dashboard from another device.** A default caddy-mode install generates **one**
-> HTTPS site, `localhost`, so another machine on the network cannot complete the TLS handshake
-> against it. `caddyTailnetHost`, `caddyRemoteHttp` and `publicDomain` above are the three ways to
-> add a reachable site today; each needs a cutover re-run afterwards. Improving that default is
-> tracked at **#863**.
+> **Reaching the dashboard from another device.** A gated caddy-mode install serves the machine's
+> own mDNS name (`<hostname>.local`) alongside `localhost`, so a phone or laptop on the same network
+> can reach it at `https://<hostname>.local:8443` and is asked for the password (#863). This is
+> automatic — there is no setting for it — and it applies **only** when a login exists; an install
+> with no credential stays `localhost`-only rather than exposing an ungated dashboard to the
+> network. The certificate is regenerated if it does not already cover the name.
+>
+> Because the certificate is issued by your machine's own local authority, another device will warn
+> the first time until that authority is trusted on it; `mkcert -install` covers the machine
+> TangleClaw runs on, and other devices need the root certificate installed separately.
+>
+> For access beyond the local network, `caddyTailnetHost` (tailnet HTTPS), `caddyRemoteHttp`
+> (plain HTTP over an already-encrypted tunnel) and `publicDomain` (public ACME certificate) remain
+> the three options; each needs a cutover re-run after being set.
 
 ### Default Quick Commands
 

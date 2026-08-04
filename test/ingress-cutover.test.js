@@ -42,7 +42,11 @@ function makeCtx(overrides = {}) {
     caddyfilePath: '/Users/test/.tangleclaw/Caddyfile',
     socketPath: '/Users/test/.tangleclaw/run/ttyd.sock',
     ttydTemplate: TTYD_TEMPLATE,
-    caddyTemplate: CADDY_TEMPLATE
+    caddyTemplate: CADDY_TEMPLATE,
+    // #863 — resolved by main() from os.hostname() once a cert covers it. Named
+    // here so a test can override it; left undefined the forwarding below could
+    // be deleted and every test would still pass.
+    lanHost: overrides.lanHost === undefined ? null : overrides.lanHost
   };
 }
 
@@ -286,6 +290,72 @@ describe('ingress-cutover', () => {
     });
     it('health-checks via the caddy HTTPS port', () => {
       assert.equal(plan.healthUrl, 'https://localhost:8443/api/health');
+    });
+  });
+
+  // #863 — the generator's half is covered in test/caddy.test.js. This covers
+  // the WIRE: planCutover must forward ctx.lanHost into buildCaddyfileContent.
+  // Without these, deleting `lanHost: ctx.lanHost` left the whole suite green
+  // while a default install went back to being unreachable by name.
+  // Regeneration is DESTRUCTIVE to names nothing else records — no config field
+  // stores the host list a cert was minted with, so the cert is its own only
+  // record. Two attempts at this shipped broken before a clean-room run caught
+  // it, both for the same reason: the union read only its argument, and the
+  // branch that actually regenerates calls it BEFORE ctx.certPath is assigned.
+  describe('certHostUnion — regeneration must never shrink the SAN (#863)', () => {
+    const os3 = require('node:os');
+
+    it('always includes the base names and the machine mDNS name', () => {
+      const hosts = cutover.certHostUnion(null, {});
+      for (const base of ['localhost', '127.0.0.1', '::1']) {
+        assert.ok(hosts.includes(base), `${base} must always be present`);
+      }
+      const mdns = require('../lib/https-setup').mdnsHostFor(os3.hostname());
+      if (mdns) assert.ok(hosts.includes(mdns), 'the mDNS name must be carried');
+    });
+
+    it('carries the sites config says we are about to emit', () => {
+      const hosts = cutover.certHostUnion(null, {
+        caddyTailnetHost: 'box.tail1234.ts.net', publicDomain: 'tc.example.com'
+      });
+      assert.ok(hosts.includes('box.tail1234.ts.net'),
+        'the tailnet site reuses this cert — dropping its name un-covers that site');
+      assert.ok(hosts.includes('tc.example.com'));
+    });
+
+    it('tolerates a null certPath — the branch that regenerates passes exactly that', () => {
+      // The bug: ctx.certPath is null in the "no valid cert configured" branch,
+      // so reading only the argument carried nothing and the union silently
+      // degraded to the defaults.
+      assert.doesNotThrow(() => cutover.certHostUnion(null, null));
+      assert.ok(cutover.certHostUnion(null, null).includes('localhost'));
+    });
+
+    it('never returns duplicates', () => {
+      const hosts = cutover.certHostUnion(null, { caddyTailnetHost: 'localhost' });
+      assert.equal(hosts.length, new Set(hosts).size);
+    });
+  });
+
+  describe('planCutover → caddy LAN hostname forwarding (#863)', () => {
+    const gated = { authEnabled: true, basicAuthUser: 'admin', basicAuthHash: '$2a$14$abcdefghijklmnopqrstuv' };
+
+    it('forwards ctx.lanHost into the generated Caddyfile', () => {
+      const plan = cutover.planCutover('caddy', makeCtx({ config: gated, lanHost: 'studio.local' }));
+      assert.match(plan.caddyfile.content, /^localhost, studio\.local \{$/m,
+        'the resolved LAN name must reach the generator');
+    });
+
+    it('emits localhost only when no LAN name was resolved', () => {
+      const plan = cutover.planCutover('caddy', makeCtx({ config: gated, lanHost: null }));
+      assert.match(plan.caddyfile.content, /^localhost \{$/m);
+    });
+
+    it('does not advertise the LAN name on an ungated install', () => {
+      // The end-to-end statement of the invariant: even when main() resolved a
+      // name, an install with no credential must stay loopback-only.
+      const plan = cutover.planCutover('caddy', makeCtx({ lanHost: 'studio.local' }));
+      assert.ok(!plan.caddyfile.content.includes('studio.local'));
     });
   });
 

@@ -6,6 +6,46 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The dashboard is now reachable from another device on your network — which is what the login
+  gate was for (#863).** A default caddy install generated exactly one Caddy site, `localhost`, so
+  every other address (the machine's own name, its LAN IP) failed the TLS handshake before a password
+  was ever asked for. Measured from a second machine: a request to the install's own hostname
+  returned `tlsv1 alert internal error`, not a login prompt. The product's headline is managing
+  sessions "from any browser or phone on your network", and on a fresh install that did not work.
+
+  The generated Caddyfile now serves the machine's mDNS name (`<hostname>.local`) alongside
+  `localhost`. Verified end-to-end on a clean-room install from a *different* host: before, every
+  route answered `000`; after, `/` and `/api/config` answer **401** and `/api/health` answers `200` —
+  reachable, and gated.
+
+  **Only when a login exists.** Caddy already listened on every interface, so this opens no socket
+  that was not already open — but it turns a name that failed the handshake into one that serves the
+  dashboard, and an ungated dashboard answering to the network is the open door the tailnet and
+  catch-all guards already refuse. An install with no credential stays `localhost`-only.
+
+  The name rides in the **same** site header (`localhost, studio.local {`) rather than getting its
+  own block. One block means one `tls` directive, one gate and one upstream, with no copy free to
+  drift — and a separate bare-FQDN block carrying `tls` is exactly the shape `extractTailnetHost`
+  hunts for, so it would have been adopted as the tailnet site and written into
+  `config.caddyTailnetHost`. `FQDN_SITE_HEADER_RE` deliberately excludes multi-address headers, so
+  this form is invisible to that parser; a regression test pins it.
+
+  The hostname is validated against an anchored pattern before interpolation: it derives from
+  `os.hostname()`, which an operator can set to anything, and a name carrying a brace, comma or space
+  would restructure the Caddyfile rather than merely fail to match.
+
+  **The certificate is made to cover the name, not assumed to.** New `certCoversHost` uses Node's
+  `X509Certificate.checkHost` (RFC 6125 matching — the same comparison a browser makes); the cutover
+  regenerates the certificate when it does not cover the name, and falls back to `localhost`-only if
+  regeneration fails rather than advertising a name the browser will reject. A name mismatch reads as
+  "the login page is broken", which is worse than unreachable. This also repairs installs carrying
+  the older `<host>.local.local` certificate.
+
+  *Known limitation, observed in the clean room:* a client that resolves the name to a **link-local**
+  IPv6 address (`fe80::…`) still fails the handshake. That is a property of link-local addressing
+  rather than of this configuration — on a network handing out IPv4 or global IPv6 the name works, as
+  measured.
+
 - **An install with no login can now get one, from the same terminal tool that resets one (#806,
   #710).** A machine that reached `setupComplete` before a credential was mandatory and then moved
   to caddy mode had no way forward: the setup route answers `409 SETUP_ALREADY_COMPLETE`, the adopt

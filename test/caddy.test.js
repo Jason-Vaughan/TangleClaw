@@ -122,6 +122,65 @@ describe('caddy', () => {
   describe('buildCaddyfileContent', () => {
     const opts = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
 
+    // #863 — a default install generated exactly ONE site, `localhost`, so every
+    // other address failed the TLS handshake and the dashboard could not be
+    // reached from a phone or a second machine. The fix adds the mDNS name to
+    // the SAME site header rather than emitting a second block.
+    describe('LAN hostname (#863)', () => {
+      const gated = { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: '$2a$14$abcdefghijklmnopqrstuv' };
+
+      it('serves the LAN name from the same block as localhost', () => {
+        const out = caddy.buildCaddyfileContent({ ...gated, lanHost: 'studio.local' });
+        assert.match(out, /^localhost, studio\.local \{$/m,
+          'the LAN name must ride in the local site header');
+        // One block, so exactly one tls/proxy pair — a second block would be a
+        // copy of the same config, free to drift.
+        assert.equal((out.match(/^\ttls /gm) || []).length, 1, 'must not emit a duplicate tls directive');
+        assert.equal((out.match(/reverse_proxy/g) || []).length, 1, 'must not emit a second proxy');
+      });
+
+      it('NEVER adds the LAN name to an ungated install', () => {
+        // Caddy already listens on every interface, so this opens no socket —
+        // but it turns a name that failed the handshake into one that serves the
+        // dashboard, and an ungated dashboard answering the LAN is the open door
+        // the catch-all and tailnet guards refuse. Ungated stays loopback-only.
+        const out = caddy.buildCaddyfileContent({ ...opts, lanHost: 'studio.local' });
+        assert.match(out, /^localhost \{$/m);
+        assert.ok(!out.includes('studio.local'), 'an ungated site must not answer to the LAN name');
+      });
+
+      it('refuses a hostname that could restructure the Caddyfile', () => {
+        // The value derives from os.hostname(), which an operator can set to
+        // anything, and it is interpolated into a file Caddy parses. A name with
+        // a brace, comma or space would not merely fail to match — it would
+        // change the file's structure.
+        for (const hostile of ['evil {\n} bad.local', 'a b.local', 'x,y.local', '', 'nodot', '../../etc.local']) {
+          const out = caddy.buildCaddyfileContent({ ...gated, lanHost: hostile });
+          assert.match(out, /^localhost \{$/m, `must fall back to localhost for ${JSON.stringify(hostile)}`);
+        }
+      });
+
+      it('stays invisible to extractTailnetHost — the reason it is not its own block', () => {
+        // A bare-FQDN site block carrying a `tls` directive is exactly what
+        // extractTailnetHost hunts for. Emitted separately, the mDNS site would
+        // be adopted as the tailnet host and written into config.caddyTailnetHost.
+        // FQDN_SITE_HEADER_RE excludes multi-address headers, so this form is
+        // correctly ignored. This is the regression that shaped the design.
+        const out = caddy.buildCaddyfileContent({ ...gated, lanHost: 'studio.local' });
+        assert.equal(caddy.extractTailnetHost(out), null,
+          'the LAN name must never be mistaken for the tailnet site');
+      });
+
+      it('still finds a real tailnet host when both are present', () => {
+        const out = caddy.buildCaddyfileContent({
+          ...gated, lanHost: 'studio.local', tailnetHost: 'box.tail1234.ts.net'
+        });
+        assert.match(out, /^localhost, studio\.local \{$/m);
+        assert.equal(caddy.extractTailnetHost(out), 'box.tail1234.ts.net',
+          'the tailnet site is still its own block and still discoverable');
+      });
+    });
+
     it('requires serverPort', () => {
       assert.throws(() => caddy.buildCaddyfileContent({ certPath: '/c/cert.pem', keyPath: '/c/key.pem' }), /serverPort/);
     });

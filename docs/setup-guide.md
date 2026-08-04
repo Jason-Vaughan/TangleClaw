@@ -102,7 +102,18 @@ node scripts/ingress-cutover.js --to caddy
 ## Checking it actually worked
 
 Do not take the dashboard's word for it. Two checks, from a *different* device than
-the one TangleClaw runs on:
+the one TangleClaw runs on.
+
+**The address to use from that other device is `https://<your-mac-name>.local:8443`** — the
+machine's own network name, not `localhost`, which on the other device means *that* device. If you
+do not know the name, run `hostname` on the Mac running TangleClaw. Setup serves this name
+automatically once a login exists.
+
+The first time, your phone or laptop will warn that the certificate is not trusted. That is
+expected: the certificate is issued by your own Mac's local authority, which other devices have
+never heard of. It means the connection is encrypted but unverified — fine on your own network,
+and you can install that authority on the other device to silence it. A *password prompt* is what
+you are checking for here; the certificate warning is a separate question.
 
 1. **Open the dashboard address.** A password prompt should appear before you see
    anything. If you see the dashboard with no prompt, the gate is not in force —
