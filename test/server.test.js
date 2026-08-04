@@ -288,15 +288,28 @@ describe('server', () => {
         it('runs the origin check before any upgrade branch dispatches', () => {
           const src = require('node:fs').readFileSync(
             require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
-          const body = src.slice(src.search(/function handleUpgrade\s*\(/));
+          // Bound the slice to handleUpgrade's own body. Running to EOF lets a
+          // later function satisfy the branch search, which would make the
+          // sanity assert below unfireable — the same "cannot fail" defect this
+          // pin replaced.
+          const fnStart = src.search(/function handleUpgrade\s*\(/);
+          assert.notEqual(fnStart, -1, 'handleUpgrade must exist');
+          const after = src.slice(fnStart + 1);
+          const nextFn = after.search(/^function /m);
+          const body = nextFn === -1 ? after : after.slice(0, nextFn);
+
           const guardAt = body.search(/_isSameOriginUpgrade\(/);
           assert.notEqual(guardAt, -1, 'handleUpgrade must consult the origin guard');
+          // No trailing slash on /terminal: the real branch tests
+          // startsWith('/terminal'), and a stricter pattern here matched nothing
+          // inside the function.
           const firstBranchAt = Math.min(
-            ...[/startsWith\('\/openclaw-direct\//, /startsWith\('\/openclaw\//, /startsWith\('\/terminal\//]
+            ...[/startsWith\('\/openclaw-direct/, /startsWith\('\/openclaw/, /startsWith\('\/terminal/]
               .map((re) => body.search(re))
               .filter((i) => i !== -1)
           );
-          assert.notEqual(firstBranchAt, Infinity, 'expected the upgrade branches to still exist');
+          assert.notEqual(firstBranchAt, Infinity,
+            'expected the upgrade branches to still exist inside handleUpgrade');
           assert.ok(guardAt < firstBranchAt,
             'the origin guard must precede every prefix branch — /terminal/* is a writable shell '
             + 'and the OpenClaw branches attach the operator gateway token');
