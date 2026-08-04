@@ -340,6 +340,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
+  outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
+  open, the wrap still reported `done` — correctly, since the commit had already landed — and the
+  only cue was `HEAD` left on the wrap branch, which any later `git checkout` on a shared clone
+  erases. Nothing else recorded whether the PR opened.
+
+  Found the hard way: `wrap/20260730172842-tangleclaw` was pushed on 2026-07-30 with no PR ever
+  created, sat unmerged for five days carrying four `FEATURES.md` descriptions and an ADR entry that
+  never reached `main`, and was noticed only while cleaning up an unrelated branch. By then the
+  server log covering the wrap had rotated out, so *which* gate failed can no longer be determined —
+  the failure is permanently unattributable.
+
+  Every auto-branched wrap now writes a `wrap.auto_pr` row to `activity_log` carrying the branch
+  name, `pushed`, `prUrl`, `autoMergeArmed`, `skippedReason` and `error`. The branch name is the
+  point: a stranded wrap becomes something you can *query for* rather than something you have to
+  notice. Successful runs are recorded too, so an absent row never has to be interpreted.
+
+  **The `gh`-unavailable path also logged at `info`,** identical in level to a PR that actually
+  opened. The predicate is now the stranded condition itself — pushed, with no PR URL — which warns
+  whether or not an `error` was set, and additionally catches a created PR whose URL could not be
+  parsed. The pre-push refusals (`wrapAutoPrEnabled: false`, no `origin`) push nothing, so they
+  stay at `info`; warning on a deliberate opt-out would train the warning away.
+
+  `store.activity.log` swallows its own failures and no-ops without a database, so recording cannot
+  break a wrap. Regression tests pin both halves, each verified by mutation: reverting the predicate
+  reddens the warn-level test alone, and disabling the write reddens all four record tests.
+
 - **The setup guide's own remedy for "no login" left you with no login — and reported success
   (#862).** `docs/setup-guide.md` → "If setup could not do it" listed `brew install caddy` followed
   by `ingress-cutover.js --to caddy`. Run on an install with no credential — which is exactly the

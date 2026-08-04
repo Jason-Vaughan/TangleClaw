@@ -26,7 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -37,25 +37,74 @@ const PR_URL = 'https://github.com/example/sandbox/pull/12';
 
 describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   let tmpDir;
+  let storeDir;
   let projectPath;
+  let projectId;
   let originals;
   let calls;
   let realExec;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-autopr-'));
+    // A real store, so the #867 activity row is asserted against the same
+    // insert path production uses rather than a stub. The project is created
+    // for real because `activity_log.project_id` references `projects(id)` —
+    // a fabricated id would be rejected and `store.activity.log` swallows the
+    // failure, which would read as "the code never logged".
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-autopr-store-'));
+    store._setBasePath(storeDir);
+    store.init();
     originals = { ...commitStep._internal };
   });
 
   after(() => {
+    store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(storeDir, { recursive: true, force: true });
   });
+
+  /**
+   * The `wrap.auto_pr` rows this case produced. `store.activity.query`
+   * already deserializes `detail`, so these read as plain objects. Scoped to
+   * the per-case project id so one case cannot see another's rows.
+   * @returns {object[]}
+   */
+  function autoPrRows() {
+    return store.activity.query({ projectId, eventType: 'wrap.auto_pr', limit: 50 });
+  }
+
+  /**
+   * Run `fn` with log output captured at `level`, restoring the quiet
+   * error-level default afterwards so one case cannot make another noisy.
+   * @param {string} level - Minimum level to capture
+   * @param {Function} fn - Async body to run
+   * @returns {Promise<string>} Everything written to the console stream
+   */
+  async function captureLogs(level, fn) {
+    let out = '';
+    setConsoleStream({ write: (s) => { out += s; } });
+    setLevel(level);
+    try {
+      await fn();
+    } finally {
+      setLevel('error');
+      setConsoleStream(null);
+    }
+    return out;
+  }
 
   beforeEach(() => {
     Object.assign(commitStep._internal, originals);
     realExec = originals.exec;
     calls = [];
     projectPath = fs.mkdtempSync(path.join(tmpDir, 'repo-'));
+    // One project record per case. `projects.name`/`path` are UNIQUE and the
+    // store outlives the whole file, so a shared id would let each case see
+    // the previous cases' activity rows and the counts below would drift.
+    projectId = store.projects.create({
+      name: `sandbox-${path.basename(projectPath)}`,
+      path: projectPath
+    }).id;
     execSync('git init --quiet', { cwd: projectPath });
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
@@ -70,7 +119,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
   /** Build a minimal context for the commit handler. */
   function buildContext() {
     return {
-      project: { name: 'sandbox', path: projectPath, id: 1 },
+      project: { name: 'sandbox', path: projectPath, id: projectId },
       session: null,
       step: { id: 'commit', kind: 'commit', blocker: true },
       previousResults: [],
@@ -290,5 +339,121 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
 
   it('DEFAULT_PROJECT_CONFIG pins wrapAutoPrEnabled:true (close-loop is the default)', () => {
     assert.equal(store.DEFAULT_PROJECT_CONFIG.wrapAutoPrEnabled, true);
+  });
+
+  /*
+   * #867 — the outcome must survive the log.
+   *
+   * A wrap pushed its branch, never opened a PR, and sat undiscovered for five
+   * days; by the time it was found the server log covering it had rotated, so
+   * which gate failed can never be known. The log line was the only record.
+   * These cases pin the durable one: a queryable `wrap.auto_pr` row naming the
+   * branch, written on every auto-branched wrap — and a warn, not an info, when
+   * the branch is on the remote with no PR behind it.
+   */
+  describe('#867 — durable record of the auto-PR outcome', () => {
+    it('records a wrap.auto_pr row naming the branch and the PR on full success', async () => {
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+
+      const rows = autoPrRows();
+      assert.equal(rows.length, 1, 'one row per auto-branched wrap');
+      assert.deepEqual(rows[0].detail, {
+        branch: result.output.branch,
+        pushed: true,
+        prUrl: PR_URL,
+        autoMergeArmed: true,
+        skippedReason: null,
+        error: null
+      });
+      assert.match(rows[0].detail.branch, /^wrap\//,
+        'the branch name is the join key back to the stranded branch');
+    });
+
+    it('records the stranded case — pushed with no PR — which is the #867 signature', async () => {
+      interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
+      await commitStep.run(buildContext());
+
+      const rows = autoPrRows();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].detail.pushed, true);
+      assert.equal(rows[0].detail.prUrl, null,
+        'pushed with no prUrl is exactly the state that went undiscovered');
+      assert.match(rows[0].detail.skippedReason, /gh CLI not available/);
+    });
+
+    it('records the error text when gh pr create fails, so the cause outlives the log', async () => {
+      interceptExec({ 'gh-create': { exitCode: 1, stdout: '', stderr: 'GraphQL: something broke\n' } });
+      await commitStep.run(buildContext());
+
+      const rows = autoPrRows();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].detail.pushed, true);
+      assert.equal(rows[0].detail.prUrl, null);
+      assert.match(rows[0].detail.error, /gh pr create failed/);
+      assert.match(rows[0].detail.error, /something broke/,
+        'the underlying gh stderr is what makes the failure attributable later');
+    });
+
+    it('records the pre-push refusals too, so "no row" never has to be interpreted', async () => {
+      interceptExec({ remote: { exitCode: 2, stdout: '', stderr: 'error: No such remote' } });
+      await commitStep.run(buildContext());
+
+      const rows = autoPrRows();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].detail.pushed, false);
+      assert.match(rows[0].detail.skippedReason, /no origin remote/);
+    });
+
+    it('writes no row when the wrap did not auto-branch (nothing can dangle)', async () => {
+      execSync('git checkout -b feat/regular --quiet', { cwd: projectPath });
+      interceptExec();
+      const result = await commitStep.run(buildContext());
+
+      assert.equal(result.output.autoBranched, false);
+      assert.equal(autoPrRows().length, 0,
+        'a feature-branch wrap leaves no branch behind, so it has nothing to record');
+    });
+
+    it('a stranded wrap logs at warn — it used to log at info and read as success', async () => {
+      const out = await captureLogs('info', async () => {
+        interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
+        await commitStep.run(buildContext());
+      });
+
+      const line = out.split('\n').find((l) => l.includes('auto-PR close-loop'));
+      assert.ok(line, 'the close-loop must log its outcome');
+      assert.match(line, /\[WARN\]/,
+        'a pushed branch with no PR is not a success — info hid this for five days');
+      assert.match(line, /degraded/);
+    });
+
+    it('a fully successful close-loop still logs at info, not warn', async () => {
+      const out = await captureLogs('info', async () => {
+        interceptExec();
+        await commitStep.run(buildContext());
+      });
+
+      const line = out.split('\n').find((l) => l.includes('auto-PR close-loop'));
+      assert.ok(line);
+      assert.match(line, /\[INFO\]/, 'success must not be warned about — that trains the warning away');
+      assert.match(line, /finished/);
+    });
+
+    it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {
+      const cfg = store.projectConfig.load(projectPath);
+      cfg.wrapAutoPrEnabled = false;
+      store.projectConfig.save(projectPath, cfg);
+
+      const out = await captureLogs('info', async () => {
+        interceptExec();
+        await commitStep.run(buildContext());
+      });
+
+      const line = out.split('\n').find((l) => l.includes('auto-PR close-loop'));
+      assert.ok(line);
+      assert.match(line, /\[INFO\]/,
+        'a deliberate opt-out must not warn, or the warning stops meaning anything');
+    });
   });
 });
