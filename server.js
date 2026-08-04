@@ -4434,8 +4434,55 @@ function proxyToTtyd(req, res, pathname) {
  * @param {import('net').Socket} socket
  * @param {Buffer} head
  */
+/**
+ * Does a WebSocket handshake's `Origin` name the same host we are serving?
+ *
+ * Compared by HOST, not by full origin string: the dashboard is reached over
+ * https through Caddy on one port and over http directly on another, and both
+ * are legitimately the same machine — a strict origin match would break the
+ * terminal on the install this release makes default. An unparseable Origin is
+ * refused rather than waved through.
+ *
+ * @param {string} origin - The `Origin` header.
+ * @param {string|undefined} host - The `Host` header.
+ * @returns {boolean}
+ */
+function _isSameOriginUpgrade(origin, host) {
+  let originHost;
+  try {
+    originHost = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  const target = String(host || '').split(':')[0] || 'localhost';
+  return originHost === target;
+}
+
 function handleUpgrade(req, socket, head) {
   const urlObj = reqUrl(req);
+
+  // The cross-site guard has to be here too, and this is the sharper half.
+  //
+  // WebSockets are NOT subject to the same-origin policy: any page can open one
+  // to any host, no preflight, no CORS. So the reasoning that protects the HTTP
+  // routes — loopback means it came through Caddy — fails harder here, because a
+  // page the operator merely visits can connect straight to the ungated
+  // 127.0.0.1:<serverPort> listener and then read AND write on the socket, which
+  // a cross-site form post cannot do. `/terminal/*` proxies to a `--writable`
+  // ttyd, so that is a shell; the OpenClaw branches attach the operator's
+  // gateway token.
+  //
+  // Browsers always send `Origin` on a WebSocket handshake and it cannot be
+  // forged from script, so this is the check that exists for exactly this case.
+  // Non-browser clients (the OpenClaw CLI, scripts) omit it and are allowed —
+  // they are not a cross-site vector — which keeps every existing consumer
+  // working, the same contract as the HTTP guard.
+  const origin = req.headers.origin;
+  if (origin && !_isSameOriginUpgrade(origin, req.headers.host)) {
+    log.warn('Refused cross-origin WebSocket upgrade', { path: urlObj.pathname, origin });
+    socket.destroy();
+    return;
+  }
 
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {

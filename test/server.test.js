@@ -220,6 +220,52 @@ describe('server', () => {
         });
       }
 
+      // WebSockets are NOT subject to the same-origin policy: any page can open
+      // one to any host, no preflight, no CORS. So this is the sharper half of
+      // the guard — a cross-site page can READ AND WRITE on the socket, which a
+      // form post cannot, and /terminal/* proxies to a `--writable` ttyd.
+      describe('WebSocket upgrades', () => {
+        // A real duplex stream, not a stub: the ALLOWED path continues into the
+        // proxy, which pipes to this socket. A plain object passes the refusal
+        // cases and then explodes asynchronously on the ones that should succeed.
+        /** @returns {{destroyed: boolean}} */
+        function upgrade(headers) {
+          const { PassThrough } = require('node:stream');
+          const socket = new PassThrough();
+          socket.destroyed = false;
+          const orig = socket.destroy.bind(socket);
+          socket.destroy = () => { socket.destroyed = true; orig(); };
+          socket.remoteAddress = '127.0.0.1';
+          try {
+            handleUpgrade({ url: '/terminal/ws', method: 'GET', headers, socket }, socket, Buffer.alloc(0));
+          } catch { /* downstream proxy setup is not what this asserts */ }
+          return { destroyed: socket.destroyed };
+        }
+
+        it('destroys an upgrade whose Origin is another site', () => {
+          const r = upgrade({ host: 'localhost:3102', origin: 'https://evil.example' });
+          assert.equal(r.destroyed, true, 'a cross-origin terminal socket must be refused');
+        });
+
+        it('allows a same-host Origin across scheme and port', () => {
+          // The dashboard is reached over https through Caddy on one port and
+          // http directly on another; both are the same machine. A strict origin
+          // match would break the terminal on the install v5 makes default.
+          const r = upgrade({ host: 'localhost:3102', origin: 'https://localhost:8443' });
+          assert.equal(r.destroyed, false, 'same host over a different scheme/port must be allowed');
+        });
+
+        it('allows an upgrade with no Origin at all (non-browser clients)', () => {
+          const r = upgrade({ host: 'localhost:3102' });
+          assert.equal(r.destroyed, false, 'a header-less client is not a cross-site vector');
+        });
+
+        it('refuses an unparseable Origin rather than waving it through', () => {
+          const r = upgrade({ host: 'localhost:3102', origin: 'not a url' });
+          assert.equal(r.destroyed, true, 'an Origin we cannot parse must fail closed');
+        });
+      });
+
       it('does NOT block a cross-site GET — navigation must keep working', async () => {
         // GET is excluded on purpose; a mutating GET is a bug in that route.
         const res = await send('GET', '/api/health', { 'sec-fetch-site': 'cross-site' });

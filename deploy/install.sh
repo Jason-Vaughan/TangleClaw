@@ -443,8 +443,20 @@ echo ""
 if [ "$INGRESS_MODE" = "caddy" ]; then
   yellow "  Ingress mode is 'caddy' but install.sh sets up DIRECT only."
   yellow "  Activate Caddy:   node scripts/ingress-cutover.js --to caddy"
+  yellow "  THEN set the login: node scripts/reset-admin.js --create-gate --user <name>"
+  yellow "  (the cutover installs the ingress, NOT a password — without the second"
+  yellow "   command the dashboard is reachable with no login at all)"
 else
-  echo "  Caddy ingress (optional): node scripts/ingress-cutover.js --to caddy"
+  # Deliberately NOT "optional", and deliberately two commands. The cutover on
+  # its own configures an ingress with no password, succeeds, and prints a green
+  # health check -- docs/setup-guide.md carries the same warning in bold because
+  # following the single-command form is how an operator ends up serving an
+  # unprotected dashboard while believing the opposite.
+  echo "  Put a password and TLS in front of it (2 commands, both needed):"
+  echo "    node scripts/ingress-cutover.js --to caddy"
+  echo "    node scripts/reset-admin.js --create-gate --user <name>"
+  echo "  The first installs the ingress; the SECOND is the login. Run them back to back —"
+  echo "  in between, the dashboard is up with no password."
   echo "  (reversible — roll back with: node scripts/ingress-cutover.js --to direct)"
 fi
 echo ""

@@ -181,6 +181,43 @@ describe('caddy', () => {
       });
     });
 
+    // Everything interpolated into a site block is shape-checked, not just the
+    // hostname. basicAuthUser arrives from the UNAUTHENTICATED
+    // POST /api/setup/complete, which only trims it — and setup now writes AND
+    // APPLIES the generated file automatically, so a username carrying a brace
+    // or a newline would close the basic_auth block and open whatever followed.
+    describe('Caddyfile injection guards', () => {
+      const base = { serverPort: 3101, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+
+      it('accepts a real bcrypt hash — the guard must not reject legitimate credentials', () => {
+        // A bcrypt hash legitimately contains $ / and . — an allowlist tight
+        // enough to feel safe would reject every real credential, so the check
+        // denies STRUCTURAL characters instead.
+        assert.ok(caddy.buildCaddyfileContent({ ...base, basicAuthUser: 'tcadmin', basicAuthHash: HASH }));
+      });
+
+      for (const bad of ['ev il', 'a{b', 'a}b', 'a"b', "a'b", 'a#b', 'a\nb', 'a\\b']) {
+        it(`refuses a username containing ${JSON.stringify(bad)}`, () => {
+          assert.throws(
+            () => caddy.buildCaddyfileContent({ ...base, basicAuthUser: bad, basicAuthHash: HASH }),
+            /not safe in a Caddyfile/);
+        });
+      }
+
+      it('refuses a structural character in the hash too', () => {
+        assert.throws(
+          () => caddy.buildCaddyfileContent({ ...base, basicAuthUser: 'ok', basicAuthHash: 'x }\nevil.com {' }),
+          /not safe in a Caddyfile/);
+      });
+
+      it('refuses a publicDomain or tailnetHost that is not a hostname', () => {
+        const gated = { ...base, basicAuthUser: 'ok', basicAuthHash: HASH };
+        assert.throws(() => caddy.buildCaddyfileContent({ ...gated, publicDomain: 'evil {' }), /publicDomain/);
+        assert.throws(() => caddy.buildCaddyfileContent({ ...gated, tailnetHost: 'a b.ts.net' }), /tailnetHost/);
+      });
+    });
+
     it('requires serverPort', () => {
       assert.throws(() => caddy.buildCaddyfileContent({ certPath: '/c/cert.pem', keyPath: '/c/key.pem' }), /serverPort/);
     });
