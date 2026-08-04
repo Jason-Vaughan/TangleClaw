@@ -393,8 +393,9 @@
    *
    * #867 — a stranded wrap also returns a handle. It has no `prUrl` to probe,
    * but it is the case most in need of a banner: the branch is on the remote
-   * and only the operator can rescue it. Returning `null` here left it with no
-   * banner at all, which is why one sat unnoticed for five days.
+   * and only the operator can rescue it. Returning `null` here left the banner
+   * reading `Wrap committed` in plain success tone, which is how one sat
+   * unnoticed for five days.
    *
    * @param {object} pipelineResult - Runner return.
    * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null, stranded: boolean}|null}

@@ -406,6 +406,17 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       assert.match(rows[0].detail.skippedReason, /no origin remote/);
     });
 
+    it('attributes the row to the session, so a stranded wrap names who left it', async () => {
+      interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
+      const ctx = buildContext();
+      const sessionId = store.sessions.start({ projectId, engineId: 'claude' }).id;
+      ctx.session = { id: sessionId };
+      await commitStep.run(ctx);
+
+      assert.equal(autoPrRows()[0].sessionId, sessionId,
+        'the row must point back at the session that stranded the branch');
+    });
+
     it('writes no row when the wrap did not auto-branch (nothing can dangle)', async () => {
       execSync('git checkout -b feat/regular --quiet', { cwd: projectPath });
       interceptExec();
@@ -472,8 +483,25 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
         "fatal: could not read from 'https://jason:hunter2@github.com/x/y.git'"
       );
       assert.doesNotMatch(out, /hunter2/, 'the password must not reach the database');
-      assert.match(out, /\/\/\*\*\*:\*\*\*@github\.com/);
+      assert.match(out, /\/\/\*\*\*@github\.com/);
       assert.match(out, /could not read from/, 'the diagnostic value must survive redaction');
+    });
+
+    it('strips the password-LESS token form GitHub actually tells people to use', () => {
+      // `https://<token>@host` carries no colon. A strip that required one
+      // missed the single most likely credential in a push error, and
+      // secret-scan only knows ghp_/github_pat_ — not gho_/ghs_/ghu_/ghr_,
+      // and nothing at all for GitLab, Bitbucket or self-hosted forges.
+      const out = commitStep._truncateForRecord(
+        "remote: error\nfatal: unable to access 'https://gho_notarealtoken@gitlab.example.com/x/y.git/'"
+      );
+      assert.doesNotMatch(out, /gho_notarealtoken/, 'the token must not reach the database');
+      assert.match(out, /\/\/\*\*\*@gitlab\.example\.com/);
+    });
+
+    it('leaves a credential-free URL alone — the strip cannot over-match', () => {
+      const url = "fatal: could not read from 'https://github.com/x/y.git'";
+      assert.equal(commitStep._truncateForRecord(url), url);
     });
 
     it('replaces — never truncates — text still matching a known secret pattern', () => {
