@@ -353,19 +353,33 @@ All notable changes to TangleClaw are documented in this file.
   the failure is permanently unattributable.
 
   Every auto-branched wrap now writes a `wrap.auto_pr` row to `activity_log` carrying the branch
-  name, `pushed`, `prUrl`, `autoMergeArmed`, `skippedReason` and `error`. The branch name is the
-  point: a stranded wrap becomes something you can *query for* rather than something you have to
-  notice. Successful runs are recorded too, so an absent row never has to be interpreted.
+  name, `pushed`, `prUrl`, `autoMergeArmed`, `stranded`, `skippedReason` and `error`. The branch
+  name is the point: a stranded wrap becomes something you can *query for* rather than something you
+  have to notice. Successful runs are recorded too, so a row's absence is not the only signal —
+  though absence still is not proof, since a crash between the push and the write leaves neither a
+  row nor a PR.
+
+  **The operator-facing half moved with it.** The wrap drawer rendered a stranded wrap as
+  `wrap PR skipped: …` — the same neutral wording as a deliberate `wrapAutoPrEnabled: false`
+  opt-out — and `wrapPrInfo` returned `null`, so no banner appeared. The drawer is the surface an
+  operator is actually watching in the one moment the branch can still be rescued, and it called the
+  failure benign. It now names the branch as left on the remote and returns a PR handle so the
+  banner fires.
 
   **The `gh`-unavailable path also logged at `info`,** identical in level to a PR that actually
-  opened. The predicate is now the stranded condition itself — pushed, with no PR URL — which warns
-  whether or not an `error` was set, and additionally catches a created PR whose URL could not be
-  parsed. The pre-push refusals (`wrapAutoPrEnabled: false`, no `origin`) push nothing, so they
-  stay at `info`; warning on a deliberate opt-out would train the warning away.
+  opened. Both the server and the drawer now derive from one predicate — pushed, no PR URL, and
+  auto-merge not armed. The last clause matters: when `gh pr create` succeeds but its URL cannot be
+  parsed from stdout, the arm step falls back to the branch name and can still arm auto-merge, so
+  that PR exists and will land. Treating it as stranded would cry wolf on the one shape that
+  resolves itself. The pre-push refusals push nothing, so they stay at `info` — warning on a
+  deliberate opt-out trains the warning away.
 
-  `store.activity.log` swallows its own failures and no-ops without a database, so recording cannot
-  break a wrap. Regression tests pin both halves, each verified by mutation: reverting the predicate
-  reddens the warn-level test alone, and disabling the write reddens all four record tests.
+  `store.activity.log` swallows its own failures and no-ops without a database, and the persisted
+  `error` is bounded at 200 characters the way `pr-merge.js` already bounds the same text, so
+  recording cannot break a wrap or grow the database without limit. Every guard is mutation-verified
+  rather than merely green: reverting the log predicate reddens the warn test alone, disabling the
+  write reddens all four record tests, and drifting the drawer's copy of the predicate away from the
+  server's reddens the agreement tests that exist to prevent exactly that.
 
 - **The setup guide's own remedy for "no login" left you with no login — and reported success
   (#862).** `docs/setup-guide.md` → "If setup could not do it" listed `brew install caddy` followed

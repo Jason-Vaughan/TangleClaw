@@ -363,6 +363,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
         pushed: true,
         prUrl: PR_URL,
         autoMergeArmed: true,
+        stranded: false,
         skippedReason: null,
         error: null
       });
@@ -438,6 +439,29 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       assert.ok(line);
       assert.match(line, /\[INFO\]/, 'success must not be warned about — that trains the warning away');
       assert.match(line, /finished/);
+    });
+
+    it('an armed PR whose URL could not be parsed is NOT stranded — it will land', async () => {
+      // `gh pr create` succeeds but prints nothing matching the URL pattern, so
+      // `prUrl` is null. The arm step then falls back to the branch name and
+      // still arms auto-merge, so the PR exists and merges. Calling that
+      // stranded would cry wolf on the one shape that resolves itself.
+      interceptExec({ 'gh-create': { exitCode: 0, stdout: 'Warning: something\n', stderr: '' } });
+      await commitStep.run(buildContext());
+
+      const rows = autoPrRows();
+      assert.equal(rows[0].detail.prUrl, null);
+      assert.equal(rows[0].detail.autoMergeArmed, true);
+      assert.equal(rows[0].detail.stranded, false,
+        'auto-merge armed means the PR exists and will land — not stranded');
+    });
+
+    it('bounds the persisted error the way the sibling push site bounds it', () => {
+      const long = 'x'.repeat(500);
+      assert.equal(commitStep._truncateForRecord(long).length, 201, '200 chars plus the ellipsis');
+      assert.match(commitStep._truncateForRecord(long), /…$/);
+      assert.equal(commitStep._truncateForRecord('short'), 'short');
+      assert.equal(commitStep._truncateForRecord(null), null);
     });
 
     it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {

@@ -246,6 +246,15 @@
         if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed`;
         if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)`;
         if (ap.error) return `${sha} · wrap PR failed — branch dangling`;
+        // #867 — a pushed branch with no PR is stranded, not skipped. It used
+        // to fall through to the neutral `skipped` line below and read exactly
+        // like the deliberate `wrapAutoPrEnabled:false` opt-out, so the one
+        // surface the operator is actually watching — in the one moment the
+        // branch can still be rescued — called the failure benign. Mirrors
+        // `_isStranded` in `lib/wrap-steps/commit.js`; a test pins them equal.
+        if (isStrandedWrap(ap)) {
+          return `${sha} · wrap PR NOT opened — branch left on origin: ${ap.skippedReason || 'no PR was created'}`;
+        }
         if (ap.skippedReason) return `${sha} · wrap PR skipped: ${ap.skippedReason}`;
         return sha;
       }
@@ -345,24 +354,48 @@
   }
 
   /**
+   * Is this close-loop result a *stranded* wrap — a branch pushed to the remote
+   * that no PR will ever land?
+   *
+   * Mirror of `_isStranded` in `lib/wrap-steps/commit.js`, which is the server's
+   * definition; `test/wrap-drawer.test.js` pins the two to the same verdict, so
+   * a change to one that is not made to the other fails rather than silently
+   * letting the drawer and the log disagree about the same wrap.
+   *
+   * @param {{pushed:boolean, prUrl:string|null, autoMergeArmed:boolean}} ap
+   * @returns {boolean}
+   */
+  function isStrandedWrap(ap) {
+    if (!ap) return false;
+    return ap.pushed === true && !ap.prUrl && ap.autoMergeArmed !== true;
+  }
+
+  /**
    * #638 — extract the wrap-PR the commit step opened (its auto-branch
    * close-loop). Returns the PR handle + armed/error state the drawer needs to
-   * decide whether to probe `GET /wrap/pr-status`, or `null` when no wrap PR was
-   * opened (on-feature-branch commit, local-only repo, or a clean no-op wrap).
+   * decide whether to probe `GET /wrap/pr-status`, or `null` when nothing was
+   * left behind to chase: an on-feature-branch commit, a local-only repo, a
+   * clean no-op wrap, or a deliberate opt-out.
+   *
+   * #867 — a stranded wrap also returns a handle. It has no `prUrl` to probe,
+   * but it is the case most in need of a banner: the branch is on the remote
+   * and only the operator can rescue it. Returning `null` here left it with no
+   * banner at all, which is why one sat unnoticed for five days.
    *
    * @param {object} pipelineResult - Runner return.
-   * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null}|null}
+   * @returns {{prUrl: string|null, armed: boolean, error: string|null, skippedReason: string|null, stranded: boolean}|null}
    */
   function wrapPrInfo(pipelineResult) {
     const results = pipelineResult && Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
     for (const r of results) {
       const ap = r && r.output && r.output.autoPr;
-      if (ap && (ap.prUrl || ap.autoMergeArmed || ap.error)) {
+      if (ap && (ap.prUrl || ap.autoMergeArmed || ap.error || isStrandedWrap(ap))) {
         return {
           prUrl: ap.prUrl || null,
           armed: ap.autoMergeArmed === true,
           error: ap.error || null,
-          skippedReason: ap.skippedReason || null
+          skippedReason: ap.skippedReason || null,
+          stranded: isStrandedWrap(ap)
         };
       }
     }
@@ -793,7 +826,8 @@
     accumulateAiContentSkips,
     buildReportText,
     wrapWatchDecision,
-    shouldStartEndedCountdown
+    shouldStartEndedCountdown,
+    isStrandedWrap
   };
 
   // Browser: attach to window so session.js can call helpers.
