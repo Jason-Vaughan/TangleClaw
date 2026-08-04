@@ -615,6 +615,48 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **BREAKING: cross-site requests can no longer change server state (#860).** A page on another
+  site could change the TangleClaw admin credential. Several routes authorize on "this request
+  arrived over loopback" — most sharply `POST /api/auth/credential`, which treats loopback as proof
+  that Caddy already authenticated the caller. That holds for traffic *through* Caddy, but in caddy
+  mode TangleClaw still binds an ungated `127.0.0.1:<serverPort>` listener that the operator's own
+  browser can reach directly, and `parseBody` parses any body as JSON regardless of `Content-Type`.
+  So a form with `enctype="text/plain"` on any page the operator visits is a CORS **simple**
+  request: no preflight, it is delivered, its body parses, the credential changes. The attacker
+  cannot read the reply — which does not matter for a write.
+
+  `POST`, `PUT`, `PATCH` and `DELETE` carrying `Sec-Fetch-Site: cross-site` now get **403
+  `CROSS_SITE_FORBIDDEN`**. The check sits *ahead* of route matching, so a cross-site caller is
+  refused whether or not the route exists — it cannot be used to probe which methods and paths
+  this server implements, and a route added later cannot open a hole the guard was assumed to
+  cover.
+
+  **Nothing that works today stops working.** Browsers always send `Sec-Fetch-Site`; curl, scripts
+  and the agent-facing PortHub/shared-docs API omit it entirely, and an absent header is allowed
+  because a non-browser caller is not a CSRF vector. `GET` is untouched, so navigation is
+  unaffected. Marked BREAKING only because a genuinely cross-site integration driving these routes
+  from a browser would now be refused, and that deserves release notes rather than a surprise.
+
+  Narrow on purpose: only `cross-site` is refused, not `same-site`. Refusing `same-site` would
+  require an attacker holding a sibling subdomain of the operator's own host and would risk
+  breaking a legitimate multi-subdomain deployment. That residual, the broader question of
+  enforcing `Content-Type` on JSON bodies (a breaking change to a documented agent-facing
+  contract), and re-ratifying the blanket CSRF acceptance in `security-model.md` — whose stated
+  premise, *"no session state in the browser"*, is exactly what shipping browser-cached HTTP Basic
+  invalidates — are tracked at **#860**.
+
+- **`canChangeCredential` now fails closed when the caller omits the connection answer.**
+  `fromLoopback` defaulted to `true`, justified in the docstring by "non-request callers (the CLI
+  has no socket)" — no such caller exists; both call sites are in `server.js` and both pass a real
+  socket answer. A permissive default on the check the module itself calls its first and most
+  important means any future caller that forgets the argument is silently authorized. It now
+  defaults to `false`.
+
+  Seven existing tests were relying on that default while naming *other* conditions — they now pass
+  `fromLoopback` explicitly, which is what makes each of them test the condition in its own title
+  rather than this one. That is a contract correction, not a weakening: a new test pins the
+  fail-closed default directly, and reverting the default turns it red.
+
 - **Break-glass recovery is proven by execution, not by reading the code (#710).** The
   no-permanent-lockout guarantee rested on a tool whose reload had never run: `test/reset-admin.test.js`
   asserts the `launchctl` argv **as data** and never executes it, so every claim past "the file is

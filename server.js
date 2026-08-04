@@ -60,6 +60,12 @@ const medusa = require('./lib/medusa');
 const log = createLogger('server');
 
 const MAX_BODY_SIZE = 10 * 1024; // 10 KB
+
+// Methods that can change server state, and so must not be accepted from a page
+// on another site. GET/HEAD are excluded because they are the ones a browser
+// issues while merely navigating; any route that mutates behind a GET is a bug
+// in that route, not something to paper over here.
+const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -4598,6 +4604,44 @@ async function handleRequest(req, res) {
 
   // API routes
   if (pathname.startsWith('/api/')) {
+    // Reject state-changing requests a browser tells us came from another site.
+    //
+    // Placed ahead of route matching on purpose: a cross-site caller is refused
+    // whether or not the route exists, so the guard cannot be probed for which
+    // methods and paths this server implements, and adding a route later can
+    // never open a hole this guard was assumed to already cover.
+    //
+    // Several routes authorize on "the request arrived over loopback" — most
+    // sharply POST /api/auth/credential, which treats loopback as proof that the
+    // perimeter already authenticated the caller. That reasoning holds for
+    // traffic through Caddy, but in caddy mode this server still binds an
+    // ungated 127.0.0.1:<serverPort> listener, and a browser on the operator's
+    // machine can reach it directly. `parseBody` parses any body as JSON
+    // regardless of Content-Type, so a form with enctype="text/plain" is a CORS
+    // *simple* request: no preflight, it is sent, and its body parses. The
+    // attacker cannot read the reply, which does not matter for a write — the
+    // admin credential is already changed.
+    //
+    // Sec-Fetch-Site is the cheap correct check: every current browser sends it
+    // and it cannot be forged from script. Non-browser callers (curl, scripts,
+    // the agent-facing API in the project guide) omit it entirely, and they are
+    // not a CSRF vector, so an absent header is allowed — this closes the
+    // browser path without breaking a single existing API consumer.
+    //
+    // Deliberately narrow: only `cross-site` is refused. Rejecting `same-site`
+    // as well would need an attacker controlling a sibling subdomain of the
+    // operator's own host, and would risk breaking a legitimate multi-subdomain
+    // deployment. The residual, plus the broader question of enforcing
+    // Content-Type on JSON bodies and re-ratifying the blanket CSRF acceptance
+    // in security-model.md — whose stated premise, "no session state in the
+    // browser", is exactly what shipping browser-cached HTTP Basic invalidates —
+    // is tracked separately.
+    if (CSRF_UNSAFE_METHODS.has(method) && req.headers['sec-fetch-site'] === 'cross-site') {
+      log.warn('Refused cross-site state-changing request', { method, path: pathname });
+      return errorResponse(res, 403,
+        'Cross-site requests may not change server state.', 'CROSS_SITE_FORBIDDEN');
+    }
+
     const matched = matchRoute(method, pathname);
     if (!matched) {
       log.debug('Route not found', { method, path: pathname });

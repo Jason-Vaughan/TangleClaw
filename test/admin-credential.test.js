@@ -55,7 +55,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
   const configured = { ingressMode: 'caddy', basicAuthUser: 'jason', basicAuthHash: HASH_OLD };
 
   it('allows a change when a gate is live and a credential exists', () => {
-    const r = cred.canChangeCredential(configured, gated);
+    const r = cred.canChangeCredential(configured, gated, true, true);
     assert.equal(r.allowed, true);
     assert.equal(r.code, 'ok');
   });
@@ -64,7 +64,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // The important half is WHY: with no gate in force there is no perimeter, so
     // this request is unauthenticated. Allowing it would let whoever reaches an
     // ungated install claim it.
-    const r = cred.canChangeCredential({ ...configured, ingressMode: 'direct' }, gated);
+    const r = cred.canChangeCredential({ ...configured, ingressMode: 'direct' }, gated, true, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'not-caddy-mode');
     assert.match(r.remedy, /ingress-cutover/, 'the operator needs the command that puts a login in place');
@@ -82,6 +82,19 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'remote-connection');
     assert.match(r.remedy, /reset-admin/, 'and names a way that proves physical control');
+  });
+
+  it('fails CLOSED when the caller omits fromLoopback entirely', () => {
+    // The default used to be `true`, justified by "non-request callers (the CLI
+    // has no socket)" — no such caller exists; both call sites are in server.js
+    // and both pass a real socket answer. A permissive default on the check this
+    // module calls its first and most important means any future caller that
+    // forgets the argument is silently authorized rather than refused. Every
+    // other test in this block now passes it explicitly, which is what makes
+    // each of them test the condition it names instead of this one.
+    const r = cred.canChangeCredential(configured, gated, true);
+    assert.equal(r.allowed, false, 'an omitted connection answer must refuse, never authorize');
+    assert.equal(r.code, 'remote-connection');
   });
 
   it('refuses a remote connection FIRST, before any answer about the machine', () => {
@@ -111,7 +124,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // `caddy hash-password` is the only hasher this codebase has. Asked here so
     // the form is never drawn for an install that would fail at submit with a 500
     // from a shell-out — the sibling ingress-state endpoint checks the same thing.
-    const r = cred.canChangeCredential(configured, gated, false);
+    const r = cred.canChangeCredential(configured, gated, false, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'no-caddy-binary');
     assert.match(r.remedy, /install caddy/i);
@@ -121,7 +134,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // The stored-unconfirmed state: config holds a credential no ingress applies.
     // Changing it here would report a password change nothing enforces — which is
     // the false-report class this whole plan exists to eliminate.
-    const r = cred.canChangeCredential(configured, { state: 'ungated', user: null });
+    const r = cred.canChangeCredential(configured, { state: 'ungated', user: null }, true, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'no-gate');
     assert.match(r.remedy, /reset-admin/, 'recovery is the terminal tool, not this surface');
@@ -132,7 +145,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // Direction forbids: a reset behind the gate cannot help someone the gate has
     // locked out, and an ungated install could be claimed by whoever reaches it.
     const r = cred.canChangeCredential(
-      { ...configured, basicAuthUser: null, basicAuthHash: null }, gated);
+      { ...configured, basicAuthUser: null, basicAuthHash: null }, gated, true, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'no-credential');
     assert.match(r.remedy, /reset-admin/);
@@ -144,7 +157,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // looking at three credentials that there are none reads as a bug in
     // TangleClaw, and sends them to the wrong command.
     const r = cred.canChangeCredential(configured,
-      { state: 'ambiguous', user: null, users: ['jason', 'ops', 'backup'] });
+      { state: 'ambiguous', user: null, users: ['jason', 'ops', 'backup'] }, true, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'no-gate');
     assert.match(r.reason, /more than one login/);
@@ -155,7 +168,7 @@ describe('canChangeCredential — the one predicate that guards this surface', (
     // Absent and unreadable are different facts. Treating unreadable as "no gate"
     // would route an operator whose file merely has bad permissions toward the
     // wrong remedy entirely.
-    const r = cred.canChangeCredential(configured, { state: 'unreadable', user: null });
+    const r = cred.canChangeCredential(configured, { state: 'unreadable', user: null }, true, true);
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'unreadable');
   });

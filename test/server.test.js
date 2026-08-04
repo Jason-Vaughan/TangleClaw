@@ -160,6 +160,81 @@ describe('server', () => {
       });
     }
 
+    // POST /api/auth/credential authorizes on "arrived over loopback", treating
+    // that as proof Caddy already authenticated the caller. In caddy mode the
+    // server still binds an ungated 127.0.0.1 listener the operator's own
+    // browser can reach, and parseBody parses any body as JSON whatever the
+    // Content-Type — so a form with enctype="text/plain" is a CORS *simple*
+    // request: no preflight, delivered, body parses, credential changed. The
+    // reply is unreadable cross-origin, which is irrelevant to a write.
+    describe('cross-site state-change guard', () => {
+      /**
+       * Drive one request through the real handler.
+       * @param {string} method
+       * @param {string} url
+       * @param {Record<string,string>} extraHeaders
+       * @returns {Promise<{statusCode:number, body:string, contentType:string}>}
+       */
+      async function send(method, url, extraHeaders) {
+        const req = {
+          url, method,
+          headers: Object.assign({ host: 'localhost:3102' }, extraHeaders),
+          // parseBody attaches data/end listeners; end immediately with no body.
+          on(event, cb) { if (event === 'end') cb(); },
+          socket: { remoteAddress: '127.0.0.1' }
+        };
+        const res = mockRes();
+        await handleRequest(req, res);
+        return res;
+      }
+
+      it('refuses the actual attack: a cross-site text/plain form POST to the credential route', async () => {
+        const res = await send('POST', '/api/auth/credential', {
+          'sec-fetch-site': 'cross-site',
+          'content-type': 'text/plain;charset=UTF-8'   // what a form enctype produces
+        });
+        assert.equal(res.statusCode, 403, 'a cross-site credential write must be refused');
+        assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+      });
+
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        it(`refuses cross-site ${method} on any API route, not just the credential one`, async () => {
+          const res = await send(method, '/api/config', { 'sec-fetch-site': 'cross-site' });
+          assert.equal(res.statusCode, 403, `${method} must be refused cross-site`);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+      }
+
+      it('does NOT block a cross-site GET — navigation must keep working', async () => {
+        // GET is excluded on purpose; a mutating GET is a bug in that route.
+        const res = await send('GET', '/api/health', { 'sec-fetch-site': 'cross-site' });
+        assert.notEqual(res.statusCode, 403, 'reads must not be refused by the CSRF guard');
+      });
+
+      it('allows a request with NO Sec-Fetch-Site — curl, scripts, the agent-facing API', async () => {
+        // This is the compatibility contract: non-browser callers omit the
+        // header entirely and are not a CSRF vector. If this ever 403s, every
+        // documented curl example in the project guide breaks at once.
+        const res = await send('POST', '/api/config', {});
+        assert.notEqual(res.statusCode, 403, 'a header-less caller must not be refused');
+        assert.doesNotMatch(res.body, /CROSS_SITE_FORBIDDEN/);
+      });
+
+      it('allows same-origin — the dashboard\'s own fetches', async () => {
+        const res = await send('POST', '/api/config', { 'sec-fetch-site': 'same-origin' });
+        assert.notEqual(res.statusCode, 403);
+      });
+
+      it('allows same-site, and that narrowness is deliberate', async () => {
+        // Refusing same-site too would need an attacker holding a sibling
+        // subdomain of the operator's own host, and would break a legitimate
+        // multi-subdomain deployment. Pinned so a future widening is a decision
+        // someone makes on purpose rather than a silent tightening.
+        const res = await send('POST', '/api/config', { 'sec-fetch-site': 'same-site' });
+        assert.notEqual(res.statusCode, 403);
+      });
+    });
+
     it('still serves the real /manifest.json file (a genuine bypass path with a handler)', async () => {
       const res = await get('/manifest.json');
       assert.equal(res.statusCode, 200);

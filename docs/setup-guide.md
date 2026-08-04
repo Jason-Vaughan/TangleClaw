@@ -54,8 +54,11 @@ means. Caddy also handles **TLS**, which is what makes the address start with
 The advantage of doing it this way is that the password check happens *before*
 anything reaches TangleClaw. There is one door, and it is locked.
 
-Setup installs and configures this for you. You do not need to write any Caddy
-configuration by hand.
+Setup **configures** this for you — you do not need to write any Caddy
+configuration by hand. It does not *install* Caddy: `deploy/install.sh` does that,
+along with the rest of the dependencies, so on a normal install Caddy is already
+present by the time setup runs. The distinction matters only when it is missing,
+which is the first case below.
 
 ### If setup could not do it
 
