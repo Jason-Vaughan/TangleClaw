@@ -25,6 +25,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const provision = require('../lib/ingress-provision');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
+const server864 = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
 
 setLevel('error');
@@ -306,7 +307,46 @@ describe('setup provisions a login by default', () => {
         assert.match(res.raw, /HOST_NOT_SERVED/);
       });
 
-      it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
+      /*
+     * #864 — the allowlist is cached because computing it parses the
+     * certificate, and the cache's certificate term is load-bearing: a SAN
+     * added by `POST /api/setup/generate-cert` lands in NO config field, so the
+     * cert is its only record. Key on config alone and a freshly added name
+     * never enters the allowlist for the life of the process — the exact
+     * failure the derivation exists to prevent.
+     */
+    describe('#864 — the served-host cache invalidates on the certificate', () => {
+      it('recomputes when cert.pem changes, not just when config does', () => {
+        const httpsSetup = require('../lib/https-setup');
+        const certsDir = httpsSetup.getCertsDir();
+        fs.mkdirSync(certsDir, { recursive: true });
+        const certPath = path.join(certsDir, 'cert.pem');
+
+        const realFn = httpsSetup.servedHostAllowlist;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        try {
+          const cfg = store.config.load();
+          fs.writeFileSync(certPath, 'FIRST');
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged cert must be served from cache');
+
+          // Rewrite with a DIFFERENT length so the key moves even if the
+          // filesystem's mtime resolution rounds two fast writes together.
+          fs.writeFileSync(certPath, 'SECOND-AND-LONGER');
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1,
+            'a regenerated certificate must invalidate the cache — its SANs live nowhere else');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+          fs.rmSync(certPath, { force: true });
+        }
+      });
+    });
+
+    it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
         // Caddy mode looks like "remotely reachable", and an earlier version
         // treated it as a second way to qualify. But bindPolicy REFUSES the wide
         // opt-in in caddy mode, so the listener is loopback-only there too; a

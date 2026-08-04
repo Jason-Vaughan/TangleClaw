@@ -91,10 +91,20 @@ let _servedHostsCache = null;
  * reduces that warning to once per change of state, which is what it was
  * written to report.
  *
- * The key is what the answer actually depends on: the two configured names, and
- * the certificate's own mtime and size. A regenerated cert therefore invalidates
- * this without anyone having to remember to, which matters because
- * `POST /api/setup/generate-cert` can add names that live nowhere else.
+ * The key is every input the answer depends on: the two configured names, the
+ * machine's hostname, and the certificate's own mtime and size.
+ *
+ * The certificate term is the load-bearing one. `POST /api/setup/generate-cert`
+ * accepts a host list that lands in no config field, so the cert is those names'
+ * only record — key on the config alone and a freshly added SAN never enters the
+ * allowlist for the life of the process, producing exactly the "loads over a
+ * valid certificate, serves reads, refuses every write, kills every terminal
+ * upgrade" failure this list exists to prevent. A test rewrites the cert between
+ * two guarded requests to hold that.
+ *
+ * `os.hostname()` is in the key because both `certHostUnion` and
+ * `servedHostAllowlist` derive names from it; without it a machine renamed
+ * mid-run keeps answering to its old `.local` name until something else moves.
  *
  * An unreadable or malformed cert must not take a request down with it, so
  * failure yields an empty set: names all refused, while an IP-literal `Host`
@@ -111,7 +121,8 @@ function _servedHostsOrEmpty(config) {
     certStamp = `${st.mtimeMs}:${st.size}`;
   } catch { /* no cert yet — a real state, and a stable cache key for it */ }
 
-  const key = `${config.publicDomain || ''}|${config.caddyTailnetHost || ''}|${certStamp}`;
+  const key = `${config.publicDomain || ''}|${config.caddyTailnetHost || ''}`
+    + `|${os.hostname()}|${certStamp}`;
   if (_servedHostsCache && _servedHostsCache.key === key) return _servedHostsCache.value;
 
   let value;
@@ -6177,4 +6188,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty };
