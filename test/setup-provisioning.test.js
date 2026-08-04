@@ -25,6 +25,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const provision = require('../lib/ingress-provision');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
+const server864 = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
 
 setLevel('error');
@@ -70,6 +71,39 @@ function request(server, method, urlPath, body) {
  * @param {object} body
  * @returns {Promise<{ status: number, data: any, raw: string }>}
  */
+/**
+ * Like `requestWithHost`, but carrying the header a real browser sends. The
+ * #864 Host guard only applies to browser-shaped requests, so a carve-out test
+ * that omits this proves nothing — it would pass with the carve-out deleted.
+ * @param {object} server
+ * @param {string} host - Host header value.
+ * @param {object} body
+ * @param {string} [path] - Route to hit.
+ * @param {string} [method] - HTTP method; Skip uses PATCH, not POST.
+ * @returns {Promise<{status:number, data:*, raw:string}>}
+ */
+function browserRequestWithHost(server, host, body, path = '/api/setup/complete', method = 'POST') {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const req = http.request({
+      hostname: '127.0.0.1', port: addr.port, path, method,
+      headers: { 'Content-Type': 'application/json', Host: host, 'Sec-Fetch-Site': 'same-origin' }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data;
+        try { data = JSON.parse(raw); } catch { data = raw; }
+        resolve({ status: res.statusCode, data, raw });
+      });
+    });
+    req.on('error', reject);
+    req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
 function requestWithHost(server, host, body) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
@@ -237,6 +271,191 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.url, 'https://localhost:8443',
         'a malformed Host must fall back, not round-trip');
       assert.ok(!/alert\(1\)/.test(res.raw), 'the response echoed script-shaped text back');
+    });
+
+    /*
+     * #864 — the Host guard's first-run carve-out, exercised through a real
+     * /api/setup/* request. An earlier version of these tests posted only to
+     * /api/config and /api/setupsomething, so neither axis of the carve-out was
+     * pinned — including the axis that makes it CLOSE.
+     */
+    describe('#864 — the first-run Host carve-out', () => {
+      const BODY = { projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery' };
+
+      it('exempts a remote first run when the install is actually reachable', async () => {
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = true;   // wide: a remote operator can reach the wizard
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'cursatory.tail123678.ts.net:8443', BODY);
+        assert.notEqual(res.status, 403,
+          'this is the flow the carve-out exists for — setup is what learns this name');
+      });
+
+      it('does NOT exempt the loopback default, where no remote first run is possible', async () => {
+        // The blocking defect in the first version. Default config binds
+        // 127.0.0.1 only, so no remote operator can reach the wizard — which
+        // means the only request that can arrive here under an unserved Host is
+        // the rebound one, on the route that sets the admin credential.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = false;
+        c.ingressMode = 'direct';
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'a loopback-only install has no remote first run to protect');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
+      it('does NOT exempt caddy mode — Caddy fronts a loopback socket a rebound page bypasses', async () => {
+        // Caddy mode looks like "remotely reachable", and an earlier version
+        // treated it as a second way to qualify. But bindPolicy REFUSES the wide
+        // opt-in in caddy mode, so the listener is loopback-only there too; a
+        // remote operator arrives through Caddy under a name this list already
+        // holds, while a rebound page reaches 127.0.0.1 without traversing Caddy
+        // at all. Exempting it would have re-opened the blocking defect in the
+        // other arm. Untested, this reverts silently.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = false;
+        c.ingressMode = 'caddy';
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'caddy mode is not a remote first run');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
+      it('closes the moment setup completes, even on a wide install', async () => {
+        const c = store.config.load();
+        c.setupComplete = true;
+        c.bindAllInterfaces = true;
+        store.config.save(c);
+        const res = await browserRequestWithHost(server, 'evil.example:8443', BODY);
+        assert.equal(res.status, 403, 'the carve-out is for FIRST run only');
+        assert.match(res.raw, /HOST_NOT_SERVED/);
+      });
+
+      it('covers the wizard\'s OTHER terminator — Skip, via PATCH /api/config', async () => {
+        // Two routes finish setup (ADR 0009 point 2). Guarding one and not the
+        // other is the half-swept-family defect: remote Finish would work while
+        // remote Skip 403'd.
+        const c = store.config.load();
+        c.setupComplete = false;
+        c.bindAllInterfaces = true;
+        store.config.save(c);
+        const res = await browserRequestWithHost(
+          server, 'cursatory.tail123678.ts.net:8443', { setupComplete: true }, '/api/config', 'PATCH');
+        assert.notEqual(res.status, 403, 'remote Skip must work wherever remote Finish does');
+        // It then hits the route's OWN refusal — Skip cannot finish setup with
+        // no credential on a machine that can run one (#710 chunk 2). Asserting
+        // that specific 400 proves the request reached the handler rather than
+        // merely avoiding the Host guard, which a bare notEqual(403) would not.
+        assert.equal(res.status, 400);
+        assert.match(res.raw, /ADMIN_REQUIRED/,
+          'reaching the eyes-open guard is proof the carve-out let it through');
+      });
+    });
+
+    /*
+     * #864 — the allowlist is cached because computing it parses the
+     * certificate, and the cache's certificate term is load-bearing: a SAN
+     * added by `POST /api/setup/generate-cert` lands in NO config field, so the
+     * cert is its only record. Key on config alone and a freshly added name
+     * never enters the allowlist for the life of the process — the exact
+     * failure the derivation exists to prevent.
+     */
+    describe('#864 — the served-host cache invalidates on the certificate', () => {
+      it('recomputes when a configured public name changes — the terms the record claimed', () => {
+        // Both are written on a RUNNING server — publicDomain via
+        // PATCH /api/config, caddyTailnetHost by the Caddyfile-adoption path —
+        // so a stale memo would refuse writes and terminal upgrades under the
+        // very name the operator had just configured, until a restart. The code
+        // keys on them correctly; nothing moved them, and the change-log then
+        // claimed every key term was pinned — which is what made the gap worse
+        // than an ordinary missing test.
+        const httpsSetup = require('../lib/https-setup');
+        const realFn = httpsSetup.servedHostAllowlist;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        try {
+          const cfg = store.config.load();
+          cfg.publicDomain = 'first.example.com';
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged config must be served from cache');
+
+          cfg.publicDomain = 'second.example.com';
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1, 'a new publicDomain must invalidate the memo');
+
+          cfg.caddyTailnetHost = 'box.tail123.ts.net';
+          const afterDomain = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterDomain + 1, 'a new caddyTailnetHost must invalidate it too');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+        }
+      });
+
+      it('recomputes when the machine is renamed — the term nothing else moves', () => {
+        // Same mutation class as the certificate term, one term over. Both
+        // certHostUnion and servedHostAllowlist derive names from os.hostname(),
+        // so without it in the key a machine renamed mid-run keeps answering to
+        // its old .local name and refuses every write under its new one until a
+        // restart. The JSDoc calls the key complete; this is what makes that true.
+        const os = require('node:os');
+        const httpsSetup = require('../lib/https-setup');
+        const realFn = httpsSetup.servedHostAllowlist;
+        const realHostname = os.hostname;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        os.hostname = () => 'before-rename';
+        try {
+          const cfg = store.config.load();
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged hostname must be served from cache');
+
+          os.hostname = () => 'after-rename';
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1,
+            'a renamed machine must invalidate the cache — its names derive from the hostname');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+          os.hostname = realHostname;
+        }
+      });
+
+      it('recomputes when cert.pem changes, not just when config does', () => {
+        const httpsSetup = require('../lib/https-setup');
+        const certsDir = httpsSetup.getCertsDir();
+        fs.mkdirSync(certsDir, { recursive: true });
+        const certPath = path.join(certsDir, 'cert.pem');
+
+        const realFn = httpsSetup.servedHostAllowlist;
+        let calls = 0;
+        httpsSetup.servedHostAllowlist = () => { calls += 1; return new Set(['localhost']); };
+        try {
+          const cfg = store.config.load();
+          fs.writeFileSync(certPath, 'FIRST');
+          server864._servedHostsOrEmpty(cfg);
+          const afterFirst = calls;
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst, 'an unchanged cert must be served from cache');
+
+          // Rewrite with a DIFFERENT length so the key moves even if the
+          // filesystem's mtime resolution rounds two fast writes together.
+          fs.writeFileSync(certPath, 'SECOND-AND-LONGER');
+          server864._servedHostsOrEmpty(cfg);
+          assert.equal(calls, afterFirst + 1,
+            'a regenerated certificate must invalidate the cache — its SANs live nowhere else');
+        } finally {
+          httpsSetup.servedHostAllowlist = realFn;
+          fs.rmSync(certPath, { force: true });
+        }
+      });
     });
 
     it('keeps a legitimate hostname, so a remote operator gets their own address', async () => {

@@ -44,6 +44,7 @@ const sidecar = require('./lib/sidecar');
 const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
+const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const ingressProvision = require('./lib/ingress-provision');
@@ -66,6 +67,188 @@ const MAX_BODY_SIZE = 10 * 1024; // 10 KB
 // issues while merely navigating; any route that mutates behind a GET is a bug
 // in that route, not something to paper over here.
 const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Load config, or `null` if it cannot be read. Both Host-guard callers fail
+ * closed on `null` rather than letting a corrupt config throw out of a request.
+ * @returns {object|null}
+ */
+function _loadConfigOrNull() {
+  try { return store.config.load(); } catch { return null; }
+}
+
+let _servedHostsCache = null;
+
+/**
+ * The served-name allowlist, or an empty set if it cannot be computed.
+ *
+ * **Cached, because computing it reads and X.509-parses the certificate.** This
+ * runs on every guarded write and every WebSocket upgrade, and an uncached
+ * version did a synchronous file read plus a certificate parse per request —
+ * and, on an install with no certificate yet, emitted a warning about
+ * regeneration on each one, loudest during the setup wizard, about an operation
+ * the request path is not performing. Caching removes the per-request cost and
+ * reduces that warning to once per change of state, which is what it was
+ * written to report.
+ *
+ * The key is every input the answer depends on: the two configured names, the
+ * machine's hostname, and the certificate's own mtime and size.
+ *
+ * The certificate term is the load-bearing one. `POST /api/setup/generate-cert`
+ * accepts a host list that lands in no config field, so the cert is those names'
+ * only record — key on the config alone and a freshly added SAN never enters the
+ * allowlist for the life of the process, producing exactly the "loads over a
+ * valid certificate, serves reads, refuses every write, kills every terminal
+ * upgrade" failure this list exists to prevent. A test rewrites the cert between
+ * two guarded requests to hold that.
+ *
+ * `os.hostname()` is in the key because both `certHostUnion` and
+ * `servedHostAllowlist` derive names from it; without it a machine renamed
+ * mid-run keeps answering to its old `.local` name until something else moves.
+ *
+ * An unreadable or malformed cert must not take a request down with it, so
+ * failure yields an empty set: names all refused, while an IP-literal `Host`
+ * still passes inside `_hostIsAllowed` on reasoning that does not consult this
+ * list at all.
+ *
+ * @param {object} config - Loaded config.
+ * @returns {Set<string>}
+ */
+function _servedHostsOrEmpty(config) {
+  let certStamp = 'none';
+  try {
+    const st = fs.statSync(path.join(httpsSetup.getCertsDir(), 'cert.pem'));
+    certStamp = `${st.mtimeMs}:${st.size}`;
+  } catch { /* no cert yet — a real state, and a stable cache key for it */ }
+
+  const key = `${config.publicDomain || ''}|${config.caddyTailnetHost || ''}`
+    + `|${os.hostname()}|${certStamp}`;
+  if (_servedHostsCache && _servedHostsCache.key === key) return _servedHostsCache.value;
+
+  let value;
+  try {
+    value = httpsSetup.servedHostAllowlist(config);
+  } catch (err) {
+    log.warn('Could not compute the served-host allowlist; refusing named hosts', {
+      error: err.message
+    });
+    value = new Set();
+  }
+  _servedHostsCache = { key, value };
+  return value;
+}
+
+/**
+ * Is this a first-run setup request the Host allowlist genuinely cannot cover?
+ *
+ * Setup is what *configures* `publicDomain` / `caddyTailnetHost`, so on an
+ * install a remote operator can actually reach, first run is the one moment the
+ * allowlist cannot contain the address they arrived by — the `Host` header is
+ * how the install learns it, and the wizard names that address back so the
+ * operator knows where the gate will appear.
+ *
+ * **Bounded on three axes, and the third is the one that matters.** An earlier
+ * version stopped at "a setup route, before `setupComplete`", reasoning that a
+ * fresh install is unprotected anyway. That reasoning was wrong: the default
+ * config is `bindAllInterfaces: false` with `ingressMode: 'direct'`, so the
+ * default install binds loopback only and **no remote operator can reach the
+ * wizard at all**. On that population the exemption protected no real flow, and
+ * the only request that could arrive at a setup route under an unserved `Host`
+ * was the rebound one — handing back exactly the attack this guard closes, on
+ * the route that sets the admin credential.
+ *
+ * So the carve-out applies only where the flow it exists for is possible: the
+ * socket is actually wide. A loopback-only install gets no exemption, because it
+ * has no remote first run to protect — and neither does caddy mode, which reads
+ * like a second qualifier and is not (see the reasoning at the return below).
+ *
+ * @param {string} pathname - Request path.
+ * @param {object|null} config - Loaded config, or `null` when it could not be
+ *   read. `null` denies the exemption — it is never re-read here, because the
+ *   caller loads it once and shares it with the allowlist check.
+ * @returns {boolean}
+ */
+function _setupRouteNeedingHostExemption(pathname, config) {
+  // `/api/config` is here because the wizard has TWO terminators: Finish posts
+  // `/api/setup/complete`, and Skip sends `PATCH /api/config { setupComplete:
+  // true }` (ADR 0009 point 2). Guarding one and not the other is the
+  // half-swept-family defect this repo keeps re-learning — remote Skip would
+  // 403 while remote Finish worked.
+  //
+  // Including a general settings route looks wide until you note WHERE this can
+  // apply: an install that is pre-setup and remotely reachable has no credential
+  // and no gate, so anyone who can reach it can already PATCH config directly.
+  // Rebinding buys an attacker nothing there that direct access does not. That
+  // is precisely why the three-axis form is safe and the two-axis one was not.
+  const isSetupSurface = pathname.startsWith('/api/setup/') || pathname === '/api/config';
+  if (!isSetupSurface) return false;
+  // A config that could not be read is not a reason to open the carve-out.
+  if (!config || config.setupComplete !== false) return false;
+  // Is this socket reachable from another machine at all? If not, there is no
+  // remote first run, and the only request that can arrive here under an
+  // unserved Host is the rebound one.
+  //
+  // Caddy mode is deliberately NOT a second way to qualify, though it looks like
+  // one. `bindPolicy` refuses the wide opt-in in caddy mode, so the listener is
+  // loopback-only there too — Caddy holds the gate in front of it. A remote
+  // operator therefore reaches the wizard THROUGH Caddy, under the site name
+  // Caddy serves, which this allowlist already contains; while a rebound page
+  // reaches 127.0.0.1 directly, without traversing Caddy at all. Adding caddy
+  // mode would have exempted only the attack — the same defect as keying on
+  // `setupComplete` alone, in the other arm.
+  return bindPolicy.describeBindState(config).wide === true;
+}
+
+/**
+ * Is `Host` a name this install actually serves?
+ *
+ * The cross-site guards ask the request to vouch for itself: `Sec-Fetch-Site`
+ * is what the browser computed from the page's own origin, and the upgrade
+ * guard compares `Origin` to the request's own `Host`. Both are satisfied by an
+ * attacker who controls DNS — `evil.example` pointed at `127.0.0.1` is
+ * `same-origin` as far as the browser knows, and reaches the ungated loopback
+ * listener. This is the independent check (#864).
+ *
+ * Parsed via `URL`, never split on `':'`: a bracketed IPv6 `Host`
+ * (`[fd7a:115c::1]:3102`) splits into `'['`, and Tailscale gives every node an
+ * `fd7a:115c::/48` address, so splitting would refuse a normal way to reach
+ * this product. Same reasoning as `_isSameOriginUpgrade`.
+ *
+ * A missing `Host` is refused: HTTP/1.1 requires it, and the callers only
+ * consult this for state-changing requests and upgrades.
+ *
+ * @param {string|undefined} host - The `Host` header.
+ * @param {Set<string>} [allowlist] - Override (tests); defaults to the live config.
+ * @returns {boolean}
+ */
+function _hostIsAllowed(host, allowlist) {
+  if (!host) return false;
+  let name;
+  try {
+    name = new URL(`http://${host}`).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  // `URL` keeps IPv6 literals bracketed; unwrap before testing either branch.
+  if (name.startsWith('[') && name.endsWith(']')) name = name.slice(1, -1);
+
+  // An IP literal is always allowed, and this is the whole shape of the attack.
+  // Rebinding needs a NAME: the trick is to make a name the browser already
+  // trusts resolve somewhere else, and `Host` then carries that name. There is
+  // no DNS step for a literal — a request that reaches us same-origin as
+  // `192.168.1.50` or `[fd7a:115c::1]` means the browser really is talking to
+  // that address. A page hosted at a DIFFERENT address posting here yields
+  // `Origin` ≠ `Host`, which the two guards above already refuse.
+  //
+  // This also keeps the allowlist free of the machine's own interface
+  // addresses, which would otherwise have to be enumerated and would change
+  // with the network — a Tailscale node's `fd7a:115c::/48` address is a normal
+  // way to reach this product and appears in no config field.
+  if (net.isIP(name)) return true;
+
+  const allowed = allowlist || httpsSetup.servedHostAllowlist(store.config.load());
+  return allowed.has(name);
+}
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -4492,6 +4675,32 @@ function handleUpgrade(req, socket, head) {
     return;
   }
 
+  // #864 — the check above only proves Origin and Host AGREE, which they do
+  // under DNS rebinding: both read `evil.example`, and the handshake proceeds
+  // to a `--writable` ttyd. Requiring the name to be one this install serves is
+  // what makes them agree on something true.
+  //
+  // Gated on `origin` for the same reason the check above is: a browser always
+  // sends it, a non-browser client (the OpenClaw CLI, scripts) does not and is
+  // not a cross-site vector. Without that gate this would refuse every
+  // headless consumer that reaches the socket by an address the allowlist has
+  // no way to know about.
+  if (origin) {
+    const wsCfg = _loadConfigOrNull();
+    const wsAllowlist = wsCfg ? _servedHostsOrEmpty(wsCfg) : new Set();
+    // No setup carve-out here on purpose: the wizard completes over HTTP, and
+    // nothing in first run opens a terminal socket. An exemption would be dead
+    // code guarding the route with the worst payoff — `/terminal/*` proxies to
+    // a `--writable` ttyd.
+    if (!_hostIsAllowed(req.headers.host, wsAllowlist)) {
+      log.warn('Refused WebSocket upgrade for an unserved Host', {
+        path: urlObj.pathname, origin, host: req.headers.host
+      });
+      socket.destroy();
+      return;
+    }
+  }
+
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw-direct', connId, ...rest]
@@ -4720,6 +4929,43 @@ async function handleRequest(req, res) {
     log.warn('Refused cross-site state-changing request', { method, path: pathname });
     return errorResponse(res, 403,
       'Cross-site requests may not change server state.', 'CROSS_SITE_FORBIDDEN');
+  }
+
+  // #864 — the check above trusts the browser's own same-origin verdict, which
+  // an attacker controlling DNS can manufacture. Refuse a state-changing
+  // request that arrives under a name this install does not serve.
+  //
+  // Scoped to the unsafe methods ON PURPOSE, not applied to every request: an
+  // allowlist derived wrongly (a reverse proxy that rewrites Host, a container
+  // name, a LAN address nobody registered) then degrades to "reads still work,
+  // writes are refused with a named error" instead of taking the dashboard away
+  // from a remote operator entirely. Tightening to an outright refusal is a
+  // separate decision, to be made once the derivation has proven itself.
+  // Applied only to requests that look like they came from a browser, matching
+  // the contract both sibling guards state explicitly: `curl`, scripts and the
+  // agent-facing API in the project guide send neither header and are not a
+  // cross-site vector, so they keep working under any `Host` (a container name,
+  // a proxy rewrite). This costs the guard nothing — a rebound page IS a
+  // browser, and a browser cannot suppress `Sec-Fetch-Site` from script, so the
+  // attack always carries the marker that brings it back into scope.
+  const looksLikeBrowser = req.headers['sec-fetch-site'] !== undefined
+    || req.headers.origin !== undefined;
+  if (CSRF_UNSAFE_METHODS.has(method) && looksLikeBrowser) {
+    // ONE read of config, shared by both checks below. They used to load it
+    // separately and only one wrapped the call, so a corrupt config threw out
+    // of the request through the unguarded path instead of being refused.
+    // `null` here means "could not read it", which fails CLOSED: no exemption,
+    // and an empty name list (an IP-literal Host still passes on its own merit).
+    const cfg = _loadConfigOrNull();
+    const allowlist = cfg ? _servedHostsOrEmpty(cfg) : new Set();
+    if (!_setupRouteNeedingHostExemption(pathname, cfg)
+        && !_hostIsAllowed(req.headers.host, allowlist)) {
+      log.warn('Refused state-changing request for an unserved Host', {
+        method, path: pathname, host: req.headers.host
+      });
+      return errorResponse(res, 403,
+        'This server does not answer to that host name.', 'HOST_NOT_SERVED');
+    }
   }
 
   // API routes
@@ -5862,6 +6108,16 @@ if (require.main === module) {
       node: process.version,
       pid: process.pid,
       https: servingHttps,
+      // #864 — the names state-changing requests and WebSocket upgrades are
+      // accepted under. Logged because this list is DERIVED (from
+      // `certHostUnion` — the certificate's own names, the mkcert defaults, the
+      // mDNS name and the two configured public names — plus the bare machine
+      // name), and a derivation that misses a legitimate address refuses writes
+      // from it. That reads as "the
+      // dashboard is broken" unless the operator can see what the server
+      // believes it serves. Printing it costs one line and turns a silent
+      // refusal into a diff against reality.
+      servedHosts: [...httpsSetup.servedHostAllowlist(config)].sort().join(', '),
       // Surfaced only when intent and reality diverge, so the listen line
       // points back at the fallback WARN logged during construction rather
       // than leaving the operator to notice the mismatch themselves.
@@ -5933,4 +6189,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty };

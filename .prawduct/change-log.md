@@ -802,6 +802,15 @@ concludes "up to date", and (given the same commit's hide-on-real-answer branch)
 down while old code is still serving. Pointed at `getRunningVersion()` with the disk read kept
 as the fallback, so all three consumers now derive it from one place.
 
+**Also:** the allowlist is memoized on the configured names, the hostname, and the certificate's
+mtime/size. That is not only a cost fix — computing it read and X.509-parsed the cert on every
+guarded write and upgrade, and on an install with no cert yet emitted a warning about *regeneration*
+per request, loudest during the setup wizard. The warning now reports a change of state. All four key terms —
+`publicDomain`, `caddyTailnetHost`, the hostname, and the certificate's mtime/size — are
+mutation-pinned. They were not at first, and the record claimed otherwise before the tests existed,
+which is worse than the gap: the certificate term is load-bearing (a SAN from `generate-cert` lives
+in no config field), and the config terms are both written on a RUNNING server — `publicDomain` via `PATCH /api/config`, `caddyTailnetHost` by the Caddyfile-adoption path.
+
 **Classification:** fix
 
 ## 2026-07-28: Bind loopback unless something is guarding the door (#710, chunk 1)
@@ -3291,5 +3300,66 @@ Independently: `autoMergeArmed` is load-bearing in the predicate, because a PR w
 parsed can still arm auto-merge and will land, and calling that stranded cries wolf on the one shape
 that resolves itself. Both fixed; cross-file tests now pin the two predicates to the same verdict
 and go red when either drifts.
+
+**Classification:** fix
+
+## 2026-08-04: A rebound name no longer satisfies the cross-site guards (#864)
+
+<!-- prawduct: type=fix | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** both v5 cross-site guards decide "is this cross-site?" relative to the request itself, so
+an attacker controlling DNS satisfies them without forging anything — the browser honestly reports
+`same-origin` for `evil.example` pointed at `127.0.0.1`. The payoff is the ungated loopback listener
+and a `--writable` ttyd.
+
+**What:** `servedHostAllowlist` derives the names this install serves and both guards check `Host`
+against it. Scoped to browser-shaped state-changing requests and WS upgrades, so a mis-derived list
+refuses writes rather than removing the dashboard, and header-less consumers keep working. Startup
+logs the computed list.
+
+**CORRECTION — this entry previously claimed `certHostUnion` does not exist. It does**, at
+`scripts/ingress-cutover.js`, exported and tested (#863). The claim came from grepping only `lib/`
+and `server.js` and reading that bounded window as absence — the exact failure the
+prove-absence-before-deleting rule names — and it was then recorded here as a *verified finding*,
+which made a confident falsehood look like diligence. The Critic caught it; all three reviewers
+found it independently.
+
+It was also a real defect, not just a bad record: the parallel union built here was a fourth copy
+and the only one omitting `certSanHosts`. An install whose cert carries an operator-added name
+(`POST /api/setup/generate-cert` takes a hosts array that lands in no config field, and the cert is
+its own only record) would have loaded the dashboard over a valid cert, served reads, then refused
+every write and destroyed every terminal upgrade. `certHostUnion` now lives in `lib/https-setup.js`
+beside the inputs it reads, the script delegates to it, and `servedHostAllowlist` derives FROM it —
+so "the names we serve cannot drift from the names the cert carries" is now true by construction
+rather than asserted.
+
+**The blocking finding, and why the first fix was wrong.** The first-run carve-out exempted
+`/api/setup/*` while `setupComplete === false`, justified as "a fresh install is unprotected
+anyway". That premise is false for the default population: `bindAllInterfaces: false` +
+`ingressMode: 'direct'` binds loopback only, so **no remote operator can reach the wizard**, and the
+only request that could arrive there under an unserved `Host` was the rebound one — on the route
+that sets the admin credential. The carve-out now also requires the install to actually be reachable —
+`describeBindState(config).wide`, and *only* that. Caddy mode looks like a second way to qualify and
+is not: `bindPolicy` refuses the wide opt-in there, so the listener is loopback-only behind Caddy, a
+remote operator arrives THROUGH Caddy under an allowlisted name, and a rebound page reaches
+127.0.0.1 without traversing Caddy at all. Accepting it would have exempted only the attack — the
+same defect in the other arm, and it was caught only because the Critic noticed the arm had no test. It also covers `PATCH /api/config`, the wizard's OTHER terminator (ADR 0009 point 2) —
+guarding Finish but not Skip is the half-swept-family defect again.
+
+**Two more the build turned up:**
+
+1. An existing test (`[fd7a:115c::1]` tailnet upgrade) went red and was right to. Enumerating the
+   machine's interface addresses would have fixed it but bound the allowlist to a network that
+   changes. **Bare IPs are allowed outright instead**: rebinding needs a NAME, and a cross-address
+   page yields `Origin` != `Host`, already refused.
+2. Two integration tests proved `POST /api/setup/complete` legitimately arrives under a host the
+   allowlist cannot know — including one named "keeps a legitimate hostname, so a remote operator
+   gets their own address". That is what forced the carve-out into the open.
+
+**And the carve-out tests did not test the carve-out.** The first version posted only to
+`/api/config` and `/api/setupsomething` — neither is a `/api/setup/*` path, so no axis was pinned,
+including the one that makes it close. Rewritten against a real store: reachable-and-first-run is
+exempt, the loopback default is not, it closes on `setupComplete`, and Skip is covered. Each is
+mutation-verified, including reverting to the exact two-axis form that was the blocking defect.
 
 **Classification:** fix

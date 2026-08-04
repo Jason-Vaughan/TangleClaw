@@ -773,6 +773,72 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **A state-changing request or terminal socket must now arrive under a name this install
+  actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
+  Those guards decide "is this cross-site?" *relative to the request itself*: `Sec-Fetch-Site` is
+  what the browser computed from the page's own origin, and the upgrade check compares `Origin`
+  against the request's own `Host`. An attacker controlling DNS satisfies both without forging
+  anything — point `evil.example` at `127.0.0.1`, get the operator to load it, and the browser
+  honestly reports `same-origin`, because as far as it knows it is. `Origin` and `Host` agree, on a
+  lie. The request then reaches the ungated loopback listener that exists in caddy mode, where
+  `/terminal/*` proxies to a `--writable` ttyd.
+
+  The guards now check that agreement against an independent fact: `servedHostAllowlist` derives
+  the names this install is *already configured to serve*. It does not assemble that set itself — it
+  derives from `certHostUnion`, the function the cert paths already share, which is why it cannot
+  drift from the certificate. That matters more than it sounds: `POST /api/setup/generate-cert`
+  accepts a caller-supplied host list that lands in **no config field**, so the certificate is the
+  only record those names have. A list built from config alone would have loaded the dashboard over
+  a valid certificate, served reads, then refused every write and destroyed every terminal upgrade
+  on exactly the installs an operator had customised. `certHostUnion` moved to `lib/https-setup.js`
+  beside the inputs it reads; the cutover script delegates to it.
+
+  **Bare IP addresses are allowed outright, and that is the shape of the attack rather than a
+  loophole.** Rebinding needs a *name* — the trick is making a name the browser already trusts
+  resolve elsewhere, and `Host` then carries that name. A request that reaches us same-origin as
+  `192.168.1.50` or a Tailscale `[fd7a:115c::1]` means the browser really is talking to that
+  address; a page at a *different* address posting here yields `Origin` ≠ `Host`, which the existing
+  guards already refuse. This also keeps the allowlist free of interface addresses that would
+  change with the network.
+
+  **Scoped to browser-shaped state-changing requests and WebSocket upgrades, deliberately — not to
+  every request.** `curl`, scripts and the agent-facing API send neither `Sec-Fetch-Site` nor
+  `Origin`, are not a cross-site vector, and keep working under any `Host` — the same exemption both
+  sibling guards already state. It costs the guard nothing, because a rebound page *is* a browser
+  and cannot suppress `Sec-Fetch-Site` from script. This list is derived, and a derivation that misses a legitimate address (a proxy that
+  rewrites `Host`, a container name) then refuses writes from it. That degrades to "reads still
+  work, writes return a named `HOST_NOT_SERVED`" instead of taking the dashboard away from a remote
+  operator entirely — the silent-failure mode this release spent its cycle eliminating. Tightening
+  to an outright refusal is a separate decision, once the derivation has proven itself in the
+  field. The startup line now logs the computed list for the same reason: a wrong derivation should
+  be a diff against reality, not a mystery.
+
+  The list is memoized on the configured names, the machine's hostname, and the certificate's mtime
+  and size — which changes what you *see*, not only what it costs. Computing it reads and parses the
+  certificate, so an uncached version did that on every guarded write and every terminal upgrade,
+  and on an install with no certificate yet it logged a warning about certificate *regeneration* on
+  each one — loudest during the setup wizard, about an operation the request path is not performing.
+  That warning now fires once per change of state, which is what it was written to report. A
+  regenerated certificate invalidates the memo by itself, which matters because the names
+  `generate-cert` adds live nowhere else.
+
+  **First-run setup is exempt on three axes, and the third is the one that matters.** Setup is what
+  *configures* the public names, so on an install a remote operator can reach, first run is the one
+  moment the allowlist cannot contain the address they arrived by — the `Host` header is how the
+  install learns it, and the wizard names that address back.
+
+  An exemption keyed only on "a setup route, before `setupComplete`" would have been wrong, and
+  wrong in the dangerous direction. The default install is `bindAllInterfaces: false` with
+  `ingressMode: 'direct'` — loopback only — so **no remote operator can reach the wizard at all**,
+  and the only request that could arrive there under an unserved `Host` was the rebound one, on the
+  route that sets the admin credential. The carve-out therefore also requires the install to be
+  genuinely reachable — a wide socket, and *only* that. Caddy mode looks like it qualifies and does
+  not: `bindPolicy` refuses the wide opt-in there, so the listener is loopback-only behind Caddy. A
+  remote operator arrives *through* Caddy under a name this list already holds, while a rebound page
+  reaches `127.0.0.1` without traversing Caddy at all — so accepting caddy mode would have exempted
+  only the attack, the same defect in the other arm. It covers `PATCH /api/config` as well as `/api/setup/*`,
+  because the wizard has two terminators — Finish and Skip — and guarding one is guarding neither.
+
 - **BREAKING: cross-site requests can no longer change server state (#860).** A page on another
   site could change the TangleClaw admin credential. Several routes authorize on "this request
   arrived over loopback" — most sharply `POST /api/auth/credential`, which treats loopback as proof

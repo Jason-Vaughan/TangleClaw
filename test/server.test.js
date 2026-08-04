@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   matchRoute, route, parseQuery, reqUrl, handleUpgrade, handleRequest,
-  _openclawProxyHeaders, _openclawWsRequestLines
+  _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed
 } = require('../server');
 
 describe('server', () => {
@@ -205,6 +205,117 @@ describe('server', () => {
         });
       }
 
+      /*
+       * #864 — the Sec-Fetch-Site check above trusts the browser's own verdict,
+       * and under DNS rebinding the browser honestly reports `same-origin`: the
+       * page really is on `evil.example`, which really does resolve to
+       * 127.0.0.1. Nothing is forged, so nothing above catches it. The Host
+       * allowlist is the independent fact the guard checks against.
+       */
+      describe('#864 — Host allowlist (DNS rebinding)', () => {
+        // A rebound page IS a browser, so it always carries `Sec-Fetch-Site`,
+        // and it reports `same-origin` because as far as the browser knows it
+        // is: the page really is on evil.example, which really does resolve to
+        // 127.0.0.1. Nothing is forged, so nothing in the cross-site guard
+        // above catches it. These send that header for that reason — not as
+        // scaffolding.
+        const BROWSER = { 'sec-fetch-site': 'same-origin' };
+
+        it('refuses a state-changing request under a rebound name', async () => {
+          const res = await send('POST', '/api/auth/credential',
+            { host: 'evil.example:3102', ...BROWSER });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /HOST_NOT_SERVED/,
+            'the cross-site guard cannot see this — the browser is telling the truth');
+        });
+
+        it('does NOT refuse a GET under an unserved Host — reads stay working', async () => {
+          // The deliberate scope. A wrongly-derived allowlist (a proxy that
+          // rewrites Host, a container name) must degrade to "writes refused",
+          // never "the dashboard is gone" for a remote operator.
+          const res = await send('GET', '/api/health', { host: 'weird-proxy-name:3102', ...BROWSER });
+          assert.notEqual(res.statusCode, 403,
+            'refusing reads too would take the dashboard away on a bad derivation');
+        });
+
+        it('does NOT refuse a header-less client under any Host — curl, scripts, the agent API', async () => {
+          // The same exemption both sibling guards state explicitly. Costs the
+          // guard nothing: a browser cannot suppress Sec-Fetch-Site from
+          // script, so the attack always carries the marker that scopes it in.
+          const res = await send('POST', '/api/config', { host: 'container-internal:3102' });
+          assert.notEqual(res.statusCode, 403,
+            'a header-less caller is not a cross-site vector and must keep working');
+        });
+
+        it('allows the served host it was already using', async () => {
+          const res = await send('POST', '/api/config', { host: 'localhost:3102', ...BROWSER });
+          assert.notEqual(res.statusCode, 403, 'localhost must never be refused');
+        });
+
+        for (const [label, host] of [
+          ['a bracketed IPv6 address', '[::1]:3102'],
+          ['a bare loopback IP', '127.0.0.1:3102'],
+          ['ANY IP literal, not just ours', '10.11.12.13:3102']
+        ]) {
+          it(`allows ${label} — an IP cannot be rebound`, async () => {
+            // Rebinding needs a NAME to point somewhere else; a literal has no
+            // DNS step. A page at a different address posting here yields
+            // Origin != Host, which the guards above already refuse — so
+            // narrowing this would buy nothing and would require enumerating
+            // interface addresses that change with the network.
+            const res = await send('POST', '/api/config', { host, ...BROWSER });
+            assert.notEqual(res.statusCode, 403, `${host} must be allowed`);
+          });
+        }
+
+        it('refuses a state-changing browser request with no Host header at all', async () => {
+          const res = await send('POST', '/api/config', { host: undefined, ...BROWSER });
+          assert.equal(res.statusCode, 403, 'HTTP/1.1 requires Host; absent is not a pass');
+          assert.match(res.body, /HOST_NOT_SERVED/);
+        });
+
+        it('does not exempt a setup-PREFIXED path outside the namespace', async () => {
+          // `/api/setupsomething` shares the letters; the carve-out is on the
+          // `/api/setup/` path segment, not a bare prefix match.
+          const res = await send('POST', '/api/setupsomething',
+            { host: 'evil.example:3102', ...BROWSER });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /HOST_NOT_SERVED/);
+        });
+
+        describe('_hostIsAllowed', () => {
+          const allow = new Set(['localhost', 'studio.local', 'box.tail123.ts.net']);
+          it('compares the parsed hostname, never a split on ":"', () => {
+            assert.equal(_hostIsAllowed('[::1]:3102', allow), true,
+              'splitting a bracketed IPv6 Host on ":" yields "[" and refuses every such request');
+          });
+          it('ignores the port', () => {
+            assert.equal(_hostIsAllowed('studio.local:8443', allow), true);
+          });
+          it('is case-insensitive, as host names are', () => {
+            assert.equal(_hostIsAllowed('STUDIO.local', allow), true);
+          });
+          it('refuses an unparseable Host rather than waving it through', () => {
+            // A bare space cannot appear in a URL authority, so this reaches the
+            // catch — verified by the assertion below being unreachable otherwise.
+            assert.equal(_hostIsAllowed('a b', allow), false);
+          });
+          it('refuses an empty Host', () => {
+            assert.equal(_hostIsAllowed('', allow), false);
+          });
+          it('refuses a name outside the list', () => {
+            assert.equal(_hostIsAllowed('evil.example', allow), false);
+          });
+          it('allows an IP literal even against an EMPTY list — the fail-closed path', () => {
+            // When the allowlist cannot be computed the caller passes an empty
+            // set. Names are then all refused, but an IP is allowed on its own
+            // reasoning, which does not depend on the list.
+            assert.equal(_hostIsAllowed('127.0.0.1:3102', new Set()), true);
+            assert.equal(_hostIsAllowed('evil.example', new Set()), false);
+          });
+        });
+      });
+
       // The first version of this guard lived inside the `/api/` branch, which
       // left these open — and they are the worse half. `_openclawProxyHeaders`
       // rewrites origin/referer to the local origin and attaches
@@ -241,6 +352,26 @@ describe('server', () => {
           } catch { /* downstream proxy setup is not what this asserts */ }
           return { destroyed: socket.destroyed };
         }
+
+        /*
+         * #864 — DNS rebinding. Both guards above decide "is this cross-site?"
+         * relative to the request itself, so an attacker who controls DNS
+         * satisfies them: point `evil.example` at 127.0.0.1, get the operator to
+         * load it, and the browser reports same-origin because as far as it
+         * knows it IS. Origin and Host agree — on a lie. The fix is to require
+         * the name be one this install actually serves.
+         */
+        it('destroys the rebinding upgrade: Origin and Host AGREE, on a name we do not serve', () => {
+          const r = upgrade({ host: 'evil.example:3102', origin: 'http://evil.example:3102' });
+          assert.equal(r.destroyed, true,
+            'agreeing with itself is not proof — /terminal/* proxies to a --writable ttyd');
+        });
+
+        it('still allows a no-Origin client under an unserved Host (not a browser, not a vector)', () => {
+          const r = upgrade({ host: 'container-internal:3102' });
+          assert.equal(r.destroyed, false,
+            'headless consumers reach the socket by names no allowlist can know');
+        });
 
         it('destroys an upgrade whose Origin is another site', () => {
           const r = upgrade({ host: 'localhost:3102', origin: 'https://evil.example' });

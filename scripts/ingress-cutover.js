@@ -54,36 +54,19 @@ const CADDY_LABEL = caddy.CADDY_LABEL;
 /**
  * Every hostname a regenerated certificate must carry.
  *
- * Regenerating is destructive to names nothing else records: no config field
- * stores the host list a cert was minted with, so generating from the defaults
- * discards a tailnet FQDN supplied through `POST /api/setup/generate-cert` — and
- * the tailnet HTTPS site reuses this very cert. Measured on a clean-room
- * install, so this is not a theoretical hazard. Both generation paths and the
- * dry-run preview call THIS, because the two paths drifted once already: the
- * union was added to one of them and the other silently kept dropping names.
+ * Delegates to `lib/https-setup.js`, which is where the implementation now
+ * lives: every input it reads is defined there, and `servedHostAllowlist`
+ * derives from it so the names this install SERVES cannot drift from the names
+ * its certificate CARRIES (#864). Kept exported under this name because both
+ * generation paths and the dry-run preview call it, and the #863 regression
+ * tests pin it here.
  *
  * @param {string|null} certPath - Existing cert to carry names forward from.
  * @param {object} config - Loaded TangleClaw config.
  * @returns {string[]} Deduplicated host list for mkcert.
  */
 function certHostUnion(certPath, config) {
-  const httpsSetup = httpsSetupModule();
-  // Read from the standard cert location as well as whatever the caller has
-  // resolved so far. The "no valid cert configured" branch calls this BEFORE
-  // ctx.certPath is assigned — it is still null there — and that is precisely
-  // the branch that regenerates, so reading only the argument carried nothing
-  // forward and dropped every name anyway. Verified by running it: a cert
-  // holding a tailnet FQDN still came out with only the defaults until this
-  // fallback existed.
-  const candidates = [certPath, path.join(httpsSetup.getCertsDir(), 'cert.pem')].filter(Boolean);
-  const carried = candidates.flatMap((p) => httpsSetup.certSanHosts(p));
-  return [...new Set([
-    ...carried,
-    ...httpsSetup.MKCERT_HOSTS_DEFAULT,
-    httpsSetup.mdnsHostFor(require('node:os').hostname()),
-    (config && config.caddyTailnetHost) || null,
-    (config && config.publicDomain) || null
-  ].filter(Boolean))];
+  return httpsSetupModule().certHostUnion(certPath, config);
 }
 
 /** @returns {object} lib/https-setup, resolved lazily (REPO_DIR-relative like the others). */
