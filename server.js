@@ -4951,6 +4951,48 @@ async function handleRequest(req, res) {
   const looksLikeBrowser = req.headers['sec-fetch-site'] !== undefined
     || req.headers.origin !== undefined;
   if (CSRF_UNSAFE_METHODS.has(method) && looksLikeBrowser) {
+    // #860 — a browser-shaped write that carries a BODY must declare JSON.
+    //
+    // This is what makes the form attack a CORS *simple* request in the first
+    // place: `parseBody` JSON-parses any body whatever its Content-Type, and
+    // the three encodings a `<form>` can send (`text/plain`,
+    // `application/x-www-form-urlencoded`, `multipart/form-data`) are exactly
+    // the three that need no preflight. Requiring `application/json` forces a
+    // preflight the server never answers affirmatively, and a form cannot send
+    // that type at all — so the class closes without depending on
+    // `Sec-Fetch-Site` being present or being `cross-site`. That is the point:
+    // it also covers the `same-site` sibling-subdomain residual the
+    // Sec-Fetch-Site guard deliberately allows, without refusing `same-site`
+    // outright and breaking legitimate multi-subdomain deployments.
+    //
+    // Scoped to browser-shaped requests for the same reason the guards below
+    // are: `curl`, scripts and the agent-facing API send no `Sec-Fetch-Site`
+    // and no `Origin`, so they are unaffected whatever Content-Type they use.
+    // That is what lets this land without breaking the documented agent API —
+    // the guide's PortHub and shared-docs examples show a JSON body and no
+    // header, and they keep working exactly as written.
+    //
+    // Keyed on a body being PRESENT, not on the method. The dashboard sends
+    // genuine bodyless writes (`medusa/toggle`, `medusa/read`,
+    // `wrap-sentinel/ack` go through `api()` with no body and no
+    // Content-Type), and refusing those would break the operator's own UI to
+    // close nothing — a request with no body carries no forged payload. The
+    // residual is a bodyless same-site POST to a route that acts without one;
+    // `Sec-Fetch-Site` still refuses the cross-site case, which is the one an
+    // arbitrary page can mount.
+    const hasBody = Number(req.headers['content-length'] || 0) > 0
+      || req.headers['transfer-encoding'] !== undefined;
+    const declaredType = String(req.headers['content-type'] || '')
+      .split(';')[0].trim().toLowerCase();
+    if (hasBody && declaredType !== 'application/json') {
+      log.warn('Refused browser write whose body is not declared JSON', {
+        method, path: pathname, contentType: declaredType || '(none)'
+      });
+      return errorResponse(res, 415,
+        'A request body from a browser must be declared as application/json.',
+        'JSON_BODY_REQUIRED');
+    }
+
     // ONE read of config, shared by both checks below. They used to load it
     // separately and only one wrapped the call, so a corrupt config threw out
     // of the request through the unguarded path instead of being refused.
