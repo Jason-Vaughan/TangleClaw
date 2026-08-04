@@ -142,7 +142,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Technical
 - **115+ registered routes** — full REST API for everything TangleClaw does
-- **3,600+ tests** — comprehensive suite using `node:test`, zero test dependencies
+- **5,500+ tests** — comprehensive suite using `node:test`, zero test dependencies
 - **SQLite storage** — runtime state in a single database file, JSON config for settings
 - **ADRs** — durable design decisions live in [docs/adr/](docs/adr/)
 
@@ -151,16 +151,10 @@ What started as session persistence grew into a full orchestration platform — 
 ## Quick Start
 
 ```bash
-git clone --branch v4.38.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.0.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
-
-> **Install from the tag, not from `main`.** `v4.38.0` is the current supported release.
-> `main` is where the next release is built, and while a major is in progress it carries
-> partly-finished work — right now that includes changes to how authentication and network
-> binding are set up, which is not something to meet halfway through. Cloning the tag gets
-> you a version that was tested as a whole. This note goes away when the next release ships.
 
 **Before that first line works, you need `git`** — and a brand-new Mac does not have it. Running
 `git clone` on a machine that has never had developer tools installed prints
