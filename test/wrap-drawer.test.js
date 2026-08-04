@@ -1255,3 +1255,127 @@ describe('wrap-drawer helpers — composeReleaseBanner precedence', () => {
     assert.doesNotMatch(unarmed.detail, /Nothing more to do/i, 'unarmed pending keeps the hedge');
   });
 });
+
+/*
+ * #867 — the drawer and the server must classify a stranded wrap identically.
+ *
+ * A wrap pushed its branch, no PR was ever opened, and it sat for five days.
+ * The server now warns and writes a durable row on that shape; the drawer used
+ * to render it in the same neutral class as a deliberate opt-out, so the one
+ * surface the operator actually watches called the failure benign. Two copies
+ * of one predicate is how that happened, so these pin the copies together.
+ */
+describe('#867 — stranded-wrap classification agrees with the server', () => {
+  const commitStep = require('../lib/wrap-steps/commit');
+
+  /*
+   * The five DISTINCT shapes the predicate can see. It reads only `pushed`,
+   * `prUrl` and `autoMergeArmed`, so "push failed" and "opt-out" are the same
+   * input to it and listing both would inflate the count without adding a case.
+   */
+  const SHAPES = [
+    { name: 'armed success', ap: { pushed: true, prUrl: 'https://x/pull/1', autoMergeArmed: true } },
+    { name: 'PR opened, not armed', ap: { pushed: true, prUrl: 'https://x/pull/1', autoMergeArmed: false } },
+    { name: 'stranded — gh unavailable', ap: { pushed: true, prUrl: null, autoMergeArmed: false } },
+    { name: 'armed but URL unparsed', ap: { pushed: true, prUrl: null, autoMergeArmed: true } },
+    { name: 'nothing pushed (push failed, or opt-out)', ap: { pushed: false, prUrl: null, autoMergeArmed: false } }
+  ];
+
+  for (const { name, ap } of SHAPES) {
+    it(`agrees on: ${name}`, () => {
+      const { isStrandedWrap } = loadHelpers();
+      assert.equal(isStrandedWrap(ap), commitStep._isStranded(ap),
+        'drawer and server must never disagree about whether a branch is stranded');
+    });
+  }
+
+  it('only the truly stranded shape is stranded', () => {
+    const { isStrandedWrap } = loadHelpers();
+    const stranded = SHAPES.filter(({ ap }) => isStrandedWrap(ap)).map(({ name }) => name);
+    assert.deepEqual(stranded, ['stranded — gh unavailable']);
+  });
+
+  it('the commit row names the branch as left behind, not merely skipped', () => {
+    const { deriveDetail } = loadHelpers();
+    const line = deriveDetail({
+      kind: 'commit',
+      status: 'done',
+      output: {
+        commitSha: 'abcdef0123456789',
+        autoPr: {
+          pushed: true, prUrl: null, autoMergeArmed: false,
+          skippedReason: 'gh CLI not available — branch pushed, PR not opened', error: null
+        }
+      }
+    });
+    assert.match(line, /NOT opened/, 'the operator must be able to tell this from a skip');
+    assert.match(line, /left on origin/);
+    assert.doesNotMatch(line, /^.*· wrap PR skipped:/,
+      'the neutral skip wording is what hid this for five days');
+  });
+
+  it('a stranded wrap yields a PR handle so a banner fires', () => {
+    const { wrapPrInfo } = loadHelpers();
+    const info = plain(wrapPrInfo({
+      results: [{ output: { autoPr: { pushed: true, prUrl: null, autoMergeArmed: false, skippedReason: 'gh CLI not available', error: null } } }]
+    }));
+    assert.ok(info, 'returning null left the stranded case with no banner at all');
+    assert.equal(info.stranded, true);
+    assert.equal(info.prUrl, null);
+  });
+
+  /**
+   * A finished pipeline whose commit step carried `ap`.
+   * @param {object} ap - The `autoPr` result shape
+   * @returns {object} pipelineResult
+   */
+  function pipelineWith(ap) {
+    return {
+      ok: true,
+      commitSha: 'abcdef0123456789',
+      results: [{ stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'abcdef0123456789', autoPr: ap } }]
+    };
+  }
+
+  it('the BANNER warns on a stranded wrap — it reported plain success', () => {
+    // The regression this pins: `wrapPrInfo` returning a handle is not enough.
+    // `summarizePipelineStatus` recognised only "close-loop errored" and "a PR
+    // exists"; a stranded wrap is neither, so it fell through to the success
+    // return, which also discards `pr`. The handle was built and thrown away.
+    const { summarizePipelineStatus } = loadHelpers();
+    const status = plain(summarizePipelineStatus(pipelineWith({
+      pushed: true, prUrl: null, autoMergeArmed: false,
+      skippedReason: 'gh CLI not available — branch pushed, PR not opened', error: null
+    })));
+
+    assert.equal(status.tone, 'warning', 'a branch nothing will land is not a success');
+    assert.match(status.label, /left on origin/);
+    assert.ok(status.pr, 'the PR handle must survive onto the status — downstream painters read it');
+    assert.equal(status.pr.stranded, true);
+  });
+
+  it('a normal armed wrap is still provisional, not warning', () => {
+    const { summarizePipelineStatus } = loadHelpers();
+    const status = plain(summarizePipelineStatus(pipelineWith({
+      pushed: true, prUrl: 'https://x/pull/9', autoMergeArmed: true, skippedReason: null, error: null
+    })));
+    assert.equal(status.tone, 'provisional', 'the stranded branch must not swallow the armed case');
+  });
+
+  it('an opt-out wrap is still plain success — nothing was left behind', () => {
+    const { summarizePipelineStatus } = loadHelpers();
+    const status = plain(summarizePipelineStatus(pipelineWith({
+      pushed: false, prUrl: null, autoMergeArmed: false,
+      skippedReason: 'wrapAutoPrEnabled is false for this project', error: null
+    })));
+    assert.equal(status.tone, 'success', 'warning on a deliberate opt-out trains the warning away');
+  });
+
+  it('a deliberate opt-out still yields no handle — nothing was left behind', () => {
+    const { wrapPrInfo } = loadHelpers();
+    const info = wrapPrInfo({
+      results: [{ output: { autoPr: { pushed: false, prUrl: null, autoMergeArmed: false, skippedReason: 'wrapAutoPrEnabled is false for this project', error: null } } }]
+    });
+    assert.equal(info, null, 'an opt-out pushes nothing, so there is nothing to banner about');
+  });
+});

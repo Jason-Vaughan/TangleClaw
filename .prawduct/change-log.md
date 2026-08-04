@@ -3265,3 +3265,31 @@ the auto-toggle hooks uninstalled with the suite green. It now reads them back v
 Also tightened the structural extractor to catch a quoted `-t '${x}'` spelling and pinned the site
 count at exactly 20 (a site disappearing is a regression too), and moved the colon rationale into
 `deploy/ttyd-attach.sh` itself, where the next editor will actually be reading.
+
+## 2026-08-04: A wrap's PR outcome is recorded, and a stranded branch says so (#867)
+
+<!-- prawduct: type=fix | scope=wrap-close-loop | status=shipped -->
+
+**Why:** the auto-PR close-loop's outcome reached exactly one place — a log line. When the PR failed
+to open, the wrap still reported `done` (correctly; the commit had landed) and the only cue was HEAD
+left on the wrap branch, which any later checkout on a shared clone erases.
+`wrap/20260730172842-tangleclaw` was pushed on 2026-07-30 with no PR ever created, sat five days
+carrying `FEATURES.md` descriptions and an ADR entry that never reached `main`, and was found only
+while cleaning up an unrelated branch. Its log had rotated by then, so which gate failed can no
+longer be determined — the failure is permanently unattributable.
+
+**What:** every auto-branched wrap writes a `wrap.auto_pr` activity row naming the branch, so a
+stranded wrap is something you query for rather than notice. One predicate — pushed, no PR URL,
+auto-merge not armed — now drives the log level, the row, the drawer's commit line, and
+`wrapPrInfo`, replacing a server-side classification that had drifted from the client's.
+
+**What the Critic caught that the build missed:** the change moved the server's classification
+without the drawer's, so on exactly the #867 shape the server warned and recorded while the drawer
+still rendered it in the same neutral class as a deliberate opt-out and fired no banner — the one
+surface the operator watches, in the one moment the branch is rescuable, calling the failure benign.
+Independently: `autoMergeArmed` is load-bearing in the predicate, because a PR whose URL cannot be
+parsed can still arm auto-merge and will land, and calling that stranded cries wolf on the one shape
+that resolves itself. Both fixed; cross-file tests now pin the two predicates to the same verdict
+and go red when either drifts.
+
+**Classification:** fix

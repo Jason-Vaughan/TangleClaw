@@ -340,6 +340,60 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
+  outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
+  open, the wrap still reported `done` — correctly, since the commit had already landed — and the
+  only cue was `HEAD` left on the wrap branch, which any later `git checkout` on a shared clone
+  erases. Nothing else recorded whether the PR opened.
+
+  Found the hard way: `wrap/20260730172842-tangleclaw` was pushed on 2026-07-30 with no PR ever
+  created, sat unmerged for five days carrying four `FEATURES.md` descriptions and an ADR entry that
+  never reached `main`, and was noticed only while cleaning up an unrelated branch. By then the
+  server log covering the wrap had rotated out, so *which* gate failed can no longer be determined —
+  the failure is permanently unattributable.
+
+  Every auto-branched wrap now writes a `wrap.auto_pr` row to `activity_log` carrying the branch
+  name, `pushed`, `prUrl`, `autoMergeArmed`, `stranded`, `skippedReason` and `error`. The branch
+  name is the point: a stranded wrap becomes something you can *query for* rather than something you
+  have to notice. Successful runs are recorded too, so a row's absence is not the only signal —
+  though absence still is not proof, since a crash between the push and the write leaves neither a
+  row nor a PR.
+
+  **The operator-facing half moved with it.** The wrap drawer rendered a stranded wrap as
+  `wrap PR skipped: …` — the same neutral wording as a deliberate `wrapAutoPrEnabled: false`
+  opt-out — and the wrap banner reported `Wrap committed` in plain **success** tone, because the
+  status summary recognised only "the close-loop errored" and "a PR exists", and a stranded wrap is
+  neither. The drawer is the surface an operator is actually watching in the one moment the branch
+  can still be rescued, and every part of it called the failure benign. The commit row now names the
+  branch as left on the remote, and the banner reads `Wrap committed — branch left on origin, no
+  PR` in warning tone, alongside the existing "release NOT armed" case it belongs with.
+
+  **The `gh`-unavailable path also logged at `info`,** identical in level to a PR that actually
+  opened. Both the server and the drawer now derive from one predicate — pushed, no PR URL, and
+  auto-merge not armed. The last clause matters: when `gh pr create` succeeds but its URL cannot be
+  parsed from stdout, the arm step falls back to the branch name and can still arm auto-merge, so
+  that PR exists and will land. Treating it as stranded would cry wolf on the one shape that
+  resolves itself. The pre-push refusals push nothing, so they stay at `info` — warning on a
+  deliberate opt-out trains the warning away.
+
+  `store.activity.log` swallows its own failures and no-ops without a database, so recording cannot
+  break a wrap. The persisted `error` is raw `git`/`gh` stderr served back over `GET /api/activity`,
+  and a failed push routinely echoes the remote URL — so **any** `//<userinfo>@` is stripped to
+  `//***@` before storage, whether or not it carries a colon. Both shapes matter and neither is
+  caught by pattern-matching: a bare `user:password@` matches none of `secret-scan`'s patterns, and
+  the password-less `https://<token>@host/…` that GitHub's own PAT-over-HTTPS instructions produce
+  survives unless that token happens to be one of the two GitHub forms `secret-scan` knows — not
+  `gho_`/`ghs_`/`ghu_`/`ghr_`, and nothing at all for GitLab, Bitbucket or self-hosted forges.
+  Stripping the whole userinfo also erases a harmless non-credential one (`ssh://git@host` becomes
+  `//***@host`), which is the intended trade: the host and the error text are what make the row
+  diagnostic, and a username is not worth a missed token. Anything still matching a known pattern
+  after that is replaced by its type names rather than trimmed, because a truncated secret is still
+  a secret. The 200-character cap `pr-merge.js` already applies to the same text is applied last: it
+  bounds size, it is not redaction. Every guard is mutation-verified
+  rather than merely green: reverting the log predicate reddens the warn test alone, disabling the
+  write reddens all four record tests, and drifting the drawer's copy of the predicate away from the
+  server's reddens the agreement tests that exist to prevent exactly that.
+
 - **The setup guide's own remedy for "no login" left you with no login — and reported success
   (#862).** `docs/setup-guide.md` → "If setup could not do it" listed `brew install caddy` followed
   by `ingress-cutover.js --to caddy`. Run on an install with no credential — which is exactly the
