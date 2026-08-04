@@ -30,9 +30,33 @@ Auto-created on first run with defaults. Editable directly or via `PATCH /api/co
 | `chimeEnabled` | boolean | `true` | Play audio chime when session goes idle |
 | `peekMode` | string | `"drawer"` | Peek UI mode: `"drawer"`, `"modal"`, `"alert"` |
 | `setupComplete` | boolean | `false` | Whether the first-run wizard has been completed. Set to `true` automatically for existing installs that lack this field. |
-| `httpsEnabled` | boolean | `false` | Enable HTTPS for the server |
+| `httpsEnabled` | boolean | `true` | Enable HTTPS on TangleClaw's own listener. Has no effect in `caddy` ingress mode, where Caddy terminates TLS and TangleClaw serves plain HTTP on the loopback behind it. |
 | `httpsCertPath` | string\|null | `null` | Path to TLS certificate file (PEM) |
 | `httpsKeyPath` | string\|null | `null` | Path to TLS private key file (PEM) |
+
+### Ingress and login gate
+
+These were absent from this reference until 2026-08-04 — the whole v5 authentication surface was
+undocumented here while the README pointed at this file for "all fields, types, and defaults".
+Defaults below are read from `DEFAULT_CONFIG` in `lib/store.js`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `ingressMode` | string | `"direct"` | `"direct"` — TangleClaw serves its own port. `"caddy"` — Caddy fronts it and owns the password gate and TLS; TangleClaw binds loopback only. **Do not edit this by hand to switch modes** — it does not move ports, plists or the Caddyfile. Use `node scripts/ingress-cutover.js --to caddy` (or `--to direct`), which is reversible and previews with `--dry-run`. |
+| `authEnabled` | boolean | `false` | Whether a `basic_auth` gate is in force. **Not settable through `PATCH /api/config`** — that route answers `409 CREDENTIAL_ROUTE_MOVED` for this field and the two below. Change the login via the settings surface, or `node scripts/reset-admin.js`. Note that the *authority* on whether a login is actually enforced is the Caddyfile, not this flag; the two can legitimately disagree. |
+| `basicAuthUser` | string\|null | `null` | Admin username in the gate. Read-only from the API; changed via `reset-admin.js`, since renaming means re-hashing the matched line. |
+| `basicAuthHash` | string\|null | `null` | bcrypt hash from `caddy hash-password`. Never returned by any API, never logged. |
+| `caddyHttpsPort` | number | `8443` | Port Caddy serves HTTPS on — **the operator's front door in caddy mode**, not `serverPort`. |
+| `caddyHttpPort` | number | `8080` | Port Caddy serves plain HTTP on; redirects to the HTTPS site. |
+| `caddyRemoteHttp` | boolean | `false` | Emit an additional Basic-Auth-gated **plain-HTTP** catch-all site, for reaching the dashboard over an already-encrypted tunnel (WireGuard, Tailscale). Off by default because the password crosses the wire in the clear — only enable it when the transport is doing the encrypting. Set it here, then re-run the cutover to regenerate the Caddyfile. |
+| `caddyTailnetHost` | string\|null | `null` | Tailnet FQDN to emit as an additional gated HTTPS site. The generator refuses to emit this site without a credential — an ungated remote HTTPS door is not a supported state. Re-run the cutover after setting it. |
+| `publicDomain` | string\|null | `null` | Public domain for an ACME/Let's Encrypt site on 443/80. Requires real DNS pointing at this machine and relocates Caddy to a root LaunchDaemon — see [deploy/INGRESS.md](../deploy/INGRESS.md). Not needed for LAN or tailnet access. |
+
+> **Reaching the dashboard from another device.** A default caddy-mode install generates **one**
+> HTTPS site, `localhost`, so another machine on the network cannot complete the TLS handshake
+> against it. `caddyTailnetHost`, `caddyRemoteHttp` and `publicDomain` above are the three ways to
+> add a reachable site today; each needs a cutover re-run afterwards. Improving that default is
+> tracked at **#863**.
 
 ### Default Quick Commands
 
