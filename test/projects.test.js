@@ -864,6 +864,26 @@ describe('projects', () => {
       assert.ok(Date.now() - started >= 55, 'must actually wait for the deadline');
     });
 
+    it('names Full Disk Access and the safe directories when the path never answered', () => {
+      // This string is the entire operator-facing value of degrading instead of
+      // hanging: without it the dashboard just shows fewer projects and nobody
+      // learns why. Inline it had NO coverage — deleting it left every test
+      // green — which is the failure this pins.
+      const timedOut = Object.assign(new Error('timed out'), { tcTimedOut: true });
+      const hint = projects._scanFailureHint(timedOut);
+      assert.match(hint, /Full Disk Access/, 'must name the actual macOS remedy');
+      assert.match(hint, /~\/Documents/, 'must name the protected directories to avoid');
+      assert.match(hint, /did not respond/, 'must say what was observed, not just what to do');
+    });
+
+    it('adds no hint for an ordinary filesystem error', () => {
+      // EACCES already explains itself. The hint exists for the failure that
+      // looks like nothing at all, and attaching it everywhere would make the
+      // one case it matters for invisible.
+      assert.equal(projects._scanFailureHint(Object.assign(new Error('x'), { code: 'EACCES' })), undefined);
+      assert.equal(projects._scanFailureHint(null), undefined);
+    });
+
     it('resolves normally when the work beats the deadline', async () => {
       assert.equal(await projects._withTimeout(Promise.resolve('ok'), 5000, 'x'), 'ok');
     });
