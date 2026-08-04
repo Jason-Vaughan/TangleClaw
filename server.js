@@ -4449,13 +4449,21 @@ function proxyToTtyd(req, res, pathname) {
  */
 function _isSameOriginUpgrade(origin, host) {
   let originHost;
+  let targetHost;
   try {
     originHost = new URL(origin).hostname;
+    // Parsed, never split on ':'. An IPv6 literal Host is bracketed
+    // (`[fd7a:115c::1]:3102`), so splitting yields `'['` while the Origin side
+    // yields the full `[fd7a:115c::1]` — they can never match, and every
+    // terminal socket gets destroyed for an operator whose dashboard is on an
+    // IPv6 address. Tailscale assigns every node an `fd7a:115c::/48` address,
+    // so that is a normal way to reach this product, not an edge case. The
+    // dashboard would load and the terminal would silently never connect.
+    targetHost = new URL(`http://${host || 'localhost'}`).hostname;
   } catch {
     return false;
   }
-  const target = String(host || '').split(':')[0] || 'localhost';
-  return originHost === target;
+  return originHost === targetHost;
 }
 
 function handleUpgrade(req, socket, head) {

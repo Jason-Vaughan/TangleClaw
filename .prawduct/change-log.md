@@ -26,6 +26,35 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-04: cross-site guards extended to WebSockets, and Caddyfile inputs shape-checked (#860, #864)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+**Why:** the cumulative review's reachable findings, plus the delta review that followed it. Recorded
+here because the previous entry's own lesson was that CHANGELOG-only updates leave every derived
+view blind.
+
+`handleUpgrade` had no cross-site check, which is the sharper half of the hole the HTTP guard closed:
+WebSockets are exempt from the same-origin policy entirely, so a page the operator merely visits
+could open one to the ungated `127.0.0.1` listener and then read AND write on it — and `/terminal/*`
+proxies to a `--writable` ttyd. Origin is compared by host, parsed rather than split on `:`, because
+an IPv6 literal arrives bracketed and splitting would have destroyed every terminal socket for an
+operator on a tailnet address.
+
+`basicAuthUser` reached `_pushSiteBlock` unvalidated while `lanHost` beside it was checked precisely
+because such a value "would restructure the Caddyfile". It arrives from the unauthenticated
+`POST /api/setup/complete` and setup now applies the generated file automatically. User, hash,
+`publicDomain` and `tailnetHost` are all shape-checked; structural characters are denied rather than
+name characters allowlisted, because a real bcrypt hash contains `$`, `/` and `.`.
+
+`install.sh` still advertised the cutover as "optional" and as a single command — the exact sequence
+that produces a green health check and an unprotected dashboard.
+
+**Not closed:** both guards decide "cross-site" relative to the request's own `Host`, so DNS
+rebinding satisfies them. Filed as **#864** rather than rushed: the fix changes which addresses an
+install answers to, and too tight an allowlist fails in the silent way this release exists to
+eliminate.
+
 ## 2026-08-04: the dashboard answers to the machine's own name, and cert regeneration stops shrinking (#863, #862, #859, #846)
 
 <!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->

@@ -438,8 +438,10 @@ echo "  Logs:           tail -f ~/.tangleclaw/logs/tangleclaw.log"
 echo "  Uninstall:      launchctl unload ~/Library/LaunchAgents/com.tangleclaw.*.plist"
 echo ""
 
-# AUTH-1 (#395): ingress mode pointer. Direct is the default; Caddy ingress is
-# opt-in and reversible via the cutover script.
+# AUTH-1 (#395) / #710: the password-gated Caddy ingress is the DEFAULT outcome of
+# setup as of v5, not an opt-in extra. This block runs after a bare install.sh,
+# which sets up direct mode only — so it tells the operator how to reach the
+# default state, and says plainly that the cutover alone does not create a login.
 if [ "$INGRESS_MODE" = "caddy" ]; then
   yellow "  Ingress mode is 'caddy' but install.sh sets up DIRECT only."
   yellow "  Activate Caddy:   node scripts/ingress-cutover.js --to caddy"

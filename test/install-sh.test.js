@@ -292,6 +292,25 @@ describe('deploy/install.sh', () => {
         'must say the resolved path is the real binary, not the symlink');
     });
 
+    it('never calls the login-bearing cutover "optional", and always prints BOTH commands', () => {
+      // The wording this replaced produced a live unprotected install: it
+      // advertised `ingress-cutover --to caddy` as an optional one-liner, which
+      // configures an ingress with NO password and prints a green health check.
+      // docs/setup-guide.md carries the same warning in bold; the installer's
+      // own closing text was still contradicting it.
+      const closing = script.slice(script.search(/installed successfully!/));
+      assert.doesNotMatch(closing, /Caddy ingress \(optional\)/,
+        'the step that installs the login must never be labelled optional');
+      assert.match(closing, /reset-admin\.js --create-gate/,
+        'the completion text must name the command that actually creates the login');
+      assert.match(closing, /ingress-cutover\.js --to caddy/,
+        'and the cutover that must precede it');
+      const cutoverAt = closing.search(/ingress-cutover\.js --to caddy/);
+      const gateAt = closing.search(/reset-admin\.js --create-gate/);
+      assert.ok(cutoverAt < gateAt,
+        'order matters: --create-gate exits when no Caddyfile exists yet');
+    });
+
     it('does not claim a major version it cannot know', () => {
       assert.ok(!/TangleClaw v3 installed/.test(script),
         'the completion banner must not hardcode a stale major version');

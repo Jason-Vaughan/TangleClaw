@@ -735,6 +735,31 @@ All notable changes to TangleClaw are documented in this file.
   this server implements, and a route added later cannot open a hole the guard was assumed to
   cover.
 
+  **WebSocket upgrades are refused cross-origin too, and that is the sharper half.** WebSockets are
+  not subject to the same-origin policy at all — any page may open one to any host, with no
+  preflight and no CORS — so a page you merely visit could connect straight to the ungated
+  `127.0.0.1` listener and then **read and write** on the socket, which a cross-site form POST
+  cannot do. `/terminal/*` proxies to a `--writable` ttyd, so that is a shell; the OpenClaw
+  handshakes carry the operator's gateway token. `handleUpgrade` now compares the handshake's
+  `Origin` against the request's own host before any branch runs.
+
+  The comparison is by **host**, not by full origin string: the dashboard is legitimately reached
+  over `https` through Caddy on one port and plain `http` directly on another, and a strict origin
+  match would break the terminal on exactly the install this release makes the default. The host is
+  *parsed*, never split on `:` — an IPv6 literal arrives bracketed (`[fd7a:115c::1]:3102`), and
+  splitting it yields `[`, which matches nothing, so every terminal socket would be destroyed for
+  anyone reaching TangleClaw over IPv6. Tailscale assigns every node an `fd7a:115c::/48` address,
+  so that is an ordinary way to use this product. A handshake with no `Origin` is allowed
+  (non-browser clients are not a cross-site vector); an unparseable one is refused.
+
+  **Known and not closed by this:** the check compares `Origin` to the request's own `Host`, so an
+  attacker who controls DNS can make both agree (resolving their own name to `127.0.0.1`) and
+  satisfy it. The same is true of the HTTP guard above. Closing it means validating `Host` against
+  the names an install actually serves — a change to *which addresses work*, where too tight an
+  allowlist silently kills legitimate access. Tracked as **#864** rather than rushed in beside a
+  release, since the guards as shipped still close the ordinary case: a malicious page with no
+  control over DNS.
+
   **It covers every path, not just `/api/`** — and that was the second half of the fix. The first
   version of this guard sat inside the `/api/` branch, which left `/terminal/*`,
   `/openclaw-direct/*` and `/openclaw/:project/*` open. Those were the more dangerous half:

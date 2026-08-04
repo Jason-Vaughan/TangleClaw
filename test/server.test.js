@@ -260,6 +260,39 @@ describe('server', () => {
           assert.equal(r.destroyed, false, 'a header-less client is not a cross-site vector');
         });
 
+        it('allows an IPv6-literal host — a tailnet address must not kill the terminal', () => {
+          // Host arrives bracketed as `[fd7a:115c::1]:3102`. Splitting on ':'
+          // yields '[', which can never equal the Origin side's
+          // '[fd7a:115c::1]', so every terminal socket would be destroyed for an
+          // operator whose dashboard is on IPv6 — dashboard loads, terminal
+          // silently dead. Tailscale assigns every node an fd7a:115c::/48
+          // address, so this is a normal way to reach TangleClaw.
+          const r = upgrade({ host: '[fd7a:115c::1]:3102', origin: 'http://[fd7a:115c::1]:3102' });
+          assert.equal(r.destroyed, false, 'an IPv6-literal same-host upgrade must be allowed');
+        });
+
+        it('still refuses a DIFFERENT IPv6 host', () => {
+          const r = upgrade({ host: '[fd7a:115c::1]:3102', origin: 'http://[fd7a:115c::2]:3102' });
+          assert.equal(r.destroyed, true);
+        });
+
+        for (const prefix of ['/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
+          it(`refuses a cross-origin upgrade to ${prefix} — the token-bearing proxies`, () => {
+            const { PassThrough } = require('node:stream');
+            const socket = new PassThrough();
+            socket.destroyed = false;
+            const orig = socket.destroy.bind(socket);
+            socket.destroy = () => { socket.destroyed = true; orig(); };
+            socket.remoteAddress = '127.0.0.1';
+            try {
+              handleUpgrade({ url: prefix, method: 'GET',
+                headers: { host: 'localhost:3102', origin: 'https://evil.example' }, socket },
+              socket, Buffer.alloc(0));
+            } catch { /* proxy setup is not what this asserts */ }
+            assert.equal(socket.destroyed, true, `${prefix} must be refused cross-origin`);
+          });
+        }
+
         it('refuses an unparseable Origin rather than waving it through', () => {
           const r = upgrade({ host: 'localhost:3102', origin: 'not a url' });
           assert.equal(r.destroyed, true, 'an Origin we cannot parse must fail closed');
