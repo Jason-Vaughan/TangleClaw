@@ -162,22 +162,61 @@ cd TangleClaw
 > binding are set up, which is not something to meet halfway through. Cloning the tag gets
 > you a version that was tested as a whole. This note goes away when the next release ships.
 
+**Before that first line works, you need `git`** — and a brand-new Mac does not have it. Running
+`git clone` on a machine that has never had developer tools installed prints
+`xcode-select: note: No developer tools were found, requesting install.` and stops. On a desktop
+Mac a dialog appears: click **Install**, wait for it (it is a large download — budget 15–30
+minutes), then run the clone again. Over SSH with no desktop session, install them first with
+`xcode-select --install`. This is the one prerequisite the installer cannot handle for you, because
+you need it to *get* the installer.
+
 The install script:
-1. Checks prerequisites (node 22+, ttyd, tmux)
+1. **Installs everything else for you** — Homebrew if it is missing, then Node 22+, ttyd, tmux,
+   mkcert and Caddy. You do not need to install these by hand; the list below is what ends up on
+   your machine, not a set of chores to do first.
 2. Generates launchd plists with correct paths
 3. Installs and loads the services
 4. Runs a health check
 
-Access the landing page at **http://localhost:3102** on a new or HTTP-only install, or **https://localhost:3102** after enabling HTTPS. Port 3102 serves one protocol at a time; opening the HTTP URL after HTTPS is enabled produces empty responses and can look like a dashboard refresh loop. See [Troubleshooting](docs/user-guide.md#dashboard-constantly-refreshes-after-enabling-https) to verify the protocol or return a localhost-only install to HTTP. (The installed launchd service uses port 3102; running `node server.js` by hand instead listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
+Access the landing page at **http://localhost:3102**. That is where setup starts, and where the
+dashboard stays if you opt out of the login gate.
+
+**Once setup has installed the login gate — the default — the address changes to
+`https://localhost:8443`.** Caddy takes over the front door on its own port; `3102` stays bound to
+the loopback interface behind it and is *not* the address to use or share. `https://localhost:3102`
+does not work in that mode and never will: TangleClaw serves plain HTTP there and Caddy terminates
+the TLS. Setup tells you the address it landed on — trust that over this paragraph, since it knows
+which mode you chose.
+
+If you opted out of the gate and enabled HTTPS directly, `https://localhost:3102` is correct. Port
+3102 serves one protocol at a time; opening the HTTP URL after HTTPS is enabled produces empty responses and can look like a dashboard refresh loop. See [Troubleshooting](docs/user-guide.md#dashboard-constantly-refreshes-after-enabling-https) to verify the protocol or return a localhost-only install to HTTP. (The installed launchd service uses port 3102; running `node server.js` by hand instead listens on the code default, **3101**.) On first launch, a setup wizard walks you through configuration — including choosing your **projects directory**. This is a single folder where all your managed projects live (e.g., `~/Projects`). TangleClaw scans this directory, detects existing repos and engines, and lets you attach them as managed projects.
 
 ### Prerequisites
 
+**You install these two:**
+
 - **macOS** — TangleClaw uses launchd for service management. Linux support is not yet available
+- **git / Xcode Command Line Tools** — needed to clone this repository at all. See the note above
+  the install script's steps; `xcode-select --install` if you have no desktop session
+
+**`deploy/install.sh` installs the rest** — listed so you know what lands on your machine, not as
+work to do first:
+
 - **Node.js 22+** — required for `node:sqlite` and `node:test`
-- **ttyd** — browser-based terminal access (`brew install ttyd`)
-- **tmux** — session multiplexer (`brew install tmux`)
-- **At least one AI CLI engine** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/), or [Aider](https://aider.chat)
-- **Caddy** — for the password-gated TLS ingress that setup provisions by default (`brew install caddy`, see [deploy/INGRESS.md](deploy/INGRESS.md)). Without it, setup finishes with **no login** and says so
+- **ttyd** — browser-based terminal access
+- **tmux** — session multiplexer
+- **mkcert** — generates the local TLS certificate
+- **Caddy** — serves the password-gated TLS ingress that setup provisions by default (see
+  [deploy/INGRESS.md](deploy/INGRESS.md)). If it is somehow absent, setup finishes with **no login**
+  and says so
+
+**You also need at least one AI CLI engine**, which TangleClaw does not install — it drives whichever
+you already use, with your own account: [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
+[Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/), or
+[Aider](https://aider.chat). TangleClaw installs and runs without one; you just cannot launch a
+session until an engine is present.
+
+**Optional integrations:**
 - **[Prawduct](https://github.com/brookstalley/prawduct)** *(optional)* — governed workflows with discovery, planning, building phases, and independent Critic review
 - **[OpenClaw](https://github.com/Jason-Vaughan/OpenClaw)** *(optional)* — remote AI agent sessions (requires SSH access to the OpenClaw host)
 - **[ClawBridge](https://github.com/Jason-Vaughan/ClawBridge)** *(optional)* — background-process visibility on OpenClaw instances

@@ -279,6 +279,19 @@ describe('deploy/install.sh', () => {
       assert.ok(repeatAt > summaryAt, 'the repeat must come AFTER the completion banner, where it is read');
     });
 
+    it('warns that the Full Disk Access path is version-pinned and dies on brew upgrade', () => {
+      // `realpathSync` resolves /opt/homebrew/bin/node to
+      // /opt/homebrew/Cellar/node@22/<version>/bin/node. Resolving is CORRECT --
+      // macOS keys the grant to the real binary, not the symlink -- but the path
+      // moves on the next `brew upgrade node`, silently revoking a grant the
+      // operator believes is still in place. Telling them the path without
+      // telling them it expires is a fix with a hidden shelf life.
+      assert.ok(/brew upgrade node/.test(script),
+        'must warn that upgrading node moves the granted path');
+      assert.ok(/REAL binary/.test(script),
+        'must say the resolved path is the real binary, not the symlink');
+    });
+
     it('does not claim a major version it cannot know', () => {
       assert.ok(!/TangleClaw v3 installed/.test(script),
         'the completion banner must not hardcode a stale major version');

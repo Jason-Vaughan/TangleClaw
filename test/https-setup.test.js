@@ -76,6 +76,42 @@ function makeSelfSignedCert(dir) {
   return { certPath, keyPath };
 }
 
+describe('mdnsHostFor — the certificate SAN that lets another device connect', () => {
+  // Required here rather than reusing the outer `httpsSetup`: that one is
+  // assigned in a `before` hook belonging to the other describe block, which has
+  // not run when these cases execute. These are pure string logic and need none
+  // of that block's stubbed PATH or temp dirs.
+  const { mdnsHostFor } = require('../lib/https-setup');
+  const httpsSetup = { mdnsHostFor };
+  // A clean-room install generated a cert whose SAN list contained
+  // `Manageds-Virtual-Machine.local.local`. `os.hostname()` on macOS usually
+  // already carries the suffix, and the code appended another unconditionally,
+  // so the SAN matched nothing — costing the certificate the one name a phone or
+  // laptop on the same network can actually resolve. It failed silently: cert
+  // generation succeeded, and the name simply never worked.
+  it('does not double a suffix the hostname already has', () => {
+    assert.equal(httpsSetup.mdnsHostFor('Manageds-Virtual-Machine.local'), 'Manageds-Virtual-Machine.local');
+    assert.equal(httpsSetup.mdnsHostFor('box.LOCAL'), 'box.LOCAL', 'suffix check is case-insensitive');
+  });
+
+  it('appends the suffix when it is genuinely absent', () => {
+    assert.equal(httpsSetup.mdnsHostFor('studio'), 'studio.local');
+  });
+
+  it('never emits a bare ".local" for an empty or unusable hostname', () => {
+    // `.local` as a SAN would be worse than no SAN — it matches nothing and
+    // looks deliberate to whoever reads the certificate later.
+    for (const bad of ['', '   ', null, undefined, 42]) {
+      assert.equal(httpsSetup.mdnsHostFor(bad), null, `${JSON.stringify(bad)} must yield no mDNS host`);
+    }
+  });
+
+  it('strips trailing dots (a fully-qualified mDNS name is written "host.local.")', () => {
+    assert.equal(httpsSetup.mdnsHostFor('studio.local.'), 'studio.local');
+    assert.equal(httpsSetup.mdnsHostFor('studio.'), 'studio.local');
+  });
+});
+
 describe('https-setup', () => {
   let tmpDir;
   let stubDir;

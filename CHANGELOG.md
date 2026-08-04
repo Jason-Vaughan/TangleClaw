@@ -286,6 +286,56 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The setup guide's own remedy for "no login" left you with no login — and reported success
+  (#862).** `docs/setup-guide.md` → "If setup could not do it" listed `brew install caddy` followed
+  by `ingress-cutover.js --to caddy`. Run on an install with no credential — which is exactly the
+  state that section addresses — the cutover succeeds, prints `✓ health check passed`, and produces
+  an ingress with **no `basic_auth` line at all**: `/` and `/api/config` both answer `200` to
+  anyone. The commands were individually correct and the sequence was incomplete.
+
+  The remedy now creates the credential first (`reset-admin.js --create-gate`) and says plainly that
+  the cutover configures ingress, not a password. `--create-gate` was already documented — under
+  "If you are locked out", which nobody who just installed successfully has any reason to open.
+
+  Found by a cold-context acceptance run: an agent with no knowledge of this codebase, given only
+  the published docs and a virgin macOS guest, which called this the worst problem in the system.
+  It fails in the one direction documentation must never fail — every other defect it hit announced
+  itself, and this one hands you a confidently unprotected dashboard that runs shell commands.
+
+- **The certificate's mDNS name was `<host>.local.local`, matching nothing (#863).**
+  `os.hostname()` on macOS usually already carries the `.local` suffix and `lib/https-setup.js`
+  appended another unconditionally, so the SAN silently lost the one name another device on the
+  network can resolve. Extracted as `mdnsHostFor` and covered directly — already-suffixed,
+  case-insensitive, trailing-dot, and empty-hostname inputs — because the failure was invisible:
+  cert generation succeeded and the name simply never worked.
+
+- **README: `git` was never listed as a prerequisite, and the first command in Quick Start fails
+  without it.** A new Mac has no developer tools, so `git clone` prints
+  `xcode-select: note: No developer tools were found` and stops — over SSH it just fails, since the
+  dialog needs a desktop session. It is the one prerequisite `install.sh` cannot handle, because you
+  need it to obtain the installer. The same cold run lost ~25 minutes here with nothing in any doc
+  to explain it.
+
+  Also corrected: the Prerequisites list read as five things to install by hand, when `install.sh`
+  installs Homebrew, Node, ttyd, tmux, mkcert **and** Caddy itself — the cold reader dutifully spent
+  ~40 minutes doing the installer's job. The list is now split into what you provide versus what
+  lands on your machine, with the AI CLI engine correctly on your side of the line.
+
+- **README pointed at the wrong address for a default install.** Quick Start named
+  `http://localhost:3102`, or `https://localhost:3102` "after enabling HTTPS". Under the v5 default
+  the front door is Caddy on **`https://localhost:8443`**; `3102` stays loopback-bound behind it, and
+  `https://localhost:3102` cannot work in that mode because TangleClaw serves plain HTTP there.
+
+- **`docs/user-guide.md` told new users to clone `main`,** which the README explicitly warns
+  against — and anyone arriving from the README's "How Do I…?" table never saw that warning. The
+  guide now points at the README's Quick Start as the single maintained copy rather than repeating
+  commands that had already drifted.
+
+- **The Full Disk Access remedy named a path with a shelf life.** `realpathSync` resolves to
+  `/opt/homebrew/Cellar/node@22/<version>/bin/node`. Resolving is correct — macOS keys the grant to
+  the real binary, not the symlink — but the path moves on the next `brew upgrade node`, silently
+  revoking a grant the operator believes is still in force. Both facts are now stated.
+
 - **`install.sh` now warns when the PROJECTS directory sits under a TCC-protected folder — the case
   where the install succeeds and the server still dies (#859, #324).** Found by running a first
   install on a virgin macOS guest, which is the only place it is observable: on the maintainer's own

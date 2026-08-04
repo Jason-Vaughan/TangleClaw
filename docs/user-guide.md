@@ -13,11 +13,19 @@ This guide walks you through using TangleClaw — from first launch to managing 
 
 ### Installation
 
+Follow the **[Quick Start in the README](../README.md#quick-start)** — it is the single maintained
+copy of the install steps, including which release to clone and the one prerequisite you must
+install yourself.
+
+This page used to repeat the commands here, cloning the default branch:
+
 ```bash
-git clone https://github.com/Jason-Vaughan/TangleClaw.git
-cd TangleClaw
-./deploy/install.sh
+git clone https://github.com/Jason-Vaughan/TangleClaw.git   # ← don't: this takes main
 ```
+
+which is exactly what the README warns against, because `main` carries partly-finished work on
+authentication and network binding. Anyone who arrived here from the README's "How Do I…?" table
+never saw that warning. Pointing at one copy is the fix; two copies is how they drifted apart.
 
 The install script verifies prerequisites, generates launchd plists, loads the services, and runs a health check. On success, you'll see:
 

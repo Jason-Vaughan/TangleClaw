@@ -200,6 +200,9 @@ if [ "$(uname)" = "Darwin" ]; then
     yellow "      If the server hangs on startup with no log output, node lacks Full Disk Access."
     yellow "      Fix: System Settings > Privacy & Security > Full Disk Access > '+' and add:"
     yellow "        $RESOLVED_NODE"
+    yellow "      (That is the REAL binary, not the $NODE_PATH symlink — macOS keys the grant to the"
+    yellow "       real path. It carries a version number, so a later 'brew upgrade node' moves it"
+    yellow "       and the grant must be given again.)"
     yellow "      (Or move the repo outside ~/Documents, ~/Desktop, ~/Downloads — also fixes the SSH variant.)"
     echo ""
   fi
@@ -422,7 +425,10 @@ if [ -n "$TCC_PROJECTS_PROTECTED" ]; then
   yellow "  HEADS-UP: the projects directory sits under a TCC-protected folder:"
   yellow "    $PROJECTS_DIR"
   yellow "  If the dashboard stops responding after you open it, that is why."
-  yellow "  Fix: grant Full Disk Access to $RESOLVED_NODE, or move the projects directory."
+  yellow "  Fix: grant Full Disk Access to the node binary below, or move the projects directory."
+  yellow "    $RESOLVED_NODE"
+  yellow "  (The REAL binary, not the $NODE_PATH symlink. It carries a version number, so a later"
+  yellow "   'brew upgrade node' moves it and the grant must be given again.)"
   echo ""
 fi
 echo "  Landing page:  ${PROTOCOL}://localhost:3102"

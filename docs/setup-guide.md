@@ -74,13 +74,28 @@ In both cases the install finishes **with no login**, and TangleClaw tells you s
 the dashboard rather than implying you are protected. Loopback-only is still in force,
 so it is not exposed — it just cannot be reached remotely yet.
 
-To set it up afterwards:
+To set it up afterwards, **both steps are required — the second one is the login**:
 
 ```sh
 brew install caddy
+
+# 1. Create the login. Without this you get an ingress with NO password on it.
+node scripts/reset-admin.js --create-gate --user <your-name>
+
+# 2. Put the ingress in front of TangleClaw.
 node scripts/ingress-cutover.js --to caddy --dry-run   # preview, changes nothing
 node scripts/ingress-cutover.js --to caddy
 ```
+
+> **Do not skip step 1.** The cutover configures the *ingress*; it does not invent a
+> password. Run it on an install that has no credential and it will succeed, print
+> `✓ health check passed`, and leave your dashboard reachable **with no login at all** —
+> a green result for a machine that is not protected. This guide used to list only the
+> cutover here, and that is exactly what it produced. If you have already done that,
+> run step 1 now and then the cutover again.
+>
+> Whichever route you took, do not take this section's word for it — use
+> **"Checking it actually worked"** below. That is the only thing that proves it.
 
 ---
 
