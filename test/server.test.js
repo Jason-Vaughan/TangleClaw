@@ -205,6 +205,21 @@ describe('server', () => {
         });
       }
 
+      // The first version of this guard lived inside the `/api/` branch, which
+      // left these open — and they are the worse half. `_openclawProxyHeaders`
+      // rewrites origin/referer to the local origin and attaches
+      // `Bearer <gatewayToken>`, so a cross-site POST here would reach the
+      // OpenClaw gateway carrying the operator's token with the tell-tale Origin
+      // stripped off. Pinned per-prefix so re-scoping the guard to `/api/` fails
+      // loudly instead of silently reopening the proxies.
+      for (const prefix of ['/terminal/x', '/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
+        it(`refuses cross-site POST to ${prefix} — the guard is not /api/-only`, async () => {
+          const res = await send('POST', prefix, { 'sec-fetch-site': 'cross-site' });
+          assert.equal(res.statusCode, 403, `${prefix} must be refused cross-site`);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+      }
+
       it('does NOT block a cross-site GET — navigation must keep working', async () => {
         // GET is excluded on purpose; a mutating GET is a bug in that route.
         const res = await send('GET', '/api/health', { 'sec-fetch-site': 'cross-site' });

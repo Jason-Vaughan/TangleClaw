@@ -631,6 +631,15 @@ All notable changes to TangleClaw are documented in this file.
   this server implements, and a route added later cannot open a hole the guard was assumed to
   cover.
 
+  **It covers every path, not just `/api/`** — and that was the second half of the fix. The first
+  version of this guard sat inside the `/api/` branch, which left `/terminal/*`,
+  `/openclaw-direct/*` and `/openclaw/:project/*` open. Those were the more dangerous half:
+  `_openclawProxyHeaders` rewrites `origin` and `referer` to the local origin and attaches
+  `Bearer <gatewayToken>`, so a cross-site page POSTing to the OpenClaw proxy would have reached
+  the gateway with the operator's token supplied and the tell-tale `Origin` laundered off the
+  request. Each prefix now has its own test, so re-scoping the guard to `/api/` fails loudly
+  instead of silently reopening the proxies.
+
   **Nothing that works today stops working.** Browsers always send `Sec-Fetch-Site`; curl, scripts
   and the agent-facing PortHub/shared-docs API omit it entirely, and an absent header is allowed
   because a non-browser caller is not a CSRF vector. `GET` is untouched, so navigation is
