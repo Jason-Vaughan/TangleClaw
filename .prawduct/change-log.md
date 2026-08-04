@@ -3402,3 +3402,16 @@ repeated four times: removing the guard reddens six tests; dropping `hasBody` re
 test; dropping the browser scoping reddens the agent-API test *and* a #864 test.
 
 **Classification:** fix
+
+**Critic round 1 (rev-20260804T094546Z-e54bf7ca, 0 blocking / 2 warnings) — the important catch was
+a break in code this repo does not own.** The guard runs ahead of route matching, so it also
+governed `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*`. `public/openclaw-view.js` iframes
+`/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside TC's page and
+its fetches are browser-shaped: the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+idiom is labelled `text/plain` by the browser and would have taken a 415 before reaching the
+gateway. Grepping `public/` — the step that correctly caught the bodyless-write case — structurally
+cannot see a third party's client. Now confined to `/api/`; those prefixes keep guards 1 and 2,
+which is what they had before, and the residual is recorded.
+
+Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
+re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.

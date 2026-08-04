@@ -287,6 +287,50 @@ describe('server', () => {
             'curl/scripts/the agent API are not a cross-site vector');
         });
 
+        for (const prefix of ['/terminal/x', '/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
+          it(`does NOT impose JSON on the proxied path ${prefix} — that client is not ours`, async () => {
+            // This block runs ahead of route matching, so without the
+            // own-API check it would govern the reverse proxies too. TC
+            // iframes /openclaw-direct/:connId/chat SAME-ORIGIN
+            // (public/openclaw-view.js), so OpenClaw's gateway UI runs inside
+            // our page: any fetch(url, {method:'POST', body: JSON.stringify(x)})
+            // with no explicit header is labelled text/plain by the browser and
+            // would 415 before reaching the gateway. Grepping public/ cannot
+            // see a third party's client. These prefixes keep the cross-site
+            // and served-Host guards, which is what they had before #860.
+            // Non-vacuous BY CONSTRUCTION, via a paired control: the same
+            // headers are sent to a /api/ path and to the proxied one, and the
+            // pair must disagree. The 415 is returned before routing, so if the
+            // guard governed both, both would return it; if the harness were
+            // broken, neither would. Downstream failures on the proxied path
+            // (a missing .pipe on the mock, an uninitialised store) are all
+            // proof of passage, so the path's outcome is deliberately not
+            // pinned to any one of them.
+            const HDRS = {
+              'sec-fetch-site': 'same-origin', 'content-type': 'text/plain', 'content-length': '9'
+            };
+            const control = await send('POST', '/api/config', HDRS);
+            assert.equal(control.statusCode, 415,
+              'control: the identical request to our own API must be refused');
+
+            let proxied = null;
+            try { proxied = (await send('POST', prefix, HDRS)).statusCode; } catch { /* reached downstream code */ }
+            assert.notEqual(proxied, 415,
+              `${prefix} proxies a client whose media types are not ours to dictate`);
+          });
+        }
+
+        it('still refuses a cross-site POST to a proxied path — the sibling guard is untouched', async () => {
+          // Confirms the exclusion above narrows THIS rule only. Pinned because
+          // a careless widening of the exclusion would silently reopen the
+          // proxies, which carry the operator's gateway token.
+          const res = await send('POST', '/openclaw-direct/abc/chat', {
+            'sec-fetch-site': 'cross-site', 'content-type': 'text/plain', 'content-length': '9'
+          });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+
         it('still checks a chunked body with no content-length', async () => {
           const res = await send('POST', '/api/config', {
             'sec-fetch-site': 'same-origin', 'transfer-encoding': 'chunked', 'content-type': 'text/plain'

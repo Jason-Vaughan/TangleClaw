@@ -795,6 +795,17 @@ All notable changes to TangleClaw are documented in this file.
   which show a JSON body and no header, keep working exactly as written. A browser cannot suppress
   `Sec-Fetch-Site` from script, so the attack always carries the marker that brings it into scope.
 
+  **Confined to TangleClaw's own API, and that is not a detail.** The guard runs ahead of route
+  matching, so unscoped it would also govern `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*` —
+  reverse proxies whose browser client is not ours. `public/openclaw-view.js` iframes
+  `/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside our page:
+  any of its fetches using the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+  idiom — no explicit header, which the browser labels `text/plain;charset=UTF-8` — would take a 415
+  before reaching the gateway, and multipart attachment paths would break the same way. Imposing a
+  media-type contract on a third party's client through a proxy is not ours to do. Those prefixes
+  keep the cross-site and served-`Host` guards, exactly what they had before, so this is a narrower
+  new rule rather than a regression.
+
   **Bodyless writes are unaffected, deliberately.** The dashboard sends genuine ones —
   `medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` all go through `api()` with no body and no
   `Content-Type` — and refusing them would break the operator's own UI to close nothing, since a

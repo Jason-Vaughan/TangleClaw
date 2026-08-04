@@ -4920,11 +4920,14 @@ async function handleRequest(req, res) {
   // Deliberately narrow: only `cross-site` is refused. Rejecting `same-site`
   // as well would need an attacker controlling a sibling subdomain of the
   // operator's own host, and would risk breaking a legitimate multi-subdomain
-  // deployment. The residual, plus the broader question of enforcing
-  // Content-Type on JSON bodies and re-ratifying the blanket CSRF acceptance
-  // in security-model.md — whose stated premise, "no session state in the
-  // browser", is exactly what shipping browser-cached HTTP Basic invalidates —
-  // is tracked separately.
+  // deployment. That residual is closed a different way — the JSON-body rule
+  // below refuses a form from a sibling subdomain too, since a `<form>` cannot
+  // send `application/json` — so `same-site` stays allowed and nothing
+  // multi-subdomain breaks (#860). The CSRF acceptance in security-model.md,
+  // whose premise "no session state in the browser" is what shipping
+  // browser-cached HTTP Basic invalidated, has been re-argued rather than
+  // re-cited: CSRF is now in scope, with all three guards and their residuals
+  // recorded there.
   if (CSRF_UNSAFE_METHODS.has(method) && req.headers['sec-fetch-site'] === 'cross-site') {
     log.warn('Refused cross-site state-changing request', { method, path: pathname });
     return errorResponse(res, 403,
@@ -4980,11 +4983,30 @@ async function handleRequest(req, res) {
     // residual is a bodyless same-site POST to a route that acts without one;
     // `Sec-Fetch-Site` still refuses the cross-site case, which is the one an
     // arbitrary page can mount.
+    // Confined to TangleClaw's OWN API. This block runs ahead of route
+    // matching, so without the check it would also govern `/terminal/*`,
+    // `/openclaw/*` and `/openclaw-direct/*` — reverse proxies whose browser
+    // client is NOT ours: `public/openclaw-view.js` iframes
+    // `/openclaw-direct/:connId/chat` SAME-ORIGIN, so OpenClaw's gateway UI
+    // runs inside our page and its fetches are browser-shaped. Any of them
+    // using the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+    // idiom — no explicit header, which the browser labels
+    // `text/plain;charset=UTF-8` — would take a 415 before reaching the
+    // gateway, and multipart attachment paths would break the same way.
+    // Imposing a media-type contract on a third party's client through a proxy
+    // is not ours to do, and grepping `public/` cannot see it.
+    //
+    // Those prefixes keep the two guards below (cross-site refusal, and the
+    // served-Host check), which is exactly what they had before this change —
+    // so this is no regression, only a narrower new rule. The residual is a
+    // same-site body-carrying write to a proxied path, recorded in
+    // `security-model.md` beside the others.
+    const ownApiSurface = pathname.startsWith('/api/');
     const hasBody = Number(req.headers['content-length'] || 0) > 0
       || req.headers['transfer-encoding'] !== undefined;
     const declaredType = String(req.headers['content-type'] || '')
       .split(';')[0].trim().toLowerCase();
-    if (hasBody && declaredType !== 'application/json') {
+    if (ownApiSurface && hasBody && declaredType !== 'application/json') {
       log.warn('Refused browser write whose body is not declared JSON', {
         method, path: pathname, contentType: declaredType || '(none)'
       });
