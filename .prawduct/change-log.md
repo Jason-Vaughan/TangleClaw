@@ -26,6 +26,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-04: one unreadable folder can no longer take down the server (#859)
+
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+
+`listAllProjects` ran `fs.readdirSync` on the event loop over the operator-chosen projects
+directory, and the shipped default (`~/Documents/Projects`) is TCC-protected on macOS. A launchd
+node without Full Disk Access does not get `EPERM` there — the `open()` never returns — so a single
+`GET /api/projects`, the route the dashboard loads on open, killed every other route with no error
+and no recovery while launchd still reported the process alive.
+
+Confirmed reachable on a default install: the wedge needs only that the directory EXISTS, which it
+does for any real user. An earlier probe that did NOT reproduce it had simply never created it, so
+the read failed fast with `ENOENT` — worth recording, because that first measurement said "fine"
+for a reason unrelated to the fix.
+
+Now `fs.promises` (libuv threadpool) bounded by a 5s deadline, degrading to the registered projects
+with a log line naming Full Disk Access and the directory. `listAllProjects` is async; one
+production caller. Verified on the clean-room guest: before `/api/projects` 000 and `/api/health`
+000; after 200 in 5007ms and 200 in 22ms.
+
+Still synchronous, deliberately out of scope: the per-directory `git.getInfo` loop that follows,
+each call separately bounded. It can make this route slow; it can no longer stop the server.
+
 ## 2026-08-04: cross-site guards extended to WebSockets, and Caddyfile inputs shape-checked (#860, #864)
 
 <!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->

@@ -830,7 +830,11 @@ describe('projects', () => {
         const list = await projects.listAllProjects();
         const elapsed = Date.now() - started;
         assert.ok(Array.isArray(list), 'must still answer with a list');
-        assert.ok(elapsed < 30000, `must not hang (took ${elapsed}ms)`);
+        // Bounded tightly against the 5s deadline. A loose ceiling would pass
+        // even if the deadline stopped working and something else happened to
+        // end the wait.
+        assert.ok(elapsed >= 4500 && elapsed < 9000,
+          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
         // Registered projects come from the database and are unaffected by a
         // stuck filesystem; only discovery of unregistered folders is lost.
         for (const p of list) {
@@ -839,6 +843,29 @@ describe('projects', () => {
       } finally {
         fsp2.readdir = realReaddir;
       }
+    });
+
+    it('marks a deadline failure so the caller can name Full Disk Access', async () => {
+      // The hint is the whole operator-facing value of the degradation: without
+      // it the dashboard just shows fewer projects and nobody learns why. It is
+      // keyed on `tcTimedOut`, which distinguishes "this path never answered"
+      // from an ordinary filesystem error — so THAT is what gets pinned, on the
+      // real helper rather than on a mock. Delete the flag and this goes red.
+      const started = Date.now();
+      await assert.rejects(
+        () => projects._withTimeout(new Promise(() => {}), 60, 'reading /nowhere'),
+        (err) => {
+          assert.equal(err.tcTimedOut, true,
+            'a timeout must be distinguishable from a filesystem error');
+          assert.match(err.message, /timed out after 60ms reading \/nowhere/);
+          return true;
+        }
+      );
+      assert.ok(Date.now() - started >= 55, 'must actually wait for the deadline');
+    });
+
+    it('resolves normally when the work beats the deadline', async () => {
+      assert.equal(await projects._withTimeout(Promise.resolve('ok'), 5000, 'x'), 'ok');
     });
 
     it('still answers when the directory read fails outright', async () => {

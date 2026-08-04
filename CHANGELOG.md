@@ -795,7 +795,10 @@ All notable changes to TangleClaw are documented in this file.
   dead; now `200` in ~5s with `/api/health` answering in 22ms immediately afterwards.
 
   The read now happens off the main thread and gives up after 5 seconds, so a folder that will not
-  answer costs **that one request**, not the server. The reply then contains your registered
+  answer costs seconds rather than the server. To be precise about the remaining cost: the per-folder
+  work that follows the read (git status for each unregistered directory) is still synchronous and
+  each of those calls is separately bounded, so a pathological directory can still make this one
+  route slow — it can no longer make the whole server stop answering, which was the defect. The reply then contains your registered
   projects — those come from the database and are never affected — and the log says plainly what
   happened and what to do: grant Full Disk Access, or choose a projects directory outside
   `~/Documents`, `~/Desktop` and `~/Downloads`. Only the discovery of folders you have not
