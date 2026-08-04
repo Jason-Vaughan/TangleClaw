@@ -876,6 +876,30 @@ describe('projects', () => {
       assert.match(hint, /did not respond/, 'must say what was observed, not just what to do');
     });
 
+    it('actually PUTS the hint in the log when a scan times out', () => {
+      // _scanFailureHint is pinned above, but pinning a helper says nothing
+      // about whether anyone calls it: delete `hint: _scanFailureHint(err)` from
+      // the log payload and the helper's own tests stay green while the operator
+      // sees nothing. This asserts the wiring, through the logger's real sink.
+      const logger = require('../lib/logger');
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
+      const fsp4 = require('node:fs').promises;
+      const realReaddir = fsp4.readdir;
+      fsp4.readdir = () => Promise.reject(Object.assign(new Error('timed out'), { tcTimedOut: true }));
+      return projects.listAllProjects().then(() => {
+        const out = chunks.join('');
+        assert.match(out, /Full Disk Access/,
+          'the remedy must reach the log, not just exist in a helper');
+      }).finally(() => {
+        fsp4.readdir = realReaddir;
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      });
+    });
+
     it('adds no hint for an ordinary filesystem error', () => {
       // EACCES already explains itself. The hint exists for the failure that
       // looks like nothing at all, and attaching it everywhere would make the
