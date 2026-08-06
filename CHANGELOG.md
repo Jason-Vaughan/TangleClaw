@@ -340,6 +340,35 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Whether you are protected is now decided in one place, and an unknown state fails safe
+  (#861).** The wizard's terminal screens decided "is anything enforcing a login?" by comparing
+  `ingress.protection` against a literal list of states — in `server.js` twice and in
+  `public/setup.js` once. The server produced the value and the browser re-derived its *meaning*,
+  which is two sources of truth for a security decision.
+
+  **The direction of the test was the real defect.** Those lists enumerated the states meaning
+  "not protected", so a state they had never heard of matched none of them and fell through to
+  the branch that **dismisses** the warning. Add a sixth `protection` value later and the wizard
+  would quietly stop telling an operator that nothing is enforcing their login, landing them on a
+  dashboard indistinguishable from a protected one. Nothing would fail; a screen would simply
+  stop appearing.
+
+  The server now derives the answer once — in `deriveProtectionFlags`, beside where the value is
+  produced — and ships `confirmedProtection` and `credentialStored`. The browser branches on
+  those and no longer reads the enum at all. The predicate is stated as an **allowlist**: only
+  the single state in which TangleClaw positively observed a gate counts as confirmed, so an
+  unrecognised value is *not confirmed* and the operator is told. Which states produce which
+  screen is deliberately unchanged — this moves who decides, not what is decided.
+
+- **Setup-wizard changes reach browsers that have used TangleClaw before (#861).** `setup.js` is
+  loaded as a plain `<script src>`, which is not a navigate request, so it fell to the service
+  worker's cache-first branch with no carve-out: a browser with an active worker kept serving
+  whatever copy it fetched first, and any change to the wizard — including the one above — stayed
+  invisible until `CACHE_NAME` moved. That is the same stale-serve pattern already carved out for
+  `session.js` and `ui.js`. It is now network-first. Deliberately *not* a `CACHE_NAME` bump: that
+  tears down and reinstalls the worker for every browser, which behind the login gate is what
+  produced the repeating credential prompt in #710.
+
 - **A project merely NAMED "Medusa" is no longer mistaken for the switchboard checkout (#873).**
   Reported from a third-party install, and structurally unreproducible here: on this machine a
   project named Medusa *is* the switchboard repository, so the resolver's assumption was invisible.

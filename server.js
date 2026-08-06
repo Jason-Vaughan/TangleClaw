@@ -1998,6 +1998,28 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     }
   }
 
+  // THE derivation of what `protection` MEANS, in one place, next to where the value
+  // is produced (#861). Before this, the same judgement was re-made by comparing the
+  // enum against a literal list in three places — twice here and once in
+  // `public/setup.js` — so the browser was a second source of truth for a security
+  // decision. There is no build step, so a shared constant module is not importable by
+  // `public/`; deriving server-side and shipping the ANSWER is the available correct
+  // form, and it is the same one this chunk already chose for the provisioning table.
+  //
+  // Stated as an ALLOWLIST, and that inversion is the substance of the fix rather than
+  // a stylistic preference. The old lists enumerated the states meaning "not protected",
+  // so an unrecognised sixth value matched none of them and fell through to the path
+  // that DISMISSES the warning — a new state would silently stop telling the operator
+  // nothing is enforcing a login, which is the precise false-reassurance the v5 Secure
+  // Baseline exists to eliminate. Naming the one state that means "confirmed" instead
+  // makes an unknown value fail safe: not confirmed, so the operator is told.
+  //
+  // `credentialStored` is kept behaviour-identical to the pair `public/setup.js` used
+  // to test, deliberately: this change is a de-duplication, and these are the
+  // least-verified screens in the release (#802), so the set of states producing each
+  // screen must not move in the same commit that moves WHO decides it.
+  Object.assign(ingress, ingressProvision.deriveProtectionFlags(ingress.protection));
+
   // One place, after every branch, so the guarantee holds for outcomes that reach no
   // branch at all — `refuse` with no credential anywhere (no Caddy installed, or a
   // Caddyfile too ambiguous to adopt) sets `reason` from the plan and enters nothing
@@ -2008,15 +2030,16 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // because its `reason` describes a gate that IS in force ("will be kept rather than
   // replaced") — restating that as a warning invents a problem. 'pending' is excluded
   // too, but is inert rather than dangerous: `decideProvisioning` returns an empty
-  // reason for `provision`, so there is nothing to push in that state either way.
+  // reason for `provision`, so there is nothing to push in that state either way. Both
+  // exclusions now read off the derived answers rather than re-listing the enum:
+  // `provisioning` is set in the same block as 'pending' and is its only producer.
   //
   // The `includes` check is a forward interlock, not a live de-duplicator: no arm above
   // pushes this exact string today, so it never fires. It is here so that adding an arm
   // that does push `reason` cannot silently double it.
   if (ingress.reason
-      && (ingress.protection === 'none'
-        || ingress.protection === 'unchanged'
-        || ingress.protection === 'existing-unverified')
+      && !ingress.confirmedProtection
+      && !ingress.provisioning
       && !warnings.includes(ingress.reason)) {
     warnings.push(ingress.reason);
   }

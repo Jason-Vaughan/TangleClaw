@@ -26,6 +26,67 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-06: one derivation of "are we protected", stated so an unknown state fails safe (#861)
+
+<!-- prawduct: type=fix | scope=ingress-861 | status= -->
+
+**Why:** last open item on the v5 gate. Raised by the cumulative Critic on the v5 bundle (R-9),
+filed rather than fixed. `ingress.protection` was produced by the server and its *meaning*
+re-derived by comparing against a literal list in three places — `server.js` (the warning push) and
+`public/setup.js` twice (screen routing, screen wording). Two sources of truth for a security
+decision, in front-end code, which is the same drift `lib/caddy.js` already refused for
+`safeToWrite`.
+
+**The substance is the direction of the predicate, not the de-duplication.** The lists enumerated
+the states meaning "NOT protected", so an unrecognised sixth value matched none and fell through to
+the branch that DISMISSES the warning — a newly-added state would silently stop telling an operator
+nothing is enforcing their login. Nothing fails; a screen stops appearing. Restating it as an
+allowlist of the ONE state where a gate was positively observed makes an unknown value fail safe.
+
+**What:** `deriveProtectionFlags(protection)` in `lib/ingress-provision.js` — pure, exported,
+returning `{confirmedProtection, credentialStored}`. `server.js` `Object.assign`s it onto `ingress`
+after the arm chain, and the warning push now reads `!confirmedProtection && !provisioning`
+(`provisioning` is set in the same block as `pending` and is its only producer — checked, not
+assumed). `public/setup.js` branches on the two booleans and **no longer reads the enum at all**:
+the only remaining `protection ===` in non-test code is the line inside the named function.
+
+**Deliberately behaviour-preserving on the screens.** `credentialStored` keeps exactly the pair the
+browser used to test. These are the least-verified screens in the release (#802), so the commit
+that moves WHO decides must not also move WHAT is decided.
+
+**Extracted to a module rather than left inline, for a reason the tests surfaced.** ~25 browser
+fixtures had to start carrying the new contract; had the derivation stayed inline in a route
+handler, the tests would have had to re-implement it, recreating the third source of truth this
+removes. As an exported pure function it is unit-testable on its own — which is what turns the
+fail-safe property into a contract instead of an intention.
+
+**Delivery defect found while doing it, and fixed here because otherwise this change does not
+ship.** `public/setup.js` is loaded from `index.html` as a plain `<script src>` — not a navigate
+request — so it fell to `sw.js`'s cache-first branch with no `NETWORK_FIRST_PATHS` carve-out. A
+browser with an active service worker keeps serving the copy it first fetched, so every past and
+future wizard change was invisible to returning operators until `CACHE_NAME` moved. Now
+network-first. **Not** a `CACHE_NAME` bump: that tears down and reinstalls the worker for every
+browser, which behind the basic_auth gate is what produced the repeating credential prompt in #710.
+
+**Tests (+9):** `test/ingress-provision.test.js` +5 (`confirmed` only for the observed-gate state;
+an UNKNOWN state fails safe across six values incl. `null`/`undefined`/`''`; stored-vs-confirmed
+separation; unknown never reads as stored; the two flags are mutually exclusive across all six
+states); `test/setup-wizard-login-gate.test.js` +3 (an unheard-of state does not dismiss; the
+browser obeys a server answer that CONTRADICTS the enum, which is what proves the second source of
+truth is gone; `setup.js` is network-first); `test/setup-provisioning.test.js` +2 assertions (the
+real API response actually carries both flags — the producing half of the contract).
+
+**Five mutations, each killing a different test.** The load-bearing one reverts the allowlist to the
+old denylist form: it agrees on all five known states and differs ONLY on an unknown one, and it
+reddens the fail-safe test specifically. Also: `credentialStored` forced false; the server not
+shipping the flags; the browser re-reading the enum; and `setup.js` dropped from
+`NETWORK_FIRST_PATHS` — that last one initially reddened NOTHING, which is how the sw.js change was
+caught as unpinned before review rather than during it. Full suite **5612 pass / 0 fail / 1 skip**.
+
+**Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
+one pass, and this is the half a machine can do — the screens still need a real no-caddy install
+and a browser.
+
 ## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
 
 <!-- prawduct: type=fix | scope=medusa-873 | status= -->

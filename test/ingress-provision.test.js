@@ -168,6 +168,58 @@ describe('decideProvisioning', () => {
   });
 });
 
+// #861 — this judgement used to be re-made by comparing `ingress.protection`
+// against a literal list in three places, twice in server.js and once in
+// public/setup.js, so the browser was a second source of truth for a security
+// decision. It now lives here once, and these tests are what make the
+// fail-safe property a contract rather than an intention.
+describe('deriveProtectionFlags (#861)', () => {
+  const derive = provision.deriveProtectionFlags;
+
+  it('confirms protection ONLY for the state where a gate was actually observed', () => {
+    assert.equal(derive('existing').confirmedProtection, true);
+    for (const state of ['none', 'pending', 'unchanged', 'existing-unverified']) {
+      assert.equal(derive(state).confirmedProtection, false,
+        `${state} means no gate was observed, so it must never read as confirmed`);
+    }
+  });
+
+  it('an UNKNOWN protection state fails safe — the operator is told, not dismissed', () => {
+    // The whole reason the predicate was inverted. The old form enumerated the
+    // states meaning "not protected", so a value it had never heard of matched
+    // none of them and fell through to the branch that DISMISSES the warning:
+    // adding a sixth state would have silently stopped telling an operator that
+    // nothing was enforcing a login. This is the assertion that stops that
+    // returning — it must hold for any value, not just the five known today.
+    for (const unknown of ['adopted-pending-reload', 'partially-enforced', '', null, undefined]) {
+      assert.equal(derive(unknown).confirmedProtection, false,
+        `an unrecognised state (${String(unknown)}) must never read as confirmed protection`);
+    }
+  });
+
+  it('reports a stored-but-unenforced credential separately from a confirmed one', () => {
+    // Selects the WORDING of the unprotected screen — "your login is saved but
+    // not confirmed" vs "there is no login". It must not soften the outcome:
+    // both still land on the same screen.
+    assert.equal(derive('unchanged').credentialStored, true);
+    assert.equal(derive('existing-unverified').credentialStored, true);
+    assert.equal(derive('none').credentialStored, false);
+    assert.equal(derive('pending').credentialStored, false);
+  });
+
+  it('never reports an unknown state as holding a stored credential either', () => {
+    assert.equal(derive('some-future-state').credentialStored, false);
+  });
+
+  it('the two flags are never both true — confirmed and unconfirmed are exclusive', () => {
+    for (const state of ['none', 'pending', 'existing', 'unchanged', 'existing-unverified', 'unknown']) {
+      const f = derive(state);
+      assert.equal(f.confirmedProtection && f.credentialStored, false,
+        `${state} must not claim a credential is both confirmed and merely stored`);
+    }
+  });
+});
+
 describe('cutover result file', () => {
   let tmpBase;
   let prevBase;

@@ -1121,12 +1121,14 @@ async function wizardComplete() {
     _showProvisioningScreen(ingress, carried);
     return;
   }
-  if (ingress && (ingress.protection === 'none' || ingress.protection === 'unchanged'
-      || ingress.protection === 'existing-unverified')) {
-    // 'unchanged' and 'existing-unverified' both mean a credential exists and
-    // TangleClaw cannot say it is in force. Dismissing into a dashboard that looks
-    // identical to a protected one is the failure this screen exists to prevent,
-    // so they route here rather than falling through.
+  // The server decides whether protection is CONFIRMED and ships the answer; this
+  // used to re-derive it by comparing `ingress.protection` against a literal list,
+  // which made the browser a second source of truth for a security decision (#861).
+  // Read as "anything not positively confirmed lands here", so a protection state
+  // this build has never heard of shows the warning instead of dismissing past it.
+  // Dismissing into a dashboard that looks identical to a protected one is the exact
+  // failure this screen exists to prevent.
+  if (ingress && !ingress.confirmedProtection) {
     _showUnprotectedScreen(ingress, carried);
     return;
   }
@@ -1489,11 +1491,12 @@ function _showUnprotectedScreen(ingress, warnings) {
   const body = document.getElementById('setupBody');
   if (!body) return;
 
-  // Three states land here and they are not the same claim. 'none' means there is
-  // no login at all. 'unchanged' and 'existing-unverified' mean a credential is
-  // stored while TangleClaw cannot say it is being enforced — asserting "nothing
-  // is asking for a password" there would be a guess in the other direction.
-  const stored = ingress.protection === 'unchanged' || ingress.protection === 'existing-unverified';
+  // Several states land here and they are not the same claim: a credential may be
+  // stored while TangleClaw cannot say it is being enforced, or there may be no login
+  // at all. Asserting "nothing is asking for a password" in the first case would be a
+  // guess in the other direction. Which of the two applies is the server's call and
+  // arrives as `credentialStored` (#861) — the enum is deliberately not read here.
+  const stored = ingress.credentialStored === true;
   const heading = stored ? 'Your login is saved, but not confirmed' : 'TangleClaw has no login';
   const lead = stored
     ? `<p class="setup-text">A login is saved, but TangleClaw <strong>cannot confirm anything is enforcing it</strong> — it did not change the Caddy config, which is maintained by hand.</p>`

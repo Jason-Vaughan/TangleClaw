@@ -572,6 +572,14 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.protection, 'existing-unverified',
         'must not report the existing login as simply kept');
+      // #861 — the browser branches on these, not on the enum, so the response
+      // must actually carry them. This is the producing half of the contract;
+      // `test/ingress-provision.test.js` pins the derivation and
+      // `test/setup-wizard-login-gate.test.js` pins the consuming half.
+      assert.equal(res.data.ingress.confirmedProtection, false,
+        'a credential the live config may not enforce is not confirmed protection');
+      assert.equal(res.data.ingress.credentialStored, true,
+        'a credential IS stored, so the screen must say saved-but-unconfirmed rather than no-login');
       assert.equal(res.data.ingress.user, 'newadmin', 'must name the account THEY set, not the adopted one');
       assert.equal(store.config.load().basicAuthUser, 'newadmin',
         'config holds the typed credential — which is precisely why the mismatch must be reported');
