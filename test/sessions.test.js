@@ -221,6 +221,26 @@ describe('sessions', () => {
           assert.ok(prompt.includes(medusaProjDir), 'the resolved source is named');
         });
 
+        it('treats an EMPTY contract as no corroboration, not as a checkout', () => {
+          // `readContract` accepts only a non-blank doc, so corroborating on
+          // mere existence would admit a candidate the read then rejects — the
+          // #873 shape again, the prime naming a project we just declined to
+          // trust.
+          fs.mkdirSync(path.join(medusaProjDir, 'docs'), { recursive: true });
+          fs.writeFileSync(path.join(medusaProjDir, medusa.CONTRACT_RELATIVE_PATH), '   \n\n');
+
+          const project = store.projects.getByName('prime-test');
+          const engine = store.engines.get('claude');
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+          assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'absence is still surfaced');
+          assert.equal(
+            prompt.includes(medusaProjDir), false,
+            'a blank contract must not promote an unrelated project into being named'
+          );
+          assert.ok(prompt.includes('no local Medusa checkout identified'), 'reports no checkout, not a broken one');
+        });
+
         it('lets the env override win over a corroborated checkout', () => {
           fs.mkdirSync(path.join(medusaProjDir, 'docs'), { recursive: true });
           fs.writeFileSync(

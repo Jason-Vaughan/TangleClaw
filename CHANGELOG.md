@@ -351,12 +351,22 @@ All notable changes to TangleClaw are documented in this file.
   Medusa install.
 
   A display name is whatever the operator typed. It can locate a candidate; it cannot establish
-  identity. The name-match now only *finds* a candidate, and the consumer contract at
-  `medusa.CONTRACT_RELATIVE_PATH` is what corroborates it — present, this is a checkout; absent, it
-  is a different project that happens to share a name, and TangleClaw says so instead of naming it.
-  The honest-absence message now reads "no local Medusa checkout identified" and names
-  `MEDUSA_CONTRACT_PATH`, so an operator whose checkout is registered under another name has a
-  stated way out rather than a path to a project they never connected to Medusa.
+  identity. The name-match now only *finds* a candidate, and a **usable** consumer contract is what
+  corroborates it — present, this is a checkout; absent, it is a different project that happens to
+  share a name, and TangleClaw says so instead of naming it. The honest-absence message now reads
+  "no local Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH`, so an operator whose
+  checkout is registered under another name has a stated way out rather than a path to a project
+  they never connected to Medusa.
+
+  "Usable" is deliberately the *same* test the reader applies — readable and non-blank — via a new
+  `medusa.hasContract()`. Corroborating on mere existence would admit a project holding an empty or
+  unreadable `docs/CONSUMER-CONTRACT.md`, which the read then rejects: the same bug in miniature,
+  with the prime naming a project TangleClaw had just declined to trust.
+
+  Resolution is also **lazy**. The checkout resolver reads the project store and logs when it
+  rejects a candidate, so it is now passed as a thunk that `readContract` calls only if the override
+  did not answer. Otherwise an operator who took the remedy this feature itself recommends would
+  still get a warning naming their project on every launch that succeeded.
 
   **The narrower bug was the visible one; the wider one was silent.** Because `readContract()`
   already failed closed on a missing file, the reporter got a wrong *diagnosis* rather than a wrong
@@ -370,10 +380,12 @@ All notable changes to TangleClaw are documented in this file.
   read cannot drift apart.
 
   The name-match path had **no test coverage at all** — every existing test reaches the contract
-  through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. Three tests now exercise it
-  directly, and each direction is pinned by its own mutation: removing the corroboration reddens the
-  unrelated-project test, and rejecting every candidate reddens the genuine-checkout test, so the fix
-  cannot degrade into simply disabling discovery.
+  through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. It is now exercised directly,
+  and each direction is pinned by its own mutation, each killing a different test: removing the
+  corroboration reddens the unrelated-project test, rejecting every candidate reddens the
+  genuine-checkout test (so the fix cannot degrade into simply disabling discovery), corroborating on
+  existence alone reddens the blank-contract tests, and resolving the checkout eagerly reddens the
+  override-short-circuit test.
 
 - **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
   outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
