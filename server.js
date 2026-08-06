@@ -4920,10 +4920,13 @@ async function handleRequest(req, res) {
   // Deliberately narrow: only `cross-site` is refused. Rejecting `same-site`
   // as well would need an attacker controlling a sibling subdomain of the
   // operator's own host, and would risk breaking a legitimate multi-subdomain
-  // deployment. That residual is closed a different way — the JSON-body rule
-  // below refuses a form from a sibling subdomain too, since a `<form>` cannot
-  // send `application/json` — so `same-site` stays allowed and nothing
-  // multi-subdomain breaks (#860). The CSRF acceptance in security-model.md,
+  // deployment. On TangleClaw's own `/api/` surface that residual is closed a
+  // different way — the JSON-body rule below refuses a form from a sibling
+  // subdomain too, since a `<form>` cannot send `application/json` — so
+  // `same-site` stays allowed and nothing multi-subdomain breaks (#860). That
+  // rule is confined to `/api/` (its own comment says why), so on the proxied
+  // prefixes the sibling-subdomain residual still stands, recorded in
+  // security-model.md rather than implied here. The CSRF acceptance there,
   // whose premise "no session state in the browser" is what shipping
   // browser-cached HTTP Basic invalidated, has been re-argued rather than
   // re-cited: CSRF is now in scope, with all three guards and their residuals
