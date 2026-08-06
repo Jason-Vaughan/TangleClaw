@@ -792,7 +792,8 @@ All notable changes to TangleClaw are documented in this file.
   before returning it. That one string fanned out to three sinks: the cutover log, the cutover
   result file, and the server log. Only the third was redacting, which is precisely the evidence
   that per-caller redaction is the leaky shape. The cutover additionally scrubs what it writes to
-  its result file and its stderr, since the Caddyfile generator can reject a credential and name it.
+  its result file and its stderr — prophylactically, since no path today builds such a message,
+  so that a future thrower near the credential cannot reopen this without knowing to.
   The username is deliberately kept — it is what makes a failure diagnosable, and it is already
   reported at the HTTP boundary.
 

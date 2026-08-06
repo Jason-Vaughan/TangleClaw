@@ -82,7 +82,7 @@ stub's quoting reddens the test on *that* guard, naming the fixture.
 
 **Mutations, each killing a different test:** validateCaddyfile stops redacting → the redaction test;
 rotation call removed → `spawnCutover rotates BEFORE opening`; size check removed → `leaves a log
-under the cap`; stub stops quoting → the fixture guard. Full suite **5601 pass / 0 fail / 1 skip** on
+under the cap`; stub stops quoting → the fixture guard. Full suite **5606 pass / 0 fail / 1 skip** on
 node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded as machine evidence.
 
 **Carried from the cumulative review (1 blocking, 10 warning, 7 note — all decided in one pass):**
