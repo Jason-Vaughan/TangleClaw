@@ -137,6 +137,68 @@ describe('ingress-cutover', () => {
       assert.equal(cutover.writeCutoverResult(null, { ok: true, code: 'ok', target: 'caddy' }), false);
     });
 
+    // #821 — this file is the SECOND at-rest home for a failure's text (the
+    // cutover log is the first), it is read back by the server and the wizard,
+    // and it persists at 0600. `caddy.validateCaddyfile` redacts at the source,
+    // but `finish` is also reached from throwers that carry their own message,
+    // so the write itself must not be the thing that trusts its input.
+    describe('credential redaction (#821)', () => {
+      const HASH = '$2a$14$' + 'z'.repeat(53);
+
+      it('scrubs a hash out of `error` before it reaches the file', () => {
+        const p = path.join(dir, 'redact-error.json');
+        cutover.writeCutoverResult(p, {
+          ok: false,
+          code: cutover.CUTOVER_CODES.VALIDATE_FAILED,
+          target: 'caddy',
+          error: `generated Caddyfile failed validation: basic_auth ops ${HASH}`
+        });
+        const raw = fs.readFileSync(p, 'utf8');
+        assert.ok(!raw.includes(HASH), 'no hash may reach the result file');
+        assert.match(raw, /\[redacted-hash\]/);
+        assert.match(raw, /ops/, 'the username stays — it is what makes the failure diagnosable');
+      });
+
+      it('scrubs `healthError` too, which travels a different key for a reason', () => {
+        // healthError is deliberately NOT routed through `error` (it would invert
+        // the outcome), so it is a genuinely separate path into the same file and
+        // redacting one says nothing about the other.
+        const p = path.join(dir, 'redact-health.json');
+        cutover.writeCutoverResult(p, {
+          ok: true,
+          code: cutover.CUTOVER_CODES.OK,
+          target: 'caddy',
+          healthError: `probe failed against basic_auth ops ${HASH}`
+        });
+        const raw = fs.readFileSync(p, 'utf8');
+        assert.ok(!raw.includes(HASH), 'no hash may reach the result file via the health key either');
+        assert.match(raw, /\[redacted-hash\]/);
+      });
+
+      it('leaves ordinary error text exactly as it was', () => {
+        // Redaction must not become a mangler: the common case carries no hash.
+        const p = path.join(dir, 'redact-none.json');
+        cutover.writeCutoverResult(p, {
+          ok: false, code: cutover.CUTOVER_CODES.FAILED, target: 'caddy', error: 'launchctl bootout failed'
+        });
+        assert.equal(JSON.parse(fs.readFileSync(p, 'utf8')).error, 'launchctl bootout failed');
+      });
+
+      it('the fatal stderr write redacts too — that stream IS the cutover log', () => {
+        // Asserted against the source because this write lives in `main`, which
+        // cannot be called from a test: running it would perform a real cutover
+        // on the developer's own box, which is exactly what the spawn interlock
+        // in lib/ingress-provision.js exists to prevent. The same source-pinning
+        // shape is already used for the redaction at
+        // test/setup-provisioning.test.js's `log.warn` assertion.
+        const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
+        assert.match(
+          src, /process\.stderr\.write\(`ERROR: \$\{caddy\.redactHashes\(err\.message\)\}\\n`\)/,
+          'the catch-all fatal write must redact — its output lands in a file that persists'
+        );
+      });
+    });
+
     // The whole point of the best-effort contract: a cutover that has already
     // touched launchd must not abort because its status file is unwritable.
     it('never throws when the path cannot be written', () => {

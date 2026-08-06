@@ -454,6 +454,23 @@ describe('spawnCutover', () => {
       assert.equal(fs.statSync(`${logPath}.1`).mode & 0o777, 0o600);
     });
 
+    it('tightens a LEGACY loose log on rotation instead of preserving its mode', () => {
+      // `rename` preserves mode, and rotation runs before the openSync/fchmod
+      // pair that tightens the live log — so an install predating that tightening
+      // would carry its 0644 straight into the generation and keep it there,
+      // holding exactly the text the live log was tightened for.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.rmSync(`${logPath}.1`, { force: true });
+      writeOversizedLog(logPath);
+      fs.chmodSync(logPath, 0o644);
+      assert.equal(fs.statSync(logPath).mode & 0o777, 0o644, 'precondition: the legacy log is loose');
+
+      provision.rotateCutoverLogIfNeeded(logPath);
+
+      assert.equal(fs.statSync(`${logPath}.1`).mode & 0o777, 0o600,
+        'the rotated generation must be tightened, not left at the mode it was renamed with');
+    });
+
     it('spawnCutover rotates BEFORE opening, never under a running child', () => {
       // The timing is the design: the fd becomes a detached child's stdout and
       // stderr, so renaming the file mid-run would leave that child writing to a
@@ -472,20 +489,42 @@ describe('spawnCutover', () => {
       assert.equal(fs.existsSync(`${logPath}.1`), true, 'the previous content is kept as one generation');
     });
 
-    it('still runs the cutover when the log cannot be rotated', () => {
+    it('still runs the cutover, and still logs, when rotation itself fails', () => {
       // Housekeeping must never cost the operator their ingress. An unrotatable
       // log degrades to appending, it does not abort the run.
+      //
+      // Reaching the failure branch is the hard part, and the obvious fixture
+      // does not: putting a DIRECTORY at the log path makes `statSync().size`
+      // ~64-128 bytes, so the size check returns early and rotation's catch never
+      // runs — the test then passes on `spawnCutover`'s pre-existing openSync
+      // handler instead, and would pass with the catch deleted. So: an oversized
+      // REAL log (clears the size check) whose destination generation is a
+      // non-empty directory, which is what makes `renameSync` throw.
       const logPath = requireSandboxed(provision.cutoverLogPath());
-      fs.rmSync(logPath, { force: true });
-      fs.mkdirSync(logPath, { recursive: true }); // a DIRECTORY where the log goes
+      const blocked = `${logPath}.1`;
+      fs.rmSync(blocked, { recursive: true, force: true });
+      writeOversizedLog(logPath);
+      fs.mkdirSync(blocked, { recursive: true });
+      fs.writeFileSync(path.join(blocked, 'occupied'), 'not empty, so rename cannot replace it');
       try {
+        assert.equal(provision.rotateCutoverLogIfNeeded(logPath), false,
+          'rotation reports failure rather than throwing');
+
+        let opts = null;
         const res = provision.spawnCutover({
           resultFile: path.join(os.tmpdir(), 'tc-rot2.json'),
-          spawnFn: () => ({ pid: 10, unref() {} })
+          spawnFn: (_c, _a, o) => { opts = o; return { pid: 10, unref() {} }; }
         });
-        assert.equal(res.ok, true, 'the cutover proceeds despite an unusable log path');
+
+        assert.equal(res.ok, true, 'the cutover proceeds despite an unrotatable log');
+        // The arm that actually distinguishes swallowing from not: without the
+        // catch, the throw escapes into spawnCutover's own try, `logFd` stays
+        // 'ignore', and the child's output is discarded — losing the one
+        // diagnostic that matters when things are already going wrong.
+        assert.equal(typeof opts.stdio[1], 'number',
+          'the run must still get a real log descriptor, not fall back to discarding output');
       } finally {
-        fs.rmSync(logPath, { recursive: true, force: true });
+        fs.rmSync(blocked, { recursive: true, force: true });
       }
     });
   });

@@ -630,8 +630,11 @@ function main() {
   } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's refusals and its generator's validation errors both arrive as Error; reported below, never swallowed
     // This script's stderr IS the cutover log — the parent hands it the log fd
     // as the child's stdio — so anything written here lands in a file that
-    // persists (#821). The generator validates the credential it is embedding,
-    // so a rejection message is a plausible carrier for the hash it rejected.
+    // persists (#821). No generator path today builds a message containing the
+    // hash, so this is prophylactic rather than a fix for a known carrier: it
+    // covers any future thrower in `planCutover`'s tree, which is where the
+    // credential is handled, without that author having to know this write ends
+    // up in a durable file. Cheap, and the alternative is finding out later.
     process.stderr.write(`ERROR: ${caddy.redactHashes(err.message)}\n`);
     // Only the tagged refusal is `ungate-refused`. Everything else the generator
     // raises is a plain build failure, and must not be reported as a credential

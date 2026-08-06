@@ -773,7 +773,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
-- **The ingress cutover log can no longer hold your login's password hash, and no longer grows
+- **The ingress cutover log no longer records your login's password hash, and no longer grows
   without end (#821).** `~/.tangleclaw/logs/ingress-cutover.log` was opened with a raw append-mode
   descriptor outside the logger that owns rotation, so it had no size cap, no rotation and no
   pruning — and by the code's own admission it could capture a credential hash, because
@@ -803,7 +803,17 @@ All notable changes to TangleClaw are documented in this file.
   stderr, so renaming mid-run would leave that child writing to a detached inode — the same trap
   `logger.js` documents for the long-running server. A log that cannot be rotated is appended to
   anyway; housekeeping must never cost an operator their ingress. The existing `0600` mode stays,
-  because it is the control that does not depend on every future writer remembering to redact.
+  because it is the control that does not depend on every future writer remembering to redact —
+  and a rotated generation is now tightened too, since `rename` preserves mode and would otherwise
+  carry a pre-existing loose log's `0644` into the archive.
+
+  **Both controls are prospective, and an already-written log is not cleaned up.** If this machine
+  ran a cutover that hit the validate-failure path before this release, its existing log can still
+  hold a hash — rotation will not remove it either, because a log under the threshold never
+  rotates. TangleClaw does not silently truncate the operator's only record of what setup did.
+  `deploy/INGRESS.md` carries a one-line check and the remedy; in short, the file is narration
+  rather than state, nothing reads it back, and `rm ~/.tangleclaw/logs/ingress-cutover.log*` is
+  safe.
 
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**

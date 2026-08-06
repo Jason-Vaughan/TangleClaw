@@ -65,11 +65,13 @@ the trap `logger.js` documents as "the owner of the log owns its rotation". Best
 unrotatable log is appended to anyway, because housekeeping must not cost the operator their ingress.
 `0600` stays: it is the control that does not depend on every future writer remembering to redact.
 
-**Tests (+8):** `test/caddy.test.js` +1 (a Caddyfile whose *credential line* is the offending one, so
-the validator's own output carries the hash — the real #821 vector end-to-end);
+**Tests (+12):** `test/caddy.test.js` +1 (a Caddyfile whose *credential line* is the offending one,
+so the validator's own output carries the hash — the real #821 vector end-to-end);
 `test/ingress-provision.test.js` +7 (under-cap left alone, over-cap rotated with the live path
-cleared, oldest generation retired, rotated generation still 0600, `spawnCutover` rotates before
-opening, cutover survives an unrotatable log).
+cleared, oldest generation retired, rotated generation still 0600, a legacy loose log tightened on
+rotation, `spawnCutover` rotates before opening, cutover survives and still logs when rotation
+fails); `test/ingress-cutover.test.js` +4 (result-file `error` and `healthError` scrubbed, ordinary
+text untouched, and a source-pin on the fatal stderr write).
 
 **The fixture was the risk, and is guarded.** The local caddy stub emitted a FIXED error string and
 never quoted the offending line — so a redaction test written against it would have passed without
@@ -82,6 +84,41 @@ stub's quoting reddens the test on *that* guard, naming the fixture.
 rotation call removed → `spawnCutover rotates BEFORE opening`; size check removed → `leaves a log
 under the cap`; stub stops quoting → the fixture guard. Full suite **5601 pass / 0 fail / 1 skip** on
 node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded as machine evidence.
+
+**Carried from the cumulative review (1 blocking, 10 warning, 7 note — all decided in one pass):**
+- **BLOCKING R-1 — two of the three redaction sites were unpinned.** Deleting the result-file or
+  stderr redaction left the suite green. Fixed with 4 tests: `error` and `healthError` scrubbed
+  behaviourally, ordinary text proven untouched, and the fatal stderr write pinned by **source
+  assertion** — it lives in `main`, which no test may call, because running it performs a real
+  cutover on the developer's own box (the very thing `spawnCutover`'s interlock exists to prevent).
+  Source-pinning follows the existing precedent in `test/setup-provisioning.test.js`.
+- **R-2/R-10/R-15 (three reviewers, independently) — my rotation-failure test could not go red.**
+  A *directory* at the log path makes `statSync().size` ~64–128 B, so the size check returned early
+  and rotation's catch never ran; the test passed on `spawnCutover`'s pre-existing `openSync`
+  handler and would have passed with the catch deleted. Now an oversized real log whose destination
+  generation is a non-empty directory, so `renameSync` genuinely throws, and the assertion is
+  `stdio[1]` being a real descriptor — the arm that distinguishes swallowing from escaping. This is
+  the second vacuous-fixture near-miss on this branch; both were caught by the guard, not by luck.
+- **R-4/R-16 — nothing addressed a hash already on disk.** Both controls are prospective and a
+  sub-threshold log never rotates, so an existing log keeps its hash forever. `CHANGELOG.md` said
+  "can no longer hold", which over-claimed; it now says "no longer records" and states the limit,
+  and `deploy/INGRESS.md` carries a check + remedy. Related: rotation runs before the
+  `openSync(0600)`/`fchmod` pair and `rename` preserves mode, so a legacy 0644 log was carried into
+  the archive at 0644 — the rotated generation is now chmod'd too (test + mutation).
+- **R-3/R-7/R-8/R-14 — three durable records still asserted #821 was live.**
+  `observability-strategy.md` (ratified Direction), `boundary-patterns.md` (the contract-surface
+  file the Critic protocol sends every reviewer to), and `deploy/INGRESS.md` all updated. The
+  Direction gained the rule the fix actually establishes: **a producer of text that can embed a
+  secret owns the redaction; a reporter may add a pass but must never be the only one** (R-12).
+  `deploy/INGRESS.md`'s #846 decision had this hazard as its stated reason — the premise is now
+  recorded as expired, the decision left standing on its remaining (narrower) support, and whether
+  to revisit #846 flagged as the operator's call rather than taken as a side effect of this fix.
+- **R-6 — the stderr rationale overstated the carrier.** No generator path emits the hash today;
+  the comment now says the write is prophylactic and why that is still worth it.
+- **R-5/R-13 — test counts were one high** (+8 claimed, +12 actual across three files). Corrected.
+- **Accepted, not fixed:** R-11 (the shift loop duplicates `logger._rotateIfNeeded`) — divergent fd
+  ownership is exactly why this cannot call into the logger, and a shared helper for nine lines
+  would couple two lifecycles that must stay independent. R-17/R-18 informational.
 
 **Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
 
