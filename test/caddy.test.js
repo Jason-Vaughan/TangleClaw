@@ -40,6 +40,15 @@ case "$1" in
     fi
     if grep -q INVALID "$cfg"; then
       echo "stub: adapting caddyfile: invalid directive" >&2
+      # Real caddy QUOTES the offending line back, and that is the only reason a
+      # credential can reach a log nobody wrote it to (#821): when the directive
+      # carrying \`basic_auth <user> <hash>\` is itself what failed to parse, the
+      # hash is inside the quoted text. Caddy renamed \`basicauth\` to
+      # \`basic_auth\` in 2.8, so a version skew alone produces exactly that.
+      # A stub that only ever emitted a fixed string could not express this, and
+      # a redaction test written against it would pass without redacting
+      # anything.
+      grep -n INVALID "$cfg" | head -1 | sed "s|^|  $cfg:|" >&2
       exit 1
     fi
     echo "Valid configuration"
@@ -493,6 +502,27 @@ describe('caddy', () => {
       const r = caddy.validateCaddyfile(cfg);
       assert.equal(r.ok, false);
       assert.match(r.error, /invalid directive/);
+    });
+
+    it('redacts a credential hash the validator quoted back at us (#821)', () => {
+      // The whole #821 vector in one test: the offending line IS the credential
+      // line, so the validator's own output carries the hash. This error string
+      // fans out to the cutover log, the cutover result file and the server log,
+      // so redacting it here is what keeps it out of all three at once.
+      const HASH = '$2a$14$' + 'q'.repeat(53);
+      const cfg = path.join(tmpDir, 'credential-Caddyfile');
+      fs.writeFileSync(cfg, `localhost {\n\tbasic_autth ops ${HASH} INVALID\n}\n`);
+
+      const r = caddy.validateCaddyfile(cfg);
+
+      assert.equal(r.ok, false);
+      // Guards the fixture, not the code: if the validator stopped quoting the
+      // line, this test would pass while redacting nothing.
+      assert.match(r.error, /basic_autth/,
+        'the fixture must actually put the offending credential line into the error');
+      assert.ok(!r.error.includes(HASH), 'the hash must not survive validation output');
+      assert.match(r.error, /\[redacted-hash\]/);
+      assert.match(r.error, /ops/, 'the username stays — it is what makes the failure diagnosable');
     });
 
     it('returns ok: false when caddy is not on PATH', () => {

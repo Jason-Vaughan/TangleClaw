@@ -773,6 +773,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **The ingress cutover log can no longer hold your login's password hash, and no longer grows
+  without end (#821).** `~/.tangleclaw/logs/ingress-cutover.log` was opened with a raw append-mode
+  descriptor outside the logger that owns rotation, so it had no size cap, no rotation and no
+  pruning — and by the code's own admission it could capture a credential hash, because
+  `caddy validate` quotes the offending Caddyfile line back and for this project that line is
+  `basic_auth <user> <hash>`. Caddy renamed `basicauth` to `basic_auth` in 2.8, so a version skew
+  alone is enough to make the credential line itself the one that fails to parse.
+
+  **Redaction is the control for the secret; rotation is the control for growth.** They are not
+  interchangeable, and it is worth being exact because the obvious reading gets it backwards: a size
+  cap would not have bounded the credential's lifetime at all. This log gets kilobytes per run and an
+  install performs a handful of cutovers ever, so it would sit forever below any sane threshold,
+  never rotate, and keep the hash for the life of the machine. Only removing the hash removes the
+  hash.
+
+  So the hash is now redacted **at its source** — `caddy.validateCaddyfile` scrubs its own error
+  before returning it. That one string fanned out to three sinks: the cutover log, the cutover
+  result file, and the server log. Only the third was redacting, which is precisely the evidence
+  that per-caller redaction is the leaky shape. The cutover additionally scrubs what it writes to
+  its result file and its stderr, since the Caddyfile generator can reject a credential and name it.
+  The username is deliberately kept — it is what makes a failure diagnosable, and it is already
+  reported at the HTTP boundary.
+
+  Separately, the log now rotates at 1 MB keeping one previous generation — deliberately far below
+  the server log's 10 MB, since a threshold sized for a continuously-appended service log would
+  never be reached here and would bound nothing. Rotation happens **only immediately before the log
+  is opened for a new run**, never during one: the descriptor becomes a detached child's stdout and
+  stderr, so renaming mid-run would leave that child writing to a detached inode — the same trap
+  `logger.js` documents for the long-running server. A log that cannot be rotated is appended to
+  anyway; housekeeping must never cost an operator their ingress. The existing `0600` mode stays,
+  because it is the control that does not depend on every future writer remembering to redact.
+
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
   Those guards decide "is this cross-site?" *relative to the request itself*: `Sec-Fetch-Site` is

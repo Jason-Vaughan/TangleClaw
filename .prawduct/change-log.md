@@ -26,6 +26,65 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-06: the cutover log stops holding a credential hash, and stops growing (#821)
+
+<!-- prawduct: type=fix | scope=ingress-821 | status= -->
+
+**Why:** v5 gate item, raised by the Critic on #819 (rev-20260731T232030Z-279745ce R-18) and filed
+rather than fixed there. `~/.tangleclaw/logs/ingress-cutover.log` is opened with a raw
+`fs.openSync(logPath,'a',0o600)` outside the logger that owns rotation — no cap, no rotation, no
+pruning — and `caddy validate` quotes the offending Caddyfile line, which for this project is
+`basic_auth <user> <hash>`. Caddy renamed `basicauth`→`basic_auth` in 2.8, so a version skew alone
+makes the credential line the one that fails to parse. v5 is the release that makes a credential
+mandatory, so it multiplies how many installs carry one of these files.
+
+**The framing correction that drove the design.** The issue offers "route through the rotating
+logger OR give it a size/age cap" as the fix, with redaction as a conditional extra. That is
+backwards for the stated concern, which is *retention of a secret*: this log takes kilobytes per
+run and an install performs a handful of cutovers ever, so it never reaches any sane threshold,
+never rotates, and keeps the hash for the life of the machine. **A size cap bounds growth and
+bounds the secret's lifetime not at all.** Redaction is therefore load-bearing, not the optional
+half — both were implemented, with the division of labour written down where each lives.
+
+**What (redaction, at the source):** `caddy.validateCaddyfile` now returns `redactHashes(detail)`.
+That single error string fans out to **three** sinks — the cutover log (via the child's stderr), the
+cutover result file (via `finish`), and the server log — and only the third was redacting, which is
+itself the evidence that per-caller redaction is the leaky shape (`feedback_verify_mechanism_uniformity`:
+one call site is not the family). Existing `caddy.redactHashes(...)` call sites are untouched;
+it is idempotent and defence in depth on a credential is worth a duplicate pass. `writeCutoverResult`
+scrubs `error`/`healthError` on the way out, and the script's catch-all stderr write scrubs
+`err.message`, because `finish` is also reached from the Caddyfile generator whose rejection can name
+the credential it rejected. The **username is deliberately preserved** — it is what makes the failure
+diagnosable and is already reported at the HTTP boundary.
+
+**What (rotation, for growth):** `rotateCutoverLogIfNeeded()` in `lib/ingress-provision.js`, 1 MB cap
+and one previous generation (vs the server log's 10 MB / 3 — a service-log threshold would never fire
+here). Called **only immediately before the log is opened**, never during a run: the fd becomes a
+detached child's stdout+stderr, so renaming mid-run leaves that child writing to a detached inode —
+the trap `logger.js` documents as "the owner of the log owns its rotation". Best-effort by design; an
+unrotatable log is appended to anyway, because housekeeping must not cost the operator their ingress.
+`0600` stays: it is the control that does not depend on every future writer remembering to redact.
+
+**Tests (+8):** `test/caddy.test.js` +1 (a Caddyfile whose *credential line* is the offending one, so
+the validator's own output carries the hash — the real #821 vector end-to-end);
+`test/ingress-provision.test.js` +7 (under-cap left alone, over-cap rotated with the live path
+cleared, oldest generation retired, rotated generation still 0600, `spawnCutover` rotates before
+opening, cutover survives an unrotatable log).
+
+**The fixture was the risk, and is guarded.** The local caddy stub emitted a FIXED error string and
+never quoted the offending line — so a redaction test written against it would have passed without
+redacting anything (`feedback_measure_against_the_real_shape`). The stub now quotes the line the way
+real caddy does, and the test carries an explicit assertion that the error actually contains the
+credential line, so losing that fidelity fails loudly instead of silently. Verified: reverting the
+stub's quoting reddens the test on *that* guard, naming the fixture.
+
+**Mutations, each killing a different test:** validateCaddyfile stops redacting → the redaction test;
+rotation call removed → `spawnCutover rotates BEFORE opening`; size check removed → `leaves a log
+under the cap`; stub stops quoting → the fixture guard. Full suite **5601 pass / 0 fail / 1 skip** on
+node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded as machine evidence.
+
+**Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
+
 ## 2026-08-04: one unreadable folder can no longer take down the server (#859)
 
 <!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
