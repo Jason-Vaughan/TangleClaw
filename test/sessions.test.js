@@ -10,6 +10,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const store = require('../lib/store');
+const medusa = require('../lib/medusa');
 
 describe('sessions', () => {
   let tmpDir;
@@ -156,6 +157,87 @@ describe('sessions', () => {
         assert.ok(prompt.includes('`prime-test-cafe0123`'), 'identity still injects');
         assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'missing contract is surfaced, not silent');
         assert.ok(prompt.includes('no-such-contract.md'), 'the tried path is named');
+      });
+
+      // #873 — a third-party install registered an ordinary project named
+      // "Medusa". The resolver matched on the name alone, so every opted-in
+      // session probed that project and reported it as a broken Medusa
+      // checkout. The name-match path had NO coverage at all — every test above
+      // reaches the contract through the MEDUSA_CONTRACT_PATH seam — which is
+      // exactly why the defect shipped. These three exercise it directly.
+      describe('#873: a project named "Medusa" is a candidate, not an identity', () => {
+        let medusaProjDir;
+
+        beforeEach(() => {
+          // Registered under the switchboard's name, but an unrelated project.
+          medusaProjDir = path.join(projectsDir, 'Medusa');
+          fs.mkdirSync(medusaProjDir, { recursive: true });
+          store.projects.create({ name: 'Medusa', path: medusaProjDir, engine: 'claude' });
+          delete process.env.MEDUSA_CONTRACT_PATH;
+          store.projectConfig.save(projDir, { medusaEnabled: true });
+        });
+
+        afterEach(() => {
+          const registered = store.projects.getByNameCaseInsensitive('medusa');
+          if (registered) store.projects.delete(registered.id);
+          fs.rmSync(medusaProjDir, { recursive: true, force: true });
+        });
+
+        it('does not select an unrelated project that merely shares the name', () => {
+          const project = store.projects.getByName('prime-test');
+          const engine = store.engines.get('claude');
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+          assert.ok(prompt.includes('consumer contract — UNAVAILABLE'), 'absence is still surfaced');
+          assert.equal(
+            prompt.includes(medusaProjDir), false,
+            'the unrelated project must not be named — doing so asserts an identity never established'
+          );
+          assert.ok(
+            prompt.includes('no local Medusa checkout identified'),
+            'the message must report no checkout, not a broken one'
+          );
+          assert.ok(
+            prompt.includes('MEDUSA_CONTRACT_PATH'),
+            'the operator needs the override named to have any way to act on this'
+          );
+        });
+
+        it('selects it once it carries the contract, and injects that contract', () => {
+          fs.mkdirSync(path.join(medusaProjDir, 'docs'), { recursive: true });
+          fs.writeFileSync(
+            path.join(medusaProjDir, medusa.CONTRACT_RELATIVE_PATH),
+            '# Corroborated Consumer Contract\nRegister then drain.\n'
+          );
+
+          const project = store.projects.getByName('prime-test');
+          const engine = store.engines.get('claude');
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+          assert.ok(
+            prompt.includes('# Corroborated Consumer Contract'),
+            'a corroborated checkout still resolves — the fix must not disable name-based discovery'
+          );
+          assert.ok(prompt.includes(medusaProjDir), 'the resolved source is named');
+        });
+
+        it('lets the env override win over a corroborated checkout', () => {
+          fs.mkdirSync(path.join(medusaProjDir, 'docs'), { recursive: true });
+          fs.writeFileSync(
+            path.join(medusaProjDir, medusa.CONTRACT_RELATIVE_PATH),
+            '# Checkout Contract\n'
+          );
+          const envDoc = path.join(projDir, 'fixture-contract.md');
+          fs.writeFileSync(envDoc, '# Override Contract\n');
+          process.env.MEDUSA_CONTRACT_PATH = envDoc;
+
+          const project = store.projects.getByName('prime-test');
+          const engine = store.engines.get('claude');
+          const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
+
+          assert.ok(prompt.includes('# Override Contract'), 'the explicit override still takes priority');
+          assert.equal(prompt.includes('# Checkout Contract'), false, 'the checkout must not shadow the override');
+        });
       });
 
       it('tells the session participation is event-driven, not a boot task (#557)', () => {

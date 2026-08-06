@@ -26,6 +26,52 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
+
+<!-- prawduct: type=fix | scope=medusa-873 | status= -->
+
+**Why:** filed by a third-party installer (`GURULifeline`) — the class of report this machine
+structurally cannot reproduce, because here a project named Medusa genuinely *is* the switchboard
+repository, so the resolver's assumption never surfaced. `_medusaProjectPath()` took
+`store.projects.getByNameCaseInsensitive('medusa')` and passed `.path` to `medusa.readContract()`
+with no identity check. The reporter had an ordinary website project registered under that name, so
+every opted-in launch injected `### Medusa consumer contract — UNAVAILABLE` naming *their*
+project's `docs/CONSUMER-CONTRACT.md`, i.e. TangleClaw reporting an unrelated project as a broken
+Medusa install.
+
+Worth separating the two failures, because the visible one is the smaller: `readContract()` already
+fails closed on ENOENT, so the reporter got a wrong **diagnosis**, not a wrong contract. The silent
+one is that a project which happened to hold `docs/CONSUMER-CONTRACT.md` would have had that
+arbitrary document injected into every opted-in prime as the protocol contract. Corroboration
+closes both; the issue's own "expected behavior" only named the first.
+
+**What:** a display name is operator-chosen, so it can *locate* a candidate and cannot *establish*
+identity. `_medusaProjectPath()` (`lib/sessions.js`) now accepts the name-matched candidate only if
+it holds the contract at `medusa.CONTRACT_RELATIVE_PATH`, logging a WARN naming the rejected path
+when it does not, and returning null so the caller never speaks about it. The honest-absence note
+now reads "no local Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH` — an operator whose
+checkout is registered under a different name gets a stated way out instead of a path they never
+connected to Medusa. `CONTRACT_RELATIVE_PATH` is exported from `lib/medusa.js` so the location
+vetted and the location read are one constant and cannot drift.
+
+**Decision — artifact, not git remote.** The issue suggested validating "a known remote/marker".
+Remote-sniffing was rejected: it misses forks and remote-less clones, costs a git read per launch,
+and adds failure modes, while the contract doc is the artifact actually being resolved. The residual
+is an unrelated project named Medusa that *also* carries `docs/CONSUMER-CONTRACT.md` — in which case
+the injected document is at least a consumer contract, and `MEDUSA_CONTRACT_PATH` overrides it.
+
+**Tests:** the name-match path had **zero** coverage — every prior test reaches the contract through
+the `MEDUSA_CONTRACT_PATH` seam, which is precisely why this shipped. `+3` in
+`test/sessions.test.js`: an unrelated same-named project is not selected and is not named in the
+prime; a corroborated checkout still resolves and injects (so the fix cannot degrade into disabling
+discovery); the env override still outranks a corroborated checkout. Mutation-verified in both
+directions, each killing a *different* test — forcing the guard false reddens the unrelated-project
+test, forcing it true reddens the genuine-checkout test. Full suite **5597 pass / 0 fail / 1 skip**
+on node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22.
+
+**Note:** landed while GitHub Actions was in a **major outage**, so the required `test` context could
+not report. Verified locally with CI's exact command and runtime; the PR still waits on the gate.
+
 ## 2026-08-04: one unreadable folder can no longer take down the server (#859)
 
 <!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
