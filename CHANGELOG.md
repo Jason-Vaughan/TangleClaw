@@ -376,8 +376,8 @@ All notable changes to TangleClaw are documented in this file.
 
   Identity is corroborated by the artifact rather than by a git remote deliberately: a remote check
   misses forks and remote-less clones, and the contract doc is the thing actually being resolved.
-  `CONTRACT_RELATIVE_PATH` is exported from `lib/medusa.js` so the location vetted and the location
-  read cannot drift apart.
+  A single `contractPathIn()` in `lib/medusa.js` derives the doc's location, and `hasContract()`
+  vets through it, so the location vetted and the location read cannot drift apart.
 
   The name-match path had **no test coverage at all** — every existing test reaches the contract
   through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. It is now exercised directly,
