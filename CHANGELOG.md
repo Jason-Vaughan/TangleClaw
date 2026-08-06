@@ -340,6 +340,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A project merely NAMED "Medusa" is no longer mistaken for the switchboard checkout (#873).**
+  Reported from a third-party install, and structurally unreproducible here: on this machine a
+  project named Medusa *is* the switchboard repository, so the resolver's assumption was invisible.
+  `_medusaProjectPath()` selected `store.projects.getByNameCaseInsensitive('medusa')` and handed the
+  path straight to `readContract()` without ever asking whether that project was the Medusa
+  repository. The reporter had an ordinary website project registered under that name, so every
+  opted-in session launched carrying `### Medusa consumer contract — UNAVAILABLE` naming *their*
+  project's `docs/CONSUMER-CONTRACT.md` — TangleClaw diagnosing an unrelated project as a broken
+  Medusa install.
+
+  A display name is whatever the operator typed. It can locate a candidate; it cannot establish
+  identity. The name-match now only *finds* a candidate, and a **usable** consumer contract is what
+  corroborates it — present, this is a checkout; absent, it is a different project that happens to
+  share a name, and TangleClaw says so instead of naming it. The honest-absence message now reads
+  "no local Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH`, so an operator whose
+  checkout is registered under another name has a stated way out rather than a path to a project
+  they never connected to Medusa.
+
+  "Usable" is deliberately the *same* test the reader applies — readable and non-blank — via a new
+  `medusa.hasContract()`. Corroborating on mere existence would admit a project holding an empty or
+  unreadable `docs/CONSUMER-CONTRACT.md`, which the read then rejects: the same bug in miniature,
+  with the prime naming a project TangleClaw had just declined to trust.
+
+  Resolution is also **lazy**. The checkout resolver reads the project store and logs when it
+  rejects a candidate, so it is now passed as a thunk that `readContract` calls only if the override
+  did not answer. Otherwise an operator who took the remedy this feature itself recommends would
+  still get a warning naming their project on every launch that succeeded.
+
+  **The narrower bug was the visible one; the wider one was silent.** Because `readContract()`
+  already failed closed on a missing file, the reporter got a wrong *diagnosis* rather than a wrong
+  *contract*. Had their project happened to contain `docs/CONSUMER-CONTRACT.md`, that arbitrary
+  document would have been injected into every opted-in prime as the protocol contract. Requiring
+  corroboration closes both.
+
+  Identity is corroborated by the artifact rather than by a git remote deliberately: a remote check
+  misses forks and remote-less clones, and the contract doc is the thing actually being resolved.
+  A single `contractPathIn()` in `lib/medusa.js` derives the doc's location, and `hasContract()`
+  vets through it, so the location vetted and the location read cannot drift apart.
+
+  The name-match path had **no test coverage at all** — every existing test reaches the contract
+  through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. It is now exercised directly,
+  and each direction is pinned by its own mutation, each killing a different test: removing the
+  corroboration reddens the unrelated-project test, rejecting every candidate reddens the
+  genuine-checkout test (so the fix cannot degrade into simply disabling discovery), corroborating on
+  existence alone reddens the blank-contract tests, and resolving the checkout eagerly reddens the
+  override-short-circuit test.
+
 - **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
   outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
   open, the wrap still reported `done` — correctly, since the commit had already landed — and the
