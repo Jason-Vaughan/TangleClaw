@@ -213,3 +213,14 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `test/store-groups.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/store-shareddocs.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/version-bump-package-json.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-06)
+
+- **TBD** — touched in this session: `SECURITY.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/setup-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/_caddy-stub.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth2-setup-admin.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/caddy-ingress-state.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/reset-admin.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-ingress-state-endpoint.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-commit-autopr.test.js`. <!-- describe -->
