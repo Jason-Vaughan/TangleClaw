@@ -71,6 +71,7 @@ fails any auto-stub section older than 14 days.
 - **Engine profiles + config generation** — detect installed engines, generate per-engine config files (`CLAUDE.md`, `.antigravity.md`, `.aider.conf.yml`, etc.). `lib/engines.js#detect`, `#generateConfig`, `#_buildBaselineHooks`. Injected shared docs: `data/global-rules.md` (Global Rules shared across TC-managed projects), `data/session-memory-guide.md` (file-based session memory system).
 - **Prawduct V2 plugin-governed deferral** (#330) — when a project carries the V2 plugin install reference (`enabledPlugins["prawduct@*"]` in `.claude/settings.json`), TC stops generating its governance config: `writeEngineConfig` skips `CLAUDE.md` regeneration and `syncEngineHooks` strips its own `.hooks` block (preserving the install reference). Auto-detected, fail-closed. `lib/engines.js#isPluginGoverned`.
 - **Orchestration launch-binder** (TB-1, #357) — bind a project to an orchestration profile so its engine launches against a different OpenAI-compatible endpoint (LiteLLM `direct` etc.) **per project**, no engine-config edit. Profiles live in operator-owned `~/.tangleclaw/orchestration-profiles.json` (seeded from `data/orchestration-profiles.json`; loader `store.orchestrationProfiles.load`); the binding is the nullable `projects.orchestration_profile` column (schema v22). Pure resolvers in `lib/orchestration.js` (`resolveKeyRef`, `resolveLaunchProfile`, `applyLaunchOverlay`); injected at one seam in `lib/sessions.js#launchSession` (overlay onto `launch.args` `--model` + `launch.env` `OPENAI_API_BASE`/`OPENAI_API_KEY`). `NULL` binding = zero injection (byte-identical to pre-TB-1). Optional per-project key override `projConfig.orchestrationKeyRef`. Spec: `.prawduct/artifacts/tb-1-launch-binder.md`.
+- **Session ownership** (AUTH-3) — stamps the authenticated operator onto a launched session and surfaces it, so a session can say who started it; NULL for direct-mode and pre-AUTH-3 sessions rather than a fabricated identity. `lib/session-ownership.js`. Tests: `test/session-ownership.test.js`.
 
 ## Governance / Engines
 
@@ -112,6 +113,10 @@ fails any auto-stub section older than 14 days.
 - **ADR: one update mechanism** — decision record requiring every surface that starts an update to call the applier rather than restate it, after the session badge shipped an unguarded `git pull` beside the guarded button (#730). `docs/adr/0010-one-update-mechanism.md`.
 - **Codex engine profile** — the Codex CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/codex.json`.
 - **Feature Index prime summarizer** — parses `FEATURES.md` into curated and auto-stubbed counts so the session prime carries a pointer plus a census instead of the whole file, whose length would otherwise grow with the project and push later directives out of the prime budget (#568). Shared by the prime builder and the index-describe wrap step so both count the same way. `lib/feature-index-prime.js`.
+- **ADR: the Prawduct boundary** — decision record for which side owns what: TangleClaw owns the plumbing, and consumes the governance rather than reimplementing it. `docs/adr/0011-prawduct-boundary.md`.
+- **ADR: enforcement adds no install step** — decision record that a norm's enforcement mechanism must not add an installation step for the operator. `docs/adr/0012-enforcement-adds-no-install-step.md`.
+- **ADR: project-map freshness** — decision record for the section-scoped, curation-preserving, idempotent refresh of `PROJECT-MAP.md`. `docs/adr/0007-project-map-freshness.md`.
+- **ADR: the authentication gate** — decision record for the Caddy `basic_auth` gate, forced first-run setup, and break-glass recovery (AUTH-2). `docs/adr/0004-auth-2-basic-auth-gate.md`.
 
 ## CLI / Tooling
 
@@ -143,6 +148,8 @@ fails any auto-stub section older than 14 days.
 - **Contributor guide** — dev setup, branch/PR conventions, test requirements, where to file issues. `CONTRIBUTING.md`.
 - **Logger** — leveled structured logging (`debug`/`info`/`warn`/`error`) with a settable level and swappable console stream, shared by every module. `lib/logger.js`.
 - **Ingress modes guide** — operator doc on the two ingress modes and how `ingressMode` switches between them. `deploy/INGRESS.md`.
+- **Break-glass credential recovery** (AUTH-2) — the terminal-only path that CREATES or resets an admin login when the settings screen cannot (creating is recovery, so it is deliberately not reachable over HTTP); shares its apply sequence with the API rather than mirroring it. `scripts/reset-admin.js`.
+- **Ingress cutover verification record** — the operator-run VRF for the AUTH-1 cutover: the phase scripts, their acceptance checkboxes, and the scored matrix that says which phases actually ran. `deploy/VRF-auth-1-cutover.md`.
 
 ## Tests
 
@@ -184,32 +191,10 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - Engine selection + launch modes: `test/codex-launch-modes.test.js` — Codex Full Auto / Bypass flag sets (#731); `test/default-engine-wiring.test.js` — default-engine resolution against what is actually installed (#707); `test/engine-picker-gating.test.js` — gating on the converged engine picker; `test/setup-wizard-engines.test.js` — the first-run wizard's engine step.
 - `test/server-info.test.js` — runtime-vs-disk identity, staleness, and the startup-captured running version; `test/update-checker.test.js` — release-tag polling, semver comparison, and the cached-status shape; `test/logger.test.js` — level filtering and structured-field output; `test/api-setup-https.test.js` — the setup HTTPS route.
 - `test/sessionstart-prime-hook.test.js` — executes the generated `data/hooks/sessionstart-prime.sh` as a real shell script rather than asserting on its text, so a hook that parses but cannot run is caught (#103; the class of defect behind #759's spaced-install-path outage).
-
-## TODO (auto-stubbed 2026-07-29)
-
-- **TBD** — touched in this session: `test/tmux.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ttyd-attach.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-07-29)
-
-- **TBD** — touched in this session: `docs/adr/0011-prawduct-boundary.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/engine-hooks-merge.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-02)
-
-- **TBD** — touched in this session: `deploy/VRF-auth-1-cutover.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0004-auth-2-basic-auth-gate.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0007-project-map-freshness.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/adr/0012-enforcement-adds-no-install-step.md`. <!-- describe -->
-- **TBD** — touched in this session: `lib/session-ownership.js`. <!-- describe -->
-- **TBD** — touched in this session: `scripts/reset-admin.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/caddy.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/openclaw-cache.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/openclaw-detect.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/orchestration.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-ownership.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ssh-target-safety.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-doclocks.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-groups.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-shareddocs.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/version-bump-package-json.test.js`. <!-- describe -->
+- Terminal + attach plumbing: `test/tmux.test.js` — session listing, status-bar construction and re-stamping; `test/ttyd-attach.test.js` — the detached attach helper that reconnects to the shared ttyd.
+- Ingress + credentials: `test/caddy.test.js` — Caddyfile generation and injection guards, ingress-state classification, `validateCaddyfile`, admin-password rules, and `redactHashes` (that no bcrypt hash survives into text bound for a log, #821).
+- Engine config merging: `test/engine-hooks-merge.test.js` — that syncing engine hooks into a managed project preserves operator-authored hooks instead of overwriting them (#752).
+- OpenClaw integration: `test/openclaw-detect.test.js` — detection of a local OpenClaw install; `test/openclaw-cache.test.js` — the cache layer behind it.
+- Orchestration + ownership: `test/orchestration.test.js` — the cross-session orchestration surface; `test/session-ownership.test.js` — the `sessions.owner` column, its migration, and that it stays NULL where no identity was observed.
+- Shared documents: `test/store-shareddocs.test.js` — registration and injection modes; `test/store-groups.test.js` — project groups and shared-directory sync; `test/store-doclocks.test.js` — lock acquisition, expiry, and release-on-wrap.
+- Safety + release mechanics: `test/ssh-target-safety.test.js` — that an SSH target cannot be coerced into reaching an unintended host; `test/version-bump-package-json.test.js` — the version-bump step's handling of a project carrying a `package.json`.
