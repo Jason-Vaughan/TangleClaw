@@ -225,6 +225,14 @@ Privacy & Security → Full Disk Access), or keep your projects somewhere outsid
 directories. The scan gives up after five seconds and tells you which it was, rather than waiting
 forever.
 
+**After you grant access, you may wait up to half a minute for the dashboard to notice.** The
+project list stops re-reading a directory that has not answered — otherwise it would retry every
+ten seconds forever, and each attempt leaves a stuck process behind. It tries again on its own,
+starting half a minute after the last failure and backing off to at most five minutes if the
+directory keeps failing. **You do not need to restart anything**; the list fills in by itself on
+the next attempt that succeeds. The wizard's Scan and Create buttons are not affected — those
+always read the directory for real, because you just asked them to.
+
 ## Sessions
 
 Sessions are the core of TangleClaw — they're how you interact with AI engines on your projects.
