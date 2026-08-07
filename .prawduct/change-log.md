@@ -81,7 +81,34 @@ old denylist form: it agrees on all five known states and differs ONLY on an unk
 reddens the fail-safe test specifically. Also: `credentialStored` forced false; the server not
 shipping the flags; the browser re-reading the enum; and `setup.js` dropped from
 `NETWORK_FIRST_PATHS` — that last one initially reddened NOTHING, which is how the sw.js change was
-caught as unpinned before review rather than during it. Full suite **5612 pass / 0 fail / 1 skip**.
+caught as unpinned before review rather than during it. Full suite **5614 pass / 0 fail / 1 skip**.
+
+**Carried from the cumulative review (0 blocking, 10 warning, 6 note — all decided in one pass):**
+- **R-1/R-6 — I had the call-site count BACKWARDS**, and it shipped in four places (`server.js`
+  comment, the JSDoc, the test header, and `CHANGELOG.md`). The denylist was in `server.js` ONCE and
+  in `public/setup.js` TWICE — verified against `origin/main`, not taken on the reviewer's word. The
+  inversion mattered beyond pedantry: the browser held the majority of them, which is what made this
+  a re-deciding problem rather than a re-reading one.
+- **R-2/R-10/R-13 — `PROTECTION_CONFIRMED` was exported with no consumer.** Publishing the sentinel
+  invites exactly the fourth `protection === …` site this change exists to remove. Unexported.
+- **R-8 — the wire field lied in one state.** `credentialStored` was narrowed to "stored AND
+  unconfirmed", so `protection: 'existing'` shipped `false` while a credential was plainly stored.
+  Rather than rename it, the field now means what it says and is `true` there too: the two flags are
+  ORTHOGONAL facts and "saved but not confirmed" is their combination. Behaviour is unchanged (the
+  browser only reads it when protection is unconfirmed), but a public field on a security surface
+  must not answer `false` to a question whose answer is yes. The exclusivity test that encoded the
+  old wart was replaced by one asserting orthogonality plus one asserting the combination.
+- **R-14 — the fail-safe path was silent.** An unmapped value read as "not confirmed" and nobody
+  learned the map had drifted. It now logs, and the log is pinned (removing it reddens a test) —
+  including that a state it DOES understand stays quiet, since a warning that always fires is noise.
+- **R-7/R-12 — `api-contract.md` omitted the only fields a client may branch on.** Added, with the
+  orthogonality and the fail-safe direction stated.
+- **R-3 — the producing half was asserted on one arm only.** Added end-to-end assertions for
+  `pending` and `existing`.
+- **R-9 module header ("two things" → three), R-11 ephemeral `this chunk` reference in product
+  code** — both fixed.
+- **Accepted:** R-4 (figure accurate), R-5 (#802 descoped by the issue's own sequencing), R-15/R-16
+  (informational).
 
 **Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
 one pass, and this is the half a machine can do — the screens still need a real no-caddy install

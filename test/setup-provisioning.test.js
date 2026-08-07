@@ -231,6 +231,12 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.action, 'provision');
       assert.equal(res.data.ingress.provisioning, true);
       assert.equal(res.data.ingress.protection, 'pending');
+      // #861 — the flags ship on every arm, not just the one this fix was
+      // written against. 'pending' means the answer is not in yet, which is
+      // emphatically not confirmed protection.
+      assert.equal(res.data.ingress.confirmedProtection, false,
+        'a cutover still running has not confirmed anything');
+      assert.equal(res.data.ingress.credentialStored, false);
       assert.equal(res.data.ingress.user, 'jason');
       // Delivered with the COMPLETION, not only from the poll. The cutover closes
       // the address this response was served from, and for a remote operator that
@@ -515,6 +521,11 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.action, 'adopt');
       assert.equal(res.data.ingress.protection, 'existing');
+      // #861 — the one arm that IS confirmed. Both flags true: a gate was
+      // observed, and it obviously has a credential behind it.
+      assert.equal(res.data.ingress.confirmedProtection, true,
+        'an adopted, observed gate is the only state that reads as confirmed');
+      assert.equal(res.data.ingress.credentialStored, true);
       assert.equal(res.data.ingress.user, 'jason');
       assert.equal(cutovers.length, 0, 'adopting must never regenerate the file');
 

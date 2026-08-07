@@ -2000,11 +2000,12 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
 
   // THE derivation of what `protection` MEANS, in one place, next to where the value
   // is produced (#861). Before this, the same judgement was re-made by comparing the
-  // enum against a literal list in three places — twice here and once in
+  // enum against a literal list in three places — once here and TWICE in
   // `public/setup.js` — so the browser was a second source of truth for a security
   // decision. There is no build step, so a shared constant module is not importable by
   // `public/`; deriving server-side and shipping the ANSWER is the available correct
-  // form, and it is the same one this chunk already chose for the provisioning table.
+  // form, and it is the same one `decideProvisioning` already uses for the
+  // provisioning table.
   //
   // Stated as an ALLOWLIST, and that inversion is the substance of the fix rather than
   // a stylistic preference. The old lists enumerated the states meaning "not protected",

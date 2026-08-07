@@ -819,9 +819,9 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
         ingress: { action: 'refuse', provisioning: false, protection: 'unchanged', credentialStored: true } },
       { name: 'adopted', expect: /did not change it/,
-        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason' } },
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } },
       { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
-        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason' } }
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } }
     ];
 
     /** Finish setup with the given ingress block and report what the body became. */
@@ -887,7 +887,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         // NOT /Setup finished/ — that string also appears on the failed-provisioning
         // screen, so it cannot prove this fixture landed on the adopted one.
         { name: 'adopted', expect: /did not change it/,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason', reason: REASON } },
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason', reason: REASON } },
         [REASON]
       );
       assert.equal(html.split(REASON).length - 1, 1,
@@ -1096,9 +1096,9 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         { name: 'no login', expect: /TangleClaw has no login/, restart: false,
           ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
         { name: 'adopted', expect: /did not change it/, restart: false,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason' } },
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } },
         { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason' } }
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } }
       ];
       for (const c of CASES) {
         const ctx = loadSetup({
@@ -1171,7 +1171,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         plan: ADOPT_PLAN,
         apiMutate: async () => ({
           ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, user: 'jason' }
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' }
         })
       });
       ctx.showWizard();
