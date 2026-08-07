@@ -2523,9 +2523,15 @@ route('GET', '/api/engines', async (req, res) => {
   // Resolve the login PATH before answering "nothing found". The boot probe is
   // fire-and-forget, so a request landing before it settles would otherwise be
   // told detection could not look — reporting a race as a finding, which is the
-  // unknown-vs-known conflation this release exists to remove. Costs one shell
-  // start, once, and only when the answer would otherwise be a shrug.
-  if (!list.some((e) => e && e.available) && !engines.detectionWasProbed()) {
+  // unknown-vs-known conflation this release exists to remove.
+  //
+  // Keyed on ATTEMPTED, not succeeded: a shell that cannot answer never sets
+  // succeeded, so keying on that would re-probe on every request for exactly
+  // the operators stuck on this step pressing buttons. Worst case is one
+  // request paying for up to two shell starts (`-lic`, then `-lc`, 6s each);
+  // afterwards the answer is cached until something explicitly asks for a new
+  // one. `?refresh=1` is that explicit ask, and it is a button press.
+  if (!list.some((e) => e && e.available) && !engines.detectionProbeAttempted()) {
     await engines.refreshDetectionPath();
     list = engines.listWithAvailability();
   }

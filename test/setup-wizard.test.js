@@ -250,6 +250,86 @@ describe('Setup Wizard', () => {
     });
   });
 
+  // The engine list is what the wizard's park screen renders, and the branch
+  // below is the one no other test enters: every suite that hits this route runs
+  // on a machine where an engine IS available, so "nothing found, and we have
+  // not looked properly yet" was new behavior with no coverage.
+  describe('GET /api/engines — the re-probe branch', () => {
+    const engines = require('../lib/engines');
+
+    /** An install with no engine profiles at all, so nothing can be detected. */
+    async function withNoEngines(fn) {
+      const dir = path.join(tmpDir, 'engines');
+      const stash = path.join(tmpDir, 'engines-stashed-probe');
+      fs.renameSync(dir, stash);
+      fs.mkdirSync(dir);
+      try {
+        await fn();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.renameSync(stash, dir);
+        engines.resetDetectionCache();
+      }
+    }
+
+    it('resolves the login PATH before reporting that it could not tell', async () => {
+      // Unprobed + nothing available is the boot race: answering straight away
+      // would report "we could not look" when the truth is "we have not looked
+      // yet", which is the unknown-vs-known conflation this release removes.
+      await withNoEngines(async () => {
+        engines.resetDetectionCache();
+        assert.equal(engines.detectionProbeAttempted(), false, 'starts unprobed');
+
+        const { status, data } = await request(server, 'GET', '/api/engines');
+        assert.equal(status, 200);
+        assert.equal(engines.detectionProbeAttempted(), true,
+          'the route must resolve the PATH rather than shrug');
+        assert.equal(typeof data.detectionCertain, 'boolean');
+      });
+    });
+
+    it('does not re-probe on every request when the shell cannot answer', async () => {
+      // The population this branch targets — no engine detected, shell that
+      // will not answer — is exactly the one sitting on the engine step
+      // pressing buttons. Keyed on "did a probe SUCCEED" it would pay up to two
+      // shell starts on every list load, forever.
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const brokenShell = path.join(shellDir, 'shell');
+      fs.writeFileSync(brokenShell, '#!/bin/bash\nexit 1\n');
+      fs.chmodSync(brokenShell, 0o755);
+      const savedShell = process.env.SHELL;
+      process.env.SHELL = brokenShell;
+
+      await withNoEngines(async () => {
+        engines.resetDetectionCache();
+        await request(server, 'GET', '/api/engines');
+        assert.equal(engines.detectionWasProbed(), false, 'the shell did not answer');
+        assert.equal(engines.detectionProbeAttempted(), true, 'but we did try');
+
+        const started = Date.now();
+        const { data } = await request(server, 'GET', '/api/engines');
+        const elapsed = Date.now() - started;
+        assert.ok(elapsed < 2000,
+          `a second list must not pay for another probe (took ${elapsed}ms)`);
+        assert.equal(data.detectionCertain, false,
+          'and it still reports honestly that it could not tell');
+      });
+
+      process.env.SHELL = savedShell;
+      fs.rmSync(shellDir, { recursive: true, force: true });
+    });
+
+    it('re-probes when the operator explicitly asks — that is what Check again is', async () => {
+      await withNoEngines(async () => {
+        engines.resetDetectionCache();
+        await request(server, 'GET', '/api/engines');
+        const { status } = await request(server, 'GET', '/api/engines?refresh=1');
+        assert.equal(status, 200);
+        assert.equal(engines.detectionProbeAttempted(), true);
+      });
+    });
+  });
+
   describe('POST /api/setup/create-dir', () => {
     let savedHome;
     let fakeHome;
