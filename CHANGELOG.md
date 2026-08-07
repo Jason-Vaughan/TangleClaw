@@ -1540,6 +1540,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Three notes from the independent PR review, cleared.** A dead `if (found.length > 0)` in the
+  wizard's engine re-check guarded a block the early return above it already made unreachable, so
+  the condition was always true; and `_probeShellPath` (`lib/engines.js`) and `createProjectsDir`
+  (`lib/projects.js`) both declared `@returns` as the *resolved* value while returning a promise —
+  JSDoc a caller could follow into a dropped `await`. No behavior change.
+
+- **`FEATURES.md`: two auto-stub graduations reconciled.** Two branches described the same newly
+  indexed files independently, and each got something wrong — one claimed `test/tmux.test.js`
+  covers status-bar re-stamping (it covers construction, not re-stamping) and that
+  `test/session-ownership.test.js` covers the owner column's migration (it does not); the other
+  omitted `redactHashes`, which is real and tested. Every disputed claim was rechecked against the
+  code and the surviving entry is the union of what both got right.
+
 - **The upstream half of the install-reference contract test is parsed, not scraped (#807, #816).**
   `29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo, which catches only
   TangleClaw's side moving; the companion check that reads prawduct's own `migrate_plugin.py` scraped
