@@ -43,15 +43,17 @@ the branch that DISMISSES the warning — a newly-added state would silently sto
 nothing is enforcing their login. Nothing fails; a screen stops appearing. Restating it as an
 allowlist of the ONE state where a gate was positively observed makes an unknown value fail safe.
 
-**What:** `deriveProtectionFlags(protection)` in `lib/ingress-provision.js` — pure, exported,
-returning `{confirmedProtection, credentialStored}`. `server.js` `Object.assign`s it onto `ingress`
+**What:** `deriveProtectionFlags(protection)` in `lib/ingress-provision.js` — exported, returning
+`{confirmedProtection, credentialStored}` (not pure: it logs a state it cannot classify, see
+below). `server.js` `Object.assign`s it onto `ingress`
 after the arm chain, and the warning push now reads `!confirmedProtection && !provisioning`
 (`provisioning` is set in the same block as `pending` and is its only producer — checked, not
 assumed). `public/setup.js` branches on the two booleans and **no longer reads the enum at all**:
 the only remaining `protection ===` in non-test code is the line inside the named function.
 
-**Deliberately behaviour-preserving on the screens.** `credentialStored` keeps exactly the pair the
-browser used to test. These are the least-verified screens in the release (#802), so the commit
+**Deliberately behaviour-preserving on the screens.** `credentialStored` ended up a WIDER set than
+the pair the browser used to test (see the review block below), but the extra value is unreachable
+by the only consumer, so the screens are identical. These are the least-verified screens in the release (#802), so the commit
 that moves WHO decides must not also move WHAT is decided.
 
 **Extracted to a module rather than left inline, for a reason the tests surfaced.** ~25 browser
@@ -70,8 +72,9 @@ browser, which behind the basic_auth gate is what produced the repeating credent
 
 **Tests (+9):** `test/ingress-provision.test.js` +5 (`confirmed` only for the observed-gate state;
 an UNKNOWN state fails safe across six values incl. `null`/`undefined`/`''`; stored-vs-confirmed
-separation; unknown never reads as stored; the two flags are mutually exclusive across all six
-states); `test/setup-wizard-login-gate.test.js` +3 (an unheard-of state does not dismiss; the
+separation; unknown never reads as stored; the flags are orthogonal across all six
+states, and that the flags are orthogonal rather than exclusive);
+`test/setup-wizard-login-gate.test.js` +3 (an unheard-of state does not dismiss; the
 browser obeys a server answer that CONTRADICTS the enum, which is what proves the second source of
 truth is gone; `setup.js` is network-first); `test/setup-provisioning.test.js` +2 assertions (the
 real API response actually carries both flags — the producing half of the contract).

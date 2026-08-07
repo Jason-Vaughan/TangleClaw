@@ -2015,10 +2015,13 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // Baseline exists to eliminate. Naming the one state that means "confirmed" instead
   // makes an unknown value fail safe: not confirmed, so the operator is told.
   //
-  // `credentialStored` is kept behaviour-identical to the pair `public/setup.js` used
-  // to test, deliberately: this change is a de-duplication, and these are the
-  // least-verified screens in the release (#802), so the set of states producing each
-  // screen must not move in the same commit that moves WHO decides it.
+  // Which states produce which SCREEN is unchanged, deliberately: this change is a
+  // de-duplication, and these are the least-verified screens in the release (#802),
+  // so what is decided must not move in the same commit that moves WHO decides it.
+  // `credentialStored` is a wider set than the pair `public/setup.js` used to test —
+  // it includes the confirmed state, because the field is named for a fact and must
+  // report it — but that value is unreachable by the only consumer, which reads it
+  // solely inside the not-confirmed branch. Wider field, identical screens.
   Object.assign(ingress, ingressProvision.deriveProtectionFlags(ingress.protection));
 
   // One place, after every branch, so the guarantee holds for outcomes that reach no
@@ -2044,6 +2047,19 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
       && !warnings.includes(ingress.reason)) {
     warnings.push(ingress.reason);
   }
+
+  // Whether setup ended with a login in force is the outcome this endpoint exists to
+  // get right, and until now only the unhappy arms left a trace: the confirmed arm
+  // dismissed into the dashboard silently, so a support question about an install
+  // that "says it is protected" had nothing on the server to read back. Logged at
+  // both outcomes so the record is symmetric — an absent line means the request never
+  // reached here, rather than meaning everything was fine.
+  log.info('Setup reported its protection verdict', {
+    protection: ingress.protection,
+    confirmedProtection: ingress.confirmedProtection,
+    credentialStored: ingress.credentialStored,
+    provisioning: ingress.provisioning === true
+  });
 
   // Decide whether to schedule a restart so the server re-binds with the new protocol
   const prevWillServeHttps = !!(prevHttps.enabled && prevHttps.certPath && prevHttps.keyPath);
