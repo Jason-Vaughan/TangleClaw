@@ -226,8 +226,10 @@ All notable changes to TangleClaw are documented in this file.
   Those three assertions pass against the **old** wording too — they pin the facts the message must
   carry, not its register — so the edit itself was unpinned and a revert to the acronym would have
   left every test green. A `doesNotMatch(hint, /TCC/)` guard now holds the line, verified by
-  reverting the string and watching it fail. The acronym stays welcome in comments and JSDoc, where
-  precision costs nobody anything.
+  reverting the string and watching it fail. The guard is scoped to what the browser shows an
+  operator: `deploy/install.sh` still prints "TCC-protected folder" in its terminal output on
+  purpose, because someone running a shell installer by hand has a different tolerance for the term
+  than someone stranded in a setup wizard. Comments and JSDoc stay free to be precise.
 
 - **Caddy access logging is now documented as deliberately NOT generator-owned, and a cutover onto a
   hand-added `log` block will end it (#846, #821).** The generator emits no `log { … }` under any
