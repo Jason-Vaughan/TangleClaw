@@ -159,8 +159,17 @@ echo ""
 # fail in different ways (see below); duplicating the case arms is how the second
 # caller drifts from the first.
 tcc_protected_path() {
-  case "${1%/}/" in
-    "$HOME/Documents/"*|"$HOME/Desktop/"*|"$HOME/Downloads/"*) return 0 ;;
+  # Case-insensitively, because macOS filesystems are case-insensitive by
+  # default: ~/documents/Projects is the SAME directory TCC protects, and a
+  # case-sensitive match calls it safe — the quiet wrong answer this function
+  # exists to prevent, wearing a different hat. `tr` rather than ${var,,}
+  # because macOS ships bash 3.2, where that expansion is a syntax error.
+  # Anchoring on $HOME survives the fold, so another user's Documents still
+  # does not match.
+  _tcc_path="$(printf '%s/' "${1%/}" | tr '[:upper:]' '[:lower:]')"
+  _tcc_home="$(printf '%s' "$HOME" | tr '[:upper:]' '[:lower:]')"
+  case "$_tcc_path" in
+    "$_tcc_home/documents/"*|"$_tcc_home/desktop/"*|"$_tcc_home/downloads/"*) return 0 ;;
   esac
   return 1
 }

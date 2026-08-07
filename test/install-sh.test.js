@@ -120,12 +120,16 @@ describe('deploy/install.sh', () => {
     });
 
     it('should detect the repo living under a TCC-protected folder', () => {
-      assert.ok(
-        script.includes('$HOME/Documents/') &&
-        script.includes('$HOME/Desktop/') &&
-        script.includes('$HOME/Downloads/'),
-        'must check all three TCC-protected roots (Documents, Desktop, Downloads)'
-      );
+      // Case-insensitive on the SOURCE because the predicate itself now folds
+      // case (macOS filesystems are case-insensitive, so ~/documents is the same
+      // protected directory) and its arms are spelled in lower case. The claim
+      // being pinned is "all three roots are checked, anchored on $HOME" — not
+      // how they are spelled. What each root actually classifies is executed,
+      // not grepped, in the projects-directory describe below.
+      for (const root of ['documents', 'desktop', 'downloads']) {
+        assert.match(script, new RegExp(`\\$\\{?_?tcc_home\\}?/${root}/|\\$HOME/${root}/`, 'i'),
+          `must check the ${root} root, anchored on the installing user's home`);
+      }
     });
 
     it('should point the operator at Full Disk Access for the resolved node binary', () => {
@@ -222,6 +226,24 @@ describe('deploy/install.sh', () => {
       ]) {
         assert.ok(!isProtected(p), `${p} must NOT be classified TCC-protected`);
       }
+    });
+
+    it('classifies the same folder however it was capitalised', () => {
+      // macOS filesystems are case-insensitive by default, so ~/documents is
+      // the SAME directory TCC protects. A case-sensitive match reports it safe
+      // — the identical quiet-wrong-answer failure the tilde case below exists
+      // for. The wizard learned this first; this is the sibling call site.
+      for (const p of [
+        '/Users/tester/documents/Projects',
+        '/Users/tester/DOCUMENTS/Projects',
+        '/Users/tester/desktop/Projects',
+        '/Users/tester/DownLoads/Projects'
+      ]) {
+        assert.ok(isProtected(p), `${p} must be classified TCC-protected`);
+      }
+      // Folding case must not fold path boundaries away with it.
+      assert.ok(!isProtected('/Users/tester/documentselsewhere/Projects'),
+        'a prefix-similar folder is still a different folder in any casing');
     });
 
     it('does not confuse another user\'s Documents with this user\'s', () => {
