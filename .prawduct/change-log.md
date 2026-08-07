@@ -70,10 +70,11 @@ future wizard change was invisible to returning operators until `CACHE_NAME` mov
 network-first. **Not** a `CACHE_NAME` bump: that tears down and reinstalls the worker for every
 browser, which behind the basic_auth gate is what produced the repeating credential prompt in #710.
 
-**Tests (+9):** `test/ingress-provision.test.js` +5 (`confirmed` only for the observed-gate state;
+**Tests (+13):** `test/ingress-provision.test.js` +5 (`confirmed` only for the observed-gate state;
 an UNKNOWN state fails safe across six values incl. `null`/`undefined`/`''`; stored-vs-confirmed
 separation; unknown never reads as stored; the flags are orthogonal across all six
-states, and that the flags are orthogonal rather than exclusive);
+states — three states asserted, not six — and one asserting that
+"saved but not confirmed" is the COMBINATION rather than either flag alone);
 `test/setup-wizard-login-gate.test.js` +3 (an unheard-of state does not dismiss; the
 browser obeys a server answer that CONTRADICTS the enum, which is what proves the second source of
 truth is gone; `setup.js` is network-first); `test/setup-provisioning.test.js` +2 assertions (the
@@ -112,6 +113,16 @@ caught as unpinned before review rather than during it. Full suite **5614 pass /
   code** — both fixed.
 - **Accepted:** R-4 (figure accurate), R-5 (#802 descoped by the issue's own sequencing), R-15/R-16
   (informational).
+
+**Observability, added in the review pass and pinned like any other behaviour.** Two log lines:
+`deriveProtectionFlags` warns on a state it cannot classify (otherwise the fail-safe path is
+indistinguishable from a correctly-classified one), and `POST /api/setup/complete` records its
+verdict on **every** arm. The second matters because every other log on that endpoint fires on a
+cutover or a failure, so a confirmed install left no server-side trace at all and "it says it is
+protected" was unanswerable. Logging both arms is also what makes an ABSENT line mean "the request
+never got here" rather than "everything was fine". Both are pinned by tests that go red when the
+line is removed — the verdict log was itself caught unpinned by the review, one commit after the
+same rule had been applied to the other one.
 
 **Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
 one pass, and this is the half a machine can do — the screens still need a real no-caddy install
