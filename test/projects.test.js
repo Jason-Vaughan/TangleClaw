@@ -876,6 +876,19 @@ describe('projects', () => {
       assert.match(hint, /did not respond/, 'must say what was observed, not just what to do');
     });
 
+    it('says it without the acronym', () => {
+      // The three assertions above all pass against the older wording too, which
+      // said "a TCC-protected path": they pin the FACTS the message must carry,
+      // and nothing pinned the register. This is the one message a stranded
+      // non-expert reads, and it is the worst moment to meet a new term — the
+      // other two surfaces naming this condition already say "protected folder"
+      // and "a directory node cannot read". Without this line, reverting to the
+      // acronym leaves every test green.
+      const timedOut = Object.assign(new Error('timed out'), { tcTimedOut: true });
+      assert.doesNotMatch(projects._scanFailureHint(timedOut), /TCC/,
+        'operator-facing text must not carry the acronym; the comments may');
+    });
+
     it('actually PUTS the hint in the log when a scan times out', () => {
       // _scanFailureHint is pinned above, but pinning a helper says nothing
       // about whether anyone calls it: delete `hint: _scanFailureHint(err)` from

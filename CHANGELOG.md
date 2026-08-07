@@ -223,6 +223,12 @@ All notable changes to TangleClaw are documented in this file.
   Wording only: no route, gate, or detection behaviour changed, and the assertions covering these
   messages match on `Full Disk Access`, `~/Documents` and `did not respond`, all of which survive.
 
+  Those three assertions pass against the **old** wording too — they pin the facts the message must
+  carry, not its register — so the edit itself was unpinned and a revert to the acronym would have
+  left every test green. A `doesNotMatch(hint, /TCC/)` guard now holds the line, verified by
+  reverting the string and watching it fail. The acronym stays welcome in comments and JSDoc, where
+  precision costs nobody anything.
+
 - **Caddy access logging is now documented as deliberately NOT generator-owned, and a cutover onto a
   hand-added `log` block will end it (#846, #821).** The generator emits no `log { … }` under any
   option — so an ingress cutover onto a Caddyfile carrying one by hand silently ends Caddy access
