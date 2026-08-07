@@ -3745,3 +3745,45 @@ which is what they had before, and the residual is recorded.
 
 Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
 re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.
+
+## 2026-08-07: A hung directory can no longer take the server's filesystem with it (#883)
+
+<!-- prawduct: type=fix | chunks=1,2,3 | scope=883-threadpool-leak | status=shipped -->
+
+**Why:** the #859 fix bounded the RESPONSE, not the OPERATION. `fs.promises` performs a read on
+libuv's threadpool — four threads shared by the whole process — and a deadline abandons the promise
+without cancelling the syscall, so every hung read cost a thread permanently. On a TCC-protected
+macOS path the read never returns at all, so four of them left the server unable to touch the
+filesystem **on any path, permanently**, while `/api/health` kept answering `200`. Worse than the
+outage was the diagnosis: with the pool gone every operation timed out, and `tcTimedOut` was the
+only signal, so the product told operators that healthy directories were protected and sent them to
+grant Full Disk Access for a problem that had nothing to do with permissions.
+
+Only killing the process that owns a thread blocked in the kernel reclaims it. `worker_threads`
+cannot substitute — workers share the process-wide pool and `terminate()` does not interrupt a
+blocked syscall. So the walks moved into a forked child the deadline kills (`lib/dir-scanner.js`,
+`lib/dir-scanner-child.js`), the three operator-path entry points in `lib/projects.js` route through
+it, and a per-path failure backoff bounds what a permanently-broken directory costs.
+
+**Chunk 1** — the supervisor. **Chunk 2** — `listAllProjects`, `scanDirectoryForProjects` and
+`createProjectsDir` behind it; `git.getInfo`'s `execSync` moved with the walk, taking a second
+event-loop hazard off the server. **Chunk 3** — the backoff: 30s doubling to a five-minute ceiling,
+opt-in, taken only by the polled route.
+
+**The rejection vocabulary is the load-bearing design.** `tcTimedOut` means "this path did not
+answer" and nothing else, because it is the sole input to the Full Disk Access advice. Collateral
+work gets `tcAborted`, a walk that ran out of budget gets `tcTruncated`, and a filesystem that
+replied gets its errno. Every one of those used to arrive wearing `tcTimedOut`.
+
+**Mutation-verified**, and one mutation mattered more than the rest: deleting the collateral guard
+left the suite green, because the test covered only one of that guard's two failure directions —
+it asserted collateral must not MARK a path bad, while the deletion's real effect was ERASING an
+existing backoff and silently dropping the rate bound. Second test written, mutation re-run, red.
+
+**Known and NOT fixed, recorded rather than implied:** `enrichProject` still calls
+`fs.existsSync(project.path)` synchronously for every registered project on `GET /api/projects`, so
+a *registered* project on a protected path still blocks the event loop — the #859 wedge, on the
+route this fixed the other half of. The family is ~31 synchronous reads in `lib/projects.js` plus
+`lib/uploads.js`; it needs its own issue — filed as #884.
+
+**Classification:** fix

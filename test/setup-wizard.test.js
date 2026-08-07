@@ -516,8 +516,10 @@ describe('Setup Wizard', () => {
         timeoutMs: 1500,
         exitGraceMs: 0
       });
-      const real = dirScanner.request;
-      dirScanner.request = () => hungScanner.request('hang', { fifo });
+      // The wizard's scan runs on the interactive scanner, kept separate from the
+      // dashboard poll so a hung projects directory cannot kill this one's child.
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = () => hungScanner.request('hang', { fifo });
 
       try {
         const scan = request(server, 'POST', '/api/setup/scan', { directory: blocked });
@@ -537,7 +539,7 @@ describe('Setup Wizard', () => {
         assert.match(data.error, /Full Disk Access/,
           'the operator must be told the remedy, not just that it failed');
       } finally {
-        dirScanner.request = real;
+        dirScanner.interactiveRequest = real;
         await hungScanner.shutdown();
       }
     });

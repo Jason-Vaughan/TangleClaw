@@ -515,9 +515,10 @@ All notable changes to TangleClaw are documented in this file.
   `engines.governanceState` reads more files under it. A *registered* project whose directory is
   TCC-protected therefore still blocks the event loop, exactly as #859 described. The comment on
   `listAllProjects` used to say the registered list "cannot be affected by a stuck filesystem";
-  that was overstated and now says otherwise. It is **not yet filed as an issue** — said plainly
-  rather than as "tracked separately", which would cite nothing. The real unit of work is the whole
-  family of ~31 synchronous reads on operator-chosen paths in that file, not this call site.
+  that was overstated and now says otherwise. Tracked as **#884**, scoped to the whole family — 32
+  synchronous reads on operator-chosen paths in `lib/projects.js` plus 7 in `lib/uploads.js` —
+  rather than to this call site, because the last time this family was fixed one site at a time the
+  sweep missed the one that wedged a clean-room install.
 
 - **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
   matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
@@ -1617,7 +1618,10 @@ All notable changes to TangleClaw are documented in this file.
   misdiagnosis this work exists to remove.
 
   **The regression test reproduces the defect rather than describing it.** A companion process
-  issues `UV_THREADPOOL_SIZE + 1` blocking reads through the shipped `projects._withTimeout`, then
+  issues `UV_THREADPOOL_SIZE + 1` blocking reads through the deadline-race shape that shipped
+  before this change (`projects._withTimeout`, deleted by chunk 2 below along with its last
+  caller, so the demo carries a verbatim copy rather than keeping dead code alive to be a
+  fixture), then
   times an ordinary `readdir` on an unrelated path: every call rejects on schedule and the readdir
   never completes again — that assertion is the bug, executable. The same workload through the
   scanner leaves the parent's `readdir` at ~35ms. Isolated in its own process because a test that

@@ -114,6 +114,30 @@ describe('lib/dir-scanner — the healthy round trip', () => {
     assert.equal(scanner.childPid(), null);
   });
 
+  test('carries tcTruncated across the REAL hop, not just in principle', async () => {
+    // The one protocol field with no end-to-end coverage: both sides agreed by
+    // inspection, and the parent-side test synthesises the flag. Delete the
+    // rehydrate line for it and every other test stays green while the wizard
+    // silently loses its distinct "big folder, slow disk" sentence and starts
+    // telling operators to grant Full Disk Access instead.
+    const dir = scratch('truncate-hop');
+    for (let i = 0; i < 40; i++) fs.mkdirSync(path.join(dir, `proj-${i}`));
+
+    const scanner = dirScanner.createScanner();
+    try {
+      // A budget of 0 makes the walk give up at its first entry check, which is
+      // the truncation path, without depending on how fast the machine is.
+      const err = await rejection(
+        scanner.request('scanEntries', { dir, budgetMs: 0 }, { timeoutMs: 10000 })
+      );
+      assert.equal(err.tcTruncated, true, 'the flag must survive the process boundary');
+      assert.ok(!err.tcTimedOut, 'a walk that was being answered is not an unresponsive path');
+      assert.match(err.message, /checked \d+ of 40 subdirectories/);
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
   test('carries a real walk result back across the process boundary', async () => {
     const dir = scratch('walk');
     fs.mkdirSync(path.join(dir, 'a-project'));
@@ -790,15 +814,14 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
 });
 
 describe('lib/dir-scanner-child — serialisation helpers', () => {
-  test('_plainDirent flattens the methods IPC would drop', () => {
-    const dir = scratch('dirent');
-    fs.mkdirSync(path.join(dir, 'sub'));
-    const [entry] = fs.readdirSync(dir, { withFileTypes: true });
-
-    assert.deepEqual(_plainDirent(entry), {
-      name: 'sub', isDirectory: true, isFile: false, isSymbolicLink: false
-    });
-  });
+  // `_plainDirent` used to be tested here. It went with the `readdir` op in
+  // chunk 2 — no handler returns a `Dirent` any more, the walks consume them
+  // inside the child — and a unit test kept giving a dead function the look of a
+  // covered contract while `boundary-patterns.md` still listed it as a
+  // load-bearing property of the IPC surface. The property it described is real
+  // and still holds; it is now stated as "only plain data crosses" and enforced
+  // by the round-trip tests above, which assert real walk results arriving
+  // intact rather than a helper nothing calls.
 
   test('_plainError keeps the code, which callers branch on', () => {
     const err = Object.assign(new Error('nope'), { code: 'ENOENT' });

@@ -1182,12 +1182,15 @@ describe('projects', () => {
      * @returns {Promise<any>}
      */
     async function withScanner(fakeRequest, fn) {
-      const real = dirScanner.request;
-      dirScanner.request = fakeRequest;
+      // `interactiveRequest`, not `request`: this route runs on the scanner
+      // reserved for work an operator pressed a button for, so that a hung
+      // background poll cannot kill the child out from under it.
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = fakeRequest;
       try {
         return await fn();
       } finally {
-        dirScanner.request = real;
+        dirScanner.interactiveRequest = real;
       }
     }
 
@@ -1247,6 +1250,42 @@ describe('projects', () => {
       assert.ok(seen, 'the fixture must actually reach the scanner');
       assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
         'the child must give up before the supervisor kills it, so a slow walk can report');
+    });
+
+    it('uses a scanner the background poll cannot kill underneath it', async () => {
+      // One shared child made every caller collateral for every other: a hung
+      // ten-second poll of the projects directory times out, the supervisor kills
+      // the child to reclaim its thread, and an operator's scan of a completely
+      // HEALTHY folder dies alongside it. Patching only the background entry
+      // point proves the separation — if this route still used it, the stub would
+      // be reached and the scan would fail.
+      const realBackground = dirScanner.request;
+      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      try {
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        assert.equal(result.ok, true, 'the wizard scan must be independent of the polled route');
+      } finally {
+        dirScanner.request = realBackground;
+      }
+    });
+
+    it('reports an interrupted scan as interrupted, never as a bad directory', async () => {
+      // Collateral says NOTHING about the folder the operator chose. Reporting it
+      // through the Full Disk Access hint would tell someone to change a system
+      // permission because an unrelated directory hung — the misdiagnosis this
+      // whole issue exists to remove, arriving by another door.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(
+          new Error('directory scan abandoned: the scanner process was killed'),
+          { tcAborted: true }
+        )),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SCAN_INTERRUPTED', 'its own code, not SCAN_FAILED');
+      assert.doesNotMatch(result.error, /Full Disk Access/,
+        'a folder that was never read must not be blamed');
+      assert.match(result.error, /try again/, 'and the operator must be told what to do');
     });
 
     it('does NOT opt an operator-pressed button into the failure backoff', async () => {
