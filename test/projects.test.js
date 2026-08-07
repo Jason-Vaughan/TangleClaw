@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -876,6 +876,19 @@ describe('projects', () => {
       assert.match(hint, /did not respond/, 'must say what was observed, not just what to do');
     });
 
+    it('says it without the acronym', () => {
+      // The three assertions above all pass against the older wording too, which
+      // said "a TCC-protected path": they pin the FACTS the message must carry,
+      // and nothing pinned the register. This is the one message a stranded
+      // non-expert reads, and it is the worst moment to meet a new term — the
+      // other two surfaces naming this condition already say "protected folder"
+      // and "a directory node cannot read". Without this line, reverting to the
+      // acronym leaves every test green.
+      const timedOut = Object.assign(new Error('timed out'), { tcTimedOut: true });
+      assert.doesNotMatch(projects._scanFailureHint(timedOut), /TCC/,
+        'operator-facing text must not carry the acronym; the comments may');
+    });
+
     it('actually PUTS the hint in the log when a scan times out', () => {
       // _scanFailureHint is pinned above, but pinning a helper says nothing
       // about whether anyone calls it: delete `hint: _scanFailureHint(err)` from
@@ -919,6 +932,333 @@ describe('projects', () => {
         assert.ok(Array.isArray(await projects.listAllProjects()));
       } finally {
         fsp2.readdir = realReaddir;
+      }
+    });
+
+    it('keeps the directories it found when the walk runs out of time', async () => {
+      // Bringing the per-entry loop under the deadline introduced an
+      // all-or-nothing failure the old shape did not have: throw mid-loop and
+      // the caller degrades to the registered projects, discarding everything
+      // already discovered. This route backs the dashboard, and per-entry cost
+      // is dominated by a synchronous git.getInfo (up to seven execSync calls
+      // per directory, cached two minutes) — so a cold-cache load over a few
+      // dozen unregistered folders would show NONE of them, with a log line as
+      // the only trace. A discovery walk that ran out of budget still
+      // discovered what it got to. Mutation: throw instead of breaking, and
+      // unregistered.length goes to zero.
+      const realReaddir = fsp2.readdir;
+      const realAccess = fsp2.access;
+      const dir = projects.resolveProjectsDir(store.config.load().projectsDir);
+      const ENTRY_COUNT = 200;
+      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+        name: `slow-proj-${i}`, isDirectory: () => true
+      }));
+
+      fsp2.readdir = (p, ...rest) => (String(p) === dir
+        ? Promise.resolve(dirents)
+        : realReaddir(p, ...rest));
+      // 200 × 60ms is twelve seconds of work against a five-second budget, so
+      // the walk must stop partway however fast the machine running this is.
+      fsp2.access = (p, ...rest) => (String(p).includes('slow-proj-')
+        ? new Promise((resolve) => setTimeout(resolve, 60))
+        : realAccess(p, ...rest));
+
+      try {
+        const all = await projects.listAllProjects();
+        const found = all.filter(p => p.registered === false);
+        assert.ok(found.length > 0,
+          'the directories walked before the deadline must survive, not be discarded');
+        assert.ok(found.length < ENTRY_COUNT,
+          `must have stopped at the deadline (${found.length} of ${ENTRY_COUNT})`);
+      } finally {
+        fsp2.readdir = realReaddir;
+        fsp2.access = realAccess;
+      }
+    });
+
+    it('reports an unregistered directory\'s TangleClaw config without a synchronous probe', async () => {
+      // The per-entry marker check here was still fs.existsSync — a bounded
+      // readdir followed by unbounded synchronous probes of what it returned is
+      // not a bounded scan, and it reads the same protected tree. Pinning the
+      // ANSWER, since the answer is what the sweep to fs.promises must not
+      // change: nothing else asserted this field for this function.
+      fs.mkdirSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
+      fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
+
+      const all = await projects.listAllProjects();
+      const withConfig = all.find(p => p.name === 'has-tc-config');
+      const without = all.find(p => p.name === 'no-tc-config');
+      assert.ok(withConfig && without, 'both unregistered directories must be listed');
+      assert.equal(withConfig.hasTangleclawConfig, true);
+      assert.equal(without.hasTangleclawConfig, false);
+    });
+  });
+
+  // The same wedge, the OTHER call site. The projects list was fixed; the
+  // first-run wizard's directory scan kept reading the operator's directory
+  // synchronously, so a fresh macOS install on the pre-filled default
+  // (~/Documents/Projects) still lost the whole server at wizard step 2 —
+  // before the operator had any working install to go back to. Reproduced on a
+  // clean macOS guest: an ordinary directory scanned 200 and left the server
+  // healthy; ~/Documents/Projects never answered and the process needed a
+  // launchctl kickstart.
+  // `~/Documents/Projects` is the shipped default and the value the wizard
+  // pre-fills — and a stock macOS install does not have it. macOS creates
+  // Documents; nothing creates Projects, and nothing in TangleClaw did either.
+  // So the first action of a brand-new install answered "Directory does not
+  // exist" and offered nothing to do about it.
+  describe('createProjectsDir — the offer that ends the dead end', () => {
+    let home;
+    let savedHome;
+
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-home-'));
+      process.env.HOME = home;
+    });
+
+    afterEach(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    it('creates the folder the operator was pointed at', async () => {
+      const target = path.join(home, 'Projects');
+      const result = await projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      assert.ok(fs.statSync(target).isDirectory());
+    });
+
+    it('expands ~ the same way the scan does', async () => {
+      // The wizard sends back exactly what it displayed, and what it displays is
+      // `~/Documents/Projects`. Handled anywhere but here and the button would
+      // create a folder literally named "~".
+      fs.mkdirSync(path.join(home, 'Documents'));
+      const result = await projects.createProjectsDir('~/Documents/Projects');
+      assert.equal(result.ok, true);
+      assert.ok(fs.statSync(path.join(home, 'Documents', 'Projects')).isDirectory());
+      assert.equal(fs.existsSync(path.join(process.cwd(), '~')), false,
+        'a literal ~ directory must never appear');
+    });
+
+    it('is happy when it is already there', async () => {
+      // Two clicks, or a folder made in Finder while this screen was open.
+      const target = path.join(home, 'Projects');
+      fs.mkdirSync(target);
+      const result = await projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, false, 'it reports that it made nothing');
+    });
+
+    it('refuses to create anything outside the home directory', async () => {
+      // This route runs during first-run setup, BEFORE any credential exists,
+      // so it cannot be protected by one — the constraint is the boundary. It
+      // must never become a general-purpose mkdir.
+      const result = await projects.createProjectsDir('/tmp/tc-should-never-exist');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.equal(fs.existsSync('/tmp/tc-should-never-exist'), false);
+    });
+
+    it('refuses a traversal that climbs back out of home', async () => {
+      // `path.resolve` collapses `..` before the check, so this is normalised
+      // away rather than pattern-matched — which is why a path that LOOKS like
+      // it is under home cannot smuggle its way out.
+      const result = await projects.createProjectsDir(path.join(home, '..', '..', 'tc-escape'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /home directory/);
+    });
+
+    it('refuses to create the home directory itself', async () => {
+      const result = await projects.createProjectsDir(home);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+    });
+
+    it('creates one level, not a tree nobody asked for', async () => {
+      // "You pointed at ~/Documents/Projects and it wasn't there" is one level.
+      // Five is building something at a path nobody checked.
+      const result = await projects.createProjectsDir(path.join(home, 'a', 'b', 'c'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /folder above it/);
+      assert.equal(fs.existsSync(path.join(home, 'a')), false);
+    });
+  });
+
+  describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {
+    const fsp3 = require('node:fs').promises;
+
+    it('answers at the deadline when the directory never responds', async () => {
+      // A never-settling readdir is the real shape: TCC does not deny the read,
+      // it declines to complete it. A rejecting stub would exercise an error
+      // path that this failure never reaches.
+      const realReaddir = fsp3.readdir;
+      fsp3.readdir = () => new Promise(() => {});
+      try {
+        const started = Date.now();
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        const elapsed = Date.now() - started;
+        assert.equal(result.ok, false, 'must report the failure, not pretend the directory was empty');
+        assert.ok(elapsed >= 4500 && elapsed < 9000,
+          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
+      } finally {
+        fsp3.readdir = realReaddir;
+      }
+    });
+
+    it('names Full Disk Access in the error the operator will read', async () => {
+      // The wizard renders this string verbatim. Without the remedy in it, the
+      // operator sees a directory they can open in Finder being refused for no
+      // stated reason — the state this whole change exists to prevent.
+      const realReaddir = fsp3.readdir;
+      fsp3.readdir = () => new Promise(() => {});
+      try {
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        assert.equal(result.code, 'SCAN_FAILED');
+        assert.match(result.error, /Full Disk Access/);
+        assert.match(result.error, /~\/Documents/);
+      } finally {
+        fsp3.readdir = realReaddir;
+      }
+    });
+
+    it('reports a missing directory under its OWN code, not a generic bad request', async () => {
+      // The browser offers to CREATE this one, and it used to decide which
+      // failure it was by regex-matching the message — so rewording a sentence
+      // silently removed the button. The condition travels as a value now.
+      const result = await projects.scanDirectoryForProjects(path.join(tmpDir, 'no-such-dir'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'DIR_MISSING');
+      assert.match(result.error, /does not exist/);
+    });
+
+    it('reports a file path as a bad request', async () => {
+      const filePath = path.join(tmpDir, 'not-a-dir.txt');
+      fs.writeFileSync(filePath, 'x');
+      const result = await projects.scanDirectoryForProjects(filePath);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /not a directory/);
+    });
+
+    it('stops probing markers once one has answered', async () => {
+      // Twelve concurrent probes to settle a question the first hit answers is
+      // twelve threadpool slots against a filesystem that may not return any of
+      // them. The short-circuit is the difference between costing one stuck
+      // slot per directory and costing twelve.
+      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+      fs.mkdirSync(path.join(scanRoot, 'js-project'));
+      fs.writeFileSync(path.join(scanRoot, 'js-project', 'package.json'), '{}');
+
+      const realAccess = fsp3.access;
+      const probed = [];
+      fsp3.access = (p, ...rest) => {
+        if (String(p).startsWith(scanRoot)) probed.push(path.basename(String(p)));
+        return realAccess(p, ...rest);
+      };
+      try {
+        const result = await projects.scanDirectoryForProjects(scanRoot);
+        assert.equal(result.projects[0].detected, true);
+        // The TangleClaw config probe, then package.json — first in the marker
+        // list, and the last thing that should have been looked at.
+        assert.deepEqual(probed, ['project.json', 'package.json'],
+          'must stop at the first marker that answers');
+      } finally {
+        fsp3.access = realAccess;
+        fs.rmSync(scanRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('abandons the walk at the deadline instead of running it to the end', async () => {
+      // The deadline answers the REQUEST; it cannot cancel the walk it raced.
+      // Left running, the walk keeps issuing filesystem calls into a path
+      // already known not to answer, and each one holds a libuv threadpool slot
+      // (four by default) until the kernel returns — which for the failure this
+      // guards is never. A few retries and every async filesystem call in the
+      // process is queued behind them, which is the wedge again by another
+      // route. Mutation: delete the per-entry deadline check and the walk runs
+      // every entry, well past the point anyone is waiting.
+      const realReaddir = fsp3.readdir;
+      const realAccess = fsp3.access;
+      const realStat = fsp3.stat;
+      let accessCalls = 0;
+      let entriesWalked = 0;
+      const fakeDir = '/tc-fake-scan-root';
+      const ENTRY_COUNT = 200;
+      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+        name: `proj-${i}`, isDirectory: () => true
+      }));
+
+      fsp3.stat = (p, ...rest) => (p === fakeDir
+        ? Promise.resolve({ isDirectory: () => true })
+        : realStat(p, ...rest));
+      fsp3.readdir = (p, ...rest) => (p === fakeDir
+        ? Promise.resolve(dirents)
+        : realReaddir(p, ...rest));
+      fsp3.access = (p, ...rest) => {
+        if (String(p).startsWith(fakeDir)) {
+          accessCalls++;
+          // One TangleClaw-config probe per entry, so this counts entries.
+          if (path.basename(String(p)) === 'project.json') entriesWalked++;
+          // Slow, but finite — the shape the deadline race alone cannot catch,
+          // because every individual call does eventually return.
+          return new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return realAccess(p, ...rest);
+      };
+
+      try {
+        const result = await projects.scanDirectoryForProjects(fakeDir);
+        assert.equal(result.ok, false, 'a walk that cannot finish in budget must be reported');
+        // Without this the test passes vacuously: every other assertion here
+        // also holds if the stubs were never reached and the path simply 404'd.
+        assert.ok(entriesWalked > 0, 'the fixture must actually reach the walk');
+        assert.ok(entriesWalked < ENTRY_COUNT,
+          `must not have walked every entry (${entriesWalked} of ${ENTRY_COUNT})`);
+        // A walk that was being answered, just slowly, is not a Full Disk Access
+        // problem — and telling a healthy machine to change a privacy setting
+        // sends the operator to fix something that was never wrong.
+        assert.doesNotMatch(result.error, /Full Disk Access — grant it/,
+          'a slow directory must not be diagnosed as a TCC block');
+        assert.match(result.error, /checked \d+ of 200 subdirectories/,
+          'must say how far it got, so the operator can tell slow from blocked');
+
+        // Sample after a grace longer than one entry's worth of probes, so the
+        // entry that was in flight at the deadline has had time to finish and
+        // the next check to fire.
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        const settled = accessCalls;
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        assert.equal(accessCalls, settled,
+          `the walk must stop when the deadline passes (kept going: ${settled} → ${accessCalls})`);
+      } finally {
+        fsp3.stat = realStat;
+        fsp3.readdir = realReaddir;
+        fsp3.access = realAccess;
+      }
+    });
+
+    it('classifies a marker-bearing directory as detected and a bare one as not', async () => {
+      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+      fs.mkdirSync(path.join(scanRoot, 'with-marker'));
+      fs.writeFileSync(path.join(scanRoot, 'with-marker', 'go.mod'), 'module example.com/x\n');
+      fs.mkdirSync(path.join(scanRoot, 'bare'));
+      fs.mkdirSync(path.join(scanRoot, '.hidden'));
+      fs.writeFileSync(path.join(scanRoot, 'loose-file.txt'), 'x');
+      try {
+        const result = await projects.scanDirectoryForProjects(scanRoot);
+        assert.equal(result.ok, true);
+        const names = result.projects.map(p => p.name).sort();
+        assert.deepEqual(names, ['bare', 'with-marker'],
+          'hidden directories and loose files are not candidate projects');
+        assert.equal(result.projects.find(p => p.name === 'with-marker').detected, true);
+        assert.equal(result.projects.find(p => p.name === 'bare').detected, false);
+      } finally {
+        fs.rmSync(scanRoot, { recursive: true, force: true });
       }
     });
   });

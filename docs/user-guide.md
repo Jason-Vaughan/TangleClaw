@@ -47,9 +47,20 @@ Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard
 through initial configuration:
 
 1. **Welcome** — overview of what TangleClaw does
-2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
-3. **Detect Projects** — scans the directory for existing projects (git repos, TangleClaw or Prawduct markers) and lets you select which to attach
-4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
+2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`).
+   If that folder does not exist yet — it does not on a fresh Mac — the wizard offers to create it.
+   On macOS it also warns you when the path is under `~/Documents`, `~/Desktop` or `~/Downloads`,
+   which the system keeps background services out of (see below).
+3. **Detect Projects** — scans the directory for existing projects (a git branch, a
+   `.tangleclaw/project.json`, or a common project manifest) and lets you select which to attach
+4. **Engines** — shows which AI engines are detected and lets you pick a default. **Setup stops
+   here when TangleClaw can confirm none are installed**: its job is running an AI coding CLI, so
+   an install without one could not launch anything. It shows the install command for each engine
+   and a **Check again** button — install one in a terminal, press it, and setup continues.
+
+   If TangleClaw cannot *read* your shell's PATH it says so and offers **Continue anyway** instead,
+   because "not installed" would then be a guess rather than a finding — and being wrong about it
+   would lock you out of your own setup.
 5. **Preferences** — delete protection password, idle chime toggle
 6. **HTTPS** — generate or select a certificate, or keep local HTTP
 7. **Admin Login** — the username and password you will sign in with (see below; this step is not always shown)
@@ -198,10 +209,21 @@ You can also attach projects in bulk during the first-run setup wizard, or via t
 During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:
 
 - A `.tangleclaw/project.json` file
-- A Prawduct governance directory (`.prawduct/`)
-- A git repository
+- A git repository (one with a branch)
+- A common project manifest — `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`,
+  `Makefile`, `Gemfile`, `pom.xml`, `build.gradle`, `CMakeLists.txt`, `setup.py`,
+  `composer.json` or `mix.exs`
 
-These are offered for batch attachment during setup.
+These are pre-ticked for batch attachment during setup. Every other subdirectory is still listed,
+just unticked — so you can attach something the markers do not recognise.
+
+**macOS: if the scan reports that the directory did not respond.** `~/Documents`, `~/Desktop` and
+`~/Downloads` are protected by macOS privacy controls (TCC). TangleClaw runs as a background
+service, which has no way to ask you for access, so a read of a protected directory does not fail —
+it simply never finishes. Either grant Full Disk Access to your `node` binary (System Settings →
+Privacy & Security → Full Disk Access), or keep your projects somewhere outside those three
+directories. The scan gives up after five seconds and tells you which it was, rather than waiting
+forever.
 
 ## Sessions
 

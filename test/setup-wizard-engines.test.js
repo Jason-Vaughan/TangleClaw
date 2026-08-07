@@ -195,9 +195,123 @@ describe('Setup wizard — engine step (#707)', () => {
       const ctx = loadSetup(roster, { defaultEngine: 'claude' });
       ctx.showWizard();
       const html = renderEngineStep(ctx);
-      assert.match(html, /No AI engine detected on this machine/);
+      assert.match(html, /No AI engine is installed yet/);
       assert.doesNotMatch(html, /<select[^>]*id="setupDefaultEngine"/,
         'a dropdown whose every option is disabled is worse than saying so');
+    });
+
+    it('parks setup here — there is no way forward with nothing to launch', () => {
+      // TangleClaw's whole job is running an engine's CLI. Finishing without one
+      // hands the operator a finished-looking dashboard that can launch nothing,
+      // and they find out at the first Launch button with nothing explaining it.
+      // The server refuses on both routes that complete setup; this screen is
+      // what makes the refusal make sense.
+      const ctx = loadSetup(roster, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.doesNotMatch(html, /onclick="wizardNext\(\)"/,
+        'Next must not be offered — the server would refuse it anyway');
+      assert.match(html, /wizardRecheckEngines\(\)/,
+        'and the way forward must be on screen: install one, then check again');
+    });
+
+    it('offers Continue anyway when detection could not look', () => {
+      // The half a server-side fail-open does not buy. If the wizard still
+      // renders no way forward, an operator whose engine IS installed and whose
+      // shell would not answer is walled in regardless of what the server would
+      // have allowed — pressing Check again forever against a broken check.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = false;
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /could not check for an AI engine/i,
+        'it must say it could not tell, not assert an absence');
+      assert.match(html, /Continue anyway/);
+      assert.match(html, /wizardRecheckEngines\(\)/, 'and still offer the re-check');
+    });
+
+    it('prefers a fresh re-check over the answer the page loaded with', () => {
+      // wizardRecheckEngines writes wizard.engineDetectionCertain; the initial
+      // page load writes state.engineDetectionCertain. The fresher one has to
+      // win, or pressing Check again on a machine whose shell started answering
+      // would keep showing the stale verdict.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = true;
+      ctx.wizard.engineDetectionCertain = false;
+      ctx.showWizard();
+      ctx.wizard.engineDetectionCertain = false;
+      const html = renderEngineStep(ctx);
+      assert.match(html, /Continue anyway/,
+        'the re-check said "could not tell" and that is the current answer');
+    });
+
+    it('wires the server flag through loadEngines — the middle link', () => {
+      // Source-level, matching how every other landing.js surface is covered
+      // (it is a browser global script, not require()-able). The chain is
+      // server -> loadEngines -> state -> wizard, and the two tests above pin
+      // only the last hop: delete the mapping and they stay green while the
+      // release valve silently stops appearing.
+      const landing = fs.readFileSync(
+        path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+      assert.match(landing, /state\.engineDetectionCertain\s*=\s*data\.detectionCertain !== false/,
+        'loadEngines must map the server field into state, and default a MISSING '
+        + 'field to certain rather than to uncertain');
+    });
+
+    it('offers NO way past when it genuinely confirmed there is nothing', () => {
+      // Otherwise the gate is decoration. A confirmed absence has nothing to
+      // launch, and the operator finding that out at the first Launch button is
+      // the failure this whole slice exists to prevent.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = true;
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /No AI engine is installed yet/);
+      assert.doesNotMatch(html, /Continue anyway/);
+      assert.doesNotMatch(html, /onclick="wizardNext\(\)"/);
+    });
+
+    it('gives the exact command and the vendor page for each engine', () => {
+      // A command is what someone at a terminal wants; the docs page is the half
+      // that cannot go stale, because the vendor maintains it. Both, per engine.
+      const withInstall = [
+        { ...CLAUDE, available: false,
+          install: { command: 'npm install -g @anthropic-ai/claude-code',
+            docsUrl: 'https://code.claude.com/docs/en/setup' } },
+        { ...CODEX, available: false,
+          install: { command: 'npm install -g @openai/codex',
+            docsUrl: 'https://developers.openai.com/codex/cli' } }
+      ];
+      const ctx = loadSetup(withInstall, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /npm install -g @anthropic-ai\/claude-code/);
+      assert.match(html, /npm install -g @openai\/codex/);
+      assert.match(html, /href="https:\/\/code\.claude\.com\/docs\/en\/setup"/);
+      assert.match(html, /rel="noopener noreferrer"/,
+        'a target=_blank link without noopener hands the opened page a handle back');
+    });
+
+    it('drops a docs link that is not http(s)', () => {
+      // Engine profiles are operator-authored through the API and this value
+      // goes straight into an href. `javascript:` there is a script the page
+      // runs when someone clicks "Install instructions".
+      const hostile = [{ ...CLAUDE, available: false,
+        install: { command: 'npm i -g x', docsUrl: 'javascript:alert(1)' } }];
+      const ctx = loadSetup(hostile, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.doesNotMatch(html, /javascript:/i, 'the scheme must never reach the href');
+      assert.match(html, /npm i -g x/, 'and the usable half is still offered');
+    });
+
+    it('says so plainly for an engine that carries no install info', () => {
+      // Operator-added profiles are not required to tell us how they install.
+      // An honest "we do not know" beats a guessed command.
+      const ctx = loadSetup([{ ...CLAUDE, available: false }], {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /No install command on file/);
     });
 
     it('still lists what was looked for, so the operator knows their options', () => {

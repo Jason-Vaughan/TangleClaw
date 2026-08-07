@@ -734,7 +734,42 @@ function _withBindState(config) {
   // socket is wide, and the settings modal would draw a shut door over an open
   // one and hide the way out. In-memory only: a GET must not write.
   bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
-  return { ...redactConfigSecrets(config), bindState: bindPolicy.describeBindState(config) };
+  return {
+    ...redactConfigSecrets(config),
+    bindState: bindPolicy.describeBindState(config),
+    protectedRoots: _protectedRoots()
+  };
+}
+
+/**
+ * Directories THIS machine's OS keeps a background service out of, in both the
+ * `~` form an operator types and the absolute form a path resolves to.
+ *
+ * Ships from the server for the same reason `bindState` does: the browser cannot
+ * answer it. The question is what the OS running TangleClaw protects, and the
+ * browser asking it may be a phone — `navigator.platform` would say iOS about a
+ * Mac, and the one warning that matters would never appear. It is also the wrong
+ * question to hardcode in the UI: `~/Documents` means nothing on the Linux hosts
+ * TangleClaw also runs on, and a caution that fires there is a caution people
+ * learn to ignore.
+ *
+ * Empty on every platform without this behaviour, so callers can treat "no roots"
+ * as "nothing to warn about" rather than special-casing macOS themselves.
+ *
+ * @returns {string[]} Protected directory roots, or `[]` where none apply.
+ */
+function _protectedRoots() {
+  // macOS TCC. A launchd-spawned process gets no prompt and no EPERM here — the
+  // read simply never returns (#859), which is why this is worth saying BEFORE
+  // someone points the product at one of them rather than only after.
+  if (process.platform !== 'darwin') return [];
+  const home = process.env.HOME || '';
+  const roots = [];
+  for (const name of ['Documents', 'Desktop', 'Downloads']) {
+    roots.push(`~/${name}`);
+    if (home) roots.push(path.join(home, name));
+  }
+  return roots;
 }
 
 /**
@@ -805,6 +840,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
   // UI saves were triggering an N-project filesystem walk).
   const oldStripAiCoauthors = config.stripAiCoauthors;
+  // Whether setup was still OPEN when this request arrived. Captured here
+  // because the loop below writes `body.setupComplete` straight onto `config` —
+  // read it afterwards and every request looks like an install that was already
+  // finished, which is exactly how a first-run-only gate becomes a gate that
+  // never fires.
+  const wasSetupOpen = config.setupComplete === false;
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
@@ -972,6 +1013,23 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // (direct mode, caddy installed) able to finish setup with no login at all,
   // which is the entire defect the sibling route was changed to close.
   //
+  // Same reasoning for the engine requirement, and the same sibling trap: Skip
+  // closes setup here, so a rule enforced only on /api/setup/complete is a rule
+  // with a door beside it. An install that finishes with no engine is a
+  // dashboard that can launch nothing.
+  //
+  // Guarded only on the explicit transition, and only while setup is still
+  // open: re-saving settings on a finished install must never be refused
+  // because an engine was uninstalled later.
+  if (body.setupComplete === true && wasSetupOpen) {
+    if (!await engines.anyEngineInstalled()) {
+      return errorResponse(res, 400,
+        'No AI engine is installed, so there would be nothing to launch. Install one '
+        + '(Claude Code, Codex, Aider or Antigravity), then press Check again.',
+        'ENGINE_REQUIRED');
+    }
+  }
+
   // Only the explicit complete-setup transition is guarded, so unrelated PATCHes
   // are never blocked.
   if (body.setupComplete === true
@@ -1504,78 +1562,54 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 });
 
 // POST /api/setup/scan — Scan a directory for existing projects
-route('POST', '/api/setup/scan', (_req, res, _params, body) => {
-  if (!body || typeof body.directory !== 'string') {
+//
+// The scan itself lives in lib/projects because it must run off the main thread
+// under a deadline: this route reads a directory the operator types in, and the
+// value the wizard pre-fills (~/Documents/Projects) is TCC-protected on macOS,
+// where a read does not fail — it never returns. Inline and synchronous, that
+// blocked the event loop and took the whole server down on the first click of a
+// fresh install (#859).
+route('POST', '/api/setup/scan', async (_req, res, _params, body) => {
+  // An all-whitespace path is not "no path": `path.resolve('')` is the server's
+  // own working directory, so without this the wizard would scan the install
+  // itself and offer its subdirectories as projects.
+  if (!body || typeof body.directory !== 'string' || !body.directory.trim()) {
     return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
   }
 
-  const dir = projects.resolveProjectsDir(body.directory);
-
-  if (!fs.existsSync(dir)) {
-    return errorResponse(res, 400, `Directory does not exist: ${body.directory}`, 'BAD_REQUEST');
+  const result = await projects.scanDirectoryForProjects(body.directory);
+  if (!result.ok) {
+    return errorResponse(res, 400, result.error, result.code);
   }
 
-  let stat;
-  try {
-    stat = fs.statSync(dir);
-  } catch (err) {
-    return errorResponse(res, 400, `Cannot access directory: ${err.message}`, 'BAD_REQUEST');
-  }
-  if (!stat.isDirectory()) {
-    return errorResponse(res, 400, `Path is not a directory: ${body.directory}`, 'BAD_REQUEST');
-  }
+  jsonResponse(res, 200, { projects: result.projects });
+});
 
-  // Scan for projects in the specified directory
-  const detected = [];
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    return errorResponse(res, 400, `Failed to read directory: ${err.message}`, 'BAD_REQUEST');
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.')) continue;
-
-    const dirPath = path.join(dir, entry.name);
-
-    // Check for git
-    let gitInfo = null;
-    try {
-      const git = require('./lib/git');
-      gitInfo = git.getInfo(dirPath);
-    } catch {
-      // Not a git repo or git not available
-    }
-
-    // Check for TangleClaw config
-    const hasTangleclawConfig = fs.existsSync(path.join(dirPath, '.tangleclaw', 'project.json'));
-
-    // Check for common project manifest files
-    const PROJECT_MARKERS = [
-      'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod',
-      'Makefile', 'Gemfile', 'pom.xml', 'build.gradle',
-      'CMakeLists.txt', 'setup.py', 'composer.json', 'mix.exs'
-    ];
-    const hasProjectMarker = PROJECT_MARKERS.some(m => fs.existsSync(path.join(dirPath, m)));
-
-    const isDetected = !!((gitInfo && gitInfo.branch) || hasTangleclawConfig || hasProjectMarker);
-
-    detected.push({
-      name: entry.name,
-      path: dirPath,
-      hasTangleclawConfig,
-      git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null,
-      detected: isDetected
-    });
+// POST /api/setup/create-dir — Create the projects directory the operator named.
+//
+// The shipped default is ~/Documents/Projects and a stock Mac does not have it,
+// so the first thing a new install does — accept the pre-filled path, press
+// Next — used to answer "Directory does not exist" and stop, with no action
+// available anywhere in the product.
+//
+// Unauthenticated by necessity: this is first-run setup, before any credential
+// exists. The constraint in `createProjectsDir` is therefore the boundary — one
+// level, inside the operator's home directory — not a stand-in for one.
+route('POST', '/api/setup/create-dir', async (_req, res, _params, body) => {
+  if (!body || typeof body.directory !== 'string' || !body.directory.trim()) {
+    return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
   }
 
-  jsonResponse(res, 200, { projects: detected });
+  const result = await projects.createProjectsDir(body.directory);
+  if (!result.ok) {
+    return errorResponse(res, 400, result.error, result.code);
+  }
+
+  jsonResponse(res, 200, { ok: true, path: result.path, created: result.created });
 });
 
 // POST /api/setup/complete — Batch setup: update config + attach projects
-route('POST', '/api/setup/complete', (req, res, _params, body) => {
+route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -1633,6 +1667,34 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // the live ingress — the guard's own question, asked one layer up.
     adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
     if (adoption.changed) config = store.config.load();
+  }
+
+  // Setup cannot finish with no engine installed. TangleClaw's whole job is
+  // launching AI coding sessions, and an install with no engine is a dashboard
+  // that can launch nothing — the operator reaches a finished-looking product
+  // and discovers the hole at the first Launch button, with nothing on screen
+  // explaining it.
+  //
+  // Refused HERE and not only in the wizard, because the wizard's Next button
+  // is not the rule. Anything that POSTs this route — a re-run, a script, a
+  // client that skipped the step — must meet the same bar, or the gate is
+  // decoration. `feedback_symmetric_capability_gates`: the two surfaces
+  // coordinating around one condition have to test the same condition.
+  //
+  // First run only. A finished install whose engine was later uninstalled is a
+  // different problem, and refusing to re-save its settings would strand it.
+  // `refresh` because the operator has probably just installed one in another
+  // window, which is the entire reason this request is being made again.
+  if (firstRun) {
+    if (!await engines.anyEngineInstalled()) {
+      return errorResponse(
+        res,
+        400,
+        'No AI engine is installed, so there would be nothing to launch. Install one '
+        + '(Claude Code, Codex, Aider or Antigravity), then press Check again.',
+        'ENGINE_REQUIRED'
+      );
+    }
   }
 
   // Snapshot HTTPS state before mutations so we can decide whether to restart
@@ -2445,10 +2507,41 @@ route('GET', '/api/system', (_req, res) => {
   jsonResponse(res, 200, stats);
 });
 
-// GET /api/engines
-route('GET', '/api/engines', (_req, res) => {
-  const list = engines.listWithAvailability();
-  jsonResponse(res, 200, { engines: list });
+// GET /api/engines — `?refresh=1` re-reads the operator's login PATH before
+// probing, rather than reusing the cached one. That is what the setup wizard's
+// "Check again" calls: the operator has just installed an engine in another
+// window, and an installer that edits their shell profile changes the PATH
+// itself, not only what sits on it.
+route('GET', '/api/engines', async (req, res) => {
+  const refresh = new URL(req.url, 'http://localhost').searchParams.get('refresh') === '1';
+  // Awaited, not run synchronously: resolving the login PATH means starting the
+  // operator's shell and running their profile, which is unbounded work someone
+  // else wrote. Doing that on the event loop inside a route is the defect this
+  // whole branch exists to remove.
+  if (refresh) await engines.refreshDetectionPath();
+  let list = engines.listWithAvailability();
+  // Resolve the login PATH before answering "nothing found". The boot probe is
+  // fire-and-forget, so a request landing before it settles would otherwise be
+  // told detection could not look — reporting a race as a finding, which is the
+  // unknown-vs-known conflation this release exists to remove.
+  //
+  // Keyed on ATTEMPTED, not succeeded: a shell that cannot answer never sets
+  // succeeded, so keying on that would re-probe on every request for exactly
+  // the operators stuck on this step pressing buttons. Worst case is one
+  // request paying for up to two shell starts (`-lic`, then `-lc`, 6s each);
+  // afterwards the answer is cached until something explicitly asks for a new
+  // one. `?refresh=1` is that explicit ask, and it is a button press.
+  if (!list.some((e) => e && e.available) && !engines.detectionProbeAttempted()) {
+    await engines.refreshDetectionPath();
+    list = engines.listWithAvailability();
+  }
+  // `detectionCertain: false` means no login shell answered, so detection saw
+  // only the PATH launchd gives this service and "not installed" is not a
+  // trustworthy answer (#346). The wizard shows that rather than presenting a
+  // guess as a fact — and it is what lets an operator whose engine IS installed
+  // get past a step that would otherwise be a locked door.
+  const certain = list.some((e) => e && e.available) || engines.detectionWasProbed();
+  jsonResponse(res, 200, { engines: list, detectionCertain: certain });
 });
 
 // GET /api/engines/:id
@@ -6256,6 +6349,17 @@ if (require.main === module) {
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
     sessions.resyncMedusaListeners();
+    // Resolve the operator's login PATH once, here, so no request ever pays for
+    // it. launchd hands this service `/usr/bin:/bin:/usr/sbin:/sbin`, which
+    // contains none of the places an engine CLI actually installs (#346) — and
+    // reading the real PATH means starting their shell and running their
+    // profile, which is unbounded work that must not happen on the event loop
+    // inside a route. Fire-and-forget: detection falls back to this process's
+    // own PATH until it lands, which is exactly what it did before.
+    engines.refreshDetectionPath().catch((err) => {
+      log.warn('Could not resolve the login PATH at boot; engine detection will see only '
+        + 'the PATH launchd gave this service', { error: err && err.message });
+    });
   };
 
   // Loopback unless something is guarding the door — see lib/bind-policy.js.

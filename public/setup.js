@@ -17,6 +17,10 @@ const wizard = {
   chimeEnabled: true,
   httpsCheckLoaded: false,
   httpsMode: null,
+  // Whether the server could actually look for engines. Undefined until an
+  // answer arrives; only an explicit `false` means "we could not tell", so a
+  // missing field never reads as uncertainty.
+  engineDetectionCertain: undefined,
   mkcertAvailable: null,
   mkcertCaroot: '',
   mkcertCaInstalled: false,
@@ -373,17 +377,91 @@ function renderProjectsDir(body) {
                placeholder="~/Documents/Projects"
                autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         <div class="form-hint">Full path or ~ for home directory</div>
+        <div id="setupDirProtected" class="form-error hidden" role="status"></div>
         <div id="setupDirError" class="form-error hidden" role="alert"></div>
+        <div id="setupDirCreate" class="hidden"></div>
       </div>
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
         <button class="btn btn-primary" onclick="wizardValidateDir()">Next</button>
       </div>
     </div>`;
+  wizardUpdateDirAdvice();
   setTimeout(() => {
     const el = document.getElementById('setupProjectsDir');
-    if (el) el.focus();
+    if (el) {
+      el.addEventListener('input', wizardUpdateDirAdvice);
+      el.focus();
+    }
   }, 100);
+}
+
+/**
+ * Is `dir` inside a directory this machine's OS keeps TangleClaw out of?
+ *
+ * The roots come from the server (`config.protectedRoots`) because they are a
+ * fact about the machine TangleClaw runs on, not about the browser looking at
+ * it. An empty list means there is nothing to warn about here — every non-macOS
+ * host — so this stays silent rather than inventing a rule for it.
+ *
+ * @param {string} dir - The path as typed, `~` form or absolute.
+ * @returns {string|null} The matching protected root, or null.
+ */
+function wizardProtectedRootFor(dir) {
+  const roots = (state.config && state.config.protectedRoots) || [];
+  const p = String(dir || '').trim().replace(/\/+$/, '');
+  if (!p) return null;
+  // Case-insensitively, because the only platform that sends roots is macOS and
+  // its filesystem is case-insensitive by default: `~/documents/Projects` is the
+  // SAME protected directory as `~/Documents/Projects`, and an operator who
+  // types it that way would otherwise be the one person the caution skips.
+  // Compared against the root's real casing so the message still names the
+  // folder the way the system does.
+  const lower = p.toLowerCase();
+  return roots.find((root) => {
+    const r = String(root).toLowerCase();
+    return lower === r || lower.startsWith(r + '/');
+  }) || null;
+}
+
+/**
+ * Show or hide the protected-directory caution for whatever is in the box now.
+ *
+ * BEFORE the scan, deliberately. The scan is the only thing that can prove
+ * whether this install can read the directory, and until #859 it proved it by
+ * killing the server; it now answers in five seconds with the remedy. But the
+ * cheapest fix by far is available only at this moment — the operator is looking
+ * at the field and can simply type somewhere else. Saying it only after the
+ * attempt fails is help arriving after the choice.
+ *
+ * A caution, not an error: plenty of installs have granted Full Disk Access, and
+ * for them this directory works fine. Nothing is blocked, and Next still scans.
+ */
+function wizardUpdateDirAdvice() {
+  // Typing a new path invalidates whatever the last attempt concluded about the
+  // old one. Leaving them up offers to create a folder the operator is no
+  // longer asking about, under an error that is no longer true.
+  const staleError = document.getElementById('setupDirError');
+  if (staleError && !staleError.classList.contains('hidden')) {
+    staleError.classList.add('hidden');
+    staleError.textContent = '';
+    _showCreateDirOffer('', false);
+  }
+  const el = document.getElementById('setupDirProtected');
+  if (!el) return;
+  const input = document.getElementById('setupProjectsDir');
+  const root = wizardProtectedRootFor(input ? input.value : wizard.projectsDir);
+  if (!root) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.innerHTML = `<strong>macOS protects ${esc(root)}.</strong> TangleClaw runs in the `
+    + 'background, so it cannot ask you for permission — it may not be able to read your '
+    + 'projects here, and it will not find out until it tries. Either choose a folder outside '
+    + '~/Documents, ~/Desktop and ~/Downloads, or grant Full Disk Access to node in System Settings '
+    + '&rarr; Privacy &amp; Security.';
+  el.classList.remove('hidden');
 }
 
 /**
@@ -405,14 +483,74 @@ async function wizardValidateDir() {
   const data = await apiMutate('/api/setup/scan', 'POST', { directory: dir });
   if (!data) {
     const err = document.getElementById('setupDirError');
-    err.textContent = 'Directory not found or not accessible.';
+    // Show what the server actually said. The generic line below is right for a
+    // wrong path and WRONG for the failure that strands people: on macOS a
+    // directory under ~/Documents exists, is readable by the operator, and
+    // still cannot be read by a launchd-spawned node without Full Disk Access.
+    // "Not found or not accessible" sends that operator to fix a path that has
+    // nothing wrong with it; the server's message names the real remedy.
+    err.textContent = api.lastError || 'Directory not found or not accessible.';
     err.classList.remove('hidden');
+    // A folder that is merely ABSENT is the one failure the operator can fix
+    // from here, in one click — and it is the one a stock Mac hits first, since
+    // the pre-filled ~/Documents/Projects does not exist until someone makes
+    // it. Telling them it is missing and stopping is accurate and useless.
+    _showCreateDirOffer(dir, api.lastErrorCode === 'DIR_MISSING');
     return;
   }
 
   wizard.scannedProjects = data.projects || [];
   wizard.selectedProjects = new Set(wizard.scannedProjects.filter(p => p.detected).map(p => p.name));
   wizardNext();
+}
+
+/**
+ * Show or hide the "Create it" offer beneath the directory error.
+ * @param {string} dir - The path the operator typed.
+ * @param {boolean} missing - Whether the failure was specifically "not there".
+ * @returns {void}
+ */
+function _showCreateDirOffer(dir, missing) {
+  const offer = document.getElementById('setupDirCreate');
+  if (!offer) return;
+  if (!missing) {
+    offer.classList.add('hidden');
+    offer.innerHTML = '';
+    return;
+  }
+  offer.innerHTML = `<button class="btn btn-small" type="button" id="setupDirCreateBtn"
+      onclick="wizardCreateDir()">Create ${esc(dir)}</button>`;
+  offer.classList.remove('hidden');
+}
+
+/**
+ * Create the missing projects directory, then carry straight on with the scan
+ * the operator was already trying to do.
+ * @returns {Promise<void>}
+ */
+async function wizardCreateDir() {
+  const input = document.getElementById('setupProjectsDir');
+  const dir = input ? input.value.trim() : wizard.projectsDir;
+  const btn = document.getElementById('setupDirCreateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  const made = await apiMutate('/api/setup/create-dir', 'POST', { directory: dir });
+  if (btn) { btn.disabled = false; btn.textContent = `Create ${dir}`; }
+  if (!made) {
+    const err = document.getElementById('setupDirError');
+    if (err) {
+      err.textContent = api.lastError || 'Could not create that folder.';
+      err.classList.remove('hidden');
+    }
+    return;
+  }
+
+  // Made it — so finish the click they originally made rather than making them
+  // press Next again to find out whether it worked.
+  const err = document.getElementById('setupDirError');
+  if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  _showCreateDirOffer(dir, false);
+  await wizardValidateDir();
 }
 
 function renderDetectProjects(body) {
@@ -552,16 +690,39 @@ function renderEngines(body) {
       </div>`;
   }
 
-  // Nothing installed: say so plainly instead of offering a picker whose every
-  // option is refused. TangleClaw is still usable — projects can be attached
-  // once an engine exists — so this warns rather than blocks.
+  // Nothing installed: setup STOPS here. TangleClaw's whole job is launching an
+  // engine's CLI, so finishing without one hands the operator a
+  // finished-looking dashboard that can launch nothing, and they find out at
+  // the first Launch button with nothing on screen explaining it. The server
+  // refuses the same thing on both routes that can complete setup — this screen
+  // is the explanation, not the enforcement.
+  //
+  // Parked, not failed: the operator installs one in a terminal (they are at
+  // this machine on a first run) and presses Check again. TangleClaw cannot run
+  // the install for them — it is a launchd service with no terminal to answer a
+  // password prompt, which is why every privileged step lives in the human-run
+  // installer.
   const noneAvailable = selectable.length === 0;
+  // Whether the server could actually LOOK. False means no login shell answered,
+  // so detection saw only the PATH launchd gives the service and "none
+  // installed" is a guess (#346). The screen must not present that as a fact,
+  // and — the part that matters — must not wall in an operator whose engine is
+  // installed and whose shell merely would not answer. The server refuses only
+  // what it is sure of; this is where the person who knows the truth gets to
+  // say so.
+  const uncertain = wizard.engineDetectionCertain === false
+    || (wizard.engineDetectionCertain === undefined && state.engineDetectionCertain === false);
   const pickerHtml = noneAvailable
     ? `<div class="setup-https-panel setup-https-warning">
         <div class="setup-https-warn-icon" aria-hidden="true">!</div>
         <div>
-          <div class="setup-https-warn-title">No AI engine detected on this machine.</div>
-          <p class="setup-text-muted">TangleClaw drives an engine's CLI, so sessions can't launch until one is installed. Install Claude Code, Codex, Antigravity, or Aider, then pick a default from Settings — the rest of setup still applies.</p>
+          <div class="setup-https-warn-title">${uncertain
+            ? 'TangleClaw could not check for an AI engine.'
+            : 'No AI engine is installed yet.'}</div>
+          <p class="setup-text-muted">${uncertain
+            ? 'It could not read your shell\'s PATH, so it cannot tell whether an engine is installed — if you have one, this is a false alarm and you can continue. If you do not, install one below and press <strong>Check again</strong>.'
+            : 'TangleClaw runs an AI coding CLI for you — without one there is nothing for it to launch, so setup pauses here. Install any one of these in a terminal on this Mac, then press <strong>Check again</strong>.'}</p>
+          ${_engineInstallOptionsHtml(enginesList)}
         </div>
       </div>`
     : `<div class="form-group">
@@ -578,11 +739,185 @@ function renderEngines(body) {
       ${pickerHtml}
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
-        <button class="btn btn-primary" onclick="wizardNext()">Next</button>
+        ${noneAvailable
+          ? `<button class="btn" id="setupEngineRecheck" onclick="wizardRecheckEngines()">Check again</button>${
+            // Offered ONLY when detection could not look. A confirmed "nothing
+            // installed" has no Continue, because there is genuinely nothing to
+            // launch; an unconfirmed one must never be a locked door.
+            uncertain
+              ? '<button class="btn btn-primary" onclick="wizardNext()">Continue anyway</button>'
+              : ''}`
+          : '<button class="btn btn-primary" onclick="wizardNext()">Next</button>'}
       </div>
     </div>`;
 }
 
+/**
+ * The install options offered when nothing is detected: per engine, the exact
+ * command and a link to the vendor's own instructions.
+ *
+ * Both, deliberately. A command is what an operator at a terminal actually
+ * wants, and a pinned command is the thing most likely to go stale — the docs
+ * page is the vendor's to keep current, so it is the half that cannot rot.
+ * An engine profile carrying neither says so rather than inventing one; an
+ * operator-added engine is not required to tell us how it is installed.
+ *
+ * @param {object[]} list - Engines as returned by `/api/engines`.
+ * @returns {string} HTML.
+ */
+function _engineInstallOptionsHtml(list) {
+  const rows = (list || []).map((e) => {
+    const name = typeof e.name === 'string' && e.name ? e.name : e.id;
+    const install = e.install || {};
+    const command = typeof install.command === 'string' ? install.command : '';
+    // http(s) only. Engine profiles are operator-authored through the API and
+    // this value goes straight into an href — `javascript:` there is a script
+    // the page runs on click. An unusable link is dropped rather than rendered.
+    const rawDocs = typeof install.docsUrl === 'string' ? install.docsUrl : '';
+    const docsUrl = /^https?:\/\//i.test(rawDocs) ? rawDocs : '';
+    if (!command && !docsUrl) {
+      return `<div class="setup-engine-install">
+        <div class="setup-engine-name">${esc(name)}</div>
+        <p class="setup-text-muted">No install command on file — see this engine's own documentation.</p>
+      </div>`;
+    }
+    const cmdHtml = command
+      ? `<div class="setup-engine-install-cmd">
+          <code>${esc(command)}</code>
+          <button class="btn btn-small" type="button"
+                  onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+        </div>`
+      : '';
+    // rel="noopener" because target=_blank otherwise hands the opened page a
+    // handle back to this one.
+    const docsHtml = docsUrl
+      ? `<a class="setup-engine-install-docs" href="${esc(docsUrl)}"
+            target="_blank" rel="noopener noreferrer">Install instructions &rarr;</a>`
+      : '';
+    return `<div class="setup-engine-install">
+      <div class="setup-engine-name">${esc(name)}</div>
+      ${cmdHtml}
+      ${docsHtml}
+    </div>`;
+  });
+  return `<div class="setup-engine-installs">${rows.join('')}</div>
+    <div id="setupEngineCopyNote" class="form-hint hidden" role="status"></div>`;
+}
+
+/**
+ * Copy an install command, and say so — a Copy button that gives no feedback
+ * reads as a broken button.
+ * @param {string} command - The command to copy.
+ * @returns {Promise<void>}
+ */
+async function wizardCopyInstall(command) {
+  const ok = await window.tcCopyToClipboard(command);
+  const note = document.getElementById('setupEngineCopyNote');
+  if (note) {
+    note.textContent = ok ? 'Copied.' : 'Could not copy — select the command and copy it manually.';
+    note.classList.remove('hidden');
+  }
+}
+
+/**
+ * Re-probe for engines after the operator has installed one.
+ *
+ * Asks the server to re-read the login PATH rather than reuse what it resolved
+ * at boot: an installer that edits the shell profile changes the PATH itself,
+ * not only what sits on it, and this button exists precisely for the moment
+ * after an install.
+ * @returns {Promise<void>}
+ */
+async function wizardRecheckEngines() {
+  const btn = document.getElementById('setupEngineRecheck');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  const data = await api('/api/engines?refresh=1');
+  if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  if (!data) {
+    const note = document.getElementById('setupEngineCopyNote');
+    if (note) {
+      note.textContent = api.lastError || 'Could not check — is the server still running?';
+      note.classList.remove('hidden');
+    }
+    return;
+  }
+  const found = (data.engines || []).filter((e) => e && e.available);
+  state.engines = data.engines || [];
+  wizard.engines = data.engines || [];
+  wizard.engineDetectionCertain = data.detectionCertain !== false;
+  if (found.length === 0) {
+    // Re-rendering the identical screen reads as a dead button. Say that the
+    // check ran and what it found, or the operator cannot tell "still nothing"
+    // from "nothing happened".
+    const note = document.getElementById('setupEngineCopyNote');
+    if (note) {
+      note.textContent = 'Checked again — still nothing found. If you just installed one, '
+        + 'make sure it runs by name in a new terminal window.';
+      note.classList.remove('hidden');
+    }
+    return;
+  }
+  // Found one — the empty case returned above. Seed the default so the picker
+  // that replaces this screen opens on something real, then re-render into it.
+  wizard.defaultEngine = found[0].id;
+  renderWizardStep();
+}
+
+
+/**
+ * What to do when mkcert is missing — or when we could not tell.
+ *
+ * NON-BLOCKING, unlike the engine gate. TangleClaw works over plain HTTP on
+ * localhost and the login gate is a separate mechanism, so a missing mkcert
+ * costs you trusted certificates, not a working install. It warns and offers the
+ * fix; Skip for now stays available.
+ *
+ * TangleClaw does NOT run the install. It is a launchd service with no terminal,
+ * `brew install` can prompt, and `mkcert -install` needs sudo to touch the trust
+ * store — the reason every privileged step lives in the human-run installer
+ * rather than the daemon.
+ *
+ * @param {boolean} probeFailed - True when the check itself did not answer, as
+ *   opposed to answering "not installed". Telling someone who HAS mkcert that
+ *   they do not is the defect this separation exists to prevent.
+ * @returns {string} HTML.
+ */
+function _mkcertHelpHtml(probeFailed) {
+  const lead = probeFailed
+    ? 'TangleClaw could not check whether mkcert is installed, so it cannot offer to generate '
+      + 'certificates for you. If you know it is installed, press Check again; otherwise you can '
+      + 'continue without HTTPS and set it up later.'
+    : 'mkcert generates certificates your browser already trusts. Install it in a terminal on '
+      + 'this Mac, then press Check again — or continue without HTTPS and set it up later.';
+  const command = 'brew install mkcert && mkcert -install';
+  return `<div class="setup-engine-install">
+    <p class="setup-text-muted">${lead}</p>
+    ${probeFailed ? '' : `<div class="setup-engine-install-cmd">
+      <code>${esc(command)}</code>
+      <button class="btn btn-small" type="button"
+              onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+    </div>
+    <a class="setup-engine-install-docs" href="https://github.com/FiloSottile/mkcert"
+       target="_blank" rel="noopener noreferrer">Install instructions &rarr;</a>`}
+    <div>
+      <button class="btn btn-small" type="button" id="setupMkcertRecheck"
+              onclick="wizardRecheckMkcert()">Check again</button>
+    </div>
+    <div id="setupEngineCopyNote" class="form-hint hidden" role="status"></div>
+  </div>`;
+}
+
+/**
+ * Re-run the mkcert probe after the operator has installed it.
+ * @returns {Promise<void>}
+ */
+async function wizardRecheckMkcert() {
+  const btn = document.getElementById('setupMkcertRecheck');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  // Force the probe to run again rather than render the answer it already had.
+  wizard.httpsCheckLoaded = false;
+  await renderHttpsSetup(document.getElementById('setupBody'));
+}
 function renderPreferences(body) {
   body.innerHTML = `
     <div class="setup-step">
@@ -623,21 +958,34 @@ async function renderHttpsSetup(body) {
       wizard.mkcertCaroot = data.mkcert.carootPath || '';
       wizard.mkcertCaInstalled = !!data.mkcert.caInstalled;
     } else {
-      wizard.mkcertAvailable = false;
+      // The probe FAILED — the server did not answer, or answered without an
+      // mkcert block. That is not the same as "mkcert is not installed", and
+      // recording it as `false` told an operator who has mkcert, flatly, that
+      // they do not. Same shape as #861: an unknown state falling through to a
+      // definite one. `null` stays null; the screen says it could not check.
+      wizard.mkcertAvailable = null;
     }
     if (!wizard.httpsMode) {
-      wizard.httpsMode = wizard.mkcertAvailable ? 'mkcert' : 'manual';
+      // `=== true` because unknown is now `null`, and only a CONFIRMED mkcert
+      // should preselect the mode that depends on it — the radio is disabled in
+      // every other state, and preselecting a disabled option leaves the step
+      // looking chosen and unadvanceable.
+      wizard.httpsMode = wizard.mkcertAvailable === true ? 'mkcert' : 'manual';
     }
     wizard.httpsCheckLoaded = true;
     renderHttpsSetup(body);
     return;
   }
 
-  const available = !!wizard.mkcertAvailable;
+  const available = wizard.mkcertAvailable === true;
+  // Distinguished from `false` on purpose: unknown is not absent.
+  const probeFailed = wizard.mkcertAvailable === null;
   const mode = wizard.httpsMode;
   const statusBadge = available
     ? '<span class="setup-https-badge setup-https-badge-ok">mkcert detected</span>'
-    : '<span class="setup-https-badge setup-https-badge-warn">mkcert not installed</span>';
+    : probeFailed
+      ? '<span class="setup-https-badge setup-https-badge-warn">could not check for mkcert</span>'
+      : '<span class="setup-https-badge setup-https-badge-warn">mkcert not installed</span>';
 
   const mkcertDisabledAttr = available ? '' : 'disabled';
   const modeTabs = `
@@ -680,6 +1028,7 @@ async function renderHttpsSetup(body) {
       <h2 class="setup-heading">Secure Access</h2>
       <p class="setup-text-muted">TangleClaw can serve over HTTPS so session traffic, API keys, and OpenClaw connections stay encrypted.</p>
       <div class="setup-https-status">${statusBadge}</div>
+      ${available ? '' : _mkcertHelpHtml(probeFailed)}
       ${modeTabs}
       <div class="setup-https-body">${modeBody}</div>
       <div id="setupHttpsError" class="form-error hidden" role="alert"></div>
