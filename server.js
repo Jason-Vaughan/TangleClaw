@@ -1512,7 +1512,10 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 // blocked the event loop and took the whole server down on the first click of a
 // fresh install (#859).
 route('POST', '/api/setup/scan', async (_req, res, _params, body) => {
-  if (!body || typeof body.directory !== 'string') {
+  // An all-whitespace path is not "no path": `path.resolve('')` is the server's
+  // own working directory, so without this the wizard would scan the install
+  // itself and offer its subdirectories as projects.
+  if (!body || typeof body.directory !== 'string' || !body.directory.trim()) {
     return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
   }
 

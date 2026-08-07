@@ -360,6 +360,27 @@ All notable changes to TangleClaw are documented in this file.
   within it. A path that never answers now costs one threadpool slot and one request instead of
   the server.
 
+  **The deadline also stops the walk, not just the request.** A promise cannot be cancelled, so
+  answering at the deadline leaves the walk running — still issuing calls into a path already
+  known not to answer, each holding one of libuv's four default threadpool slots until a kernel
+  that never returns returns. Four retries and every async filesystem call in the process is
+  queued behind them, which is the same wedge by a slower road. The walk now re-checks the
+  deadline between entries and abandons itself, and the twelve manifest probes per directory
+  short-circuit on the first hit again rather than firing concurrently.
+
+  **The same fix, swept to its sibling.** `listAllProjects` — the route the dashboard loads, and
+  the one this issue was originally filed against — had a bounded `readdir` followed by an
+  *unbounded* `fs.existsSync` per subdirectory over the same protected tree. Bounding the
+  directory read and then probing its children synchronously is not a bounded scan. That loop now
+  uses the same async probe and the same walk deadline.
+
+  **One residual, stated plainly:** `git.getInfo` still shells out with `execSync`, and lib/git's
+  5-second cap is per command while reading a repo takes several. A directory whose git calls all
+  stall can block the loop for longer than this scan's own deadline, which cannot fire while a
+  synchronous call is running. It is bounded, unlike the read this fixes, but it is not free —
+  the per-entry deadline check is what keeps one slow directory from being followed by a hundred
+  more.
+
   **And it says what to do about it.** There is nothing to degrade to here — the operator asked
   about one specific directory — so the failure is reported rather than silently shortened, and a
   deadline failure carries the remedy: grant Full Disk Access, or choose a directory outside

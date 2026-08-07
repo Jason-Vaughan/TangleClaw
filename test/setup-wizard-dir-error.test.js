@@ -83,10 +83,9 @@ function loadSetup(lastError) {
 }
 
 describe('Setup wizard — projects-directory errors (#859)', () => {
-  const TCC_MESSAGE = 'Could not read ~/Documents/Projects: timed out after 5000ms — the '
-    + 'directory did not respond; on macOS this is what a TCC-protected path does when node '
-    + 'has no Full Disk Access — grant it, or choose a projects directory outside ~/Documents, '
-    + '~/Desktop and ~/Downloads';
+  const TCC_MESSAGE = 'Could not read ~/Documents/Projects — the directory did not respond; on '
+    + 'macOS this is what a TCC-protected path does when node has no Full Disk Access — grant '
+    + 'it, or choose a projects directory outside ~/Documents, ~/Desktop and ~/Downloads';
 
   it('shows what the server said, not a generic not-found line', async () => {
     const ctx = loadSetup(TCC_MESSAGE);

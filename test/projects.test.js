@@ -921,6 +921,24 @@ describe('projects', () => {
         fsp2.readdir = realReaddir;
       }
     });
+
+    it('reports an unregistered directory\'s TangleClaw config without a synchronous probe', async () => {
+      // The per-entry marker check here was still fs.existsSync — a bounded
+      // readdir followed by unbounded synchronous probes of what it returned is
+      // not a bounded scan, and it reads the same protected tree. Pinning the
+      // ANSWER, since the answer is what the sweep to fs.promises must not
+      // change: nothing else asserted this field for this function.
+      fs.mkdirSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
+      fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
+
+      const all = await projects.listAllProjects();
+      const withConfig = all.find(p => p.name === 'has-tc-config');
+      const without = all.find(p => p.name === 'no-tc-config');
+      assert.ok(withConfig && without, 'both unregistered directories must be listed');
+      assert.equal(withConfig.hasTangleclawConfig, true);
+      assert.equal(without.hasTangleclawConfig, false);
+    });
   });
 
   // The same wedge, the OTHER call site. The projects list was fixed; the
@@ -982,6 +1000,93 @@ describe('projects', () => {
       assert.equal(result.ok, false);
       assert.equal(result.code, 'BAD_REQUEST');
       assert.match(result.error, /not a directory/);
+    });
+
+    it('stops probing markers once one has answered', async () => {
+      // Twelve concurrent probes to settle a question the first hit answers is
+      // twelve threadpool slots against a filesystem that may not return any of
+      // them. The short-circuit is the difference between costing one stuck
+      // slot per directory and costing twelve.
+      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+      fs.mkdirSync(path.join(scanRoot, 'js-project'));
+      fs.writeFileSync(path.join(scanRoot, 'js-project', 'package.json'), '{}');
+
+      const realAccess = fsp3.access;
+      const probed = [];
+      fsp3.access = (p, ...rest) => {
+        if (String(p).startsWith(scanRoot)) probed.push(path.basename(String(p)));
+        return realAccess(p, ...rest);
+      };
+      try {
+        const result = await projects.scanDirectoryForProjects(scanRoot);
+        assert.equal(result.projects[0].detected, true);
+        // The TangleClaw config probe, then package.json — first in the marker
+        // list, and the last thing that should have been looked at.
+        assert.deepEqual(probed, ['project.json', 'package.json'],
+          'must stop at the first marker that answers');
+      } finally {
+        fsp3.access = realAccess;
+        fs.rmSync(scanRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('abandons the walk at the deadline instead of running it to the end', async () => {
+      // The deadline answers the REQUEST; it cannot cancel the walk it raced.
+      // Left running, the walk keeps issuing filesystem calls into a path
+      // already known not to answer, and each one holds a libuv threadpool slot
+      // (four by default) until the kernel returns — which for the failure this
+      // guards is never. A few retries and every async filesystem call in the
+      // process is queued behind them, which is the wedge again by another
+      // route. Mutation: delete the per-entry deadline check and the walk runs
+      // all 60 entries, well past the point anyone is waiting.
+      const realReaddir = fsp3.readdir;
+      const realAccess = fsp3.access;
+      const realStat = fsp3.stat;
+      let accessCalls = 0;
+      let entriesWalked = 0;
+      const fakeDir = '/tc-fake-scan-root';
+      const ENTRY_COUNT = 200;
+      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+        name: `proj-${i}`, isDirectory: () => true
+      }));
+
+      fsp3.stat = (p, ...rest) => (p === fakeDir
+        ? Promise.resolve({ isDirectory: () => true })
+        : realStat(p, ...rest));
+      fsp3.readdir = (p, ...rest) => (p === fakeDir
+        ? Promise.resolve(dirents)
+        : realReaddir(p, ...rest));
+      fsp3.access = (p, ...rest) => {
+        if (String(p).startsWith(fakeDir)) {
+          accessCalls++;
+          // One TangleClaw-config probe per entry, so this counts entries.
+          if (path.basename(String(p)) === 'project.json') entriesWalked++;
+          // Slow, but finite — the shape the deadline race alone cannot catch,
+          // because every individual call does eventually return.
+          return new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return realAccess(p, ...rest);
+      };
+
+      try {
+        const result = await projects.scanDirectoryForProjects(fakeDir);
+        assert.equal(result.ok, false, 'a walk that cannot finish in budget must be reported');
+        assert.ok(entriesWalked < ENTRY_COUNT,
+          `must not have walked every entry (${entriesWalked} of ${ENTRY_COUNT})`);
+
+        // Sample after a grace longer than one entry's worth of probes, so the
+        // entry that was in flight at the deadline has had time to finish and
+        // the next check to fire.
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        const settled = accessCalls;
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        assert.equal(accessCalls, settled,
+          `the walk must stop when the deadline passes (kept going: ${settled} → ${accessCalls})`);
+      } finally {
+        fsp3.stat = realStat;
+        fsp3.readdir = realReaddir;
+        fsp3.access = realAccess;
+      }
     });
 
     it('classifies a marker-bearing directory as detected and a bare one as not', async () => {

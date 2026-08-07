@@ -156,6 +156,14 @@ describe('Setup Wizard', () => {
       assert.equal(data.code, 'BAD_REQUEST');
     });
 
+    it('should return 400 for a blank directory rather than scanning the server itself', async () => {
+      // path.resolve('') is the server's own working directory, so a blank
+      // value is not "no value" — it is a scan of the install.
+      const { status, data } = await request(server, 'POST', '/api/setup/scan', { directory: '   ' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
     it('should return 400 for nonexistent directory', async () => {
       const { status, data } = await request(server, 'POST', '/api/setup/scan', {
         directory: '/tmp/nonexistent-' + Date.now()
