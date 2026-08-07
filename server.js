@@ -1585,6 +1585,29 @@ route('POST', '/api/setup/scan', async (_req, res, _params, body) => {
   jsonResponse(res, 200, { projects: result.projects });
 });
 
+// POST /api/setup/create-dir — Create the projects directory the operator named.
+//
+// The shipped default is ~/Documents/Projects and a stock Mac does not have it,
+// so the first thing a new install does — accept the pre-filled path, press
+// Next — used to answer "Directory does not exist" and stop, with no action
+// available anywhere in the product.
+//
+// Unauthenticated by necessity: this is first-run setup, before any credential
+// exists. The constraint in `createProjectsDir` is therefore the boundary — one
+// level, inside the operator's home directory — not a stand-in for one.
+route('POST', '/api/setup/create-dir', (_req, res, _params, body) => {
+  if (!body || typeof body.directory !== 'string' || !body.directory.trim()) {
+    return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
+  }
+
+  const result = projects.createProjectsDir(body.directory);
+  if (!result.ok) {
+    return errorResponse(res, 400, result.error, result.code);
+  }
+
+  jsonResponse(res, 200, { ok: true, path: result.path, created: result.created });
+});
+
 // POST /api/setup/complete — Batch setup: update config + attach projects
 route('POST', '/api/setup/complete', (req, res, _params, body) => {
   if (!body || typeof body !== 'object') {

@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -990,6 +990,92 @@ describe('projects', () => {
   // clean macOS guest: an ordinary directory scanned 200 and left the server
   // healthy; ~/Documents/Projects never answered and the process needed a
   // launchctl kickstart.
+  // `~/Documents/Projects` is the shipped default and the value the wizard
+  // pre-fills — and a stock macOS install does not have it. macOS creates
+  // Documents; nothing creates Projects, and nothing in TangleClaw did either.
+  // So the first action of a brand-new install answered "Directory does not
+  // exist" and offered nothing to do about it.
+  describe('createProjectsDir — the offer that ends the dead end', () => {
+    let home;
+    let savedHome;
+
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-home-'));
+      process.env.HOME = home;
+    });
+
+    afterEach(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    it('creates the folder the operator was pointed at', () => {
+      const target = path.join(home, 'Projects');
+      const result = projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      assert.ok(fs.statSync(target).isDirectory());
+    });
+
+    it('expands ~ the same way the scan does', () => {
+      // The wizard sends back exactly what it displayed, and what it displays is
+      // `~/Documents/Projects`. Handled anywhere but here and the button would
+      // create a folder literally named "~".
+      fs.mkdirSync(path.join(home, 'Documents'));
+      const result = projects.createProjectsDir('~/Documents/Projects');
+      assert.equal(result.ok, true);
+      assert.ok(fs.statSync(path.join(home, 'Documents', 'Projects')).isDirectory());
+      assert.equal(fs.existsSync(path.join(process.cwd(), '~')), false,
+        'a literal ~ directory must never appear');
+    });
+
+    it('is happy when it is already there', () => {
+      // Two clicks, or a folder made in Finder while this screen was open.
+      const target = path.join(home, 'Projects');
+      fs.mkdirSync(target);
+      const result = projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, false, 'it reports that it made nothing');
+    });
+
+    it('refuses to create anything outside the home directory', () => {
+      // This route runs during first-run setup, BEFORE any credential exists,
+      // so it cannot be protected by one — the constraint is the boundary. It
+      // must never become a general-purpose mkdir.
+      const result = projects.createProjectsDir('/tmp/tc-should-never-exist');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.equal(fs.existsSync('/tmp/tc-should-never-exist'), false);
+    });
+
+    it('refuses a traversal that climbs back out of home', () => {
+      // `path.resolve` collapses `..` before the check, so this is normalised
+      // away rather than pattern-matched — which is why a path that LOOKS like
+      // it is under home cannot smuggle its way out.
+      const result = projects.createProjectsDir(path.join(home, '..', '..', 'tc-escape'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /home directory/);
+    });
+
+    it('refuses to create the home directory itself', () => {
+      const result = projects.createProjectsDir(home);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+    });
+
+    it('creates one level, not a tree nobody asked for', () => {
+      // "You pointed at ~/Documents/Projects and it wasn't there" is one level.
+      // Five is building something at a path nobody checked.
+      const result = projects.createProjectsDir(path.join(home, 'a', 'b', 'c'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /folder above it/);
+      assert.equal(fs.existsSync(path.join(home, 'a')), false);
+    });
+  });
+
   describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {
     const fsp3 = require('node:fs').promises;
 

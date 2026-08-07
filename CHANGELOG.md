@@ -6,6 +6,42 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
+  wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing
+  creates `Projects`, and nothing in TangleClaw did either. So the first action of a brand-new
+  install (accept the default, press Next) answered *"Directory does not exist"* and stopped, with
+  no action available anywhere in the product: leave, make a folder in Finder, come back.
+
+  The error now carries a **Create it** button, and creating it continues straight into the scan the
+  operator was already trying to run rather than making them press Next again.
+
+  The offer appears only for a folder that is genuinely absent. A folder that exists but cannot be
+  read — the TCC case — does not get a Create button, because creating it is not the fix and the
+  button would do nothing but confuse.
+
+  New route `POST /api/setup/create-dir`. It is reachable before any credential exists, because
+  first-run setup has none, so its constraint **is** the security boundary rather than a convenience:
+  the path must resolve inside the operator's home directory, and only the final segment is created,
+  so it can add `~/Documents/Projects` and cannot walk out to `/etc` or lay down a tree at a path
+  nobody checked. `path.resolve` collapses `..` before the check, so traversal is normalised away
+  rather than pattern-matched.
+
+- **mkcert: "we could not check" no longer renders as "not installed".** When the HTTPS probe failed
+  for any reason, the wizard recorded `mkcertAvailable = false` and drew the badge *"mkcert not
+  installed"* — telling an operator who has mkcert, flatly, that they do not. That is an unknown
+  state falling through to a definite one, the same shape as #861 one step further along the same
+  wizard.
+
+  Unknown is now its own state and says so, with a Check again button. A genuine absence gets the
+  install command, a Copy button and a link to mkcert's own instructions. Deliberately
+  **non-blocking**, unlike the engine gate: TangleClaw works over plain HTTP on localhost and the
+  login gate is a separate mechanism, so a missing mkcert costs trusted certificates, not a working
+  install — Skip stays available.
+
+  TangleClaw does not run the install. `brew install` can prompt and `mkcert -install` needs sudo to
+  touch the trust store; a launchd service has no terminal to answer either, which is why privileged
+  steps live in the human-run installer.
+
 - **Setup will not finish with no AI engine installed.** TangleClaw's whole job is running an AI
   coding CLI for you. An install that completed without one handed the operator a finished-looking
   dashboard that could launch nothing — and they found out at the first Launch button, with nothing

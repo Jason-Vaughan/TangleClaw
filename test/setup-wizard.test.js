@@ -250,6 +250,45 @@ describe('Setup Wizard', () => {
     });
   });
 
+  describe('POST /api/setup/create-dir', () => {
+    let savedHome;
+    let fakeHome;
+
+    before(() => {
+      savedHome = process.env.HOME;
+      fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-home-'));
+      process.env.HOME = fakeHome;
+    });
+
+    after(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    });
+
+    it('creates the folder and reports the resolved path', async () => {
+      const { status, data } = await request(server, 'POST', '/api/setup/create-dir',
+        { directory: path.join(fakeHome, 'Projects') });
+      assert.equal(status, 200);
+      assert.equal(data.created, true);
+      assert.ok(fs.statSync(data.path).isDirectory());
+    });
+
+    it('refuses a path outside the home directory', async () => {
+      // The route is reachable before any credential exists — first-run setup
+      // has none — so this refusal IS the security boundary, not a convenience.
+      const { status, data } = await request(server, 'POST', '/api/setup/create-dir',
+        { directory: '/tmp/tc-route-should-never-exist' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.equal(fs.existsSync('/tmp/tc-route-should-never-exist'), false);
+    });
+
+    it('requires a directory', async () => {
+      const { status } = await request(server, 'POST', '/api/setup/create-dir', { directory: '  ' });
+      assert.equal(status, 400);
+    });
+  });
+
   describe('POST /api/setup/scan', () => {
     it('should return 400 when directory is missing', async () => {
       const { status, data } = await request(server, 'POST', '/api/setup/scan', {});

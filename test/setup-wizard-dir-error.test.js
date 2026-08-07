@@ -196,6 +196,39 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
     });
   });
 
+  describe('the missing folder the operator can fix from here', () => {
+    it('offers to create a directory that simply is not there', async () => {
+      // The pre-filled ~/Documents/Projects does not exist on a stock Mac —
+      // macOS makes Documents, nothing makes Projects — so this is the first
+      // thing a brand-new install hits. Saying "does not exist" and stopping is
+      // accurate and useless.
+      const ctx = loadSetup('Directory does not exist: ~/Documents/Projects');
+      ctx.api.lastErrorCode = 'BAD_REQUEST';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+
+      await ctx.wizardValidateDir();
+
+      const offer = ctx.document.getElementById('setupDirCreate');
+      assert.equal(offer.classList.contains('hidden'), false, 'the way out must be on screen');
+      assert.match(offer.innerHTML, /wizardCreateDir\(\)/);
+      assert.match(offer.innerHTML, /~\/Documents\/Projects/, 'and name what it will create');
+    });
+
+    it('does NOT offer to create a directory that exists but cannot be read', async () => {
+      // The TCC case. The folder is right there; creating it is not the fix and
+      // the button would do nothing but confuse. Full Disk Access is the fix,
+      // and the message already says so.
+      const ctx = loadSetup(TCC_MESSAGE);
+      ctx.api.lastErrorCode = 'SCAN_FAILED';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+
+      await ctx.wizardValidateDir();
+
+      assert.equal(ctx.document.getElementById('setupDirCreate').classList.contains('hidden'),
+        true, 'a present-but-unreadable folder must not be offered a Create button');
+    });
+  });
+
   it('still asks for a path before calling the server at all', async () => {
     const ctx = loadSetup(TCC_MESSAGE);
     ctx.document.getElementById('setupProjectsDir').value = '   ';

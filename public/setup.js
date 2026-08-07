@@ -375,6 +375,7 @@ function renderProjectsDir(body) {
         <div class="form-hint">Full path or ~ for home directory</div>
         <div id="setupDirProtected" class="form-error hidden" role="status"></div>
         <div id="setupDirError" class="form-error hidden" role="alert"></div>
+        <div id="setupDirCreate" class="hidden"></div>
       </div>
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
@@ -477,12 +478,67 @@ async function wizardValidateDir() {
     // nothing wrong with it; the server's message names the real remedy.
     err.textContent = api.lastError || 'Directory not found or not accessible.';
     err.classList.remove('hidden');
+    // A folder that is merely ABSENT is the one failure the operator can fix
+    // from here, in one click — and it is the one a stock Mac hits first, since
+    // the pre-filled ~/Documents/Projects does not exist until someone makes
+    // it. Telling them it is missing and stopping is accurate and useless.
+    _showCreateDirOffer(dir, api.lastErrorCode === 'BAD_REQUEST'
+      && /does not exist/i.test(api.lastError || ''));
     return;
   }
 
   wizard.scannedProjects = data.projects || [];
   wizard.selectedProjects = new Set(wizard.scannedProjects.filter(p => p.detected).map(p => p.name));
   wizardNext();
+}
+
+/**
+ * Show or hide the "Create it" offer beneath the directory error.
+ * @param {string} dir - The path the operator typed.
+ * @param {boolean} missing - Whether the failure was specifically "not there".
+ * @returns {void}
+ */
+function _showCreateDirOffer(dir, missing) {
+  const offer = document.getElementById('setupDirCreate');
+  if (!offer) return;
+  if (!missing) {
+    offer.classList.add('hidden');
+    offer.innerHTML = '';
+    return;
+  }
+  offer.innerHTML = `<button class="btn btn-small" type="button" id="setupDirCreateBtn"
+      onclick="wizardCreateDir()">Create ${esc(dir)}</button>`;
+  offer.classList.remove('hidden');
+}
+
+/**
+ * Create the missing projects directory, then carry straight on with the scan
+ * the operator was already trying to do.
+ * @returns {Promise<void>}
+ */
+async function wizardCreateDir() {
+  const input = document.getElementById('setupProjectsDir');
+  const dir = input ? input.value.trim() : wizard.projectsDir;
+  const btn = document.getElementById('setupDirCreateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  const made = await apiMutate('/api/setup/create-dir', 'POST', { directory: dir });
+  if (btn) { btn.disabled = false; btn.textContent = `Create ${dir}`; }
+  if (!made) {
+    const err = document.getElementById('setupDirError');
+    if (err) {
+      err.textContent = api.lastError || 'Could not create that folder.';
+      err.classList.remove('hidden');
+    }
+    return;
+  }
+
+  // Made it — so finish the click they originally made rather than making them
+  // press Next again to find out whether it worked.
+  const err = document.getElementById('setupDirError');
+  if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  _showCreateDirOffer(dir, false);
+  await wizardValidateDir();
 }
 
 function renderDetectProjects(body) {
@@ -761,6 +817,61 @@ async function wizardRecheckEngines() {
   renderWizardStep();
 }
 
+
+/**
+ * What to do when mkcert is missing — or when we could not tell.
+ *
+ * NON-BLOCKING, unlike the engine gate. TangleClaw works over plain HTTP on
+ * localhost and the login gate is a separate mechanism, so a missing mkcert
+ * costs you trusted certificates, not a working install. It warns and offers the
+ * fix; Skip for now stays available.
+ *
+ * TangleClaw does NOT run the install. It is a launchd service with no terminal,
+ * `brew install` can prompt, and `mkcert -install` needs sudo to touch the trust
+ * store — the reason every privileged step lives in the human-run installer
+ * rather than the daemon.
+ *
+ * @param {boolean} probeFailed - True when the check itself did not answer, as
+ *   opposed to answering "not installed". Telling someone who HAS mkcert that
+ *   they do not is the defect this separation exists to prevent.
+ * @returns {string} HTML.
+ */
+function _mkcertHelpHtml(probeFailed) {
+  const lead = probeFailed
+    ? 'TangleClaw could not check whether mkcert is installed, so it cannot offer to generate '
+      + 'certificates for you. If you know it is installed, press Check again; otherwise you can '
+      + 'continue without HTTPS and set it up later.'
+    : 'mkcert generates certificates your browser already trusts. Install it in a terminal on '
+      + 'this Mac, then press Check again — or continue without HTTPS and set it up later.';
+  const command = 'brew install mkcert && mkcert -install';
+  return `<div class="setup-engine-install">
+    <p class="setup-text-muted">${lead}</p>
+    ${probeFailed ? '' : `<div class="setup-engine-install-cmd">
+      <code>${esc(command)}</code>
+      <button class="btn btn-small" type="button"
+              onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+    </div>
+    <a class="setup-engine-install-docs" href="https://github.com/FiloSottile/mkcert"
+       target="_blank" rel="noopener noreferrer">Install instructions &rarr;</a>`}
+    <div>
+      <button class="btn btn-small" type="button" id="setupMkcertRecheck"
+              onclick="wizardRecheckMkcert()">Check again</button>
+    </div>
+    <div id="setupEngineCopyNote" class="form-hint hidden" role="status"></div>
+  </div>`;
+}
+
+/**
+ * Re-run the mkcert probe after the operator has installed it.
+ * @returns {Promise<void>}
+ */
+async function wizardRecheckMkcert() {
+  const btn = document.getElementById('setupMkcertRecheck');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  // Force the probe to run again rather than render the answer it already had.
+  wizard.httpsCheckLoaded = false;
+  await renderHttpsSetup(document.getElementById('setupBody'));
+}
 function renderPreferences(body) {
   body.innerHTML = `
     <div class="setup-step">
@@ -801,21 +912,34 @@ async function renderHttpsSetup(body) {
       wizard.mkcertCaroot = data.mkcert.carootPath || '';
       wizard.mkcertCaInstalled = !!data.mkcert.caInstalled;
     } else {
-      wizard.mkcertAvailable = false;
+      // The probe FAILED — the server did not answer, or answered without an
+      // mkcert block. That is not the same as "mkcert is not installed", and
+      // recording it as `false` told an operator who has mkcert, flatly, that
+      // they do not. Same shape as #861: an unknown state falling through to a
+      // definite one. `null` stays null; the screen says it could not check.
+      wizard.mkcertAvailable = null;
     }
     if (!wizard.httpsMode) {
-      wizard.httpsMode = wizard.mkcertAvailable ? 'mkcert' : 'manual';
+      // `=== true` because unknown is now `null`, and only a CONFIRMED mkcert
+      // should preselect the mode that depends on it — the radio is disabled in
+      // every other state, and preselecting a disabled option leaves the step
+      // looking chosen and unadvanceable.
+      wizard.httpsMode = wizard.mkcertAvailable === true ? 'mkcert' : 'manual';
     }
     wizard.httpsCheckLoaded = true;
     renderHttpsSetup(body);
     return;
   }
 
-  const available = !!wizard.mkcertAvailable;
+  const available = wizard.mkcertAvailable === true;
+  // Distinguished from `false` on purpose: unknown is not absent.
+  const probeFailed = wizard.mkcertAvailable === null;
   const mode = wizard.httpsMode;
   const statusBadge = available
     ? '<span class="setup-https-badge setup-https-badge-ok">mkcert detected</span>'
-    : '<span class="setup-https-badge setup-https-badge-warn">mkcert not installed</span>';
+    : probeFailed
+      ? '<span class="setup-https-badge setup-https-badge-warn">could not check for mkcert</span>'
+      : '<span class="setup-https-badge setup-https-badge-warn">mkcert not installed</span>';
 
   const mkcertDisabledAttr = available ? '' : 'disabled';
   const modeTabs = `
@@ -858,6 +982,7 @@ async function renderHttpsSetup(body) {
       <h2 class="setup-heading">Secure Access</h2>
       <p class="setup-text-muted">TangleClaw can serve over HTTPS so session traffic, API keys, and OpenClaw connections stay encrypted.</p>
       <div class="setup-https-status">${statusBadge}</div>
+      ${available ? '' : _mkcertHelpHtml(probeFailed)}
       ${modeTabs}
       <div class="setup-https-body">${modeBody}</div>
       <div id="setupHttpsError" class="form-error hidden" role="alert"></div>
