@@ -922,6 +922,47 @@ describe('projects', () => {
       }
     });
 
+    it('keeps the directories it found when the walk runs out of time', async () => {
+      // Bringing the per-entry loop under the deadline introduced an
+      // all-or-nothing failure the old shape did not have: throw mid-loop and
+      // the caller degrades to the registered projects, discarding everything
+      // already discovered. This route backs the dashboard, and per-entry cost
+      // is dominated by a synchronous git.getInfo (up to seven execSync calls
+      // per directory, cached two minutes) — so a cold-cache load over a few
+      // dozen unregistered folders would show NONE of them, with a log line as
+      // the only trace. A discovery walk that ran out of budget still
+      // discovered what it got to. Mutation: throw instead of breaking, and
+      // unregistered.length goes to zero.
+      const realReaddir = fsp2.readdir;
+      const realAccess = fsp2.access;
+      const dir = projects.resolveProjectsDir(store.config.load().projectsDir);
+      const ENTRY_COUNT = 200;
+      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+        name: `slow-proj-${i}`, isDirectory: () => true
+      }));
+
+      fsp2.readdir = (p, ...rest) => (String(p) === dir
+        ? Promise.resolve(dirents)
+        : realReaddir(p, ...rest));
+      // 200 × 60ms is twelve seconds of work against a five-second budget, so
+      // the walk must stop partway however fast the machine running this is.
+      fsp2.access = (p, ...rest) => (String(p).includes('slow-proj-')
+        ? new Promise((resolve) => setTimeout(resolve, 60))
+        : realAccess(p, ...rest));
+
+      try {
+        const all = await projects.listAllProjects();
+        const found = all.filter(p => p.registered === false);
+        assert.ok(found.length > 0,
+          'the directories walked before the deadline must survive, not be discarded');
+        assert.ok(found.length < ENTRY_COUNT,
+          `must have stopped at the deadline (${found.length} of ${ENTRY_COUNT})`);
+      } finally {
+        fsp2.readdir = realReaddir;
+        fsp2.access = realAccess;
+      }
+    });
+
     it('reports an unregistered directory\'s TangleClaw config without a synchronous probe', async () => {
       // The per-entry marker check here was still fs.existsSync — a bounded
       // readdir followed by unbounded synchronous probes of what it returned is
@@ -1038,7 +1079,7 @@ describe('projects', () => {
       // guards is never. A few retries and every async filesystem call in the
       // process is queued behind them, which is the wedge again by another
       // route. Mutation: delete the per-entry deadline check and the walk runs
-      // all 60 entries, well past the point anyone is waiting.
+      // every entry, well past the point anyone is waiting.
       const realReaddir = fsp3.readdir;
       const realAccess = fsp3.access;
       const realStat = fsp3.stat;
@@ -1071,8 +1112,18 @@ describe('projects', () => {
       try {
         const result = await projects.scanDirectoryForProjects(fakeDir);
         assert.equal(result.ok, false, 'a walk that cannot finish in budget must be reported');
+        // Without this the test passes vacuously: every other assertion here
+        // also holds if the stubs were never reached and the path simply 404'd.
+        assert.ok(entriesWalked > 0, 'the fixture must actually reach the walk');
         assert.ok(entriesWalked < ENTRY_COUNT,
           `must not have walked every entry (${entriesWalked} of ${ENTRY_COUNT})`);
+        // A walk that was being answered, just slowly, is not a Full Disk Access
+        // problem — and telling a healthy machine to change a privacy setting
+        // sends the operator to fix something that was never wrong.
+        assert.doesNotMatch(result.error, /Full Disk Access — grant it/,
+          'a slow directory must not be diagnosed as a TCC block');
+        assert.match(result.error, /checked \d+ of 200 subdirectories/,
+          'must say how far it got, so the operator can tell slow from blocked');
 
         // Sample after a grace longer than one entry's worth of probes, so the
         // entry that was in flight at the deadline has had time to finish and

@@ -374,6 +374,23 @@ All notable changes to TangleClaw are documented in this file.
   directory read and then probing its children synchronously is not a bounded scan. That loop now
   uses the same async probe and the same walk deadline.
 
+  **Running out of time shortens the list; it does not empty it.** The dashboard's walk stops at
+  the deadline and returns what it found, logging that the list is short — a discovery walk that
+  ran out of budget has still discovered everything it reached, and per-entry cost here is
+  dominated by a synchronous `git.getInfo` (up to seven `execSync` calls per directory, cached two
+  minutes), so a cold-cache load over a few dozen unregistered folders would otherwise have shown
+  **none** of them with a log line as the only trace. The walk's own deadline fires 250ms before
+  the request deadline that races it, so the specific answer wins the tie instead of the generic
+  one — same instant, and the race would reject first and throw the partial away.
+
+  **The wizard's scan reports instead of shortening**, because the operator is about to tick boxes
+  from that list and a silently half-empty one reads as "those directories are not there". It also
+  distinguishes the two failures: a walk that was being answered too slowly says how far it got
+  and names a large directory or slow disk first, with Full Disk Access offered last as a
+  possibility. Only a read that never answered at all gets told to grant Full Disk Access —
+  telling a healthy machine to change a privacy setting sends the operator to fix something that
+  was never wrong.
+
   **One residual, stated plainly:** `git.getInfo` still shells out with `execSync`, and lib/git's
   5-second cap is per command while reading a repo takes several. A directory whose git calls all
   stall can block the loop for longer than this scan's own deadline, which cannot fire while a
