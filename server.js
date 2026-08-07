@@ -2519,7 +2519,16 @@ route('GET', '/api/engines', async (req, res) => {
   // else wrote. Doing that on the event loop inside a route is the defect this
   // whole branch exists to remove.
   if (refresh) await engines.refreshDetectionPath();
-  const list = engines.listWithAvailability();
+  let list = engines.listWithAvailability();
+  // Resolve the login PATH before answering "nothing found". The boot probe is
+  // fire-and-forget, so a request landing before it settles would otherwise be
+  // told detection could not look — reporting a race as a finding, which is the
+  // unknown-vs-known conflation this release exists to remove. Costs one shell
+  // start, once, and only when the answer would otherwise be a shrug.
+  if (!list.some((e) => e && e.available) && !engines.detectionWasProbed()) {
+    await engines.refreshDetectionPath();
+    list = engines.listWithAvailability();
+  }
   // `detectionCertain: false` means no login shell answered, so detection saw
   // only the PATH launchd gives this service and "not installed" is not a
   // trustworthy answer (#346). The wizard shows that rather than presenting a

@@ -230,6 +230,34 @@ describe('Setup wizard — engine step (#707)', () => {
       assert.match(html, /wizardRecheckEngines\(\)/, 'and still offer the re-check');
     });
 
+    it('prefers a fresh re-check over the answer the page loaded with', () => {
+      // wizardRecheckEngines writes wizard.engineDetectionCertain; the initial
+      // page load writes state.engineDetectionCertain. The fresher one has to
+      // win, or pressing Check again on a machine whose shell started answering
+      // would keep showing the stale verdict.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = true;
+      ctx.wizard.engineDetectionCertain = false;
+      ctx.showWizard();
+      ctx.wizard.engineDetectionCertain = false;
+      const html = renderEngineStep(ctx);
+      assert.match(html, /Continue anyway/,
+        'the re-check said "could not tell" and that is the current answer');
+    });
+
+    it('wires the server flag through loadEngines — the middle link', () => {
+      // Source-level, matching how every other landing.js surface is covered
+      // (it is a browser global script, not require()-able). The chain is
+      // server -> loadEngines -> state -> wizard, and the two tests above pin
+      // only the last hop: delete the mapping and they stay green while the
+      // release valve silently stops appearing.
+      const landing = fs.readFileSync(
+        path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+      assert.match(landing, /state\.engineDetectionCertain\s*=\s*data\.detectionCertain !== false/,
+        'loadEngines must map the server field into state, and default a MISSING '
+        + 'field to certain rather than to uncertain');
+    });
+
     it('offers NO way past when it genuinely confirmed there is nothing', () => {
       // Otherwise the gate is decoration. A confirmed absence has nothing to
       // launch, and the operator finding that out at the first Launch button is
