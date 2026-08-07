@@ -184,6 +184,117 @@ describe('lib/dir-scanner — failures that are not hangs', () => {
     }
   });
 
+  test('a child that closed its channel is written off, not forked past', async () => {
+    const { EventEmitter } = require('node:events');
+    const made = [];
+    const forkFn = () => {
+      const fake = new EventEmitter();
+      fake.pid = 900000 + made.length;
+      fake.connected = true;
+      fake.channel = null;
+      fake.stderr = null;
+      fake.exitCode = null;
+      fake.signalCode = null;
+      fake.killed = false;
+      fake.unref = () => {};
+      fake.kill = () => { fake.killed = true; };
+      fake.send = () => true; // accepts the request and never answers it
+      made.push(fake);
+      return fake;
+    };
+
+    const scanner = dirScanner.createScanner({ forkFn, timeoutMs: 5000, exitGraceMs: 0 });
+    try {
+      const stranded = scanner.request('ping');
+
+      // Node does not guarantee `exit` precedes the channel close. This is the
+      // window: the child is unusable, but nothing has announced its death.
+      made[0].connected = false;
+
+      const successor = scanner.request('ping');
+      successor.catch(() => {}); // never answered either; shutdown settles it
+
+      const started = Date.now();
+      const err = await rejection(stranded);
+
+      // Left to the old behavior this request waited out its full deadline and
+      // was then labelled `tcTimedOut` — the Full Disk Access misdiagnosis this
+      // module exists to remove, on a path that was never even read.
+      assert.ok(err.tcAborted, 'stranded work should be abandoned, not timed out');
+      assert.ok(!err.tcTimedOut, 'a closed channel is not an unresponsive directory');
+      assert.ok(Date.now() - started < 3000, 'should fail immediately, not on the deadline');
+
+      // And the orphan must actually be killed: leaving it alive leaves the
+      // blocked thread this whole module exists to reclaim.
+      assert.ok(made[0].killed, 'the superseded child should have been killed');
+      assert.equal(made.length, 2, 'a replacement should have been forked');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('a fork that emits an error fails the request rather than hanging it', async () => {
+    const { EventEmitter } = require('node:events');
+
+    // A fork can fail without ever producing a process — EMFILE, a spawn the OS
+    // refuses. The supervisor only learns via the `error` event, and if it did
+    // not translate that into a rejection the caller would wait out the full
+    // deadline and then be told the DIRECTORY was unresponsive.
+    const forkFn = () => {
+      const fake = new EventEmitter();
+      fake.pid = undefined;
+      fake.connected = true;
+      fake.channel = null;
+      fake.stderr = null;
+      fake.exitCode = null;
+      fake.signalCode = null;
+      fake.unref = () => {};
+      fake.kill = () => {};
+      fake.send = () => true;
+      setImmediate(() => fake.emit('error', new Error('spawn EMFILE')));
+      return fake;
+    };
+
+    const scanner = dirScanner.createScanner({ forkFn, timeoutMs: 4000 });
+    try {
+      const started = Date.now();
+      const err = await rejection(scanner.request('ping'));
+      assert.ok(err.tcAborted, 'a fork that failed is not an unresponsive path');
+      assert.ok(!err.tcTimedOut);
+      assert.ok(Date.now() - started < 3000, 'should fail on the error event, not the deadline');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('a request whose send fails is rejected, not left outstanding', async () => {
+    const { EventEmitter } = require('node:events');
+
+    const forkFn = () => {
+      const fake = new EventEmitter();
+      fake.pid = 424242;
+      fake.connected = true;
+      fake.channel = null;
+      fake.stderr = null;
+      fake.exitCode = null;
+      fake.signalCode = null;
+      fake.unref = () => {};
+      fake.kill = () => {};
+      // The channel closed between the liveness check and the write.
+      fake.send = (_msg, cb) => { setImmediate(() => cb(new Error('channel closed'))); return false; };
+      return fake;
+    };
+
+    const scanner = dirScanner.createScanner({ forkFn, timeoutMs: 4000 });
+    try {
+      const err = await rejection(scanner.request('ping'));
+      assert.ok(err.tcAborted);
+      assert.match(err.message, /could not be reached/);
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
   test('a child that dies is replaced on the next request', async () => {
     const scanner = dirScanner.createScanner({ childPath: HANG_CHILD });
     try {
