@@ -488,7 +488,9 @@ All notable changes to TangleClaw are documented in this file.
   `engines.governanceState` reads more files under it. A *registered* project whose directory is
   TCC-protected therefore still blocks the event loop, exactly as #859 described. The comment on
   `listAllProjects` used to say the registered list "cannot be affected by a stuck filesystem";
-  that was overstated and now says so.
+  that was overstated and now says otherwise. It is **not yet filed as an issue** — said plainly
+  rather than as "tracked separately", which would cite nothing. The real unit of work is the whole
+  family of ~31 synchronous reads on operator-chosen paths in that file, not this call site.
 
 - **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
   matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
