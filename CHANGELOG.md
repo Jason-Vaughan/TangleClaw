@@ -206,6 +206,23 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **The first-run messages about a protected projects folder now speak one language.** The scan-
+  failure message was the only user-facing string in the product that said *"TCC-protected"* — an
+  acronym nobody outside Apple's developer docs knows, surfacing at the one moment a stranded
+  operator has least patience for a new term. The two other surfaces describing the same condition
+  (the wizard's pre-choice caution and the truncated-walk error) already said *"protected folder"*
+  and *"a directory node cannot read"*, so the plain wording was already the house style; this was
+  the outlier. It now reads *"On macOS that is what a protected folder does when node has no Full
+  Disk Access."*, split into sentences instead of a single clause chained by a semicolon and two
+  dashes.
+
+  The wizard's caution also now names the protected directories the same way the other two do —
+  `~/Documents, ~/Desktop and ~/Downloads` rather than the bare `Documents, Desktop and Downloads`,
+  which left it ambiguous which `Documents` was meant.
+
+  Wording only: no route, gate, or detection behaviour changed, and the assertions covering these
+  messages match on `Full Disk Access`, `~/Documents` and `did not respond`, all of which survive.
+
 - **Caddy access logging is now documented as deliberately NOT generator-owned, and a cutover onto a
   hand-added `log` block will end it (#846, #821).** The generator emits no `log { … }` under any
   option — so an ingress cutover onto a Caddyfile carrying one by hand silently ends Caddy access
@@ -1971,6 +1988,17 @@ All notable changes to TangleClaw are documented in this file.
   username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an
   empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof
   that probing neither creates nor modifies a Caddyfile.
+
+- **Six review rounds' worth of hardening behind the first-run work (#859, #346).** Logged for the
+  audit trail rather than because an operator would notice it: the engine-list route re-probes the
+  login shell at most once per cache generation instead of once per request (keyed on *attempted*,
+  not *succeeded* — a shell that never answers never latches the second flag, so the population most
+  likely to be sitting on that screen was paying two shell starts per page load); the plan's chunk
+  headings were renamed to the form record-lint can actually walk, so deliverable checks report a
+  number instead of `null`; and three tests were rewritten because they could not fail on the
+  regressions they named — two bounded on elapsed time against a stub that returns instantly, one
+  asserting a flag the previous line had already set. Six `detectEngine` tests deleted by a scripted
+  edit that swallowed the block between two `describe` boundaries were restored verbatim.
 
 ## [4.38.0] - 2026-07-28
 

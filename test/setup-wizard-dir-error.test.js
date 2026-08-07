@@ -86,18 +86,23 @@ function loadSetup(lastError, protectedRoots) {
 }
 
 describe('Setup wizard — projects-directory errors (#859)', () => {
-  const TCC_MESSAGE = 'Could not read ~/Documents/Projects — the directory did not respond; on '
-    + 'macOS this is what a TCC-protected path does when node has no Full Disk Access — grant '
-    + 'it, or choose a projects directory outside ~/Documents, ~/Desktop and ~/Downloads';
+  // Verbatim what the server sends for this failure (`_scanFailureHint` in
+  // lib/projects.js, composed into the SCAN_FAILED error). A stand-in, not an
+  // assertion target — these tests pin that the wizard shows whatever the
+  // server said. Kept in sync so the fixture stays a real example.
+  const PROTECTED_DIR_MESSAGE = 'Could not read ~/Documents/Projects — the directory did not '
+    + 'respond. On macOS that is what a protected folder does when node has no Full Disk '
+    + 'Access. Grant it, or choose a projects directory outside ~/Documents, ~/Desktop and '
+    + '~/Downloads';
 
   it('shows what the server said, not a generic not-found line', async () => {
-    const ctx = loadSetup(TCC_MESSAGE);
+    const ctx = loadSetup(PROTECTED_DIR_MESSAGE);
     ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
 
     await ctx.wizardValidateDir();
 
     const err = ctx.document.getElementById('setupDirError');
-    assert.equal(err.textContent, TCC_MESSAGE);
+    assert.equal(err.textContent, PROTECTED_DIR_MESSAGE);
     assert.match(err.textContent, /Full Disk Access/,
       'the remedy must reach the screen, not just the server log');
     assert.equal(err.classList.contains('hidden'), false, 'the error must be visible');
@@ -218,7 +223,7 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
       // The TCC case. The folder is right there; creating it is not the fix and
       // the button would do nothing but confuse. Full Disk Access is the fix,
       // and the message already says so.
-      const ctx = loadSetup(TCC_MESSAGE);
+      const ctx = loadSetup(PROTECTED_DIR_MESSAGE);
       ctx.api.lastErrorCode = 'SCAN_FAILED';
       ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
 
@@ -248,7 +253,7 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
   });
 
   it('still asks for a path before calling the server at all', async () => {
-    const ctx = loadSetup(TCC_MESSAGE);
+    const ctx = loadSetup(PROTECTED_DIR_MESSAGE);
     ctx.document.getElementById('setupProjectsDir').value = '   ';
 
     await ctx.wizardValidateDir();

@@ -459,7 +459,7 @@ function wizardUpdateDirAdvice() {
   el.innerHTML = `<strong>macOS protects ${esc(root)}.</strong> TangleClaw runs in the `
     + 'background, so it cannot ask you for permission — it may not be able to read your '
     + 'projects here, and it will not find out until it tries. Either choose a folder outside '
-    + 'Documents, Desktop and Downloads, or grant Full Disk Access to node in System Settings '
+    + '~/Documents, ~/Desktop and ~/Downloads, or grant Full Disk Access to node in System Settings '
     + '&rarr; Privacy &amp; Security.';
   el.classList.remove('hidden');
 }
