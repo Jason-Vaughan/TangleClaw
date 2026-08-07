@@ -820,6 +820,51 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **A browser request body must be declared `application/json` — closing the CSRF class that made
+  the form attack a CORS *simple* request (#860).** `parseBody` JSON-parses any body whatever its
+  `Content-Type`, and the three encodings a `<form>` can send (`text/plain`,
+  `application/x-www-form-urlencoded`, `multipart/form-data`) are exactly the three that need no
+  preflight. So a page on another site could post a form to
+  `POST /api/auth/credential` — a route that authorizes on "arrived over loopback", reasoning that a
+  live gate means Caddy already authenticated the caller. In caddy mode TangleClaw still binds an
+  ungated `127.0.0.1` listener the operator's own browser reaches directly, so that reasoning never
+  covered browser traffic. The attacker cannot read the reply, which does not matter for a write:
+  the admin credential is already changed.
+
+  Requiring `application/json` forces a preflight the server never answers affirmatively, and a form
+  cannot send that type at all. **It also closes the `same-site` residual** the `Sec-Fetch-Site`
+  guard deliberately allows — a sibling-subdomain attacker — without refusing `same-site` outright,
+  which would break a legitimate multi-subdomain deployment.
+
+  **This was deferred from v5 as a breaking change to the agent-facing API, and it is not one.** The
+  check applies only to *browser-shaped* requests — those carrying `Sec-Fetch-Site` or `Origin`.
+  `curl`, scripts and the agent API send neither, so the guide's PortHub and shared-docs examples,
+  which show a JSON body and no header, keep working exactly as written. A browser cannot suppress
+  `Sec-Fetch-Site` from script, so the attack always carries the marker that brings it into scope.
+
+  **Confined to TangleClaw's own API, and that is not a detail.** The guard runs ahead of route
+  matching, so unscoped it would also govern `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*` —
+  reverse proxies whose browser client is not ours. `public/openclaw-view.js` iframes
+  `/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside our page:
+  any of its fetches using the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+  idiom — no explicit header, which the browser labels `text/plain;charset=UTF-8` — would take a 415
+  before reaching the gateway, and multipart attachment paths would break the same way. Imposing a
+  media-type contract on a third party's client through a proxy is not ours to do. Those prefixes
+  keep the cross-site and served-`Host` guards, exactly what they had before, so this is a narrower
+  new rule rather than a regression.
+
+  **Bodyless writes are unaffected, deliberately.** The dashboard sends genuine ones —
+  `medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` all go through `api()` with no body and no
+  `Content-Type` — and refusing them would break the operator's own UI to close nothing, since a
+  request with no body carries no forged payload. The remaining exposure is a bodyless *same-site*
+  write to a route that acts without one; `Sec-Fetch-Site` still refuses the cross-site case, which
+  is the one an arbitrary page can mount. Recorded in `security-model.md` rather than implied.
+
+  The security model's CSRF acceptance is **re-argued, not re-cited**. Its stated premise was "no
+  cookies, no tokens, no session state in the browser" — precisely what shipping browser-cached HTTP
+  Basic by default invalidates. CSRF is now in scope, with the three guards and their residuals
+  written down.
+
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
   Those guards decide "is this cross-site?" *relative to the request itself*: `Sec-Fetch-Site` is

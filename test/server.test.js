@@ -212,6 +212,133 @@ describe('server', () => {
        * 127.0.0.1. Nothing is forged, so nothing above catches it. The Host
        * allowlist is the independent fact the guard checks against.
        */
+      /*
+       * #860 — parseBody JSON-parses any body whatever its Content-Type, which
+       * is what makes the form attack a CORS *simple* request: the three
+       * encodings a <form> can send are exactly the three that need no
+       * preflight. Requiring application/json forces a preflight the server
+       * never answers, and a form cannot send that type at all.
+       */
+      describe('#860 — a browser body must be declared JSON', () => {
+        /** A browser-shaped request carrying a body of `type`. */
+        function browserBody(type, len = '42') {
+          const h = { 'sec-fetch-site': 'same-origin', 'content-length': len };
+          if (type !== null) h['content-type'] = type;
+          return h;
+        }
+
+        it('refuses the actual attack: a text/plain form POST to the credential route', async () => {
+          const res = await send('POST', '/api/auth/credential',
+            browserBody('text/plain;charset=UTF-8'));
+          assert.equal(res.statusCode, 415);
+          assert.match(res.body, /JSON_BODY_REQUIRED/);
+        });
+
+        for (const type of ['application/x-www-form-urlencoded', 'multipart/form-data']) {
+          it(`refuses the other form encoding: ${type}`, async () => {
+            // All three form encodings must close, not just the one in the PoC.
+            const res = await send('POST', '/api/config', browserBody(type));
+            assert.equal(res.statusCode, 415, `${type} must be refused`);
+          });
+        }
+
+        it('refuses a same-site body too — the residual Sec-Fetch-Site deliberately allows', async () => {
+          // The sibling-subdomain attacker. Closing it here is why `same-site`
+          // need not be refused outright, which would break legitimate
+          // multi-subdomain deployments.
+          const res = await send('POST', '/api/config', {
+            'sec-fetch-site': 'same-site', 'content-type': 'text/plain', 'content-length': '9'
+          });
+          assert.equal(res.statusCode, 415);
+        });
+
+        it('refuses a body with NO Content-Type at all', async () => {
+          const res = await send('POST', '/api/config', browserBody(null));
+          assert.equal(res.statusCode, 415, 'an undeclared body is not a JSON body');
+        });
+
+        it('accepts application/json with parameters (charset)', async () => {
+          const res = await send('POST', '/api/config',
+            browserBody('application/json; charset=utf-8'));
+          assert.notEqual(res.statusCode, 415, 'the media type is the part that matters');
+        });
+
+        it('accepts a case-varied Content-Type — media types are case-insensitive', async () => {
+          const res = await send('POST', '/api/config', browserBody('APPLICATION/JSON'));
+          assert.notEqual(res.statusCode, 415);
+        });
+
+        it('does NOT refuse a bodyless browser write — the dashboard sends these', async () => {
+          // medusa/toggle, medusa/read and wrap-sentinel/ack all go through
+          // api() with no body and no Content-Type. Refusing them would break
+          // the operator's own UI to close nothing: no body, no forged payload.
+          const res = await send('POST', '/api/config', { 'sec-fetch-site': 'same-origin' });
+          assert.notEqual(res.statusCode, 415, 'a bodyless write carries no payload to forge');
+        });
+
+        it('does NOT refuse a header-less client sending any Content-Type', async () => {
+          // The whole reason this can ship: the guide's PortHub and shared-docs
+          // examples show a JSON body and no Content-Type header, and agents
+          // following them keep working exactly as written.
+          const res = await send('POST', '/api/ports/lease', {
+            'content-type': 'text/plain', 'content-length': '42'
+          });
+          assert.notEqual(res.statusCode, 415,
+            'curl/scripts/the agent API are not a cross-site vector');
+        });
+
+        for (const prefix of ['/terminal/x', '/openclaw-direct/abc/chat', '/openclaw/proj/thing']) {
+          it(`does NOT impose JSON on the proxied path ${prefix} — that client is not ours`, async () => {
+            // This block runs ahead of route matching, so without the
+            // own-API check it would govern the reverse proxies too. TC
+            // iframes /openclaw-direct/:connId/chat SAME-ORIGIN
+            // (public/openclaw-view.js), so OpenClaw's gateway UI runs inside
+            // our page: any fetch(url, {method:'POST', body: JSON.stringify(x)})
+            // with no explicit header is labelled text/plain by the browser and
+            // would 415 before reaching the gateway. Grepping public/ cannot
+            // see a third party's client. These prefixes keep the cross-site
+            // and served-Host guards, which is what they had before #860.
+            // Non-vacuous BY CONSTRUCTION, via a paired control: the same
+            // headers are sent to a /api/ path and to the proxied one, and the
+            // pair must disagree. The 415 is returned before routing, so if the
+            // guard governed both, both would return it; if the harness were
+            // broken, neither would. Downstream failures on the proxied path
+            // (a missing .pipe on the mock, an uninitialised store) are all
+            // proof of passage, so the path's outcome is deliberately not
+            // pinned to any one of them.
+            const HDRS = {
+              'sec-fetch-site': 'same-origin', 'content-type': 'text/plain', 'content-length': '9'
+            };
+            const control = await send('POST', '/api/config', HDRS);
+            assert.equal(control.statusCode, 415,
+              'control: the identical request to our own API must be refused');
+
+            let proxied = null;
+            try { proxied = (await send('POST', prefix, HDRS)).statusCode; } catch { /* reached downstream code */ }
+            assert.notEqual(proxied, 415,
+              `${prefix} proxies a client whose media types are not ours to dictate`);
+          });
+        }
+
+        it('still refuses a cross-site POST to a proxied path — the sibling guard is untouched', async () => {
+          // Confirms the exclusion above narrows THIS rule only. Pinned because
+          // a careless widening of the exclusion would silently reopen the
+          // proxies, which carry the operator's gateway token.
+          const res = await send('POST', '/openclaw-direct/abc/chat', {
+            'sec-fetch-site': 'cross-site', 'content-type': 'text/plain', 'content-length': '9'
+          });
+          assert.equal(res.statusCode, 403);
+          assert.match(res.body, /CROSS_SITE_FORBIDDEN/);
+        });
+
+        it('still checks a chunked body with no content-length', async () => {
+          const res = await send('POST', '/api/config', {
+            'sec-fetch-site': 'same-origin', 'transfer-encoding': 'chunked', 'content-type': 'text/plain'
+          });
+          assert.equal(res.statusCode, 415, 'a chunked body is still a body');
+        });
+      });
+
       describe('#864 — Host allowlist (DNS rebinding)', () => {
         // A rebound page IS a browser, so it always carries `Sec-Fetch-Site`,
         // and it reports `same-origin` because as far as the browser knows it

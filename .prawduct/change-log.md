@@ -3424,3 +3424,55 @@ exempt, the loopback default is not, it closes on `setupComplete`, and Skip is c
 mutation-verified, including reverting to the exact two-axis form that was the blocking defect.
 
 **Classification:** fix
+
+## 2026-08-04: A browser body must be declared JSON, and CSRF is back in scope (#860)
+
+<!-- prawduct: type=fix | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** `parseBody` JSON-parses any body whatever its `Content-Type`, which is what made the form
+attack a CORS *simple* request — the three encodings a `<form>` can send are exactly the three
+needing no preflight, and none is `application/json`. Target is `POST /api/auth/credential`, which
+authorizes on "arrived over loopback"; in caddy mode TC still binds an ungated `127.0.0.1` listener
+the operator's own browser reaches directly, so that reasoning never covered browser traffic.
+
+**The deferral reason dissolved rather than being accepted.** #860 was held out of v5 because
+enforcing `Content-Type` breaks the documented agent-facing API. It only does if enforced on every
+caller. Scoped to *browser-shaped* requests — carrying `Sec-Fetch-Site` or `Origin` — it closes the
+whole class while `curl`, scripts and the agent API stay untouched, so the guide needs no change. A
+browser cannot suppress `Sec-Fetch-Site` from script, so the attack always carries the marker that
+scopes it in. Same shape as #864's Host check.
+
+That also resolves the issue's part 2 for free: refusing `same-site` was on the table to close the
+sibling-subdomain attacker, but a same-site form still cannot send `application/json` — so this
+closes it without the breakage refusing `same-site` would cause to multi-subdomain deployments.
+
+**Verified before designing, and it changed the design.** The dashboard sends genuine bodyless
+writes (`medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` via `api()` with no body and no
+`Content-Type`). Requiring the header on every browser write would have broken the operator's own UI
+to close nothing — a request with no body carries no forged payload. Keyed on a body being present
+instead. Grepping `public/` for this was the step that caught it; assuming would have shipped it.
+
+**Part 3 was a ratification, not code.** `security-model.md`'s CSRF acceptance rested on "no
+cookies, no tokens, no session state in the browser" — exactly what shipping browser-cached HTTP
+Basic invalidates. CSRF is now IN SCOPE, with all three guards recorded and, more importantly, their
+**residuals** written down rather than implied: `same-site` is still allowed at guard 1, and a
+bodyless same-site write to a route that acts without a body is not covered.
+
+**Mutation-verified on the arms not touched**, which is the failure this branch's predecessor
+repeated four times: removing the guard reddens six tests; dropping `hasBody` reddens the dashboard
+test; dropping the browser scoping reddens the agent-API test *and* a #864 test.
+
+**Classification:** fix
+
+**Critic round 1 (rev-20260804T094546Z-e54bf7ca, 0 blocking / 2 warnings) — the important catch was
+a break in code this repo does not own.** The guard runs ahead of route matching, so it also
+governed `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*`. `public/openclaw-view.js` iframes
+`/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside TC's page and
+its fetches are browser-shaped: the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+idiom is labelled `text/plain` by the browser and would have taken a 415 before reaching the
+gateway. Grepping `public/` — the step that correctly caught the bodyless-write case — structurally
+cannot see a third party's client. Now confined to `/api/`; those prefixes keep guards 1 and 2,
+which is what they had before, and the residual is recorded.
+
+Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
+re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.
