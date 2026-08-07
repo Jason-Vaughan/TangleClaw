@@ -257,17 +257,46 @@ describe('Setup Wizard', () => {
   describe('GET /api/engines — the re-probe branch', () => {
     const engines = require('../lib/engines');
 
-    /** An install with no engine profiles at all, so nothing can be detected. */
-    async function withNoEngines(fn) {
+    /**
+     * Run `fn` with no engine profiles and a stub login shell that COUNTS its
+     * invocations.
+     *
+     * Counting, not timing: a shell that fails instantly makes a re-probe just
+     * as fast as no probe at all, so an elapsed-time bound passes whether the
+     * regression is present or not. And stubbed in every case, so none of these
+     * spawn the host's real login shell — this file is careful about host
+     * dependence everywhere else (the Caddy stub, the engine fixture).
+     *
+     * @param {(tally: () => number) => Promise<void>} fn - Receives a function
+     *   returning how many times the shell has been started.
+     */
+    async function withNoEnginesAndStubShell(fn) {
       const dir = path.join(tmpDir, 'engines');
       const stash = path.join(tmpDir, 'engines-stashed-probe');
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const tallyFile = path.join(shellDir, 'invocations');
+      const stubShell = path.join(shellDir, 'shell');
+      fs.writeFileSync(stubShell, '#!/bin/bash\necho x >> ' + tallyFile + '\nexit 1\n');
+      fs.chmodSync(stubShell, 0o755);
+      const savedShell = process.env.SHELL;
+
+      process.env.SHELL = stubShell;
       fs.renameSync(dir, stash);
       fs.mkdirSync(dir);
+      engines.resetDetectionCache();
+      const tally = () => (fs.existsSync(tallyFile)
+        ? fs.readFileSync(tallyFile, 'utf8').trim().split('\n').filter(Boolean).length
+        : 0);
       try {
-        await fn();
+        await fn(tally);
       } finally {
+        // Inside the finally, all of it: an assertion failure must not leak a
+        // deliberately-broken SHELL into every later test in this file, turning
+        // one red into a cascade.
+        process.env.SHELL = savedShell;
         fs.rmSync(dir, { recursive: true, force: true });
         fs.renameSync(stash, dir);
+        fs.rmSync(shellDir, { recursive: true, force: true });
         engines.resetDetectionCache();
       }
     }
@@ -276,56 +305,50 @@ describe('Setup Wizard', () => {
       // Unprobed + nothing available is the boot race: answering straight away
       // would report "we could not look" when the truth is "we have not looked
       // yet", which is the unknown-vs-known conflation this release removes.
-      await withNoEngines(async () => {
-        engines.resetDetectionCache();
+      await withNoEnginesAndStubShell(async (tally) => {
         assert.equal(engines.detectionProbeAttempted(), false, 'starts unprobed');
 
         const { status, data } = await request(server, 'GET', '/api/engines');
         assert.equal(status, 200);
         assert.equal(engines.detectionProbeAttempted(), true,
           'the route must resolve the PATH rather than shrug');
-        assert.equal(typeof data.detectionCertain, 'boolean');
+        assert.ok(tally() > 0, 'and it really did start a shell to do it');
+        assert.equal(data.detectionCertain, false,
+          'the stub shell cannot answer, so it reports honestly that it could not tell');
       });
     });
 
     it('does not re-probe on every request when the shell cannot answer', async () => {
       // The population this branch targets — no engine detected, shell that
       // will not answer — is exactly the one sitting on the engine step
-      // pressing buttons. Keyed on "did a probe SUCCEED" it would pay up to two
-      // shell starts on every list load, forever.
-      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
-      const brokenShell = path.join(shellDir, 'shell');
-      fs.writeFileSync(brokenShell, '#!/bin/bash\nexit 1\n');
-      fs.chmodSync(brokenShell, 0o755);
-      const savedShell = process.env.SHELL;
-      process.env.SHELL = brokenShell;
-
-      await withNoEngines(async () => {
-        engines.resetDetectionCache();
+      // pressing buttons. Keyed on "did a probe SUCCEED" it would pay two shell
+      // starts on every list load, forever. Mutation: key the route back on
+      // detectionWasProbed and the tally grows on the second request.
+      await withNoEnginesAndStubShell(async (tally) => {
         await request(server, 'GET', '/api/engines');
         assert.equal(engines.detectionWasProbed(), false, 'the shell did not answer');
         assert.equal(engines.detectionProbeAttempted(), true, 'but we did try');
+        const afterFirst = tally();
+        assert.ok(afterFirst > 0, 'the first request really did start a shell');
 
-        const started = Date.now();
-        const { data } = await request(server, 'GET', '/api/engines');
-        const elapsed = Date.now() - started;
-        assert.ok(elapsed < 2000,
-          `a second list must not pay for another probe (took ${elapsed}ms)`);
-        assert.equal(data.detectionCertain, false,
-          'and it still reports honestly that it could not tell');
+        await request(server, 'GET', '/api/engines');
+        assert.equal(tally(), afterFirst,
+          'a second list must not start another shell (' + afterFirst + ' then ' + tally() + ')');
       });
-
-      process.env.SHELL = savedShell;
-      fs.rmSync(shellDir, { recursive: true, force: true });
     });
 
     it('re-probes when the operator explicitly asks — that is what Check again is', async () => {
-      await withNoEngines(async () => {
-        engines.resetDetectionCache();
+      // Distinct from the case above: the guard must not become "never look
+      // again". Asserted on the tally GROWING, because the attempted flag is
+      // already true by then and would pass with the refresh handler deleted.
+      await withNoEnginesAndStubShell(async (tally) => {
         await request(server, 'GET', '/api/engines');
+        const afterFirst = tally();
+
         const { status } = await request(server, 'GET', '/api/engines?refresh=1');
         assert.equal(status, 200);
-        assert.equal(engines.detectionProbeAttempted(), true);
+        assert.ok(tally() > afterFirst,
+          'an explicit re-check must actually re-check (' + afterFirst + ' then ' + tally() + ')');
       });
     });
   });
