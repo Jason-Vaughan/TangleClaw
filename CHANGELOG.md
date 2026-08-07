@@ -1540,6 +1540,41 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **A killable scanner process, so a hung directory can no longer take the server's filesystem with
+  it.** (#883, chunk 1 — the mechanism only; nothing routes through it yet, so no behavior changes
+  in this entry.) A read of a TCC-protected macOS path does not fail, it never returns, and
+  `fs.promises` performs it on libuv's threadpool — four threads, shared by every async filesystem
+  call in the process. A deadline can abandon the promise but cannot cancel the syscall, so each
+  hung read costs a thread permanently. Four of them and the server can no longer touch the
+  filesystem **at all, on any path**, while `/api/health` still answers `200`.
+
+  New `lib/dir-scanner.js` supervises a forked `lib/dir-scanner-child.js`: filesystem work happens
+  in a process that can be killed, and the deadline kills it, which is the only way to reclaim a
+  thread blocked in the kernel. `worker_threads` cannot substitute — workers share the process-wide
+  pool and `terminate()` does not interrupt a blocked syscall. The child is long-lived rather than
+  forked per scan because the dashboard polls `GET /api/projects` every ten seconds for as long as a
+  tab is open, and a process spawn per poll is a permanent cost paid against a rare failure.
+
+  Collateral requests — work travelling in a child killed for a *sibling's* deadline — reject as
+  `tcAborted`, deliberately **not** `tcTimedOut`. Only `tcTimedOut` earns the Full Disk Access hint,
+  and their paths may be perfectly healthy; labelling them timed-out would reproduce the exact
+  misdiagnosis this work exists to remove.
+
+  **The regression test reproduces the defect rather than describing it.** A companion process
+  issues `UV_THREADPOOL_SIZE + 1` blocking reads through the shipped `projects._withTimeout`, then
+  times an ordinary `readdir` on an unrelated path: every call rejects on schedule and the readdir
+  never completes again — that assertion is the bug, executable. The same workload through the
+  scanner leaves the parent's `readdir` at ~35ms. Isolated in its own process because a test that
+  destroys its own threadpool would take the rest of the file with it; measured along the way,
+  such a process cannot even finish `process.exit(0)`, so it is SIGKILLed.
+
+  **What the test does not prove, stated plainly:** a real hung `readdir` is not reproducible in CI.
+  A FIFO — the one portable way to block a filesystem call — answers `readdir` with `ENOTDIR`
+  immediately (measured); only `open`/`readFile` blocks on one. The hang is therefore produced with
+  the operation that does block, in a fixture child standing in for the real one. That covers the
+  supervisor's contract against a genuinely blocked syscall holding a genuine pool thread, and
+  nothing specific to `readdir`.
+
 - **Seven tests stopped asking the host a question the code should answer.** The new
   no-engine refusal on `POST /api/setup/complete` broke `test/api-setup-https.test.js`, which had
   never needed an engine before: the bundled profiles detect real CLIs, so the suite passed on a
