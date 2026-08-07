@@ -434,6 +434,15 @@ function wizardProtectedRootFor(dir) {
  * for them this directory works fine. Nothing is blocked, and Next still scans.
  */
 function wizardUpdateDirAdvice() {
+  // Typing a new path invalidates whatever the last attempt concluded about the
+  // old one. Leaving them up offers to create a folder the operator is no
+  // longer asking about, under an error that is no longer true.
+  const staleError = document.getElementById('setupDirError');
+  if (staleError && !staleError.classList.contains('hidden')) {
+    staleError.classList.add('hidden');
+    staleError.textContent = '';
+    _showCreateDirOffer('', false);
+  }
   const el = document.getElementById('setupDirProtected');
   if (!el) return;
   const input = document.getElementById('setupProjectsDir');
@@ -482,8 +491,7 @@ async function wizardValidateDir() {
     // from here, in one click — and it is the one a stock Mac hits first, since
     // the pre-filled ~/Documents/Projects does not exist until someone makes
     // it. Telling them it is missing and stopping is accurate and useless.
-    _showCreateDirOffer(dir, api.lastErrorCode === 'BAD_REQUEST'
-      && /does not exist/i.test(api.lastError || ''));
+    _showCreateDirOffer(dir, api.lastErrorCode === 'DIR_MISSING');
     return;
   }
 
@@ -739,7 +747,11 @@ function _engineInstallOptionsHtml(list) {
     const name = typeof e.name === 'string' && e.name ? e.name : e.id;
     const install = e.install || {};
     const command = typeof install.command === 'string' ? install.command : '';
-    const docsUrl = typeof install.docsUrl === 'string' ? install.docsUrl : '';
+    // http(s) only. Engine profiles are operator-authored through the API and
+    // this value goes straight into an href — `javascript:` there is a script
+    // the page runs on click. An unusable link is dropped rather than rendered.
+    const rawDocs = typeof install.docsUrl === 'string' ? install.docsUrl : '';
+    const docsUrl = /^https?:\/\//i.test(rawDocs) ? rawDocs : '';
     if (!command && !docsUrl) {
       return `<div class="setup-engine-install">
         <div class="setup-engine-name">${esc(name)}</div>
@@ -809,6 +821,18 @@ async function wizardRecheckEngines() {
   const found = (data.engines || []).filter((e) => e && e.available);
   state.engines = data.engines || [];
   wizard.engines = data.engines || [];
+  if (found.length === 0) {
+    // Re-rendering the identical screen reads as a dead button. Say that the
+    // check ran and what it found, or the operator cannot tell "still nothing"
+    // from "nothing happened".
+    const note = document.getElementById('setupEngineCopyNote');
+    if (note) {
+      note.textContent = 'Checked again — still nothing found. If you just installed one, '
+        + 'make sure it runs by name in a new terminal window.';
+      note.classList.remove('hidden');
+    }
+    return;
+  }
   if (found.length > 0) {
     // Found one: seed the default so the picker that replaces this screen opens
     // on something real, then re-render into it.

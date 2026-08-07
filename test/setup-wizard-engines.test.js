@@ -236,6 +236,19 @@ describe('Setup wizard — engine step (#707)', () => {
         'a target=_blank link without noopener hands the opened page a handle back');
     });
 
+    it('drops a docs link that is not http(s)', () => {
+      // Engine profiles are operator-authored through the API and this value
+      // goes straight into an href. `javascript:` there is a script the page
+      // runs when someone clicks "Install instructions".
+      const hostile = [{ ...CLAUDE, available: false,
+        install: { command: 'npm i -g x', docsUrl: 'javascript:alert(1)' } }];
+      const ctx = loadSetup(hostile, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.doesNotMatch(html, /javascript:/i, 'the scheme must never reach the href');
+      assert.match(html, /npm i -g x/, 'and the usable half is still offered');
+    });
+
     it('says so plainly for an engine that carries no install info', () => {
       // Operator-added profiles are not required to tell us how they install.
       // An honest "we do not know" beats a guessed command.

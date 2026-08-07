@@ -1022,7 +1022,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // open: re-saving settings on a finished install must never be refused
   // because an engine was uninstalled later.
   if (body.setupComplete === true && wasSetupOpen) {
-    if (!engines.anyEngineInstalled()) {
+    if (!await engines.anyEngineInstalled()) {
       return errorResponse(res, 400,
         'No AI engine is installed, so there would be nothing to launch. Install one '
         + '(Claude Code, Codex, Aider or Antigravity), then press Check again.',
@@ -1595,12 +1595,12 @@ route('POST', '/api/setup/scan', async (_req, res, _params, body) => {
 // Unauthenticated by necessity: this is first-run setup, before any credential
 // exists. The constraint in `createProjectsDir` is therefore the boundary — one
 // level, inside the operator's home directory — not a stand-in for one.
-route('POST', '/api/setup/create-dir', (_req, res, _params, body) => {
+route('POST', '/api/setup/create-dir', async (_req, res, _params, body) => {
   if (!body || typeof body.directory !== 'string' || !body.directory.trim()) {
     return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
   }
 
-  const result = projects.createProjectsDir(body.directory);
+  const result = await projects.createProjectsDir(body.directory);
   if (!result.ok) {
     return errorResponse(res, 400, result.error, result.code);
   }
@@ -1609,7 +1609,7 @@ route('POST', '/api/setup/create-dir', (_req, res, _params, body) => {
 });
 
 // POST /api/setup/complete — Batch setup: update config + attach projects
-route('POST', '/api/setup/complete', (req, res, _params, body) => {
+route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
@@ -1686,7 +1686,7 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // `refresh` because the operator has probably just installed one in another
   // window, which is the entire reason this request is being made again.
   if (firstRun) {
-    if (!engines.anyEngineInstalled()) {
+    if (!await engines.anyEngineInstalled()) {
       return errorResponse(
         res,
         400,
@@ -2512,10 +2512,14 @@ route('GET', '/api/system', (_req, res) => {
 // "Check again" calls: the operator has just installed an engine in another
 // window, and an installer that edits their shell profile changes the PATH
 // itself, not only what sits on it.
-route('GET', '/api/engines', (req, res) => {
+route('GET', '/api/engines', async (req, res) => {
   const refresh = new URL(req.url, 'http://localhost').searchParams.get('refresh') === '1';
-  const list = engines.listWithAvailability({ refresh });
-  jsonResponse(res, 200, { engines: list });
+  // Awaited, not run synchronously: resolving the login PATH means starting the
+  // operator's shell and running their profile, which is unbounded work someone
+  // else wrote. Doing that on the event loop inside a route is the defect this
+  // whole branch exists to remove.
+  if (refresh) await engines.refreshDetectionPath();
+  jsonResponse(res, 200, { engines: engines.listWithAvailability() });
 });
 
 // GET /api/engines/:id
@@ -6323,6 +6327,17 @@ if (require.main === module) {
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
     sessions.resyncMedusaListeners();
+    // Resolve the operator's login PATH once, here, so no request ever pays for
+    // it. launchd hands this service `/usr/bin:/bin:/usr/sbin:/sbin`, which
+    // contains none of the places an engine CLI actually installs (#346) — and
+    // reading the real PATH means starting their shell and running their
+    // profile, which is unbounded work that must not happen on the event loop
+    // inside a route. Fire-and-forget: detection falls back to this process's
+    // own PATH until it lands, which is exactly what it did before.
+    engines.refreshDetectionPath().catch((err) => {
+      log.warn('Could not resolve the login PATH at boot; engine detection will see only '
+        + 'the PATH launchd gave this service', { error: err && err.message });
+    });
   };
 
   // Loopback unless something is guarding the door — see lib/bind-policy.js.

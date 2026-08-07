@@ -47,9 +47,16 @@ Open http://localhost:3102 in your browser. On a fresh install, a **setup wizard
 through initial configuration:
 
 1. **Welcome** — overview of what TangleClaw does
-2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`)
-3. **Detect Projects** — scans the directory for existing projects (git repos, TangleClaw or Prawduct markers) and lets you select which to attach
-4. **Engines** — shows which AI engines are detected on your system and lets you pick a default
+2. **Projects Directory** — set where your project folders live (defaults to `~/Documents/Projects`).
+   If that folder does not exist yet — it does not on a fresh Mac — the wizard offers to create it.
+   On macOS it also warns you when the path is under `~/Documents`, `~/Desktop` or `~/Downloads`,
+   which the system keeps background services out of (see below).
+3. **Detect Projects** — scans the directory for existing projects (a git branch, a
+   `.tangleclaw/project.json`, or a common project manifest) and lets you select which to attach
+4. **Engines** — shows which AI engines are detected and lets you pick a default. **Setup stops
+   here if none are installed**: TangleClaw's job is running an AI coding CLI, so an install
+   without one could not launch anything. It shows the install command for each engine and a
+   **Check again** button — install one in a terminal, press it, and setup continues.
 5. **Preferences** — delete protection password, idle chime toggle
 6. **HTTPS** — generate or select a certificate, or keep local HTTP
 7. **Admin Login** — the username and password you will sign in with (see below; this step is not always shown)

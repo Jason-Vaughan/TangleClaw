@@ -421,6 +421,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
+  matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
+  reported "safe" and the preflight said nothing — the same quiet-wrong-answer failure the
+  tilde-expansion guard beside it already exists to prevent. The wizard learned this first; this is
+  the sibling call site.
+
 - **Engine detection now looks where you actually installed it (#346).** TangleClaw's server runs
   under launchd, whose `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else — while every
   common way to install an engine CLI (npm `-g`, nvm, volta, Homebrew, pipx) puts it somewhere that

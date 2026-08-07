@@ -61,10 +61,19 @@ describe('engines', () => {
   // installed" about binaries the operator runs by name every day (#346).
   // Setup now REFUSES to finish with no engine, which turns that wrong answer
   // from a cosmetic label into a door the operator cannot open.
-  describe('_detectionPath — looking where the operator actually installed it (#346)', () => {
+  describe('detection PATH — looking where the operator actually installed it (#346)', () => {
     afterEach(() => engines.resetDetectionCache());
 
-    it('never loses a directory the server could already see', () => {
+    /** Write an executable fake shell that evaluates the command it is given. */
+    function fakeShell(body) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const file = path.join(dir, 'shell');
+      fs.writeFileSync(file, body);
+      fs.chmodSync(file, 0o755);
+      return { file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+    }
+
+    it('never loses a directory the server could already see', async () => {
       // The safety property. A login shell that answers with a NARROWER path
       // than launchd's — or fails outright — may only add candidates. Without
       // this, "fixing" detection could un-detect an engine that worked.
@@ -72,7 +81,7 @@ describe('engines', () => {
       process.env.PATH = '/tc-sentinel-one:/tc-sentinel-two';
       engines.resetDetectionCache();
       try {
-        const entries = engines._detectionPath().split(':');
+        const entries = (await engines.refreshDetectionPath()).path.split(':');
         assert.ok(entries.includes('/tc-sentinel-one'), 'the server PATH must survive the merge');
         assert.ok(entries.includes('/tc-sentinel-two'), 'every entry of it, not just the first');
       } finally {
@@ -81,14 +90,14 @@ describe('engines', () => {
       }
     });
 
-    it('de-duplicates without reordering', () => {
+    it('de-duplicates without reordering', async () => {
       const saved = process.env.PATH;
       process.env.PATH = '/tc-dup:/tc-dup:/tc-other';
       engines.resetDetectionCache();
       try {
-        const entries = engines._detectionPath().split(':');
-        const dupIndexes = entries.filter(e => e === '/tc-dup').length;
-        assert.equal(dupIndexes, 1, 'a repeated entry is searched once');
+        const entries = (await engines.refreshDetectionPath()).path.split(':');
+        assert.equal(entries.filter((e) => e === '/tc-dup').length, 1,
+          'a repeated entry is searched once');
         assert.ok(entries.indexOf('/tc-dup') < entries.indexOf('/tc-other'), 'order is preserved');
       } finally {
         process.env.PATH = saved;
@@ -96,15 +105,41 @@ describe('engines', () => {
       }
     });
 
-    it('resolves once and reuses it, until something asks it not to', () => {
-      // One login shell per cycle, not one per engine: it runs the operator's
-      // profile, which is unbounded work someone else wrote.
+    it('never spawns a shell from the synchronous accessor', async () => {
+      // The split that matters. `_detectionPath` is read inside request
+      // handlers, and resolving the login PATH means starting the operator's
+      // shell and running their profile — unbounded work someone else wrote.
+      // Before anything has resolved it, the accessor answers with what this
+      // process can see rather than blocking to find out. If it ever probes,
+      // this shell makes that unmissable.
+      const shell = fakeShell('#!/bin/bash\nsleep 30\n');
+      const savedShell = process.env.SHELL;
+      const savedPath = process.env.PATH;
+      process.env.SHELL = shell.file;
+      process.env.PATH = '/tc-sentinel-sync';
+      engines.resetDetectionCache();
+      try {
+        const started = Date.now();
+        const answer = engines._detectionPath();
+        assert.ok(Date.now() - started < 500, 'the accessor must answer immediately');
+        assert.equal(answer, '/tc-sentinel-sync', 'with the PATH this process already has');
+      } finally {
+        process.env.SHELL = savedShell;
+        process.env.PATH = savedPath;
+        engines.resetDetectionCache();
+        shell.cleanup();
+      }
+    });
+
+    it('reuses the resolved PATH until something asks it not to', async () => {
+      await engines.refreshDetectionPath();
       const first = engines._detectionPath();
       const saved = process.env.PATH;
       process.env.PATH = '/tc-changed-underneath';
       try {
         assert.equal(engines._detectionPath(), first, 'the cached answer is reused');
-        assert.ok(engines._detectionPath(true).split(':').includes('/tc-changed-underneath'),
+        const refreshed = await engines.refreshDetectionPath();
+        assert.ok(refreshed.path.split(':').includes('/tc-changed-underneath'),
           'and a refresh — what "Check again" asks for — re-reads it');
       } finally {
         process.env.PATH = saved;
@@ -112,58 +147,58 @@ describe('engines', () => {
       }
     });
 
-    it('survives a shell that prints a banner before answering', () => {
+    it('survives a shell that prints a banner before answering', async () => {
       // The probe runs the operator's INTERACTIVE rc, because ~/.zshrc is where
       // most PATH edits live and zsh reads it only for interactive shells.
       // Interactive rc files also greet you — version notices, prompt
       // frameworks, "you have mail". Taking all of stdout as the answer yields
       // a PATH with a banner glued to the front of it.
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
-      const fakeShell = path.join(dir, 'noisy-shell');
-      fs.writeFileSync(fakeShell,
+      const shell = fakeShell(
         '#!/bin/bash\n'
         + 'echo "Welcome to your shell! 3 updates available."\n'
         + 'PATH=/tc-from-profile:$PATH\n'
-        + 'eval "$2"\n');
-      fs.chmodSync(fakeShell, 0o755);
-
+        + 'eval "$2"\n'
+      );
       const savedShell = process.env.SHELL;
-      process.env.SHELL = fakeShell;
+      process.env.SHELL = shell.file;
       engines.resetDetectionCache();
       try {
-        const entries = engines._detectionPath().split(':');
+        const probe = await engines.refreshDetectionPath();
+        assert.equal(probe.probed, true, 'a shell that answered counts as a real look');
+        const entries = probe.path.split(':');
         assert.ok(entries.includes('/tc-from-profile'),
           'the PATH the profile set must be picked up');
         for (const entry of entries) {
           assert.doesNotMatch(entry, /Welcome|updates available/,
-            `the banner must not become a PATH entry (got "${entry}")`);
+            'the banner must not become a PATH entry (got "' + entry + '")');
         }
       } finally {
         process.env.SHELL = savedShell;
         engines.resetDetectionCache();
-        fs.rmSync(dir, { recursive: true, force: true });
+        shell.cleanup();
       }
     });
 
-    it('falls back to the server PATH when the shell never answers', () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
-      const brokenShell = path.join(dir, 'broken-shell');
-      fs.writeFileSync(brokenShell, '#!/bin/bash\nexit 1\n');
-      fs.chmodSync(brokenShell, 0o755);
-
+    it('reports that it could NOT look when no shell answers', async () => {
+      // The difference between "not installed" and "we could not look" now
+      // decides whether an operator can finish setup at all, so the probe has
+      // to say which one happened rather than returning a bare PATH.
+      const shell = fakeShell('#!/bin/bash\nexit 1\n');
       const savedShell = process.env.SHELL;
       const savedPath = process.env.PATH;
-      process.env.SHELL = brokenShell;
+      process.env.SHELL = shell.file;
       process.env.PATH = '/tc-sentinel-fallback';
       engines.resetDetectionCache();
       try {
-        assert.deepEqual(engines._detectionPath().split(':'), ['/tc-sentinel-fallback'],
-          'a shell that refuses to answer leaves detection where it already was');
+        const probe = await engines.refreshDetectionPath();
+        assert.equal(probe.probed, false, 'a shell that refused to answer is not a look');
+        assert.deepEqual(probe.path.split(':'), ['/tc-sentinel-fallback'],
+          'and detection is left exactly where it already was');
       } finally {
         process.env.SHELL = savedShell;
         process.env.PATH = savedPath;
         engines.resetDetectionCache();
-        fs.rmSync(dir, { recursive: true, force: true });
+        shell.cleanup();
       }
     });
 
@@ -181,57 +216,61 @@ describe('engines', () => {
     });
   });
 
-  describe('detectEngine', () => {
-    it('should detect an available binary', () => {
-      // "node" should be available
-      const result = engines.detectEngine({
-        id: 'test-node',
-        detection: { strategy: 'which', target: 'node' }
-      });
-      assert.equal(result.id, 'test-node');
-      assert.equal(result.available, true);
-      assert.ok(result.path);
+  // The gate that refuses to finish setup is only as good as the detection
+  // behind it, and #346 is a standing report that this detection returns the
+  // wrong answer on a perfectly normal machine. A wrong "no engine" behind a
+  // hard gate is a first-run install with no way out: a Check again button that
+  // keeps saying no because the check is broken, not the machine.
+  describe('anyEngineInstalled — the gate must not lock on an answer it is unsure of', () => {
+    afterEach(() => engines.resetDetectionCache());
+
+    /** Write an executable fake shell. */
+    function fakeShell(body) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const file = path.join(dir, 'shell');
+      fs.writeFileSync(file, body);
+      fs.chmodSync(file, 0o755);
+      return { file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+    }
+
+    it('fails OPEN when the login shell could not be read', async () => {
+      const shell = fakeShell('#!/bin/bash\nexit 1\n');
+      const savedShell = process.env.SHELL;
+      const savedPath = process.env.PATH;
+      process.env.SHELL = shell.file;
+      // Nothing on the PATH, so no engine can possibly be detected.
+      process.env.PATH = '/tc-nothing-here';
+      engines.resetDetectionCache();
+      try {
+        assert.equal(await engines.anyEngineInstalled(), true,
+          'an uncertain answer must not become a locked door');
+      } finally {
+        process.env.SHELL = savedShell;
+        process.env.PATH = savedPath;
+        engines.resetDetectionCache();
+        shell.cleanup();
+      }
     });
 
-    it('should handle unavailable binary', () => {
-      const result = engines.detectEngine({
-        id: 'test-missing',
-        detection: { strategy: 'which', target: '__nonexistent_binary_12345__' }
-      });
-      assert.equal(result.id, 'test-missing');
-      assert.equal(result.available, false);
-      assert.equal(result.path, null);
-    });
-
-    it('should detect by path', () => {
-      const result = engines.detectEngine({
-        id: 'test-path',
-        detection: { strategy: 'path', target: '/usr/bin/env' }
-      });
-      assert.equal(result.available, true);
-      assert.equal(result.path, '/usr/bin/env');
-    });
-
-    it('should handle missing path', () => {
-      const result = engines.detectEngine({
-        id: 'test-path-missing',
-        detection: { strategy: 'path', target: '/nonexistent/binary' }
-      });
-      assert.equal(result.available, false);
-      assert.equal(result.path, null);
-    });
-
-    it('should handle unknown strategy', () => {
-      const result = engines.detectEngine({
-        id: 'test-unknown',
-        detection: { strategy: 'magic', target: 'foo' }
-      });
-      assert.equal(result.available, false);
-    });
-
-    it('should handle profile with no detection', () => {
-      const result = engines.detectEngine({ id: 'no-detect' });
-      assert.equal(result.available, false);
+    it('says no when it genuinely looked and found nothing', async () => {
+      // Fail-open must not mean "always open" — otherwise the gate is
+      // decoration. A shell that ANSWERS, with nothing installed on it, is a
+      // trustworthy no.
+      const shell = fakeShell('#!/bin/bash\nPATH=/tc-empty\neval "$2"\n');
+      const savedShell = process.env.SHELL;
+      const savedPath = process.env.PATH;
+      process.env.SHELL = shell.file;
+      process.env.PATH = '/tc-empty';
+      engines.resetDetectionCache();
+      try {
+        assert.equal(await engines.anyEngineInstalled(), false,
+          'a real look that found nothing is a real no');
+      } finally {
+        process.env.SHELL = savedShell;
+        process.env.PATH = savedPath;
+        engines.resetDetectionCache();
+        shell.cleanup();
+      }
     });
   });
 

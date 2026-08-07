@@ -203,7 +203,7 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
       // thing a brand-new install hits. Saying "does not exist" and stopping is
       // accurate and useless.
       const ctx = loadSetup('Directory does not exist: ~/Documents/Projects');
-      ctx.api.lastErrorCode = 'BAD_REQUEST';
+      ctx.api.lastErrorCode = 'DIR_MISSING';
       ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
 
       await ctx.wizardValidateDir();
@@ -227,6 +227,24 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
       assert.equal(ctx.document.getElementById('setupDirCreate').classList.contains('hidden'),
         true, 'a present-but-unreadable folder must not be offered a Create button');
     });
+  });
+
+  it('clears a stale error and offer when the operator types a different path', async () => {
+    // The verdict belonged to the OLD path. Left on screen it offers to create
+    // a folder nobody is asking about, under an error that is no longer true.
+    const ctx = loadSetup('Directory does not exist: ~/Documents/Projects');
+    ctx.api.lastErrorCode = 'DIR_MISSING';
+    ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+    await ctx.wizardValidateDir();
+    assert.equal(ctx.document.getElementById('setupDirCreate').classList.contains('hidden'), false);
+
+    ctx.document.getElementById('setupProjectsDir').value = '~/somewhere-else';
+    ctx.wizardUpdateDirAdvice();
+
+    assert.equal(ctx.document.getElementById('setupDirError').classList.contains('hidden'), true,
+      'the old error must not describe the new path');
+    assert.equal(ctx.document.getElementById('setupDirCreate').classList.contains('hidden'), true,
+      'and neither must the old offer');
   });
 
   it('still asks for a path before calling the server at all', async () => {
