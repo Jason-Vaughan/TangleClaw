@@ -9,6 +9,7 @@ const os = require('node:os');
 const { execSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -122,6 +123,13 @@ describe('HTTPS Setup API', () => {
     process.env.PATH = stubDir + path.delimiter + (origPath || '');
 
     store._setBasePath(baseDir);
+    // `POST /api/setup/complete` refuses to finish an install with no AI engine,
+    // and the bundled profiles detect real CLIs — so the seven tests below asked
+    // the host a question instead of the code: green on a Mac with Claude Code
+    // installed, `400 ENGINE_REQUIRED` on a CI runner with none. Satisfy the
+    // precondition deterministically, the same way every other suite that drives
+    // setup to completion already does.
+    installAlwaysAvailableEngine(baseDir);
     store.init();
 
     // This suite is about the HTTPS restart and the redirect URL it produces —
