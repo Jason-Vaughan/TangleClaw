@@ -340,6 +340,53 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A project merely NAMED "Medusa" is no longer mistaken for the switchboard checkout (#873).**
+  Reported from a third-party install, and structurally unreproducible here: on this machine a
+  project named Medusa *is* the switchboard repository, so the resolver's assumption was invisible.
+  `_medusaProjectPath()` selected `store.projects.getByNameCaseInsensitive('medusa')` and handed the
+  path straight to `readContract()` without ever asking whether that project was the Medusa
+  repository. The reporter had an ordinary website project registered under that name, so every
+  opted-in session launched carrying `### Medusa consumer contract — UNAVAILABLE` naming *their*
+  project's `docs/CONSUMER-CONTRACT.md` — TangleClaw diagnosing an unrelated project as a broken
+  Medusa install.
+
+  A display name is whatever the operator typed. It can locate a candidate; it cannot establish
+  identity. The name-match now only *finds* a candidate, and a **usable** consumer contract is what
+  corroborates it — present, this is a checkout; absent, it is a different project that happens to
+  share a name, and TangleClaw says so instead of naming it. The honest-absence message now reads
+  "no local Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH`, so an operator whose
+  checkout is registered under another name has a stated way out rather than a path to a project
+  they never connected to Medusa.
+
+  "Usable" is deliberately the *same* test the reader applies — readable and non-blank — via a new
+  `medusa.hasContract()`. Corroborating on mere existence would admit a project holding an empty or
+  unreadable `docs/CONSUMER-CONTRACT.md`, which the read then rejects: the same bug in miniature,
+  with the prime naming a project TangleClaw had just declined to trust.
+
+  Resolution is also **lazy**. The checkout resolver reads the project store and logs when it
+  rejects a candidate, so it is now passed as a thunk that `readContract` calls only if the override
+  did not answer. Otherwise an operator who took the remedy this feature itself recommends would
+  still get a warning naming their project on every launch that succeeded.
+
+  **The narrower bug was the visible one; the wider one was silent.** Because `readContract()`
+  already failed closed on a missing file, the reporter got a wrong *diagnosis* rather than a wrong
+  *contract*. Had their project happened to contain `docs/CONSUMER-CONTRACT.md`, that arbitrary
+  document would have been injected into every opted-in prime as the protocol contract. Requiring
+  corroboration closes both.
+
+  Identity is corroborated by the artifact rather than by a git remote deliberately: a remote check
+  misses forks and remote-less clones, and the contract doc is the thing actually being resolved.
+  A single `contractPathIn()` in `lib/medusa.js` derives the doc's location, and `hasContract()`
+  vets through it, so the location vetted and the location read cannot drift apart.
+
+  The name-match path had **no test coverage at all** — every existing test reaches the contract
+  through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. It is now exercised directly,
+  and each direction is pinned by its own mutation, each killing a different test: removing the
+  corroboration reddens the unrelated-project test, rejecting every candidate reddens the
+  genuine-checkout test (so the fix cannot degrade into simply disabling discovery), corroborating on
+  existence alone reddens the blank-contract tests, and resolving the checkout eagerly reddens the
+  override-short-circuit test.
+
 - **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
   outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
   open, the wrap still reported `done` — correctly, since the commit had already landed — and the
@@ -815,6 +862,52 @@ All notable changes to TangleClaw are documented in this file.
   `deploy/INGRESS.md` carries a one-line check and the remedy; in short, the file is narration
   rather than state, nothing reads it back, and `rm ~/.tangleclaw/logs/ingress-cutover.log*` is
   safe.
+
+- **A browser request body must be declared `application/json` — closing the CSRF class that made
+  the form attack a CORS *simple* request (#860).** `parseBody` JSON-parses any body whatever its
+  `Content-Type`, and the three encodings a `<form>` can send (`text/plain`,
+  `application/x-www-form-urlencoded`, `multipart/form-data`) are exactly the three that need no
+  preflight. So a page on another site could post a form to
+  `POST /api/auth/credential` — a route that authorizes on "arrived over loopback", reasoning that a
+  live gate means Caddy already authenticated the caller. In caddy mode TangleClaw still binds an
+  ungated `127.0.0.1` listener the operator's own browser reaches directly, so that reasoning never
+  covered browser traffic. The attacker cannot read the reply, which does not matter for a write:
+  the admin credential is already changed.
+
+  Requiring `application/json` forces a preflight the server never answers affirmatively, and a form
+  cannot send that type at all. **It also closes the `same-site` residual** the `Sec-Fetch-Site`
+  guard deliberately allows — a sibling-subdomain attacker — without refusing `same-site` outright,
+  which would break a legitimate multi-subdomain deployment.
+
+  **This was deferred from v5 as a breaking change to the agent-facing API, and it is not one.** The
+  check applies only to *browser-shaped* requests — those carrying `Sec-Fetch-Site` or `Origin`.
+  `curl`, scripts and the agent API send neither, so the guide's PortHub and shared-docs examples,
+  which show a JSON body and no header, keep working exactly as written. A browser cannot suppress
+  `Sec-Fetch-Site` from script, so the attack always carries the marker that brings it into scope.
+
+  **Confined to TangleClaw's own API, and that is not a detail.** The guard runs ahead of route
+  matching, so unscoped it would also govern `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*` —
+  reverse proxies whose browser client is not ours. `public/openclaw-view.js` iframes
+  `/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside our page:
+  any of its fetches using the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+  idiom — no explicit header, which the browser labels `text/plain;charset=UTF-8` — would take a 415
+  before reaching the gateway, and multipart attachment paths would break the same way. Imposing a
+  media-type contract on a third party's client through a proxy is not ours to do. Those prefixes
+  keep the cross-site and served-`Host` guards, exactly what they had before, so this is a narrower
+  new rule rather than a regression.
+
+  **Bodyless writes are unaffected, deliberately.** The dashboard sends genuine ones —
+  `medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` all go through `api()` with no body and no
+  `Content-Type` — and refusing them would break the operator's own UI to close nothing, since a
+  request with no body carries no forged payload. The remaining exposure is a bodyless *same-site*
+  write to a route that acts without one; `Sec-Fetch-Site` still refuses the cross-site case, which
+  is the one an arbitrary page can mount. Recorded in `security-model.md` rather than implied.
+
+  The security model's CSRF acceptance is **re-argued, not re-cited**. Its stated premise was "no
+  cookies, no tokens, no session state in the browser" — precisely what shipping browser-cached HTTP
+  Basic by default invalidates. CSRF is now in scope, with the three guards and their residuals
+  written down.
+
 
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**

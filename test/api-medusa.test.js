@@ -1623,6 +1623,71 @@ describe('MED-2K9P v2 T1 — medusa.readContract (consumer-contract resolution)'
     const got = medusa.readContract({});
     assert.deepEqual(got, { text: null, tried: [] });
   });
+
+  // #873 — the checkout resolver hits the project store and logs when it
+  // rejects a candidate. Calling it on a launch the override already answered
+  // means an operator who took the remedy the prime itself recommends still
+  // gets a per-launch warning naming their project. A thunk makes the laziness
+  // structural rather than a caller's good intention.
+  it('does not resolve the checkout at all when the override already answered', () => {
+    const envDoc = path.join(tempDir, 'override.md');
+    fs.writeFileSync(envDoc, '# Override Contract\n');
+    process.env.MEDUSA_CONTRACT_PATH = envDoc;
+
+    let calls = 0;
+    const got = medusa.readContract({ medusaProjectPath: () => { calls++; return tempDir; } });
+
+    assert.equal(got.source, envDoc, 'the override still resolves');
+    assert.equal(calls, 0, 'the checkout resolver must not run once the override has answered');
+  });
+
+  it('calls the checkout thunk when the override is absent', () => {
+    delete process.env.MEDUSA_CONTRACT_PATH;
+    const projDir = path.join(tempDir, 'medusa-thunk');
+    fs.mkdirSync(path.join(projDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(projDir, medusa.CONTRACT_RELATIVE_PATH), '# Thunk Contract\n');
+
+    let calls = 0;
+    const got = medusa.readContract({ medusaProjectPath: () => { calls++; return projDir; } });
+
+    assert.equal(calls, 1, 'with no override the thunk is the only way to reach a checkout');
+    assert.equal(got.text, '# Thunk Contract\n');
+  });
+});
+
+describe('#873 — medusa.hasContract (checkout corroboration)', () => {
+  let tempDir;
+
+  before(() => { tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-has-contract-')); });
+  after(() => { fs.rmSync(tempDir, { recursive: true, force: true }); });
+
+  it('corroborates a directory holding a non-blank contract', () => {
+    const root = path.join(tempDir, 'real');
+    fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, medusa.CONTRACT_RELATIVE_PATH), '# Real\n');
+    assert.equal(medusa.hasContract(root), true);
+  });
+
+  it('refuses a directory with no contract at all', () => {
+    const root = path.join(tempDir, 'bare');
+    fs.mkdirSync(root, { recursive: true });
+    assert.equal(medusa.hasContract(root), false);
+  });
+
+  it('refuses a BLANK contract — the same test readContract accepts on', () => {
+    const root = path.join(tempDir, 'blank');
+    fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, medusa.CONTRACT_RELATIVE_PATH), '  \n\t\n');
+    assert.equal(
+      medusa.hasContract(root), false,
+      'vetting must not admit a candidate the read then rejects'
+    );
+  });
+
+  it('refuses null/undefined rather than throwing on a path join', () => {
+    assert.equal(medusa.hasContract(null), false);
+    assert.equal(medusa.hasContract(undefined), false);
+  });
 });
 
 describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (TC#549, v2 T3)', () => {

@@ -122,6 +122,68 @@ node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded
 
 **Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
 
+## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
+
+<!-- prawduct: type=fix | scope=medusa-873 | status= -->
+
+**Why:** filed by a third-party installer (`GURULifeline`) — the class of report this machine
+structurally cannot reproduce, because here a project named Medusa genuinely *is* the switchboard
+repository, so the resolver's assumption never surfaced. `_medusaProjectPath()` took
+`store.projects.getByNameCaseInsensitive('medusa')` and passed `.path` to `medusa.readContract()`
+with no identity check. The reporter had an ordinary website project registered under that name, so
+every opted-in launch injected `### Medusa consumer contract — UNAVAILABLE` naming *their*
+project's `docs/CONSUMER-CONTRACT.md`, i.e. TangleClaw reporting an unrelated project as a broken
+Medusa install.
+
+Worth separating the two failures, because the visible one is the smaller: `readContract()` already
+fails closed on ENOENT, so the reporter got a wrong **diagnosis**, not a wrong contract. The silent
+one is that a project which happened to hold `docs/CONSUMER-CONTRACT.md` would have had that
+arbitrary document injected into every opted-in prime as the protocol contract. Corroboration
+closes both; the issue's own "expected behavior" only named the first.
+
+**What:** a display name is operator-chosen, so it can *locate* a candidate and cannot *establish*
+identity. `_medusaProjectPath()` (`lib/sessions.js`) now accepts the name-matched candidate only if
+`medusa.hasContract()` corroborates it, logging a WARN naming the rejected path when it does not,
+and returning null so the caller never speaks about it. The honest-absence note now reads "no local
+Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH` — an operator whose checkout is
+registered under a different name gets a stated way out instead of a path they never connected to
+Medusa. `contractPathIn()` is the single derivation of the doc's location, so the location vetted
+and the location read cannot drift.
+
+**Carried from the cumulative review (0 blocking; both items raised INDEPENDENTLY by two
+reviewers, which is why they were fixed rather than accepted):**
+- *Corroboration matched the reader.* `hasContract()` applies the same readable-and-non-blank test
+  `readContract()` accepts on. Existence alone would admit an empty or unreadable contract that the
+  read then rejects — the #873 shape in miniature, the prime naming a project just declined.
+- *Resolution made lazy.* `_medusaProjectPath` is passed to `readContract()` as a **thunk**, called
+  only if `MEDUSA_CONTRACT_PATH` did not resolve. Eager evaluation meant the store lookup and the
+  rejection WARN fired even on a launch the override had already answered — so an operator who took
+  the remedy this very fix recommends kept getting a per-launch warning naming their project.
+
+**Decision — artifact, not git remote.** The issue suggested validating "a known remote/marker".
+Remote-sniffing was rejected: it misses forks and remote-less clones, costs a git read per launch,
+and adds failure modes, while the contract doc is the artifact actually being resolved. The residual
+is an unrelated project named Medusa that *also* carries a non-blank `docs/CONSUMER-CONTRACT.md` —
+in which case the injected document is at least a consumer contract, and `MEDUSA_CONTRACT_PATH`
+overrides it.
+
+**Tests:** the name-match path had **zero** coverage — every prior test reaches the contract through
+the `MEDUSA_CONTRACT_PATH` seam, which is precisely why this shipped. `+4` in
+`test/sessions.test.js` (unrelated same-named project not selected and not named in the prime; a
+corroborated checkout still resolves and injects; a BLANK contract corroborates nothing; the env
+override still outranks a corroborated checkout) and `+6` in `test/api-medusa.test.js`
+(`hasContract` matrix incl. blank + null-safety; the override short-circuits the thunk; the thunk is
+reached when the override is absent). Four mutations, each killing a *different* test: guard forced
+false → unrelated-project test; guard forced true → genuine-checkout test; corroboration reduced to
+`existsSync` → both blank-contract tests; checkout resolved eagerly → override-short-circuit test.
+Full suite **5604 pass / 0 fail / 1 skip** on node v22.22.3, matching CI's
+`node --test 'test/*.test.js'` on node 22, and recorded as machine evidence via
+`prawduct-hook test-evidence record` (the review's one WARNING was that this tree had none).
+
+**Note:** landed while GitHub Actions was in a **major outage**, so the required `test` context could
+not report. Verified locally with CI's exact command and runtime; the PR still waits on the gate.
+
+
 ## 2026-08-04: one unreadable folder can no longer take down the server (#859)
 
 <!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
@@ -3459,3 +3521,55 @@ exempt, the loopback default is not, it closes on `setupComplete`, and Skip is c
 mutation-verified, including reverting to the exact two-axis form that was the blocking defect.
 
 **Classification:** fix
+
+## 2026-08-04: A browser body must be declared JSON, and CSRF is back in scope (#860)
+
+<!-- prawduct: type=fix | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** `parseBody` JSON-parses any body whatever its `Content-Type`, which is what made the form
+attack a CORS *simple* request — the three encodings a `<form>` can send are exactly the three
+needing no preflight, and none is `application/json`. Target is `POST /api/auth/credential`, which
+authorizes on "arrived over loopback"; in caddy mode TC still binds an ungated `127.0.0.1` listener
+the operator's own browser reaches directly, so that reasoning never covered browser traffic.
+
+**The deferral reason dissolved rather than being accepted.** #860 was held out of v5 because
+enforcing `Content-Type` breaks the documented agent-facing API. It only does if enforced on every
+caller. Scoped to *browser-shaped* requests — carrying `Sec-Fetch-Site` or `Origin` — it closes the
+whole class while `curl`, scripts and the agent API stay untouched, so the guide needs no change. A
+browser cannot suppress `Sec-Fetch-Site` from script, so the attack always carries the marker that
+scopes it in. Same shape as #864's Host check.
+
+That also resolves the issue's part 2 for free: refusing `same-site` was on the table to close the
+sibling-subdomain attacker, but a same-site form still cannot send `application/json` — so this
+closes it without the breakage refusing `same-site` would cause to multi-subdomain deployments.
+
+**Verified before designing, and it changed the design.** The dashboard sends genuine bodyless
+writes (`medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` via `api()` with no body and no
+`Content-Type`). Requiring the header on every browser write would have broken the operator's own UI
+to close nothing — a request with no body carries no forged payload. Keyed on a body being present
+instead. Grepping `public/` for this was the step that caught it; assuming would have shipped it.
+
+**Part 3 was a ratification, not code.** `security-model.md`'s CSRF acceptance rested on "no
+cookies, no tokens, no session state in the browser" — exactly what shipping browser-cached HTTP
+Basic invalidates. CSRF is now IN SCOPE, with all three guards recorded and, more importantly, their
+**residuals** written down rather than implied: `same-site` is still allowed at guard 1, and a
+bodyless same-site write to a route that acts without a body is not covered.
+
+**Mutation-verified on the arms not touched**, which is the failure this branch's predecessor
+repeated four times: removing the guard reddens six tests; dropping `hasBody` reddens the dashboard
+test; dropping the browser scoping reddens the agent-API test *and* a #864 test.
+
+**Classification:** fix
+
+**Critic round 1 (rev-20260804T094546Z-e54bf7ca, 0 blocking / 2 warnings) — the important catch was
+a break in code this repo does not own.** The guard runs ahead of route matching, so it also
+governed `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*`. `public/openclaw-view.js` iframes
+`/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside TC's page and
+its fetches are browser-shaped: the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+idiom is labelled `text/plain` by the browser and would have taken a 415 before reaching the
+gateway. Grepping `public/` — the step that correctly caught the bodyless-write case — structurally
+cannot see a third party's client. Now confined to `/api/`; those prefixes keep guards 1 and 2,
+which is what they had before, and the residual is recorded.
+
+Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
+re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.
