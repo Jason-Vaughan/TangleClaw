@@ -923,6 +923,88 @@ describe('projects', () => {
     });
   });
 
+  // The same wedge, the OTHER call site. The projects list was fixed; the
+  // first-run wizard's directory scan kept reading the operator's directory
+  // synchronously, so a fresh macOS install on the pre-filled default
+  // (~/Documents/Projects) still lost the whole server at wizard step 2 —
+  // before the operator had any working install to go back to. Reproduced on a
+  // clean macOS guest: an ordinary directory scanned 200 and left the server
+  // healthy; ~/Documents/Projects never answered and the process needed a
+  // launchctl kickstart.
+  describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {
+    const fsp3 = require('node:fs').promises;
+
+    it('answers at the deadline when the directory never responds', async () => {
+      // A never-settling readdir is the real shape: TCC does not deny the read,
+      // it declines to complete it. A rejecting stub would exercise an error
+      // path that this failure never reaches.
+      const realReaddir = fsp3.readdir;
+      fsp3.readdir = () => new Promise(() => {});
+      try {
+        const started = Date.now();
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        const elapsed = Date.now() - started;
+        assert.equal(result.ok, false, 'must report the failure, not pretend the directory was empty');
+        assert.ok(elapsed >= 4500 && elapsed < 9000,
+          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
+      } finally {
+        fsp3.readdir = realReaddir;
+      }
+    });
+
+    it('names Full Disk Access in the error the operator will read', async () => {
+      // The wizard renders this string verbatim. Without the remedy in it, the
+      // operator sees a directory they can open in Finder being refused for no
+      // stated reason — the state this whole change exists to prevent.
+      const realReaddir = fsp3.readdir;
+      fsp3.readdir = () => new Promise(() => {});
+      try {
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        assert.equal(result.code, 'SCAN_FAILED');
+        assert.match(result.error, /Full Disk Access/);
+        assert.match(result.error, /~\/Documents/);
+      } finally {
+        fsp3.readdir = realReaddir;
+      }
+    });
+
+    it('reports a missing directory as a bad request, not a scan failure', async () => {
+      const result = await projects.scanDirectoryForProjects(path.join(tmpDir, 'no-such-dir'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /does not exist/);
+    });
+
+    it('reports a file path as a bad request', async () => {
+      const filePath = path.join(tmpDir, 'not-a-dir.txt');
+      fs.writeFileSync(filePath, 'x');
+      const result = await projects.scanDirectoryForProjects(filePath);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /not a directory/);
+    });
+
+    it('classifies a marker-bearing directory as detected and a bare one as not', async () => {
+      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+      fs.mkdirSync(path.join(scanRoot, 'with-marker'));
+      fs.writeFileSync(path.join(scanRoot, 'with-marker', 'go.mod'), 'module example.com/x\n');
+      fs.mkdirSync(path.join(scanRoot, 'bare'));
+      fs.mkdirSync(path.join(scanRoot, '.hidden'));
+      fs.writeFileSync(path.join(scanRoot, 'loose-file.txt'), 'x');
+      try {
+        const result = await projects.scanDirectoryForProjects(scanRoot);
+        assert.equal(result.ok, true);
+        const names = result.projects.map(p => p.name).sort();
+        assert.deepEqual(names, ['bare', 'with-marker'],
+          'hidden directories and loose files are not candidate projects');
+        assert.equal(result.projects.find(p => p.name === 'with-marker').detected, true);
+        assert.equal(result.projects.find(p => p.name === 'bare').detected, false);
+      } finally {
+        fs.rmSync(scanRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('listAllProjects', () => {
     it('includes both registered and unregistered projects', async () => {
       // Create an unregistered directory

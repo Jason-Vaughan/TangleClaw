@@ -340,6 +340,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The first-run wizard no longer kills the server on a stock Mac (#859).** Step 2 of setup
+  scans the directory you point it at, and the value it pre-fills is `~/Documents/Projects` —
+  TCC-protected on macOS. A launchd-spawned node without Full Disk Access does not get `EPERM`
+  there: the `open()` never returns. Because that scan ran synchronously inside the request
+  callback, the blocked syscall stopped the event loop, and one click took down **every route in
+  the process** — no error, no log line, no recovery, with launchd still reporting the service
+  healthy. It needed a `launchctl kickstart`. Measured on a clean macOS guest, same server, back
+  to back: an ordinary directory returned `200` and left `/api/health` answering `200`; the
+  default directory never answered and the server was gone.
+
+  This is the same defect already fixed for `GET /api/projects`, at a call site that fix missed —
+  and the more dangerous of the two, because it fires before the operator has a working install
+  to go back to, and on the default configuration rather than an unlucky one.
+
+  `POST /api/setup/scan` now delegates to `projects.scanDirectoryForProjects`, which runs the
+  whole walk — `stat`, `readdir` and the per-directory marker checks — through `fs.promises` on
+  libuv's threadpool under a single 5-second deadline covering the entire scan, not each call
+  within it. A path that never answers now costs one threadpool slot and one request instead of
+  the server.
+
+  **And it says what to do about it.** There is nothing to degrade to here — the operator asked
+  about one specific directory — so the failure is reported rather than silently shortened, and a
+  deadline failure carries the remedy: grant Full Disk Access, or choose a directory outside
+  `~/Documents`, `~/Desktop` and `~/Downloads`. The wizard now renders the server's message
+  instead of its own "Directory not found or not accessible", which was actively misleading for
+  this failure — the directory *is* there, and the operator can open it in Finder.
+
+  The regression test asserts the property that matters rather than the response alone: a 200ms
+  timer set while the scan is outstanding must still fire on time. It stubs the synchronous
+  readdir as well as the async one, so reverting the route to `fs.readdirSync` turns the test red
+  instead of leaving it green.
+
 - **Whether you are protected is now decided in one place, and an unknown state fails safe
   (#861).** The wizard's terminal screens decided "is anything enforcing a login?" by comparing
   `ingress.protection` against a literal list of states — once in `server.js` and twice in

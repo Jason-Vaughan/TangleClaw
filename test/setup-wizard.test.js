@@ -239,6 +239,58 @@ describe('Setup Wizard', () => {
       assert.equal(goFound.detected, true, 'go.mod should trigger detection');
     });
 
+    // #859, second call site. On a stock macOS install the directory this route
+    // scans is ~/Documents/Projects, which TCC blocks for a launchd-spawned
+    // node with no Full Disk Access — and it blocks by never completing the
+    // open(), not by returning EPERM. Read synchronously that stopped the event
+    // loop, so one click on wizard step 2 killed every route in the process,
+    // permanently, with launchd still reporting it healthy.
+    it('keeps the event loop free and answers when the directory never responds', async () => {
+      const blocked = path.join(tmpDir, 'blocked-projects');
+      fs.mkdirSync(blocked, { recursive: true });
+
+      const fsp = require('node:fs').promises;
+      const realAsync = fsp.readdir;
+      const realSync = fs.readdirSync;
+
+      // Both shapes are stubbed on purpose. The async stub reproduces the real
+      // failure (a read that neither resolves nor rejects); the SYNCHRONOUS one
+      // is the mutation guard — revert this route to fs.readdirSync and the
+      // spin below stalls the loop, which is what the assertions catch. Without
+      // it, restoring the defect would leave this test green.
+      fs.readdirSync = (p, o) => {
+        if (String(p) === blocked) {
+          const until = Date.now() + 3000;
+          while (Date.now() < until) { /* the kernel, not returning */ }
+          return [];
+        }
+        return realSync(p, o);
+      };
+      fsp.readdir = (p, o) => (String(p) === blocked ? new Promise(() => {}) : realAsync(p, o));
+
+      try {
+        const scan = request(server, 'POST', '/api/setup/scan', { directory: blocked });
+
+        // A timer that fires on schedule is proof the loop stayed free while
+        // the scan was outstanding — the property the whole fix is about, and
+        // one no assertion about the response alone can establish.
+        const timerSet = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const drift = Date.now() - timerSet;
+        assert.ok(drift < 1500,
+          `the scan must not block the event loop (200ms timer took ${drift}ms)`);
+
+        const { status, data } = await scan;
+        assert.equal(status, 400, 'the request must be answered, not left hanging');
+        assert.equal(data.code, 'SCAN_FAILED');
+        assert.match(data.error, /Full Disk Access/,
+          'the operator must be told the remedy, not just that it failed');
+      } finally {
+        fs.readdirSync = realSync;
+        fsp.readdir = realAsync;
+      }
+    });
+
       });
 
   describe('POST /api/setup/complete', () => {

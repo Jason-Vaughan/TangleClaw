@@ -198,10 +198,21 @@ You can also attach projects in bulk during the first-run setup wizard, or via t
 During the setup wizard, TangleClaw scans your `projectsDir` for directories that have:
 
 - A `.tangleclaw/project.json` file
-- A Prawduct governance directory (`.prawduct/`)
-- A git repository
+- A git repository (one with a branch)
+- A common project manifest — `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`,
+  `Makefile`, `Gemfile`, `pom.xml`, `build.gradle`, `CMakeLists.txt`, `setup.py`,
+  `composer.json` or `mix.exs`
 
-These are offered for batch attachment during setup.
+These are pre-ticked for batch attachment during setup. Every other subdirectory is still listed,
+just unticked — so you can attach something the markers do not recognise.
+
+**macOS: if the scan reports that the directory did not respond.** `~/Documents`, `~/Desktop` and
+`~/Downloads` are protected by macOS privacy controls (TCC). TangleClaw runs as a background
+service, which has no way to ask you for access, so a read of a protected directory does not fail —
+it simply never finishes. Either grant Full Disk Access to your `node` binary (System Settings →
+Privacy & Security → Full Disk Access), or keep your projects somewhere outside those three
+directories. The scan gives up after five seconds and tells you which it was, rather than waiting
+forever.
 
 ## Sessions
 

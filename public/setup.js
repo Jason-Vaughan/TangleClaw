@@ -405,7 +405,13 @@ async function wizardValidateDir() {
   const data = await apiMutate('/api/setup/scan', 'POST', { directory: dir });
   if (!data) {
     const err = document.getElementById('setupDirError');
-    err.textContent = 'Directory not found or not accessible.';
+    // Show what the server actually said. The generic line below is right for a
+    // wrong path and WRONG for the failure that strands people: on macOS a
+    // directory under ~/Documents exists, is readable by the operator, and
+    // still cannot be read by a launchd-spawned node without Full Disk Access.
+    // "Not found or not accessible" sends that operator to fix a path that has
+    // nothing wrong with it; the server's message names the real remedy.
+    err.textContent = api.lastError || 'Directory not found or not accessible.';
     err.classList.remove('hidden');
     return;
   }

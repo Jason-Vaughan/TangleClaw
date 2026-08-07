@@ -1504,74 +1504,24 @@ route('POST', '/api/setup/generate-cert', (_req, res, _params, body) => {
 });
 
 // POST /api/setup/scan — Scan a directory for existing projects
-route('POST', '/api/setup/scan', (_req, res, _params, body) => {
+//
+// The scan itself lives in lib/projects because it must run off the main thread
+// under a deadline: this route reads a directory the operator types in, and the
+// value the wizard pre-fills (~/Documents/Projects) is TCC-protected on macOS,
+// where a read does not fail — it never returns. Inline and synchronous, that
+// blocked the event loop and took the whole server down on the first click of a
+// fresh install (#859).
+route('POST', '/api/setup/scan', async (_req, res, _params, body) => {
   if (!body || typeof body.directory !== 'string') {
     return errorResponse(res, 400, 'directory is required', 'BAD_REQUEST');
   }
 
-  const dir = projects.resolveProjectsDir(body.directory);
-
-  if (!fs.existsSync(dir)) {
-    return errorResponse(res, 400, `Directory does not exist: ${body.directory}`, 'BAD_REQUEST');
+  const result = await projects.scanDirectoryForProjects(body.directory);
+  if (!result.ok) {
+    return errorResponse(res, 400, result.error, result.code);
   }
 
-  let stat;
-  try {
-    stat = fs.statSync(dir);
-  } catch (err) {
-    return errorResponse(res, 400, `Cannot access directory: ${err.message}`, 'BAD_REQUEST');
-  }
-  if (!stat.isDirectory()) {
-    return errorResponse(res, 400, `Path is not a directory: ${body.directory}`, 'BAD_REQUEST');
-  }
-
-  // Scan for projects in the specified directory
-  const detected = [];
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    return errorResponse(res, 400, `Failed to read directory: ${err.message}`, 'BAD_REQUEST');
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.')) continue;
-
-    const dirPath = path.join(dir, entry.name);
-
-    // Check for git
-    let gitInfo = null;
-    try {
-      const git = require('./lib/git');
-      gitInfo = git.getInfo(dirPath);
-    } catch {
-      // Not a git repo or git not available
-    }
-
-    // Check for TangleClaw config
-    const hasTangleclawConfig = fs.existsSync(path.join(dirPath, '.tangleclaw', 'project.json'));
-
-    // Check for common project manifest files
-    const PROJECT_MARKERS = [
-      'package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod',
-      'Makefile', 'Gemfile', 'pom.xml', 'build.gradle',
-      'CMakeLists.txt', 'setup.py', 'composer.json', 'mix.exs'
-    ];
-    const hasProjectMarker = PROJECT_MARKERS.some(m => fs.existsSync(path.join(dirPath, m)));
-
-    const isDetected = !!((gitInfo && gitInfo.branch) || hasTangleclawConfig || hasProjectMarker);
-
-    detected.push({
-      name: entry.name,
-      path: dirPath,
-      hasTangleclawConfig,
-      git: gitInfo ? { branch: gitInfo.branch, dirty: gitInfo.dirty } : null,
-      detected: isDetected
-    });
-  }
-
-  jsonResponse(res, 200, { projects: detected });
+  jsonResponse(res, 200, { projects: result.projects });
 });
 
 // POST /api/setup/complete — Batch setup: update config + attach projects
