@@ -114,23 +114,24 @@ describe('lib/dir-scanner — the healthy round trip', () => {
     assert.equal(scanner.childPid(), null);
   });
 
-  test('reads a directory and reports which entries are directories', async () => {
-    const dir = scratch('readdir');
+  test('carries a real walk result back across the process boundary', async () => {
+    const dir = scratch('walk');
     fs.mkdirSync(path.join(dir, 'a-project'));
     fs.writeFileSync(path.join(dir, 'a-file.txt'), 'x');
 
     const scanner = dirScanner.createScanner();
     try {
-      const { entries } = await scanner.request('readdir', { dir });
-      const byName = Object.fromEntries(entries.map((e) => [e.name, e]));
+      const { unregistered, truncated } = await scanner.request(
+        'listUnregistered', { dir, skipNames: [], budgetMs: 4000 }
+      );
 
-      assert.deepEqual(Object.keys(byName).sort(), ['a-file.txt', 'a-project']);
-      // Flattened booleans, not Dirent methods: a method does not survive the
-      // IPC hop, and a caller reading `entry.isDirectory` on the far side would
-      // get `undefined` and silently classify every entry as a file.
-      assert.equal(byName['a-project'].isDirectory, true);
-      assert.equal(byName['a-file.txt'].isDirectory, false);
-      assert.equal(byName['a-file.txt'].isFile, true);
+      // The walk's own behavior is pinned in test/dir-scanner-child.test.js.
+      // What THIS asserts is that a structured result survives the hop intact —
+      // the file excluded, the directory kept, the fields populated.
+      assert.deepEqual(unregistered.map(u => u.name), ['a-project']);
+      assert.equal(truncated, false);
+      assert.equal(unregistered[0].path, path.join(dir, 'a-project'));
+      assert.equal(unregistered[0].registered, false);
     } finally {
       await scanner.shutdown();
     }
@@ -142,7 +143,8 @@ describe('lib/dir-scanner — failures that are not hangs', () => {
     const scanner = dirScanner.createScanner();
     try {
       const err = await rejection(
-        scanner.request('readdir', { dir: path.join(tmpRoot, 'does-not-exist') })
+        scanner.request('scanEntries',
+          { dir: path.join(tmpRoot, 'does-not-exist'), budgetMs: 4000 })
       );
       // The wizard offers to CREATE a directory on ENOENT. If the condition did
       // not survive IPC as a value, that button would depend on matching prose.
@@ -404,6 +406,27 @@ describe('lib/dir-scanner — the deadline kills, it does not merely give up', (
     }
   });
 
+  test('an idle scanner does not hold the process open', async () => {
+    // Every stdio handle has to be unref'd, not just the child and the IPC
+    // channel: a piped stderr is a socket, and a socket with a `data` listener
+    // keeps the event loop alive by itself. When that was missed, every process
+    // that forked a scanner and did not explicitly shut it down simply never
+    // exited — the work finished, the assertions passed, and the runner hung
+    // afterwards with nothing failing to point at. A whole test file was lost to
+    // it before the cause was found, which is why this is pinned in a real
+    // process rather than by inspecting handles.
+    const script = `
+      const s = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'dir-scanner'))});
+      s.request('ping').then(() => {});
+    `;
+    const exited = await new Promise((resolve) => {
+      const child = execFile(process.execPath, ['-e', script], { timeout: 15000 },
+        (err) => resolve(!err));
+      child.on('error', () => resolve(false));
+    });
+    assert.ok(exited, 'a process that used the scanner and never shut it down must still exit');
+  });
+
   test('shutdown kills the child and refuses further work', async () => {
     const scanner = dirScanner.createScanner();
     await scanner.request('ping');
@@ -504,10 +527,25 @@ describe('lib/dir-scanner-child — serialisation helpers', () => {
 
   test('_plainError keeps the code, which callers branch on', () => {
     const err = Object.assign(new Error('nope'), { code: 'ENOENT' });
-    assert.deepEqual(_plainError(err), { message: 'nope', code: 'ENOENT' });
+    assert.deepEqual(_plainError(err),
+      { message: 'nope', code: 'ENOENT', tcTruncated: undefined });
+  });
+
+  test('_plainError carries tcTruncated but never lets the child claim tcTimedOut', () => {
+    // The distinction is the difference between "your folder is big and your
+    // disk is slow" and "grant Full Disk Access". A walk that ran out of budget
+    // may say the first; only the supervisor's own deadline may say the second,
+    // so a child that sets `tcTimedOut` must not be believed.
+    const truncated = Object.assign(new Error('gave up'), { tcTruncated: true });
+    assert.equal(_plainError(truncated).tcTruncated, true);
+
+    const impostor = Object.assign(new Error('not yours to declare'), { tcTimedOut: true });
+    assert.equal(_plainError(impostor).tcTimedOut, undefined,
+      'only the supervisor may declare a path unresponsive');
   });
 
   test('_plainError survives something that is not an Error', () => {
-    assert.deepEqual(_plainError('just a string'), { message: 'just a string', code: undefined });
+    assert.deepEqual(_plainError('just a string'),
+      { message: 'just a string', code: undefined, tcTruncated: undefined });
   });
 });

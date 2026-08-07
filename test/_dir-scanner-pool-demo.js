@@ -10,9 +10,13 @@
  * would take every later test in the file down with it. The damage has to be
  * contained by exiting.
  *
- * WHY IT USES `projects._withTimeout` AND NOT A COPY. The claim being made is
- * about the code that ships, so `leak` mode calls the real exported helper. A
- * lookalike could drift into demonstrating something the product no longer does.
+ * WHY THE LEAKING HELPER LIVES HERE NOW. `leak` mode used to call
+ * `projects._withTimeout`, the real shipped helper, so the demonstration could not
+ * be dismissed as a strawman. Chunk 2 moved every operator-path read into the
+ * scanner child and that helper became dead code, so keeping it in `lib/` purely
+ * to be a fixture would misrepresent the product to anyone reading it. It is
+ * reproduced below instead, verbatim — `git log -S_withTimeout -- lib/projects.js`
+ * shows the original, and `4b44b2e^` is the last commit where the product used it.
  *
  * Usage: node _dir-scanner-pool-demo.js <leak|scanner> <fifoDir>
  * Prints one line of JSON: {"mode":…,"rejections":N,"readdirMs":N|null,"readdirStuck":bool}
@@ -85,19 +89,44 @@ async function probeOrdinaryReaddir() {
  * @returns {Promise<number>} How many calls rejected as expected.
  */
 async function runLeak() {
-  const projects = require('../lib/projects');
   let rejections = 0;
 
   const races = [];
   for (let i = 0; i < HUNG_CALLS; i++) {
     const fifo = makeFifo(i);
     races.push(
-      projects._withTimeout(fsp.readFile(fifo), DEADLINE_MS, `reading ${fifo}`)
+      _withTimeoutAsItShipped(fsp.readFile(fifo), DEADLINE_MS, `reading ${fifo}`)
         .then(() => {}, () => { rejections++; })
     );
   }
   await Promise.all(races);
   return rejections;
+}
+
+/**
+ * `projects._withTimeout` as it shipped before this branch, reproduced verbatim.
+ *
+ * The rejection carries `tcTimedOut` so a caller could tell "this path is not
+ * answering" from an ordinary filesystem error. The underlying operation is NOT
+ * cancellable — it keeps occupying its threadpool slot — so this bounds the
+ * REQUEST, not the syscall. That limit is the whole of #883, and this function
+ * exists so the limit can be demonstrated rather than asserted.
+ *
+ * @param {Promise<any>} promise - Work to bound.
+ * @param {number} ms - Milliseconds to wait.
+ * @param {string} what - Short description used in the timeout message.
+ * @returns {Promise<any>}
+ */
+function _withTimeoutAsItShipped(promise, ms, what) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`timed out after ${ms}ms ${what}`);
+      err.tcTimedOut = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**

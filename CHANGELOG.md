@@ -463,6 +463,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A projects folder that never answers no longer costs the server its ability to read ANY
+  file.** (#883, chunk 2 — the fix reaching the routes.) `GET /api/projects`,
+  `POST /api/setup/scan` and `POST /api/setup/create-dir` now do their filesystem work in the
+  scanner child added in chunk 1, so a directory that hangs costs a disposable process instead of
+  one of the four libuv threadpool threads the whole server shares. Before this, four hung scans
+  left the server unable to touch the filesystem at all, on any path, permanently — while
+  `/api/health` still answered `200` and every later failure was misreported as a Full Disk Access
+  problem, sending operators to change a permission that was never at fault.
+
+  **Proven through the real route, not at the unit level:** `test/api-projects.test.js` issues
+  `UV_THREADPOOL_SIZE + 1` hung scans at one running server, then times an ordinary `readdir` on
+  an unrelated path. Verified by mutation — putting the hang back in the server process makes that
+  readdir never complete, which is the defect exactly.
+
+  A second win comes free: `git.getInfo` shells out with `execSync` from *inside* the walk, and a
+  synchronous call cannot be interrupted by any deadline. That is now in the child too, so a
+  directory whose `git` calls stall no longer blocks the server's event loop either. Its
+  two-minute cache moves with it, so a child killed for a hang starts cold — a few repeated `git`
+  calls after a kill, in exchange for never blocking the server.
+
+  **Known and NOT fixed by this, stated plainly:** `enrichProject` still calls
+  `fs.existsSync(project.path)` synchronously for every registered project on that same route, and
+  `engines.governanceState` reads more files under it. A *registered* project whose directory is
+  TCC-protected therefore still blocks the event loop, exactly as #859 described. The comment on
+  `listAllProjects` used to say the registered list "cannot be affected by a stuck filesystem";
+  that was overstated and now says so.
+
 - **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
   matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
   reported "safe" and the preflight said nothing — the same quiet-wrong-answer failure the

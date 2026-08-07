@@ -817,51 +817,71 @@ describe('projects', () => {
   // launchd still reporting the process alive. The dashboard loads this route, so
   // it was the first thing a new operator hit.
   describe('listAllProjects — a directory that never answers must not take the server down (#859)', () => {
-    const fsp2 = require('node:fs').promises;
+    const dirScanner = require('../lib/dir-scanner');
 
-    it('returns the registered projects instead of hanging forever', async () => {
-      // Simulate the real failure precisely: readdir that never settles. A
-      // rejecting stub would NOT reproduce it — the bug is a call that neither
-      // resolves nor rejects, which is why it was invisible to every error path.
-      const realReaddir = fsp2.readdir;
-      fsp2.readdir = () => new Promise(() => {});
+    /**
+     * Run `fn` with the scanner replaced, then restore it.
+     *
+     * The hang used to be injected by stubbing `fsp.readdir` in this process.
+     * Since #883 the walk happens in a child process, where a stub in this one
+     * cannot reach it — so the seam moved to the scanner call itself. What is
+     * being pinned here is unchanged: how `listAllProjects` DEGRADES when the
+     * scan does not come back. Whether the scanner really kills a hung child is
+     * `test/dir-scanner.test.js`'s job, and it is asserted against a genuinely
+     * blocked syscall there rather than a stub.
+     *
+     * @param {Function} fakeRequest - Stand-in for dirScanner.request.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fakeRequest, fn) {
+      const real = dirScanner.request;
+      dirScanner.request = fakeRequest;
       try {
-        const started = Date.now();
-        const list = await projects.listAllProjects();
-        const elapsed = Date.now() - started;
-        assert.ok(Array.isArray(list), 'must still answer with a list');
-        // Bounded tightly against the 5s deadline. A loose ceiling would pass
-        // even if the deadline stopped working and something else happened to
-        // end the wait.
-        assert.ok(elapsed >= 4500 && elapsed < 9000,
-          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
-        // Registered projects come from the database and are unaffected by a
-        // stuck filesystem; only discovery of unregistered folders is lost.
-        for (const p of list) {
-          assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
-        }
+        return await fn();
       } finally {
-        fsp2.readdir = realReaddir;
+        dirScanner.request = real;
+      }
+    }
+
+    /**
+     * The rejection a scan produces when the path never answered.
+     * @returns {Error}
+     */
+    function timedOut() {
+      return Object.assign(new Error('timed out after 5000ms reading /nowhere'),
+        { tcTimedOut: true });
+    }
+
+    it('returns the registered projects instead of failing the request', async () => {
+      const list = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.listAllProjects()
+      );
+      assert.ok(Array.isArray(list), 'must still answer with a list');
+      // Registered projects come from the database and are unaffected by a
+      // stuck filesystem; only discovery of unregistered folders is lost.
+      assert.ok(list.length > 0, 'the fixture must actually have registered projects to degrade to');
+      for (const p of list) {
+        assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
       }
     });
 
-    it('marks a deadline failure so the caller can name Full Disk Access', async () => {
-      // The hint is the whole operator-facing value of the degradation: without
-      // it the dashboard just shows fewer projects and nobody learns why. It is
-      // keyed on `tcTimedOut`, which distinguishes "this path never answered"
-      // from an ordinary filesystem error — so THAT is what gets pinned, on the
-      // real helper rather than on a mock. Delete the flag and this goes red.
-      const started = Date.now();
-      await assert.rejects(
-        () => projects._withTimeout(new Promise(() => {}), 60, 'reading /nowhere'),
-        (err) => {
-          assert.equal(err.tcTimedOut, true,
-            'a timeout must be distinguishable from a filesystem error');
-          assert.match(err.message, /timed out after 60ms reading \/nowhere/);
-          return true;
-        }
+    it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
+      // The two bounds are not redundant and their order is the whole point: the
+      // child stops itself first and hands back what it found, leaving the
+      // supervisor's kill as the backstop for a walk that never returns at all.
+      // Equal values let the kill win the tie, which throws away a partial answer
+      // and reports a responsive directory as unresponsive.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = { payload, opts }; return Promise.reject(timedOut()); },
+        () => projects.listAllProjects()
       );
-      assert.ok(Date.now() - started >= 55, 'must actually wait for the deadline');
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
+        `the walk budget (${seen.payload.budgetMs}ms) must be under the request deadline `
+        + `(${seen.opts.timeoutMs}ms)`);
     });
 
     it('names Full Disk Access and the safe directories when the path never answered', () => {
@@ -899,15 +919,16 @@ describe('projects', () => {
       const prevLevel = logger.getLevel();
       logger.setLevel('warn');
       logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
-      const fsp4 = require('node:fs').promises;
-      const realReaddir = fsp4.readdir;
-      fsp4.readdir = () => Promise.reject(Object.assign(new Error('timed out'), { tcTimedOut: true }));
+      const real = dirScanner.request;
+      dirScanner.request = () => Promise.reject(
+        Object.assign(new Error('timed out'), { tcTimedOut: true })
+      );
       return projects.listAllProjects().then(() => {
         const out = chunks.join('');
         assert.match(out, /Full Disk Access/,
           'the remedy must reach the log, not just exist in a helper');
       }).finally(() => {
-        fsp4.readdir = realReaddir;
+        dirScanner.request = real;
         logger.setConsoleStream(null);
         logger.setLevel(prevLevel);
       });
@@ -921,18 +942,20 @@ describe('projects', () => {
       assert.equal(projects._scanFailureHint(null), undefined);
     });
 
-    it('resolves normally when the work beats the deadline', async () => {
-      assert.equal(await projects._withTimeout(Promise.resolve('ok'), 5000, 'x'), 'ok');
-    });
+    // `_withTimeout`'s own two unit tests (the deadline fires and carries
+    // `tcTimedOut`; it resolves when the work wins) are gone with the helper.
+    // #883 moved every operator-path read into the scanner child, leaving the
+    // helper with no production caller, and keeping dead code alive to be a
+    // fixture misrepresents the module. Both contracts are asserted against the
+    // code that now owns them, in test/dir-scanner.test.js — and against a real
+    // blocked syscall rather than a never-settling stub.
 
     it('still answers when the directory read fails outright', async () => {
-      const realReaddir = fsp2.readdir;
-      fsp2.readdir = () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' }));
-      try {
-        assert.ok(Array.isArray(await projects.listAllProjects()));
-      } finally {
-        fsp2.readdir = realReaddir;
-      }
+      const list = await withScanner(
+        () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' })),
+        () => projects.listAllProjects()
+      );
+      assert.ok(Array.isArray(list));
     });
 
     it('keeps the directories it found when the walk runs out of time', async () => {
@@ -944,44 +967,57 @@ describe('projects', () => {
       // per directory, cached two minutes) — so a cold-cache load over a few
       // dozen unregistered folders would show NONE of them, with a log line as
       // the only trace. A discovery walk that ran out of budget still
-      // discovered what it got to. Mutation: throw instead of breaking, and
-      // unregistered.length goes to zero.
-      const realReaddir = fsp2.readdir;
-      const realAccess = fsp2.access;
-      const dir = projects.resolveProjectsDir(store.config.load().projectsDir);
-      const ENTRY_COUNT = 200;
-      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
-        name: `slow-proj-${i}`, isDirectory: () => true
-      }));
+      // discovered what it got to.
+      //
+      // The walk now truncates inside the scanner child, so THAT half is pinned
+      // in test/dir-scanner-child.test.js. What remains this file's job — and it
+      // is the half that regressed before — is that `listAllProjects` RENDERS a
+      // truncated result instead of treating it as a failure. Mutation: make the
+      // truncated branch degrade to the registered list and `found` goes to zero.
+      const partial = [
+        { id: null, name: 'walked-1', path: '/x/walked-1', registered: false, git: null },
+        { id: null, name: 'walked-2', path: '/x/walked-2', registered: false, git: null }
+      ];
+      const all = await withScanner(
+        () => Promise.resolve({ unregistered: partial, truncated: true }),
+        () => projects.listAllProjects()
+      );
+      const found = all.filter(p => p.registered === false);
+      assert.deepEqual(found.map(p => p.name).sort(), ['walked-1', 'walked-2'],
+        'the directories walked before the deadline must survive, not be discarded');
+    });
 
-      fsp2.readdir = (p, ...rest) => (String(p) === dir
-        ? Promise.resolve(dirents)
-        : realReaddir(p, ...rest));
-      // 200 × 60ms is twelve seconds of work against a five-second budget, so
-      // the walk must stop partway however fast the machine running this is.
-      fsp2.access = (p, ...rest) => (String(p).includes('slow-proj-')
-        ? new Promise((resolve) => setTimeout(resolve, 60))
-        : realAccess(p, ...rest));
-
+    it('says the list is SHORT rather than letting a truncated walk look complete', async () => {
+      // A silently-short list reads as "those directories are not there". The
+      // log line is the only place that distinction exists, so it is wiring
+      // worth pinning: delete the `truncated` branch and this goes red while
+      // the test above still passes.
+      const logger = require('../lib/logger');
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
       try {
-        const all = await projects.listAllProjects();
-        const found = all.filter(p => p.registered === false);
-        assert.ok(found.length > 0,
-          'the directories walked before the deadline must survive, not be discarded');
-        assert.ok(found.length < ENTRY_COUNT,
-          `must have stopped at the deadline (${found.length} of ${ENTRY_COUNT})`);
+        await withScanner(
+          () => Promise.resolve({ unregistered: [], truncated: true }),
+          () => projects.listAllProjects()
+        );
+        assert.match(chunks.join(''), /SHORT, not empty/);
       } finally {
-        fsp2.readdir = realReaddir;
-        fsp2.access = realAccess;
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
       }
     });
 
-    it('reports an unregistered directory\'s TangleClaw config without a synchronous probe', async () => {
-      // The per-entry marker check here was still fs.existsSync — a bounded
-      // readdir followed by unbounded synchronous probes of what it returned is
-      // not a bounded scan, and it reads the same protected tree. Pinning the
-      // ANSWER, since the answer is what the sweep to fs.promises must not
-      // change: nothing else asserted this field for this function.
+    it('reports an unregistered directory\'s TangleClaw config, end to end', async () => {
+      // Pins the ANSWER, because the answer is what two successive rewrites of
+      // the mechanism underneath it must not change: this field was a synchronous
+      // `fs.existsSync`, then an awaited `fsp.access`, and is now an `access` in
+      // the scanner child, and nothing else asserts it for this function.
+      //
+      // Deliberately end-to-end against real directories through the real
+      // scanner — no stub anywhere — so it also proves the walk's result actually
+      // survives the process hop with this field intact.
       fs.mkdirSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw'), { recursive: true });
       fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
       fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
@@ -1090,40 +1126,87 @@ describe('projects', () => {
   });
 
   describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {
-    const fsp3 = require('node:fs').promises;
+    const dirScanner = require('../lib/dir-scanner');
 
-    it('answers at the deadline when the directory never responds', async () => {
-      // A never-settling readdir is the real shape: TCC does not deny the read,
-      // it declines to complete it. A rejecting stub would exercise an error
-      // path that this failure never reaches.
-      const realReaddir = fsp3.readdir;
-      fsp3.readdir = () => new Promise(() => {});
+    /**
+     * Run `fn` with the scanner replaced, then restore it.
+     *
+     * Same seam, and same reason, as the `listAllProjects` block above: since
+     * #883 the read happens in a child process, so a `fsp` stub in this one
+     * cannot reach it. These tests pin how the WIZARD reports a scan that did
+     * not come back; that the scanner really kills a hung child is asserted
+     * against a genuinely blocked syscall in test/dir-scanner.test.js.
+     *
+     * @param {Function} fakeRequest - Stand-in for dirScanner.request.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fakeRequest, fn) {
+      const real = dirScanner.request;
+      dirScanner.request = fakeRequest;
       try {
-        const started = Date.now();
-        const result = await projects.scanDirectoryForProjects(projectsDir);
-        const elapsed = Date.now() - started;
-        assert.equal(result.ok, false, 'must report the failure, not pretend the directory was empty');
-        assert.ok(elapsed >= 4500 && elapsed < 9000,
-          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
+        return await fn();
       } finally {
-        fsp3.readdir = realReaddir;
+        dirScanner.request = real;
       }
+    }
+
+    it('reports the failure instead of pretending the directory was empty', async () => {
+      // The dangerous wrong answer here is not an error, it is `ok: true` with
+      // an empty list — the operator ticks nothing, imports nothing, and
+      // concludes they have no projects.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(new Error('timed out after 5000ms'),
+          { tcTimedOut: true })),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SCAN_FAILED');
     });
 
     it('names Full Disk Access in the error the operator will read', async () => {
       // The wizard renders this string verbatim. Without the remedy in it, the
       // operator sees a directory they can open in Finder being refused for no
       // stated reason — the state this whole change exists to prevent.
-      const realReaddir = fsp3.readdir;
-      fsp3.readdir = () => new Promise(() => {});
-      try {
-        const result = await projects.scanDirectoryForProjects(projectsDir);
-        assert.equal(result.code, 'SCAN_FAILED');
-        assert.match(result.error, /Full Disk Access/);
-        assert.match(result.error, /~\/Documents/);
-      } finally {
-        fsp3.readdir = realReaddir;
-      }
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(new Error('timed out after 5000ms'),
+          { tcTimedOut: true })),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.code, 'SCAN_FAILED');
+      assert.match(result.error, /Full Disk Access/);
+      assert.match(result.error, /~\/Documents/);
+    });
+
+    it('words a TRUNCATED walk differently, and does not blame Full Disk Access', async () => {
+      // A walk that ran out of budget is the one failure a perfectly healthy
+      // machine produces — a very large directory, a slow disk. Offering Full
+      // Disk Access as the remedy sends the operator to change a setting that
+      // was never the problem. The flag has to survive the process hop for this
+      // sentence to be reachable at all.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(
+          new Error('checked 12 of 200 subdirectories in 4750ms and gave up'),
+          { tcTruncated: true }
+        )),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.code, 'SCAN_FAILED');
+      assert.match(result.error, /checked 12 of 200 subdirectories/,
+        'must say how far it got, so the operator can tell slow from blocked');
+      assert.doesNotMatch(result.error, /Full Disk Access — grant it/,
+        'a slow directory must not be diagnosed as a protected one');
+    });
+
+    it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = { payload, opts }; return Promise.resolve({ projects: [] }); },
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
+        'the child must give up before the supervisor kills it, so a slow walk can report');
     });
 
     it('reports a missing directory under its OWN code, not a generic bad request', async () => {
@@ -1145,104 +1228,12 @@ describe('projects', () => {
       assert.match(result.error, /not a directory/);
     });
 
-    it('stops probing markers once one has answered', async () => {
-      // Twelve concurrent probes to settle a question the first hit answers is
-      // twelve threadpool slots against a filesystem that may not return any of
-      // them. The short-circuit is the difference between costing one stuck
-      // slot per directory and costing twelve.
-      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
-      fs.mkdirSync(path.join(scanRoot, 'js-project'));
-      fs.writeFileSync(path.join(scanRoot, 'js-project', 'package.json'), '{}');
-
-      const realAccess = fsp3.access;
-      const probed = [];
-      fsp3.access = (p, ...rest) => {
-        if (String(p).startsWith(scanRoot)) probed.push(path.basename(String(p)));
-        return realAccess(p, ...rest);
-      };
-      try {
-        const result = await projects.scanDirectoryForProjects(scanRoot);
-        assert.equal(result.projects[0].detected, true);
-        // The TangleClaw config probe, then package.json — first in the marker
-        // list, and the last thing that should have been looked at.
-        assert.deepEqual(probed, ['project.json', 'package.json'],
-          'must stop at the first marker that answers');
-      } finally {
-        fsp3.access = realAccess;
-        fs.rmSync(scanRoot, { recursive: true, force: true });
-      }
-    });
-
-    it('abandons the walk at the deadline instead of running it to the end', async () => {
-      // The deadline answers the REQUEST; it cannot cancel the walk it raced.
-      // Left running, the walk keeps issuing filesystem calls into a path
-      // already known not to answer, and each one holds a libuv threadpool slot
-      // (four by default) until the kernel returns — which for the failure this
-      // guards is never. A few retries and every async filesystem call in the
-      // process is queued behind them, which is the wedge again by another
-      // route. Mutation: delete the per-entry deadline check and the walk runs
-      // every entry, well past the point anyone is waiting.
-      const realReaddir = fsp3.readdir;
-      const realAccess = fsp3.access;
-      const realStat = fsp3.stat;
-      let accessCalls = 0;
-      let entriesWalked = 0;
-      const fakeDir = '/tc-fake-scan-root';
-      const ENTRY_COUNT = 200;
-      const dirents = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
-        name: `proj-${i}`, isDirectory: () => true
-      }));
-
-      fsp3.stat = (p, ...rest) => (p === fakeDir
-        ? Promise.resolve({ isDirectory: () => true })
-        : realStat(p, ...rest));
-      fsp3.readdir = (p, ...rest) => (p === fakeDir
-        ? Promise.resolve(dirents)
-        : realReaddir(p, ...rest));
-      fsp3.access = (p, ...rest) => {
-        if (String(p).startsWith(fakeDir)) {
-          accessCalls++;
-          // One TangleClaw-config probe per entry, so this counts entries.
-          if (path.basename(String(p)) === 'project.json') entriesWalked++;
-          // Slow, but finite — the shape the deadline race alone cannot catch,
-          // because every individual call does eventually return.
-          return new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        return realAccess(p, ...rest);
-      };
-
-      try {
-        const result = await projects.scanDirectoryForProjects(fakeDir);
-        assert.equal(result.ok, false, 'a walk that cannot finish in budget must be reported');
-        // Without this the test passes vacuously: every other assertion here
-        // also holds if the stubs were never reached and the path simply 404'd.
-        assert.ok(entriesWalked > 0, 'the fixture must actually reach the walk');
-        assert.ok(entriesWalked < ENTRY_COUNT,
-          `must not have walked every entry (${entriesWalked} of ${ENTRY_COUNT})`);
-        // A walk that was being answered, just slowly, is not a Full Disk Access
-        // problem — and telling a healthy machine to change a privacy setting
-        // sends the operator to fix something that was never wrong.
-        assert.doesNotMatch(result.error, /Full Disk Access — grant it/,
-          'a slow directory must not be diagnosed as a TCC block');
-        assert.match(result.error, /checked \d+ of 200 subdirectories/,
-          'must say how far it got, so the operator can tell slow from blocked');
-
-        // Sample after a grace longer than one entry's worth of probes, so the
-        // entry that was in flight at the deadline has had time to finish and
-        // the next check to fire.
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        const settled = accessCalls;
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        assert.equal(accessCalls, settled,
-          `the walk must stop when the deadline passes (kept going: ${settled} → ${accessCalls})`);
-      } finally {
-        fsp3.stat = realStat;
-        fsp3.readdir = realReaddir;
-        fsp3.access = realAccess;
-      }
-    });
-
-    it('classifies a marker-bearing directory as detected and a bare one as not', async () => {
+    it('classifies real directories end to end, through the real scanner', async () => {
+      // The classification RULES are pinned in test/dir-scanner-child.test.js,
+      // where `fs` can be stubbed. This is the same question asked with no stub
+      // anywhere — real directories, real child process — so the two together
+      // catch both a wrong rule and a correct rule whose answer does not survive
+      // the hop. Deliberate duplication at two levels, not an oversight.
       const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
       fs.mkdirSync(path.join(scanRoot, 'with-marker'));
       fs.writeFileSync(path.join(scanRoot, 'with-marker', 'go.mod'), 'module example.com/x\n');
