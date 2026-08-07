@@ -15,6 +15,11 @@ All notable changes to TangleClaw are documented in this file.
   The error now carries a **Create it** button, and creating it continues straight into the scan the
   operator was already trying to run rather than making them press Next again.
 
+  **Measured on the same guest:** a missing `~/Documents/Projects` answers `400 DIR_MISSING`
+  immediately, Create it returns `200`, and — the part that was not obvious — scanning the folder
+  TangleClaw just created then works, where scanning a pre-existing one times out. macOS grants a
+  process access to what it creates, so this does not swap one dead end for another.
+
   The offer appears only for a folder that is genuinely absent. A folder that exists but cannot be
   read — the TCC case — does not get a Create button, because creating it is not the fix and the
   button would do nothing but confuse.
@@ -72,6 +77,10 @@ All notable changes to TangleClaw are documented in this file.
 
   "Check again" re-reads your login PATH rather than reusing what the server resolved at boot: an
   installer that edits your shell profile changes the PATH itself, not only what sits on it.
+
+  **Measured on a clean guest with no engine installed:** `POST /api/setup/complete` and the Skip
+  path both answer `400 ENGINE_REQUIRED`, and `setupComplete` stays `false` — neither door closes
+  setup.
 
 - **Setup now warns you about a protected projects directory before you choose it, not after it
   fails (#859).** The wizard pre-fills `~/Documents/Projects`, and on macOS that is a directory a
@@ -524,6 +533,12 @@ All notable changes to TangleClaw are documented in this file.
   `~/Documents`, `~/Desktop` and `~/Downloads`. The wizard now renders the server's message
   instead of its own "Directory not found or not accessible", which was actively misleading for
   this failure — the directory *is* there, and the operator can open it in Finder.
+
+  **Confirmed on the machine the bug lives on**, not only in tests: on a clean macOS 26.3 guest
+  where node has no Full Disk Access, scanning an ordinary directory returns `200` and scanning
+  `~/Documents/Projects` returns `400` in five seconds with the remedy — and `/api/health` and
+  `/api/config` both still answer `200` afterwards. That request used to take the whole server
+  down.
 
   The regression test asserts the property that matters rather than the response alone: a 200ms
   timer set while the scan is outstanding must still fire on time. It stubs the synchronous
