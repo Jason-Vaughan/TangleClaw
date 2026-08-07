@@ -26,6 +26,110 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+<<<<<<< HEAD
+## 2026-08-06: one derivation of "are we protected", stated so an unknown state fails safe (#861)
+
+<!-- prawduct: type=fix | scope=ingress-861 | status= -->
+
+**Why:** last open item on the v5 gate. Raised by the cumulative Critic on the v5 bundle (R-9),
+filed rather than fixed. `ingress.protection` was produced by the server and its *meaning*
+re-derived by comparing against a literal list in three places — `server.js` (the warning push) and
+`public/setup.js` twice (screen routing, screen wording). Two sources of truth for a security
+decision, in front-end code, which is the same drift `lib/caddy.js` already refused for
+`safeToWrite`.
+
+**The substance is the direction of the predicate, not the de-duplication.** The lists enumerated
+the states meaning "NOT protected", so an unrecognised sixth value matched none and fell through to
+the branch that DISMISSES the warning — a newly-added state would silently stop telling an operator
+nothing is enforcing their login. Nothing fails; a screen stops appearing. Restating it as an
+allowlist of the ONE state where a gate was positively observed makes an unknown value fail safe.
+
+**What:** `deriveProtectionFlags(protection)` in `lib/ingress-provision.js` — exported, returning
+`{confirmedProtection, credentialStored}` (not pure: it logs a state it cannot classify, see
+below). `server.js` `Object.assign`s it onto `ingress`
+after the arm chain, and the warning push now reads `!confirmedProtection && !provisioning`
+(`provisioning` is set in the same block as `pending` and is its only producer — checked, not
+assumed). `public/setup.js` branches on the two booleans and **no longer reads the enum at all**:
+the only remaining `protection ===` in non-test code is the line inside the named function.
+
+**Deliberately behaviour-preserving on the screens.** `credentialStored` ended up a WIDER set than
+the pair the browser used to test (see the review block below), but the extra value is unreachable
+by the only consumer, so the screens are identical. These are the least-verified screens in the release (#802), so the commit
+that moves WHO decides must not also move WHAT is decided.
+
+**Extracted to a module rather than left inline, for a reason the tests surfaced.** ~25 browser
+fixtures had to start carrying the new contract; had the derivation stayed inline in a route
+handler, the tests would have had to re-implement it, recreating the third source of truth this
+removes. As an exported pure function it is unit-testable on its own — which is what turns the
+fail-safe property into a contract instead of an intention.
+
+**Delivery defect found while doing it, and fixed here because otherwise this change does not
+ship.** `public/setup.js` is loaded from `index.html` as a plain `<script src>` — not a navigate
+request — so it fell to `sw.js`'s cache-first branch with no `NETWORK_FIRST_PATHS` carve-out. A
+browser with an active service worker keeps serving the copy it first fetched, so every past and
+future wizard change was invisible to returning operators until `CACHE_NAME` moved. Now
+network-first. **Not** a `CACHE_NAME` bump: that tears down and reinstalls the worker for every
+browser, which behind the basic_auth gate is what produced the repeating credential prompt in #710.
+
+**Tests (+12), counted from the diff rather than estimated:** `test/ingress-provision.test.js`
+**+7** — `confirmed` only for the observed-gate state; an UNKNOWN state fails safe across six values
+incl. `null`/`undefined`/`''`; `credentialStored` reports the fact it is named for (including on the
+confirmed state); an unknown state is never reported as holding a credential; the two flags are
+orthogonal rather than exclusive; "saved but not confirmed" is their COMBINATION; and an
+unclassifiable state is logged (while a recognised one stays quiet).
+`test/setup-wizard-login-gate.test.js` **+3** — an unheard-of state does not dismiss; the browser
+obeys a server answer that CONTRADICTS the enum, which is what proves the second source of truth is
+gone; `setup.js` is network-first. `test/setup-provisioning.test.js` **+2** — the verdict log on the
+confirmed arm and on an unconfirmed one (plus flag assertions added to three existing cases).
+
+**Five mutations, each killing a different test.** The load-bearing one reverts the allowlist to the
+old denylist form: it agrees on all five known states and differs ONLY on an unknown one, and it
+reddens the fail-safe test specifically. Also: `credentialStored` forced false; the server not
+shipping the flags; the browser re-reading the enum; and `setup.js` dropped from
+`NETWORK_FIRST_PATHS` — that last one initially reddened NOTHING, which is how the sw.js change was
+caught as unpinned before review rather than during it. Full suite **5616 pass / 0 fail / 1 skip**.
+
+**Carried from the cumulative review (0 blocking, 10 warning, 6 note — all decided in one pass):**
+- **R-1/R-6 — I had the call-site count BACKWARDS**, and it shipped in four places (`server.js`
+  comment, the JSDoc, the test header, and `CHANGELOG.md`). The denylist was in `server.js` ONCE and
+  in `public/setup.js` TWICE — verified against `origin/main`, not taken on the reviewer's word. The
+  inversion mattered beyond pedantry: the browser held the majority of them, which is what made this
+  a re-deciding problem rather than a re-reading one.
+- **R-2/R-10/R-13 — `PROTECTION_CONFIRMED` was exported with no consumer.** Publishing the sentinel
+  invites exactly the fourth `protection === …` site this change exists to remove. Unexported.
+- **R-8 — the wire field lied in one state.** `credentialStored` was narrowed to "stored AND
+  unconfirmed", so `protection: 'existing'` shipped `false` while a credential was plainly stored.
+  Rather than rename it, the field now means what it says and is `true` there too: the two flags are
+  ORTHOGONAL facts and "saved but not confirmed" is their combination. Behaviour is unchanged (the
+  browser only reads it when protection is unconfirmed), but a public field on a security surface
+  must not answer `false` to a question whose answer is yes. The exclusivity test that encoded the
+  old wart was replaced by one asserting orthogonality plus one asserting the combination.
+- **R-14 — the fail-safe path was silent.** An unmapped value read as "not confirmed" and nobody
+  learned the map had drifted. It now logs, and the log is pinned (removing it reddens a test) —
+  including that a state it DOES understand stays quiet, since a warning that always fires is noise.
+- **R-7/R-12 — `api-contract.md` omitted the only fields a client may branch on.** Added, with the
+  orthogonality and the fail-safe direction stated.
+- **R-3 — the producing half was asserted on one arm only.** Added end-to-end assertions for
+  `pending` and `existing`.
+- **R-9 module header ("two things" → three), R-11 ephemeral `this chunk` reference in product
+  code** — both fixed.
+- **Accepted:** R-4 (figure accurate), R-5 (#802 descoped by the issue's own sequencing), R-15/R-16
+  (informational).
+
+**Observability, added in the review pass and pinned like any other behaviour.** Two log lines:
+`deriveProtectionFlags` warns on a state it cannot classify (otherwise the fail-safe path is
+indistinguishable from a correctly-classified one), and `POST /api/setup/complete` records its
+verdict on **every** arm. The second matters because every other log on that endpoint fires on a
+cutover or a failure, so a confirmed install left no server-side trace at all and "it says it is
+protected" was unanswerable. Logging both arms is also what makes an ABSENT line mean "the request
+never got here" rather than "everything was fine". Both are pinned by tests that go red when the
+line is removed — the verdict log was itself caught unpinned by the review, one commit after the
+same rule had been applied to the other one.
+
+**Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
+one pass, and this is the half a machine can do — the screens still need a real no-caddy install
+and a browser.
+=======
 ## 2026-08-06: the cutover log stops holding a credential hash, and stops growing (#821)
 
 <!-- prawduct: type=fix | scope=ingress-821 | status= -->
@@ -121,6 +225,7 @@ node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded
   would couple two lifecycles that must stay independent. R-17/R-18 informational.
 
 **Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
+>>>>>>> origin/main
 
 ## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
 

@@ -69,6 +69,15 @@ const NETWORK_FIRST_PATHS = new Set([
   // network-first index.html; both stay precached above for offline coherence.
   '/ui.js',
   '/style.css',
+  // setup.js runs the first-run wizard, including the terminal screens that tell an
+  // operator whether a login is in force. It was cache-first with no carve-out, so a
+  // browser with an active worker kept serving whatever copy it fetched first and any
+  // change to those screens stayed invisible — the same #271 stale-serve pattern
+  // called out for session.js and ui.js above, on the one screen whose whole job is to
+  // not be wrong about protection (#861). Network-first rather than a CACHE_NAME bump:
+  // a bump tears down and reinstalls the worker for every browser, which behind the
+  // basic_auth gate is what produced the repeating credential prompt in #710.
+  '/setup.js',
   '/landing.js',
   // sw-register.js is cache-bust-critical (category 1): its entire purpose is
   // service-worker lifecycle. Serving a stale copy would re-strand operators

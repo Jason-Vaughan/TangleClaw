@@ -1998,6 +1998,32 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     }
   }
 
+  // THE derivation of what `protection` MEANS, in one place, next to where the value
+  // is produced (#861). Before this, the same judgement was re-made by comparing the
+  // enum against a literal list in three places — once here and TWICE in
+  // `public/setup.js` — so the browser was a second source of truth for a security
+  // decision. There is no build step, so a shared constant module is not importable by
+  // `public/`; deriving server-side and shipping the ANSWER is the available correct
+  // form, and it is the same one `decideProvisioning` already uses for the
+  // provisioning table.
+  //
+  // Stated as an ALLOWLIST, and that inversion is the substance of the fix rather than
+  // a stylistic preference. The old lists enumerated the states meaning "not protected",
+  // so an unrecognised sixth value matched none of them and fell through to the path
+  // that DISMISSES the warning — a new state would silently stop telling the operator
+  // nothing is enforcing a login, which is the precise false-reassurance the v5 Secure
+  // Baseline exists to eliminate. Naming the one state that means "confirmed" instead
+  // makes an unknown value fail safe: not confirmed, so the operator is told.
+  //
+  // Which states produce which SCREEN is unchanged, deliberately: this change is a
+  // de-duplication, and these are the least-verified screens in the release (#802),
+  // so what is decided must not move in the same commit that moves WHO decides it.
+  // `credentialStored` is a wider set than the pair `public/setup.js` used to test —
+  // it includes the confirmed state, because the field is named for a fact and must
+  // report it — but that value is unreachable by the only consumer, which reads it
+  // solely inside the not-confirmed branch. Wider field, identical screens.
+  Object.assign(ingress, ingressProvision.deriveProtectionFlags(ingress.protection));
+
   // One place, after every branch, so the guarantee holds for outcomes that reach no
   // branch at all — `refuse` with no credential anywhere (no Caddy installed, or a
   // Caddyfile too ambiguous to adopt) sets `reason` from the plan and enters nothing
@@ -2008,18 +2034,32 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
   // because its `reason` describes a gate that IS in force ("will be kept rather than
   // replaced") — restating that as a warning invents a problem. 'pending' is excluded
   // too, but is inert rather than dangerous: `decideProvisioning` returns an empty
-  // reason for `provision`, so there is nothing to push in that state either way.
+  // reason for `provision`, so there is nothing to push in that state either way. Both
+  // exclusions now read off the derived answers rather than re-listing the enum:
+  // `provisioning` is set in the same block as 'pending' and is its only producer.
   //
   // The `includes` check is a forward interlock, not a live de-duplicator: no arm above
   // pushes this exact string today, so it never fires. It is here so that adding an arm
   // that does push `reason` cannot silently double it.
   if (ingress.reason
-      && (ingress.protection === 'none'
-        || ingress.protection === 'unchanged'
-        || ingress.protection === 'existing-unverified')
+      && !ingress.confirmedProtection
+      && !ingress.provisioning
       && !warnings.includes(ingress.reason)) {
     warnings.push(ingress.reason);
   }
+
+  // Whether setup ended with a login in force is the outcome this endpoint exists to
+  // get right, and until now only the unhappy arms left a trace: the confirmed arm
+  // dismissed into the dashboard silently, so a support question about an install
+  // that "says it is protected" had nothing on the server to read back. Logged at
+  // both outcomes so the record is symmetric — an absent line means the request never
+  // reached here, rather than meaning everything was fine.
+  log.info('Setup reported its protection verdict', {
+    protection: ingress.protection,
+    confirmedProtection: ingress.confirmedProtection,
+    credentialStored: ingress.credentialStored,
+    provisioning: ingress.provisioning === true
+  });
 
   // Decide whether to schedule a restart so the server re-binds with the new protocol
   const prevWillServeHttps = !!(prevHttps.enabled && prevHttps.certPath && prevHttps.keyPath);

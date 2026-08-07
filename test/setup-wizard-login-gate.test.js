@@ -250,7 +250,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         apiMutate: async (_url, _method, body) => {
           sent = body;
           return { ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
-            ingress: ingressResponse || { action: 'refuse', provisioning: false, protection: 'unchanged' } };
+            ingress: ingressResponse || { action: 'refuse', provisioning: false, protection: 'unchanged', credentialStored: true } };
         }
       });
       ctx.showWizard();
@@ -566,7 +566,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       // alone, so nothing is known to be enforcing it. Dismissing closed the
       // overlay that carried the server's own warning about exactly that.
       const { html, dismissed } = await completeWith({
-        action: 'refuse', provisioning: false, protection: 'unchanged',
+        action: 'refuse', provisioning: false, protection: 'unchanged', credentialStored: true,
         remedy: 'Run `node scripts/ingress-cutover.js --to caddy`.'
       });
       assert.equal(dismissed, false);
@@ -577,12 +577,63 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
 
     it('gives the same treatment to an adoption that could not be verified', async () => {
       const { html, dismissed } = await completeWith({
-        action: 'adopt', provisioning: false, protection: 'existing-unverified',
+        action: 'adopt', provisioning: false, protection: 'existing-unverified', credentialStored: true,
         reason: 'TangleClaw cannot tell whether they carry the same credential.'
       });
       assert.equal(dismissed, false);
       assert.match(html, /saved, but not confirmed/);
       assert.match(html, /cannot tell whether/);
+    });
+
+    it('#861: setup.js is network-first, or this fix never reaches an installed browser', async () => {
+      // Delivery, not behaviour — and without it the rest of this change is
+      // invisible to exactly the operators who have used TangleClaw before.
+      // setup.js is loaded from index.html as a plain <script src>, which is not
+      // a navigate request, so it fell to sw.js's cache-first branch: a browser
+      // with an active worker keeps serving whatever copy it fetched first,
+      // until CACHE_NAME moves. That is the #271 stale-serve pattern already
+      // carved out for session.js and ui.js, here on the one screen whose whole
+      // job is to not be wrong about whether a login is in force.
+      //
+      // Asserted against sw.js's source because the alternative fix — bumping
+      // CACHE_NAME — tears down and reinstalls the worker for every browser,
+      // which behind the basic_auth gate is what produced the repeating
+      // credential prompt in #710. Network-first achieves the same freshness
+      // with none of that blast radius.
+      const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+      const block = sw.match(/const NETWORK_FIRST_PATHS = new Set\(\[([\s\S]*?)\]\)/);
+      assert.ok(block, 'NETWORK_FIRST_PATHS is still declared as a Set literal');
+      assert.match(block[1], /'\/setup\.js'/,
+        'setup.js must be network-first so wizard changes are not stranded behind an active worker');
+    });
+
+    it('#861: a protection state this build has never heard of does NOT dismiss', async () => {
+      // The hazard the issue names. The browser used to decide "is this
+      // unprotected?" by matching against a literal list of states, so a value
+      // added server-side later matched nothing and fell through to the dismiss
+      // path — the wizard would quietly stop saying nothing is enforcing a
+      // login, and the operator would land on a dashboard indistinguishable from
+      // a protected one. It now reads the server's answer, so anything not
+      // positively confirmed shows the screen.
+      const { html, dismissed } = await completeWith({
+        action: 'refuse', provisioning: false, protection: 'a-state-added-after-this-build',
+        confirmedProtection: false, credentialStored: false,
+        reason: 'TangleClaw cannot confirm a login is in force.'
+      });
+      assert.equal(dismissed, false, 'an unrecognised state must not dismiss into the dashboard');
+      assert.match(html, /Nothing is asking for a password/);
+    });
+
+    it('#861: the browser obeys the server\'s answer rather than re-reading the enum', async () => {
+      // Deliberately contradictory: an enum value that USED to route to the
+      // unprotected screen, with the server saying protection is confirmed. If
+      // the browser still consulted `protection`, it would show the warning
+      // screen and this would fail. Pins that the second source of truth is gone.
+      const { dismissed } = await completeWith({
+        action: 'adopt', provisioning: false, protection: 'unchanged',
+        confirmedProtection: true, credentialStored: false, user: 'jason'
+      });
+      assert.equal(dismissed, true, 'the server owns the decision; the enum is not re-read');
     });
 
     it('carries the server\'s warnings onto the screen that replaces the one reporting them', async () => {
@@ -739,7 +790,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
     // shipped with no assertion at all — revert the lines and the suite stayed
     // green. These cases cover the family, not a member.
     // Each entry must actually REACH the screen it names. Two earlier versions of
-    // this table did not: a `restarting` row carrying `protection: 'unchanged'`
+    // this table did not: a `restarting` row carrying `protection: 'unchanged', credentialStored: true`
     // returned at the unprotected branch before the restart check, and a
     // `provisioning` row with an unreachable status route ended on 'unconfirmed'
     // rather than the success screen — so two mutations survived a suite that
@@ -766,11 +817,11 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       { name: 'unprotected', expect: /TangleClaw has no login/,
         ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
       { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
-        ingress: { action: 'refuse', provisioning: false, protection: 'unchanged' } },
+        ingress: { action: 'refuse', provisioning: false, protection: 'unchanged', credentialStored: true } },
       { name: 'adopted', expect: /did not change it/,
-        ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } },
       { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
-        ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
+        ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } }
     ];
 
     /** Finish setup with the given ingress block and report what the body became. */
@@ -816,7 +867,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         { name: 'unprotected', expect: /TangleClaw has no login/,
           ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: REASON } },
         { name: 'stored-unconfirmed', expect: /saved, but not confirmed/,
-          ingress: { action: 'refuse', provisioning: false, protection: 'existing-unverified', reason: REASON } }
+          ingress: { action: 'refuse', provisioning: false, protection: 'existing-unverified', credentialStored: true, reason: REASON } }
       ];
       for (const screen of printsTheReason) {
         const { html } = await endOn(screen, [REASON, OTHER]);
@@ -836,7 +887,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         // NOT /Setup finished/ — that string also appears on the failed-provisioning
         // screen, so it cannot prove this fixture landed on the adopted one.
         { name: 'adopted', expect: /did not change it/,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason', reason: REASON } },
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason', reason: REASON } },
         [REASON]
       );
       assert.equal(html.split(REASON).length - 1, 1,
@@ -1045,9 +1096,9 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         { name: 'no login', expect: /TangleClaw has no login/, restart: false,
           ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'no caddy' } },
         { name: 'adopted', expect: /did not change it/, restart: false,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } },
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } },
         { name: 'restarting', expect: /Restarting TangleClaw/, restart: true,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' } }
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' } }
       ];
       for (const c of CASES) {
         const ctx = loadSetup({
@@ -1120,7 +1171,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         plan: ADOPT_PLAN,
         apiMutate: async () => ({
           ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
-          ingress: { action: 'adopt', provisioning: false, protection: 'existing', user: 'jason' }
+          ingress: { action: 'adopt', provisioning: false, protection: 'existing', confirmedProtection: true, credentialStored: true, user: 'jason' }
         })
       });
       ctx.showWizard();

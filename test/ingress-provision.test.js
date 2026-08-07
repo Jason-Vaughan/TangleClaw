@@ -168,6 +168,99 @@ describe('decideProvisioning', () => {
   });
 });
 
+// #861 — this judgement used to be re-made by comparing `ingress.protection`
+// against a literal list in three places, once in server.js and twice in
+// public/setup.js, so the browser was a second source of truth for a security
+// decision. It now lives here once, and these tests are what make the
+// fail-safe property a contract rather than an intention.
+describe('deriveProtectionFlags (#861)', () => {
+  const derive = provision.deriveProtectionFlags;
+
+  it('confirms protection ONLY for the state where a gate was actually observed', () => {
+    assert.equal(derive('existing').confirmedProtection, true);
+    for (const state of ['none', 'pending', 'unchanged', 'existing-unverified']) {
+      assert.equal(derive(state).confirmedProtection, false,
+        `${state} means no gate was observed, so it must never read as confirmed`);
+    }
+  });
+
+  it('an UNKNOWN protection state fails safe — the operator is told, not dismissed', () => {
+    // The whole reason the predicate was inverted. The old form enumerated the
+    // states meaning "not protected", so a value it had never heard of matched
+    // none of them and fell through to the branch that DISMISSES the warning:
+    // adding a sixth state would have silently stopped telling an operator that
+    // nothing was enforcing a login. This is the assertion that stops that
+    // returning — it must hold for any value, not just the five known today.
+    for (const unknown of ['adopted-pending-reload', 'partially-enforced', '', null, undefined]) {
+      assert.equal(derive(unknown).confirmedProtection, false,
+        `an unrecognised state (${String(unknown)}) must never read as confirmed protection`);
+    }
+  });
+
+  it('reports whether a credential EXISTS, independently of whether it is enforced', () => {
+    // Selects the WORDING of the unprotected screen — "your login is saved but
+    // not confirmed" vs "there is no login" — but it is named for a fact and so
+    // must report that fact everywhere, including the confirmed state. A public
+    // field on a security surface answering `false` while a credential IS stored
+    // is a trap, even if today's only reader never looks there.
+    assert.equal(derive('unchanged').credentialStored, true);
+    assert.equal(derive('existing-unverified').credentialStored, true);
+    assert.equal(derive('existing').credentialStored, true,
+      'a gate that was observed obviously has a credential behind it');
+    assert.equal(derive('none').credentialStored, false);
+    assert.equal(derive('pending').credentialStored, false);
+  });
+
+  it('never reports an unknown state as holding a stored credential either', () => {
+    assert.equal(derive('some-future-state').credentialStored, false);
+  });
+
+  it('the flags are orthogonal — neither implies the other', () => {
+    // The combination is the consumer's job. Asserting exclusivity here would
+    // re-encode "stored means unconfirmed", which is the conflation this pair
+    // exists to take apart.
+    assert.deepEqual(derive('existing'), { confirmedProtection: true, credentialStored: true });
+    assert.deepEqual(derive('unchanged'), { confirmedProtection: false, credentialStored: true });
+    assert.deepEqual(derive('none'), { confirmedProtection: false, credentialStored: false });
+  });
+
+  it('says so when it meets a state it cannot classify', () => {
+    // The fail-safe path is correct but SILENT: an unmapped value reads as "not
+    // confirmed", the operator gets the warning screen, and nobody ever learns a
+    // state was added without being classified here. The log line is the only
+    // signal that the map has drifted, so it is pinned like any other behaviour.
+    const logger = require('../lib/logger');
+    const captured = [];
+    const prevLevel = logger.getLevel();
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (s) => captured.push(s) });
+    try {
+      derive('a-state-nobody-mapped');
+      derive('existing');
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel(prevLevel);
+    }
+    const joined = captured.join('');
+    assert.match(joined, /Unclassified ingress protection state/);
+    assert.match(joined, /a-state-nobody-mapped/, 'the offending value is named, or it is undiagnosable');
+    assert.equal(/existing/.test(joined.replace(/a-state-nobody-mapped/g, '')), false,
+      'a state it DOES understand must not be logged — a warning that always fires is noise');
+  });
+
+  it('"saved but not confirmed" is the COMBINATION, and only the unconfirmed states match it', () => {
+    const savedButUnconfirmed = (s) => {
+      const f = derive(s);
+      return f.credentialStored && !f.confirmedProtection;
+    };
+    assert.equal(savedButUnconfirmed('unchanged'), true);
+    assert.equal(savedButUnconfirmed('existing-unverified'), true);
+    assert.equal(savedButUnconfirmed('existing'), false, 'a confirmed gate is not merely saved');
+    assert.equal(savedButUnconfirmed('none'), false);
+    assert.equal(savedButUnconfirmed('a-future-state'), false);
+  });
+});
+
 describe('cutover result file', () => {
   let tmpBase;
   let prevBase;

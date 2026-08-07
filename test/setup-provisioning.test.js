@@ -231,6 +231,12 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.data.ingress.action, 'provision');
       assert.equal(res.data.ingress.provisioning, true);
       assert.equal(res.data.ingress.protection, 'pending');
+      // #861 — the flags ship on every arm, not just the one this fix was
+      // written against. 'pending' means the answer is not in yet, which is
+      // emphatically not confirmed protection.
+      assert.equal(res.data.ingress.confirmedProtection, false,
+        'a cutover still running has not confirmed anything');
+      assert.equal(res.data.ingress.credentialStored, false);
       assert.equal(res.data.ingress.user, 'jason');
       // Delivered with the COMPLETION, not only from the poll. The cutover closes
       // the address this response was served from, and for a remote operator that
@@ -515,12 +521,73 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.action, 'adopt');
       assert.equal(res.data.ingress.protection, 'existing');
+      // #861 — the one arm that IS confirmed. Both flags true: a gate was
+      // observed, and it obviously has a credential behind it.
+      assert.equal(res.data.ingress.confirmedProtection, true,
+        'an adopted, observed gate is the only state that reads as confirmed');
+      assert.equal(res.data.ingress.credentialStored, true);
       assert.equal(res.data.ingress.user, 'jason');
       assert.equal(cutovers.length, 0, 'adopting must never regenerate the file');
 
       const config = store.config.load();
       assert.equal(config.authEnabled, true);
       assert.equal(config.basicAuthUser, 'jason');
+    });
+
+    it('#861: records the protection verdict on the CONFIRMED arm too, not only the unhappy ones', async () => {
+      // The symmetry is the point, and it is why this is a deliverable rather
+      // than incidental tracing. Every other log on this endpoint fires on a
+      // cutover or a failure, so a confirmed install left no server-side trace
+      // at all — and a support question about a machine that "says it is
+      // protected" had nothing to read back. Logging both arms also means an
+      // ABSENT line reads as "the request never got here" instead of as
+      // "everything was fine", which is the whole value of the symmetry.
+      const logger = require('../lib/logger');
+      const captured = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (s) => captured.push(s) });
+      let res;
+      try {
+        writeLive(handEdited([`jason ${BCRYPT_A}`]));
+        caddyIsLive();
+        res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+      assert.equal(res.data.ingress.confirmedProtection, true, 'precondition: this is the confirmed arm');
+      const line = captured.join('');
+      assert.match(line, /Setup reported its protection verdict/,
+        'a confirmed outcome must leave a trace, or "it says it is protected" is unanswerable');
+      // The logger renders context as key=value, not JSON — asserted against the
+      // real emitted shape rather than an assumed one.
+      assert.match(line, /confirmedProtection=true/);
+      assert.match(line, /protection=existing/);
+      assert.match(line, /credentialStored=true/);
+    });
+
+    it('#861: and on the UNCONFIRMED arm, so an absent line means the request never got here', async () => {
+      // The other half of the symmetry. If only one arm logged, a missing line
+      // would be ambiguous between "unconfirmed" and "never reached" — which is
+      // exactly the ambiguity the confirmed-arm log was added to remove.
+      const logger = require('../lib/logger');
+      const captured = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (s2) => captured.push(s2) });
+      let res;
+      try {
+        // No caddy at all: the plainest ungated outcome there is.
+        res = await withoutCaddy(() => request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir }));
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+      assert.equal(res.data.ingress.confirmedProtection, false, 'precondition: this is an unconfirmed arm');
+      const line = captured.join('');
+      assert.match(line, /Setup reported its protection verdict/);
+      assert.match(line, /confirmedProtection=false/);
     });
 
     it('does not restate a login that IS in force as a warning', async () => {
@@ -572,6 +639,14 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.protection, 'existing-unverified',
         'must not report the existing login as simply kept');
+      // #861 — the browser branches on these, not on the enum, so the response
+      // must actually carry them. This is the producing half of the contract;
+      // `test/ingress-provision.test.js` pins the derivation and
+      // `test/setup-wizard-login-gate.test.js` pins the consuming half.
+      assert.equal(res.data.ingress.confirmedProtection, false,
+        'a credential the live config may not enforce is not confirmed protection');
+      assert.equal(res.data.ingress.credentialStored, true,
+        'a credential IS stored, so the screen must say saved-but-unconfirmed rather than no-login');
       assert.equal(res.data.ingress.user, 'newadmin', 'must name the account THEY set, not the adopted one');
       assert.equal(store.config.load().basicAuthUser, 'newadmin',
         'config holds the typed credential — which is precisely why the mismatch must be reported');
