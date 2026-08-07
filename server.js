@@ -840,6 +840,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
   // UI saves were triggering an N-project filesystem walk).
   const oldStripAiCoauthors = config.stripAiCoauthors;
+  // Whether setup was still OPEN when this request arrived. Captured here
+  // because the loop below writes `body.setupComplete` straight onto `config` —
+  // read it afterwards and every request looks like an install that was already
+  // finished, which is exactly how a first-run-only gate becomes a gate that
+  // never fires.
+  const wasSetupOpen = config.setupComplete === false;
   const allowedFields = [
     'serverPort', 'ttydPort', 'defaultEngine',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
@@ -1007,6 +1013,23 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // (direct mode, caddy installed) able to finish setup with no login at all,
   // which is the entire defect the sibling route was changed to close.
   //
+  // Same reasoning for the engine requirement, and the same sibling trap: Skip
+  // closes setup here, so a rule enforced only on /api/setup/complete is a rule
+  // with a door beside it. An install that finishes with no engine is a
+  // dashboard that can launch nothing.
+  //
+  // Guarded only on the explicit transition, and only while setup is still
+  // open: re-saving settings on a finished install must never be refused
+  // because an engine was uninstalled later.
+  if (body.setupComplete === true && wasSetupOpen) {
+    if (!engines.anyEngineInstalled()) {
+      return errorResponse(res, 400,
+        'No AI engine is installed, so there would be nothing to launch. Install one '
+        + '(Claude Code, Codex, Aider or Antigravity), then press Check again.',
+        'ENGINE_REQUIRED');
+    }
+  }
+
   // Only the explicit complete-setup transition is guarded, so unrelated PATCHes
   // are never blocked.
   if (body.setupComplete === true
@@ -1621,6 +1644,34 @@ route('POST', '/api/setup/complete', (req, res, _params, body) => {
     // the live ingress — the guard's own question, asked one layer up.
     adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
     if (adoption.changed) config = store.config.load();
+  }
+
+  // Setup cannot finish with no engine installed. TangleClaw's whole job is
+  // launching AI coding sessions, and an install with no engine is a dashboard
+  // that can launch nothing — the operator reaches a finished-looking product
+  // and discovers the hole at the first Launch button, with nothing on screen
+  // explaining it.
+  //
+  // Refused HERE and not only in the wizard, because the wizard's Next button
+  // is not the rule. Anything that POSTs this route — a re-run, a script, a
+  // client that skipped the step — must meet the same bar, or the gate is
+  // decoration. `feedback_symmetric_capability_gates`: the two surfaces
+  // coordinating around one condition have to test the same condition.
+  //
+  // First run only. A finished install whose engine was later uninstalled is a
+  // different problem, and refusing to re-save its settings would strand it.
+  // `refresh` because the operator has probably just installed one in another
+  // window, which is the entire reason this request is being made again.
+  if (firstRun) {
+    if (!engines.anyEngineInstalled()) {
+      return errorResponse(
+        res,
+        400,
+        'No AI engine is installed, so there would be nothing to launch. Install one '
+        + '(Claude Code, Codex, Aider or Antigravity), then press Check again.',
+        'ENGINE_REQUIRED'
+      );
+    }
   }
 
   // Snapshot HTTPS state before mutations so we can decide whether to restart
@@ -2433,9 +2484,14 @@ route('GET', '/api/system', (_req, res) => {
   jsonResponse(res, 200, stats);
 });
 
-// GET /api/engines
-route('GET', '/api/engines', (_req, res) => {
-  const list = engines.listWithAvailability();
+// GET /api/engines — `?refresh=1` re-reads the operator's login PATH before
+// probing, rather than reusing the cached one. That is what the setup wizard's
+// "Check again" calls: the operator has just installed an engine in another
+// window, and an installer that edits their shell profile changes the PATH
+// itself, not only what sits on it.
+route('GET', '/api/engines', (req, res) => {
+  const refresh = new URL(req.url, 'http://localhost').searchParams.get('refresh') === '1';
+  const list = engines.listWithAvailability({ refresh });
   jsonResponse(res, 200, { engines: list });
 });
 

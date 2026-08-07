@@ -195,9 +195,54 @@ describe('Setup wizard — engine step (#707)', () => {
       const ctx = loadSetup(roster, { defaultEngine: 'claude' });
       ctx.showWizard();
       const html = renderEngineStep(ctx);
-      assert.match(html, /No AI engine detected on this machine/);
+      assert.match(html, /No AI engine is installed yet/);
       assert.doesNotMatch(html, /<select[^>]*id="setupDefaultEngine"/,
         'a dropdown whose every option is disabled is worse than saying so');
+    });
+
+    it('parks setup here — there is no way forward with nothing to launch', () => {
+      // TangleClaw's whole job is running an engine's CLI. Finishing without one
+      // hands the operator a finished-looking dashboard that can launch nothing,
+      // and they find out at the first Launch button with nothing explaining it.
+      // The server refuses on both routes that complete setup; this screen is
+      // what makes the refusal make sense.
+      const ctx = loadSetup(roster, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.doesNotMatch(html, /onclick="wizardNext\(\)"/,
+        'Next must not be offered — the server would refuse it anyway');
+      assert.match(html, /wizardRecheckEngines\(\)/,
+        'and the way forward must be on screen: install one, then check again');
+    });
+
+    it('gives the exact command and the vendor page for each engine', () => {
+      // A command is what someone at a terminal wants; the docs page is the half
+      // that cannot go stale, because the vendor maintains it. Both, per engine.
+      const withInstall = [
+        { ...CLAUDE, available: false,
+          install: { command: 'npm install -g @anthropic-ai/claude-code',
+            docsUrl: 'https://code.claude.com/docs/en/setup' } },
+        { ...CODEX, available: false,
+          install: { command: 'npm install -g @openai/codex',
+            docsUrl: 'https://developers.openai.com/codex/cli' } }
+      ];
+      const ctx = loadSetup(withInstall, {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /npm install -g @anthropic-ai\/claude-code/);
+      assert.match(html, /npm install -g @openai\/codex/);
+      assert.match(html, /href="https:\/\/code\.claude\.com\/docs\/en\/setup"/);
+      assert.match(html, /rel="noopener noreferrer"/,
+        'a target=_blank link without noopener hands the opened page a handle back');
+    });
+
+    it('says so plainly for an engine that carries no install info', () => {
+      // Operator-added profiles are not required to tell us how they install.
+      // An honest "we do not know" beats a guessed command.
+      const ctx = loadSetup([{ ...CLAUDE, available: false }], {});
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /No install command on file/);
     });
 
     it('still lists what was looked for, so the operator knows their options', () => {

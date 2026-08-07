@@ -27,6 +27,7 @@ const provision = require('../lib/ingress-provision');
 const { createServer, _setRestartScheduler, _setCutoverSpawner } = require('../server');
 const server864 = require('../server');
 const { installCaddyStub, withoutCaddy } = require('./_caddy-stub');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -158,6 +159,10 @@ describe('setup provisions a login by default', () => {
     caddyStub = installCaddyStub();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-provisioning-'));
     store._setBasePath(tmpDir);
+    // Setup refuses to finish with no engine installed, and the bundled
+    // profiles detect real CLIs — so without this the result depends on
+    // what the host has, passing on a dev Mac and failing on CI.
+    installAlwaysAvailableEngine(tmpDir);
     store.init();
     _setRestartScheduler(() => {});
     server = createServer();

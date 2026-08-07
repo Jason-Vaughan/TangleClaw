@@ -6,6 +6,29 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Setup will not finish with no AI engine installed.** TangleClaw's whole job is running an AI
+  coding CLI for you. An install that completed without one handed the operator a finished-looking
+  dashboard that could launch nothing — and they found out at the first Launch button, with nothing
+  on screen explaining it.
+
+  The engine step now **parks** instead of waving you through: it names each supported engine, gives
+  the exact install command with a Copy button and a link to that vendor's own instructions, and
+  offers **Check again** in place of Next. Install one in a terminal, press the button, and setup
+  continues.
+
+  **Both routes that can finish setup refuse it**, not just the button — `POST /api/setup/complete`
+  and the Skip path's `PATCH /api/config { setupComplete: true }`, through one shared predicate.
+  That pairing has diverged here before (#710), where a new rule landed on one and the other kept
+  the old one, leaving a door beside the gate. First-run only: an install that finished long ago and
+  later lost its engine is a different problem, and refusing to save its settings would strand it.
+
+  **TangleClaw does not install the engine for you.** It runs as a background service with no
+  terminal, so it cannot answer a password prompt — the same reason every privileged step lives in
+  the human-run installer. It tells you exactly what to run instead.
+
+  "Check again" re-reads your login PATH rather than reusing what the server resolved at boot: an
+  installer that edits your shell profile changes the PATH itself, not only what sits on it.
+
 - **Setup now warns you about a protected projects directory before you choose it, not after it
   fails (#859).** The wizard pre-fills `~/Documents/Projects`, and on macOS that is a directory a
   background service cannot read without Full Disk Access — so the product was recommending the

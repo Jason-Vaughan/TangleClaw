@@ -622,16 +622,26 @@ function renderEngines(body) {
       </div>`;
   }
 
-  // Nothing installed: say so plainly instead of offering a picker whose every
-  // option is refused. TangleClaw is still usable — projects can be attached
-  // once an engine exists — so this warns rather than blocks.
+  // Nothing installed: setup STOPS here. TangleClaw's whole job is launching an
+  // engine's CLI, so finishing without one hands the operator a
+  // finished-looking dashboard that can launch nothing, and they find out at
+  // the first Launch button with nothing on screen explaining it. The server
+  // refuses the same thing on both routes that can complete setup — this screen
+  // is the explanation, not the enforcement.
+  //
+  // Parked, not failed: the operator installs one in a terminal (they are at
+  // this machine on a first run) and presses Check again. TangleClaw cannot run
+  // the install for them — it is a launchd service with no terminal to answer a
+  // password prompt, which is why every privileged step lives in the human-run
+  // installer.
   const noneAvailable = selectable.length === 0;
   const pickerHtml = noneAvailable
     ? `<div class="setup-https-panel setup-https-warning">
         <div class="setup-https-warn-icon" aria-hidden="true">!</div>
         <div>
-          <div class="setup-https-warn-title">No AI engine detected on this machine.</div>
-          <p class="setup-text-muted">TangleClaw drives an engine's CLI, so sessions can't launch until one is installed. Install Claude Code, Codex, Antigravity, or Aider, then pick a default from Settings — the rest of setup still applies.</p>
+          <div class="setup-https-warn-title">No AI engine is installed yet.</div>
+          <p class="setup-text-muted">TangleClaw runs an AI coding CLI for you — without one there is nothing for it to launch, so setup pauses here. Install any one of these in a terminal on this Mac, then press <strong>Check again</strong>.</p>
+          ${_engineInstallOptionsHtml(enginesList)}
         </div>
       </div>`
     : `<div class="form-group">
@@ -648,9 +658,107 @@ function renderEngines(body) {
       ${pickerHtml}
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
-        <button class="btn btn-primary" onclick="wizardNext()">Next</button>
+        ${noneAvailable
+          ? '<button class="btn btn-primary" id="setupEngineRecheck" onclick="wizardRecheckEngines()">Check again</button>'
+          : '<button class="btn btn-primary" onclick="wizardNext()">Next</button>'}
       </div>
     </div>`;
+}
+
+/**
+ * The install options offered when nothing is detected: per engine, the exact
+ * command and a link to the vendor's own instructions.
+ *
+ * Both, deliberately. A command is what an operator at a terminal actually
+ * wants, and a pinned command is the thing most likely to go stale — the docs
+ * page is the vendor's to keep current, so it is the half that cannot rot.
+ * An engine profile carrying neither says so rather than inventing one; an
+ * operator-added engine is not required to tell us how it is installed.
+ *
+ * @param {object[]} list - Engines as returned by `/api/engines`.
+ * @returns {string} HTML.
+ */
+function _engineInstallOptionsHtml(list) {
+  const rows = (list || []).map((e) => {
+    const name = typeof e.name === 'string' && e.name ? e.name : e.id;
+    const install = e.install || {};
+    const command = typeof install.command === 'string' ? install.command : '';
+    const docsUrl = typeof install.docsUrl === 'string' ? install.docsUrl : '';
+    if (!command && !docsUrl) {
+      return `<div class="setup-engine-install">
+        <div class="setup-engine-name">${esc(name)}</div>
+        <p class="setup-text-muted">No install command on file — see this engine's own documentation.</p>
+      </div>`;
+    }
+    const cmdHtml = command
+      ? `<div class="setup-engine-install-cmd">
+          <code>${esc(command)}</code>
+          <button class="btn btn-small" type="button"
+                  onclick="wizardCopyInstall(${esc(JSON.stringify(command))})">Copy</button>
+        </div>`
+      : '';
+    // rel="noopener" because target=_blank otherwise hands the opened page a
+    // handle back to this one.
+    const docsHtml = docsUrl
+      ? `<a class="setup-engine-install-docs" href="${esc(docsUrl)}"
+            target="_blank" rel="noopener noreferrer">Install instructions &rarr;</a>`
+      : '';
+    return `<div class="setup-engine-install">
+      <div class="setup-engine-name">${esc(name)}</div>
+      ${cmdHtml}
+      ${docsHtml}
+    </div>`;
+  });
+  return `<div class="setup-engine-installs">${rows.join('')}</div>
+    <div id="setupEngineCopyNote" class="form-hint hidden" role="status"></div>`;
+}
+
+/**
+ * Copy an install command, and say so — a Copy button that gives no feedback
+ * reads as a broken button.
+ * @param {string} command - The command to copy.
+ * @returns {Promise<void>}
+ */
+async function wizardCopyInstall(command) {
+  const ok = await window.tcCopyToClipboard(command);
+  const note = document.getElementById('setupEngineCopyNote');
+  if (note) {
+    note.textContent = ok ? 'Copied.' : 'Could not copy — select the command and copy it manually.';
+    note.classList.remove('hidden');
+  }
+}
+
+/**
+ * Re-probe for engines after the operator has installed one.
+ *
+ * Asks the server to re-read the login PATH rather than reuse what it resolved
+ * at boot: an installer that edits the shell profile changes the PATH itself,
+ * not only what sits on it, and this button exists precisely for the moment
+ * after an install.
+ * @returns {Promise<void>}
+ */
+async function wizardRecheckEngines() {
+  const btn = document.getElementById('setupEngineRecheck');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  const data = await api('/api/engines?refresh=1');
+  if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  if (!data) {
+    const note = document.getElementById('setupEngineCopyNote');
+    if (note) {
+      note.textContent = api.lastError || 'Could not check — is the server still running?';
+      note.classList.remove('hidden');
+    }
+    return;
+  }
+  const found = (data.engines || []).filter((e) => e && e.available);
+  state.engines = data.engines || [];
+  wizard.engines = data.engines || [];
+  if (found.length > 0) {
+    // Found one: seed the default so the picker that replaces this screen opens
+    // on something real, then re-render into it.
+    wizard.defaultEngine = found[0].id;
+  }
+  renderWizardStep();
 }
 
 function renderPreferences(body) {

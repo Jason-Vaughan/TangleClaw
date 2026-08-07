@@ -8,6 +8,7 @@ const os = require('node:os');
 const { execSync } = require('node:child_process');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -207,6 +208,10 @@ describe('https-setup', () => {
     process.env.PATH = stubDir + path.delimiter + (origPath || '');
 
     store._setBasePath(baseDir);
+    // Setup refuses to finish with no engine installed, and the bundled
+    // profiles detect real CLIs — so without this the result depends on
+    // what the host has, passing on a dev Mac and failing on CI.
+    installAlwaysAvailableEngine(baseDir);
     store.init();
 
     // Require after PATH is primed so module uses stub if it resolves early

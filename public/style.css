@@ -2380,6 +2380,46 @@ body.setup-active { overflow: hidden; }
   border-radius: var(--radius-btn);
   min-height: 44px;
 }
+/* Install options shown when setup parks on "no engine installed". Stacked
+   rather than in a row: this is read on an iPhone as often as a desktop, and a
+   shell command is the one thing that must never be truncated to fit. */
+.setup-engine-installs {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.setup-engine-install {
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border-radius: var(--radius-btn);
+}
+.setup-engine-install-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.setup-engine-install-cmd code {
+  flex: 1;
+  min-width: 0;
+  /* The command scrolls inside its own box; the page never scrolls sideways. */
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: var(--radius-btn);
+}
+.setup-engine-install-docs {
+  font-size: 13px;
+  color: var(--primary);
+  /* 44px target — this is a link people tap, not only click. */
+  display: inline-block;
+  min-height: 44px;
+  line-height: 44px;
+}
 .setup-engine-available {
   color: var(--primary);
   font-size: 16px;

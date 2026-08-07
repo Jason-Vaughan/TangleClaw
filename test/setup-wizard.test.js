@@ -10,6 +10,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -72,6 +73,10 @@ describe('Setup Wizard', () => {
     fs.mkdirSync(projectsDir);
 
     store._setBasePath(tmpDir);
+    // Setup refuses to finish with no engine installed, and the bundled
+    // profiles detect real CLIs — so without this the result depends on
+    // what the host has, passing on a dev Mac and failing on CI.
+    installAlwaysAvailableEngine(tmpDir);
     store.init();
 
     server = createServer();
@@ -146,6 +151,102 @@ describe('Setup Wizard', () => {
       const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: 'yes' });
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
+    });
+  });
+
+  // TangleClaw's whole job is launching AI coding sessions. An install that
+  // finishes with no engine is a dashboard that can launch nothing — the
+  // operator reaches a finished-looking product and discovers the hole at the
+  // first Launch button, with nothing on screen explaining it.
+  describe('setup cannot finish with no engine installed', () => {
+    // Resolved lazily: `tmpDir` is assigned in `before`, which runs after this
+    // describe body is evaluated.
+    const engineProfile = () => path.join(tmpDir, 'engines', 'test-engine.json');
+
+    /**
+     * Run `fn` on an install where nothing is detected as installed.
+     *
+     * EVERY profile has to go, not just the fixture: the bundled ones are
+     * seeded into this store too, and they detect real CLIs — so on a machine
+     * with Claude Code installed, removing only the fixture still leaves an
+     * engine available and the gate correctly does not fire. Emptying the
+     * directory makes the case reproduce the same way on any host.
+     */
+    async function withNoEngines(fn) {
+      const dir = path.join(tmpDir, 'engines');
+      const stash = path.join(tmpDir, 'engines-stashed');
+      fs.renameSync(dir, stash);
+      fs.mkdirSync(dir);
+      const config = store.config.load();
+      const savedComplete = config.setupComplete;
+      config.setupComplete = false;
+      store.config.save(config);
+      try {
+        await fn();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.renameSync(stash, dir);
+        const restore = store.config.load();
+        restore.setupComplete = savedComplete;
+        store.config.save(restore);
+      }
+    }
+
+    it('refuses POST /api/setup/complete, naming what to do about it', async () => {
+      await withNoEngines(async () => {
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
+        assert.equal(status, 400);
+        assert.equal(data.code, 'ENGINE_REQUIRED');
+        assert.match(data.error, /Install one/, 'must say what to do, not only what is wrong');
+        assert.equal(store.config.load().setupComplete, false,
+          'a refused completion must not have half-finished setup');
+      });
+    });
+
+    it('refuses the Skip path too — the button is not the rule', async () => {
+      // #710 lived exactly here: /api/setup/complete got a new predicate and
+      // PATCH /api/config { setupComplete: true } kept the old one, so Skip was
+      // a door beside the gate. A rule enforced on one of these two is not
+      // enforced.
+      await withNoEngines(async () => {
+        const { status, data } = await request(server, 'PATCH', '/api/config',
+          { setupComplete: true });
+        assert.equal(status, 400);
+        assert.equal(data.code, 'ENGINE_REQUIRED');
+        assert.equal(store.config.load().setupComplete, false);
+      });
+    });
+
+    it('lets setup finish once an engine is there', async () => {
+      // The other half of the gate: it has to OPEN. A refusal that never lifts
+      // is the trap this whole slice exists to avoid.
+      const config = store.config.load();
+      config.setupComplete = false;
+      config.authEnabled = true;
+      config.basicAuthUser = 'admin';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(config);
+
+      const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+      assert.equal(status, 200);
+      assert.equal(data.config.setupComplete, true);
+    });
+
+    it('does not refuse an already-finished install whose engine went away', async () => {
+      // Uninstalling an engine later is a different problem, and refusing to
+      // save settings over it would strand a working install.
+      const enginePath = engineProfile();
+      const saved = fs.readFileSync(enginePath, 'utf8');
+      fs.unlinkSync(enginePath);
+      const config = store.config.load();
+      config.setupComplete = true;
+      store.config.save(config);
+      try {
+        const { status } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+        assert.equal(status, 200, 'a finished install must stay settable');
+      } finally {
+        fs.writeFileSync(enginePath, saved);
+      }
     });
   });
 
