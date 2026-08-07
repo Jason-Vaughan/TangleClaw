@@ -820,6 +820,49 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **The ingress cutover log no longer records your login's password hash, and no longer grows
+  without end (#821).** `~/.tangleclaw/logs/ingress-cutover.log` was opened with a raw append-mode
+  descriptor outside the logger that owns rotation, so it had no size cap, no rotation and no
+  pruning — and by the code's own admission it could capture a credential hash, because
+  `caddy validate` quotes the offending Caddyfile line back and for this project that line is
+  `basic_auth <user> <hash>`. Caddy renamed `basicauth` to `basic_auth` in 2.8, so a version skew
+  alone is enough to make the credential line itself the one that fails to parse.
+
+  **Redaction is the control for the secret; rotation is the control for growth.** They are not
+  interchangeable, and it is worth being exact because the obvious reading gets it backwards: a size
+  cap would not have bounded the credential's lifetime at all. This log gets kilobytes per run and an
+  install performs a handful of cutovers ever, so it would sit forever below any sane threshold,
+  never rotate, and keep the hash for the life of the machine. Only removing the hash removes the
+  hash.
+
+  So the hash is now redacted **at its source** — `caddy.validateCaddyfile` scrubs its own error
+  before returning it. That one string fanned out to three sinks: the cutover log, the cutover
+  result file, and the server log. Only the third was redacting, which is precisely the evidence
+  that per-caller redaction is the leaky shape. The cutover additionally scrubs what it writes to
+  its result file and its stderr — prophylactically, since no path today builds such a message,
+  so that a future thrower near the credential cannot reopen this without knowing to.
+  The username is deliberately kept — it is what makes a failure diagnosable, and it is already
+  reported at the HTTP boundary.
+
+  Separately, the log now rotates at 1 MB keeping one previous generation — deliberately far below
+  the server log's 10 MB, since a threshold sized for a continuously-appended service log would
+  never be reached here and would bound nothing. Rotation happens **only immediately before the log
+  is opened for a new run**, never during one: the descriptor becomes a detached child's stdout and
+  stderr, so renaming mid-run would leave that child writing to a detached inode — the same trap
+  `logger.js` documents for the long-running server. A log that cannot be rotated is appended to
+  anyway; housekeeping must never cost an operator their ingress. The existing `0600` mode stays,
+  because it is the control that does not depend on every future writer remembering to redact —
+  and a rotated generation is now tightened too, since `rename` preserves mode and would otherwise
+  carry a pre-existing loose log's `0644` into the archive.
+
+  **Both controls are prospective, and an already-written log is not cleaned up.** If this machine
+  ran a cutover that hit the validate-failure path before this release, its existing log can still
+  hold a hash — rotation will not remove it either, because a log under the threshold never
+  rotates. TangleClaw does not silently truncate the operator's only record of what setup did.
+  `deploy/INGRESS.md` carries a one-line check and the remedy; in short, the file is narration
+  rather than state, nothing reads it back, and `rm ~/.tangleclaw/logs/ingress-cutover.log*` is
+  safe.
+
 - **A browser request body must be declared `application/json` — closing the CSRF class that made
   the form attack a CORS *simple* request (#860).** `parseBody` JSON-parses any body whatever its
   `Content-Type`, and the three encodings a `<form>` can send (`text/plain`,
@@ -864,6 +907,7 @@ All notable changes to TangleClaw are documented in this file.
   cookies, no tokens, no session state in the browser" — precisely what shipping browser-cached HTTP
   Basic by default invalidates. CSRF is now in scope, with the three guards and their residuals
   written down.
+
 
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
