@@ -26,7 +26,64 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-<<<<<<< HEAD
+## 2026-08-07: first run stops dead-ending — the wedge, the PATH, and three screens with no way forward (#859, #346)
+
+<!-- prawduct: type=fix | scope=first-run-859 | status= -->
+
+**Why:** #859 opened this — a single `GET /api/projects` could kill the server permanently — but
+tracing the first-run path from a stranger's point of view found three more places the wizard
+stopped with no action available anywhere in the product. The requirement ratified for this work:
+**the wizard must never leave someone at a step with nothing they can do inside the product**, and
+where TangleClaw cannot fix a thing itself it says exactly what to run and re-checks on demand.
+
+**The wedge (#859).** `listAllProjects` and `POST /api/setup/scan` both ran a synchronous `readdir`
+on the event loop. Over a TCC-protected path — which the shipped default `~/Documents/Projects`
+**is** on a stock Mac — `open()` never returns, so one request took every other route down while
+launchd still reported the process healthy. The scan now runs off the main thread under a deadline
+covering the **whole walk**, not just its first call, and the dashboard's walk was swept to match:
+it truncates rather than emptying, so a slow directory costs the tail of the list instead of all
+of it.
+
+**Detection (#346).** Engine detection read launchd's PATH, not the operator's, so an installed
+Gemini CLI reported "not installed". It now resolves the login PATH through an interactive login
+shell, once at boot and off the request path, and reports `detectionCertain` so the wizard can tell
+"we looked and it is absent" apart from "we could not look".
+
+**Three dead ends closed.** Setup will not complete with no AI engine installed — the engine step
+parks with per-engine install commands, Copy buttons, vendor docs links and **Check again** in
+place of Next, and *both* completion routes refuse through one shared predicate, because that
+pairing has diverged here before (#710). A missing projects folder now offers to create itself via
+`POST /api/setup/create-dir`, constrained to inside `$HOME` with only the final segment created.
+And mkcert's "we could not check" stopped rendering as "not installed" — an unknown falling through
+to a definite, the same shape as #861 one step further along the wizard.
+
+**Measured, not inferred.** None of this reproduces on the development machine, which has Full Disk
+Access and four engines installed. It was verified on a throwaway macOS guest that is a fresh Mac:
+the request that used to kill the server answers `400` in 5s with a remedy and leaves `/api/health`
+and `/api/config` both at `200`; both completion routes return `400 ENGINE_REQUIRED`; `create-dir`
+is refused outside `$HOME`; and — the result that was not obvious — **scanning a folder TangleClaw
+just created succeeds where scanning a pre-existing one times out**, because macOS grants a process
+access to what it creates. Full table in `.prawduct/operator-verification.md`.
+
+**Wording.** The scan-failure message no longer says "TCC-protected", the only user-facing acronym
+in the product, and the wizard's caution names `~/Documents, ~/Desktop and ~/Downloads` the way its
+two sibling messages already did. The three existing assertions pass against the old wording too —
+they pin the facts, not the register — so a `doesNotMatch(hint, /TCC/)` guard now holds it, verified
+by reverting the string and watching it fail. `deploy/install.sh` deliberately keeps the term: a
+person hand-running a shell installer has a different tolerance for it than someone stranded in a
+wizard.
+
+**Not done here, deliberately:** the shipped default `projectsDir` should move off `~/Documents`
+entirely, which would make the caution rare rather than something every new Mac meets on its own
+default. Filed as **#880** — the verification above was measured against the current default, and
+changing it at the finish line would invalidate that evidence for a change deserving its own.
+
+**Also in this branch:** the tracked change-log's own merge-conflict markers, committed to `main` by
+`c8a91ab` and left unresolved across three sessions, are resolved here — both sides were distinct
+entries (#861 and #821) in an append-only log, so both are kept and only the markers are gone.
+Nothing detected them, which is filed separately.
+
+
 ## 2026-08-06: one derivation of "are we protected", stated so an unknown state fails safe (#861)
 
 <!-- prawduct: type=fix | scope=ingress-861 | status= -->
@@ -129,7 +186,6 @@ same rule had been applied to the other one.
 **Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
 one pass, and this is the half a machine can do — the screens still need a real no-caddy install
 and a browser.
-=======
 ## 2026-08-06: the cutover log stops holding a credential hash, and stops growing (#821)
 
 <!-- prawduct: type=fix | scope=ingress-821 | status= -->
@@ -225,7 +281,6 @@ node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded
   would couple two lifecycles that must stay independent. R-17/R-18 informational.
 
 **Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
->>>>>>> origin/main
 
 ## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
 
