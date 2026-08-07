@@ -57,8 +57,20 @@ pairing has diverged here before (#710). A missing projects folder now offers to
 And mkcert's "we could not check" stopped rendering as "not installed" — an unknown falling through
 to a definite, the same shape as #861 one step further along the wizard.
 
+**Known incomplete — #883, and the reason this is in draft.** The deadline abandons the walk but
+cannot cancel the syscall already blocked in the kernel, so each hung scan permanently leaks one of
+libuv's four default threadpool slots. Measured on the guest: scans 1-3 leave an ordinary directory
+answering `200` in 0.03s, the **fourth** leaves it timing out, and it never recovers. That reduces
+the wedge from one request to four rather than removing it, and the residue is nastier than a loud
+failure — nothing surfaces it, and every directory is then blamed on Full Disk Access, which is
+false. Found by an operator reviewing the wizard who said "it is not working" and was right; the
+on-screen message sent the investigation the wrong way, which is the strongest argument for fixing
+the misattribution alongside the leak.
+
 **Measured, not inferred.** None of this reproduces on the development machine, which has Full Disk
-Access and four engines installed. It was verified on a throwaway macOS guest that is a fresh Mac:
+Access and four engines installed. It was verified on a throwaway macOS guest that is a fresh Mac.
+Each row below was measured against a **freshly restarted process**, which is why none of them
+caught #883 — the leak needs four hung scans in one process, and no row issued a fourth:
 the request that used to kill the server answers `400` in 5s with a remedy and leaves `/api/health`
 and `/api/config` both at `200`; both completion routes return `400 ENGINE_REQUIRED`; `create-dir`
 is refused outside `$HOME`; and — the result that was not obvious — **scanning a folder TangleClaw

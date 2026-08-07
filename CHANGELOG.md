@@ -514,6 +514,18 @@ All notable changes to TangleClaw are documented in this file.
   within it. A path that never answers now costs one threadpool slot and one request instead of
   the server.
 
+  **That slot is never given back, and four of them is the whole pool (#883).** Measured on the
+  clean guest after this branch: scans 1-3 of a protected path leave an ordinary directory
+  answering `200` in 0.03s; the **fourth** leaves it failing at the 5s deadline, and it never
+  recovers. `UV_THREADPOOL_SIZE` is unset, so the default is 4, and the cliff lands exactly there.
+  So this reduces the wedge from one request to four — it does not remove it. Worse, the failure
+  is invisible (`/api/health`, `/api/config` and `/api/engines` all keep answering `200`) and it
+  misattributes: `tcTimedOut` is the only signal, so once the pool is gone **every** directory is
+  reported as Full-Disk-Access-protected, sending the operator to change a permission that was
+  never the problem. Reclaiming a thread blocked in the kernel needs the process holding it to
+  die, so the real fix is running the walk in a child process that the deadline kills. Tracked in
+  #883; this branch is held in draft for it.
+
   **The deadline also stops the walk, not just the request.** A promise cannot be cancelled, so
   answering at the deadline leaves the walk running — still issuing calls into a path already
   known not to answer, each holding one of libuv's four default threadpool slots until a kernel
