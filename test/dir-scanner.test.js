@@ -163,6 +163,27 @@ describe('lib/dir-scanner — failures that are not hangs', () => {
     }
   });
 
+  test('a child that cannot even start fails the request instead of hanging it', async () => {
+    const scanner = dirScanner.createScanner({
+      childPath: path.join(tmpRoot, 'no-such-child.js'),
+      timeoutMs: 4000
+    });
+    try {
+      // A broken install is the realistic cause. The request must come back on
+      // the child's exit — well inside the deadline — because a supervisor that
+      // let it run the full timeout would report a missing file as an
+      // unresponsive directory, and send the operator to grant Full Disk Access
+      // for it.
+      const started = Date.now();
+      const err = await rejection(scanner.request('ping'));
+      assert.ok(err.tcAborted, 'a child that never started is not a timed-out path');
+      assert.ok(!err.tcTimedOut);
+      assert.ok(Date.now() - started < 3000, 'should fail on exit, not on the deadline');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
   test('a child that dies is replaced on the next request', async () => {
     const scanner = dirScanner.createScanner({ childPath: HANG_CHILD });
     try {
