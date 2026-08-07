@@ -696,15 +696,31 @@ Then the honest-failure half, which matters more than the success half:
 #       the service's PATH so detection fails, and re-run first-run setup.
 ```
 
-- [ ] With no `caddy` on the service PATH, the wizard shows **no** Admin Login step, and completing  
-      *(not run this pass)*
+- [x] With no `caddy` on the service PATH, the wizard shows **no** Admin Login step, and completing  
+      *(habitat macOS/tart guest `tc-vrf-v5`, 2026-08-06, branch `vrf-802` @c8a91ab)*
       setup lands on **"TangleClaw has no login"** — naming `brew install caddy` and the cutover
       command. It must NOT collect a password first.
-- [ ] That screen does not dismiss itself; it waits for *Continue*.  
-      *(not run this pass)*
-- [ ] On an install whose `bindAllInterfaces` is `true`, the same screen says TangleClaw is  
-      *(not run this pass)*
+      Observed: the step rail rendered **seven** dots with no `admin` step, and no credential was
+      requested at any point. `GET /api/setup/ingress-state` answered `caddy.available: false`,
+      `plan.action: refuse`; `POST /api/setup/complete` answered `protection: "none"` with the
+      reason and remedy naming both commands. The rendered screen carried the heading verbatim
+      and **"Nothing is asking for a password."**
+- [x] That screen does not dismiss itself; it waits for *Continue*.  
+      *(same run — held on screen and re-confirmed by the operator after the fact; a Continue
+      button, no countdown, no redirect)*
+- [x] On an install whose `bindAllInterfaces` is `true`, the same screen says TangleClaw is  
+      *(same run — the guest was deliberately made wide, so this is the reachable branch, not the
+      loopback one)*
       **reachable from your network** with no login — not "this machine only".
+      Observed verbatim: *"The TangleClaw dashboard is currently reachable from your network with
+      no login in front of it — anyone who can reach this address can run commands as you."*
+
+> **How caddy was removed from the service PATH.** The plist hands the service
+> `/opt/homebrew/bin` first, so a shell test is not the arbiter — a non-interactive SSH shell
+> lacks that PATH and reports `caddy not found` while the service still sees it. The binary was
+> renamed (`/opt/homebrew/bin/caddy` → `caddy.vrf802-hidden`) and the service restarted; the
+> precondition was then confirmed **through the API** (`caddy.available: false`), not the shell.
+> Checking the shell alone is how this phase came to be skipped on the 2026-07-30 pass.
 
 ## Phase 8 — Roll back to direct (reversibility)
 
@@ -814,7 +830,7 @@ is the evidence, not the code review.
 | #710 — a successful cutover writes `"code": "ok"` to its result file | 7c | **PASS** — habitat guest, 2026-07-30, @4e4e55e |
 | #710 — an ungate refusal reports `ungate-refused`, not `failed` | 7d | **PASS** — `tc-cleanroom`, 2026-07-30, @e20c1a3 (corrected fixture) |
 | #710 — the wizard's detached cutover outlives the restart and reports `ok`; the named address prompts for a login | 7e | **PASS** — server PID 6053→6219, 401/401/200 |
-| #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e.1 | **NOT RUN** — the guest had caddy installed and the run did not re-do first-run setup without it. The *decision* is unit-covered (`test/setup-wizard-login-gate.test.js`, `test/setup-provisioning.test.js`); what is unverified is that the honest-absence screen renders end-to-end — the same browser-only limit as 7e's `[~]` boxes |
+| #710 — with no caddy, setup collects no password and says "no login" (and names real exposure) | 7e.1 | **PASS** — habitat macOS/tart guest `tc-vrf-v5`, 2026-08-06, branch `vrf-802` @c8a91ab. All three boxes measured: no Admin Login step and no credential collected; the honest-absence screen rendered with both commands named; it held for *Continue* with no self-dismiss; and the `bindAllInterfaces: true` variant reported network reachability rather than "this machine only". Observed in a browser by the operator, not inferred |
 | Rollback restores direct mode cleanly | 8 | **PARTIAL** — after the #789 fix, re-run @ad280a7: caddy unloaded, `ingressMode` direct, 3102 answering 200. The direct-HTTPS and ttyd-on-3100 checks were NOT run |
 
 ### How to score this matrix
