@@ -126,7 +126,9 @@ describe('API endpoints', () => {
           + 'does not apply is one people learn to ignore');
       }
     });
+  });
 
+  describe('bindState edge cases (#710)', () => {
     it('reports wide + unchosen for an install that predates the setting', async () => {
       // The population this whole mechanism exists for. If the API reports
       // `closed` here, the settings modal draws a shut door over an open one.

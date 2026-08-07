@@ -406,7 +406,17 @@ function wizardProtectedRootFor(dir) {
   const roots = (state.config && state.config.protectedRoots) || [];
   const p = String(dir || '').trim().replace(/\/+$/, '');
   if (!p) return null;
-  return roots.find(root => p === root || p.startsWith(root + '/')) || null;
+  // Case-insensitively, because the only platform that sends roots is macOS and
+  // its filesystem is case-insensitive by default: `~/documents/Projects` is the
+  // SAME protected directory as `~/Documents/Projects`, and an operator who
+  // types it that way would otherwise be the one person the caution skips.
+  // Compared against the root's real casing so the message still names the
+  // folder the way the system does.
+  const lower = p.toLowerCase();
+  return roots.find((root) => {
+    const r = String(root).toLowerCase();
+    return lower === r || lower.startsWith(r + '/');
+  }) || null;
 }
 
 /**

@@ -167,6 +167,22 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
         true, 'a Linux install must not be warned about a macOS rule');
     });
 
+    it('matches the folder however the operator capitalised it', async () => {
+      // macOS is case-insensitive by default, so ~/documents/Projects IS
+      // ~/Documents/Projects — the same protected directory, and the operator
+      // who types it in lower case would have been the one person the caution
+      // skipped.
+      const ctx = loadSetup(null, MAC_ROOTS);
+      ctx.wizard.projectsDir = '~/documents/projects';
+      ctx.document.getElementById('setupProjectsDir').value = '~/documents/projects';
+      ctx.renderProjectsDir(ctx.document.getElementById('setupBody'));
+
+      const advice = ctx.document.getElementById('setupDirProtected');
+      assert.equal(advice.classList.contains('hidden'), false);
+      assert.match(advice.innerHTML, /~\/Documents/,
+        'and it names the folder the way the system spells it, not the way it was typed');
+    });
+
     it('does not mistake a lookalike sibling for a protected folder', async () => {
       // `~/Documents-old` starts with `~/Documents` as a string but is a
       // different directory, and TCC does not protect it.
