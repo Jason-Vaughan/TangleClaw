@@ -70,22 +70,23 @@ future wizard change was invisible to returning operators until `CACHE_NAME` mov
 network-first. **Not** a `CACHE_NAME` bump: that tears down and reinstalls the worker for every
 browser, which behind the basic_auth gate is what produced the repeating credential prompt in #710.
 
-**Tests (+13):** `test/ingress-provision.test.js` +5 (`confirmed` only for the observed-gate state;
-an UNKNOWN state fails safe across six values incl. `null`/`undefined`/`''`; stored-vs-confirmed
-separation; unknown never reads as stored; the flags are orthogonal across all six
-states — three states asserted, not six — and one asserting that
-"saved but not confirmed" is the COMBINATION rather than either flag alone);
-`test/setup-wizard-login-gate.test.js` +3 (an unheard-of state does not dismiss; the
-browser obeys a server answer that CONTRADICTS the enum, which is what proves the second source of
-truth is gone; `setup.js` is network-first); `test/setup-provisioning.test.js` +2 assertions (the
-real API response actually carries both flags — the producing half of the contract).
+**Tests (+12), counted from the diff rather than estimated:** `test/ingress-provision.test.js`
+**+7** — `confirmed` only for the observed-gate state; an UNKNOWN state fails safe across six values
+incl. `null`/`undefined`/`''`; `credentialStored` reports the fact it is named for (including on the
+confirmed state); an unknown state is never reported as holding a credential; the two flags are
+orthogonal rather than exclusive; "saved but not confirmed" is their COMBINATION; and an
+unclassifiable state is logged (while a recognised one stays quiet).
+`test/setup-wizard-login-gate.test.js` **+3** — an unheard-of state does not dismiss; the browser
+obeys a server answer that CONTRADICTS the enum, which is what proves the second source of truth is
+gone; `setup.js` is network-first. `test/setup-provisioning.test.js` **+2** — the verdict log on the
+confirmed arm and on an unconfirmed one (plus flag assertions added to three existing cases).
 
 **Five mutations, each killing a different test.** The load-bearing one reverts the allowlist to the
 old denylist form: it agrees on all five known states and differs ONLY on an unknown one, and it
 reddens the fail-safe test specifically. Also: `credentialStored` forced false; the server not
 shipping the flags; the browser re-reading the enum; and `setup.js` dropped from
 `NETWORK_FIRST_PATHS` — that last one initially reddened NOTHING, which is how the sw.js change was
-caught as unpinned before review rather than during it. Full suite **5614 pass / 0 fail / 1 skip**.
+caught as unpinned before review rather than during it. Full suite **5616 pass / 0 fail / 1 skip**.
 
 **Carried from the cumulative review (0 blocking, 10 warning, 6 note — all decided in one pass):**
 - **R-1/R-6 — I had the call-site count BACKWARDS**, and it shipped in four places (`server.js`
