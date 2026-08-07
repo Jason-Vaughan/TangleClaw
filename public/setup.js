@@ -373,6 +373,7 @@ function renderProjectsDir(body) {
                placeholder="~/Documents/Projects"
                autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         <div class="form-hint">Full path or ~ for home directory</div>
+        <div id="setupDirProtected" class="form-error hidden" role="status"></div>
         <div id="setupDirError" class="form-error hidden" role="alert"></div>
       </div>
       <div class="setup-nav">
@@ -380,10 +381,63 @@ function renderProjectsDir(body) {
         <button class="btn btn-primary" onclick="wizardValidateDir()">Next</button>
       </div>
     </div>`;
+  wizardUpdateDirAdvice();
   setTimeout(() => {
     const el = document.getElementById('setupProjectsDir');
-    if (el) el.focus();
+    if (el) {
+      el.addEventListener('input', wizardUpdateDirAdvice);
+      el.focus();
+    }
   }, 100);
+}
+
+/**
+ * Is `dir` inside a directory this machine's OS keeps TangleClaw out of?
+ *
+ * The roots come from the server (`config.protectedRoots`) because they are a
+ * fact about the machine TangleClaw runs on, not about the browser looking at
+ * it. An empty list means there is nothing to warn about here — every non-macOS
+ * host — so this stays silent rather than inventing a rule for it.
+ *
+ * @param {string} dir - The path as typed, `~` form or absolute.
+ * @returns {string|null} The matching protected root, or null.
+ */
+function wizardProtectedRootFor(dir) {
+  const roots = (state.config && state.config.protectedRoots) || [];
+  const p = String(dir || '').trim().replace(/\/+$/, '');
+  if (!p) return null;
+  return roots.find(root => p === root || p.startsWith(root + '/')) || null;
+}
+
+/**
+ * Show or hide the protected-directory caution for whatever is in the box now.
+ *
+ * BEFORE the scan, deliberately. The scan is the only thing that can prove
+ * whether this install can read the directory, and until #859 it proved it by
+ * killing the server; it now answers in five seconds with the remedy. But the
+ * cheapest fix by far is available only at this moment — the operator is looking
+ * at the field and can simply type somewhere else. Saying it only after the
+ * attempt fails is help arriving after the choice.
+ *
+ * A caution, not an error: plenty of installs have granted Full Disk Access, and
+ * for them this directory works fine. Nothing is blocked, and Next still scans.
+ */
+function wizardUpdateDirAdvice() {
+  const el = document.getElementById('setupDirProtected');
+  if (!el) return;
+  const input = document.getElementById('setupProjectsDir');
+  const root = wizardProtectedRootFor(input ? input.value : wizard.projectsDir);
+  if (!root) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.innerHTML = `<strong>macOS protects ${esc(root)}.</strong> TangleClaw runs in the `
+    + 'background, so it cannot ask you for permission — it may not be able to read your '
+    + 'projects here, and it will not find out until it tries. Either choose a folder outside '
+    + 'Documents, Desktop and Downloads, or grant Full Disk Access to node in System Settings '
+    + '&rarr; Privacy &amp; Security.';
+  el.classList.remove('hidden');
 }
 
 /**

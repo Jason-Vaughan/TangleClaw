@@ -6,6 +6,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **Setup now warns you about a protected projects directory before you choose it, not after it
+  fails (#859).** The wizard pre-fills `~/Documents/Projects`, and on macOS that is a directory a
+  background service cannot read without Full Disk Access — so the product was recommending the
+  one folder most likely to break it, with no caveat. Step 2 now shows a caution as soon as the
+  path sits under `~/Documents`, `~/Desktop` or `~/Downloads`, naming the folder and both
+  remedies, and it follows what you type rather than only what was pre-filled.
+
+  It is a caution, not a block: plenty of installs have granted Full Disk Access and work fine
+  there, and only the scan can tell. But the cheapest fix — type a different folder — is available
+  only while the operator is still looking at the field. After that, help arrives after the
+  choice.
+
+  **Which directories are protected comes from the server**, in the `GET /api/config` response
+  alongside `bindState`, for the same reason that one moved: the browser cannot answer it. The
+  browser may be a phone, where `navigator.platform` reports iOS about a Mac and the warning would
+  never appear for the person who needs it. Off macOS the list is empty and nothing is shown —
+  `~/Documents` means nothing on Linux, and a caution that fires where it does not apply is one
+  people learn to ignore everywhere.
+
+  The installer has warned about this since the first #859 fix; that notice is terminal output at
+  install time, and this is the same fact at the moment the decision is actually made.
+
 - **The dashboard is now reachable from another device on your network — which is what the login
   gate was for (#863).** A default caddy install generated exactly one Caddy site, `localhost`, so
   every other address (the machine's own name, its LAN IP) failed the TLS handshake before a password

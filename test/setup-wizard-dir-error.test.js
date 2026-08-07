@@ -53,7 +53,7 @@ function makeElement(id) {
  * @param {string|null} lastError - What the server said, or null for none.
  * @returns {object} sandbox
  */
-function loadSetup(lastError) {
+function loadSetup(lastError, protectedRoots) {
   const elements = new Map();
   const sandbox = {
     console, setTimeout: (fn) => { fn(); return 0; }, clearTimeout() {},
@@ -63,7 +63,10 @@ function loadSetup(lastError) {
     api: Object.assign(async () => null, { lastError }),
     loadConfig: async () => {}, loadProjects: async () => {}, loadStats: async () => {},
     loadPorts: async () => {}, maybeShowFilter: () => {}, startPolling: () => {},
-    state: { engines: [], config: { setupComplete: false } },
+    state: {
+      engines: [],
+      config: { setupComplete: false, protectedRoots: protectedRoots || [] }
+    },
     fetch: async () => ({ ok: true })
   };
   sandbox.document = {
@@ -111,6 +114,70 @@ describe('Setup wizard — projects-directory errors (#859)', () => {
     const err = ctx.document.getElementById('setupDirError');
     assert.equal(err.textContent, 'Directory not found or not accessible.');
     assert.equal(err.classList.contains('hidden'), false);
+  });
+
+  describe('the caution that arrives before the choice, not after it', () => {
+    const MAC_ROOTS = ['~/Documents', '/Users/dev/Documents', '~/Desktop', '/Users/dev/Desktop'];
+
+    it('warns about the pre-filled default before the operator presses Next', async () => {
+      // The wizard PRE-FILLS ~/Documents/Projects, so on a stock Mac the product
+      // recommends the one directory it may not be able to read. The scan is the
+      // only thing that can prove it either way, but the cheapest fix — type
+      // somewhere else — is available only while the operator is still looking
+      // at the field.
+      const ctx = loadSetup(null, MAC_ROOTS);
+      ctx.wizard.projectsDir = '~/Documents/Projects';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+      ctx.renderProjectsDir(ctx.document.getElementById('setupBody'));
+
+      const advice = ctx.document.getElementById('setupDirProtected');
+      assert.equal(advice.classList.contains('hidden'), false, 'the caution must be visible');
+      assert.match(advice.innerHTML, /Full Disk Access/);
+      assert.match(advice.innerHTML, /~\/Documents/, 'must name the folder it is about');
+    });
+
+    it('follows what the operator types, not just what was pre-filled', async () => {
+      const ctx = loadSetup(null, MAC_ROOTS);
+      ctx.wizard.projectsDir = '~/Documents/Projects';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+      ctx.renderProjectsDir(ctx.document.getElementById('setupBody'));
+
+      ctx.document.getElementById('setupProjectsDir').value = '~/code';
+      ctx.wizardUpdateDirAdvice();
+      const advice = ctx.document.getElementById('setupDirProtected');
+      assert.equal(advice.classList.contains('hidden'), true,
+        'moving out of the protected tree must clear the caution');
+
+      ctx.document.getElementById('setupProjectsDir').value = '/Users/dev/Desktop/work';
+      ctx.wizardUpdateDirAdvice();
+      assert.equal(advice.classList.contains('hidden'), false,
+        'the absolute form of a protected root must match too');
+    });
+
+    it('says nothing on a host with no protected directories', async () => {
+      // The server sends an empty list off macOS. `~/Documents` means nothing on
+      // Linux, and a caution that fires where it does not apply is one people
+      // learn to ignore everywhere.
+      const ctx = loadSetup(null, []);
+      ctx.wizard.projectsDir = '~/Documents/Projects';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents/Projects';
+      ctx.renderProjectsDir(ctx.document.getElementById('setupBody'));
+
+      assert.equal(ctx.document.getElementById('setupDirProtected').classList.contains('hidden'),
+        true, 'a Linux install must not be warned about a macOS rule');
+    });
+
+    it('does not mistake a lookalike sibling for a protected folder', async () => {
+      // `~/Documents-old` starts with `~/Documents` as a string but is a
+      // different directory, and TCC does not protect it.
+      const ctx = loadSetup(null, MAC_ROOTS);
+      ctx.wizard.projectsDir = '~/Documents-old/Projects';
+      ctx.document.getElementById('setupProjectsDir').value = '~/Documents-old/Projects';
+      ctx.renderProjectsDir(ctx.document.getElementById('setupBody'));
+
+      assert.equal(ctx.document.getElementById('setupDirProtected').classList.contains('hidden'),
+        true, 'prefix matching must respect path boundaries');
+    });
   });
 
   it('still asks for a path before calling the server at all', async () => {

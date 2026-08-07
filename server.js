@@ -734,7 +734,42 @@ function _withBindState(config) {
   // socket is wide, and the settings modal would draw a shut door over an open
   // one and hide the way out. In-memory only: a GET must not write.
   bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
-  return { ...redactConfigSecrets(config), bindState: bindPolicy.describeBindState(config) };
+  return {
+    ...redactConfigSecrets(config),
+    bindState: bindPolicy.describeBindState(config),
+    protectedRoots: _protectedRoots()
+  };
+}
+
+/**
+ * Directories THIS machine's OS keeps a background service out of, in both the
+ * `~` form an operator types and the absolute form a path resolves to.
+ *
+ * Ships from the server for the same reason `bindState` does: the browser cannot
+ * answer it. The question is what the OS running TangleClaw protects, and the
+ * browser asking it may be a phone — `navigator.platform` would say iOS about a
+ * Mac, and the one warning that matters would never appear. It is also the wrong
+ * question to hardcode in the UI: `~/Documents` means nothing on the Linux hosts
+ * TangleClaw also runs on, and a caution that fires there is a caution people
+ * learn to ignore.
+ *
+ * Empty on every platform without this behaviour, so callers can treat "no roots"
+ * as "nothing to warn about" rather than special-casing macOS themselves.
+ *
+ * @returns {string[]} Protected directory roots, or `[]` where none apply.
+ */
+function _protectedRoots() {
+  // macOS TCC. A launchd-spawned process gets no prompt and no EPERM here — the
+  // read simply never returns (#859), which is why this is worth saying BEFORE
+  // someone points the product at one of them rather than only after.
+  if (process.platform !== 'darwin') return [];
+  const home = process.env.HOME || '';
+  const roots = [];
+  for (const name of ['Documents', 'Desktop', 'Downloads']) {
+    roots.push(`~/${name}`);
+    if (home) roots.push(path.join(home, name));
+  }
+  return roots;
 }
 
 /**
