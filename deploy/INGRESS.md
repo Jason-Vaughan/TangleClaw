@@ -69,7 +69,30 @@ Two consequences fall out of the same fact:
 - **The child's stdout/stderr must go somewhere.** They are appended to
   `~/.tangleclaw/logs/ingress-cutover.log`. Discarding them would throw away the
   cutover's own "could not write result file" warning — the diagnostic that matters
-  precisely when the result channel is the thing that failed.
+  precisely when the result channel is the thing that failed. The log is `0600`,
+  rotates at 1 MB keeping one previous generation, and the credential hash that
+  `caddy validate` can quote back is redacted at its producer (#821).
+
+### If this machine ran a cutover before 2026-08-06, check its log once
+
+Both #821 controls are **prospective**. Redaction scrubs text as it is written, and a
+log below the rotation threshold never rotates — so a hash already sitting in
+`~/.tangleclaw/logs/ingress-cutover.log` stays there indefinitely. Nothing in the fix
+rewrites history, deliberately: silently truncating an operator's only record of what
+setup did is not a call TangleClaw should make on its own.
+
+It only happened if a cutover actually hit the validate-failure path (most installs
+never do). Check, and clear it yourself if so:
+
+```sh
+grep -c '\$2[aby]\$' ~/.tangleclaw/logs/ingress-cutover.log        # 0 means nothing to do
+grep -rl '\$2[aby]\$' ~/.tangleclaw/logs/ingress-cutover.log*      # includes rotated generations
+```
+
+If a match appears, the file is narration, not state — nothing reads it back, so it is
+safe to remove: `rm ~/.tangleclaw/logs/ingress-cutover.log*`. Changing the password
+itself is only warranted if that file left the machine (a pasted log, a bug report, a
+backup), since the hash is bcrypt and `0600`.
 
 Alternatives rejected, recorded so they are not re-proposed: executing the plan
 in-process minus the kickstart leaves the server bound wrong until some later
@@ -217,12 +240,24 @@ the generator reproduces the live file in full — see the parity caveat below.
 > Caddyfile that carries one by hand **ends Caddy access logging** — this is a real
 > loss, and it is not a bug to be fixed by teaching the generator to emit one.
 >
-> The reason is that an ingress log is not free: `~/.tangleclaw/logs/ingress-cutover.log`
-> already grows without rotation and can capture a `basic_auth` credential hash
-> (**#821**). Emitting an access-log block by default would propagate that hazard to
-> every new install, and TangleClaw would be writing a credential-adjacent, unrotated
-> file on machines whose operator never asked for one. A gap the operator opts into
-> is safer than a hazard they inherit.
+> The reason is that an ingress log is not free. As originally argued:
+> `~/.tangleclaw/logs/ingress-cutover.log` itself grew without rotation and could capture a
+> `basic_auth` credential hash (**#821**), so emitting an access-log block by default would
+> propagate that hazard to every new install.
+>
+> **That premise no longer holds — #821 closed 2026-08-06.** The cutover log now rotates
+> (1 MB, 2 files) and the hash is redacted at its producer. The nearest supporting
+> argument for this decision is therefore gone, and it is recorded here rather than
+> quietly dropped, because a decision whose stated reason has expired should be re-argued
+> on purpose or not at all.
+>
+> **The decision stands on what is left of it**, which is narrower but still real: an
+> access log is a file TangleClaw would be creating on a machine whose operator never
+> asked for one, and *whoever emits a log owns its rotation* — which for a Caddy-written
+> log is Caddy's `log` directive, not anything TangleClaw controls. A gap the operator
+> opts into is safer than a hazard they inherit. Whether the closed #821 changes the
+> balance enough to revisit #846 is a decision for the operator, not a side effect of
+> this fix.
 >
 > **If you want access logging, add the block by hand and own its rotation** — see
 > Caddy's `log` directive. Re-read this before any cutover on a machine that has one:
