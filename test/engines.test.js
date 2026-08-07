@@ -54,6 +54,133 @@ describe('engines', () => {
     });
   });
 
+  // The server runs under launchd, whose PATH is /usr/bin:/bin:/usr/sbin:/sbin
+  // and nothing else — while every common way to install an engine CLI (npm
+  // -g, nvm, volta, Homebrew, pipx) puts it somewhere that list does not
+  // contain. So `which` in the server's own environment reported "not
+  // installed" about binaries the operator runs by name every day (#346).
+  // Setup now REFUSES to finish with no engine, which turns that wrong answer
+  // from a cosmetic label into a door the operator cannot open.
+  describe('_detectionPath — looking where the operator actually installed it (#346)', () => {
+    afterEach(() => engines.resetDetectionCache());
+
+    it('never loses a directory the server could already see', () => {
+      // The safety property. A login shell that answers with a NARROWER path
+      // than launchd's — or fails outright — may only add candidates. Without
+      // this, "fixing" detection could un-detect an engine that worked.
+      const saved = process.env.PATH;
+      process.env.PATH = '/tc-sentinel-one:/tc-sentinel-two';
+      engines.resetDetectionCache();
+      try {
+        const entries = engines._detectionPath().split(':');
+        assert.ok(entries.includes('/tc-sentinel-one'), 'the server PATH must survive the merge');
+        assert.ok(entries.includes('/tc-sentinel-two'), 'every entry of it, not just the first');
+      } finally {
+        process.env.PATH = saved;
+        engines.resetDetectionCache();
+      }
+    });
+
+    it('de-duplicates without reordering', () => {
+      const saved = process.env.PATH;
+      process.env.PATH = '/tc-dup:/tc-dup:/tc-other';
+      engines.resetDetectionCache();
+      try {
+        const entries = engines._detectionPath().split(':');
+        const dupIndexes = entries.filter(e => e === '/tc-dup').length;
+        assert.equal(dupIndexes, 1, 'a repeated entry is searched once');
+        assert.ok(entries.indexOf('/tc-dup') < entries.indexOf('/tc-other'), 'order is preserved');
+      } finally {
+        process.env.PATH = saved;
+        engines.resetDetectionCache();
+      }
+    });
+
+    it('resolves once and reuses it, until something asks it not to', () => {
+      // One login shell per cycle, not one per engine: it runs the operator's
+      // profile, which is unbounded work someone else wrote.
+      const first = engines._detectionPath();
+      const saved = process.env.PATH;
+      process.env.PATH = '/tc-changed-underneath';
+      try {
+        assert.equal(engines._detectionPath(), first, 'the cached answer is reused');
+        assert.ok(engines._detectionPath(true).split(':').includes('/tc-changed-underneath'),
+          'and a refresh — what "Check again" asks for — re-reads it');
+      } finally {
+        process.env.PATH = saved;
+        engines.resetDetectionCache();
+      }
+    });
+
+    it('survives a shell that prints a banner before answering', () => {
+      // The probe runs the operator's INTERACTIVE rc, because ~/.zshrc is where
+      // most PATH edits live and zsh reads it only for interactive shells.
+      // Interactive rc files also greet you — version notices, prompt
+      // frameworks, "you have mail". Taking all of stdout as the answer yields
+      // a PATH with a banner glued to the front of it.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const fakeShell = path.join(dir, 'noisy-shell');
+      fs.writeFileSync(fakeShell,
+        '#!/bin/bash\n'
+        + 'echo "Welcome to your shell! 3 updates available."\n'
+        + 'PATH=/tc-from-profile:$PATH\n'
+        + 'eval "$2"\n');
+      fs.chmodSync(fakeShell, 0o755);
+
+      const savedShell = process.env.SHELL;
+      process.env.SHELL = fakeShell;
+      engines.resetDetectionCache();
+      try {
+        const entries = engines._detectionPath().split(':');
+        assert.ok(entries.includes('/tc-from-profile'),
+          'the PATH the profile set must be picked up');
+        for (const entry of entries) {
+          assert.doesNotMatch(entry, /Welcome|updates available/,
+            `the banner must not become a PATH entry (got "${entry}")`);
+        }
+      } finally {
+        process.env.SHELL = savedShell;
+        engines.resetDetectionCache();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to the server PATH when the shell never answers', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const brokenShell = path.join(dir, 'broken-shell');
+      fs.writeFileSync(brokenShell, '#!/bin/bash\nexit 1\n');
+      fs.chmodSync(brokenShell, 0o755);
+
+      const savedShell = process.env.SHELL;
+      const savedPath = process.env.PATH;
+      process.env.SHELL = brokenShell;
+      process.env.PATH = '/tc-sentinel-fallback';
+      engines.resetDetectionCache();
+      try {
+        assert.deepEqual(engines._detectionPath().split(':'), ['/tc-sentinel-fallback'],
+          'a shell that refuses to answer leaves detection where it already was');
+      } finally {
+        process.env.SHELL = savedShell;
+        process.env.PATH = savedPath;
+        engines.resetDetectionCache();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses a detection target that is not a plain command name', () => {
+      // The target is interpolated into a shell command, and engine profiles
+      // are operator-authored through the API. A name is [A-Za-z0-9._-]; a
+      // semicolon is not part of any binary's name.
+      const probe = engines.detectEngine({
+        id: 'malicious',
+        detection: { strategy: 'which', target: 'node; touch /tmp/tc-detect-injection' }
+      });
+      assert.equal(probe.available, false);
+      assert.equal(fs.existsSync('/tmp/tc-detect-injection'), false,
+        'the interpolated command must never have run');
+    });
+  });
+
   describe('detectEngine', () => {
     it('should detect an available binary', () => {
       // "node" should be available

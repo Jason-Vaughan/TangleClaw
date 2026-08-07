@@ -362,6 +362,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Engine detection now looks where you actually installed it (#346).** TangleClaw's server runs
+  under launchd, whose `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else — while every
+  common way to install an engine CLI (npm `-g`, nvm, volta, Homebrew, pipx) puts it somewhere that
+  list does not contain. So `which claude` failed in the server's environment and the engine was
+  reported "not installed" to someone who runs it by name every day.
+
+  Measured on this machine, with the server's own `PATH`: the old probe found **none** of the four
+  installed engines; the new one finds all four. It resolves the operator's login PATH once per
+  probe cycle and merges it with the server's — **merged, never replaced**, so nothing findable
+  before can stop being findable, and a login shell that fails or hangs leaves detection exactly
+  where it already was.
+
+  It asks an *interactive* login shell, deliberately: `zsh` reads `.zshrc` only for interactive
+  shells, and `.zshrc` is where most PATH edits live. With `-lc` alone this fix still missed the
+  engine installed under `~/.npm-global/bin`. Because an interactive shell also greets you — version
+  notices, prompt frameworks — the PATH is read from between explicit markers rather than from
+  whatever the shell happened to print.
+
+  Detection targets are now required to be plain command names before being interpolated into a
+  shell command. Engine profiles are operator-authored through the API, and a binary's name does not
+  contain a semicolon.
+
+  This was cosmetic until now. Setup refuses to finish with no engine installed, which turns a wrong
+  "not installed" into a door the operator cannot open — so it is fixed first.
+
 - **The first-run wizard no longer kills the server on a stock Mac (#859).** Step 2 of setup
   scans the directory you point it at, and the value it pre-fills is `~/Documents/Projects` —
   TCC-protected on macOS. A launchd-spawned node without Full Disk Access does not get `EPERM`
