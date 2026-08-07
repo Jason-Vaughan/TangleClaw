@@ -215,6 +215,34 @@ describe('Setup wizard — engine step (#707)', () => {
         'and the way forward must be on screen: install one, then check again');
     });
 
+    it('offers Continue anyway when detection could not look', () => {
+      // The half a server-side fail-open does not buy. If the wizard still
+      // renders no way forward, an operator whose engine IS installed and whose
+      // shell would not answer is walled in regardless of what the server would
+      // have allowed — pressing Check again forever against a broken check.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = false;
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /could not check for an AI engine/i,
+        'it must say it could not tell, not assert an absence');
+      assert.match(html, /Continue anyway/);
+      assert.match(html, /wizardRecheckEngines\(\)/, 'and still offer the re-check');
+    });
+
+    it('offers NO way past when it genuinely confirmed there is nothing', () => {
+      // Otherwise the gate is decoration. A confirmed absence has nothing to
+      // launch, and the operator finding that out at the first Launch button is
+      // the failure this whole slice exists to prevent.
+      const ctx = loadSetup(roster, {});
+      ctx.state.engineDetectionCertain = true;
+      ctx.showWizard();
+      const html = renderEngineStep(ctx);
+      assert.match(html, /No AI engine is installed yet/);
+      assert.doesNotMatch(html, /Continue anyway/);
+      assert.doesNotMatch(html, /onclick="wizardNext\(\)"/);
+    });
+
     it('gives the exact command and the vendor page for each engine', () => {
       // A command is what someone at a terminal wants; the docs page is the half
       // that cannot go stale, because the vendor maintains it. Both, per engine.

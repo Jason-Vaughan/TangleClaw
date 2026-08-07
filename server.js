@@ -2519,7 +2519,14 @@ route('GET', '/api/engines', async (req, res) => {
   // else wrote. Doing that on the event loop inside a route is the defect this
   // whole branch exists to remove.
   if (refresh) await engines.refreshDetectionPath();
-  jsonResponse(res, 200, { engines: engines.listWithAvailability() });
+  const list = engines.listWithAvailability();
+  // `detectionCertain: false` means no login shell answered, so detection saw
+  // only the PATH launchd gives this service and "not installed" is not a
+  // trustworthy answer (#346). The wizard shows that rather than presenting a
+  // guess as a fact — and it is what lets an operator whose engine IS installed
+  // get past a step that would otherwise be a locked door.
+  const certain = list.some((e) => e && e.available) || engines.detectionWasProbed();
+  jsonResponse(res, 200, { engines: list, detectionCertain: certain });
 });
 
 // GET /api/engines/:id

@@ -58,6 +58,14 @@ All notable changes to TangleClaw are documented in this file.
   the old one, leaving a door beside the gate. First-run only: an install that finished long ago and
   later lost its engine is a different problem, and refusing to save its settings would strand it.
 
+  **It refuses what it can confirm, not what it failed to find.** Detection reads your login PATH,
+  and TangleClaw runs under launchd where that PATH is not visible by default (#346) — so a hard
+  refusal keyed on "found nothing" would lock out someone whose engine is installed and whose shell
+  simply would not answer, behind a Check again button that keeps saying no because the *check* is
+  broken. Where it could not look, the step says so and offers **Continue anyway**. Being wrong in
+  that direction costs a dashboard that cannot launch, which you see immediately; being wrong the
+  other way costs an install with no way out at all.
+
   **TangleClaw does not install the engine for you.** It runs as a background service with no
   terminal, so it cannot answer a password prompt — the same reason every privileged step lives in
   the human-run installer. It tells you exactly what to run instead.

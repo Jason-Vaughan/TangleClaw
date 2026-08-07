@@ -17,6 +17,10 @@ const wizard = {
   chimeEnabled: true,
   httpsCheckLoaded: false,
   httpsMode: null,
+  // Whether the server could actually look for engines. Undefined until an
+  // answer arrives; only an explicit `false` means "we could not tell", so a
+  // missing field never reads as uncertainty.
+  engineDetectionCertain: undefined,
   mkcertAvailable: null,
   mkcertCaroot: '',
   mkcertCaInstalled: false,
@@ -699,12 +703,25 @@ function renderEngines(body) {
   // password prompt, which is why every privileged step lives in the human-run
   // installer.
   const noneAvailable = selectable.length === 0;
+  // Whether the server could actually LOOK. False means no login shell answered,
+  // so detection saw only the PATH launchd gives the service and "none
+  // installed" is a guess (#346). The screen must not present that as a fact,
+  // and — the part that matters — must not wall in an operator whose engine is
+  // installed and whose shell merely would not answer. The server refuses only
+  // what it is sure of; this is where the person who knows the truth gets to
+  // say so.
+  const uncertain = wizard.engineDetectionCertain === false
+    || (wizard.engineDetectionCertain === undefined && state.engineDetectionCertain === false);
   const pickerHtml = noneAvailable
     ? `<div class="setup-https-panel setup-https-warning">
         <div class="setup-https-warn-icon" aria-hidden="true">!</div>
         <div>
-          <div class="setup-https-warn-title">No AI engine is installed yet.</div>
-          <p class="setup-text-muted">TangleClaw runs an AI coding CLI for you — without one there is nothing for it to launch, so setup pauses here. Install any one of these in a terminal on this Mac, then press <strong>Check again</strong>.</p>
+          <div class="setup-https-warn-title">${uncertain
+            ? 'TangleClaw could not check for an AI engine.'
+            : 'No AI engine is installed yet.'}</div>
+          <p class="setup-text-muted">${uncertain
+            ? 'It could not read your shell\'s PATH, so it cannot tell whether an engine is installed — if you have one, this is a false alarm and you can continue. If you do not, install one below and press <strong>Check again</strong>.'
+            : 'TangleClaw runs an AI coding CLI for you — without one there is nothing for it to launch, so setup pauses here. Install any one of these in a terminal on this Mac, then press <strong>Check again</strong>.'}</p>
           ${_engineInstallOptionsHtml(enginesList)}
         </div>
       </div>`
@@ -723,7 +740,13 @@ function renderEngines(body) {
       <div class="setup-nav">
         <button class="btn" onclick="wizardBack()">Back</button>
         ${noneAvailable
-          ? '<button class="btn btn-primary" id="setupEngineRecheck" onclick="wizardRecheckEngines()">Check again</button>'
+          ? `<button class="btn" id="setupEngineRecheck" onclick="wizardRecheckEngines()">Check again</button>${
+            // Offered ONLY when detection could not look. A confirmed "nothing
+            // installed" has no Continue, because there is genuinely nothing to
+            // launch; an unconfirmed one must never be a locked door.
+            uncertain
+              ? '<button class="btn btn-primary" onclick="wizardNext()">Continue anyway</button>'
+              : ''}`
           : '<button class="btn btn-primary" onclick="wizardNext()">Next</button>'}
       </div>
     </div>`;
@@ -821,6 +844,7 @@ async function wizardRecheckEngines() {
   const found = (data.engines || []).filter((e) => e && e.available);
   state.engines = data.engines || [];
   wizard.engines = data.engines || [];
+  wizard.engineDetectionCertain = data.detectionCertain !== false;
   if (found.length === 0) {
     // Re-rendering the identical screen reads as a dead button. Say that the
     // check ran and what it found, or the operator cannot tell "still nothing"

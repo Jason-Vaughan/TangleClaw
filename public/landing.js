@@ -995,7 +995,13 @@ async function loadModelStatus() {
 
 async function loadEngines() {
   const data = await api('/api/engines');
-  if (data) state.engines = data.engines || [];
+  if (!data) return;
+  state.engines = data.engines || [];
+  // Whether the server could actually look, or only saw the PATH launchd gave
+  // it (#346). The setup wizard refuses to wall an operator in on an answer
+  // this flag says is a guess, so it has to arrive with the FIRST load and not
+  // only after a re-check.
+  state.engineDetectionCertain = data.detectionCertain !== false;
 }
 
 async function loadConfig() {

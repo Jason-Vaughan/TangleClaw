@@ -54,9 +54,13 @@ through initial configuration:
 3. **Detect Projects** — scans the directory for existing projects (a git branch, a
    `.tangleclaw/project.json`, or a common project manifest) and lets you select which to attach
 4. **Engines** — shows which AI engines are detected and lets you pick a default. **Setup stops
-   here if none are installed**: TangleClaw's job is running an AI coding CLI, so an install
-   without one could not launch anything. It shows the install command for each engine and a
-   **Check again** button — install one in a terminal, press it, and setup continues.
+   here when TangleClaw can confirm none are installed**: its job is running an AI coding CLI, so
+   an install without one could not launch anything. It shows the install command for each engine
+   and a **Check again** button — install one in a terminal, press it, and setup continues.
+
+   If TangleClaw cannot *read* your shell's PATH it says so and offers **Continue anyway** instead,
+   because "not installed" would then be a guess rather than a finding — and being wrong about it
+   would lock you out of your own setup.
 5. **Preferences** — delete protection password, idle chime toggle
 6. **HTTPS** — generate or select a certificate, or keep local HTTP
 7. **Admin Login** — the username and password you will sign in with (see below; this step is not always shown)

@@ -233,6 +233,29 @@ describe('engines', () => {
       return { file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
     }
 
+    it('reports uncertainty rather than deciding it either way', async () => {
+      // The distinction the wizard needs. Answering "installed" would drop a
+      // stated requirement; answering "not installed" would wall in an operator
+      // whose engine is present. Neither is the server's call to make alone.
+      const shell = fakeShell('#!/bin/bash\nexit 1\n');
+      const savedShell = process.env.SHELL;
+      const savedPath = process.env.PATH;
+      process.env.SHELL = shell.file;
+      process.env.PATH = '/tc-nothing-here';
+      engines.resetDetectionCache();
+      try {
+        const readiness = await engines.engineReadiness();
+        assert.equal(readiness.installed, false, 'it found nothing, and says so');
+        assert.equal(readiness.certain, false, 'but it could not look, and says that too');
+        assert.equal(engines.detectionWasProbed(), false);
+      } finally {
+        process.env.SHELL = savedShell;
+        process.env.PATH = savedPath;
+        engines.resetDetectionCache();
+        shell.cleanup();
+      }
+    });
+
     it('fails OPEN when the login shell could not be read', async () => {
       const shell = fakeShell('#!/bin/bash\nexit 1\n');
       const savedShell = process.env.SHELL;
@@ -271,6 +294,60 @@ describe('engines', () => {
         engines.resetDetectionCache();
         shell.cleanup();
       }
+    });
+  });
+
+  describe('detectEngine', () => {
+    it('should detect an available binary', () => {
+      // "node" should be available
+      const result = engines.detectEngine({
+        id: 'test-node',
+        detection: { strategy: 'which', target: 'node' }
+      });
+      assert.equal(result.id, 'test-node');
+      assert.equal(result.available, true);
+      assert.ok(result.path);
+    });
+
+    it('should handle unavailable binary', () => {
+      const result = engines.detectEngine({
+        id: 'test-missing',
+        detection: { strategy: 'which', target: '__nonexistent_binary_12345__' }
+      });
+      assert.equal(result.id, 'test-missing');
+      assert.equal(result.available, false);
+      assert.equal(result.path, null);
+    });
+
+    it('should detect by path', () => {
+      const result = engines.detectEngine({
+        id: 'test-path',
+        detection: { strategy: 'path', target: '/usr/bin/env' }
+      });
+      assert.equal(result.available, true);
+      assert.equal(result.path, '/usr/bin/env');
+    });
+
+    it('should handle missing path', () => {
+      const result = engines.detectEngine({
+        id: 'test-path-missing',
+        detection: { strategy: 'path', target: '/nonexistent/binary' }
+      });
+      assert.equal(result.available, false);
+      assert.equal(result.path, null);
+    });
+
+    it('should handle unknown strategy', () => {
+      const result = engines.detectEngine({
+        id: 'test-unknown',
+        detection: { strategy: 'magic', target: 'foo' }
+      });
+      assert.equal(result.available, false);
+    });
+
+    it('should handle profile with no detection', () => {
+      const result = engines.detectEngine({ id: 'no-detect' });
+      assert.equal(result.available, false);
     });
   });
 
