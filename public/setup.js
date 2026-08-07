@@ -857,11 +857,9 @@ async function wizardRecheckEngines() {
     }
     return;
   }
-  if (found.length > 0) {
-    // Found one: seed the default so the picker that replaces this screen opens
-    // on something real, then re-render into it.
-    wizard.defaultEngine = found[0].id;
-  }
+  // Found one — the empty case returned above. Seed the default so the picker
+  // that replaces this screen opens on something real, then re-render into it.
+  wizard.defaultEngine = found[0].id;
   renderWizardStep();
 }
 
