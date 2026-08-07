@@ -1540,6 +1540,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Seven tests stopped asking the host a question the code should answer.** The new
+  no-engine refusal on `POST /api/setup/complete` broke `test/api-setup-https.test.js`, which had
+  never needed an engine before: the bundled profiles detect real CLIs, so the suite passed on a
+  developer's Mac and returned `400 ENGINE_REQUIRED` on a CI runner with none installed. The shared
+  `test/_engine-fixture.js` exists for precisely this and had been applied to the four suites
+  measured when the gate landed; this fifth one was missed, because a test that still passes does
+  not ask to be looked at. It is the only remaining file of the nine referencing that route that
+  issues a real request against a real server. Proven on a host that *does* have engines by removing
+  every bundled profile and confirming the fixture alone satisfies the gate — and that removing the
+  fixture too makes it refuse.
+
 - **Three notes from the independent PR review, cleared.** A dead `if (found.length > 0)` in the
   wizard's engine re-check guarded a block the early return above it already made unreachable, so
   the condition was always true; and `_probeShellPath` (`lib/engines.js`) and `createProjectsDir`
