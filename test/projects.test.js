@@ -884,6 +884,46 @@ describe('projects', () => {
         + `(${seen.opts.timeoutMs}ms)`);
     });
 
+    it('opts the POLLED route into the failure backoff', async () => {
+      // This route is polled every ten seconds for as long as a dashboard tab is
+      // open. Without opting in, an unreadable projects directory costs a killed
+      // child on every tick forever — and a child blocked in the kernel may never
+      // leave the process table. Drop the pathKey and that returns silently:
+      // everything still works, it just costs a process every ten seconds.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = opts; return Promise.reject(timedOut()); },
+        () => projects.listAllProjects()
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.equal(seen.pathKey, projects.resolveProjectsDir(store.config.load().projectsDir),
+        'the backoff must be keyed on the directory actually read');
+    });
+
+    it('logs a remembered refusal quietly, so one bad directory is not a log flood', async () => {
+      // Same condition, same degradation — but the scanner already warned when it
+      // really failed, and warns again on each escalation. Repeating that per poll
+      // would bury those lines behind six identical ones a minute.
+      const logger = require('../lib/logger');
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
+      try {
+        const cached = Object.assign(new Error('remembered'),
+          { tcTimedOut: true, tcCached: true });
+        await withScanner(() => Promise.reject(cached), () => projects.listAllProjects());
+        assert.equal(chunks.join(''), '', 'a remembered refusal must not warn again');
+
+        // ...but a NEW failure still must, or a stuck directory goes unreported.
+        await withScanner(() => Promise.reject(timedOut()), () => projects.listAllProjects());
+        assert.match(chunks.join(''), /Full Disk Access/);
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+    });
+
     it('names Full Disk Access and the safe directories when the path never answered', () => {
       // This string is the entire operator-facing value of degrading instead of
       // hanging: without it the dashboard just shows fewer projects and nobody
@@ -1207,6 +1247,21 @@ describe('projects', () => {
       assert.ok(seen, 'the fixture must actually reach the scanner');
       assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
         'the child must give up before the supervisor kills it, so a slow walk can report');
+    });
+
+    it('does NOT opt an operator-pressed button into the failure backoff', async () => {
+      // The polled route opts in; this one must not. Someone who has just granted
+      // Full Disk Access and pressed Scan again is entitled to a real answer — a
+      // remembered refusal would tell them their fix did not work, which is a
+      // worse version of the misdiagnosis this whole issue is about. The cost of
+      // leaving it out is bounded by how fast a person can click.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = opts; return Promise.resolve({ projects: [] }); },
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.equal(seen.pathKey, undefined);
     });
 
     it('reports a missing directory under its OWN code, not a generic bad request', async () => {

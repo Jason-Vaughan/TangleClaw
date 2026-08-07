@@ -441,6 +441,281 @@ describe('lib/dir-scanner — the deadline kills, it does not merely give up', (
   });
 });
 
+describe('lib/dir-scanner — the failure backoff (#883 chunk 3)', () => {
+  /**
+   * A fork stand-in whose children answer according to a script.
+   *
+   * Real children are not usable here: the questions are about how MANY child
+   * processes a sequence of requests costs, and about time, and a real fork adds
+   * tens of milliseconds of noise to both. Each script entry is `'hang'` (never
+   * reply — the case the backoff exists for), `{ok: value}`, or `{err: {...}}`;
+   * the script is consumed per child, and it repeats its last entry once
+   * exhausted so a test only has to state the part it cares about.
+   *
+   * @param {Array<'hang'|{ok?: any, err?: object}>} script - Behavior per child.
+   * @returns {Function} A `forkFn`, carrying `.made` — the children it created.
+   */
+  function scriptedForkFn(script) {
+    const made = [];
+    const fn = () => {
+      const index = made.length;
+      const fake = new (require('node:events').EventEmitter)();
+      fake.pid = 700000 + index;
+      fake.connected = true;
+      fake.channel = null;
+      fake.stderr = null;
+      fake.exitCode = null;
+      fake.signalCode = null;
+      fake.unref = () => {};
+      fake.kill = () => { fake.connected = false; };
+      fake.send = (msg) => {
+        const step = script[Math.min(index, script.length - 1)];
+        if (step === 'hang') return true;
+        setImmediate(() => fake.emit('message', step.err
+          ? { id: msg.id, ok: false, error: step.err }
+          : { id: msg.id, ok: true, value: step.ok }));
+        return true;
+      };
+      made.push(fake);
+      return fake;
+    };
+    fn.made = made;
+    return fn;
+  }
+
+  /**
+   * A scanner wired for fast, deterministic backoff tests.
+   * @param {Function} forkFn - From scriptedForkFn.
+   * @param {object} [over] - Option overrides.
+   * @returns {object} The scanner.
+   */
+  function backoffScanner(forkFn, over = {}) {
+    return dirScanner.createScanner({
+      forkFn, timeoutMs: 60, exitGraceMs: 0,
+      pathFailureTtlMs: 200, pathFailureMaxTtlMs: 800, ...over
+    });
+  }
+
+  const KEY = '/some/protected/dir';
+
+  test('a path that did not answer is refused without costing another process', async () => {
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn);
+    try {
+      const first = await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.ok(first.tcTimedOut);
+      assert.ok(!first.tcCached, 'the first failure is observed, not remembered');
+      assert.equal(forkFn.made.length, 1);
+
+      const started = Date.now();
+      const second = await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+
+      // The whole point: no second child, and no five-second wait to find out.
+      assert.equal(forkFn.made.length, 1, 'a known-bad path must not cost another process');
+      assert.ok(Date.now() - started < 40, 'and must be refused promptly, not on the deadline');
+
+      // The CONDITION is unchanged, so the operator still gets the Full Disk
+      // Access remedy — `_scanFailureHint` keys on exactly this flag.
+      assert.ok(second.tcTimedOut, 'a remembered refusal is still an unresponsive path');
+      assert.ok(second.tcCached, 'but callers must be able to tell it cost nothing');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('exactly one real attempt per backoff interval, however often it is asked', async () => {
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 250 });
+    try {
+      for (let i = 0; i < 6; i++) {
+        await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      }
+      assert.equal(forkFn.made.length, 1, 'six requests inside one interval is one attempt');
+
+      await new Promise((r) => setTimeout(r, 300));
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.equal(forkFn.made.length, 2, 'and one more once the interval has passed');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('concurrent requests during the retry do not each become a retry', async () => {
+    // The interval is shorter than the deadline here on purpose. A probe that is
+    // still outstanding when the next poll arrives would let a second process be
+    // forked if the door were only pushed shut after the probe returned.
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn, { timeoutMs: 300, pathFailureTtlMs: 100 });
+    try {
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.equal(forkFn.made.length, 1);
+
+      await new Promise((r) => setTimeout(r, 150));
+      const probe = rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      await new Promise((r) => setTimeout(r, 30));
+      const overlapping = await rejection(
+        scanner.request('listUnregistered', {}, { pathKey: KEY })
+      );
+
+      assert.ok(overlapping.tcCached, 'the overlapping request must be served from memory');
+      assert.equal(forkFn.made.length, 2, 'the in-flight probe is the only new process');
+      await probe;
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('a directory that starts working recovers with no restart', async () => {
+    // The first child hangs; the second answers. Nothing intervenes — no
+    // operator action inside the product, no process restart.
+    const forkFn = scriptedForkFn(['hang', { ok: { unregistered: [], truncated: false } }]);
+    const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 120 });
+    try {
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      await new Promise((r) => setTimeout(r, 160));
+
+      const recovered = await scanner.request('listUnregistered', {}, { pathKey: KEY });
+      assert.deepEqual(recovered, { unregistered: [], truncated: false });
+
+      // And the memory of the failure is gone, not merely expired: the very next
+      // request goes straight through rather than waiting out another interval.
+      const after = await scanner.request('listUnregistered', {}, { pathKey: KEY });
+      assert.deepEqual(after, { unregistered: [], truncated: false });
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('an ordinary error clears the memory too — the path ANSWERED', async () => {
+    // ENOENT is not a hang, it is a reply. Caching it would break the wizard
+    // outright: its Create button turns ENOENT into a directory, and the scan
+    // immediately afterwards has to see the folder that was just made.
+    const forkFn = scriptedForkFn(['hang', { err: { message: 'nope', code: 'ENOENT' } }]);
+    const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 120 });
+    try {
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      await new Promise((r) => setTimeout(r, 160));
+
+      const answered = await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.equal(answered.code, 'ENOENT');
+
+      const next = await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      // Reaching the child is what matters, and these two prove it: a remembered
+      // refusal would carry `tcTimedOut` and `tcCached`, never an errno.
+      assert.equal(next.code, 'ENOENT', 'not a remembered timeout');
+      assert.ok(!next.tcCached, 'a path that replies is not a path being backed off');
+
+      // Two children, not three — and that is correct rather than a miss. Only
+      // the hung one was killed; the one that answered ENOENT is healthy, so the
+      // third request reuses it. That reuse is the long-lived child doing its
+      // job, and counting forks here would punish it.
+      assert.equal(forkFn.made.length, 2);
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('collateral does NOT mark a path as bad', async () => {
+    // The killed request's path may be perfectly healthy — it died because a
+    // SIBLING forced a kill. Recording that would let one bad directory blame a
+    // good one, which is the misdiagnosis this whole issue exists to remove.
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn, { timeoutMs: 5000 });
+    try {
+      const doomed = rejection(scanner.request('a', {}, { pathKey: '/bad', timeoutMs: 60 }));
+      const bystander = rejection(scanner.request('b', {}, { pathKey: '/healthy' }));
+
+      assert.ok((await doomed).tcTimedOut);
+      const collateral = await bystander;
+      assert.ok(collateral.tcAborted, 'and it is reported as collateral, not as a timeout');
+
+      // The bystander's path must be untouched: the next request for it is a
+      // real attempt, not a remembered refusal.
+      const forksBefore = forkFn.made.length;
+      const retry = await rejection(
+        scanner.request('b', {}, { pathKey: '/healthy', timeoutMs: 60 })
+      );
+      assert.ok(!retry.tcCached, '/healthy must not have been marked bad by /bad\'s kill');
+      assert.ok(forkFn.made.length > forksBefore, 'it must really have been tried');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('collateral does not ERASE an existing backoff either', async () => {
+    // The other direction of the same rule, and the one that actually costs
+    // something. A probe for an already-bad path can be killed by an unrelated
+    // path's deadline; if that abort were read as "this path is fine now", the
+    // backoff would be dropped and the next poll would fork again — the rate
+    // bound quietly gone, with nothing failing to show it.
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 200 });
+    try {
+      await rejection(scanner.request('b', {}, { pathKey: '/b', timeoutMs: 60 }));
+      await new Promise((r) => setTimeout(r, 250));
+
+      // /b's retry goes out, then /a's deadline kills the child under it.
+      const probe = rejection(scanner.request('b', {}, { pathKey: '/b', timeoutMs: 5000 }));
+      const doomed = rejection(scanner.request('a', {}, { pathKey: '/a', timeoutMs: 60 }));
+      assert.ok((await doomed).tcTimedOut);
+      assert.ok((await probe).tcAborted, 'the retry must have died as collateral');
+
+      const after = await rejection(scanner.request('b', {}, { pathKey: '/b' }));
+      assert.ok(after.tcCached,
+        '/b must still be backed off — an abort is not evidence that it recovered');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('the backoff escalates, and the escalation is visible', async () => {
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn, { pathFailureTtlMs: 100, pathFailureMaxTtlMs: 100 });
+    try {
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      const firstRefusal = await rejection(
+        scanner.request('listUnregistered', {}, { pathKey: KEY })
+      );
+      assert.match(firstRefusal.message, /the last 1 time\(s\)/);
+
+      await new Promise((r) => setTimeout(r, 140));
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      const secondRefusal = await rejection(
+        scanner.request('listUnregistered', {}, { pathKey: KEY })
+      );
+      // The count rises, which is what makes a persistent failure legible in the
+      // log as a trend rather than as a repeated incident.
+      assert.match(secondRefusal.message, /the last 2 time\(s\)/);
+
+      // Capped: with max == ttl, the third interval is still ~100ms rather than
+      // having doubled to 400. Without a ceiling, a directory fixed after a few
+      // failures would stay unnoticed for an unbounded time.
+      await new Promise((r) => setTimeout(r, 140));
+      const forksBefore = forkFn.made.length;
+      await rejection(scanner.request('listUnregistered', {}, { pathKey: KEY }));
+      assert.ok(forkFn.made.length > forksBefore,
+        'the backoff must not have grown past its ceiling');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('without a pathKey nothing is remembered — the backoff is opt-in', async () => {
+    // A generic supervisor silently declining to do what it was asked would be a
+    // bad surprise. Only a caller that says "a repeat of this is not worth a
+    // second process" gets short-circuited.
+    const forkFn = scriptedForkFn(['hang']);
+    const scanner = backoffScanner(forkFn);
+    try {
+      await rejection(scanner.request('listUnregistered', { dir: KEY }));
+      await rejection(scanner.request('listUnregistered', { dir: KEY }));
+      assert.equal(forkFn.made.length, 2, 'both were really attempted');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+});
+
 describe('lib/dir-scanner — the threadpool leak (#883)', () => {
   /**
    * Run the pool demo in one mode and read its verdict.

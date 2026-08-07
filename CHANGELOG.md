@@ -463,6 +463,33 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **An unreadable projects folder is now cheap, not merely survivable.** (#883, chunk 3.) With
+  chunks 1–2 the dashboard's ten-second poll still cost a five-second stall and a killed scanner
+  process *on every tick, forever* — and a process blocked in the kernel may never leave the
+  process table, so that was roughly six unreapable processes a minute for as long as a browser
+  tab stayed open. A path that does not answer is now remembered and refused immediately, so the
+  cost is one attempt per backoff interval (30s, doubling to a 5-minute ceiling) instead of one
+  per poll.
+
+  **A directory that starts working recovers on its own** — no restart, no button. That is the
+  half of a failure cache that is easy to get wrong, and this project has the bug on record: a
+  memoization that cached *failures* permanently because only the success case was thought
+  through. So the rule here is narrow on purpose — **only "it did not answer" is remembered.**
+  Anything else is an *answer*: a success clears the memory, and so does an ordinary error.
+  `ENOENT` in particular must never stick, because the wizard's Create button exists to turn it
+  into a directory and the scan straight afterwards has to see the folder that was just made.
+  Work killed as collateral for a *sibling* request is recorded neither way — it says nothing
+  about its own path, and treating it as evidence would let one bad directory either blame or
+  absolve a healthy one.
+
+  **The backoff is opt-in, and only the polled route takes it.** The wizard's Scan and Create
+  buttons deliberately do not: someone who has just granted Full Disk Access and pressed the
+  button again is entitled to a real answer, not a remembered one, and the cost of leaving them
+  out is bounded by how fast a person can click. Repeated refusals log at debug rather than warn,
+  so one broken directory no longer buries its own diagnosis under six identical warnings a
+  minute; a genuinely new failure, and each escalation of the backoff, still warn with the
+  consecutive count.
+
 - **A projects folder that never answers no longer costs the server its ability to read ANY
   file.** (#883, chunk 2 — the fix reaching the routes.) `GET /api/projects`,
   `POST /api/setup/scan` and `POST /api/setup/create-dir` now do their filesystem work in the
