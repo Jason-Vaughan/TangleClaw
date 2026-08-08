@@ -218,3 +218,15 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/store-groups.test.js` — `store.projectGroups`: project-group membership.
 - `test/store-shareddocs.test.js` — `store.sharedDocs`: shared-document registration and lookup.
 - `test/version-bump-package-json.test.js` — #298: version-bump falls back to `package.json` for Node projects with no `version.json`, writing only the top-level `version` value.
+
+## TODO (auto-stubbed 2026-08-08)
+
+- **TBD** — touched in this session: `data/engines/aider.json`. <!-- describe -->
+- **TBD** — touched in this session: `data/engines/antigravity.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/_dir-scanner-hang-child.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_dir-scanner-pool-demo.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_engine-fixture.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/auth2-setup-admin.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/dir-scanner-child.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/dir-scanner.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-wizard-dir-error.test.js`. <!-- describe -->
