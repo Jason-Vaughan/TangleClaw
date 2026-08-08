@@ -614,6 +614,35 @@ tail -50 ~/.tangleclaw/logs/tangleclaw.log
 curl -s http://localhost:3102/api/health | python3 -m json.tool
 ```
 
+### Leftover `dir-scanner-child` Processes
+
+TangleClaw reads your project folders in a small helper process rather than in the server, so
+a folder that never responds cannot take the whole dashboard down with it. If a folder does
+stop responding, that helper is killed — but a process stuck waiting on the operating system
+cannot always be killed immediately, and those can pile up.
+
+**This is a symptom, not the problem. Fix the folder and the pile-up stops.**
+
+```bash
+# How many are there? Two is normal — one for the dashboard, one for the setup wizard.
+pgrep -fl dir-scanner-child
+
+# Which folder is not responding, and how often it has failed
+grep -E "did not answer|did not exit after SIGKILL" ~/.tangleclaw/logs/tangleclaw.log | tail -20
+```
+
+The fix is whatever the log names: usually granting Full Disk Access to your `node` binary
+(System Settings → Privacy & Security → Full Disk Access), or moving your projects folder
+outside `~/Documents`, `~/Desktop` and `~/Downloads`. While a folder stays unreadable,
+TangleClaw backs off and retries at most once every 30 seconds, widening to 5 minutes — so
+the pile-up is slow, not runaway.
+
+To clear the ones already there, restart the server. Nothing else releases them:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
+```
+
 ### Terminal Not Connecting
 
 ```bash
