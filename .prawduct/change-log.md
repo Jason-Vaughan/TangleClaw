@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-07: first run stops dead-ending — the wedge, the PATH, and three screens with no way forward (#859, #346)
 
-<!-- prawduct: type=fix | scope=first-run-859 | status= -->
+<!-- prawduct: type=fix | scope=first-run-859 | status=shipped -->
 
 **Why:** #859 opened this — a single `GET /api/projects` could kill the server permanently — but
 tracing the first-run path from a stranger's point of view found three more places the wizard
@@ -98,7 +98,7 @@ Nothing detected them, which is filed separately.
 
 ## 2026-08-06: one derivation of "are we protected", stated so an unknown state fails safe (#861)
 
-<!-- prawduct: type=fix | scope=ingress-861 | status= -->
+<!-- prawduct: type=fix | scope=ingress-861 | status=shipped -->
 
 **Why:** last open item on the v5 gate. Raised by the cumulative Critic on the v5 bundle (R-9),
 filed rather than fixed. `ingress.protection` was produced by the server and its *meaning*
@@ -200,7 +200,7 @@ one pass, and this is the half a machine can do — the screens still need a rea
 and a browser.
 ## 2026-08-06: the cutover log stops holding a credential hash, and stops growing (#821)
 
-<!-- prawduct: type=fix | scope=ingress-821 | status= -->
+<!-- prawduct: type=fix | scope=ingress-821 | status=shipped -->
 
 **Why:** v5 gate item, raised by the Critic on #819 (rev-20260731T232030Z-279745ce R-18) and filed
 rather than fixed there. `~/.tangleclaw/logs/ingress-cutover.log` is opened with a raw
@@ -296,7 +296,7 @@ node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded
 
 ## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
 
-<!-- prawduct: type=fix | scope=medusa-873 | status= -->
+<!-- prawduct: type=fix | scope=medusa-873 | status=shipped -->
 
 **Why:** filed by a third-party installer (`GURULifeline`) — the class of report this machine
 structurally cannot reproduce, because here a project named Medusa genuinely *is* the switchboard
@@ -358,7 +358,7 @@ not report. Verified locally with CI's exact command and runtime; the PR still w
 
 ## 2026-08-04: one unreadable folder can no longer take down the server (#859)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 `listAllProjects` ran `fs.readdirSync` on the event loop over the operator-chosen projects
 directory, and the shipped default (`~/Documents/Projects`) is TCC-protected on macOS. A launchd
@@ -381,7 +381,7 @@ each call separately bounded. It can make this route slow; it can no longer stop
 
 ## 2026-08-04: cross-site guards extended to WebSockets, and Caddyfile inputs shape-checked (#860, #864)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 **Why:** the cumulative review's reachable findings, plus the delta review that followed it. Recorded
 here because the previous entry's own lesson was that CHANGELOG-only updates leave every derived
@@ -420,7 +420,7 @@ eliminate.
 
 ## 2026-08-04: the dashboard answers to the machine's own name, and cert regeneration stops shrinking (#863, #862, #859, #846)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 **Why:** four issues' worth of shipped v5 behaviour reached `CHANGELOG.md` and never reached this
 file, so every view that derives from these tags — Status, `release-notes.md`, `scope_rollups` —
@@ -459,7 +459,7 @@ which was true of the running service and false of the file it reloads from.
 
 ## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
 
-<!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
 
 **Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
 weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.
@@ -3745,3 +3745,45 @@ which is what they had before, and the residual is recorded.
 
 Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
 re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.
+
+## 2026-08-07: A hung directory can no longer take the server's filesystem with it (#883)
+
+<!-- prawduct: type=fix | chunks=1,2,3 | scope=883-threadpool-leak | status=shipped -->
+
+**Why:** the #859 fix bounded the RESPONSE, not the OPERATION. `fs.promises` performs a read on
+libuv's threadpool — four threads shared by the whole process — and a deadline abandons the promise
+without cancelling the syscall, so every hung read cost a thread permanently. On a TCC-protected
+macOS path the read never returns at all, so four of them left the server unable to touch the
+filesystem **on any path, permanently**, while `/api/health` kept answering `200`. Worse than the
+outage was the diagnosis: with the pool gone every operation timed out, and `tcTimedOut` was the
+only signal, so the product told operators that healthy directories were protected and sent them to
+grant Full Disk Access for a problem that had nothing to do with permissions.
+
+Only killing the process that owns a thread blocked in the kernel reclaims it. `worker_threads`
+cannot substitute — workers share the process-wide pool and `terminate()` does not interrupt a
+blocked syscall. So the walks moved into a forked child the deadline kills (`lib/dir-scanner.js`,
+`lib/dir-scanner-child.js`), the three operator-path entry points in `lib/projects.js` route through
+it, and a per-path failure backoff bounds what a permanently-broken directory costs.
+
+**Chunk 1** — the supervisor. **Chunk 2** — `listAllProjects`, `scanDirectoryForProjects` and
+`createProjectsDir` behind it; `git.getInfo`'s `execSync` moved with the walk, taking a second
+event-loop hazard off the server. **Chunk 3** — the backoff: 30s doubling to a five-minute ceiling,
+opt-in, taken only by the polled route.
+
+**The rejection vocabulary is the load-bearing design.** `tcTimedOut` means "this path did not
+answer" and nothing else, because it is the sole input to the Full Disk Access advice. Collateral
+work gets `tcAborted`, a walk that ran out of budget gets `tcTruncated`, and a filesystem that
+replied gets its errno. Every one of those used to arrive wearing `tcTimedOut`.
+
+**Mutation-verified**, and one mutation mattered more than the rest: deleting the collateral guard
+left the suite green, because the test covered only one of that guard's two failure directions —
+it asserted collateral must not MARK a path bad, while the deletion's real effect was ERASING an
+existing backoff and silently dropping the rate bound. Second test written, mutation re-run, red.
+
+**Known and NOT fixed, recorded rather than implied:** `enrichProject` still calls
+`fs.existsSync(project.path)` synchronously for every registered project on `GET /api/projects`, so
+a *registered* project on a protected path still blocks the event loop — the #859 wedge, on the
+route this fixed the other half of. The family is 32 synchronous reads in `lib/projects.js` plus 7 in
+`lib/uploads.js`; it needs its own issue — filed as #884.
+
+**Classification:** fix

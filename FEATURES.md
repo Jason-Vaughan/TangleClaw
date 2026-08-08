@@ -42,6 +42,20 @@ fails any auto-stub section older than 14 days.
 
 - **HTTP entrypoint + route table** — `server.js` (single-file router; `route(method, path, handler)` registrations throughout). API families summarized below; find any route by grepping its literal route string in `server.js`.
 - **Projects family** — `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/:name`, `POST .../archive`, `POST .../unarchive`, `POST /api/projects/attach`, `POST /api/projects/import`, orphan-hooks scan/repair routes. Enrichment: `lib/projects.js#enrichProject`. Updates: `lib/projects.js#updateProject`.
+- **Directory scanner — filesystem work in a killable child** (#883) — every read of an
+  operator-chosen path happens in a forked process, never on the server's event loop, because a
+  TCC-protected path on macOS never returns a read and a deadline cannot cancel a syscall (it
+  abandons the promise and the libuv threadpool thread is gone for good; four of those and the
+  server can no longer touch the filesystem at all). Supervisor: `lib/dir-scanner.js` —
+  correlation ids, per-request child ownership, `SIGKILL` on the deadline, lazy respawn, and a
+  per-path failure backoff (30s → 5min ceiling) that only the polled route opts into. Walks:
+  `lib/dir-scanner-child.js#HANDLERS` (`listUnregistered`, `scanEntries`, `createDir`). Two
+  scanners: a background one for `listAllProjects`, an interactive one for the wizard's
+  `scanDirectoryForProjects`/`createProjectsDir`, so a hung poll cannot kill a child out from
+  under an operator's click. Rejection vocabulary is contractual — `tcTimedOut` (did not answer;
+  the sole input to the Full Disk Access advice), `tcCached`, `tcAborted` (collateral),
+  `tcTruncated` (ran out of budget). Callers: `lib/projects.js#listAllProjects`,
+  `#scanDirectoryForProjects`, `#createProjectsDir`.
 - **Project-action invocation** — `POST /api/projects/:name/actions/:command`. Dispatcher: `lib/actions.js#runAction`; availability predicate shared with the button: `lib/actions.js#availableActions`.
 - **Sessions family** — `POST /api/sessions/:project` (launch), `DELETE` (kill), `GET .../status`, `POST .../command`, `POST .../wrap`, `POST .../wrap/complete`, `GET .../wrap/status` (#583 reattach), `GET .../peek`, `GET .../history`. Core: `lib/sessions.js#launchSession`, `#generatePrimePrompt`.
 - **Wrap pipeline runner** — `lib/wrap-pipeline.js#runWrapPipeline`; single-flight per project via `lib/wrap-run-registry.js` (#583).

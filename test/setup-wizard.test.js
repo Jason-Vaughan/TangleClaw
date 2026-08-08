@@ -499,25 +499,27 @@ describe('Setup Wizard', () => {
     it('keeps the event loop free and answers when the directory never responds', async () => {
       const blocked = path.join(tmpDir, 'blocked-projects');
       fs.mkdirSync(blocked, { recursive: true });
+      const fifo = path.join(blocked, 'pipe');
+      require('node:child_process').execFileSync('mkfifo', [fifo]);
 
-      const fsp = require('node:fs').promises;
-      const realAsync = fsp.readdir;
-      const realSync = fs.readdirSync;
-
-      // Both shapes are stubbed on purpose. The async stub reproduces the real
-      // failure (a read that neither resolves nor rejects); the SYNCHRONOUS one
-      // is the mutation guard — revert this route to fs.readdirSync and the
-      // spin below stalls the loop, which is what the assertions catch. Without
-      // it, restoring the defect would leave this test green.
-      fs.readdirSync = (p, o) => {
-        if (String(p) === blocked) {
-          const until = Date.now() + 3000;
-          while (Date.now() < until) { /* the kernel, not returning */ }
-          return [];
-        }
-        return realSync(p, o);
-      };
-      fsp.readdir = (p, o) => (String(p) === blocked ? new Promise(() => {}) : realAsync(p, o));
+      // NO STUB. The read this route performs happens in the scanner child since
+      // #883, so a stubbed `fs` in this process could not reach it — and a test
+      // whose fixture cannot reach its subject passes forever. Instead the child
+      // is made to block for real, on a reader-less FIFO, which occupies a
+      // genuine libuv thread in a genuine blocked syscall. That is a stronger
+      // fixture than the one it replaces: the loop-free assertion below is now
+      // measured against work that really is stuck rather than a promise that
+      // simply never settles.
+      const dirScanner = require('../lib/dir-scanner');
+      const hungScanner = dirScanner.createScanner({
+        childPath: path.join(__dirname, '_dir-scanner-hang-child.js'),
+        timeoutMs: 1500,
+        exitGraceMs: 0
+      });
+      // The wizard's scan runs on the interactive scanner, kept separate from the
+      // dashboard poll so a hung projects directory cannot kill this one's child.
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = () => hungScanner.request('hang', { fifo });
 
       try {
         const scan = request(server, 'POST', '/api/setup/scan', { directory: blocked });
@@ -537,8 +539,8 @@ describe('Setup Wizard', () => {
         assert.match(data.error, /Full Disk Access/,
           'the operator must be told the remedy, not just that it failed');
       } finally {
-        fs.readdirSync = realSync;
-        fsp.readdir = realAsync;
+        dirScanner.interactiveRequest = real;
+        await hungScanner.shutdown();
       }
     });
 

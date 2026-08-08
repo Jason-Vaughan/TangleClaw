@@ -225,6 +225,14 @@ Privacy & Security → Full Disk Access), or keep your projects somewhere outsid
 directories. The scan gives up after five seconds and tells you which it was, rather than waiting
 forever.
 
+**After you grant access, you may wait up to half a minute for the dashboard to notice.** The
+project list stops re-reading a directory that has not answered — otherwise it would retry every
+ten seconds forever, and each attempt leaves a stuck process behind. It tries again on its own,
+starting half a minute after the last failure and backing off to at most five minutes if the
+directory keeps failing. **You do not need to restart anything**; the list fills in by itself on
+the next attempt that succeeds. The wizard's Scan and Create buttons are not affected — those
+always read the directory for real, because you just asked them to.
+
 ## Sessions
 
 Sessions are the core of TangleClaw — they're how you interact with AI engines on your projects.
@@ -604,6 +612,35 @@ tail -50 ~/.tangleclaw/logs/tangleclaw.log
 
 # Health check
 curl -s http://localhost:3102/api/health | python3 -m json.tool
+```
+
+### Leftover `dir-scanner-child` Processes
+
+TangleClaw reads your project folders in a small helper process rather than in the server, so
+a folder that never responds cannot take the whole dashboard down with it. If a folder does
+stop responding, that helper is killed — but a process stuck waiting on the operating system
+cannot always be killed immediately, and those can pile up.
+
+**This is a symptom, not the problem. Fix the folder and the pile-up stops.**
+
+```bash
+# How many are there? Two is normal — one for the dashboard, one for the setup wizard.
+pgrep -fl dir-scanner-child
+
+# Which folder is not responding, and how often it has failed
+grep -E "did not answer|did not exit after SIGKILL" ~/.tangleclaw/logs/tangleclaw.log | tail -20
+```
+
+The fix is whatever the log names: usually granting Full Disk Access to your `node` binary
+(System Settings → Privacy & Security → Full Disk Access), or moving your projects folder
+outside `~/Documents`, `~/Desktop` and `~/Downloads`. While a folder stays unreadable,
+TangleClaw backs off and retries at most once every 30 seconds, widening to 5 minutes — so
+the pile-up is slow, not runaway.
+
+To clear the ones already there, restart the server. Nothing else releases them:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server
 ```
 
 ### Terminal Not Connecting

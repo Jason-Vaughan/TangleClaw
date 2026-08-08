@@ -463,6 +463,63 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **An unreadable projects folder is now cheap, not merely survivable.** (#883, chunk 3.) With
+  chunks 1–2 the dashboard's ten-second poll still cost a five-second stall and a killed scanner
+  process *on every tick, forever* — and a process blocked in the kernel may never leave the
+  process table, so that was roughly six unreapable processes a minute for as long as a browser
+  tab stayed open. A path that does not answer is now remembered and refused immediately, so the
+  cost is one attempt per backoff interval (30s, doubling to a 5-minute ceiling) instead of one
+  per poll.
+
+  **A directory that starts working recovers on its own** — no restart, no button. That is the
+  half of a failure cache that is easy to get wrong, and this project has the bug on record: a
+  memoization that cached *failures* permanently because only the success case was thought
+  through. So the rule here is narrow on purpose — **only "it did not answer" is remembered.**
+  Anything else is an *answer*: a success clears the memory, and so does an ordinary error.
+  `ENOENT` in particular must never stick, because the wizard's Create button exists to turn it
+  into a directory and the scan straight afterwards has to see the folder that was just made.
+  Work killed as collateral for a *sibling* request is recorded neither way — it says nothing
+  about its own path, and treating it as evidence would let one bad directory either blame or
+  absolve a healthy one.
+
+  **The backoff is opt-in, and only the polled route takes it.** The wizard's Scan and Create
+  buttons deliberately do not: someone who has just granted Full Disk Access and pressed the
+  button again is entitled to a real answer, not a remembered one, and the cost of leaving them
+  out is bounded by how fast a person can click. Repeated refusals log at debug rather than warn,
+  so one broken directory no longer buries its own diagnosis under six identical warnings a
+  minute; a genuinely new failure, and each escalation of the backoff, still warn with the
+  consecutive count.
+
+- **A projects folder that never answers no longer costs the server its ability to read ANY
+  file.** (#883, chunk 2 — the fix reaching the routes.) `GET /api/projects`,
+  `POST /api/setup/scan` and `POST /api/setup/create-dir` now do their filesystem work in the
+  scanner child added in chunk 1, so a directory that hangs costs a disposable process instead of
+  one of the four libuv threadpool threads the whole server shares. Before this, four hung scans
+  left the server unable to touch the filesystem at all, on any path, permanently — while
+  `/api/health` still answered `200` and every later failure was misreported as a Full Disk Access
+  problem, sending operators to change a permission that was never at fault.
+
+  **Proven through the real route, not at the unit level:** `test/api-projects.test.js` issues
+  `UV_THREADPOOL_SIZE + 1` hung scans at one running server, then times an ordinary `readdir` on
+  an unrelated path. Verified by mutation — putting the hang back in the server process makes that
+  readdir never complete, which is the defect exactly.
+
+  A second win comes free: `git.getInfo` shells out with `execSync` from *inside* the walk, and a
+  synchronous call cannot be interrupted by any deadline. That is now in the child too, so a
+  directory whose `git` calls stall no longer blocks the server's event loop either. Its
+  two-minute cache moves with it, so a child killed for a hang starts cold — a few repeated `git`
+  calls after a kill, in exchange for never blocking the server.
+
+  **Known and NOT fixed by this, stated plainly:** `enrichProject` still calls
+  `fs.existsSync(project.path)` synchronously for every registered project on that same route, and
+  `engines.governanceState` reads more files under it. A *registered* project whose directory is
+  TCC-protected therefore still blocks the event loop, exactly as #859 described. The comment on
+  `listAllProjects` used to say the registered list "cannot be affected by a stuck filesystem";
+  that was overstated and now says otherwise. Tracked as **#884**, scoped to the whole family — 32
+  synchronous reads on operator-chosen paths in `lib/projects.js` plus 7 in `lib/uploads.js` —
+  rather than to this call site, because the last time this family was fixed one site at a time the
+  sweep missed the one that wedged a clean-room install.
+
 - **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
   matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
   reported "safe" and the preflight said nothing — the same quiet-wrong-answer failure the
@@ -1539,6 +1596,44 @@ All notable changes to TangleClaw are documented in this file.
   nothing until a pattern that must hit does.**
 
 ### Internal
+
+- **A killable scanner process, so a hung directory can no longer take the server's filesystem with
+  it.** (#883, chunk 1 — the mechanism only; nothing routes through it yet, so no behavior changes
+  in this entry.) A read of a TCC-protected macOS path does not fail, it never returns, and
+  `fs.promises` performs it on libuv's threadpool — four threads, shared by every async filesystem
+  call in the process. A deadline can abandon the promise but cannot cancel the syscall, so each
+  hung read costs a thread permanently. Four of them and the server can no longer touch the
+  filesystem **at all, on any path**, while `/api/health` still answers `200`.
+
+  New `lib/dir-scanner.js` supervises a forked `lib/dir-scanner-child.js`: filesystem work happens
+  in a process that can be killed, and the deadline kills it, which is the only way to reclaim a
+  thread blocked in the kernel. `worker_threads` cannot substitute — workers share the process-wide
+  pool and `terminate()` does not interrupt a blocked syscall. The child is long-lived rather than
+  forked per scan because the dashboard polls `GET /api/projects` every ten seconds for as long as a
+  tab is open, and a process spawn per poll is a permanent cost paid against a rare failure.
+
+  Collateral requests — work travelling in a child killed for a *sibling's* deadline — reject as
+  `tcAborted`, deliberately **not** `tcTimedOut`. Only `tcTimedOut` earns the Full Disk Access hint,
+  and their paths may be perfectly healthy; labelling them timed-out would reproduce the exact
+  misdiagnosis this work exists to remove.
+
+  **The regression test reproduces the defect rather than describing it.** A companion process
+  issues `UV_THREADPOOL_SIZE + 1` blocking reads through the deadline-race shape that shipped
+  before this change (`projects._withTimeout`, deleted by chunk 2 below along with its last
+  caller, so the demo carries a verbatim copy rather than keeping dead code alive to be a
+  fixture), then
+  times an ordinary `readdir` on an unrelated path: every call rejects on schedule and the readdir
+  never completes again — that assertion is the bug, executable. The same workload through the
+  scanner leaves the parent's `readdir` at ~35ms. Isolated in its own process because a test that
+  destroys its own threadpool would take the rest of the file with it; measured along the way,
+  such a process cannot even finish `process.exit(0)`, so it is SIGKILLed.
+
+  **What the test does not prove, stated plainly:** a real hung `readdir` is not reproducible in CI.
+  A FIFO — the one portable way to block a filesystem call — answers `readdir` with `ENOTDIR`
+  immediately (measured); only `open`/`readFile` blocks on one. The hang is therefore produced with
+  the operation that does block, in a fixture child standing in for the real one. That covers the
+  supervisor's contract against a genuinely blocked syscall holding a genuine pool thread, and
+  nothing specific to `readdir`.
 
 - **Seven tests stopped asking the host a question the code should answer.** The new
   no-engine refusal on `POST /api/setup/complete` broke `test/api-setup-https.test.js`, which had
