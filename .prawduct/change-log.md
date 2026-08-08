@@ -3783,7 +3783,7 @@ existing backoff and silently dropping the rate bound. Second test written, muta
 **Known and NOT fixed, recorded rather than implied:** `enrichProject` still calls
 `fs.existsSync(project.path)` synchronously for every registered project on `GET /api/projects`, so
 a *registered* project on a protected path still blocks the event loop — the #859 wedge, on the
-route this fixed the other half of. The family is ~31 synchronous reads in `lib/projects.js` plus
+route this fixed the other half of. The family is 32 synchronous reads in `lib/projects.js` plus 7 in
 `lib/uploads.js`; it needs its own issue — filed as #884.
 
 **Classification:** fix

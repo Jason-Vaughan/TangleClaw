@@ -1163,6 +1163,50 @@ describe('projects', () => {
       assert.match(result.error, /folder above it/);
       assert.equal(fs.existsSync(path.join(home, 'a')), false);
     });
+
+    it('reports an interrupted create as interrupted, never as a bad directory', async () => {
+      // The SECOND of the two doors this fix opened, and it shipped without this
+      // test while the scan side had one. Collateral means a concurrent request
+      // in the same scanner stopped responding and the process had to be killed —
+      // this create never ran, so it says nothing about the folder. Handing the
+      // operator the Full Disk Access hint for a path that was never touched is
+      // the misdiagnosis #883 exists to remove. Delete the tcAborted branch in
+      // createProjectsDir and this goes red; without it, the suite stayed green.
+      const dirScanner = require('../lib/dir-scanner');
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = () => Promise.reject(Object.assign(
+        new Error('directory scan abandoned: the scanner process was killed'),
+        { tcAborted: true }
+      ));
+      try {
+        const result = await projects.createProjectsDir(path.join(home, 'Projects'));
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'CREATE_INTERRUPTED', 'its own code, not CREATE_FAILED');
+        assert.doesNotMatch(result.error, /Full Disk Access/,
+          'a folder that was never touched must not be blamed');
+        assert.match(result.error, /Nothing was created/,
+          'and the operator must be told the retry is safe');
+        assert.match(result.error, /try again/);
+      } finally {
+        dirScanner.interactiveRequest = real;
+      }
+    });
+
+    it('runs on the scanner the background poll cannot kill underneath it', async () => {
+      // Same separation the scan route has. Patching only the background entry
+      // point proves it: if create still used it, the stub would be reached and
+      // the folder would not appear.
+      const dirScanner = require('../lib/dir-scanner');
+      const realBackground = dirScanner.request;
+      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      try {
+        const result = await projects.createProjectsDir(path.join(home, 'Projects'));
+        assert.equal(result.ok, true, 'create must be independent of the polled route');
+        assert.equal(result.created, true);
+      } finally {
+        dirScanner.request = realBackground;
+      }
+    });
   });
 
   describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {

@@ -8,7 +8,7 @@ const path = require('node:path');
 const { execFile, execFileSync } = require('node:child_process');
 
 const dirScanner = require('../lib/dir-scanner');
-const { _plainDirent, _plainError } = require('../lib/dir-scanner-child');
+const { _plainError } = require('../lib/dir-scanner-child');
 
 const HANG_CHILD = path.join(__dirname, '_dir-scanner-hang-child.js');
 const POOL_DEMO = path.join(__dirname, '_dir-scanner-pool-demo.js');
@@ -785,7 +785,7 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
     });
   }
 
-  test('the shipped in-process deadline DOES exhaust the pool — the defect, reproduced', async () => {
+  test('the in-process deadline that shipped before this branch DOES exhaust the pool', async () => {
     const verdict = await runDemo('leak', path.join(tmpRoot, 'demo-leak'));
 
     // Every call rejected on time. That is exactly what made this invisible:
