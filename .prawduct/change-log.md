@@ -3788,6 +3788,79 @@ route this fixed the other half of. The family is 32 synchronous reads in `lib/p
 
 **Classification:** fix
 
+## 2026-08-09: git's total work is bounded once, so the scan deadline can only expire on a path that never answers (#891)
+
+<!-- prawduct: type=fix | chunks=01 | scope=fix-891-git-budget | status=shipped -->
+
+**Why:** `PROJECT_FACTS_TIMEOUT_MS` was 5000ms and bounded one round trip to the scanner child.
+`git.getInfo` behind it issued **seven** `execSync` spawns, each independently capped at 5000ms — an
+honest worst case near 35s against a 5s deadline. A repository whose git work merely stalled was
+SIGKILLed with the child and reported to the operator as a Full Disk Access problem it did not have,
+and because the kill discards git's in-process cache the retry after the backoff was equally cold and
+did it again.
+
+**Measured before it was tuned.** All seven spawns against this repository (949 commits, 400 tracked
+files, warm) cost **85ms together**, no single command over 20ms. So the failure is a *stall* case —
+a very large repository with a cold cache, or a filesystem that will not answer — not the "any large
+repo" case the issue's wording implied. The plan says so rather than inheriting the issue's framing.
+
+**The budget went into `lib/git.js`, not the handler the issue named.** `_gitInfo` is called from
+three places in `lib/dir-scanner-child.js`, and two of them call it once per candidate subdirectory
+inside loops that already carry their own deadline — a deadline checked *between* iterations, which
+cannot interrupt a synchronous 35s spawn inside one. Bounding the handler would have fixed one call
+site and left the two that document a bound they could not honour.
+
+**That was necessary and not sufficient, which the Critic caught and the first implementation did
+not.** A budget inside `_fetchInfo` still let each walk candidate take a fresh FULL budget, because
+`_gitInfo` passed no options — so the overrun fell from ~35s to ~4s rather than going away, while
+this entry's first draft and the commit message both claimed all three sites were fixed. The walk
+call sites now forward `deadlineAt - Date.now()`. The claim is true because the code changed, not
+because the sentence was softened.
+
+**Exhaustion degrades to a labelled partial, never to `null` and never to a default.** Both rules came
+from grepping consumers, not from taste. `lib/dir-scanner-child.js` derives `detected` from
+`gitInfo && gitInfo.branch`, so returning `null` would make a real git-only project *vanish* from the
+detected list; `public/ui.js:248` would additionally print "Not a git repo", which is false. And
+`_isDirty`'s catch returns `false` while `public/ui.js` renders `dirty` as a dot — so a check the
+budget cut short would draw a dirty repository as clean, an unknown falling through to a definite
+(#861's shape). `dirty` is now `null` when unestablished, and a new `incomplete: string[]` names every
+field the read could not answer. No consumer reads it yet: it is the seam #885 renders, exactly as
+#884 left `unreadable` behind.
+
+**The deadline is computed from the budget rather than set beside it**, so the two cannot drift; the
+budget was sized to leave `PROJECT_FACTS_TIMEOUT_MS` at 5000 **unchanged**, because the poll issues
+these one at a time and a larger per-project deadline multiplies across every registered project.
+Partial readings are deliberately not cached — freezing one bad reading for the two-minute TTL would
+repeat it across twelve polls of a repository that may be fine now.
+
+**A REAL SLOW `git` ON PATH CAUGHT A BUG A STUB WOULD HAVE HIDDEN.** The first implementation
+detected "our own cap killed this spawn" with `if (err.killed)` — which never fires: `execSync` sets
+`killed` on `spawnSync`'s *result*, not on the error it *throws*, where a timeout arrives as
+`code: 'ETIMEDOUT'` / `signal: 'SIGTERM'`. The branch compiled, read correctly, and was dead, so every
+budget-truncated field silently reported its fallback as an answer — the exact false fact the change
+exists to prevent. Reverting to `err.killed` now fails four tests. `lib/tmux.js:53` carries the
+identical dead check and has therefore never once logged a tmux timeout; filed as #894 rather than
+widened into here.
+
+**Two smaller things the records did not originally mention.** A partial is not cached, so a
+repository that stays slow re-reads on every ten-second poll — and the new diagnostic fired on each
+one, several times a minute per project. It is now loud once per directory and debug thereafter, per
+process rather than per interval, because this runs in a child the supervisor recreates so the set
+dies with it and a genuinely new incident is loud again with no timer to get wrong. Both failure
+directions are guarded: warning every time and going silent after the first each fail. Separately,
+the wizard walk (`scanEntries`) projects only `branch` and `dirty` out of the git object and was dropping
+`incomplete` — so a `dirty: null` the walk never checked was indistinguishable THERE from a clean
+repository, the same false fact the other path carries it to prevent.
+
+**One guard was tautological and was rewritten.** `PROJECT_FACTS_TIMEOUT_MS > GIT_INFO_BUDGET_MS`
+holds for *every* budget once the deadline is derived from it, so the assertion could not fail — it
+passed against the hardcoded value it was meant to forbid. It now asserts against the source that the
+deadline is computed from the budget, which goes red when a literal is restored. Found by planting the
+mutation and watching it *not* fail; #893 exists because that is the sixth time this has been the
+difference between a guard and a decoration.
+
+**Classification:** fix
+
 ## 2026-08-09: A registered project's directory is read in the killable child, not on the event loop (#884)
 
 <!-- prawduct: type=fix | chunks=01,02a,02b | scope=fix-884-sync-reads | status=shipped -->
