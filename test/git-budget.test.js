@@ -226,6 +226,27 @@ describe('git info budget — an empty budget never becomes an unbounded spawn (
     git.clearCache();
   });
 
+  it('calls a repository with no commits answered, not unestablished', () => {
+    // `git rev-parse HEAD` fails in a freshly-initialised repository, and it
+    // fails the same way a spawn the budget killed does. Distinguishing them by
+    // return value alone reported EVERY empty repository as incomplete — an
+    // answer misfiled as a failure, which is the mirror of the false fact this
+    // whole change exists to prevent.
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-nocommit-'));
+    try {
+      execFileSync('git', ['init', '--template=', '-q'], { cwd: empty });
+      const info = git._fetchInfo(empty);
+
+      assert.ok(info !== null, 'an initialised repository is a repository');
+      assert.deepEqual(info.incomplete, [],
+        'no commits is a fact about the repository, not a field we failed to read');
+      assert.equal(info.lastCommit, '');
+      assert.equal(info.latestTag, null);
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
   it('skips every step rather than spawning git with no timeout', () => {
     // `execSync` treats `timeout: 0` as NO timeout. A cap computed as
     // min(perCall, remaining) therefore becomes UNBOUNDED the moment the budget
