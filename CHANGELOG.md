@@ -542,7 +542,7 @@ All notable changes to TangleClaw are documented in this file.
   blocked the loop by construction — several git commands per project, before TCC was involved
   at all. Its two-minute cache moves with it, so a child killed for a hang starts cold; a few
   repeated git calls after a kill, in exchange for never blocking the server. Only the
-  version-detection chain is left, and it is the next chunk.
+  version-detection chain is left, and it went in the same release.
 
   **New `lib/project-config.js`, for the reason `lib/governance-state.js` exists.** The config
   reader is pure `fs` but lived in `lib/store.js`, which opens SQLite at require time — so the
@@ -641,7 +641,10 @@ All notable changes to TangleClaw are documented in this file.
   What per-project delivers is that the failure is attributed to the directory that actually
   caused it, so the backoff engages for that path and every later poll answers normally for
   everyone else. The property is convergence after one poll, not immunity during it. Requests
-  are issued concurrently, so a healthy list costs the slowest single directory, not the sum.
+  are issued **one at a time**, so a healthy list costs the sum of its directories rather than the
+  slowest one. That is deliberate: the child is single-threaded and a request's deadline starts when
+  it is issued, so firing N at once would put N deadlines on a serial queue and let a large fleet's
+  tail be killed for waiting its turn.
 
   **New `lib/governance-state.js`, because the child must never touch the database.**
   Reaching `governanceState` from the child by requiring `lib/engines.js` pulls in
