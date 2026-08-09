@@ -733,6 +733,24 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     assert.match(result.output.warnings, /error/);
   });
 
+  it('with blocker:false, a timeout still says it timed out', async () => {
+    // Not blocking is the configured behaviour; staying silent about WHY is a
+    // different thing. A killed lint produces no output, so the informational
+    // branch would otherwise report a bare non-zero exit with empty warnings —
+    // a step that never ran, presented as one that ran and had nothing to say.
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
+
+    assert.equal(result.ok, true, 'blocker:false still must not block');
+    assert.equal(result.output.timedOut, true);
+    assert.match(result.output.warnings, /timed out/i,
+      'an informational step that was killed must still say so');
+  });
+
   it('shell-quotes file paths containing spaces and single quotes', async () => {
     // Direct unit test of the quoting helper — visible from public API
     // so the test pins the contract.

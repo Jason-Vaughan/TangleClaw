@@ -17,7 +17,6 @@ describe('tmux — a timed-out command says so (#894)', () => {
     // Driven by a REAL stalling `tmux` on PATH: a stubbed error would assert the
     // very model that was wrong.
     const os = require('node:os');
-    const { execSync } = require('node:child_process');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-'));
     fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
     const realPath = process.env.PATH;
@@ -31,7 +30,6 @@ describe('tmux — a timed-out command says so (#894)', () => {
     } finally {
       process.env.PATH = realPath;
       fs.rmSync(binDir, { recursive: true, force: true });
-      void execSync;
     }
   });
 });

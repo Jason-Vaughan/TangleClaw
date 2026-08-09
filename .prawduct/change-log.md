@@ -3820,6 +3820,13 @@ owns it and all four call sites consume it. Its `ETIMEDOUT` clause is deliberate
 the `SIGTERM` fallback and the module says so: deleting it breaks no test, and that overlap is
 recorded rather than left for an auditor to mistake for an untested branch.
 
+**The lint step's informational mode had the same hole one branch over**, found by scrubbing the
+diff rather than by the review. With `blocker: false` a non-zero exit returns `ok: true, status:
+'done'` carrying the output tail — and a killed command has no output, so a lint that never ran was
+reported as one that ran and found nothing to say. Not blocking is the configured behaviour; being
+silent about why is not, and the fix had been placed after that branch rather than before it. It now
+names the timeout there too. *One call site is not the family*, again.
+
 **One adjacent instance of the same class went with it.** `error: err.code === undefined ? … : null`
 also never fired for a non-numeric code, so a suite chatty enough to exceed the 10 MiB buffer
 reported a bare `exit 1` with no error at all. Now `typeof err.code !== 'number'`, and the operator
