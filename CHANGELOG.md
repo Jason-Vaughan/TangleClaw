@@ -463,6 +463,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A big or slow repository is no longer killed and blamed on Full Disk Access (#891).** Reading one
+  project's git state costs seven `git` invocations, and each was capped separately at five seconds —
+  behind a single five-second deadline that kills the process doing the work. The arithmetic never
+  worked: an honest worst case near 35 seconds against a 5-second limit. A repository whose git work
+  stalled was killed and the dashboard told the operator to grant Full Disk Access, for a permission
+  that was never the problem. It also repeated forever, because the kill throws away git's cache, so
+  the next attempt starts just as cold.
+
+  All seven invocations now share **one** budget. A repository that outruns it comes back with what
+  was established and an explicit list of what was not, instead of being killed.
+
+  **What it does not do is guess.** A field the budget could not check is reported as unknown, never
+  as a default — "we did not look" and "we looked and it is clean" are different answers, and a
+  dashboard that renders the first as the second is lying about the repository. A slow repository
+  loses a badge; it does not lose its dirty marker, and it does not stop being a project.
+
+  The deadline is now computed from the budget rather than written next to it, so the two cannot
+  drift apart again. It works out to the same five seconds it already was — deliberately, since the
+  server reads projects one at a time and a longer per-project deadline would multiply across every
+  project on the dashboard's ten-second poll. Nothing gets slower.
+
 - **A registered project's version is now detected in the scanner child, and `enrichProject`
   opens nothing under a project's own path (#884).** This was the last of the
   five per-project reads the dashboard poll ran on the server's event loop. It read up to four
