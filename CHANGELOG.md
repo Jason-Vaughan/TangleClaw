@@ -463,22 +463,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- **A wrap step that hangs no longer reports itself as a failing test suite (#894).** If your test
-  command hung and was stopped at the ten-minute limit, the wrap said *"Tests failed (exit 1)"* and
-  told you to *"fix the failing test(s) shown above"*. There were none — nothing had finished. The
-  advice sent you looking for a failure that never happened.
+- **Three checks for "did our own timeout kill this?" were dead code — none had ever run once
+  (#894).** They failed for two different reasons: `execSync` puts `killed` on a different object
+  than the error it throws, and async `exec` does set it but reports a `code` the check compared
+  wrongly. Every one compiled, read correctly, and was never true.
 
-  A stopped command now says so: its own blocker, its own exit code, and remediation that points at
-  where the command hangs — a watch mode left on, a prompt waiting for input, a suite that genuinely
-  needs longer — and states plainly that nothing failed. An ordinary failing suite is unaffected and
-  still reads exactly as before.
+  **What changes for you today** is the tmux diagnostic. A tmux command that hangs and is stopped now
+  says so in the log; that line existed and had never been emitted, so a wedged tmux server left no
+  trace at all.
 
-  Same fix for the lint step. And a test suite noisy enough to overflow the 10 MiB output buffer now
-  tells you that is what happened, instead of failing with no explanation.
+  **What is fixed but not yet reachable from a wrap:** the `test` and `lint` step handlers. A command
+  they stopped for hanging was reported as *"Tests failed (exit 1)"* with advice to *"fix the failing
+  test(s) shown above"* — for tests that had never finished. Both now name the timeout instead, with
+  their own remediation and a log line, and an output overflow reports itself rather than arriving as
+  a bare exit 1. **Neither handler is in the shipped wrap pipeline**, which is fixed to fourteen
+  steps, so no wrap runs them today — they are opt-in primitives, and this makes them correct before
+  they are used rather than after.
 
-  Underneath, three separate checks for "did our own timeout kill this?" were all dead code — none
-  had ever run once, for two different reasons. They now share one implementation, and the
-  `tmux command timed out` diagnostic fires for the first time since it was written.
+  The steps that *are* in the pipeline — `commit`, `pr-merge` and six others — still map a stopped
+  command to a plain failure. That is the reachable half of the same defect and it is tracked
+  separately as #897.
 
 - **A big or slow repository is no longer killed and blamed on Full Disk Access (#891).** Reading one
   project's git state costs seven `git` invocations, and each was capped separately at five seconds —
