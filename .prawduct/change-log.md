@@ -3848,7 +3848,7 @@ one, several times a minute per project. It is now loud once per directory and d
 process rather than per interval, because this runs in a child the supervisor recreates so the set
 dies with it and a genuinely new incident is loud again with no timer to get wrong. Both failure
 directions are guarded: warning every time and going silent after the first each fail. Separately,
-`detectProjects` projects only `branch` and `dirty` out of the git object and was dropping
+the wizard walk (`scanEntries`) projects only `branch` and `dirty` out of the git object and was dropping
 `incomplete` — so a `dirty: null` the walk never checked was indistinguishable THERE from a clean
 repository, the same false fact the other path carries it to prevent.
 
