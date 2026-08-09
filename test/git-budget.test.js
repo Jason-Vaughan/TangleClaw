@@ -223,7 +223,7 @@ describe('git info budget (#891)', () => {
         git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
         git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
 
-        const budgetLines = lines.filter((l) => l.includes('ran out of budget'));
+        const budgetLines = lines.filter((l) => l.includes('Git info incomplete'));
         assert.equal(budgetLines.length, 2, 'both reads must reach the log — neither is silent');
         assert.match(budgetLines[0], /WARN/);
         assert.match(budgetLines[1], /DEBUG/);

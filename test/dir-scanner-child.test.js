@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const fsp = require('node:fs').promises;
+const { execFileSync } = require('node:child_process');
 
 const { HANDLERS, PROJECT_MARKERS } = require('../lib/dir-scanner-child');
 
@@ -62,6 +63,30 @@ describe('dir-scanner child — scanEntries (the wizard walk)', () => {
       'hidden directories and loose files are not candidate projects');
     assert.equal(projects.find(p => p.name === 'with-marker').detected, true);
     assert.equal(projects.find(p => p.name === 'bare').detected, false);
+  });
+
+  test('forwards `incomplete` alongside the git fields it qualifies', async () => {
+    // This payload projects only `branch` and `dirty` out of the git object, so
+    // it has to carry `incomplete` with them: a `dirty: null` the walk never got
+    // to check is otherwise indistinguishable HERE from a repository that is
+    // genuinely clean, which is the same false fact the projectFacts path
+    // carries it to prevent. Without this the projection can be quietly dropped
+    // again and nothing fails (#891).
+    const root = scratch('incomplete-projection');
+    const repo = path.join(root, 'a-repo');
+    fs.mkdirSync(repo);
+    // Empty --template: a bare `git init` inherits the live global template dir,
+    // which TangleClaw rewrites, and that flakes (#831).
+    execFileSync('git', ['init', '--template=', '-q'], { cwd: repo });
+
+    const { projects } = await HANDLERS.scanEntries({ dir: root, budgetMs: 5000 });
+    const found = projects.find(p => p.name === 'a-repo');
+
+    assert.ok(found.git, 'a git directory reports a git object');
+    assert.ok(Array.isArray(found.git.incomplete),
+      'the projection must keep `incomplete`, or `dirty: null` reads as clean here');
+    assert.deepEqual(found.git.incomplete, [],
+      'a healthy repository establishes every field');
   });
 
   test('stops probing markers once one has answered', async () => {
@@ -342,7 +367,6 @@ describe('dir-scanner child — projectFacts (#884)', () => {
     // supervisor kills mid-syscall an open handle on the SQLite database the
     // server depends on. Asserted on a FRESH child process because this suite's
     // own requires have long since loaded `store` into this one.
-    const { execFileSync } = require('node:child_process');
     const probe = 'require("./lib/dir-scanner-child.js");'
       + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js"))))';
     const loaded = execFileSync(process.execPath, ['-e', probe], {

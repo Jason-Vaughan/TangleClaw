@@ -3842,6 +3842,16 @@ exists to prevent. Reverting to `err.killed` now fails four tests. `lib/tmux.js:
 identical dead check and has therefore never once logged a tmux timeout; filed as #894 rather than
 widened into here.
 
+**Two smaller things the records did not originally mention.** A partial is not cached, so a
+repository that stays slow re-reads on every ten-second poll — and the new diagnostic fired on each
+one, several times a minute per project. It is now loud once per directory and debug thereafter, per
+process rather than per interval, because this runs in a child the supervisor recreates so the set
+dies with it and a genuinely new incident is loud again with no timer to get wrong. Both failure
+directions are guarded: warning every time and going silent after the first each fail. Separately,
+`detectProjects` projects only `branch` and `dirty` out of the git object and was dropping
+`incomplete` — so a `dirty: null` the walk never checked was indistinguishable THERE from a clean
+repository, the same false fact the other path carries it to prevent.
+
 **One guard was tautological and was rewritten.** `PROJECT_FACTS_TIMEOUT_MS > GIT_INFO_BUDGET_MS`
 holds for *every* budget once the deadline is derived from it, so the assertion could not fail — it
 passed against the hardcoded value it was meant to forbid. It now asserts against the source that the
