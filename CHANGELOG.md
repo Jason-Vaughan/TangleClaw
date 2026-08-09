@@ -518,8 +518,9 @@ All notable changes to TangleClaw are documented in this file.
   now that the same stream carries routine warnings, keeping the first would fill it with healthy
   notices and leave no room for whatever explained the exit.
 
-  Both new guards were confirmed by planting their named mutation and watching it fail. One of
-  them did not fail at first: the fresh-process probe asserting the child never loads
+  Every guard added here was confirmed by planting the mutation it names and watching it fail —
+  the ladder's order, the atomic write, the staging sweep, the child's diagnostics and the death
+  buffer's bound. One did not fail at first: the fresh-process probe asserting the child never loads
   `lib/store.js` ran against the repo root, where the ladder's first rung reads TangleClaw's own
   `CHANGELOG.md` and returns — so it never reached the rung that reads project config, and a
   deliberately-planted `require('./store')` there passed. It now runs against a directory with
