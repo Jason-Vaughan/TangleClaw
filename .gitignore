@@ -119,3 +119,11 @@ secrets.*.json
 # default posture for logs is a security property here, not tidiness.
 *.log
 logs/
+
+# Engine config and local planning notes — machine state, not repo content.
+# CLAUDE.md here is plugin-governed (Prawduct), hand-maintained, and duplicates
+# data/global-rules.md, which IS tracked. NOTE: lib/engines.js isPluginGoverned()
+# keys on .claude/settings.json, which is also ignored — so on a FRESH CLONE with
+# no plugin reference, TC will generate a CLAUDE.md rather than leave it alone.
+# That coupling is issue #833; revisit this line when #833 is decided.
+CLAUDE.md

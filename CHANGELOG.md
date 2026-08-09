@@ -1659,6 +1659,24 @@ All notable changes to TangleClaw are documented in this file.
   omitted `redactHashes`, which is real and tested. Every disputed claim was rechecked against the
   code and the surviving entry is the union of what both got right.
 
+- **`CLAUDE.md` is no longer tracked — it is machine state, not repo content.** This repo's own
+  `CLAUDE.md` is plugin-governed (Prawduct hand-maintains it; TangleClaw deliberately never
+  regenerates it), and its substantive content — the global rules injected into every managed
+  project — already lives in `data/global-rules.md`, which stays tracked. Keeping a second,
+  hand-edited copy under version control published machine-local configuration and invited the two
+  to drift. Local planning notes moved to the already-ignored `.tangleclaw/plans/` at the same time,
+  matching the rule that plans are project state kept out of the repo root.
+
+  **One coupling, recorded rather than discovered later:** `isPluginGoverned()`
+  (`lib/engines.js`) decides whether TangleClaw leaves a project's `CLAUDE.md` alone, and it keys on
+  `.claude/settings.json` carrying an enabled `prawduct@*` entry — *not* on the file's presence.
+  `.claude/` is also ignored, so a **fresh clone** has no plugin reference and TangleClaw will
+  therefore *generate* a `CLAUDE.md` instead of leaving the plugin-governed one in place. That was
+  already true; untracking the file is what makes it reachable, because there is no longer a
+  committed copy to fall back on. It is the same question as #833 — whether a managed repo's
+  prawduct install reference should be a committed artifact rather than untracked machine state —
+  and the `.gitignore` entry carries a note pointing at it.
+
 - **The upstream half of the install-reference contract test is parsed, not scraped (#807, #816).**
   `29147c7` pinned `PRAWDUCT_INSTALL_REFERENCE` against a literal in this repo, which catches only
   TangleClaw's side moving; the companion check that reads prawduct's own `migrate_plugin.py` scraped

@@ -219,6 +219,16 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/store-shareddocs.test.js` — `store.sharedDocs`: shared-document registration and lookup.
 - `test/version-bump-package-json.test.js` — #298: version-bump falls back to `package.json` for Node projects with no `version.json`, writing only the top-level `version` value.
 
+## TODO (auto-stubbed 2026-08-06)
+
+- **TBD** — touched in this session: `SECURITY.md`. <!-- describe -->
+- **TBD** — touched in this session: `docs/setup-guide.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/_caddy-stub.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/caddy-ingress-state.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/reset-admin.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-ingress-state-endpoint.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-commit-autopr.test.js`. <!-- describe -->
+
 ## TODO (auto-stubbed 2026-08-08)
 
 - **TBD** — touched in this session: `data/engines/aider.json`. <!-- describe -->
