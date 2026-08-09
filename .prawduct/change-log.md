@@ -3787,3 +3787,42 @@ route this fixed the other half of. The family is 32 synchronous reads in `lib/p
 `lib/uploads.js`; it needs its own issue — filed as #884.
 
 **Classification:** fix
+
+## 2026-08-09: A registered project's directory is read in the killable child, not on the event loop (#884)
+
+<!-- prawduct: type=fix | chunks=01,02a | scope=fix-884-sync-reads | status=shipped -->
+
+**Why:** #883 moved the walk for *unregistered* folders into a child a deadline can kill and left
+the enrichment of *registered* ones on the event loop, so one TCC-protected project directory still
+stopped every route. The issue scoped that as "32 `existsSync` sites". Reading `enrichProject`
+rather than the issue found **five** distinct synchronous reads per project per ten-second poll, of
+which exactly one is an `existsSync`: `git.getInfo` shells out through `execSync`,
+`_detectProjectVersion` and the project-config read are `readFileSync` chains, and
+the governance read happened twice. The project's own learning told future sweeps to grep
+`readdirSync|existsSync|statSync`, which matches none of the other four; that grep now includes
+`readFileSync|execSync`.
+
+**Chunk 01** — the `projectFacts` op, the async cascade, and `lib/governance-state.js`, extracted
+because reaching governance through `lib/engines.js` opens SQLite at require time inside a process
+built to be SIGKILLed. **Chunk 02a** — `git.getInfo` and the project config, plus
+`lib/project-config.js` extracted for the same reason, and `getProjectRow` so the eight routes that
+use a lookup as a 404 guard stop paying for a cross-process round trip.
+
+**Two decisions reversed against the plan, both because the code said otherwise than the docs did.**
+Batching was specified for efficiency and is wrong: the supervisor's deadline kills the CHILD, not a
+request, so a batch can only fail whole. And the per-project requests are issued ONE AT A TIME —
+the child is single-threaded and a request's timer starts when it is issued, so firing N at once put
+N deadlines on a serial queue and let a large fleet's tail be killed for waiting its turn.
+
+**Mutation-verified, and four mutations initially passed.** Reverting the git read to the event
+loop, restoring the lazy `require` of the database in version detection, deleting the collateral
+branch, and dropping the hint all left the suite green — each produces identical *values* and
+differs only in what it executes or logs. Every one now has a guard that observes the behaviour
+rather than the result.
+
+**Known and NOT fixed, recorded rather than implied:** `_detectProjectVersion` still reads
+synchronously, so the headline claim is not yet true — chunk 02b. Its chain reaches
+`lib/project-version.js` and back into `lib/projects.js`, and its self-heal WRITES, which needs to
+become atomic before a killable process owns it.
+
+**Classification:** fix

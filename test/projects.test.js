@@ -201,6 +201,38 @@ describe('projects', () => {
         'enrichProject must not shell out to git when the scanner already answered');
     });
 
+    it('issues one scanner request at a time, so a deadline never times the queue', async () => {
+      // THE MUTATION THIS CATCHES: `Promise.all(projects.map(readProjectFacts))`.
+      // The child is single-threaded and each request now runs ~six execSync git
+      // spawns, but `dir-scanner.js` starts a request's timer when it is ISSUED,
+      // not when the child picks it up — so firing N at once put N deadlines on a
+      // serial queue. The tail spent its deadline waiting its turn, and expiring
+      // killed the SHARED child: healthy siblings came back aborted, one earned
+      // the Full Disk Access hint this module exists to prevent, and they entered
+      // the 30s→5min backoff. It scaled with project count, and no test here used
+      // more than two projects.
+      for (const n of ['seq-a', 'seq-b', 'seq-c', 'seq-d']) projects.createProject({ name: n });
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      await withScanner(
+        () => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          // Resolve on a later turn, so an overlapping issue is observable at all.
+          return new Promise((resolve) => setImmediate(() => {
+            inFlight--;
+            resolve({ exists: true, governanceState: 'ungoverned' });
+          }));
+        },
+        () => projects.listProjects()
+      );
+
+      assert.ok(maxInFlight > 0, 'the fixture must actually have reached the scanner');
+      assert.equal(maxInFlight, 1,
+        'the poll must not have two directory reads outstanding against a serial child');
+    });
+
     it('getProjectRow answers from the database without touching the scanner', async () => {
       // R-11 from Chunk 01's review. Eight routes — the four continuity readers,
       // both upload routes, delete and session launch — use a project lookup only

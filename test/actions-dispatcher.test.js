@@ -121,6 +121,35 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
       'and must not be answered from the poll\'s per-path failure backoff');
   });
 
+  it('says the directory could not be read, rather than that the action does not apply', async () => {
+    // THE MUTATION THIS CATCHES: dropping the `facts.unreadable` branch and
+    // falling straight through to the availability gate. A project whose
+    // directory the server could not read then reports UNAVAILABLE — "action not
+    // available for this project" — which tells the operator their governance
+    // says no when the truth is that nobody looked. That is the misdiagnosis
+    // lib/project-facts.js exists to prevent, arriving through the one path that
+    // already had the real reason in hand.
+    const dirScanner = require('../lib/dir-scanner');
+    makeProject('disp-unreadable');
+
+    const realInteractive = dirScanner.interactiveRequest;
+    dirScanner.interactiveRequest = () => Promise.reject(
+      Object.assign(new Error('timed out after 5000ms'), { tcTimedOut: true })
+    );
+    let result;
+    try {
+      result = await actions.runAction('disp-unreadable', 'invoke-critic');
+    } finally {
+      dirScanner.interactiveRequest = realInteractive;
+    }
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PROJECT_UNREADABLE',
+      'a directory that could not be read is not a governance refusal');
+    assert.match(result.error, /Full Disk Access/,
+      'and the remedy already in hand must reach the operator');
+  });
+
   it('rejects an action the project governance state does not support', async () => {
     makeProject('disp-minimal', false); // no plugin reference → ungoverned
     const result = await actions.runAction('disp-minimal', 'invoke-critic');
@@ -134,7 +163,12 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     for (const governed of [true, false]) {
       const name = `disp-symmetry-${governed}`;
       const project = makeProject(name, governed);
-      const offered = actions.availableActions(project).some((a) => a.command === 'invoke-critic');
+      // Both sides must read ONE predicate from ONE source. Passing the state
+      // here is what makes that literal: the dispatcher derives it from the
+      // scanner and this asserts the same function agrees given the same input.
+      const engines = require('../lib/engines');
+      const state = engines.governanceState(project.path, { engineId: project.engineId });
+      const offered = actions.availableActions(project, state).some((a) => a.command === 'invoke-critic');
       assert.equal(offered, governed, `governed=${governed}: button visibility follows governance`);
       const result = await actions.runAction(name, 'invoke-critic');
       assert.equal(result.ok !== false, offered,

@@ -500,13 +500,41 @@ All notable changes to TangleClaw are documented in this file.
   `getProjectRow` returns the database row with no filesystem read at all. (Carried in from
   chunk 1's Critic review.)
 
-  Two of the four mutations run against this work initially passed — reverting the git read to
-  the event loop, and restoring the `./store` reach in version detection — because both produce
-  identical *values* and differ only in what they execute. Neither had a guard; both do now, one
-  observing the subprocess call and one probing a fresh process.
+  **The poll issues one request at a time, and that is correctness rather than throttling.** The
+  child is single-threaded, and `lib/dir-scanner.js` starts a request's deadline when it is
+  *issued*, not when the child picks it up. Firing N requests in one tick therefore put N
+  deadlines on a serial queue: the tail of a large fleet spent its whole deadline waiting its
+  turn, and expiring killed the **shared** child — healthy-but-queued directories came back as
+  collateral, one of them earned the "grant Full Disk Access" advice this machinery exists to
+  prevent, they entered the 30s→5min backoff, and the kill discarded `git.getInfo`'s in-child
+  cache so the retry was equally cold. It scaled with project count and nothing bounded it.
+  Sequential issue makes each deadline honest and leaves no sibling in flight to abort;
+  concurrency bought nothing against a worker that was serial anyway. The deadline also moved
+  2s → 5s, because 2s was sized for a single `fs.access` and now has to cover roughly six
+  `execSync` git spawns — a deadline shorter than the honest work does not add safety margin, it
+  manufactures the failure it is meant to detect.
+
+  **A directory that refuses is no longer reported as one that is gone.** `EACCES`/`EPERM` used
+  to collapse into "not there", so a project on a volume the server may not traverse rendered as
+  deleted. It now reports as present-and-unreadable with a reason, and the enriched record
+  carries `unreadableCode` (`SCAN_TIMEOUT` / `SCAN_ABORTED` / `SCAN_FAILED` / `EACCES`) so #885
+  branches on a code rather than parsing prose. `runAction` uses the same reason: a project whose
+  directory could not be read now answers `PROJECT_UNREADABLE` with the remedy, instead of
+  `UNAVAILABLE` — which told the operator their governance said no when the truth was that nobody
+  looked.
+
+  `availableActions`'s synchronous fallback is **removed** rather than documented. Both call sites
+  supply the state from the child, so it had no production caller left and offered only a way to
+  reintroduce the read this work removes; the `lib/engines.js` import went with it.
+
+  Four of the mutations run against this work initially passed — reverting the git read to the
+  event loop, restoring the lazy database require in version detection, collapsing the
+  collateral branch, and dropping the hint. Each produces identical *values* and differs only in
+  what it executes or logs, so nothing about the result distinguished them. Every one now has a
+  guard that observes the behaviour rather than the result.
 
 - **A registered project's own directory is no longer read on the server's event loop
-  (#884, chunk 1 of 3).** #883 moved the walk for *unregistered* folders into a killable
+  (#884, chunk 1 of 4).** #883 moved the walk for *unregistered* folders into a killable
   child and left the enrichment of *registered* ones standing, so one TCC-protected project
   directory still stopped every route — the degradation note in `listAllProjects` said as
   much and this closes the first half of it. `enrichProject`'s existence test and its two

@@ -94,6 +94,11 @@ fails any auto-stub section older than 14 days.
 
 ## Governance / Engines
 
+- **Per-project config reader** — `<project>/.tangleclaw/project.json` merged over documented
+  defaults. `lib/project-config.js` — dependency-free (`node:fs`/`node:path` only) so the killable
+  scanner child can read it; `lib/store.js` re-exports it and keeps the WRITER, because nothing on
+  the poll path writes config and a process built to be SIGKILLed should not own that write. Takes
+  an `onError` callback rather than owning a logger.
 - **Governance state** — classifies what governance is actually installed in a project: `governed-plugin` (Prawduct V2 plugin), `governed-vendored` (legacy in-repo hook), `ungoverned` (neutral), `not-applicable` (non-Claude). Derived live from disk, never from a stored label. `lib/governance-state.js#governanceState` — a dependency-free module (`node:fs`/`node:path` only) so the killable scanner child can read it without importing `lib/engines.js`, which opens the SQLite database at require time; `lib/engines.js` re-exports it unchanged for every existing caller.
 - **Engine profiles** — claude, codex, antigravity, aider, openclaw (openclaw is `pickerHidden: true` — resolvable for launch plumbing but excluded from the project engine picker, #459). `data/engines/<id>.json`. Capability gates (`supportsSilentPrime`, `supportsPrimePrompt`, etc.) consumed throughout `lib/sessions.js`, `lib/engines.js`. **Canonical-source sync** (#251): on every `store.init()`, bundled `data/engines/*.json` is reconciled into `~/.tangleclaw/engines/`; drift triggers a `log.warn` then overwrite. Operator-added profiles with no bundled counterpart are preserved — EXCEPT retired ids (`RETIRED_ENGINE_IDS`: gemini #457, genesis #458), which are tombstoned (user-local copy deleted on boot). Helper: `lib/store.js#_syncBundledEngines`.
 - **SessionStart hook (Claude Code)** — shell script Claude Code runs on session start; reads `<project>/.tangleclaw/session-prime.md` and emits it as the prime context. `data/hooks/sessionstart-prime.sh`. Hook plumbing: `lib/engines.js#_buildBaselineHooks`.

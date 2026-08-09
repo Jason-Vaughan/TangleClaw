@@ -433,4 +433,24 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
     assert.equal(loaded, 'false',
       'the scanner child must not load lib/store.js, even after answering a real request');
   });
+
+  test('a directory that is there but unreadable is not reported as deleted', async () => {
+    // THE MUTATION THIS CATCHES: routing this through `_exists`, which collapses
+    // EACCES into `false`. That renders a directory the server may not traverse
+    // as one the operator deleted — confidently wrong rather than merely absent,
+    // and indistinguishable in the UI from a project they removed on purpose.
+    if (process.getuid && process.getuid() === 0) return; // root bypasses the check
+    const locked = scratch('facts-locked');
+    const inner = path.join(locked, 'project');
+    fs.mkdirSync(inner, { recursive: true });
+    fs.chmodSync(locked, 0o000);
+    try {
+      const facts = await HANDLERS.projectFacts({ dir: inner, engineId: 'claude' });
+      assert.equal(facts.exists, true, 'the directory is there, and saying otherwise is a lie');
+      assert.equal(facts.code, 'EACCES');
+      assert.match(facts.unreadable, /permission denied/);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
 });
