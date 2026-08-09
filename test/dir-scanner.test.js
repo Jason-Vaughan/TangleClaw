@@ -917,4 +917,43 @@ describe('dir-scanner — the child\'s diagnostics reach the server\'s log (#884
       await scanner.shutdown();
     }
   });
+
+  test('the death buffer keeps what the child said LAST, not what it said first', async () => {
+    // THE MUTATION THIS CATCHES: `.slice(-4096)` back to `.slice(0, 4096)` — the
+    // head-bounded form this replaced. It passes every other test in the suite,
+    // because nothing else drives a nonzero exit, and it reinstates exactly what
+    // the inversion was for: this stream now carries routine child warnings as
+    // well as crash output, so a head-bounded buffer fills up with healthy
+    // notices during a long life and has no room left for the output that
+    // explains the death. The operator then reads `Scanner child exited
+    // unexpectedly` with `versionFilePath` chatter attached and nothing about
+    // the exit.
+    //
+    // Asserted on the LOG LINE the operator actually sees, for the same reason
+    // the tests above are: `detail.stderr` has no other observer.
+    const scanner = dirScanner.createScanner({ childPath: STDERR_CHILD, timeoutMs: 8000 });
+    try {
+      const out = await captured('warn', async () => {
+        // The request is expected to fail — the child exits mid-flight, by design.
+        await scanner.request('flood-then-die', {}, { what: 'flooding' }).catch(() => {});
+        // The `exit` event and its log line race the rejection.
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      // NOT `split('\n').find(...)`: the attached `stderr` detail is itself
+      // multi-line, so splitting on newlines returns the entry's first physical
+      // line and silently discards the very thing under test. The entry runs
+      // from its header to the end of the capture.
+      const at = out.indexOf('exited unexpectedly');
+      const exitLine = at === -1 ? null : out.slice(at);
+      assert.ok(exitLine, 'an unexpected exit must be logged with whatever the child managed to say');
+      assert.ok(/filler-0[45]\d/.test(exitLine),
+        'the death detail must carry the LATE output, which is what explains the exit');
+      assert.ok(!/filler-00\d/.test(exitLine),
+        'and must have dropped the oldest chatter — a head-bounded buffer keeps exactly this '
+        + 'and discards the end instead');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
 });

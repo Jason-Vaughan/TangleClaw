@@ -35,6 +35,28 @@ function write(s) {
 process.on('message', async (msg) => {
   const { id, op } = msg || {};
 
+  if (op === 'flood-then-die') {
+    // More than the supervisor's 4096-byte death buffer holds, then a nonzero
+    // exit. The point is which end survives: the supervisor keeps a bounded TAIL
+    // precisely because this stream carries routine chatter as well as crash
+    // output, so a long-lived child would otherwise fill the buffer with healthy
+    // notices and have no room for what explains the death. The marker lines
+    // below sit at the two ends so a test can tell head-bounded from
+    // tail-bounded, which is invisible from any other observation.
+    // Numbered rather than marked at the two ends only. The very last write
+    // races the parent's `exit` event — two different streams, no ordering
+    // guarantee — so a test that insisted on the FINAL line would be asserting
+    // on a race rather than on the bound. An early index and a late index
+    // separate head-bounded from tail-bounded just as decisively and are stable.
+    for (let i = 0; i < 60; i++) {
+      const n = String(i).padStart(3, '0');
+      await write(`[2026-08-09T00:00:00.000Z] [WARN] [fixture] filler-${n} ${'x'.repeat(80)}\n`);
+    }
+    // Long enough for the parent to drain what was written before `exit` fires.
+    await new Promise((r) => setTimeout(r, 200));
+    process.exit(3);
+  }
+
   if (op === 'talk') {
     // A well-formed line in the logger's own format, at WARN. The supervisor
     // must preserve that level rather than flattening it to info.

@@ -504,6 +504,20 @@ All notable changes to TangleClaw are documented in this file.
   behind the server's back — `null`, never the detection chain's `0.0.0-dev` fallback, which
   would render on the card as a fact the server never established.
 
+  **Warnings from inside the scanner child now reach the log again.** The child is forked with
+  stdout `'ignore'` and the logger sends warn there, so every warning that process emitted went
+  nowhere — and this change had just moved five of them in, including *failed to write the
+  project-version cache*. A project with an unwritable cache or a `versionFilePath` naming a
+  file that is not there showed a wrong or missing version with no evidence anywhere an operator
+  looks. The child now prints to its piped stderr and the server re-emits each complete line
+  into the log, **at the level the child chose** — flattening them to `info` would have looked
+  fine at the default setting and dropped every one of them under `logLevel: 'warn'`.
+
+  Relatedly, the buffer that explains an unexpected child exit now keeps the *last* few kilobytes
+  of that stream rather than the first. It was written when the stream carried only crash output;
+  now that the same stream carries routine warnings, keeping the first would fill it with healthy
+  notices and leave no room for whatever explained the exit.
+
   Both new guards were confirmed by planting their named mutation and watching it fail. One of
   them did not fail at first: the fresh-process probe asserting the child never loads
   `lib/store.js` ran against the repo root, where the ladder's first rung reads TangleClaw's own
