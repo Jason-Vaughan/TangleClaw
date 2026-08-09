@@ -463,6 +463,51 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A registered project's own directory is no longer read on the server's event loop
+  (#884, chunk 1 of 3).** #883 moved the walk for *unregistered* folders into a killable
+  child and left the enrichment of *registered* ones standing, so one TCC-protected project
+  directory still stopped every route — the degradation note in `listAllProjects` said as
+  much and this closes the first half of it. `enrichProject`'s existence test and its two
+  `governanceState` reads (its own, and the one inside `actions.availableActions`) now come
+  from a new `projectFacts` operation in the scanner child. A project whose directory never
+  answers is listed without its git and governance detail and carries an `unreadable`
+  reason; its siblings keep their real answers.
+
+  **One request per project, not one batch per poll — the plan said batch, and the plan was
+  wrong.** Batching is the obvious efficiency, but the supervisor's deadline kills the
+  *child*, not a request, so one unreadable directory in a batch takes every sibling's
+  answer with it — the precise property this work exists to deliver. Per-project requests
+  also each carry their own `pathKey`, so the existing backoff skips a directory that has
+  already refused to answer rather than spending another process on it every ten seconds.
+  They are issued concurrently, so a list costs the slowest single directory, not the sum.
+
+  **New `lib/governance-state.js`, because the child must never touch the database.**
+  Reaching `governanceState` from the child by requiring `lib/engines.js` pulls in
+  `lib/store.js`, which opens SQLite at require time — an open handle on the server's
+  database, held by a process the supervisor SIGKILLs mid-syscall. `isPluginGoverned` and
+  `governanceState` were already pure `fs`+`path`, so they moved verbatim into a dependency-
+  free module that `engines.js` re-exports unchanged; there is one implementation, not a
+  copy that drifts. The guarding test spawns a **fresh** process, because this suite has
+  long since loaded `store` into its own — an in-process check passes while the defect is
+  live.
+
+  **The async cascade was not as free as it looked.** `listAllProjects` was already async
+  with a single awaiting caller, but `enrichProject` has eight callers besides
+  `listProjects`; `attachProject`, `getProject`, `updateProject` and
+  `migrateProjectToPlugin` became async with it, reaching 12 `server.js` route handlers.
+  An intermediate draft defaulted `enrichProject`'s new `facts` argument to the shape a
+  missing directory produces — every one of those eight call sites then reported every
+  project as having no governance at all, and nothing threw. An omitted argument now makes
+  the function gather the facts itself: slower, never silently wrong. Each of the three
+  guards added here was confirmed by mutation — dropping `pathKey`, restoring that default,
+  and importing `./engines` in the child each turn the suite red.
+
+  One test changed rather than being added: the #883 route-level regression counted total
+  scanner calls and asserted it equalled the number of requests, which encoded "one scanner
+  call per request". That is no longer the contract. It now asserts the count moved on
+  *every* request — which is what the total was standing in for, and is strictly stronger:
+  a total would pass if one request bypassed the scanner while another made two.
+
 - **An unreadable projects folder is now cheap, not merely survivable.** (#883, chunk 3.) With
   chunks 1–2 the dashboard's ten-second poll still cost a five-second stall and a killed scanner
   process *on every tick, forever* — and a process blocked in the kernel may never leave the

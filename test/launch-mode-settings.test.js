@@ -55,18 +55,18 @@ describe('launch-mode settings', () => {
       assert.equal(store.DEFAULT_PROJECT_CONFIG.showLaunchModePicker, true);
     });
 
-    it('enrichment exposes the defaults for a fresh project', () => {
+    it('enrichment exposes the defaults for a fresh project', async () => {
       mkProject('lm-fresh');
-      const enriched = projects.getProject('lm-fresh');
+      const enriched = await projects.getProject('lm-fresh');
       assert.equal(enriched.defaultLaunchMode, 'default');
       assert.equal(enriched.showLaunchModePicker, true);
     });
   });
 
   describe('updateProject validation', () => {
-    it('persists a valid mode key + picker toggle and enriches them', () => {
+    it('persists a valid mode key + picker toggle and enriches them', async () => {
       mkProject('lm-valid');
-      const result = projects.updateProject('lm-valid', { defaultLaunchMode: 'plan', showLaunchModePicker: false });
+      const result = await projects.updateProject('lm-valid', { defaultLaunchMode: 'plan', showLaunchModePicker: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.defaultLaunchMode, 'plan');
       assert.equal(result.project.showLaunchModePicker, false);
@@ -75,22 +75,22 @@ describe('launch-mode settings', () => {
       assert.equal(projConfig.showLaunchModePicker, false);
     });
 
-    it('rejects a non-boolean showLaunchModePicker', () => {
+    it('rejects a non-boolean showLaunchModePicker', async () => {
       mkProject('lm-badbool');
-      const result = projects.updateProject('lm-badbool', { showLaunchModePicker: 'yes' });
+      const result = await projects.updateProject('lm-badbool', { showLaunchModePicker: 'yes' });
       assert.equal(result.project, null);
       assert.match(result.errors[0], /showLaunchModePicker must be a boolean/);
     });
 
-    it('rejects a mode key the engine does not define, listing the valid keys', () => {
+    it('rejects a mode key the engine does not define, listing the valid keys', async () => {
       mkProject('lm-badkey');
-      const result = projects.updateProject('lm-badkey', { defaultLaunchMode: 'yolo' });
+      const result = await projects.updateProject('lm-badkey', { defaultLaunchMode: 'yolo' });
       assert.equal(result.project, null);
       assert.match(result.errors[0], /not a launch mode of engine "claude"/);
       assert.match(result.errors[0], /bypassPermissions/);
     });
 
-    it('rejects a disabled mode key (symmetric with the picker filter)', () => {
+    it('rejects a disabled mode key (symmetric with the picker filter)', async () => {
       mkProject('lm-disabled');
       const claude = store.engines.get('claude');
       const patched = {
@@ -100,7 +100,7 @@ describe('launch-mode settings', () => {
       const originalGet = store.engines.get;
       store.engines.get = (id) => (id === 'claude' ? patched : originalGet.call(store.engines, id));
       try {
-        const result = projects.updateProject('lm-disabled', { defaultLaunchMode: 'plan' });
+        const result = await projects.updateProject('lm-disabled', { defaultLaunchMode: 'plan' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /disabled for engine "claude"/);
       } finally {
@@ -108,24 +108,24 @@ describe('launch-mode settings', () => {
       }
     });
 
-    it('rejects an empty or non-string mode', () => {
+    it('rejects an empty or non-string mode', async () => {
       mkProject('lm-empty');
-      assert.match(projects.updateProject('lm-empty', { defaultLaunchMode: '  ' }).errors[0], /non-empty string/);
-      assert.match(projects.updateProject('lm-empty', { defaultLaunchMode: 42 }).errors[0], /non-empty string/);
+      assert.match((await projects.updateProject('lm-empty', { defaultLaunchMode: '  ' })).errors[0], /non-empty string/);
+      assert.match((await projects.updateProject('lm-empty', { defaultLaunchMode: 42 })).errors[0], /non-empty string/);
     });
   });
 
   describe('eyes-open bypass-hidden guard', () => {
-    it('blocks hiding the picker with a warning-carrying default unless confirmed', () => {
+    it('blocks hiding the picker with a warning-carrying default unless confirmed', async () => {
       mkProject('lm-guard');
-      const blocked = projects.updateProject('lm-guard', {
+      const blocked = await projects.updateProject('lm-guard', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false
       });
       assert.equal(blocked.project, null);
       assert.match(blocked.errors[0], /confirmBypassHidden/);
 
-      const confirmed = projects.updateProject('lm-guard', {
+      const confirmed = await projects.updateProject('lm-guard', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
@@ -135,33 +135,33 @@ describe('launch-mode settings', () => {
       assert.equal(confirmed.project.showLaunchModePicker, false);
     });
 
-    it('fires when a single-field change creates the combination against stored state', () => {
+    it('fires when a single-field change creates the combination against stored state', async () => {
       mkProject('lm-guard-split');
       // Step 1: bypass default with the picker still shown — no guard (the
       // picker still surfaces the warning at launch).
-      const step1 = projects.updateProject('lm-guard-split', { defaultLaunchMode: 'bypassPermissions' });
+      const step1 = await projects.updateProject('lm-guard-split', { defaultLaunchMode: 'bypassPermissions' });
       assert.deepEqual(step1.errors, []);
       // Step 2: hiding the picker now completes the combination — guard fires.
-      const step2 = projects.updateProject('lm-guard-split', { showLaunchModePicker: false });
+      const step2 = await projects.updateProject('lm-guard-split', { showLaunchModePicker: false });
       assert.equal(step2.project, null);
       assert.match(step2.errors[0], /confirmBypassHidden/);
     });
 
-    it('a stored confirmed combination never blocks unrelated updates', () => {
+    it('a stored confirmed combination never blocks unrelated updates', async () => {
       mkProject('lm-guard-stored');
-      projects.updateProject('lm-guard-stored', {
+      await projects.updateProject('lm-guard-stored', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
       });
-      const unrelated = projects.updateProject('lm-guard-stored', { tags: ['later'] });
+      const unrelated = await projects.updateProject('lm-guard-stored', { tags: ['later'] });
       assert.deepEqual(unrelated.errors, []);
       assert.deepEqual(unrelated.project.tags, ['later']);
     });
 
-    it('does not fire for a warning-free default with the picker hidden', () => {
+    it('does not fire for a warning-free default with the picker hidden', async () => {
       mkProject('lm-no-warn');
-      const result = projects.updateProject('lm-no-warn', {
+      const result = await projects.updateProject('lm-no-warn', {
         defaultLaunchMode: 'plan',
         showLaunchModePicker: false
       });
@@ -170,13 +170,13 @@ describe('launch-mode settings', () => {
   });
 
   describe('engine-switch reconciliation (#682 trigger, #622)', () => {
-    it('resets a stored mode the new engine cannot honor to default', () => {
+    it('resets a stored mode the new engine cannot honor to default', async () => {
       mkProject('lm-switch');
       // Claude honors bypassPermissions; aider does not (its only non-default
       // mode is yesAlways). This used to use codex, which gained a real bypass
       // mode in #731 — the contract is unchanged, the example had to move to an
       // engine where the mode is genuinely unhonorable.
-      const set = projects.updateProject('lm-switch', {
+      const set = await projects.updateProject('lm-switch', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
@@ -184,7 +184,7 @@ describe('launch-mode settings', () => {
       assert.deepEqual(set.errors, []);
       assert.equal(set.project.defaultLaunchMode, 'bypassPermissions');
 
-      const switched = projects.updateProject('lm-switch', { engine: 'aider' });
+      const switched = await projects.updateProject('lm-switch', { engine: 'aider' });
       assert.deepEqual(switched.errors.filter(e => /defaultLaunchMode|launch mode/i.test(e)), []);
       // The stranded mode is reconciled to the universally-valid default.
       const cfg = store.projectConfig.load(switched.project.path);
@@ -192,7 +192,7 @@ describe('launch-mode settings', () => {
       assert.equal(switched.project.defaultLaunchMode, 'default');
     });
 
-    it('preserves bypass when switching to an engine that DOES honor it (#731)', () => {
+    it('preserves bypass when switching to an engine that DOES honor it (#731)', async () => {
       // Codex gaining a bypass mode changed this case from "reset" to "keep".
       // Recorded deliberately rather than left to be discovered: reconciliation
       // only downgrades modes the target engine cannot honor, so an operator who
@@ -206,13 +206,13 @@ describe('launch-mode settings', () => {
       // one was confirmed, but the carried posture is not identical in blast
       // radius to the one that was confirmed.
       mkProject('lm-switch-bypass-kept');
-      projects.updateProject('lm-switch-bypass-kept', {
+      await projects.updateProject('lm-switch-bypass-kept', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
       });
 
-      const switched = projects.updateProject('lm-switch-bypass-kept', { engine: 'codex' });
+      const switched = await projects.updateProject('lm-switch-bypass-kept', { engine: 'codex' });
       assert.deepEqual(switched.errors, []);
       assert.equal(
         store.projectConfig.load(switched.project.path).defaultLaunchMode,
@@ -220,17 +220,17 @@ describe('launch-mode settings', () => {
       );
     });
 
-    it('preserves a stored mode the new engine still honors', () => {
+    it('preserves a stored mode the new engine still honors', async () => {
       mkProject('lm-switch-keep');
       // 'default' is valid for every engine — a switch must not disturb it.
-      const switched = projects.updateProject('lm-switch-keep', { engine: 'codex' });
+      const switched = await projects.updateProject('lm-switch-keep', { engine: 'codex' });
       assert.deepEqual(switched.errors, []);
       assert.equal(store.projectConfig.load(switched.project.path).defaultLaunchMode, 'default');
     });
 
-    it('allows switching engine AND hiding the picker together when reconciliation makes it safe', () => {
+    it('allows switching engine AND hiding the picker together when reconciliation makes it safe', async () => {
       mkProject('lm-switch-hide');
-      projects.updateProject('lm-switch-hide', {
+      await projects.updateProject('lm-switch-hide', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
@@ -240,7 +240,7 @@ describe('launch-mode settings', () => {
       // block this switch-to-safe, and no re-confirm should be demanded.
       // (Was codex until #731 gave codex a real bypass mode — see the sibling
       // test below, where the guard now correctly refuses that target.)
-      const result = projects.updateProject('lm-switch-hide', {
+      const result = await projects.updateProject('lm-switch-hide', {
         engine: 'aider',
         showLaunchModePicker: false
       });
@@ -250,20 +250,20 @@ describe('launch-mode settings', () => {
       assert.equal(cfg.showLaunchModePicker, false);
     });
 
-    it('demands re-confirmation when the new engine DOES honor the warned mode (#731)', () => {
+    it('demands re-confirmation when the new engine DOES honor the warned mode (#731)', async () => {
       // The counterpart to the switch-to-safe case above. Codex honoring
       // bypassPermissions means reconciliation no longer defuses this update, so
       // hiding the picker would put a warned posture behind no warning — the
       // #622 guard must ask again. Adding a mode to an engine widens what the
       // guard has to catch; this pins that it does.
       mkProject('lm-switch-hide-warned');
-      projects.updateProject('lm-switch-hide-warned', {
+      await projects.updateProject('lm-switch-hide-warned', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false,
         confirmBypassHidden: true
       });
 
-      const blocked = projects.updateProject('lm-switch-hide-warned', {
+      const blocked = await projects.updateProject('lm-switch-hide-warned', {
         engine: 'codex',
         showLaunchModePicker: false
       });
@@ -271,7 +271,7 @@ describe('launch-mode settings', () => {
       assert.match(blocked.errors.join(' '), /confirmBypassHidden/);
 
       // And it goes through once confirmed.
-      const confirmed = projects.updateProject('lm-switch-hide-warned', {
+      const confirmed = await projects.updateProject('lm-switch-hide-warned', {
         engine: 'codex',
         showLaunchModePicker: false,
         confirmBypassHidden: true
@@ -295,9 +295,9 @@ describe('launch-mode settings', () => {
       assert.notEqual(cfg.showLaunchModePicker, false);
     });
 
-    it('the guard still blocks claude bypass + hidden without confirm after hardening', () => {
+    it('the guard still blocks claude bypass + hidden without confirm after hardening', async () => {
       mkProject('lm-still-guarded');
-      const blocked = projects.updateProject('lm-still-guarded', {
+      const blocked = await projects.updateProject('lm-still-guarded', {
         defaultLaunchMode: 'bypassPermissions',
         showLaunchModePicker: false
       });

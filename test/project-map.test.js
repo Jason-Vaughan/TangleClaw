@@ -124,55 +124,55 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
       return result.project;
     }
 
-    it('rejects a non-boolean value without mutating state', () => {
+    it('rejects a non-boolean value without mutating state', async () => {
       const project = makeProject('pm-validate');
-      const result = projects.updateProject(project.name, { projectMapEnabled: 'yes' });
+      const result = await projects.updateProject(project.name, { projectMapEnabled: 'yes' });
       assert.deepEqual(result.errors, ['projectMapEnabled must be a boolean']);
       assert.equal(result.project, null);
       assert.equal(store.projectConfig.load(project.path).projectMapEnabled, false);
     });
 
-    it('seeds PROJECT-MAP.md on a false → true transition when the file is absent', () => {
+    it('seeds PROJECT-MAP.md on a false → true transition when the file is absent', async () => {
       const project = makeProject('pm-seed-on-toggle');
       fs.mkdirSync(path.join(project.path, 'lib'), { recursive: true });
       const filePath = path.join(project.path, projects.PROJECT_MAP_FILENAME);
       assert.equal(fs.existsSync(filePath), false);
 
-      projects.updateProject(project.name, { projectMapEnabled: true });
+      await projects.updateProject(project.name, { projectMapEnabled: true });
 
       assert.equal(store.projectConfig.load(project.path).projectMapEnabled, true);
       assert.ok(fs.existsSync(filePath), 'toggle-on should seed PROJECT-MAP.md');
     });
 
-    it('does NOT overwrite a pre-existing PROJECT-MAP.md on toggle-on', () => {
+    it('does NOT overwrite a pre-existing PROJECT-MAP.md on toggle-on', async () => {
       const project = makeProject('pm-no-overwrite');
       const filePath = path.join(project.path, projects.PROJECT_MAP_FILENAME);
       const curated = '# Mine\n\n- entry\n';
       fs.writeFileSync(filePath, curated);
 
-      projects.updateProject(project.name, { projectMapEnabled: true });
+      await projects.updateProject(project.name, { projectMapEnabled: true });
       assert.equal(fs.readFileSync(filePath, 'utf8'), curated);
     });
 
-    it('does NOT delete PROJECT-MAP.md on toggle-off', () => {
+    it('does NOT delete PROJECT-MAP.md on toggle-off', async () => {
       const project = makeProject('pm-no-delete');
       const filePath = path.join(project.path, projects.PROJECT_MAP_FILENAME);
-      projects.updateProject(project.name, { projectMapEnabled: true });
+      await projects.updateProject(project.name, { projectMapEnabled: true });
       assert.ok(fs.existsSync(filePath));
 
-      projects.updateProject(project.name, { projectMapEnabled: false });
+      await projects.updateProject(project.name, { projectMapEnabled: false });
       assert.equal(store.projectConfig.load(project.path).projectMapEnabled, false);
       assert.ok(fs.existsSync(filePath), 'toggle-off must leave the file (user-owned artifact)');
     });
   });
 
   describe('enrichProject — surface', () => {
-    it('exposes projectMapEnabled (default false, reflects post-update true)', () => {
+    it('exposes projectMapEnabled (default false, reflects post-update true)', async () => {
       projects.createProject({ name: 'pm-surface' });
-      assert.equal(projects.getProject('pm-surface').projectMapEnabled, false);
+      assert.equal((await projects.getProject('pm-surface')).projectMapEnabled, false);
 
-      projects.updateProject('pm-surface', { projectMapEnabled: true });
-      assert.equal(projects.getProject('pm-surface').projectMapEnabled, true);
+      await projects.updateProject('pm-surface', { projectMapEnabled: true });
+      assert.equal((await projects.getProject('pm-surface')).projectMapEnabled, true);
     });
   });
 
@@ -274,13 +274,13 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
   });
 
   describe('updateProject — seeds PROJECT-MAP.md from real group membership', () => {
-    it('records the count on toggle-on without publishing membership', () => {
+    it('records the count on toggle-on without publishing membership', async () => {
       const group = store.projectGroups.create({ name: 'PM Membership Group', sharedDir: '/abs/pm-shared' });
       const project = projects.createProject({ name: 'pm-with-membership' }).project;
       store.projectGroups.addMember(group.id, project.id);
       store.sharedDocs.create({ groupId: group.id, name: 'NETWORK', filePath: '/abs/pm-shared/NETWORK.md' });
 
-      projects.updateProject('pm-with-membership', { projectMapEnabled: true });
+      await projects.updateProject('pm-with-membership', { projectMapEnabled: true });
 
       // End-to-end: real store membership, real seeded file on disk. The file is
       // committed by managed projects, so it must carry the count and nothing that

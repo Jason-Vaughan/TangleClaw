@@ -321,13 +321,21 @@ describe('api-projects', () => {
 
       try {
         for (let i = 0; i < attempts; i++) {
+          const before = n;
           const { status, data } = await request('GET', '/api/projects');
           // Degraded, not failed: registered projects come from SQLite and are
           // unaffected, so the dashboard still renders.
           assert.equal(status, 200, `request ${i + 1} of ${attempts} must still be answered`);
           assert.ok(Array.isArray(data.projects), 'must answer with a list, not an error');
+          // Checked per request rather than as one total at the end. The route
+          // used to make exactly one scanner call, so a total of `attempts` said
+          // "every request reached the fixture"; since #884 it makes one per
+          // registered project as well, and a total would silently pass if one
+          // request bypassed the scanner while another made two. Asserting the
+          // count MOVED on every iteration is what the total was standing in for.
+          assert.ok(n > before,
+            `request ${i + 1} of ${attempts} must actually have reached the scanner`);
         }
-        assert.equal(n, attempts, 'the fixture must actually have reached the scanner each time');
 
         // The assertion #883 is about, and the reason it is RACED rather than
         // awaited: with the pool destroyed this readdir never resolves at all, so

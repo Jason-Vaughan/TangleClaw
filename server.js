@@ -2774,12 +2774,12 @@ route('GET', '/api/projects', async (req, res) => {
 });
 
 // POST /api/projects/attach — Attach an existing filesystem directory as a project
-route('POST', '/api/projects/attach', (_req, res, _params, body) => {
+route('POST', '/api/projects/attach', async (_req, res, _params, body) => {
   if (!body || !body.name) {
     return errorResponse(res, 400, 'name is required', 'BAD_REQUEST');
   }
 
-  const result = projects.attachProject(body.name);
+  const result = await projects.attachProject(body.name);
   if (!result.project) {
     const firstError = result.errors[0] || 'Attach failed';
     const code = firstError.includes('already registered') ? 'CONFLICT' : 'BAD_REQUEST';
@@ -2838,8 +2838,8 @@ route('POST', '/api/projects/repair-orphan-hooks', (_req, res, _params, body) =>
 });
 
 // GET /api/projects/:name
-route('GET', '/api/projects/:name', (_req, res, params) => {
-  const project = projects.getProject(params.name);
+route('GET', '/api/projects/:name', async (_req, res, params) => {
+  const project = await projects.getProject(params.name);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
@@ -2952,13 +2952,13 @@ route('POST', '/api/projects/import', (_req, res, _params, body) => {
 });
 
 // DELETE /api/projects/:name
-route('DELETE', '/api/projects/:name', (_req, res, params, body) => {
+route('DELETE', '/api/projects/:name', async (_req, res, params, body) => {
   const passwordCheck = projects.checkDeletePassword(body ? body.password : undefined);
   if (!passwordCheck.allowed) {
     return errorResponse(res, 403, passwordCheck.error, 'FORBIDDEN');
   }
 
-  const project = projects.getProject(params.name);
+  const project = await projects.getProject(params.name);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
@@ -3002,8 +3002,8 @@ route('POST', '/api/projects/:name/unarchive', (_req, res, params) => {
 // POST /api/projects/:name/migrate-to-plugin — Migrate a project to V2-plugin
 // governance (#262, C1). Cohort-aware (non-Claude → not-applicable) + session-safe
 // (defers on a live session; never auto-closes). Idempotent.
-route('POST', '/api/projects/:name/migrate-to-plugin', (_req, res, params) => {
-  const result = projects.migrateProjectToPlugin(params.name);
+route('POST', '/api/projects/:name/migrate-to-plugin', async (_req, res, params) => {
+  const result = await projects.migrateProjectToPlugin(params.name);
   if (result.error) {
     const notFound = result.error.includes('not found');
     return errorResponse(res, notFound ? 404 : 400, result.error, notFound ? 'NOT_FOUND' : 'BAD_REQUEST');
@@ -3020,12 +3020,12 @@ route('POST', '/api/projects/:name/migrate-to-plugin', (_req, res, params) => {
 });
 
 // PATCH /api/projects/:name
-route('PATCH', '/api/projects/:name', (_req, res, params, body) => {
+route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
 
-  const result = projects.updateProject(params.name, body);
+  const result = await projects.updateProject(params.name, body);
 
   if (result.errors.length > 0 && !result.project) {
     const firstError = result.errors[0];
@@ -3088,8 +3088,8 @@ route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, 
 });
 
 // POST /api/sessions/:project — Launch session
-route('POST', '/api/sessions/:project', (_req, res, params, body) => {
-  const project = projects.getProject(params.project);
+route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
+  const project = await projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
@@ -3688,7 +3688,7 @@ function _publicTranscriptMeta(meta) {
 // wrap summaries; `scope=transcripts` greps every captured transcript directly
 // (the "search my old transcripts" path). Both honor the same five filters.
 route('GET', '/api/continuity/:project/search', async (req, res, params) => {
-  const project = projects.getProject(params.project);
+  const project = await projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
@@ -3710,8 +3710,8 @@ route('GET', '/api/continuity/:project/search', async (req, res, params) => {
 });
 
 // GET /api/continuity/:project/sessions — list every session in the store
-route('GET', '/api/continuity/:project/sessions', (req, res, params) => {
-  const project = projects.getProject(params.project);
+route('GET', '/api/continuity/:project/sessions', async (req, res, params) => {
+  const project = await projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
@@ -3719,8 +3719,8 @@ route('GET', '/api/continuity/:project/sessions', (req, res, params) => {
 });
 
 // GET /api/continuity/:project/sessions/:sid — drill-down payload for one session
-route('GET', '/api/continuity/:project/sessions/:sid', (req, res, params) => {
-  const project = projects.getProject(params.project);
+route('GET', '/api/continuity/:project/sessions/:sid', async (req, res, params) => {
+  const project = await projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
@@ -3741,7 +3741,7 @@ route('GET', '/api/continuity/:project/sessions/:sid', (req, res, params) => {
 
 // GET /api/continuity/:project/sessions/:sid/transcript/search — cold drill-down
 route('GET', '/api/continuity/:project/sessions/:sid/transcript/search', async (req, res, params) => {
-  const project = projects.getProject(params.project);
+  const project = await projects.getProject(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
@@ -3797,12 +3797,12 @@ route('GET', '/api/activity', (req, res) => {
 });
 
 // POST /api/upload — Upload a file to a project's .uploads/ directory
-route('POST', '/api/upload', (_req, res, _params, body) => {
+route('POST', '/api/upload', async (_req, res, _params, body) => {
   if (!body || !body.project || !body.filename || !body.data) {
     return errorResponse(res, 400, 'project, filename, and data are required', 'BAD_REQUEST');
   }
 
-  const project = projects.getProject(body.project);
+  const project = await projects.getProject(body.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${body.project}" not found`, 'NOT_FOUND');
   }
@@ -3828,7 +3828,7 @@ route('POST', '/api/upload', (_req, res, _params, body) => {
 }, { maxBodySize: 15 * 1024 * 1024 });
 
 // GET /api/uploads — List uploads for a project
-route('GET', '/api/uploads', (req, res) => {
+route('GET', '/api/uploads', async (req, res) => {
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
 
@@ -3836,7 +3836,7 @@ route('GET', '/api/uploads', (req, res) => {
     return errorResponse(res, 400, 'project query parameter is required', 'BAD_REQUEST');
   }
 
-  const project = projects.getProject(query.project);
+  const project = await projects.getProject(query.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${query.project}" not found`, 'NOT_FOUND');
   }

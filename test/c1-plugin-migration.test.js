@@ -507,91 +507,91 @@ describe('C1 — per-project plugin migration (#262)', () => {
       mock.method(sessionOwnership, 'resolveByProject', () => null);
     });
 
-    it('Cohort C (non-Claude) — not-applicable, no settings mutation', () => {
+    it('Cohort C (non-Claude) — not-applicable, no settings mutation', async () => {
       const p = mkProjectDir('cohortC');
       store.projects.create({ name: 'c1-gemini', path: p, engine: 'gemini' });
-      const r = projects.migrateProjectToPlugin('c1-gemini');
+      const r = await projects.migrateProjectToPlugin('c1-gemini');
       assert.equal(r.status, 'not-applicable');
       assert.equal(r.migrated, false);
       assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')), 'no settings written for a non-Claude project');
       assert.equal(store.projects.getByName('c1-gemini').migrationStatus, 'not-applicable');
     });
 
-    it('defers on a CONFIRMED-live session — no mutation, status unchanged', () => {
+    it('defers on a CONFIRMED-live session — no mutation, status unchanged', async () => {
       const p = mkProjectDir('live');
       store.projects.create({ name: 'c1-live', path: p, engine: 'claude' });
       mock.method(sessionOwnership, 'resolveByProject', () => ({ sessionId: 1, project: 'c1-live', live: true }));
-      const r = projects.migrateProjectToPlugin('c1-live');
+      const r = await projects.migrateProjectToPlugin('c1-live');
       assert.equal(r.deferred, true);
       assert.equal(r.migrated, false);
       assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')), 'no settings written while a session is live');
       assert.equal(store.projects.getByName('c1-live').migrationStatus, null);
     });
 
-    it('does NOT defer on a stale ownership row whose pane is gone (live:false) — isolates the .live gate', () => {
+    it('does NOT defer on a stale ownership row whose pane is gone (live:false) — isolates the .live gate', async () => {
       const p = mkProjectDir('stalerow');
       store.projects.create({ name: 'c1-stale', path: p, engine: 'claude' });
       // resolveByProject returns an object for any active/wrapping DB row; a
       // dead pane has live:false and must migrate, not falsely defer.
       mock.method(sessionOwnership, 'resolveByProject', () => ({ sessionId: 2, project: 'c1-stale', live: false }));
-      const r = projects.migrateProjectToPlugin('c1-stale');
+      const r = await projects.migrateProjectToPlugin('c1-stale');
       assert.equal(r.deferred || false, false, 'a stale (dead-pane) row must not defer');
       assert.equal(r.migrated, true);
       assert.equal(engines.isPluginGoverned(p), true);
     });
 
-    it('happy path — migrates a Claude project, status migrated, ref written', () => {
+    it('happy path — migrates a Claude project, status migrated, ref written', async () => {
       const p = mkProjectDir('happy');
       store.projects.create({ name: 'c1-happy', path: p, engine: 'claude' });
-      const r = projects.migrateProjectToPlugin('c1-happy');
+      const r = await projects.migrateProjectToPlugin('c1-happy');
       assert.equal(r.migrated, true);
       assert.equal(r.status, 'migrated');
       assert.equal(engines.isPluginGoverned(p), true);
       assert.equal(store.projects.getByName('c1-happy').migrationStatus, 'migrated');
     });
 
-    it('records pending-activation when the plugin is not installed on this machine', () => {
+    it('records pending-activation when the plugin is not installed on this machine', async () => {
       engines._internal.pluginsHome = () => pluginsHomeEmpty;
       const p = mkProjectDir('pending');
       store.projects.create({ name: 'c1-pending', path: p, engine: 'claude' });
-      const r = projects.migrateProjectToPlugin('c1-pending');
+      const r = await projects.migrateProjectToPlugin('c1-pending');
       assert.equal(r.migrated, true);
       assert.equal(r.status, 'pending-activation');
       assert.equal(store.projects.getByName('c1-pending').migrationStatus, 'pending-activation');
       engines._internal.pluginsHome = () => pluginsHomeInstalled;
     });
 
-    it('is idempotent — an already-governed project reports migrated, alreadyGoverned', () => {
+    it('is idempotent — an already-governed project reports migrated, alreadyGoverned', async () => {
       const p = mkProjectDir('already', { enabledPlugins: { 'prawduct@prawduct': true } });
       store.projects.create({ name: 'c1-already', path: p, engine: 'claude' });
-      const r = projects.migrateProjectToPlugin('c1-already');
+      const r = await projects.migrateProjectToPlugin('c1-already');
       assert.equal(r.alreadyGoverned, true);
       assert.equal(r.migrated, false);
       assert.equal(r.status, 'migrated');
     });
 
-    it('returns an error for an unknown project', () => {
-      const r = projects.migrateProjectToPlugin('c1-does-not-exist');
+    it('returns an error for an unknown project', async () => {
+      const r = await projects.migrateProjectToPlugin('c1-does-not-exist');
       assert.match(r.error, /not found/);
       assert.equal(r.migrated, false);
     });
 
-    it('surfaces migrationStatus through the enriched project object', () => {
+    it('surfaces migrationStatus through the enriched project object', async () => {
       const p = mkProjectDir('enrich');
       store.projects.create({ name: 'c1-enrich', path: p, engine: 'claude' });
-      projects.migrateProjectToPlugin('c1-enrich');
-      const enriched = projects.getProject('c1-enrich');
+      await projects.migrateProjectToPlugin('c1-enrich');
+      const enriched = await projects.getProject('c1-enrich');
       assert.equal(enriched.migrationStatus, 'migrated');
     });
 
-    it('migration flips governanceState ungoverned → governed-plugin (C2 #353 badge self-clears)', () => {
+    it('migration flips governanceState ungoverned → governed-plugin (C2 #353 badge self-clears)', async () => {
       const p = mkProjectDir('govflip');
       store.projects.create({ name: 'c1-govflip', path: p, engine: 'claude' });
       // Before: Claude, no plugin, no vendored hook → ungoverned.
-      assert.equal(projects.getProject('c1-govflip').governanceState, 'ungoverned');
-      projects.migrateProjectToPlugin('c1-govflip');
+      assert.equal((await projects.getProject('c1-govflip')).governanceState, 'ungoverned');
+      await projects.migrateProjectToPlugin('c1-govflip');
       // After: the migration wrote the plugin ref, so the derived state clears.
-      assert.equal(projects.getProject('c1-govflip').governanceState, 'governed-plugin');
+      assert.equal((await projects.getProject('c1-govflip')).governanceState, 'governed-plugin');
     });
   });
 });

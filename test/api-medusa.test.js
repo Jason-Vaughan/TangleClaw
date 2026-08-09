@@ -1712,9 +1712,9 @@ describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (T
     fs.rmSync(projDir, { recursive: true, force: true });
   });
 
-  it('OFF→ON registers the live session immediately (no relaunch needed)', () => {
+  it('OFF→ON registers the live session immediately (no relaunch needed)', async () => {
     assert.equal(medusa.getStatus(active.id).state, 'off');
-    const result = projects.updateProject('live-flip', { medusaEnabled: true });
+    const result = await projects.updateProject('live-flip', { medusaEnabled: true });
     assert.equal(result.errors.length, 0);
     // The listener is up for the ALREADY-RUNNING session — the TC#549 contract.
     // (Real socket path, no Bridge in tests → honest non-off state; the guard
@@ -1723,17 +1723,17 @@ describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (T
     assert.match(medusa.getStatus(active.id).workspaceId, /^live-flip-[0-9a-f]{8}$/);
   });
 
-  it('ON→OFF stops the live session listener immediately', () => {
+  it('ON→OFF stops the live session listener immediately', async () => {
     assert.notEqual(medusa.getStatus(active.id).state, 'off');
-    const result = projects.updateProject('live-flip', { medusaEnabled: false });
+    const result = await projects.updateProject('live-flip', { medusaEnabled: false });
     assert.equal(result.errors.length, 0);
     assert.equal(medusa.getStatus(active.id).state, 'off');
   });
 
-  it('a project with NO live session flips the pref cleanly (listener untouched)', () => {
+  it('a project with NO live session flips the pref cleanly (listener untouched)', async () => {
     const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-549-idle-'));
     store.projects.create({ name: 'idle-flip', path: otherDir, engine: 'claude' });
-    const result = projects.updateProject('idle-flip', { medusaEnabled: true });
+    const result = await projects.updateProject('idle-flip', { medusaEnabled: true });
     assert.equal(result.errors.length, 0);
     assert.equal(store.projectConfig.load(otherDir).medusaEnabled, true);
     fs.rmSync(otherDir, { recursive: true, force: true });

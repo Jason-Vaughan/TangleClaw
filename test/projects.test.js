@@ -32,6 +32,114 @@ describe('projects', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // Enriching a registered project used to read that project's own directory on
+  // this process's event loop — `fs.existsSync` plus `engines.governanceState`
+  // beneath it — on the route the dashboard polls every ten seconds. #883 moved
+  // the walk for UNREGISTERED folders into a killable child and left this half
+  // standing, so a single TCC-protected project directory still wedged every
+  // route. These pin the delegation and the degradation; whether the scanner
+  // really kills a hung child is `test/dir-scanner.test.js`'s job, and the
+  // handler's own answers are in `test/dir-scanner-child.test.js`.
+  describe('enrichment reads a project directory in the scanner child (#884)', () => {
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * The rejection the scanner produces when a path never answered.
+     * @returns {Error}
+     */
+    function timedOut() {
+      return Object.assign(new Error('timed out after 2000ms reading /nowhere'),
+        { tcTimedOut: true });
+    }
+
+    /**
+     * Run `fn` with `dirScanner.request` replaced, then restore it.
+     * @param {Function} fake - Stand-in for dirScanner.request.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fake, fn) {
+      const real = dirScanner.request;
+      dirScanner.request = fake;
+      try {
+        return await fn();
+      } finally {
+        dirScanner.request = real;
+      }
+    }
+
+    it('asks the scanner for every registered project, keyed by its own path', async () => {
+      projects.createProject({ name: 'facts-delegation' });
+      const seen = [];
+      await withScanner(
+        (op, payload, opts) => {
+          seen.push({ op, payload, opts });
+          return Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+        },
+        () => projects.listProjects()
+      );
+
+      assert.ok(seen.length > 0, 'the fixture must have registered projects to enrich');
+      const mine = seen.find((r) => r.payload.dir.endsWith('facts-delegation'));
+      assert.ok(mine, 'the project under test must have reached the scanner');
+      assert.equal(mine.op, 'projectFacts');
+      // THE MUTATION THIS CATCHES: dropping `pathKey`. Without it the supervisor's
+      // backoff cannot fire, so an unreadable directory costs a killed child on
+      // every ten-second poll forever instead of once per backoff interval — and
+      // a child blocked in the kernel may never leave the process table.
+      assert.equal(mine.opts.pathKey, mine.payload.dir,
+        'each request must opt into the per-path backoff, since nobody asked for this read');
+    });
+
+    it('one unreadable project does not cost the others their governance state', async () => {
+      // The acceptance criterion. Before this, one protected directory did not
+      // degrade one card — it stopped the process answering anything at all.
+      projects.createProject({ name: 'facts-healthy' });
+      projects.createProject({ name: 'facts-stuck' });
+
+      const list = await withScanner(
+        (op, payload) => (payload.dir.endsWith('facts-stuck')
+          ? Promise.reject(timedOut())
+          : Promise.resolve({ exists: true, governanceState: 'governed-plugin' })),
+        () => projects.listProjects()
+      );
+
+      const stuck = list.find((p) => p.name === 'facts-stuck');
+      const healthy = list.find((p) => p.name === 'facts-healthy');
+      assert.ok(stuck && healthy, 'both projects must still be listed');
+      assert.equal(healthy.governanceState, 'governed-plugin',
+        'a healthy project keeps its real answer while a sibling is stuck');
+      assert.equal(stuck.governanceState, 'not-applicable');
+      assert.match(stuck.unreadable, /timed out/,
+        'and the one that failed says so, rather than being indistinguishable from a missing folder');
+      assert.equal(healthy.unreadable, null,
+        'the healthy project carries no failure reason');
+    });
+
+    it('enrichProject reads the facts itself when a caller does not supply them', async () => {
+      // THE MUTATION THIS CATCHES: defaulting the `facts` parameter to a
+      // plausible-looking literal. An earlier draft defaulted it to the shape a
+      // missing directory produces; the eight call sites that pass nothing then
+      // reported every project as having no governance, and nothing failed. An
+      // omitted argument must make this function do the read — slower, never
+      // silently wrong.
+      projects.createProject({ name: 'facts-unsupplied' });
+      const row = store.projects.getByName('facts-unsupplied');
+
+      let asked = false;
+      const enriched = await withScanner(
+        (op, payload) => {
+          if (payload.dir === row.path) asked = true;
+          return Promise.resolve({ exists: true, governanceState: 'governed-vendored' });
+        },
+        () => projects.enrichProject(row)
+      );
+
+      assert.ok(asked, 'enrichProject must gather facts when none were passed in');
+      assert.equal(enriched.governanceState, 'governed-vendored');
+    });
+  });
+
   describe('validateName', () => {
     it('accepts valid names', async () => {
       assert.ok(projects.validateName('my-project').valid);
@@ -294,7 +402,7 @@ describe('projects', () => {
         // and via the store-level test below.
         try { fs.mkdirSync(otherDir); } catch { return; }
         try {
-          const result = projects.attachProject('Attach-Case');
+          const result = await projects.attachProject('Attach-Case');
           assert.equal(result.project, null, 'attach must reject case-collision');
           assert.match(result.errors[0], /already registered/);
           assert.match(result.errors[0], /case-insensitive|attach-case/i,
@@ -308,7 +416,7 @@ describe('projects', () => {
 
   describe('getProject / listProjects', () => {
     it('getProject returns enriched project', async () => {
-      const project = projects.getProject('new-project');
+      const project = await projects.getProject('new-project');
       assert.ok(project);
       assert.equal(project.name, 'new-project');
       assert.ok(project.hasOwnProperty('engine'));
@@ -319,18 +427,18 @@ describe('projects', () => {
     });
 
     it('getProject returns null for unknown', async () => {
-      assert.equal(projects.getProject('nonexistent'), null);
+      assert.equal(await projects.getProject('nonexistent'), null);
     });
 
     it('listProjects returns array of enriched projects', async () => {
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(Array.isArray(list));
       assert.ok(list.length > 0);
       assert.ok(list[0].hasOwnProperty('engine'));
     });
 
     it('listProjects filters by tag', async () => {
-      const list = projects.listProjects({ tag: 'node' });
+      const list = await projects.listProjects({ tag: 'node' });
       for (const p of list) {
         assert.ok(p.tags.includes('node'));
       }
@@ -365,21 +473,21 @@ describe('projects', () => {
 
     it('surfaces ungoverned for a Claude project with no governance installed', async () => {
       makeProject('gov-drift');
-      assert.equal(projects.getProject('gov-drift').governanceState, 'ungoverned');
+      assert.equal((await projects.getProject('gov-drift')).governanceState, 'ungoverned');
     });
 
     it('surfaces governed-plugin once the V2 plugin ref is present', async () => {
       makeProject('gov-plugin', { settings: { enabledPlugins: { 'prawduct@prawduct': true } } });
-      assert.equal(projects.getProject('gov-plugin').governanceState, 'governed-plugin');
+      assert.equal((await projects.getProject('gov-plugin')).governanceState, 'governed-plugin');
     });
 
     it('surfaces not-applicable for a non-Claude project', async () => {
       makeProject('gov-na', { engine: 'gemini' });
-      assert.equal(projects.getProject('gov-na').governanceState, 'not-applicable');
+      assert.equal((await projects.getProject('gov-na')).governanceState, 'not-applicable');
     });
 
     it('every listProjects entry carries a governanceState field', async () => {
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(list.length > 0);
       for (const p of list) {
         assert.ok(p.hasOwnProperty('governanceState'),
@@ -494,13 +602,13 @@ describe('projects', () => {
 
   describe('updateProject', () => {
     it('updates tags', async () => {
-      const result = projects.updateProject('new-project', { tags: ['updated'] });
+      const result = await projects.updateProject('new-project', { tags: ['updated'] });
       assert.ok(result.project);
       assert.deepEqual(result.project.tags, ['updated']);
     });
 
     it('rejects core rule disabling', async () => {
-      const result = projects.updateProject('new-project', {
+      const result = await projects.updateProject('new-project', {
         rules: { core: { changelogPerChange: false } }
       });
       assert.equal(result.project, null);
@@ -508,7 +616,7 @@ describe('projects', () => {
     });
 
     it('updates extension rules', async () => {
-      const result = projects.updateProject('new-project', {
+      const result = await projects.updateProject('new-project', {
         rules: { extensions: { identitySentry: true } }
       });
       assert.ok(result.project);
@@ -517,14 +625,14 @@ describe('projects', () => {
     });
 
     it('returns error for unknown project', async () => {
-      const result = projects.updateProject('nonexistent', { tags: [] });
+      const result = await projects.updateProject('nonexistent', { tags: [] });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('not found'));
     });
 
     it('updates quick commands', async () => {
       const cmds = [{ label: 'test', command: 'echo test' }];
-      const result = projects.updateProject('new-project', { quickCommands: cmds });
+      const result = await projects.updateProject('new-project', { quickCommands: cmds });
       assert.ok(result.project);
       const projConfig = store.projectConfig.load(result.project.path);
       assert.deepEqual(projConfig.quickCommands, cmds);
@@ -532,7 +640,7 @@ describe('projects', () => {
 
     // CC-6 (#381): per-project wrap-section selection.
     it('persists a valid wrapSections selection + enriches it', async () => {
-      const result = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Next action', 'Freshness'] });
+      const result = await projects.updateProject('new-project', { wrapSections: ['Where we are', 'Next action', 'Freshness'] });
       assert.ok(result.project);
       assert.deepEqual(result.project.wrapSections, ['Where we are', 'Next action', 'Freshness']);
       const projConfig = store.projectConfig.load(result.project.path);
@@ -540,8 +648,8 @@ describe('projects', () => {
     });
 
     it('clears the wrapSections override when set to null (deep default)', async () => {
-      projects.updateProject('new-project', { wrapSections: ['Freshness'] });
-      const result = projects.updateProject('new-project', { wrapSections: null });
+      await projects.updateProject('new-project', { wrapSections: ['Freshness'] });
+      const result = await projects.updateProject('new-project', { wrapSections: null });
       assert.ok(result.project);
       assert.equal(result.project.wrapSections, null);
       const projConfig = store.projectConfig.load(result.project.path);
@@ -549,36 +657,36 @@ describe('projects', () => {
     });
 
     it('rejects wrapSections that is not an array or contains unknown names', async () => {
-      const notArray = projects.updateProject('new-project', { wrapSections: 'Freshness' });
+      const notArray = await projects.updateProject('new-project', { wrapSections: 'Freshness' });
       assert.equal(notArray.project, null);
       assert.ok(notArray.errors[0].includes('wrapSections'));
 
-      const bogus = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Bogus'] });
+      const bogus = await projects.updateProject('new-project', { wrapSections: ['Where we are', 'Bogus'] });
       assert.equal(bogus.project, null);
       assert.ok(bogus.errors[0].includes('wrapSections'));
     });
 
     // MED-2K9P Chunk 02: per-project Medusa session-comms auto-enable.
     it('defaults medusaEnabled to false on enrich', async () => {
-      const result = projects.updateProject('new-project', { tags: ['x'] });
+      const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
       assert.equal(result.project.medusaEnabled, false);
     });
 
     it('persists medusaEnabled and round-trips it through enrich', async () => {
-      const on = projects.updateProject('new-project', { medusaEnabled: true });
+      const on = await projects.updateProject('new-project', { medusaEnabled: true });
       assert.ok(on.project);
       assert.equal(on.project.medusaEnabled, true);
       assert.equal(store.projectConfig.load(on.project.path).medusaEnabled, true);
 
-      const off = projects.updateProject('new-project', { medusaEnabled: false });
+      const off = await projects.updateProject('new-project', { medusaEnabled: false });
       assert.equal(off.project.medusaEnabled, false);
       assert.equal(store.projectConfig.load(off.project.path).medusaEnabled, false);
     });
 
     it('rejects a non-boolean medusaEnabled without mutating state', async () => {
-      projects.updateProject('new-project', { medusaEnabled: true });
-      const bad = projects.updateProject('new-project', { medusaEnabled: 'yes' });
+      await projects.updateProject('new-project', { medusaEnabled: true });
+      const bad = await projects.updateProject('new-project', { medusaEnabled: 'yes' });
       assert.equal(bad.project, null);
       assert.ok(bad.errors[0].includes('medusaEnabled'));
       // Prior true value is untouched by the rejected update.
@@ -587,25 +695,25 @@ describe('projects', () => {
 
     // MED-2K9P v2 T2: per-project idle-gated wake opt-in (same shape as medusaEnabled).
     it('defaults medusaWake to false on enrich', async () => {
-      const result = projects.updateProject('new-project', { tags: ['x'] });
+      const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
       assert.equal(result.project.medusaWake, false);
     });
 
     it('persists medusaWake and round-trips it through enrich', async () => {
-      const on = projects.updateProject('new-project', { medusaWake: true });
+      const on = await projects.updateProject('new-project', { medusaWake: true });
       assert.ok(on.project);
       assert.equal(on.project.medusaWake, true);
       assert.equal(store.projectConfig.load(on.project.path).medusaWake, true);
 
-      const off = projects.updateProject('new-project', { medusaWake: false });
+      const off = await projects.updateProject('new-project', { medusaWake: false });
       assert.equal(off.project.medusaWake, false);
       assert.equal(store.projectConfig.load(off.project.path).medusaWake, false);
     });
 
     it('rejects a non-boolean medusaWake without mutating state', async () => {
-      projects.updateProject('new-project', { medusaWake: true });
-      const bad = projects.updateProject('new-project', { medusaWake: 'yes' });
+      await projects.updateProject('new-project', { medusaWake: true });
+      const bad = await projects.updateProject('new-project', { medusaWake: 'yes' });
       assert.equal(bad.project, null);
       assert.ok(bad.errors[0].includes('medusaWake'));
       // Prior true value is untouched by the rejected update.
@@ -622,7 +730,7 @@ describe('projects', () => {
       });
 
       it('persists a valid activePlan filename to project.json', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const result = await projects.updateProject('new-project', { activePlan: 'chosen.md' });
         assert.ok(result.project);
         const cfg = store.projectConfig.load(result.project.path);
         assert.equal(cfg.activePlan, 'chosen.md');
@@ -630,14 +738,14 @@ describe('projects', () => {
 
       it('round-trips: priming-roll._readActivePlan reads back the persisted pick', async () => {
         const primingRoll = require('../lib/wrap-steps/priming-roll');
-        projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        await projects.updateProject('new-project', { activePlan: 'chosen.md' });
         const projPath = path.join(projectsDir, 'new-project');
         assert.equal(primingRoll._readActivePlan(projPath), 'chosen.md');
       });
 
       it('clears activePlan when set to null', async () => {
-        projects.updateProject('new-project', { activePlan: 'chosen.md' });
-        const result = projects.updateProject('new-project', { activePlan: null });
+        await projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const result = await projects.updateProject('new-project', { activePlan: null });
         assert.ok(result.project);
         const cfg = store.projectConfig.load(result.project.path);
         assert.equal(cfg.activePlan, undefined, 'null must delete the key, not store null');
@@ -652,44 +760,44 @@ describe('projects', () => {
         fs.mkdirSync(tcPlans, { recursive: true });
         fs.writeFileSync(path.join(tcPlans, 'current.md'), '### Chunk 1: A\n');
         try {
-          const result = projects.updateProject('new-project', { activePlan: 'current.md' });
+          const result = await projects.updateProject('new-project', { activePlan: 'current.md' });
           assert.ok(result.project, `expected accept, got: ${JSON.stringify(result.errors)}`);
           const cfg = store.projectConfig.load(result.project.path);
           assert.equal(cfg.activePlan, 'current.md');
-          projects.updateProject('new-project', { activePlan: null });
+          await projects.updateProject('new-project', { activePlan: null });
         } finally {
           fs.rmSync(tcPlans, { recursive: true, force: true });
         }
       });
 
       it('rejects a filename that does not exist under the resolved plans directory', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 'ghost.md' });
+        const result = await projects.updateProject('new-project', { activePlan: 'ghost.md' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /activePlan .* not found/);
       });
 
       it('rejects a non-.md filename even if the file exists', async () => {
         fs.writeFileSync(path.join(planDir, 'notes.txt'), 'x');
-        const result = projects.updateProject('new-project', { activePlan: 'notes.txt' });
+        const result = await projects.updateProject('new-project', { activePlan: 'notes.txt' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /not found/);
       });
 
       it('rejects a path-bearing activePlan (traversal-safe)', async () => {
-        const result = projects.updateProject('new-project', { activePlan: '../../etc/passwd' });
+        const result = await projects.updateProject('new-project', { activePlan: '../../etc/passwd' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /bare plan filename/);
       });
 
       it('rejects a non-string activePlan', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 42 });
+        const result = await projects.updateProject('new-project', { activePlan: 42 });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /activePlan must be a string/);
       });
     });
 
-    describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
-      it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
+    describe('rename — case-insensitive collision handling (#221, sibling to #188)', async () => {
+      it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', async (t) => {
         // Set up a discrete project so other tests' state doesn't interfere.
         projects.createProject({ name: 'self-rename-src' });
 
@@ -707,7 +815,7 @@ describe('projects', () => {
           return;
         }
 
-        const result = projects.updateProject('self-rename-src', { name: 'Self-Rename-Src' });
+        const result = await projects.updateProject('self-rename-src', { name: 'Self-Rename-Src' });
         assert.ok(result.project, 'case-only self-rename must be allowed by the validator');
         assert.equal(result.errors.length, 0);
         assert.equal(result.project.name, 'Self-Rename-Src',
@@ -718,7 +826,7 @@ describe('projects', () => {
         projects.createProject({ name: 'collision-dest' });
         projects.createProject({ name: 'rename-src' });
 
-        const result = projects.updateProject('rename-src', { name: 'Collision-Dest' });
+        const result = await projects.updateProject('rename-src', { name: 'Collision-Dest' });
         assert.equal(result.project, null, 'cross-rename to a case-collision must be rejected');
         assert.ok(result.errors.length > 0);
         assert.match(result.errors[0], /collision-dest/, 'error cites the OTHER project');
@@ -730,7 +838,7 @@ describe('projects', () => {
         projects.createProject({ name: 'exact-rename-target' });
         projects.createProject({ name: 'rename-source-2' });
 
-        const result = projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
+        const result = await projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
         assert.equal(result.project, null);
         assert.equal(result.errors[0], 'Project "exact-rename-target" already exists',
           'exact-case collision keeps the legacy error format — no spurious case-insensitive suffix');
@@ -1435,7 +1543,7 @@ describe('projects', () => {
       const attachDir = path.join(projectsDir, 'attachable');
       fs.mkdirSync(attachDir, { recursive: true });
 
-      const result = projects.attachProject('attachable');
+      const result = await projects.attachProject('attachable');
       assert.ok(result.project);
       assert.equal(result.project.name, 'attachable');
 
@@ -1453,7 +1561,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'),
         JSON.stringify({ engine: 'codex' }));
 
-      const result = projects.attachProject('has-config');
+      const result = await projects.attachProject('has-config');
       assert.ok(result.project);
       // Should use engine from existing config
       const dbProject = store.projects.getByName('has-config');
@@ -1461,19 +1569,19 @@ describe('projects', () => {
     });
 
     it('rejects already registered project', async () => {
-      const result = projects.attachProject('new-project');
+      const result = await projects.attachProject('new-project');
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('already registered'));
     });
 
     it('rejects non-existent directory', async () => {
-      const result = projects.attachProject('does-not-exist-xyz');
+      const result = await projects.attachProject('does-not-exist-xyz');
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('not found'));
     });
 
     it('rejects invalid name', async () => {
-      const result = projects.attachProject('bad name!');
+      const result = await projects.attachProject('bad name!');
       assert.equal(result.project, null);
       assert.ok(result.errors.length > 0);
     });
@@ -1484,7 +1592,7 @@ describe('projects', () => {
       const result = projects.archiveProject('attachable');
       assert.ok(result.success);
       // Should not appear in default list
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(!list.some(p => p.name === 'attachable'));
     });
 
@@ -1521,7 +1629,7 @@ describe('projects', () => {
       const result = projects.unarchiveProject('attachable');
       assert.ok(result.success);
       // Should appear in default list again
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(list.some(p => p.name === 'attachable'));
     });
 
@@ -1568,7 +1676,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.5.0' }));
 
       const registered = store.projects.create({ name: 'ver-test-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.5.0');
     });
 
@@ -1577,7 +1685,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
 
       const registered = store.projects.create({ name: 'ver-test-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1587,7 +1695,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ name: 'test' }));
 
       const registered = store.projects.create({ name: 'ver-test-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1597,7 +1705,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), 'not json{{{');
 
       const registered = store.projects.create({ name: 'ver-test-4', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1612,7 +1720,7 @@ describe('projects', () => {
       );
 
       const registered = store.projects.create({ name: 'ver-cache-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '9.9.9-rc1');
     });
 
@@ -1635,7 +1743,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0-from-packagejson' }));
 
       const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0-from-changelog');
     });
 
@@ -1650,7 +1758,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '5.5.5' }));
 
       const registered = store.projects.create({ name: 'ver-cache-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '5.5.5');
     });
 
@@ -1663,7 +1771,7 @@ describe('projects', () => {
       );
 
       const registered = store.projects.create({ name: 'ver-cl-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
 
@@ -1674,7 +1782,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '0.1.0' }));
 
       const registered = store.projects.create({ name: 'ver-cl-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '0.1.0');
     });
 
@@ -1686,7 +1794,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-cl-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0');
     });
 
@@ -1696,7 +1804,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.12.7' }));
 
       const registered = store.projects.create({ name: 'ver-vj-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
 
@@ -1707,7 +1815,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-vj-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.0.0');
     });
 
@@ -1716,7 +1824,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
 
       const registered = store.projects.create({ name: 'ver-none', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1812,7 +1920,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-vj-num', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       // Should fall through to package.json since version.json had non-string
       assert.equal(enriched.version, '1.0.0');
     });
@@ -1852,7 +1960,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.2.2' }));
 
       const registered = store.projects.create({ name: 'ver-cache-ws', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       // Cache file should be rejected as empty → fall through to package.json
       assert.equal(enriched.version, '2.2.2');
     });
@@ -1874,7 +1982,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.4.4' }));
 
       const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '4.4.4');
     });
   });
@@ -2115,7 +2223,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-default');
       fs.mkdirSync(projPath, { recursive: true });
       const registered = store.projects.create({ name: 'sp-default', path: projPath, engineId: 'claude' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.silentPrime, true);
     });
 
@@ -2126,7 +2234,7 @@ describe('projects', () => {
       const projConfig = store.projectConfig.load(projPath);
       projConfig.silentPrime = true;
       store.projectConfig.save(projPath, projConfig);
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.silentPrime, true);
     });
 
@@ -2134,7 +2242,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-update-on');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-update-on', path: projPath, engineId: 'claude' });
-      const result = projects.updateProject('sp-update-on', { silentPrime: true });
+      const result = await projects.updateProject('sp-update-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
       const persisted = store.projectConfig.load(projPath);
@@ -2150,7 +2258,7 @@ describe('projects', () => {
       seed.silentPrime = true;
       store.projectConfig.save(projPath, seed);
 
-      const result = projects.updateProject('sp-update-off', { silentPrime: false });
+      const result = await projects.updateProject('sp-update-off', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
       assert.equal(store.projectConfig.load(projPath).silentPrime, false);
@@ -2162,7 +2270,7 @@ describe('projects', () => {
       // 'codex' / 'gemini' / 'aider' do not advertise supportsSilentPrime; using a definitely-missing id
       // is even safer for this assertion.
       store.projects.create({ name: 'sp-update-bad', path: projPath, engine: 'no-such-engine' });
-      const result = projects.updateProject('sp-update-bad', { silentPrime: true });
+      const result = await projects.updateProject('sp-update-bad', { silentPrime: true });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
       // No project.json was written by the rejected PATCH. (Pre-#129, this
@@ -2177,7 +2285,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-update-nonbool');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-update-nonbool', path: projPath, engineId: 'claude' });
-      const result = projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
+      const result = await projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('boolean'));
     });
@@ -2186,7 +2294,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-clear-bad-engine');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-clear-bad-engine', path: projPath, engine: 'no-such-engine' });
-      const result = projects.updateProject('sp-clear-bad-engine', { silentPrime: false });
+      const result = await projects.updateProject('sp-clear-bad-engine', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
     });
@@ -2206,7 +2314,7 @@ describe('projects', () => {
       const beforeRow = store.projects.getByName('sp-engine-race');
 
       // Attempt the bad PATCH: switch to an engine without the capability AND enable silentPrime.
-      const result = projects.updateProject('sp-engine-race', {
+      const result = await projects.updateProject('sp-engine-race', {
         engine: 'no-such-engine',
         silentPrime: true
       });
@@ -2233,7 +2341,7 @@ describe('projects', () => {
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.json yet');
 
-      const result = projects.updateProject('sp-sync-on', { silentPrime: true });
+      const result = await projects.updateProject('sp-sync-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
 
@@ -2255,12 +2363,12 @@ describe('projects', () => {
       store.projects.create({ name: 'sp-sync-off', path: projPath, engineId: 'claude' });
 
       // Seed silentPrime=true via PATCH so the baseline matches the on-disk shape PATCH would produce.
-      projects.updateProject('sp-sync-off', { silentPrime: true });
+      await projects.updateProject('sp-sync-off', { silentPrime: true });
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: hook should be present after silentPrime=true');
 
-      const result = projects.updateProject('sp-sync-off', { silentPrime: false });
+      const result = await projects.updateProject('sp-sync-off', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
 
@@ -2287,7 +2395,7 @@ describe('projects', () => {
       fs.writeFileSync(primeFile, '# stale prime from a previous session\n');
       assert.equal(fs.existsSync(primeFile), true, 'baseline: stale prime file is on disk');
 
-      const result = projects.updateProject('sp-prime-cleanup', { silentPrime: false });
+      const result = await projects.updateProject('sp-prime-cleanup', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(fs.existsSync(primeFile), false, 'stale prime file should be removed by PATCH');
     });
@@ -2301,7 +2409,7 @@ describe('projects', () => {
       // Seed silentPrime=true via PATCH so the SessionStart hook is materialized
       // as the canonical pre-flip state — same shape an existing install would
       // have on disk before the engine change.
-      projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
+      await projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: SessionStart hook present after silentPrime=true');
@@ -2314,7 +2422,7 @@ describe('projects', () => {
       // Flip engine away from claude WITHOUT touching silentPrime — exactly the
       // scenario from #140's repro. (antigravity here; the original gemini
       // fixture engine was retired in #457.)
-      const result = projects.updateProject('sp-engine-flip-orphan', { engine: 'antigravity' });
+      const result = await projects.updateProject('sp-engine-flip-orphan', { engine: 'antigravity' });
       assert.deepEqual(result.errors, []);
       assert.equal(store.projects.getByName('sp-engine-flip-orphan').engineId, 'antigravity');
 
@@ -2350,7 +2458,7 @@ describe('projects', () => {
 
       // Flip onto claude. CHANGELOG claims the hook is materialized immediately
       // rather than waiting for the next launchSession.
-      const result = projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
+      const result = await projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
       assert.deepEqual(result.errors, []);
 
       assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.json should be written by syncEngineHooks');
@@ -2367,7 +2475,7 @@ describe('projects', () => {
       const primeFile = path.join(projPath, '.tangleclaw', 'session-prime.md');
       assert.equal(fs.existsSync(primeFile), false, 'baseline: no prime file');
 
-      const result = projects.updateProject('sp-prime-absent', { silentPrime: false });
+      const result = await projects.updateProject('sp-prime-absent', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
       assert.equal(fs.existsSync(primeFile), false, 'still absent — _removePrimeFile is non-throwing on missing');

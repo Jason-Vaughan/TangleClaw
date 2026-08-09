@@ -85,7 +85,7 @@ describe('feature-index (#207, chunk 1)', () => {
   });
 
   describe('updateProject — featureIndexEnabled validation', () => {
-    it('rejects non-boolean values without mutating state', () => {
+    it('rejects non-boolean values without mutating state', async () => {
       const result = projects.createProject({
         name: 'validation-proj'
       });
@@ -95,7 +95,7 @@ describe('feature-index (#207, chunk 1)', () => {
 
       const badValues = ['true', 1, null, {}, []];
       for (const bad of badValues) {
-        const update = projects.updateProject('validation-proj', { featureIndexEnabled: bad });
+        const update = await projects.updateProject('validation-proj', { featureIndexEnabled: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
         assert.ok(
           update.errors[0].includes('featureIndexEnabled'),
@@ -108,10 +108,10 @@ describe('feature-index (#207, chunk 1)', () => {
       assert.equal(after, before);
     });
 
-    it('accepts true and persists to project.json', () => {
+    it('accepts true and persists to project.json', async () => {
       projects.createProject({ name: 'accept-true-proj' });
 
-      const update = projects.updateProject('accept-true-proj', { featureIndexEnabled: true });
+      const update = await projects.updateProject('accept-true-proj', { featureIndexEnabled: true });
       assert.ok(update.project);
       assert.equal(update.errors.length, 0);
 
@@ -120,13 +120,13 @@ describe('feature-index (#207, chunk 1)', () => {
       assert.equal(config.featureIndexEnabled, true);
     });
 
-    it('accepts false and persists', () => {
+    it('accepts false and persists', async () => {
       projects.createProject({ name: 'accept-false-proj' });
 
       // First flip to true so the false case is a real transition.
-      projects.updateProject('accept-false-proj', { featureIndexEnabled: true });
+      await projects.updateProject('accept-false-proj', { featureIndexEnabled: true });
 
-      const update = projects.updateProject('accept-false-proj', { featureIndexEnabled: false });
+      const update = await projects.updateProject('accept-false-proj', { featureIndexEnabled: false });
       assert.ok(update.project);
       assert.equal(update.errors.length, 0);
 
@@ -136,103 +136,103 @@ describe('feature-index (#207, chunk 1)', () => {
   });
 
   describe('updateProject — versionBumpEnabled opt-out (#318)', () => {
-    it('rejects non-boolean values', () => {
+    it('rejects non-boolean values', async () => {
       projects.createProject({ name: 'vb-validation' });
       for (const bad of ['true', 1, null, {}, []]) {
-        const update = projects.updateProject('vb-validation', { versionBumpEnabled: bad });
+        const update = await projects.updateProject('vb-validation', { versionBumpEnabled: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
         assert.ok(update.errors[0].includes('versionBumpEnabled'));
       }
     });
 
-    it('defaults to true and persists an explicit false', () => {
+    it('defaults to true and persists an explicit false', async () => {
       projects.createProject({ name: 'vb-persist' });
       // Default: getProject reports true when unset.
-      assert.equal(projects.getProject('vb-persist').versionBumpEnabled, true);
+      assert.equal((await projects.getProject('vb-persist')).versionBumpEnabled, true);
 
-      const update = projects.updateProject('vb-persist', { versionBumpEnabled: false });
+      const update = await projects.updateProject('vb-persist', { versionBumpEnabled: false });
       assert.ok(update.project);
       assert.equal(update.errors.length, 0);
       assert.equal(store.projectConfig.load(update.project.path).versionBumpEnabled, false);
       // And getProject reflects the disabled state.
-      assert.equal(projects.getProject('vb-persist').versionBumpEnabled, false);
+      assert.equal((await projects.getProject('vb-persist')).versionBumpEnabled, false);
     });
   });
 
   describe('updateProject — versionFilePath (#540)', () => {
-    it('rejects non-string values', () => {
+    it('rejects non-string values', async () => {
       projects.createProject({ name: 'vfp-type' });
       for (const bad of [1, true, {}, []]) {
-        const update = projects.updateProject('vfp-type', { versionFilePath: bad });
+        const update = await projects.updateProject('vfp-type', { versionFilePath: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
         assert.ok(update.errors[0].includes('versionFilePath'));
       }
     });
 
-    it('rejects absolute paths and ".." escapes — this field feeds a write path', () => {
+    it('rejects absolute paths and ".." escapes — this field feeds a write path', async () => {
       projects.createProject({ name: 'vfp-escape' });
       // '.' resolves to the project root itself: it would save cleanly and then
       // be refused forever at the write site, silently skipping every wrap.
       for (const bad of ['/etc/passwd.json', '../outside.json', 'a/../../b.json', '.']) {
-        const update = projects.updateProject('vfp-escape', { versionFilePath: bad });
+        const update = await projects.updateProject('vfp-escape', { versionFilePath: bad });
         assert.equal(update.project, null, `should reject ${JSON.stringify(bad)}`);
         assert.ok(update.errors[0].includes('versionFilePath'));
       }
     });
 
-    it('defaults to null, persists a relative path, and clears on empty string', () => {
+    it('defaults to null, persists a relative path, and clears on empty string', async () => {
       projects.createProject({ name: 'vfp-persist' });
-      assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
+      assert.equal((await projects.getProject('vfp-persist')).versionFilePath, null);
 
-      const set = projects.updateProject('vfp-persist', { versionFilePath: 'VERSION.json' });
+      const set = await projects.updateProject('vfp-persist', { versionFilePath: 'VERSION.json' });
       assert.ok(set.project);
       assert.equal(set.errors.length, 0);
       assert.equal(store.projectConfig.load(set.project.path).versionFilePath, 'VERSION.json');
-      assert.equal(projects.getProject('vfp-persist').versionFilePath, 'VERSION.json');
+      assert.equal((await projects.getProject('vfp-persist')).versionFilePath, 'VERSION.json');
 
-      const cleared = projects.updateProject('vfp-persist', { versionFilePath: '' });
+      const cleared = await projects.updateProject('vfp-persist', { versionFilePath: '' });
       assert.ok(cleared.project);
       assert.equal(store.projectConfig.load(cleared.project.path).versionFilePath, null);
-      assert.equal(projects.getProject('vfp-persist').versionFilePath, null);
+      assert.equal((await projects.getProject('vfp-persist')).versionFilePath, null);
     });
 
-    it('accepts an explicit null as a clear', () => {
+    it('accepts an explicit null as a clear', async () => {
       projects.createProject({ name: 'vfp-null' });
-      projects.updateProject('vfp-null', { versionFilePath: 'VERSION.json' });
-      assert.equal(projects.getProject('vfp-null').versionFilePath, 'VERSION.json');
+      await projects.updateProject('vfp-null', { versionFilePath: 'VERSION.json' });
+      assert.equal((await projects.getProject('vfp-null')).versionFilePath, 'VERSION.json');
 
-      const cleared = projects.updateProject('vfp-null', { versionFilePath: null });
+      const cleared = await projects.updateProject('vfp-null', { versionFilePath: null });
       assert.ok(cleared.project, 'null is a valid clear, not a type error');
       assert.equal(cleared.errors.length, 0);
       assert.equal(store.projectConfig.load(cleared.project.path).versionFilePath, null);
-      assert.equal(projects.getProject('vfp-null').versionFilePath, null);
+      assert.equal((await projects.getProject('vfp-null')).versionFilePath, null);
     });
 
-    it('accepts a nested relative path', () => {
+    it('accepts a nested relative path', async () => {
       projects.createProject({ name: 'vfp-nested' });
-      const update = projects.updateProject('vfp-nested', { versionFilePath: 'meta/app-version.json' });
+      const update = await projects.updateProject('vfp-nested', { versionFilePath: 'meta/app-version.json' });
       assert.ok(update.project);
       assert.equal(update.errors.length, 0);
-      assert.equal(projects.getProject('vfp-nested').versionFilePath, 'meta/app-version.json');
+      assert.equal((await projects.getProject('vfp-nested')).versionFilePath, 'meta/app-version.json');
     });
   });
 
   describe('updateProject — seeding behavior on toggle', () => {
-    it('seeds FEATURES.md on false → true transition when file absent', () => {
+    it('seeds FEATURES.md on false → true transition when file absent', async () => {
       const created = projects.createProject({
         name: 'seed-on-toggle'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
       assert.equal(fs.existsSync(featuresPath), false, 'precondition: FEATURES.md absent');
 
-      projects.updateProject('seed-on-toggle', { featureIndexEnabled: true });
+      await projects.updateProject('seed-on-toggle', { featureIndexEnabled: true });
 
       assert.ok(fs.existsSync(featuresPath), 'FEATURES.md should be seeded');
       const content = fs.readFileSync(featuresPath, 'utf8');
       assert.equal(content, projects.FEATURE_INDEX_TEMPLATE);
     });
 
-    it('does NOT overwrite a pre-existing FEATURES.md on toggle-on', () => {
+    it('does NOT overwrite a pre-existing FEATURES.md on toggle-on', async () => {
       const created = projects.createProject({
         name: 'preserve-existing'
       });
@@ -240,64 +240,64 @@ describe('feature-index (#207, chunk 1)', () => {
       const userContent = '# My own index\n\n- entry I wrote myself\n';
       fs.writeFileSync(featuresPath, userContent);
 
-      projects.updateProject('preserve-existing', { featureIndexEnabled: true });
+      await projects.updateProject('preserve-existing', { featureIndexEnabled: true });
 
       assert.equal(fs.readFileSync(featuresPath, 'utf8'), userContent);
     });
 
-    it('does NOT delete FEATURES.md on toggle-off', () => {
+    it('does NOT delete FEATURES.md on toggle-off', async () => {
       const created = projects.createProject({
         name: 'no-delete-on-off'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
 
       // Toggle on → seed file
-      projects.updateProject('no-delete-on-off', { featureIndexEnabled: true });
+      await projects.updateProject('no-delete-on-off', { featureIndexEnabled: true });
       assert.ok(fs.existsSync(featuresPath));
 
       // Toggle off → file must remain (user owns it; git-tracked artifact)
-      projects.updateProject('no-delete-on-off', { featureIndexEnabled: false });
+      await projects.updateProject('no-delete-on-off', { featureIndexEnabled: false });
       assert.ok(fs.existsSync(featuresPath), 'FEATURES.md must survive toggle-off');
     });
 
-    it('does not re-seed (overwrite) on idempotent true → true save', () => {
+    it('does not re-seed (overwrite) on idempotent true → true save', async () => {
       const created = projects.createProject({
         name: 'idempotent-true'
       });
       const featuresPath = path.join(created.project.path, 'FEATURES.md');
 
-      projects.updateProject('idempotent-true', { featureIndexEnabled: true });
+      await projects.updateProject('idempotent-true', { featureIndexEnabled: true });
       // User edits the file
       const edited = '# Feature Index\n\n## UI / Web\n- **Foo** — does foo. `lib/foo.js:1`.\n';
       fs.writeFileSync(featuresPath, edited);
 
       // Re-save with toggle still true
-      projects.updateProject('idempotent-true', { featureIndexEnabled: true });
+      await projects.updateProject('idempotent-true', { featureIndexEnabled: true });
 
       assert.equal(fs.readFileSync(featuresPath, 'utf8'), edited, 'user edits must survive a true→true save');
     });
   });
 
   describe('enrichProject — surface', () => {
-    it('exposes featureIndexEnabled (default false)', () => {
+    it('exposes featureIndexEnabled (default false)', async () => {
       projects.createProject({ name: 'enrich-default' });
-      const enriched = projects.getProject('enrich-default');
+      const enriched = await projects.getProject('enrich-default');
       assert.equal(enriched.featureIndexEnabled, false);
     });
 
-    it('reflects post-update true', () => {
+    it('reflects post-update true', async () => {
       projects.createProject({ name: 'enrich-true' });
-      projects.updateProject('enrich-true', { featureIndexEnabled: true });
-      const enriched = projects.getProject('enrich-true');
+      await projects.updateProject('enrich-true', { featureIndexEnabled: true });
+      const enriched = await projects.getProject('enrich-true');
       assert.equal(enriched.featureIndexEnabled, true);
     });
   });
 
   describe('independence from other PATCH fields', () => {
-    it('a featureIndexEnabled update alongside tags persists both', () => {
+    it('a featureIndexEnabled update alongside tags persists both', async () => {
       projects.createProject({ name: 'combo-update' });
 
-      const update = projects.updateProject('combo-update', {
+      const update = await projects.updateProject('combo-update', {
         featureIndexEnabled: true,
         tags: ['active', 'experiment']
       });
@@ -307,26 +307,26 @@ describe('feature-index (#207, chunk 1)', () => {
       const config = store.projectConfig.load(update.project.path);
       assert.equal(config.featureIndexEnabled, true);
 
-      const enriched = projects.getProject('combo-update');
+      const enriched = await projects.getProject('combo-update');
       assert.deepEqual(enriched.tags, ['active', 'experiment']);
       assert.equal(enriched.featureIndexEnabled, true);
     });
 
-    it('a non-boolean featureIndexEnabled rejection does not mutate tags', () => {
+    it('a non-boolean featureIndexEnabled rejection does not mutate tags', async () => {
       const created = projects.createProject({
         name: 'rejection-isolation',
         tags: ['original']
       });
       assert.deepEqual(created.project.tags, ['original']);
 
-      const update = projects.updateProject('rejection-isolation', {
+      const update = await projects.updateProject('rejection-isolation', {
         featureIndexEnabled: 'oops',
         tags: ['new-tag']
       });
       assert.equal(update.project, null);
 
       // Tags must remain unchanged because pre-mutation validation rejected before any write.
-      const enriched = projects.getProject('rejection-isolation');
+      const enriched = await projects.getProject('rejection-isolation');
       assert.deepEqual(enriched.tags, ['original']);
     });
   });

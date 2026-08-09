@@ -114,29 +114,29 @@ describe('resolveDefaultEngine call-site wiring (#707)', () => {
       return p;
     }
 
-    it('attaches against an installed engine, not the uninstalled default', () => {
+    it('attaches against an installed engine, not the uninstalled default', async () => {
       installOnly(['codex']);
       mkdir('de-attach-1');
-      const { project, errors } = projects.attachProject('de-attach-1');
+      const { project, errors } = await projects.attachProject('de-attach-1');
       assert.deepEqual(errors, []);
       assert.equal(project.engine.id, 'codex');
     });
 
-    it("an existing project.json engine wins over the resolver", () => {
+    it("an existing project.json engine wins over the resolver", async () => {
       installOnly(['codex']);
       mkdir('de-attach-2', { engine: 'aider' });
-      const { project, errors } = projects.attachProject('de-attach-2');
+      const { project, errors } = await projects.attachProject('de-attach-2');
       assert.deepEqual(errors, []);
       assert.equal(project.engine.id, 'aider', 'the directory already declared its engine');
     });
 
-    it('does not run engine detection at all when project.json answers', () => {
+    it('does not run engine detection at all when project.json answers', async () => {
       // Detection shells out per engine profile; resolving and then discarding
       // the result made every attach pay for it.
       let called = 0;
       engines._internal.listWithAvailability = () => { called++; return [{ id: 'codex', available: true }]; };
       mkdir('de-attach-3', { engine: 'aider' });
-      const { project } = projects.attachProject('de-attach-3');
+      const { project } = await projects.attachProject('de-attach-3');
       assert.equal(project.engine.id, 'aider');
       assert.equal(called, 0, 'detection must not run when the answer was already on disk');
     });

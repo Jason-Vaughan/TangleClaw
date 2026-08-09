@@ -266,3 +266,91 @@ describe('dir-scanner child — createDir', () => {
     assert.ok(!fs.existsSync(path.join(root, 'a')));
   });
 });
+
+describe('dir-scanner child — projectFacts (#884)', () => {
+  test('reports a real Claude project directory and what governs it', async () => {
+    const root = scratch('facts-governed');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
+    );
+
+    assert.deepEqual(
+      await HANDLERS.projectFacts({ dir: root, engineId: 'claude' }),
+      { exists: true, governanceState: 'governed-plugin' }
+    );
+  });
+
+  test('a vendored governance hook reads as governed-vendored, and neither as ungoverned', async () => {
+    const vendored = scratch('facts-vendored');
+    fs.mkdirSync(path.join(vendored, 'tools'), { recursive: true });
+    fs.writeFileSync(path.join(vendored, 'tools', 'product-hook'), '#!/bin/sh\n');
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: vendored, engineId: 'claude' })).governanceState,
+      'governed-vendored'
+    );
+
+    const bare = scratch('facts-bare');
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: bare, engineId: 'claude' })).governanceState,
+      'ungoverned'
+    );
+  });
+
+  test('governance is not-applicable on a non-Claude engine, even though the directory is there', async () => {
+    // The distinction the `exists` field carries: a directory that IS present
+    // can still have no governance question to answer. Collapsing the two would
+    // make a codex project indistinguishable from a missing folder.
+    const root = scratch('facts-codex');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
+    );
+
+    assert.deepEqual(
+      await HANDLERS.projectFacts({ dir: root, engineId: 'codex' }),
+      { exists: true, governanceState: 'not-applicable' }
+    );
+  });
+
+  test('a directory that is not there answers, rather than throwing', async () => {
+    const gone = path.join(tmpRoot, 'facts-never-created');
+    assert.deepEqual(
+      await HANDLERS.projectFacts({ dir: gone, engineId: 'claude' }),
+      { exists: false, governanceState: 'not-applicable' }
+    );
+  });
+
+  test('malformed settings fail closed to ungoverned rather than throwing', async () => {
+    // The whole point of the fail-closed catch: a parse error must not read as
+    // "governed", which would make TangleClaw skip config generation for a
+    // project that has no plugin at all.
+    const root = scratch('facts-malformed');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{ not json');
+
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: root, engineId: 'claude' })).governanceState,
+      'ungoverned'
+    );
+  });
+
+  test('the handler never imports the server database — it exists to be SIGKILLed', () => {
+    // THE MUTATION THIS CATCHES: importing `./engines` here instead of
+    // `./governance-state` to reach `governanceState`. That is the obvious edit,
+    // it passes every other test in this file, and it gives a process the
+    // supervisor kills mid-syscall an open handle on the SQLite database the
+    // server depends on. Asserted on a FRESH child process because this suite's
+    // own requires have long since loaded `store` into this one.
+    const { execFileSync } = require('node:child_process');
+    const probe = 'require("./lib/dir-scanner-child.js");'
+      + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js"))))';
+    const loaded = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    assert.equal(loaded, 'false',
+      'the scanner child must not load lib/store.js — see lib/governance-state.js');
+  });
+});
