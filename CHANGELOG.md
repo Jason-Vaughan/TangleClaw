@@ -463,6 +463,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Three checks for "did our own timeout kill this?" were dead code — none had ever run once
+  (#894).** They failed for two different reasons: `execSync` puts `killed` on a different object
+  than the error it throws, and async `exec` does set it but reports a `code` the check compared
+  wrongly. Every one compiled, read correctly, and was never true.
+
+  **What changes for you today** is the tmux diagnostic. A tmux command that hangs and is stopped now
+  says so in the log; that line existed and had never been emitted, so a wedged tmux server left no
+  trace at all.
+
+  **What is fixed but not yet reachable from a wrap:** the `test` and `lint` step handlers. A command
+  they stopped for hanging was reported as *"Tests failed (exit 1)"* with advice to *"fix the failing
+  test(s) shown above"* — for tests that had never finished. Both now name the timeout instead, with
+  their own remediation and a log line, and an output overflow reports itself rather than arriving as
+  a bare exit 1. **Neither handler is in the shipped wrap pipeline**, which is fixed to fourteen
+  steps, so no wrap runs them today — they are opt-in primitives, and this makes them correct before
+  they are used rather than after.
+
+  The steps that *are* in the pipeline — `commit`, `pr-merge` and six others — still map a stopped
+  command to a plain failure. That is the reachable half of the same defect and it is tracked
+  separately as #897.
+
 - **A big or slow repository is no longer killed and blamed on Full Disk Access (#891).** Reading one
   project's git state costs seven `git` invocations, and each was capped separately at five seconds —
   behind a single five-second deadline that kills the process doing the work. The arithmetic never

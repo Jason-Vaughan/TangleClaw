@@ -538,6 +538,42 @@ describe('wrap-step test (#139 Chunk 4)', () => {
       'test remediation must mention the skip-tests override');
   });
 
+  it('names a timeout as a timeout instead of as a failing suite', async () => {
+    // The whole point of #894. Before the fix a killed command arrived here as
+    // exitCode 1 / error null — indistinguishable from a suite that ran and
+    // failed — so the operator was handed "fix the failing test(s) shown above"
+    // for tests that had never produced a result.
+    writeConfig({ testCommand: 'npm test' });
+    testStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 600000ms', timedOut: true
+    });
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.exitCode, 124);
+    assert.ok(result.blockers.some((b) => /timed out/i.test(b)),
+      'the blocker must name the timeout');
+    assert.ok(!result.blockers.some((b) => b.startsWith('Tests failed')),
+      'nothing failed — saying so sends the operator after a failure that never happened');
+    assert.doesNotMatch(result.output.remediation, /fix the failing test/i);
+    assert.match(result.output.remediation, /did not finish|hangs/i);
+  });
+
+  it('keeps the failing-suite remediation for an ordinary non-zero exit', async () => {
+    // The other half of the same predicate: correcting the timeout path must not
+    // reclassify a genuine failure as a hang.
+    writeConfig({ testCommand: 'npm test' });
+    testStep._internal.execShell = async () => ({
+      exitCode: 1, stdout: '', stderr: '1 failing\n', error: null, timedOut: false
+    });
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.blockers[0].includes('Tests failed (exit 1)'));
+    assert.match(result.output.remediation, /fix the failing test/i);
+  });
+
   it('honors allowOverride+skipTests by reporting skipped with override flag', async () => {
     writeConfig({ testCommand: 'npm test' });
     let execCalled = false;
@@ -695,6 +731,64 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     assert.equal(result.ok, true, 'blocker:false must keep ok:true even on lint errors');
     assert.equal(result.status, 'done');
     assert.match(result.output.warnings, /error/);
+  });
+
+  it('names a timeout as a timeout in its BLOCKING mode too', async () => {
+    // R-1 from the #894 review, and the acceptance criterion this chunk set for
+    // itself: every timeout branch needs a guard that fails when reverted. The
+    // informational branch had one and the blocked branch did not — and blocked
+    // is lint's canonical mode (`docs/adr/0002` configures it "errors-only"), so
+    // the guarded half was the half that matters less.
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: true }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.exitCode, 124);
+    assert.ok(result.blockers.some((b) => /timed out/i.test(b)),
+      'the blocker must name the timeout');
+    assert.ok(!result.blockers.some((b) => /^Lint failed/.test(b)),
+      'nothing was linted — saying it failed sends the operator after errors that do not exist');
+    assert.doesNotMatch(result.output.remediation, /fix the lint errors/i);
+  });
+
+  it('routes a non-blocking timeout through the channel the drawer renders', async () => {
+    // `public/wrap-drawer.js#buildStepRow` reads `output.warning === true` and
+    // `output.remediation`. Writing only to `output.warnings` left a killed lint
+    // rendering as a plain green row — correct in the payload, invisible to the
+    // person it was written for.
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
+
+    assert.equal(result.ok, true, 'blocker:false still must not block');
+    assert.equal(result.output.warning, true, 'the drawer keys off `warning`, not `warnings`');
+    assert.match(result.output.remediation, /did not finish|hangs/i);
+  });
+
+  it('with blocker:false, a timeout still says it timed out', async () => {
+    // Not blocking is the configured behaviour; staying silent about WHY is a
+    // different thing. A killed lint produces no output, so the informational
+    // branch would otherwise report a bare non-zero exit with empty warnings —
+    // a step that never ran, presented as one that ran and had nothing to say.
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+    });
+    const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
+
+    assert.equal(result.ok, true, 'blocker:false still must not block');
+    assert.equal(result.output.timedOut, true);
+    assert.match(result.output.warnings, /timed out/i,
+      'an informational step that was killed must still say so');
   });
 
   it('shell-quotes file paths containing spaces and single quotes', async () => {

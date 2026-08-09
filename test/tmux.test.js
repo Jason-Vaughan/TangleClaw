@@ -6,6 +6,34 @@ const fs = require('node:fs');
 const path = require('node:path');
 const tmux = require('../lib/tmux');
 
+describe('tmux — a timed-out command says so (#894)', () => {
+  it('raises the timeout error instead of the raw exec failure', () => {
+    // `lib/tmux.js` tested `err.killed` to spot its own timeout. `execSync` never
+    // sets that on the error it throws — it throws code 'ETIMEDOUT' — so the
+    // branch, and the 'tmux command timed out' log line inside it, had NEVER
+    // executed. A wedged tmux server (a state #94/#144/#380 record this install
+    // reaching) produced no timeout diagnostic at all.
+    //
+    // Driven by a REAL stalling `tmux` on PATH: a stubbed error would assert the
+    // very model that was wrong.
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      assert.throws(
+        () => tmux._exec('tmux list-sessions', { timeout: 300 }),
+        /tmux command timed out after 300ms/,
+        'a killed tmux command must be reported as timed out, not as a bare exec failure'
+      );
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('tmux', () => {
   describe('toSessionName', () => {
     it('should pass through valid names unchanged', () => {
