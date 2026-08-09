@@ -234,6 +234,31 @@ describe('git info budget (#891)', () => {
     });
   });
 
+  describe('the read that establishes nothing is the one that must say so', () => {
+    it('reports when even the is-a-repo probe never answered', () => {
+      // That probe failing takes an early return with a hand-built
+      // all-incomplete object, which bypassed the shared report below it — so
+      // the ONE path that established nothing at all was also the one path that
+      // logged nothing at all. Silent-failure shape, and this file family has
+      // been bitten by it twice (PRJ-2F8W, #884).
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        shadowGit(null);
+        const info = git._fetchInfo(REPO_ROOT, { budgetMs: 800 });
+
+        assert.equal(info.incomplete.length, 5, 'precondition: nothing was established');
+        const reported = lines.filter((l) => l.includes('Git info incomplete'));
+        assert.equal(reported.length, 1, 'the emptiest read must not be the quietest one');
+        assert.match(reported[0], /WARN/);
+      } finally {
+        setConsoleStream(null);
+        setLevel(priorLogLevel);
+      }
+    });
+  });
+
   describe('a deadlined walk passes its remainder down, not the default budget', () => {
     it('reads each directory under what is LEFT of the walk, never a fresh full budget', () => {
       // The walk loops in `lib/dir-scanner-child.js` check their deadline
