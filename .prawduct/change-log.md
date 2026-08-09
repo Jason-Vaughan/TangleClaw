@@ -3851,4 +3851,18 @@ warn there, so five diagnostics that reached the server's log before this branch
 unwritable version cache — reached nothing after it. The child now pins its console stream to the
 piped stderr and the supervisor re-emits complete lines into the server's log.
 
+**The remaining chunk was re-filed rather than shipped here, and the plan retired with it.** The
+plan's fourth chunk — sweep the rest of the family — was scoped from #884's body as "32 + 7 sites".
+Re-derived against the code it is **54**: 11 in `lib/uploads.js` (which, contrary to the assumption
+recorded and refuted in the census, resolve under the project's own path, not `~/.tangleclaw`) and
+43 in `lib/projects.js`. That is larger than the three chunks above combined, and it spans hazards
+this bundle did not treat — writers that leave a half-deleted project if killed mid-`rmSync`, and a
+manifest whose truncation is a parse failure on a live path. Folding it back in would have bought
+either a chunk nobody could review or a silent descope, so it is **#889**, with the census kept at
+`.prawduct/artifacts/884-chunk03-census.md` as its evidence. The two decisions the plan required to
+be made explicitly rather than passed over are made: the `execSync` pair above is **#890**, and
+`PROJECT_FACTS_TIMEOUT_MS` — 5s bounding roughly 35s of per-spawn-capped git work, so a large or
+cold repository is killed and handed a Full Disk Access remedy for a permission that was never the
+problem — is **#891**.
+
 **Classification:** fix

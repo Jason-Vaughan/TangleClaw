@@ -464,7 +464,7 @@ All notable changes to TangleClaw are documented in this file.
 ### Fixed
 
 - **A registered project's version is now detected in the scanner child, and `enrichProject`
-  opens nothing under a project's own path (#884, chunk 2b of 4).** This was the last of the
+  opens nothing under a project's own path (#884).** This was the last of the
   five per-project reads the dashboard poll ran on the server's event loop. It read up to four
   files at the operator's path — and on macOS a TCC-protected directory does not fail a read,
   it never answers one, for the life of the process. Existence, governance, git, config and
@@ -474,9 +474,19 @@ All notable changes to TangleClaw are documented in this file.
   synchronous subprocess probes: engine detection (`command -v <name>`) and a tmux session
   check. Neither touches an operator-chosen directory — they probe a regex-validated command
   name and a TangleClaw-generated session name, each timeout-capped — so they are a smaller and
-  different hazard than the one this closes, and they are not closed by it. The build plan
-  records the decision as open rather than settling it silently, which is how the version chain
-  survived #883 in the first place.
+  different hazard than the one this closes, and they are not closed by it. They are **#890** —
+  filed rather than settled silently, which is how the version chain survived #883 in the first
+  place.
+
+  **The wider sweep is #889, and it is bigger than what shipped here.** #884 scoped the family as
+  "32 + 7 synchronous reads". Re-derived against the code it is **54** — including all of
+  `lib/uploads.js`, which turns out to read under the *project's* path rather than TangleClaw's
+  own state directory, and writers whose interruption leaves a half-deleted project or a truncated
+  manifest that the reader parses. That is more than everything above combined, so it is its own
+  issue rather than a fourth chunk nobody could review. A third defect this work exposed —
+  the per-project deadline is 5s against roughly 35s of bounded git work, so a large or cold
+  repository is killed and handed a Full Disk Access remedy for a permission that was never the
+  problem — is **#891**.
 
   **New `lib/project-version-files.js`, which dissolves a require cycle rather than deferring
   it.** `lib/projects.js` and `lib/project-version.js` each reached into the other for readers —
@@ -526,7 +536,7 @@ All notable changes to TangleClaw are documented in this file.
   deliberately-planted `require('./store')` there passed. It now runs against a directory with
   no version source at all.
 
-- **Git and project config now come from the scanner child too (#884, chunk 2a of 4).** Two of
+- **Git and project config now come from the scanner child too (#884).** Two of
   the three reads `enrichProject` still performed per registered project per ten-second poll are
   gone from the event loop. `git.getInfo` mattered most: it shells out with `execSync`, so it
   blocked the loop by construction — several git commands per project, before TCC was involved
@@ -612,7 +622,7 @@ All notable changes to TangleClaw are documented in this file.
   guard that observes the behaviour rather than the result.
 
 - **A registered project's own directory is no longer read on the server's event loop
-  (#884, chunk 1 of 4).** #883 moved the walk for *unregistered* folders into a killable
+  (#884).** #883 moved the walk for *unregistered* folders into a killable
   child and left the enrichment of *registered* ones standing, so one TCC-protected project
   directory still stopped every route — the degradation note in `listAllProjects` said as
   much and this closes the first half of it. `enrichProject`'s existence test and its two
