@@ -471,15 +471,19 @@ All notable changes to TangleClaw are documented in this file.
   `governanceState` reads (its own, and the one inside `actions.availableActions`) now come
   from a new `projectFacts` operation in the scanner child. A project whose directory never
   answers is listed without its git and governance detail and carries an `unreadable`
-  reason; its siblings keep their real answers.
+  reason; from the poll after that, its siblings keep their real answers.
 
   **One request per project, not one batch per poll — the plan said batch, and the plan was
   wrong.** Batching is the obvious efficiency, but the supervisor's deadline kills the
-  *child*, not a request, so one unreadable directory in a batch takes every sibling's
-  answer with it — the precise property this work exists to deliver. Per-project requests
-  also each carry their own `pathKey`, so the existing backoff skips a directory that has
-  already refused to answer rather than spending another process on it every ten seconds.
-  They are issued concurrently, so a list costs the slowest single directory, not the sum.
+  *child*, not a request, so a batch can only ever fail whole and one unreadable directory
+  would permanently cost every sibling its answer. **Be precise about what per-project buys,
+  because the obvious claim is too strong:** these requests are multiplexed through one child,
+  so a hung path can still take its siblings down *within* a poll — enough hung reads exhaust
+  the child's own threadpool, and every request riding the killed child fails as collateral.
+  What per-project delivers is that the failure is attributed to the directory that actually
+  caused it, so the backoff engages for that path and every later poll answers normally for
+  everyone else. The property is convergence after one poll, not immunity during it. Requests
+  are issued concurrently, so a healthy list costs the slowest single directory, not the sum.
 
   **New `lib/governance-state.js`, because the child must never touch the database.**
   Reaching `governanceState` from the child by requiring `lib/engines.js` pulls in

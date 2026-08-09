@@ -84,6 +84,43 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     assert.ok(fs.existsSync(path.join(project.path, '.tangleclaw', 'critic-runs.json')));
   });
 
+  it('reads governance interactively, because an action is something the operator pressed', async () => {
+    // THE MUTATION THIS CATCHES: `{ interactive: false }` at the readProjectFacts
+    // call in runAction. The gate's OUTCOME is already covered above, so a broken
+    // read goes red there — but sending this read down the polled path stays
+    // green while reintroducing the defect #884's first review caught: an
+    // operator who has just granted Full Disk Access and pressed the button is
+    // answered from a five-minute cached refusal, and their click rides a child
+    // a hung dashboard poll can kill. Same defect class as that one, at the
+    // second call site — which is the one that gets missed.
+    const dirScanner = require('../lib/dir-scanner');
+    makeProject('disp-interactive');
+
+    const seen = [];
+    const realReq = dirScanner.request;
+    const realInteractive = dirScanner.interactiveRequest;
+    dirScanner.request = (op, payload, opts) => {
+      seen.push({ kind: 'polled', opts });
+      return realReq(op, payload, opts);
+    };
+    dirScanner.interactiveRequest = (op, payload, opts) => {
+      seen.push({ kind: 'interactive', opts });
+      return realInteractive(op, payload, opts);
+    };
+    try {
+      await actions.runAction('disp-interactive', 'invoke-critic');
+    } finally {
+      dirScanner.request = realReq;
+      dirScanner.interactiveRequest = realInteractive;
+    }
+
+    assert.ok(seen.length > 0, 'the dispatcher must read the project directory through the scanner');
+    assert.ok(seen.every((r) => r.kind === 'interactive'),
+      'an operator-pressed action must not read on the dashboard poll\'s scanner');
+    assert.ok(seen.every((r) => r.opts.pathKey === undefined),
+      'and must not be answered from the poll\'s per-path failure backoff');
+  });
+
   it('rejects an action the project governance state does not support', async () => {
     makeProject('disp-minimal', false); // no plugin reference → ungoverned
     const result = await actions.runAction('disp-minimal', 'invoke-critic');

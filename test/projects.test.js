@@ -156,6 +156,77 @@ describe('projects', () => {
         'and the one that failed says so, rather than being indistinguishable from a missing folder');
       assert.equal(healthy.unreadable, null,
         'the healthy project carries no failure reason');
+      // A directory that did not answer is the ONE case the Full Disk Access
+      // advice fits, and it is the reason the flag exists — dropping the remedy
+      // leaves an operator with a broken card and no next step.
+      assert.match(stuck.unreadableHint, /Full Disk Access/,
+        'a path that did not answer must carry the remedy for the reason it usually did not');
+      assert.equal(healthy.unreadableHint, null,
+        'and a healthy project must not be told to change its permissions');
+    });
+
+    it('a read cancelled for a SIBLING\'s hang is not blamed on its own directory', async () => {
+      // THE MUTATION THIS CATCHES: collapsing the catch back to one branch, so
+      // every failure earns the Full Disk Access remedy. `tcAborted` means this
+      // request died because the supervisor killed the child to reclaim a thread
+      // some OTHER path blocked — this directory may be perfectly healthy, and
+      // telling the operator to change permissions because of it is precisely
+      // the misdiagnosis the whole scanner exists to remove. R-16 of #884's first
+      // review shipped exactly this collapse, because nothing tested the branch.
+      projects.createProject({ name: 'facts-collateral' });
+
+      const list = await withScanner(
+        (kind, op, payload) => (payload.dir.endsWith('facts-collateral')
+          ? Promise.reject(Object.assign(
+            new Error('the scanner process was killed after another request stopped responding'),
+            { tcAborted: true }))
+          : Promise.resolve({ exists: true, governanceState: 'ungoverned' })),
+        () => projects.listProjects()
+      );
+
+      const collateral = list.find((p) => p.name === 'facts-collateral');
+      assert.ok(collateral, 'the project must still be listed');
+      assert.ok(collateral.unreadable, 'and must say it could not be read');
+      assert.equal(collateral.unreadableHint, null,
+        'but must NOT be given the Full Disk Access remedy — its own path may be fine');
+      // Asserted on the REASON, not just the absent hint: the hint is already
+      // null for a collateral abort whichever branch runs, because it is gated on
+      // tcTimedOut/tcCached. So an assertion about the hint alone passes with the
+      // branch deleted, which is a guard that guards nothing. What actually
+      // differs is what this says happened.
+      assert.match(collateral.unreadable, /cancelled/,
+        'a collateral abort must read as cancelled, not as a directory that would not answer');
+      assert.doesNotMatch(collateral.unreadable, /did not answer/,
+        'because its own directory was never asked and may be perfectly healthy');
+    });
+
+    it('does not WARN about a healthy directory that was only collateral', async () => {
+      // The other half, and the operator-visible one. A collateral abort logging
+      // at WARN puts "Could not read a project directory" in the log naming a
+      // path that is fine — the same misdiagnosis in the log that the tcTimedOut
+      // hint avoids in the UI. The kill that caused it is already logged once, by
+      // the supervisor, naming the path that actually hung.
+      const logger = require('../lib/logger');
+      projects.createProject({ name: 'facts-quiet' });
+
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
+      try {
+        await withScanner(
+          (kind, op, payload) => (payload.dir.endsWith('facts-quiet')
+            ? Promise.reject(Object.assign(new Error('killed'), { tcAborted: true }))
+            : Promise.resolve({ exists: true, governanceState: 'ungoverned' })),
+          () => projects.listProjects()
+        );
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+
+      assert.doesNotMatch(chunks.join(''), /facts-quiet/,
+        'a directory that was never actually read must not be named in a warning');
     });
 
     it('enrichProject reads the facts itself when a caller does not supply them', async () => {
