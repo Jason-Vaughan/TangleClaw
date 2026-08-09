@@ -463,6 +463,48 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Git and project config now come from the scanner child too (#884, chunk 2a of 4).** Two of
+  the three reads `enrichProject` still performed per registered project per ten-second poll are
+  gone from the event loop. `git.getInfo` mattered most: it shells out with `execSync`, so it
+  blocked the loop by construction — several git commands per project, before TCC was involved
+  at all. Its two-minute cache moves with it, so a child killed for a hang starts cold; a few
+  repeated git calls after a kill, in exchange for never blocking the server. Only the
+  version-detection chain is left, and it is the next chunk.
+
+  **New `lib/project-config.js`, for the reason `lib/governance-state.js` exists.** The config
+  reader is pure `fs` but lived in `lib/store.js`, which opens SQLite at require time — so the
+  child could not call it. It moves verbatim; `store.js` re-exports it and keeps the WRITER,
+  because nothing on the poll path writes config and a process built to be SIGKILLed has no
+  business owning a write the operator's settings depend on. The reader takes an `onError`
+  callback instead of owning a logger, so `store.js`'s callers keep the exact warning they had
+  while the child stays free of a dependency it does not need.
+
+  `store.js` requires that module rather than destructuring `load` from it, which is not a
+  style preference: a destructured function is captured at require time, so the same reader had
+  two seams — one a test stub could reach and one it could not. That asymmetry is how a stubbed
+  test passes while the code it names goes unexercised, and it showed up immediately as tests
+  that stubbed `store.projectConfig.load` and no longer reached `lib/project-version.js`. Those
+  now write a real `.tangleclaw/project.json` instead of stubbing anything, which cannot be
+  orphaned by the next move.
+
+  **`lib/project-version.js` no longer reaches for `./store`.** Its `_readConfiguredVersion`
+  did so *lazily* — safe for the require cycle it was written for, and unsafe for a caller that
+  did not exist yet, because the import appeared only on first **call**, inside whatever process
+  was calling. That is the trap chunk 1 avoided, one level down, and it is what would have put
+  an open database handle inside the killable child. Guarded by a fresh-process probe, because
+  the test process has loaded `store` long before the assertion runs.
+
+  **Eight routes stopped paying for an answer they never asked for.** `getProject` enriches, and
+  since chunk 1 enrichment means a cross-process round trip; the four continuity readers, both
+  upload routes, delete and session launch use the result only as a 404 guard plus `path`. New
+  `getProjectRow` returns the database row with no filesystem read at all. (Carried in from
+  chunk 1's Critic review.)
+
+  Two of the four mutations run against this work initially passed — reverting the git read to
+  the event loop, and restoring the `./store` reach in version detection — because both produce
+  identical *values* and differ only in what they execute. Neither had a guard; both do now, one
+  observing the subprocess call and one probing a fresh process.
+
 - **A registered project's own directory is no longer read on the server's event loop
   (#884, chunk 1 of 3).** #883 moved the walk for *unregistered* folders into a killable
   child and left the enrichment of *registered* ones standing, so one TCC-protected project

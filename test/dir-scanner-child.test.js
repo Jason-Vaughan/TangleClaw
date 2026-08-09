@@ -276,10 +276,9 @@ describe('dir-scanner child — projectFacts (#884)', () => {
       JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
     );
 
-    assert.deepEqual(
-      await HANDLERS.projectFacts({ dir: root, engineId: 'claude' }),
-      { exists: true, governanceState: 'governed-plugin' }
-    );
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.exists, true);
+    assert.equal(facts.governanceState, 'governed-plugin');
   });
 
   test('a vendored governance hook reads as governed-vendored, and neither as ungoverned', async () => {
@@ -309,17 +308,16 @@ describe('dir-scanner child — projectFacts (#884)', () => {
       JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
     );
 
-    assert.deepEqual(
-      await HANDLERS.projectFacts({ dir: root, engineId: 'codex' }),
-      { exists: true, governanceState: 'not-applicable' }
-    );
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'codex' });
+    assert.equal(facts.exists, true);
+    assert.equal(facts.governanceState, 'not-applicable');
   });
 
   test('a directory that is not there answers, rather than throwing', async () => {
     const gone = path.join(tmpRoot, 'facts-never-created');
     assert.deepEqual(
       await HANDLERS.projectFacts({ dir: gone, engineId: 'claude' }),
-      { exists: false, governanceState: 'not-applicable' }
+      { exists: false, governanceState: 'not-applicable', git: null, config: null }
     );
   });
 
@@ -352,5 +350,87 @@ describe('dir-scanner child — projectFacts (#884)', () => {
     });
     assert.equal(loaded, 'false',
       'the scanner child must not load lib/store.js — see lib/governance-state.js');
+  });
+});
+
+describe('dir-scanner child — projectFacts carries git and config (#884, chunk 02a)', () => {
+  const { execFileSync } = require('node:child_process');
+
+  test('reports the branch of a real repository', () => {
+    // A real repo, not a stub: `git.getInfo` shells out, and the entire reason
+    // this read moved here is that shelling out blocks the caller's event loop.
+    // A stub would test the plumbing and not the thing that made it necessary.
+    const root = scratch('facts-git');
+    try {
+      // `-c init.templateDir=` isolates this from the host's global git template,
+      // which #831 records as a source of flakes when TangleClaw rewrites it. And
+      // a commit is required, not decoration: a repo with no commits has no
+      // resolvable HEAD, so `getInfo` reports branch `unknown` and the assertion
+      // below would pass against a repo that proves nothing about branch reading.
+      execFileSync('git', ['-c', 'init.templateDir=', 'init', '-q', '-b', 'trunk', root],
+        { stdio: 'ignore' });
+      for (const args of [
+        ['config', 'user.email', 'test@example.com'],
+        ['config', 'user.name', 'Test'],
+        ['commit', '--allow-empty', '-q', '-m', 'init']
+      ]) execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    } catch {
+      return; // no git on this host — the assertion below would say nothing
+    }
+    return HANDLERS.projectFacts({ dir: root, engineId: 'claude' }).then((facts) => {
+      assert.ok(facts.git, 'a git repository must report git info');
+      assert.equal(facts.git.branch, 'trunk');
+    });
+  });
+
+  test('a directory that is not a repository reports null git rather than failing', async () => {
+    const facts = await HANDLERS.projectFacts({ dir: scratch('facts-nogit'), engineId: 'claude' });
+    assert.equal(facts.git, null);
+    assert.ok(facts.config, 'and still answers for everything else');
+  });
+
+  test('reads the project config, and returns defaults when there is none', async () => {
+    const configured = scratch('facts-cfg');
+    fs.mkdirSync(path.join(configured, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(
+      path.join(configured, '.tangleclaw', 'project.json'),
+      JSON.stringify({ versionBumpEnabled: false, versionFilePath: 'VERSION.json' })
+    );
+
+    const facts = await HANDLERS.projectFacts({ dir: configured, engineId: 'claude' });
+    assert.equal(facts.config.versionBumpEnabled, false, 'an explicit false must survive the round trip');
+    assert.equal(facts.config.versionFilePath, 'VERSION.json');
+    assert.equal(facts.config.silentPrime, true, 'and unset keys still come from the defaults');
+
+    const bare = await HANDLERS.projectFacts({ dir: scratch('facts-nocfg'), engineId: 'claude' });
+    assert.equal(bare.config.versionBumpEnabled, true, 'no config file reads as the documented default');
+  });
+
+  test('a malformed config reads as defaults without throwing, and without a logger', async () => {
+    // The reader has no logger of its own by design — acquiring one would give
+    // this process a dependency it exists to avoid. The condition is carried by
+    // the return value instead, which is what this pins.
+    const root = scratch('facts-badcfg');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project.json'), '{ not json');
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.config.versionBumpEnabled, true);
+  });
+
+  test('the child still never imports the server database, now that it reads config too', () => {
+    // THE MUTATION THIS CATCHES, and the reason it is re-asserted rather than
+    // left to the chunk-01 copy: the obvious way to read project config is
+    // `require('./store').projectConfig.load`, and `lib/project-version.js`
+    // reached for exactly that, lazily, so the import appeared only on first
+    // CALL. A fresh process is the only place this is observable.
+    const probe = 'const c = require("./lib/dir-scanner-child.js");'
+      + 'c.HANDLERS.projectFacts({ dir: process.cwd(), engineId: "claude" }).then(() => '
+      + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js")))))';
+    const loaded = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    assert.equal(loaded, 'false',
+      'the scanner child must not load lib/store.js, even after answering a real request');
   });
 });
