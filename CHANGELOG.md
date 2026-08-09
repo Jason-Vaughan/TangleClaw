@@ -463,6 +463,48 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A registered project's version is now detected in the scanner child, and `enrichProject`
+  opens nothing under a project's own path (#884, chunk 2b of 4).** This was the last of the
+  five per-project reads the dashboard poll ran on the server's event loop. It read up to four
+  files at the operator's path — and on macOS a TCC-protected directory does not fail a read,
+  it never answers one, for the life of the process. Existence, governance, git, config and
+  version now all arrive from one round trip to a child a deadline can kill.
+
+  **Be precise about what that does and does not claim.** `enrichProject` still runs two
+  synchronous subprocess probes: engine detection (`command -v <name>`) and a tmux session
+  check. Neither touches an operator-chosen directory — they probe a regex-validated command
+  name and a TangleClaw-generated session name, each timeout-capped — so they are a smaller and
+  different hazard than the one this closes, and they are not closed by it. The build plan
+  records the decision as open rather than settling it silently, which is how the version chain
+  survived #883 in the first place.
+
+  **New `lib/project-version-files.js`, which dissolves a require cycle rather than deferring
+  it.** `lib/projects.js` and `lib/project-version.js` each reached into the other for readers —
+  a cycle both papered over with lazy call-time requires, and #584 is what that cost when the
+  papering slipped. Two modules can live with a cycle; a *third* consumer cannot join one, and
+  the scanner child is that third consumer. The readers move into a module both sides consume,
+  so neither requires the other now.
+
+  **The cache write is atomic, because its writer became killable.** Version detection carries a
+  read-time self-heal (#165): when a project's live version has moved past its cached one, the
+  cache is rewritten. That write now happens inside a process the supervisor SIGKILLs
+  mid-syscall, and writing in place truncates the file first — so a kill in that window left a
+  partial cache that the reader parses without complaint, silently changing or losing a
+  project's version. The body is staged to a sibling temp file and `rename`d, which is atomic
+  within a directory on POSIX; the temp name carries the pid, because the server also writes
+  this file at session launch and wrap.
+
+  A project whose directory would not answer now reports **no** version rather than one read
+  behind the server's back — `null`, never the detection chain's `0.0.0-dev` fallback, which
+  would render on the card as a fact the server never established.
+
+  Both new guards were confirmed by planting their named mutation and watching it fail. One of
+  them did not fail at first: the fresh-process probe asserting the child never loads
+  `lib/store.js` ran against the repo root, where the ladder's first rung reads TangleClaw's own
+  `CHANGELOG.md` and returns — so it never reached the rung that reads project config, and a
+  deliberately-planted `require('./store')` there passed. It now runs against a directory with
+  no version source at all.
+
 - **Git and project config now come from the scanner child too (#884, chunk 2a of 4).** Two of
   the three reads `enrichProject` still performed per registered project per ten-second poll are
   gone from the event loop. `git.getInfo` mattered most: it shells out with `execSync`, so it

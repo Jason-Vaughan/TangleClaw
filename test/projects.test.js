@@ -201,6 +201,48 @@ describe('projects', () => {
         'enrichProject must not shell out to git when the scanner already answered');
     });
 
+    it('enrichProject reads no version from disk — it reports what the child detected', async () => {
+      // THE MUTATION THIS CATCHES: restoring `_detectProjectVersion(project.path)`
+      // here. The fixture is what makes that observable: the project's directory
+      // carries version.json at 1.0.0, while the facts say 9.9.9. Reading disk
+      // returns 1.0.0 and every other assertion in this file stays green, because
+      // the value is still a plausible version from a real file — which is exactly
+      // how the last synchronous read in this function would come back unnoticed.
+      projects.createProject({ name: 'facts-noversionread' });
+      const row = store.projects.getByName('facts-noversionread');
+      fs.writeFileSync(path.join(row.path, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+
+      const enriched = await projects.enrichProject(row, {
+        exists: true,
+        governanceState: 'ungoverned',
+        git: null,
+        config: null,
+        version: '9.9.9',
+        unreadable: null,
+        unreadableHint: null
+      });
+
+      assert.equal(enriched.version, '9.9.9',
+        'the version must be the child\'s answer, not one re-read here');
+    });
+
+    it('a project whose directory would not answer carries no version at all', async () => {
+      // The honest degrade. A directory that never replied has no known version,
+      // and the alternative — the detection chain's `0.0.0-dev` fallback — would
+      // render on the card as a fact the server never established.
+      projects.createProject({ name: 'facts-versionless' });
+      const row = store.projects.getByName('facts-versionless');
+
+      const enriched = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.enrichProject(row)
+      );
+
+      assert.equal(enriched.version, null);
+      assert.match(enriched.unreadableHint, /Full Disk Access/,
+        'and it still says why, so the null is attributable');
+    });
+
     it('issues one scanner request at a time, so a deadline never times the queue', async () => {
       // THE MUTATION THIS CATCHES: `Promise.all(projects.map(readProjectFacts))`.
       // The child is single-threaded and each request now runs ~six execSync git

@@ -317,7 +317,7 @@ describe('dir-scanner child — projectFacts (#884)', () => {
     const gone = path.join(tmpRoot, 'facts-never-created');
     assert.deepEqual(
       await HANDLERS.projectFacts({ dir: gone, engineId: 'claude' }),
-      { exists: false, governanceState: 'not-applicable', git: null, config: null }
+      { exists: false, governanceState: 'not-applicable', git: null, config: null, version: null }
     );
   });
 
@@ -416,6 +416,63 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
 
     const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
     assert.equal(facts.config.versionBumpEnabled, true);
+  });
+
+  test('reports the project version, and null when nothing on disk names one', async () => {
+    const versioned = scratch('facts-version');
+    fs.writeFileSync(path.join(versioned, 'CHANGELOG.md'),
+      '# Changelog\n\n## [Unreleased]\n\n## [4.2.0] - 2026-05-01\n');
+    const facts = await HANDLERS.projectFacts({ dir: versioned, engineId: 'claude' });
+    assert.equal(facts.version, '4.2.0');
+
+    const bare = await HANDLERS.projectFacts({ dir: scratch('facts-noversion'), engineId: 'claude' });
+    assert.equal(bare.version, null,
+      'a project with no version source reports null rather than a fabricated fallback');
+  });
+
+  test('the self-heal write happens HERE, in the process that can be killed', async () => {
+    // The reason this op is the only handler in the file that writes. Version
+    // detection rewrites a cache its live sources have moved past (#165), and
+    // that write is the whole reason the chunk that moved this had to make the
+    // writer atomic first — the supervisor SIGKILLs this process mid-syscall.
+    const root = scratch('facts-selfheal');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project-version.txt'),
+      'version: 1.0.0\nrecorded_at: 2026-01-01T00:00:00Z\nsource: version.json\n');
+    fs.writeFileSync(path.join(root, 'version.json'), JSON.stringify({ version: '2.0.0' }));
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.version, '2.0.0', 'the live value wins over a stale cache');
+    assert.match(
+      fs.readFileSync(path.join(root, '.tangleclaw', 'project-version.txt'), 'utf8'),
+      /^version: 2\.0\.0$/m,
+      'and the cache is healed in place, by this process'
+    );
+  });
+
+  test('the child still never imports the server database, now that it detects versions too', () => {
+    // THE MUTATION THIS CATCHES: reaching version detection through
+    // `require('./projects')`, which owns the public names for these readers and
+    // pulls the database in with them.
+    //
+    // Pointed at an EMPTY directory, not at the repo root. Against the repo the
+    // first rung reads TangleClaw's own CHANGELOG.md and returns, so the ladder
+    // never reaches the rung that reads project config — the probe passes while
+    // the defect sits one rung below it. That was measured, not assumed: the
+    // mutation was run against a cwd-based probe and it passed.
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-child-vprobe-'));
+    try {
+      const probe = 'const c = require("./lib/dir-scanner-child.js");'
+        + `c.HANDLERS.projectFacts({ dir: ${JSON.stringify(empty)}, engineId: "claude" }).then(() => `
+        + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js")))))';
+      const loaded = execFileSync(process.execPath, ['-e', probe], {
+        cwd: path.join(__dirname, '..'), encoding: 'utf8'
+      });
+      assert.equal(loaded, 'false',
+        'the scanner child must not load lib/store.js, even walking the whole version ladder');
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   });
 
   test('the child still never imports the server database, now that it reads config too', () => {
