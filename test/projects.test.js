@@ -233,6 +233,60 @@ describe('projects', () => {
         'the poll must not have two directory reads outstanding against a serial child');
     });
 
+    it('translates every failure shape into the code #885 branches on', async () => {
+      // THE MUTATION THIS CATCHES: deleting any of the three lines that produce
+      // `unreadableCode`. It shipped as a documented contract field — the one
+      // `api-contract.md` tells consumers to branch on instead of parsing prose —
+      // with no assertion anywhere, which is the third time in this issue that a
+      // fix for a review finding arrived without a guard. The child-side check
+      // asserts the raw `code`, which never crosses `readProjectFacts`, so the
+      // translation itself was the untested part.
+      projects.createProject({ name: 'facts-codes' });
+      const row = store.projects.getByName('facts-codes');
+
+      /**
+       * Enrich this one project with a scanner that answers `answer`.
+       * @param {Function} answer - Stand-in reply or rejection.
+       * @returns {Promise<object>} The enriched record.
+       */
+      const enrichWith = (answer) => withScanner(answer, () => projects.enrichProject(row));
+
+      const timedOut = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('timed out after 5000ms'), { tcTimedOut: true })));
+      assert.equal(timedOut.unreadableCode, 'SCAN_TIMEOUT');
+      assert.match(timedOut.unreadableHint, /Full Disk Access/);
+
+      const cached = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('not answering'), { tcTimedOut: true, tcCached: true })));
+      assert.equal(cached.unreadableCode, 'SCAN_CACHED',
+        'a remembered refusal is distinguishable from a fresh one');
+
+      const aborted = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('killed for another path'), { tcAborted: true })));
+      assert.equal(aborted.unreadableCode, 'SCAN_ABORTED');
+      assert.equal(aborted.unreadableHint, null,
+        'collateral earns no remedy — its own directory may be fine');
+
+      const failed = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' })));
+      assert.equal(failed.unreadableCode, 'SCAN_FAILED');
+
+      // The child's own refusal: it answers rather than rejecting, and its raw
+      // `code` must be TRANSLATED onto the caller's field rather than forwarded
+      // as a second vocabulary.
+      const refused = await enrichWith(() => Promise.resolve({
+        exists: true, governanceState: 'not-applicable', git: null, config: null,
+        unreadable: 'the directory is there but this server may not read it (permission denied)',
+        code: 'EACCES'
+      }));
+      assert.equal(refused.unreadableCode, 'EACCES');
+      assert.match(refused.unreadable, /permission denied/);
+
+      const healthy = await enrichWith(() => Promise.resolve(
+        { exists: true, governanceState: 'ungoverned', git: null, config: null }));
+      assert.equal(healthy.unreadableCode, null, 'and a healthy project carries no code');
+    });
+
     it('getProjectRow answers from the database without touching the scanner', async () => {
       // R-11 from Chunk 01's review. Eight routes — the four continuity readers,
       // both upload routes, delete and session launch — use a project lookup only
