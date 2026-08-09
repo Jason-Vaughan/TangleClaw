@@ -246,3 +246,7 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/auth2-setup-admin.test.js` — AUTH-2 slice 2b: the forced first-run admin in caddy ingress mode, end to end across `/api/setup/complete` and the PATCH `/api/config` "Skip" path.
 - `test/reset-admin.test.js` — `scripts/reset-admin.js` argument parsing and reset behavior.
 - `test/wrap-step-commit-autopr.test.js` — the commit step's auto-PR close-loop (#467), which keeps a wrap branch off a protected branch from dangling.
+
+## TODO (auto-stubbed 2026-08-09)
+
+- **TBD** — touched in this session: `test/_dir-scanner-stderr-child.js`. <!-- describe -->
