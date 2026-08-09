@@ -528,6 +528,20 @@ All notable changes to TangleClaw are documented in this file.
   supply the state from the child, so it had no production caller left and offered only a way to
   reintroduce the read this work removes; the `lib/engines.js` import went with it.
 
+  **`unreadableCode` is a contract field, and it shipped without one assertion behind it.** It is
+  produced in three places and `api-contract.md` names it as the value consumers branch on, yet
+  deleting any of the three left the suite green — the one nearby check asserted the child's raw
+  `code`, which never crosses `readProjectFacts`, so the translation itself was the untested part.
+  All three sites are now asserted through the enriched record, across every branch:
+  `SCAN_TIMEOUT`, `SCAN_CACHED`, `SCAN_ABORTED`, `SCAN_FAILED`, the child's `EACCES`
+  pass-through, and `null` when healthy. `tcCached` gained its own value in the process, so a
+  remembered refusal is no longer indistinguishable from a generic failure.
+
+  That was the third fix-for-a-review-finding in this issue to arrive with no guard, which is now
+  recorded as a rule rather than corrected a fourth time: closing a finding reads as finishing
+  work, so it inherits none of the test discipline that writing a feature does — and the guard
+  written under that framing tends to describe the fix instead of falsifying it.
+
   Four of the mutations run against this work initially passed — reverting the git read to the
   event loop, restoring the lazy database require in version detection, collapsing the
   collateral branch, and dropping the hint. Each produces identical *values* and differs only in

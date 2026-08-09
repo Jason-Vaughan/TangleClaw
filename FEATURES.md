@@ -141,6 +141,8 @@ fails any auto-stub section older than 14 days.
 - **ADR: authentication gate** — decision record for the Caddy `basic_auth` gate, forced first-run credential, and break-glass recovery (AUTH-2, #1). `docs/adr/0004-auth-2-basic-auth-gate.md`.
 - **ADR: project-map freshness** — decision record for the section-scoped, curation-preserving, idempotent `PROJECT-MAP.md` refresh (#360, #356). `docs/adr/0007-project-map-freshness.md`.
 - **ADR: enforcement adds no install step** — decision record governing how any norm may be mechanically enforced: a linter or checker that adds an installation step is refused (2026-08-01 norm-registry ratification). `docs/adr/0012-enforcement-adds-no-install-step.md`.
+- **Aider engine profile** — the Aider CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/aider.json`.
+- **Antigravity engine profile** — the Antigravity CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/antigravity.json`.
 
 ## CLI / Tooling
 
@@ -174,6 +176,8 @@ fails any auto-stub section older than 14 days.
 - **Ingress modes guide** — operator doc on the two ingress modes and how `ingressMode` switches between them. `deploy/INGRESS.md`.
 - **Break-glass admin reset** (AUTH-2 slice 3) — the terminal-only path that resets, or with `--create-gate` first CREATES, an admin login when the settings screen cannot: it regenerates the bcrypt hash and patches the live Caddyfile from a terminal on the box, so a lost credential is never a permanent lockout. Recovery proves physical control rather than opening a second remote door, which is why it is deliberately not reachable over HTTP; it calls the apply sequence in `lib/admin-credential.js` rather than mirroring it. `scripts/reset-admin.js`.
 - **Clean-room cutover VRF** — the operator-run verification procedure for the AUTH-1 ingress cutover: the phase scripts, their acceptance checkboxes, and the scored matrix saying which phases actually ran. Runs on a throwaway habitat macOS guest so nothing touches the live install, its projects, DB or hand-edited Caddyfile (#397); also the standing recipe for driving the tart guests. `deploy/VRF-auth-1-cutover.md`.
+- **Setup guide** — operator-facing first-install walkthrough, and the checklist for confirming an existing install is set up the way its operator believes. Assumes no web-server background. `docs/setup-guide.md`.
+- **Security policy** — how to report a vulnerability in TangleClaw responsibly, and what is in scope. `SECURITY.md`.
 
 ## Tests
 
@@ -228,25 +232,15 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/store-groups.test.js` — `store.projectGroups`: project-group membership.
 - `test/store-shareddocs.test.js` — `store.sharedDocs`: shared-document registration and lookup.
 - `test/version-bump-package-json.test.js` — #298: version-bump falls back to `package.json` for Node projects with no `version.json`, writing only the top-level `version` value.
-
-## TODO (auto-stubbed 2026-08-06)
-
-- **TBD** — touched in this session: `SECURITY.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/setup-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/_caddy-stub.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/caddy-ingress-state.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/reset-admin.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-ingress-state-endpoint.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-commit-autopr.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-08)
-
-- **TBD** — touched in this session: `data/engines/aider.json`. <!-- describe -->
-- **TBD** — touched in this session: `data/engines/antigravity.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/_dir-scanner-hang-child.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/_dir-scanner-pool-demo.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/_engine-fixture.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth2-setup-admin.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/dir-scanner-child.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/dir-scanner.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard-dir-error.test.js`. <!-- describe -->
+- `test/dir-scanner.test.js` — the scanner supervisor (#883): correlation ids, per-request child ownership, `SIGKILL` on the deadline, lazy respawn, and the per-path failure backoff. Asserted against a genuinely blocked syscall rather than a stub.
+- `test/dir-scanner-child.test.js` — the forked child's handlers, in-process where `fs` stubs still reach them: the wizard walk, `listUnregistered`, `createDir`, and `projectFacts` (#884). Also pins, from a FRESH process, that the child never loads `lib/store.js` — an in-process check passes while that defect is live.
+- `test/_dir-scanner-hang-child.js` — fixture scanner child that really hangs, blocking on a reader-less FIFO, so the supervisor's deadline is exercised against a real blocked syscall instead of a stub.
+- `test/_dir-scanner-pool-demo.js` — throwaway process demonstrating what abandoning a blocked filesystem call costs (a permanently lost libuv threadpool thread) and that the same work through the scanner costs nothing. Isolated because a test that destroys its own threadpool would take the rest of the file with it.
+- `test/_engine-fixture.js` — shared fixture giving a test store one engine that is ALWAYS detected as installed, so suites reaching `POST /api/setup/complete` stop depending on which CLIs the host happens to have.
+- `test/_caddy-stub.js` — shared `caddy` stub for suites whose behavior depends on whether Caddy is installed.
+- `test/caddy-ingress-state.test.js` — classification of an existing Caddyfile into the states the setup wizard must act on; the wizard has no `--force`, so it adopts a hand-rolled gate and refuses anything it cannot safely own.
+- `test/setup-ingress-state-endpoint.test.js` — `GET /api/setup/ingress-state`, the read-only probe the wizard uses to decide how to put a login in front of an install without destroying one the operator already built. Detection only.
+- `test/setup-wizard-dir-error.test.js` — the wizard's projects-directory error line (#859), asserted at the frontend.
+- `test/auth2-setup-admin.test.js` — AUTH-2 slice 2b: the forced first-run admin in caddy ingress mode, end to end across `/api/setup/complete` and the PATCH `/api/config` "Skip" path.
+- `test/reset-admin.test.js` — `scripts/reset-admin.js` argument parsing and reset behavior.
+- `test/wrap-step-commit-autopr.test.js` — the commit step's auto-PR close-loop (#467), which keeps a wrap branch off a protected branch from dangling.
