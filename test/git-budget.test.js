@@ -48,14 +48,21 @@ let realPath = null;
  * WHICH fields the budget establishes and how long the whole read takes, never
  * on git's output.
  *
- * @param {string[]|null} stallOn - Subcommands to stall on (`null` = all of them).
+ * Patterns are shell globs matched against the WHOLE argument list, not just the
+ * subcommand, because the two `rev-parse` calls have to be told apart: the
+ * is-a-repo probe and the has-commits probe share `$1`.
+ *
+ * @param {string[]|null} stallOn - Globs to stall on (`null` = every invocation).
  * @returns {void}
  */
 function shadowGit(stallOn) {
   fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-git-'));
+  // Spaces escaped rather than quoted: a quoted case pattern is literal, and
+  // these need to stay globs so `status*` matches its flags.
+  const patterns = stallOn && stallOn.map((g) => g.replace(/ /g, '\\ ')).join('|');
   const body = stallOn === null
     ? `sleep ${STALL_SECONDS}\n`
-    : `case "$1" in\n  ${stallOn.join('|')}) sleep ${STALL_SECONDS} ;;\nesac\n`;
+    : `case "$*" in\n  ${patterns}) sleep ${STALL_SECONDS} ;;\nesac\n`;
   fs.writeFileSync(path.join(fakeBinDir, 'git'), `#!/bin/sh\n${body}exit 0\n`, { mode: 0o755 });
   realPath = process.env.PATH;
   process.env.PATH = `${fakeBinDir}:${realPath}`;
@@ -92,7 +99,7 @@ describe('git info budget (#891)', () => {
     });
 
     it('names every field it did not establish', () => {
-      shadowGit(['status', 'log', 'describe']);
+      shadowGit(['status*', 'log*', 'describe*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
 
       assert.ok(Array.isArray(info.incomplete));
@@ -112,17 +119,36 @@ describe('git info budget (#891)', () => {
       // budget still stops the read, but the killed field is silently reported
       // as its fallback instead of as unestablished. Only `status` stalls here,
       // so `dirty` is cut short mid-call rather than skipped for want of budget.
-      shadowGit(['status']);
+      shadowGit(['status*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
 
       assert.ok(info.incomplete.includes('dirty'),
         'a field whose spawn was killed by the cap must be named unestablished');
     });
+
+    it('marks everything downstream of a killed has-commits probe, not just the probe', () => {
+      // `git rev-parse HEAD` failing means "no commits" — a real answer, whose
+      // empty message/age/tag are the truth. The same call being KILLED means we
+      // never found out, and it fails identically. Only the step's `ok` separates
+      // them; inferring from the returned value silently let a killed probe pass
+      // for an empty repository, leaving lastCommitAge and latestTag reported as
+      // established when nothing had looked at them.
+      //
+      // Stalls on the has-commits probe alone — matched on the full argument list
+      // because it shares `$1` with the is-a-repo probe that must stay fast.
+      shadowGit(['rev-parse HEAD']);
+      const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
+
+      for (const field of ['lastCommit', 'lastCommitAge', 'latestTag']) {
+        assert.ok(info.incomplete.includes(field),
+          `${field} sits downstream of a probe that was killed, so it was never established`);
+      }
+    });
   });
 
   describe('an unestablished field never reads as a definite answer', () => {
     it('reports dirty as null rather than false when it could not look', () => {
-      shadowGit(['status']);
+      shadowGit(['status*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
 
       // THE GUARD THIS FILE EXISTS FOR. `_isDirty`'s catch returns `false`, and
@@ -165,7 +191,7 @@ describe('git info budget (#891)', () => {
 
   describe('a truncated reading is not frozen in the cache', () => {
     it('re-reads after a partial instead of serving it for the whole TTL', () => {
-      shadowGit(['status']);
+      shadowGit(['status*']);
       const first = git.getInfo(REPO_ROOT, { budgetMs: 2000 });
       assert.ok(first.incomplete.length > 0, 'precondition: the first read was partial');
 
@@ -193,7 +219,7 @@ describe('git info budget (#891)', () => {
       setConsoleStream({ write: (s) => lines.push(s) });
       setLevel('debug');
       try {
-        shadowGit(['status']);
+        shadowGit(['status*']);
         git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
         git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
 
@@ -204,6 +230,31 @@ describe('git info budget (#891)', () => {
       } finally {
         setConsoleStream(null);
         setLevel(priorLogLevel);
+      }
+    });
+  });
+
+  describe('a deadlined walk passes its remainder down, not the default budget', () => {
+    it('reads each directory under what is LEFT of the walk, never a fresh full budget', () => {
+      // The walk loops in `lib/dir-scanner-child.js` check their deadline
+      // BETWEEN iterations, and a synchronous git spawn inside one cannot be
+      // interrupted. So a per-directory read that took `git.getInfo`'s own
+      // default would overrun the walk's bound by a whole budget no matter how
+      // little of the walk was left — the walk's deadline would be documented
+      // rather than enforced. Asserted against the source because the overrun is
+      // a property of what the call site passes, not of anything git returns.
+      const source = fs.readFileSync(
+        path.join(REPO_ROOT, 'lib', 'dir-scanner-child.js'), 'utf8');
+
+      const perDirectoryCalls = [...source.matchAll(/_gitInfo\(([^)]*)\)/g)]
+        .map((m) => m[1])
+        .filter((args) => args.includes('dirPath'));
+
+      assert.ok(perDirectoryCalls.length >= 2,
+        'expected the walk call sites to still exist');
+      for (const args of perDirectoryCalls) {
+        assert.match(args, /deadlineAt/,
+          `a per-directory git read must be given the walk's remaining budget, got _gitInfo(${args})`);
       }
     });
   });

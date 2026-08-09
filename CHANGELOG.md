@@ -474,10 +474,15 @@ All notable changes to TangleClaw are documented in this file.
   All seven invocations now share **one** budget. A repository that outruns it comes back with what
   was established and an explicit list of what was not, instead of being killed.
 
-  **What it does not do is guess.** A field the budget could not check is reported as unknown, never
-  as a default — "we did not look" and "we looked and it is clean" are different answers, and a
-  dashboard that renders the first as the second is lying about the repository. A slow repository
-  loses a badge; it does not lose its dirty marker, and it does not stop being a project.
+  **What it does not do is guess.** A field the budget could not check is recorded as unknown, never
+  as a default — "we did not look" and "we looked and it is clean" are different answers, and
+  treating the first as the second is a lie about the repository. A slow repository also does not
+  stop being a project: it still appears, still detected, rather than vanishing from the list.
+
+  **Being straight about how far that goes today:** the *data* now distinguishes unknown from clean,
+  and nothing in the interface reads that distinction yet, so an unchecked repository currently shows
+  no dirty marker — the same as a clean one. What has been removed is the false record underneath;
+  showing it is #885's job.
 
   The deadline is now computed from the budget rather than written next to it, so the two cannot
   drift apart again. It works out to the same five seconds it already was — deliberately, since the

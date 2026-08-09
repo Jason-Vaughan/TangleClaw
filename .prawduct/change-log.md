@@ -3810,6 +3810,13 @@ inside loops that already carry their own deadline — a deadline checked *betwe
 cannot interrupt a synchronous 35s spawn inside one. Bounding the handler would have fixed one call
 site and left the two that document a bound they could not honour.
 
+**That was necessary and not sufficient, which the Critic caught and the first implementation did
+not.** A budget inside `_fetchInfo` still let each walk candidate take a fresh FULL budget, because
+`_gitInfo` passed no options — so the overrun fell from ~35s to ~4s rather than going away, while
+this entry's first draft and the commit message both claimed all three sites were fixed. The walk
+call sites now forward `deadlineAt - Date.now()`. The claim is true because the code changed, not
+because the sentence was softened.
+
 **Exhaustion degrades to a labelled partial, never to `null` and never to a default.** Both rules came
 from grepping consumers, not from taste. `lib/dir-scanner-child.js` derives `detected` from
 `gitInfo && gitInfo.branch`, so returning `null` would make a real git-only project *vanish* from the
