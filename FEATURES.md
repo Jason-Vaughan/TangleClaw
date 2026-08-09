@@ -49,10 +49,15 @@ fails any auto-stub section older than 14 days.
   server can no longer touch the filesystem at all). Supervisor: `lib/dir-scanner.js` —
   correlation ids, per-request child ownership, `SIGKILL` on the deadline, lazy respawn, and a
   per-path failure backoff (30s → 5min ceiling) that only the polled route opts into. Walks:
-  `lib/dir-scanner-child.js#HANDLERS` (`listUnregistered`, `scanEntries`, `createDir`). Two
-  scanners: a background one for `listAllProjects`, an interactive one for the wizard's
-  `scanDirectoryForProjects`/`createProjectsDir`, so a hung poll cannot kill a child out from
-  under an operator's click. Rejection vocabulary is contractual — `tcTimedOut` (did not answer;
+  `lib/dir-scanner-child.js#HANDLERS` (`listUnregistered`, `scanEntries`, `createDir`,
+  `projectFacts`). Two scanners: a background one for the dashboard poll — `listAllProjects`'s
+  walk and the per-project `projectFacts` reads behind `listProjects` — and an interactive one
+  for everything an operator pressed a button for: the wizard's
+  `scanDirectoryForProjects`/`createProjectsDir`, and every single-project read routed through
+  `lib/project-facts.js#readProjectFacts` (which defaults to interactive, so a caller that
+  forgets pays a process rather than inheriting a cached refusal). A hung poll therefore cannot
+  kill a child out from under an operator's click, and an operator who has just granted Full
+  Disk Access is never answered from the backoff. Rejection vocabulary is contractual — `tcTimedOut` (did not answer;
   the sole input to the Full Disk Access advice), `tcCached`, `tcAborted` (collateral),
   `tcTruncated` (ran out of budget). Callers: `lib/projects.js#listAllProjects`,
   `#scanDirectoryForProjects`, `#createProjectsDir`.
@@ -89,7 +94,7 @@ fails any auto-stub section older than 14 days.
 
 ## Governance / Engines
 
-- **Governance state** — classifies what governance is actually installed in a project: `governed-plugin` (Prawduct V2 plugin), `governed-vendored` (legacy in-repo hook), `ungoverned` (neutral), `not-applicable` (non-Claude). Derived live from disk, never from a stored label. `lib/engines.js#governanceState`.
+- **Governance state** — classifies what governance is actually installed in a project: `governed-plugin` (Prawduct V2 plugin), `governed-vendored` (legacy in-repo hook), `ungoverned` (neutral), `not-applicable` (non-Claude). Derived live from disk, never from a stored label. `lib/governance-state.js#governanceState` — a dependency-free module (`node:fs`/`node:path` only) so the killable scanner child can read it without importing `lib/engines.js`, which opens the SQLite database at require time; `lib/engines.js` re-exports it unchanged for every existing caller.
 - **Engine profiles** — claude, codex, antigravity, aider, openclaw (openclaw is `pickerHidden: true` — resolvable for launch plumbing but excluded from the project engine picker, #459). `data/engines/<id>.json`. Capability gates (`supportsSilentPrime`, `supportsPrimePrompt`, etc.) consumed throughout `lib/sessions.js`, `lib/engines.js`. **Canonical-source sync** (#251): on every `store.init()`, bundled `data/engines/*.json` is reconciled into `~/.tangleclaw/engines/`; drift triggers a `log.warn` then overwrite. Operator-added profiles with no bundled counterpart are preserved — EXCEPT retired ids (`RETIRED_ENGINE_IDS`: gemini #457, genesis #458), which are tombstoned (user-local copy deleted on boot). Helper: `lib/store.js#_syncBundledEngines`.
 - **SessionStart hook (Claude Code)** — shell script Claude Code runs on session start; reads `<project>/.tangleclaw/session-prime.md` and emits it as the prime context. `data/hooks/sessionstart-prime.sh`. Hook plumbing: `lib/engines.js#_buildBaselineHooks`.
 - **Startup rules channel** (#749) — operator rules ship on their own `SessionStart` hook rather than inside the prime, so neither payload can displace the other; sharded across further hooks on rule boundaries when the corpus outgrows one channel, each shard naming its slice. TangleClaw writes the JSON envelope; the hook only reads it. Engines without a second startup channel keep rules inline in the prime. Core: `lib/session-rules-channel.js`. Hook: `data/hooks/sessionstart-rules.sh`. Registration: `lib/engines.js#_buildBaselineHooks`. Manifest + inline split: `lib/sessions.js#buildStartupRulesSection`. Tests: `test/session-rules-channel.test.js`.

@@ -502,6 +502,34 @@ All notable changes to TangleClaw are documented in this file.
   guards added here was confirmed by mutation — dropping `pathKey`, restoring that default,
   and importing `./engines` in the child each turn the suite red.
 
+  **An operator's click and a ten-second poll are not the same read, and the first draft of
+  this made them one.** `enrichProject` gathers its own facts for eight callers — attach,
+  PATCH, launching a session, migrating, the continuity routes — every one of them
+  operator-pressed. Routing those through the *polled* scanner meant someone who granted Full
+  Disk Access and pressed the button again was answered from a remembered refusal for up to
+  five minutes, and their click could be SIGKILLed as collateral for a hung poll of an
+  unrelated directory. Both halves were already recorded decisions (`architecture.md`
+  Decision 8, `FEATURES.md`, and `lib/dir-scanner.js`'s own export block), and the second half
+  is a defect this project shipped once before, in #883 chunk 2. The read now lives in new
+  `lib/project-facts.js`, whose `interactive` option **defaults to the safe side**: a caller
+  that forgets pays an extra process, which is recoverable, instead of silently inheriting a
+  cached refusal, which is not. Only the poll opts into the backoff. Caught by the independent
+  Critic, not by me.
+
+  That extraction also closed a second source of truth. `runAction` still gated on
+  `availableActions(project)` with no state, falling through to a synchronous
+  `governanceState` disk read — the same read #884 exists to remove, on a route, and a
+  divergence from the button that renders from the scanner's answer (the "one predicate, both
+  sides" invariant in `lib/actions.js`'s header, ADR 0001). Both sides now read through
+  `readProjectFacts`.
+
+  The scanner's rejection vocabulary is preserved rather than flattened: only `tcTimedOut` and
+  `tcCached` earn the Full Disk Access remedy, because a `tcAborted` request died for a
+  sibling's hang and its own path may be perfectly healthy — advising a permissions change
+  there would be the exact misdiagnosis this machinery exists to remove. The enriched record
+  carries `unreadable` and `unreadableHint`, both always present and `null` when healthy, for
+  #885 to render.
+
   One test changed rather than being added: the #883 route-level regression counted total
   scanner calls and asserted it equalled the number of requests, which encoded "one scanner
   call per request". That is no longer the contract. It now asserts the count moved on

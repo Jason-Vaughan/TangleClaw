@@ -53,18 +53,29 @@ describe('projects', () => {
     }
 
     /**
-     * Run `fn` with `dirScanner.request` replaced, then restore it.
-     * @param {Function} fake - Stand-in for dirScanner.request.
+     * Run `fn` with BOTH scanner entry points replaced, then restore them.
+     *
+     * Both, deliberately. `lib/dir-scanner.js` runs two scanners — a polled one
+     * that opts into the per-path failure backoff and an interactive one that
+     * does not — and which of them a read travels on is the thing most likely to
+     * regress silently here, because using the wrong one still returns a correct
+     * answer on a healthy machine. Stubbing only the polled entry point would let
+     * an operator-path read fall through to a real child and pass.
+     *
+     * @param {Function} fake - Stand-in, called as (kind, op, payload, opts).
      * @param {Function} fn - Test body.
      * @returns {Promise<any>}
      */
     async function withScanner(fake, fn) {
-      const real = dirScanner.request;
-      dirScanner.request = fake;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      dirScanner.request = (op, payload, opts) => fake('polled', op, payload, opts);
+      dirScanner.interactiveRequest = (op, payload, opts) => fake('interactive', op, payload, opts);
       try {
         return await fn();
       } finally {
-        dirScanner.request = real;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
       }
     }
 
@@ -72,8 +83,8 @@ describe('projects', () => {
       projects.createProject({ name: 'facts-delegation' });
       const seen = [];
       await withScanner(
-        (op, payload, opts) => {
-          seen.push({ op, payload, opts });
+        (kind, op, payload, opts) => {
+          seen.push({ kind, op, payload, opts });
           return Promise.resolve({ exists: true, governanceState: 'ungoverned' });
         },
         () => projects.listProjects()
@@ -83,12 +94,43 @@ describe('projects', () => {
       const mine = seen.find((r) => r.payload.dir.endsWith('facts-delegation'));
       assert.ok(mine, 'the project under test must have reached the scanner');
       assert.equal(mine.op, 'projectFacts');
-      // THE MUTATION THIS CATCHES: dropping `pathKey`. Without it the supervisor's
-      // backoff cannot fire, so an unreadable directory costs a killed child on
-      // every ten-second poll forever instead of once per backoff interval — and
-      // a child blocked in the kernel may never leave the process table.
+      // THE MUTATION THIS CATCHES: dropping `pathKey` on the poll. Without it the
+      // supervisor's backoff cannot fire, so an unreadable directory costs a
+      // killed child on every ten-second poll forever — and a child blocked in
+      // the kernel may never leave the process table.
+      assert.equal(mine.kind, 'polled', 'the dashboard poll reads on the polled scanner');
       assert.equal(mine.opts.pathKey, mine.payload.dir,
-        'each request must opt into the per-path backoff, since nobody asked for this read');
+        'the poll must opt into the per-path backoff, since nobody asked for this read');
+    });
+
+    it('an operator-pressed read never rides the poll\'s backoff or its child', async () => {
+      // THE REGRESSION THIS EXISTS FOR. `enrichProject` gathers its own facts for
+      // eight callers, every one of them operator-pressed — attach, PATCH, launch
+      // a session, migrate, the continuity routes. Sending those through the
+      // polled scanner means someone who grants Full Disk Access and presses the
+      // button again is answered from a remembered refusal for up to five
+      // minutes, and their click can be killed as collateral for a hung poll.
+      // Both halves were recorded decisions before this code existed
+      // (architecture.md Decision 8, and lib/dir-scanner.js's own export block),
+      // and shipping the second half is a defect this project has already had
+      // once, in #883 chunk 2.
+      projects.createProject({ name: 'facts-operator' });
+      const row = store.projects.getByName('facts-operator');
+
+      const seen = [];
+      await withScanner(
+        (kind, op, payload, opts) => {
+          seen.push({ kind, opts });
+          return Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+        },
+        () => projects.enrichProject(row)
+      );
+
+      assert.equal(seen.length, 1, 'exactly one read for a single project');
+      assert.equal(seen[0].kind, 'interactive',
+        'an operator-pressed read must not share a child with the dashboard poll');
+      assert.equal(seen[0].opts.pathKey, undefined,
+        'and must not be answered from the poll\'s failure backoff');
     });
 
     it('one unreadable project does not cost the others their governance state', async () => {
@@ -98,7 +140,7 @@ describe('projects', () => {
       projects.createProject({ name: 'facts-stuck' });
 
       const list = await withScanner(
-        (op, payload) => (payload.dir.endsWith('facts-stuck')
+        (kind, op, payload) => (payload.dir.endsWith('facts-stuck')
           ? Promise.reject(timedOut())
           : Promise.resolve({ exists: true, governanceState: 'governed-plugin' })),
         () => projects.listProjects()
@@ -128,7 +170,7 @@ describe('projects', () => {
 
       let asked = false;
       const enriched = await withScanner(
-        (op, payload) => {
+        (kind, op, payload) => {
           if (payload.dir === row.path) asked = true;
           return Promise.resolve({ exists: true, governanceState: 'governed-vendored' });
         },
