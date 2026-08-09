@@ -3790,7 +3790,7 @@ route this fixed the other half of. The family is 32 synchronous reads in `lib/p
 
 ## 2026-08-09: A registered project's directory is read in the killable child, not on the event loop (#884)
 
-<!-- prawduct: type=fix | chunks=01,02a | scope=fix-884-sync-reads | status=shipped -->
+<!-- prawduct: type=fix | chunks=01,02a,02b | scope=fix-884-sync-reads | status=shipped -->
 
 **Why:** #883 moved the walk for *unregistered* folders into a child a deadline can kill and left
 the enrichment of *registered* ones on the event loop, so one TCC-protected project directory still
@@ -3820,9 +3820,35 @@ branch, and dropping the hint all left the suite green — each produces identic
 differs only in what it executes or logs. Every one now has a guard that observes the behaviour
 rather than the result.
 
-**Known and NOT fixed, recorded rather than implied:** `_detectProjectVersion` still reads
-synchronously, so the headline claim is not yet true — chunk 02b. Its chain reaches
-`lib/project-version.js` and back into `lib/projects.js`, and its self-heal WRITES, which needs to
-become atomic before a killable process owns it.
+**Chunk 02b** closed the read that made the headline claim untrue. Version detection moved into the
+child, which took two things the other four reads did not need. A **require cycle**:
+`projects.js` and `project-version.js` each reached into the other for readers, both papering over
+it with lazy call-time requires (#584 is what that cost when the papering slipped) — two modules can
+live with a cycle, a third consumer cannot join one, so the readers moved to
+`lib/project-version-files.js` and the cycle is gone rather than deferred. And a **write**: the #165
+read-time self-heal now runs in a process that is SIGKILLed mid-syscall, where writing in place
+truncates first and the reader parses whatever survived — so the body is staged to a sibling temp
+and renamed, with strays older than a minute swept by the next successful write. The age gate is
+load-bearing: two processes legitimately write this cache, and sweeping on the name alone would
+delete a staging file another writer was about to rename.
+
+**The acceptance criterion as written is NOT met, and the plan now says so** rather than rounding up.
+"No `execSync`, and no call that reaches one" fails: `enrichProject` still reaches it through
+`engines.detectEngine` and `tmux.hasSession`. Neither touches an operator-chosen directory — a
+regex-validated command name and a generated tmux session name, each timeout-capped — so they are a
+smaller and different hazard than the TCC hang this closed. What IS true, and is the claim the issue
+actually makes: `enrichProject` opens nothing under `project.path`.
+
+**A guard that did not work until it was measured.** The fresh-process probe asserting the child
+never loads `lib/store.js` was first written against the repo root — where the ladder's first rung
+reads TangleClaw's own `CHANGELOG.md` and returns, so it never reached the rung that reads project
+config, and a deliberately-planted `require('./store')` passed. Fixtures for a short-circuiting
+chain have to start below every rung the chain can stop at.
+
+**Found by the cumulative Critic and fixed in the same bundle:** every warning the moved code emits
+was going to a discarded stdout. The child is forked with stdout `'ignore'` and the logger sends
+warn there, so five diagnostics that reached the server's log before this branch — including an
+unwritable version cache — reached nothing after it. The child now pins its console stream to the
+piped stderr and the supervisor re-emits complete lines into the server's log.
 
 **Classification:** fix
