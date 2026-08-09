@@ -49,10 +49,16 @@ fails any auto-stub section older than 14 days.
   server can no longer touch the filesystem at all). Supervisor: `lib/dir-scanner.js` —
   correlation ids, per-request child ownership, `SIGKILL` on the deadline, lazy respawn, and a
   per-path failure backoff (30s → 5min ceiling) that only the polled route opts into. Walks:
-  `lib/dir-scanner-child.js#HANDLERS` (`listUnregistered`, `scanEntries`, `createDir`). Two
-  scanners: a background one for `listAllProjects`, an interactive one for the wizard's
-  `scanDirectoryForProjects`/`createProjectsDir`, so a hung poll cannot kill a child out from
-  under an operator's click. Rejection vocabulary is contractual — `tcTimedOut` (did not answer;
+  `lib/dir-scanner-child.js#HANDLERS` (`listUnregistered`, `scanEntries`, `createDir`,
+  `projectFacts` — which carries existence, governance, git, config and version, and is the one
+  handler that WRITES, via version detection's read-time self-heal). Two scanners: a background one for the dashboard poll — `listAllProjects`'s
+  walk and the per-project `projectFacts` reads behind `listProjects` — and an interactive one
+  for everything an operator pressed a button for: the wizard's
+  `scanDirectoryForProjects`/`createProjectsDir`, and every single-project read routed through
+  `lib/project-facts.js#readProjectFacts` (which defaults to interactive, so a caller that
+  forgets pays a process rather than inheriting a cached refusal). A hung poll therefore cannot
+  kill a child out from under an operator's click, and an operator who has just granted Full
+  Disk Access is never answered from the backoff. Rejection vocabulary is contractual — `tcTimedOut` (did not answer;
   the sole input to the Full Disk Access advice), `tcCached`, `tcAborted` (collateral),
   `tcTruncated` (ran out of budget). Callers: `lib/projects.js#listAllProjects`,
   `#scanDirectoryForProjects`, `#createProjectsDir`.
@@ -83,13 +89,18 @@ fails any auto-stub section older than 14 days.
 - **Wrap-shape derivation** — the wrap's step ids + capture fields derive from the code-owned pipeline. `lib/wrap-default-pipeline.js#wrapShape`.
 - **Project store / DB** — SQLite-backed project records, project-config persistence. `lib/store.js` (`DEFAULT_PROJECT_CONFIG`, `store.projects.*`).
 - **Engine profiles + config generation** — detect installed engines, generate per-engine config files (`CLAUDE.md`, `.antigravity.md`, `.aider.conf.yml`, etc.). `lib/engines.js#detect`, `#generateConfig`, `#_buildBaselineHooks`. Injected shared docs: `data/global-rules.md` (Global Rules shared across TC-managed projects), `data/session-memory-guide.md` (file-based session memory system).
-- **Prawduct V2 plugin-governed deferral** (#330) — when a project carries the V2 plugin install reference (`enabledPlugins["prawduct@*"]` in `.claude/settings.json`), TC stops generating its governance config: `writeEngineConfig` skips `CLAUDE.md` regeneration and `syncEngineHooks` strips its own `.hooks` block (preserving the install reference). Auto-detected, fail-closed. `lib/engines.js#isPluginGoverned`.
+- **Prawduct V2 plugin-governed deferral** (#330) — when a project carries the V2 plugin install reference (`enabledPlugins["prawduct@*"]` in `.claude/settings.json`), TC stops generating its governance config: `writeEngineConfig` skips `CLAUDE.md` regeneration and `syncEngineHooks` strips its own `.hooks` block (preserving the install reference). Auto-detected, fail-closed. `lib/governance-state.js#isPluginGoverned` — dependency-free (`node:fs`/`node:path` only) so the killable scanner child can read it without importing `lib/engines.js`, which opens the SQLite database at require time; `lib/engines.js` re-exports it unchanged.
 - **Orchestration launch-binder** (TB-1, #357) — bind a project to an orchestration profile so its engine launches against a different OpenAI-compatible endpoint (LiteLLM `direct` etc.) **per project**, no engine-config edit. Profiles live in operator-owned `~/.tangleclaw/orchestration-profiles.json` (seeded from `data/orchestration-profiles.json`; loader `store.orchestrationProfiles.load`); the binding is the nullable `projects.orchestration_profile` column (schema v22). Pure resolvers in `lib/orchestration.js` (`resolveKeyRef`, `resolveLaunchProfile`, `applyLaunchOverlay`); injected at one seam in `lib/sessions.js#launchSession` (overlay onto `launch.args` `--model` + `launch.env` `OPENAI_API_BASE`/`OPENAI_API_KEY`). `NULL` binding = zero injection (byte-identical to pre-TB-1). Optional per-project key override `projConfig.orchestrationKeyRef`. Spec: `.prawduct/artifacts/tb-1-launch-binder.md`.
 - **Session ownership** (#347) — first-class queryable binding of each session to the project it owns, built once and shared so the scope guard and its sibling consumers cannot disagree about who owns what. The derived address carries the AUTH-3 `owner` field — the proxy-authenticated user who launched the session, left NULL for direct-mode and pre-AUTH-3 sessions rather than fabricating an identity. `lib/session-ownership.js`. Tests: `test/session-ownership.test.js`.
 
 ## Governance / Engines
 
-- **Governance state** — classifies what governance is actually installed in a project: `governed-plugin` (Prawduct V2 plugin), `governed-vendored` (legacy in-repo hook), `ungoverned` (neutral), `not-applicable` (non-Claude). Derived live from disk, never from a stored label. `lib/engines.js#governanceState`.
+- **Per-project config reader** — `<project>/.tangleclaw/project.json` merged over documented
+  defaults. `lib/project-config.js` — dependency-free (`node:fs`/`node:path` only) so the killable
+  scanner child can read it; `lib/store.js` re-exports it and keeps the WRITER, because nothing on
+  the poll path writes config and a process built to be SIGKILLed should not own that write. Takes
+  an `onError` callback rather than owning a logger.
+- **Governance state** — classifies what governance is actually installed in a project: `governed-plugin` (Prawduct V2 plugin), `governed-vendored` (legacy in-repo hook), `ungoverned` (neutral), `not-applicable` (non-Claude). Derived live from disk, never from a stored label. `lib/governance-state.js#governanceState` — a dependency-free module (`node:fs`/`node:path` only) so the killable scanner child can read it without importing `lib/engines.js`, which opens the SQLite database at require time; `lib/engines.js` re-exports it unchanged for every existing caller.
 - **Engine profiles** — claude, codex, antigravity, aider, openclaw (openclaw is `pickerHidden: true` — resolvable for launch plumbing but excluded from the project engine picker, #459). `data/engines/<id>.json`. Capability gates (`supportsSilentPrime`, `supportsPrimePrompt`, etc.) consumed throughout `lib/sessions.js`, `lib/engines.js`. **Canonical-source sync** (#251): on every `store.init()`, bundled `data/engines/*.json` is reconciled into `~/.tangleclaw/engines/`; drift triggers a `log.warn` then overwrite. Operator-added profiles with no bundled counterpart are preserved — EXCEPT retired ids (`RETIRED_ENGINE_IDS`: gemini #457, genesis #458), which are tombstoned (user-local copy deleted on boot). Helper: `lib/store.js#_syncBundledEngines`.
 - **SessionStart hook (Claude Code)** — shell script Claude Code runs on session start; reads `<project>/.tangleclaw/session-prime.md` and emits it as the prime context. `data/hooks/sessionstart-prime.sh`. Hook plumbing: `lib/engines.js#_buildBaselineHooks`.
 - **Startup rules channel** (#749) — operator rules ship on their own `SessionStart` hook rather than inside the prime, so neither payload can displace the other; sharded across further hooks on rule boundaries when the corpus outgrows one channel, each shard naming its slice. TangleClaw writes the JSON envelope; the hook only reads it. Engines without a second startup channel keep rules inline in the prime. Core: `lib/session-rules-channel.js`. Hook: `data/hooks/sessionstart-rules.sh`. Registration: `lib/engines.js#_buildBaselineHooks`. Manifest + inline split: `lib/sessions.js#buildStartupRulesSection`. Tests: `test/session-rules-channel.test.js`.
@@ -115,7 +126,7 @@ fails any auto-stub section older than 14 days.
 - **Wrap step: `ai-content`** — prompts injected into the AI session for changelog / learnings / memory updates. `lib/wrap-steps/ai-content.js`.
 - **Wrap step: `test`** / **`lint`** — test + lint hooks. `lib/wrap-steps/test.js`, `lib/wrap-steps/lint.js`.
 - **Mark Critic Run action handler** — appends entry to `.tangleclaw/critic-runs.json`; **does not run a Critic** (the review is out-of-band). `lib/actions/invoke-critic.js`. UX clarification (label + confirm + toast) landed in #230.
-- **Project version reader** — surfaces the project's version to the UI, resolved in order: `CHANGELOG.md`, a configured `versionFilePath`, `version.json`, `package.json`, git tag, then a `0.0.0-dev` fallback. Degrades with a warning rather than refusing. `lib/project-version.js`.
+- **Project version reader** — surfaces the project's version to the UI, resolved in order: `CHANGELOG.md`, a configured `versionFilePath`, `version.json`, `package.json`, git tag, then a `0.0.0-dev` fallback. Degrades with a warning rather than refusing. `lib/project-version.js#detectVersion` writes the cache at session launch/wrap and owns the git-tag rung. The readers, the cache-only ladder (no git tag, so a null live read preserves a git-tag-derived cache) and the writer live in `lib/project-version-files.js` — whose only TangleClaw imports are the pure-`fs` `project-config`, `project-paths` and the logger, none of which reach the database, so the killable scanner child can run the whole chain; `lib/projects.js` re-exports them under their original `_`-prefixed names. Extracting them dissolved the `projects.js` ↔ `project-version.js` require cycle that #584 came from, which is what allowed a third consumer at all. The cache write is **atomic** (`writeVersionCacheFile`: stage to a sibling temp, `rename`, then sweep strays older than a minute), because the #165 read-time self-heal now runs in a process that is SIGKILLed mid-syscall.
 - **Model status monitor** — polls engine providers (Atlassian / Google status pages) for outage detection. `lib/model-status.js#_pollEngine`, `#startMonitor`.
 - **Wrap step: `learnings-db-write`** — persists the session's captured learnings into the learnings store after the ai-content capture step. `lib/wrap-steps/learnings-db-write.js`.
 - **ADR: symmetric capability gates** — decision record for the paired-flag gate pattern (two files coordinating one conceptual flag must check the same conjunction, #103). `docs/adr/0001-symmetric-capability-gates.md`.
@@ -131,6 +142,8 @@ fails any auto-stub section older than 14 days.
 - **ADR: authentication gate** — decision record for the Caddy `basic_auth` gate, forced first-run credential, and break-glass recovery (AUTH-2, #1). `docs/adr/0004-auth-2-basic-auth-gate.md`.
 - **ADR: project-map freshness** — decision record for the section-scoped, curation-preserving, idempotent `PROJECT-MAP.md` refresh (#360, #356). `docs/adr/0007-project-map-freshness.md`.
 - **ADR: enforcement adds no install step** — decision record governing how any norm may be mechanically enforced: a linter or checker that adds an installation step is refused (2026-08-01 norm-registry ratification). `docs/adr/0012-enforcement-adds-no-install-step.md`.
+- **Aider engine profile** — the Aider CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/aider.json`.
+- **Antigravity engine profile** — the Antigravity CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/antigravity.json`.
 
 ## CLI / Tooling
 
@@ -164,6 +177,8 @@ fails any auto-stub section older than 14 days.
 - **Ingress modes guide** — operator doc on the two ingress modes and how `ingressMode` switches between them. `deploy/INGRESS.md`.
 - **Break-glass admin reset** (AUTH-2 slice 3) — the terminal-only path that resets, or with `--create-gate` first CREATES, an admin login when the settings screen cannot: it regenerates the bcrypt hash and patches the live Caddyfile from a terminal on the box, so a lost credential is never a permanent lockout. Recovery proves physical control rather than opening a second remote door, which is why it is deliberately not reachable over HTTP; it calls the apply sequence in `lib/admin-credential.js` rather than mirroring it. `scripts/reset-admin.js`.
 - **Clean-room cutover VRF** — the operator-run verification procedure for the AUTH-1 ingress cutover: the phase scripts, their acceptance checkboxes, and the scored matrix saying which phases actually ran. Runs on a throwaway habitat macOS guest so nothing touches the live install, its projects, DB or hand-edited Caddyfile (#397); also the standing recipe for driving the tart guests. `deploy/VRF-auth-1-cutover.md`.
+- **Setup guide** — operator-facing first-install walkthrough, and the checklist for confirming an existing install is set up the way its operator believes. Assumes no web-server background. `docs/setup-guide.md`.
+- **Security policy** — how to report a vulnerability in TangleClaw responsibly, and what is in scope. `SECURITY.md`.
 
 ## Tests
 
@@ -218,25 +233,18 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/store-groups.test.js` — `store.projectGroups`: project-group membership.
 - `test/store-shareddocs.test.js` — `store.sharedDocs`: shared-document registration and lookup.
 - `test/version-bump-package-json.test.js` — #298: version-bump falls back to `package.json` for Node projects with no `version.json`, writing only the top-level `version` value.
+- `test/dir-scanner.test.js` — the scanner supervisor (#883): correlation ids, per-request child ownership, `SIGKILL` on the deadline, lazy respawn, and the per-path failure backoff. Asserted against a genuinely blocked syscall rather than a stub.
+- `test/dir-scanner-child.test.js` — the forked child's handlers, in-process where `fs` stubs still reach them: the wizard walk, `listUnregistered`, `createDir`, and `projectFacts` (#884). Also pins, from a FRESH process, that the child never loads `lib/store.js` — an in-process check passes while that defect is live. That probe runs against an EMPTY directory on purpose: against the repo root the version ladder's first rung reads TangleClaw's own `CHANGELOG.md` and returns, so the rung that reads project config is never reached and a planted `require('./store')` passes.
+- `test/project-version-files.test.js` — the two invariants of the version layer that a plausible edit breaks while every behavioral test stays green (#884): the detection ladder's ORDER, pinned rung by rung and cross-checked against `project-version.js`'s writing ladder, because where the two disagree the self-heal stamps a `source:` naming a file the version did not come from; and the cache write's ATOMICITY, guarded on the mechanism (the destination is never handed to a truncating write) since a kill between truncate and last byte cannot be scheduled from a test.
+- `test/_dir-scanner-hang-child.js` — fixture scanner child that really hangs, blocking on a reader-less FIFO, so the supervisor's deadline is exercised against a real blocked syscall instead of a stub.
+- `test/_dir-scanner-pool-demo.js` — throwaway process demonstrating what abandoning a blocked filesystem call costs (a permanently lost libuv threadpool thread) and that the same work through the scanner costs nothing. Isolated because a test that destroys its own threadpool would take the rest of the file with it.
+- `test/_engine-fixture.js` — shared fixture giving a test store one engine that is ALWAYS detected as installed, so suites reaching `POST /api/setup/complete` stop depending on which CLIs the host happens to have.
+- `test/_caddy-stub.js` — shared `caddy` stub for suites whose behavior depends on whether Caddy is installed.
+- `test/caddy-ingress-state.test.js` — classification of an existing Caddyfile into the states the setup wizard must act on; the wizard has no `--force`, so it adopts a hand-rolled gate and refuses anything it cannot safely own.
+- `test/setup-ingress-state-endpoint.test.js` — `GET /api/setup/ingress-state`, the read-only probe the wizard uses to decide how to put a login in front of an install without destroying one the operator already built. Detection only.
+- `test/setup-wizard-dir-error.test.js` — the wizard's projects-directory error line (#859), asserted at the frontend.
+- `test/auth2-setup-admin.test.js` — AUTH-2 slice 2b: the forced first-run admin in caddy ingress mode, end to end across `/api/setup/complete` and the PATCH `/api/config` "Skip" path.
+- `test/reset-admin.test.js` — `scripts/reset-admin.js` argument parsing and reset behavior.
+- `test/wrap-step-commit-autopr.test.js` — the commit step's auto-PR close-loop (#467), which keeps a wrap branch off a protected branch from dangling.
+- `test/_dir-scanner-stderr-child.js` — fixture scanner child that writes real stderr over a real pipe (#884), so the supervisor's re-emission is tested rather than stubbed: WARN and DEBUG lines to prove the level is read not flattened, one line split across two writes to prove a partial is held until its newline, an unparseable line to prove it is not dropped, and an over-4096-byte flood before a nonzero exit to prove the death buffer keeps the tail rather than the head.
 
-## TODO (auto-stubbed 2026-08-06)
-
-- **TBD** — touched in this session: `SECURITY.md`. <!-- describe -->
-- **TBD** — touched in this session: `docs/setup-guide.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/_caddy-stub.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/caddy-ingress-state.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/reset-admin.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-ingress-state-endpoint.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-commit-autopr.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-08)
-
-- **TBD** — touched in this session: `data/engines/aider.json`. <!-- describe -->
-- **TBD** — touched in this session: `data/engines/antigravity.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/_dir-scanner-hang-child.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/_dir-scanner-pool-demo.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/_engine-fixture.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/auth2-setup-admin.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/dir-scanner-child.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/dir-scanner.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard-dir-error.test.js`. <!-- describe -->

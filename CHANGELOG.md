@@ -463,6 +463,244 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A registered project's version is now detected in the scanner child, and `enrichProject`
+  opens nothing under a project's own path (#884).** This was the last of the
+  five per-project reads the dashboard poll ran on the server's event loop. It read up to four
+  files at the operator's path — and on macOS a TCC-protected directory does not fail a read,
+  it never answers one, for the life of the process. Existence, governance, git, config and
+  version now all arrive from one round trip to a child a deadline can kill.
+
+  **Be precise about what that does and does not claim.** `enrichProject` still runs two
+  synchronous subprocess probes: engine detection (`command -v <name>`) and a tmux session
+  check. Neither touches an operator-chosen directory — they probe a regex-validated command
+  name and a TangleClaw-generated session name, each timeout-capped — so they are a smaller and
+  different hazard than the one this closes, and they are not closed by it. They are **#890** —
+  filed rather than settled silently, which is how the version chain survived #883 in the first
+  place.
+
+  **The wider sweep is #889, and it is bigger than what shipped here.** #884 scoped the family as
+  "32 + 7 synchronous reads". Re-derived against the code it is **54** — including all of
+  `lib/uploads.js`, which turns out to read under the *project's* path rather than TangleClaw's
+  own state directory, and writers whose interruption leaves a half-deleted project or a truncated
+  manifest that the reader parses. That is more than everything above combined, so it is its own
+  issue rather than a fourth chunk nobody could review. A third defect this work exposed —
+  the per-project deadline is 5s against roughly 35s of bounded git work, so a large or cold
+  repository is killed and handed a Full Disk Access remedy for a permission that was never the
+  problem — is **#891**.
+
+  **New `lib/project-version-files.js`, which dissolves a require cycle rather than deferring
+  it.** `lib/projects.js` and `lib/project-version.js` each reached into the other for readers —
+  a cycle both papered over with lazy call-time requires, and #584 is what that cost when the
+  papering slipped. Two modules can live with a cycle; a *third* consumer cannot join one, and
+  the scanner child is that third consumer. The readers move into a module both sides consume,
+  so neither requires the other now.
+
+  **The cache write is atomic, because its writer became killable.** Version detection carries a
+  read-time self-heal (#165): when a project's live version has moved past its cached one, the
+  cache is rewritten. That write now happens inside a process the supervisor SIGKILLs
+  mid-syscall, and writing in place truncates the file first — so a kill in that window left a
+  partial cache that the reader parses without complaint, silently changing or losing a
+  project's version. The body is staged to a sibling temp file and `rename`d, which is atomic
+  within a directory on POSIX; the temp name carries the pid, because the server also writes
+  this file at session launch and wrap.
+
+  Staging moves the failure from a corrupt cache to a stray file rather than eliminating it, so
+  each successful write clears strays older than a minute. The age threshold is the load-bearing
+  part: two processes legitimately write this cache, and sweeping on the name alone would delete
+  a staging file another writer was about to rename — turning a healthy write into a warning
+  about a project with nothing wrong at its path.
+
+  A project whose directory would not answer now reports **no** version rather than one read
+  behind the server's back — `null`, never the detection chain's `0.0.0-dev` fallback, which
+  would render on the card as a fact the server never established.
+
+  **Warnings from inside the scanner child now reach the log again.** The child is forked with
+  stdout `'ignore'` and the logger sends warn there, so every warning that process emitted went
+  nowhere — and this change had just moved five of them in, including *failed to write the
+  project-version cache*. A project with an unwritable cache or a `versionFilePath` naming a
+  file that is not there showed a wrong or missing version with no evidence anywhere an operator
+  looks. The child now prints to its piped stderr and the server re-emits each complete line
+  into the log, **at the level the child chose** — flattening them to `info` would have looked
+  fine at the default setting and dropped every one of them under `logLevel: 'warn'`.
+
+  Relatedly, the buffer that explains an unexpected child exit now keeps the *last* few kilobytes
+  of that stream rather than the first. It was written when the stream carried only crash output;
+  now that the same stream carries routine warnings, keeping the first would fill it with healthy
+  notices and leave no room for whatever explained the exit.
+
+  Every guard added here was confirmed by planting the mutation it names and watching it fail —
+  the ladder's order, the atomic write, the staging sweep, the child's diagnostics and the death
+  buffer's bound. One did not fail at first: the fresh-process probe asserting the child never loads
+  `lib/store.js` ran against the repo root, where the ladder's first rung reads TangleClaw's own
+  `CHANGELOG.md` and returns — so it never reached the rung that reads project config, and a
+  deliberately-planted `require('./store')` there passed. It now runs against a directory with
+  no version source at all.
+
+- **Git and project config now come from the scanner child too (#884).** Two of
+  the three reads `enrichProject` still performed per registered project per ten-second poll are
+  gone from the event loop. `git.getInfo` mattered most: it shells out with `execSync`, so it
+  blocked the loop by construction — several git commands per project, before TCC was involved
+  at all. Its two-minute cache moves with it, so a child killed for a hang starts cold; a few
+  repeated git calls after a kill, in exchange for never blocking the server. Only the
+  version-detection chain is left, and it went in the same release.
+
+  **New `lib/project-config.js`, for the reason `lib/governance-state.js` exists.** The config
+  reader is pure `fs` but lived in `lib/store.js`, which opens SQLite at require time — so the
+  child could not call it. It moves verbatim; `store.js` re-exports it and keeps the WRITER,
+  because nothing on the poll path writes config and a process built to be SIGKILLed has no
+  business owning a write the operator's settings depend on. The reader takes an `onError`
+  callback instead of owning a logger, so `store.js`'s callers keep the exact warning they had
+  while the child stays free of a dependency it does not need.
+
+  `store.js` requires that module rather than destructuring `load` from it, which is not a
+  style preference: a destructured function is captured at require time, so the same reader had
+  two seams — one a test stub could reach and one it could not. That asymmetry is how a stubbed
+  test passes while the code it names goes unexercised, and it showed up immediately as tests
+  that stubbed `store.projectConfig.load` and no longer reached `lib/project-version.js`. Those
+  now write a real `.tangleclaw/project.json` instead of stubbing anything, which cannot be
+  orphaned by the next move.
+
+  **`lib/project-version.js` no longer reaches for `./store`.** Its `_readConfiguredVersion`
+  did so *lazily* — safe for the require cycle it was written for, and unsafe for a caller that
+  did not exist yet, because the import appeared only on first **call**, inside whatever process
+  was calling. That is the trap chunk 1 avoided, one level down, and it is what would have put
+  an open database handle inside the killable child. Guarded by a fresh-process probe, because
+  the test process has loaded `store` long before the assertion runs.
+
+  **Eight routes stopped paying for an answer they never asked for.** `getProject` enriches, and
+  since chunk 1 enrichment means a cross-process round trip; the four continuity readers, both
+  upload routes, delete and session launch use the result only as a 404 guard plus `path`. New
+  `getProjectRow` returns the database row with no filesystem read at all. (Carried in from
+  chunk 1's Critic review.)
+
+  **The poll issues one request at a time, and that is correctness rather than throttling.** The
+  child is single-threaded, and `lib/dir-scanner.js` starts a request's deadline when it is
+  *issued*, not when the child picks it up. Firing N requests in one tick therefore put N
+  deadlines on a serial queue: the tail of a large fleet spent its whole deadline waiting its
+  turn, and expiring killed the **shared** child — healthy-but-queued directories came back as
+  collateral, one of them earned the "grant Full Disk Access" advice this machinery exists to
+  prevent, they entered the 30s→5min backoff, and the kill discarded `git.getInfo`'s in-child
+  cache so the retry was equally cold. It scaled with project count and nothing bounded it.
+  Sequential issue makes each deadline honest and leaves no sibling in flight to abort;
+  concurrency bought nothing against a worker that was serial anyway. The deadline also moved
+  2s → 5s, because 2s was sized for a single `fs.access` and now has to cover roughly six
+  `execSync` git spawns — a deadline shorter than the honest work does not add safety margin, it
+  manufactures the failure it is meant to detect.
+
+  **A directory that refuses is no longer reported as one that is gone.** `EACCES`/`EPERM` used
+  to collapse into "not there", so a project on a volume the server may not traverse rendered as
+  deleted. It now reports as present-and-unreadable with a reason, and the enriched record
+  carries `unreadableCode` (`SCAN_TIMEOUT` / `SCAN_CACHED` / `SCAN_ABORTED` / `SCAN_FAILED` /
+  `EACCES`) so #885
+  branches on a code rather than parsing prose. `runAction` uses the same reason: a project whose
+  directory could not be read now answers `PROJECT_UNREADABLE` with the remedy, instead of
+  `UNAVAILABLE` — which told the operator their governance said no when the truth was that nobody
+  looked.
+
+  `availableActions`'s synchronous fallback is **removed** rather than documented. Both call sites
+  supply the state from the child, so it had no production caller left and offered only a way to
+  reintroduce the read this work removes; the `lib/engines.js` import went with it.
+
+  **`unreadableCode` is a contract field, and it shipped without one assertion behind it.** It is
+  produced in three places and `api-contract.md` names it as the value consumers branch on, yet
+  deleting any of the three left the suite green — the one nearby check asserted the child's raw
+  `code`, which never crosses `readProjectFacts`, so the translation itself was the untested part.
+  All three sites are now asserted through the enriched record, across every branch:
+  `SCAN_TIMEOUT`, `SCAN_CACHED`, `SCAN_ABORTED`, `SCAN_FAILED`, the child's `EACCES`
+  pass-through, and `null` when healthy. `tcCached` gained its own value in the process, so a
+  remembered refusal is no longer indistinguishable from a generic failure.
+
+  That was the third fix-for-a-review-finding in this issue to arrive with no guard, which is now
+  recorded as a rule rather than corrected a fourth time: closing a finding reads as finishing
+  work, so it inherits none of the test discipline that writing a feature does — and the guard
+  written under that framing tends to describe the fix instead of falsifying it.
+
+  Four of the mutations run against this work initially passed — reverting the git read to the
+  event loop, restoring the lazy database require in version detection, collapsing the
+  collateral branch, and dropping the hint. Each produces identical *values* and differs only in
+  what it executes or logs, so nothing about the result distinguished them. Every one now has a
+  guard that observes the behaviour rather than the result.
+
+- **A registered project's own directory is no longer read on the server's event loop
+  (#884).** #883 moved the walk for *unregistered* folders into a killable
+  child and left the enrichment of *registered* ones standing, so one TCC-protected project
+  directory still stopped every route — the degradation note in `listAllProjects` said as
+  much and this closes the first half of it. `enrichProject`'s existence test and its two
+  `governanceState` reads (its own, and the one inside `actions.availableActions`) now come
+  from a new `projectFacts` operation in the scanner child. A project whose directory never
+  answers is listed without its git and governance detail and carries an `unreadable`
+  reason; from the poll after that, its siblings keep their real answers.
+
+  **One request per project, not one batch per poll — the plan said batch, and the plan was
+  wrong.** Batching is the obvious efficiency, but the supervisor's deadline kills the
+  *child*, not a request, so a batch can only ever fail whole and one unreadable directory
+  would permanently cost every sibling its answer. **Be precise about what per-project buys,
+  because the obvious claim is too strong:** these requests are multiplexed through one child,
+  so a hung path can still take its siblings down *within* a poll — enough hung reads exhaust
+  the child's own threadpool, and every request riding the killed child fails as collateral.
+  What per-project delivers is that the failure is attributed to the directory that actually
+  caused it, so the backoff engages for that path and every later poll answers normally for
+  everyone else. The property is convergence after one poll, not immunity during it. Requests
+  are issued **one at a time**, so a healthy list costs the sum of its directories rather than the
+  slowest one. That is deliberate: the child is single-threaded and a request's deadline starts when
+  it is issued, so firing N at once would put N deadlines on a serial queue and let a large fleet's
+  tail be killed for waiting its turn.
+
+  **New `lib/governance-state.js`, because the child must never touch the database.**
+  Reaching `governanceState` from the child by requiring `lib/engines.js` pulls in
+  `lib/store.js`, which opens SQLite at require time — an open handle on the server's
+  database, held by a process the supervisor SIGKILLs mid-syscall. `isPluginGoverned` and
+  `governanceState` were already pure `fs`+`path`, so they moved verbatim into a dependency-
+  free module that `engines.js` re-exports unchanged; there is one implementation, not a
+  copy that drifts. The guarding test spawns a **fresh** process, because this suite has
+  long since loaded `store` into its own — an in-process check passes while the defect is
+  live.
+
+  **The async cascade was not as free as it looked.** `listAllProjects` was already async
+  with a single awaiting caller, but `enrichProject` has eight callers besides
+  `listProjects`; `attachProject`, `getProject`, `updateProject` and
+  `migrateProjectToPlugin` became async with it, reaching 12 `server.js` route handlers.
+  An intermediate draft defaulted `enrichProject`'s new `facts` argument to the shape a
+  missing directory produces — every one of those eight call sites then reported every
+  project as having no governance at all, and nothing threw. An omitted argument now makes
+  the function gather the facts itself: slower, never silently wrong. Each of the three
+  guards added here was confirmed by mutation — dropping `pathKey`, restoring that default,
+  and importing `./engines` in the child each turn the suite red.
+
+  **An operator's click and a ten-second poll are not the same read, and the first draft of
+  this made them one.** `enrichProject` gathers its own facts for eight callers — attach,
+  PATCH, launching a session, migrating, the continuity routes — every one of them
+  operator-pressed. Routing those through the *polled* scanner meant someone who granted Full
+  Disk Access and pressed the button again was answered from a remembered refusal for up to
+  five minutes, and their click could be SIGKILLed as collateral for a hung poll of an
+  unrelated directory. Both halves were already recorded decisions (`architecture.md`
+  Decision 8, `FEATURES.md`, and `lib/dir-scanner.js`'s own export block), and the second half
+  is a defect this project shipped once before, in #883 chunk 2. The read now lives in new
+  `lib/project-facts.js`, whose `interactive` option **defaults to the safe side**: a caller
+  that forgets pays an extra process, which is recoverable, instead of silently inheriting a
+  cached refusal, which is not. Only the poll opts into the backoff. Caught by the independent
+  Critic, not by me.
+
+  That extraction also closed a second source of truth. `runAction` still gated on
+  `availableActions(project)` with no state, falling through to a synchronous
+  `governanceState` disk read — the same read #884 exists to remove, on a route, and a
+  divergence from the button that renders from the scanner's answer (the "one predicate, both
+  sides" invariant in `lib/actions.js`'s header, ADR 0001). Both sides now read through
+  `readProjectFacts`.
+
+  The scanner's rejection vocabulary is preserved rather than flattened: only `tcTimedOut` and
+  `tcCached` earn the Full Disk Access remedy, because a `tcAborted` request died for a
+  sibling's hang and its own path may be perfectly healthy — advising a permissions change
+  there would be the exact misdiagnosis this machinery exists to remove. The enriched record
+  carries `unreadable` and `unreadableHint`, both always present and `null` when healthy, for
+  #885 to render.
+
+  One test changed rather than being added: the #883 route-level regression counted total
+  scanner calls and asserted it equalled the number of requests, which encoded "one scanner
+  call per request". That is no longer the contract. It now asserts the count moved on
+  *every* request — which is what the total was standing in for, and is strictly stronger:
+  a total would pass if one request bypassed the scanner while another made two.
+
 - **An unreadable projects folder is now cheap, not merely survivable.** (#883, chunk 3.) With
   chunks 1–2 the dashboard's ten-second poll still cost a five-second stall and a killed scanner
   process *on every tick, forever* — and a process blocked in the kernel may never leave the

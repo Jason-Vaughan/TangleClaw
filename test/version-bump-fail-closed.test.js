@@ -30,6 +30,10 @@ setLevel('error');
 
 const vb = require('../lib/wrap-steps/version-bump');
 const store = require('../lib/store');
+// The config READER moved out of `store` into its own dependency-free module
+// (#884) so the killable scanner child can use it. Stubs must follow the code:
+// stubbing `projectConfigModule.load` no longer reaches the callers below.
+const projectConfigModule = require('../lib/project-config');
 
 // A 4-octet project (TiLT v2's real shape): the version file is VERSION.json
 // and the changelog headings carry an operator-owned 4th octet.
@@ -88,14 +92,14 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
 
   beforeEach(() => {
     savedInternal = { ...vb._internal };
-    savedLoad = store.projectConfig.load;
-    store.projectConfig.load = () => ({});
+    savedLoad = projectConfigModule.load;
+    projectConfigModule.load = () => ({});
     vb._internal.todayIso = () => '2026-07-19';
   });
 
   afterEach(() => {
     Object.assign(vb._internal, savedInternal);
-    store.projectConfig.load = savedLoad;
+    projectConfigModule.load = savedLoad;
   });
 
   describe('1. versionFilePath — an explicit path resolves that file or skips', () => {
@@ -108,7 +112,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
         if (p.endsWith('package.json')) return PKG_UNRELATED;
         return CHANGELOG_3OCTET;
       };
-      store.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
 
       const s = vb._resolveVersionSource('/p/version.json', '/p/package.json', '/p/VERSION.json');
       assert.equal(s.kind, 'VERSION.json');
@@ -149,7 +153,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
         if (p.endsWith('package.json')) return PKG_UNRELATED;
         return CHANGELOG_3OCTET;
       };
-      store.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -168,7 +172,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       it(`skips on ${JSON.stringify(escape)}`, async () => {
         vb._internal.existsSync = () => true;
         vb._internal.readFileSync = () => '{"version":"1.0.0"}';
-        store.projectConfig.load = () => ({ versionFilePath: escape });
+        projectConfigModule.load = () => ({ versionFilePath: escape });
 
         const c = ctx();
         const r = await vb.run(c);
@@ -183,7 +187,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       vb._internal.existsSync = (p) => p.endsWith('meta/VERSION.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('VERSION.json')
         ? '{"version":"1.4.2"}' : CHANGELOG_3OCTET);
-      store.projectConfig.load = () => ({ versionFilePath: 'meta/VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'meta/VERSION.json' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -257,7 +261,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       vb._internal.existsSync = (p) => p.endsWith('VERSION.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('VERSION.json')
         ? VERSION_JSON_4OCTET : CHANGELOG_4OCTET);
-      store.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -411,7 +415,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       const PKG = '{\n  "name": "demo",\n  "version": "1.4.2",\n  "scripts": { "build": "x" }\n}\n';
       vb._internal.existsSync = (p) => p.endsWith('package.json') || p.endsWith('CHANGELOG.md');
       vb._internal.readFileSync = (p) => (p.endsWith('package.json') ? PKG : CHANGELOG_3OCTET);
-      store.projectConfig.load = () => ({ versionFilePath: 'package.json' });
+      projectConfigModule.load = () => ({ versionFilePath: 'package.json' });
 
       const c = ctx();
       const r = await vb.run(c);
@@ -478,21 +482,36 @@ describe('project-version honors versionFilePath (#540)', () => {
   const storeMod = require('../lib/store');
 
   let dir;
-  let savedLoad;
+
+  /**
+   * Write a REAL `.tangleclaw/project.json`, rather than stubbing the reader.
+   *
+   * These used to stub `projectConfigModule.load`. That reader has since moved
+   * into its own module so the killable scanner child can use it (#884), and the
+   * stub stopped reaching `_readConfiguredVersion` — silently, in the sense that
+   * it took a failing assertion to notice. A real file cannot be orphaned by the
+   * next move, and it exercises the parse and merge these tests are ultimately
+   * about anyway.
+   *
+   * @param {object} cfg - Config to persist for the fixture project.
+   * @returns {void}
+   */
+  function writeConfig(cfg) {
+    fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), JSON.stringify(cfg));
+  }
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-vfp-'));
-    savedLoad = storeMod.projectConfig.load;
   });
   afterEach(() => {
-    storeMod.projectConfig.load = savedLoad;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it('reads the configured file ahead of the built-in probe', () => {
     fs.writeFileSync(path.join(dir, 'VERSION.json'), '{"version":"2.5.0"}');
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
-    storeMod.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+    writeConfig({ versionFilePath: 'VERSION.json' });
 
     const got = projectVersion.detectVersion(dir);
     assert.equal(got.version, '2.5.0');
@@ -501,7 +520,7 @@ describe('project-version honors versionFilePath (#540)', () => {
 
   it('falls through to the probe when no path is configured', () => {
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
-    storeMod.projectConfig.load = () => ({});
+    writeConfig({});
 
     const got = projectVersion.detectVersion(dir);
     assert.equal(got.version, '0.1.0');
@@ -510,7 +529,7 @@ describe('project-version honors versionFilePath (#540)', () => {
 
   it('ignores a configured path that escapes the project root', () => {
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
-    storeMod.projectConfig.load = () => ({ versionFilePath: '../../../etc/passwd.json' });
+    writeConfig({ versionFilePath: '../../../etc/passwd.json' });
 
     const got = projectVersion.detectVersion(dir);
     assert.equal(got.source, 'package.json', 'falls through rather than reading outside');
@@ -518,11 +537,11 @@ describe('project-version honors versionFilePath (#540)', () => {
 
   it('falls through when the configured file is missing or malformed', () => {
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.1.0"}');
-    storeMod.projectConfig.load = () => ({ versionFilePath: 'nope.json' });
+    writeConfig({ versionFilePath: 'nope.json' });
     assert.equal(projectVersion.detectVersion(dir).source, 'package.json');
 
     fs.writeFileSync(path.join(dir, 'bad.json'), '{not json');
-    storeMod.projectConfig.load = () => ({ versionFilePath: 'bad.json' });
+    writeConfig({ versionFilePath: 'bad.json' });
     assert.equal(projectVersion.detectVersion(dir).source, 'package.json');
   });
 });
@@ -536,17 +555,17 @@ describe('version-bump refusal messages read as one sentence', () => {
 
   beforeEach(() => {
     savedInternal = { ...vb._internal };
-    savedLoad = store.projectConfig.load;
+    savedLoad = projectConfigModule.load;
   });
   afterEach(() => {
     Object.assign(vb._internal, savedInternal);
-    store.projectConfig.load = savedLoad;
+    projectConfigModule.load = savedLoad;
   });
 
   it('composes the field name with the reason, without a doubled noun', async () => {
     vb._internal.existsSync = () => true;
     vb._internal.readFileSync = () => '{"version":"1.0.0"}';
-    store.projectConfig.load = () => ({ versionFilePath: '../../outside.json' });
+    projectConfigModule.load = () => ({ versionFilePath: '../../outside.json' });
 
     const c = ctx();
     const r = await vb.run(c);

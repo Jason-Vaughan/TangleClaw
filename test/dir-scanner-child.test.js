@@ -266,3 +266,288 @@ describe('dir-scanner child — createDir', () => {
     assert.ok(!fs.existsSync(path.join(root, 'a')));
   });
 });
+
+describe('dir-scanner child — projectFacts (#884)', () => {
+  test('reports a real Claude project directory and what governs it', async () => {
+    const root = scratch('facts-governed');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
+    );
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.exists, true);
+    assert.equal(facts.governanceState, 'governed-plugin');
+  });
+
+  test('a vendored governance hook reads as governed-vendored, and neither as ungoverned', async () => {
+    const vendored = scratch('facts-vendored');
+    fs.mkdirSync(path.join(vendored, 'tools'), { recursive: true });
+    fs.writeFileSync(path.join(vendored, 'tools', 'product-hook'), '#!/bin/sh\n');
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: vendored, engineId: 'claude' })).governanceState,
+      'governed-vendored'
+    );
+
+    const bare = scratch('facts-bare');
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: bare, engineId: 'claude' })).governanceState,
+      'ungoverned'
+    );
+  });
+
+  test('governance is not-applicable on a non-Claude engine, even though the directory is there', async () => {
+    // The distinction the `exists` field carries: a directory that IS present
+    // can still have no governance question to answer. Collapsing the two would
+    // make a codex project indistinguishable from a missing folder.
+    const root = scratch('facts-codex');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.claude', 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'prawduct@tangleclaw': true } })
+    );
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'codex' });
+    assert.equal(facts.exists, true);
+    assert.equal(facts.governanceState, 'not-applicable');
+  });
+
+  test('a directory that is not there answers, rather than throwing', async () => {
+    const gone = path.join(tmpRoot, 'facts-never-created');
+    assert.deepEqual(
+      await HANDLERS.projectFacts({ dir: gone, engineId: 'claude' }),
+      { exists: false, governanceState: 'not-applicable', git: null, config: null, version: null }
+    );
+  });
+
+  test('malformed settings fail closed to ungoverned rather than throwing', async () => {
+    // The whole point of the fail-closed catch: a parse error must not read as
+    // "governed", which would make TangleClaw skip config generation for a
+    // project that has no plugin at all.
+    const root = scratch('facts-malformed');
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{ not json');
+
+    assert.equal(
+      (await HANDLERS.projectFacts({ dir: root, engineId: 'claude' })).governanceState,
+      'ungoverned'
+    );
+  });
+
+  test('the handler never imports the server database — it exists to be SIGKILLed', () => {
+    // THE MUTATION THIS CATCHES: importing `./engines` here instead of
+    // `./governance-state` to reach `governanceState`. That is the obvious edit,
+    // it passes every other test in this file, and it gives a process the
+    // supervisor kills mid-syscall an open handle on the SQLite database the
+    // server depends on. Asserted on a FRESH child process because this suite's
+    // own requires have long since loaded `store` into this one.
+    const { execFileSync } = require('node:child_process');
+    const probe = 'require("./lib/dir-scanner-child.js");'
+      + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js"))))';
+    const loaded = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    assert.equal(loaded, 'false',
+      'the scanner child must not load lib/store.js — see lib/governance-state.js');
+  });
+});
+
+describe('dir-scanner child — projectFacts carries git and config (#884, chunk 02a)', () => {
+  const { execFileSync } = require('node:child_process');
+
+  test('reports the branch of a real repository', () => {
+    // A real repo, not a stub: `git.getInfo` shells out, and the entire reason
+    // this read moved here is that shelling out blocks the caller's event loop.
+    // A stub would test the plumbing and not the thing that made it necessary.
+    const root = scratch('facts-git');
+    try {
+      // `-c init.templateDir=` isolates this from the host's global git template,
+      // which #831 records as a source of flakes when TangleClaw rewrites it. And
+      // a commit is required, not decoration: a repo with no commits has no
+      // resolvable HEAD, so `getInfo` reports branch `unknown` and the assertion
+      // below would pass against a repo that proves nothing about branch reading.
+      execFileSync('git', ['-c', 'init.templateDir=', 'init', '-q', '-b', 'trunk', root],
+        { stdio: 'ignore' });
+      for (const args of [
+        ['config', 'user.email', 'test@example.com'],
+        ['config', 'user.name', 'Test'],
+        ['commit', '--allow-empty', '-q', '-m', 'init']
+      ]) execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    } catch {
+      return; // no git on this host — the assertion below would say nothing
+    }
+    return HANDLERS.projectFacts({ dir: root, engineId: 'claude' }).then((facts) => {
+      assert.ok(facts.git, 'a git repository must report git info');
+      assert.equal(facts.git.branch, 'trunk');
+    });
+  });
+
+  test('a directory that is not a repository reports null git rather than failing', async () => {
+    const facts = await HANDLERS.projectFacts({ dir: scratch('facts-nogit'), engineId: 'claude' });
+    assert.equal(facts.git, null);
+    assert.ok(facts.config, 'and still answers for everything else');
+  });
+
+  test('reads the project config, and returns defaults when there is none', async () => {
+    const configured = scratch('facts-cfg');
+    fs.mkdirSync(path.join(configured, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(
+      path.join(configured, '.tangleclaw', 'project.json'),
+      JSON.stringify({ versionBumpEnabled: false, versionFilePath: 'VERSION.json' })
+    );
+
+    const facts = await HANDLERS.projectFacts({ dir: configured, engineId: 'claude' });
+    assert.equal(facts.config.versionBumpEnabled, false, 'an explicit false must survive the round trip');
+    assert.equal(facts.config.versionFilePath, 'VERSION.json');
+    assert.equal(facts.config.silentPrime, true, 'and unset keys still come from the defaults');
+
+    const bare = await HANDLERS.projectFacts({ dir: scratch('facts-nocfg'), engineId: 'claude' });
+    assert.equal(bare.config.versionBumpEnabled, true, 'no config file reads as the documented default');
+  });
+
+  test('a malformed config reads as defaults without throwing, and without a logger', async () => {
+    // The reader has no logger of its own by design — acquiring one would give
+    // this process a dependency it exists to avoid. The condition is carried by
+    // the return value instead, which is what this pins.
+    const root = scratch('facts-badcfg');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project.json'), '{ not json');
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.config.versionBumpEnabled, true);
+  });
+
+  test('reports the project version, and null when nothing on disk names one', async () => {
+    const versioned = scratch('facts-version');
+    fs.writeFileSync(path.join(versioned, 'CHANGELOG.md'),
+      '# Changelog\n\n## [Unreleased]\n\n## [4.2.0] - 2026-05-01\n');
+    const facts = await HANDLERS.projectFacts({ dir: versioned, engineId: 'claude' });
+    assert.equal(facts.version, '4.2.0');
+
+    const bare = await HANDLERS.projectFacts({ dir: scratch('facts-noversion'), engineId: 'claude' });
+    assert.equal(bare.version, null,
+      'a project with no version source reports null rather than a fabricated fallback');
+  });
+
+  test('the self-heal write happens HERE, in the process that can be killed', async () => {
+    // The reason this op is the only handler in the file that writes. Version
+    // detection rewrites a cache its live sources have moved past (#165), and
+    // that write is the whole reason the chunk that moved this had to make the
+    // writer atomic first — the supervisor SIGKILLs this process mid-syscall.
+    const root = scratch('facts-selfheal');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project-version.txt'),
+      'version: 1.0.0\nrecorded_at: 2026-01-01T00:00:00Z\nsource: version.json\n');
+    fs.writeFileSync(path.join(root, 'version.json'), JSON.stringify({ version: '2.0.0' }));
+
+    const facts = await HANDLERS.projectFacts({ dir: root, engineId: 'claude' });
+    assert.equal(facts.version, '2.0.0', 'the live value wins over a stale cache');
+    assert.match(
+      fs.readFileSync(path.join(root, '.tangleclaw', 'project-version.txt'), 'utf8'),
+      /^version: 2\.0\.0$/m,
+      'and the cache is healed in place, by this process'
+    );
+  });
+
+  test('a warning from inside the child reaches stderr instead of a discarded stdout', async () => {
+    // THE MUTATION THIS CATCHES: dropping `setConsoleStream(process.stderr)` from
+    // the child's entry block. The logger sends warn to `process.stdout`, and the
+    // supervisor forks this child with stdout `'ignore'` — so without the pin,
+    // every warning this process emits goes to /dev/null and the code still
+    // "works". That is invisible from in-process tests, which own a real stdout.
+    //
+    // Forked for real rather than required, because `require.main === module` is
+    // exactly the condition under test.
+    const { fork } = require('node:child_process');
+    const root = scratch('facts-childwarn');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    // A configured version file that is not there — one of the diagnostics this
+    // process now owns, and one an operator has to be able to see.
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project.json'),
+      JSON.stringify({ versionFilePath: 'ABSENT.json' }));
+
+    const child = fork(path.join(__dirname, '..', 'lib', 'dir-scanner-child.js'), [], {
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'], // the supervisor's exact stdio
+      serialization: 'json'
+    });
+    try {
+      let stderr = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (c) => { stderr += c; });
+
+      await new Promise((resolve) => {
+        child.on('message', resolve);
+        child.send({ id: 1, op: 'projectFacts', payload: { dir: root, engineId: 'claude' } });
+      });
+      // The reply races the stderr flush; they are different channels.
+      await new Promise((r) => setTimeout(r, 250));
+
+      assert.match(stderr, /configured version file unreadable/,
+        'the child\'s warning must leave the process, or nothing an operator reads will ever carry it');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
+  test('the child still never imports the server database, now that it detects versions too', () => {
+    // THE MUTATION THIS CATCHES: reaching version detection through
+    // `require('./projects')`, which owns the public names for these readers and
+    // pulls the database in with them.
+    //
+    // Pointed at an EMPTY directory, not at the repo root. Against the repo the
+    // first rung reads TangleClaw's own CHANGELOG.md and returns, so the ladder
+    // never reaches the rung that reads project config — the probe passes while
+    // the defect sits one rung below it. That was measured, not assumed: the
+    // mutation was run against a cwd-based probe and it passed.
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-child-vprobe-'));
+    try {
+      const probe = 'const c = require("./lib/dir-scanner-child.js");'
+        + `c.HANDLERS.projectFacts({ dir: ${JSON.stringify(empty)}, engineId: "claude" }).then(() => `
+        + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js")))))';
+      const loaded = execFileSync(process.execPath, ['-e', probe], {
+        cwd: path.join(__dirname, '..'), encoding: 'utf8'
+      });
+      assert.equal(loaded, 'false',
+        'the scanner child must not load lib/store.js, even walking the whole version ladder');
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test('the child still never imports the server database, now that it reads config too', () => {
+    // THE MUTATION THIS CATCHES, and the reason it is re-asserted rather than
+    // left to the chunk-01 copy: the obvious way to read project config is
+    // `require('./store').projectConfig.load`, and `lib/project-version.js`
+    // reached for exactly that, lazily, so the import appeared only on first
+    // CALL. A fresh process is the only place this is observable.
+    const probe = 'const c = require("./lib/dir-scanner-child.js");'
+      + 'c.HANDLERS.projectFacts({ dir: process.cwd(), engineId: "claude" }).then(() => '
+      + 'process.stdout.write(String(Object.keys(require.cache).some(k => k.endsWith("/lib/store.js")))))';
+    const loaded = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    assert.equal(loaded, 'false',
+      'the scanner child must not load lib/store.js, even after answering a real request');
+  });
+
+  test('a directory that is there but unreadable is not reported as deleted', async () => {
+    // THE MUTATION THIS CATCHES: routing this through `_exists`, which collapses
+    // EACCES into `false`. That renders a directory the server may not traverse
+    // as one the operator deleted — confidently wrong rather than merely absent,
+    // and indistinguishable in the UI from a project they removed on purpose.
+    if (process.getuid && process.getuid() === 0) return; // root bypasses the check
+    const locked = scratch('facts-locked');
+    const inner = path.join(locked, 'project');
+    fs.mkdirSync(inner, { recursive: true });
+    fs.chmodSync(locked, 0o000);
+    try {
+      const facts = await HANDLERS.projectFacts({ dir: inner, engineId: 'claude' });
+      assert.equal(facts.exists, true, 'the directory is there, and saying otherwise is a lie');
+      assert.equal(facts.code, 'EACCES');
+      assert.match(facts.unreadable, /permission denied/);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+});

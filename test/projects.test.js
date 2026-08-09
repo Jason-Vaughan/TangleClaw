@@ -6,6 +6,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
+// The config READER moved out of `store` into its own dependency-free module
+// (#884) so the killable scanner child can use it. Stubs must follow the code:
+// stubbing `projectConfigModule.load` no longer reaches the callers below.
+const projectConfigModule = require('../lib/project-config');
 const projects = require('../lib/projects');
 const engines = require('../lib/engines');
 
@@ -30,6 +34,415 @@ describe('projects', () => {
   after(() => {
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Enriching a registered project used to read that project's own directory on
+  // this process's event loop — `fs.existsSync` plus `engines.governanceState`
+  // beneath it — on the route the dashboard polls every ten seconds. #883 moved
+  // the walk for UNREGISTERED folders into a killable child and left this half
+  // standing, so a single TCC-protected project directory still wedged every
+  // route. These pin the delegation and the degradation; whether the scanner
+  // really kills a hung child is `test/dir-scanner.test.js`'s job, and the
+  // handler's own answers are in `test/dir-scanner-child.test.js`.
+  describe('enrichment reads a project directory in the scanner child (#884)', () => {
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * The rejection the scanner produces when a path never answered.
+     * @returns {Error}
+     */
+    function timedOut() {
+      return Object.assign(new Error('timed out after 2000ms reading /nowhere'),
+        { tcTimedOut: true });
+    }
+
+    /**
+     * Run `fn` with BOTH scanner entry points replaced, then restore them.
+     *
+     * Both, deliberately. `lib/dir-scanner.js` runs two scanners — a polled one
+     * that opts into the per-path failure backoff and an interactive one that
+     * does not — and which of them a read travels on is the thing most likely to
+     * regress silently here, because using the wrong one still returns a correct
+     * answer on a healthy machine. Stubbing only the polled entry point would let
+     * an operator-path read fall through to a real child and pass.
+     *
+     * @param {Function} fake - Stand-in, called as (kind, op, payload, opts).
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fake, fn) {
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      dirScanner.request = (op, payload, opts) => fake('polled', op, payload, opts);
+      dirScanner.interactiveRequest = (op, payload, opts) => fake('interactive', op, payload, opts);
+      try {
+        return await fn();
+      } finally {
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    it('asks the scanner for every registered project, keyed by its own path', async () => {
+      projects.createProject({ name: 'facts-delegation' });
+      const seen = [];
+      await withScanner(
+        (kind, op, payload, opts) => {
+          seen.push({ kind, op, payload, opts });
+          return Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+        },
+        () => projects.listProjects()
+      );
+
+      assert.ok(seen.length > 0, 'the fixture must have registered projects to enrich');
+      const mine = seen.find((r) => r.payload.dir.endsWith('facts-delegation'));
+      assert.ok(mine, 'the project under test must have reached the scanner');
+      assert.equal(mine.op, 'projectFacts');
+      // THE MUTATION THIS CATCHES: dropping `pathKey` on the poll. Without it the
+      // supervisor's backoff cannot fire, so an unreadable directory costs a
+      // killed child on every ten-second poll forever — and a child blocked in
+      // the kernel may never leave the process table.
+      assert.equal(mine.kind, 'polled', 'the dashboard poll reads on the polled scanner');
+      assert.equal(mine.opts.pathKey, mine.payload.dir,
+        'the poll must opt into the per-path backoff, since nobody asked for this read');
+    });
+
+    it('an operator-pressed read never rides the poll\'s backoff or its child', async () => {
+      // THE REGRESSION THIS EXISTS FOR. `enrichProject` gathers its own facts for
+      // eight callers, every one of them operator-pressed — attach, PATCH, launch
+      // a session, migrate, the continuity routes. Sending those through the
+      // polled scanner means someone who grants Full Disk Access and presses the
+      // button again is answered from a remembered refusal for up to five
+      // minutes, and their click can be killed as collateral for a hung poll.
+      // Both halves were recorded decisions before this code existed
+      // (architecture.md Decision 8, and lib/dir-scanner.js's own export block),
+      // and shipping the second half is a defect this project has already had
+      // once, in #883 chunk 2.
+      projects.createProject({ name: 'facts-operator' });
+      const row = store.projects.getByName('facts-operator');
+
+      const seen = [];
+      await withScanner(
+        (kind, op, payload, opts) => {
+          seen.push({ kind, opts });
+          return Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+        },
+        () => projects.enrichProject(row)
+      );
+
+      assert.equal(seen.length, 1, 'exactly one read for a single project');
+      assert.equal(seen[0].kind, 'interactive',
+        'an operator-pressed read must not share a child with the dashboard poll');
+      assert.equal(seen[0].opts.pathKey, undefined,
+        'and must not be answered from the poll\'s failure backoff');
+    });
+
+    it('one unreadable project does not cost the others their governance state', async () => {
+      // The acceptance criterion. Before this, one protected directory did not
+      // degrade one card — it stopped the process answering anything at all.
+      projects.createProject({ name: 'facts-healthy' });
+      projects.createProject({ name: 'facts-stuck' });
+
+      const list = await withScanner(
+        (kind, op, payload) => (payload.dir.endsWith('facts-stuck')
+          ? Promise.reject(timedOut())
+          : Promise.resolve({ exists: true, governanceState: 'governed-plugin' })),
+        () => projects.listProjects()
+      );
+
+      const stuck = list.find((p) => p.name === 'facts-stuck');
+      const healthy = list.find((p) => p.name === 'facts-healthy');
+      assert.ok(stuck && healthy, 'both projects must still be listed');
+      assert.equal(healthy.governanceState, 'governed-plugin',
+        'a healthy project keeps its real answer while a sibling is stuck');
+      assert.equal(stuck.governanceState, 'not-applicable');
+      assert.match(stuck.unreadable, /timed out/,
+        'and the one that failed says so, rather than being indistinguishable from a missing folder');
+      assert.equal(healthy.unreadable, null,
+        'the healthy project carries no failure reason');
+      // A directory that did not answer is the ONE case the Full Disk Access
+      // advice fits, and it is the reason the flag exists — dropping the remedy
+      // leaves an operator with a broken card and no next step.
+      assert.match(stuck.unreadableHint, /Full Disk Access/,
+        'a path that did not answer must carry the remedy for the reason it usually did not');
+      assert.equal(healthy.unreadableHint, null,
+        'and a healthy project must not be told to change its permissions');
+    });
+
+    it('enrichProject runs no git subprocess when the facts already carry git', async () => {
+      // THE MUTATION THIS CATCHES: `facts.exists ? git.getInfo(project.path) : null`
+      // in place of `facts.git`. That reads identically — same branch, same values,
+      // every other assertion green — while putting `execSync` back on the event
+      // loop, which is the entire defect. Nothing about the RESULT distinguishes
+      // the two, so the test has to observe the call rather than the value.
+      const git = require('../lib/git');
+      projects.createProject({ name: 'facts-nogitcall' });
+      const row = store.projects.getByName('facts-nogitcall');
+
+      const realGetInfo = git.getInfo;
+      let called = 0;
+      git.getInfo = (...args) => { called++; return realGetInfo(...args); };
+      try {
+        const enriched = await projects.enrichProject(row, {
+          exists: true,
+          governanceState: 'ungoverned',
+          git: { branch: 'from-the-child', dirty: false },
+          config: null,
+          unreadable: null,
+          unreadableHint: null
+        });
+        assert.equal(enriched.git.branch, 'from-the-child',
+          'the git info must be the one the child supplied');
+      } finally {
+        git.getInfo = realGetInfo;
+      }
+
+      assert.equal(called, 0,
+        'enrichProject must not shell out to git when the scanner already answered');
+    });
+
+    it('enrichProject reads no version from disk — it reports what the child detected', async () => {
+      // THE MUTATION THIS CATCHES: restoring `_detectProjectVersion(project.path)`
+      // here. The fixture is what makes that observable: the project's directory
+      // carries version.json at 1.0.0, while the facts say 9.9.9. Reading disk
+      // returns 1.0.0 and every other assertion in this file stays green, because
+      // the value is still a plausible version from a real file — which is exactly
+      // how the last synchronous read in this function would come back unnoticed.
+      projects.createProject({ name: 'facts-noversionread' });
+      const row = store.projects.getByName('facts-noversionread');
+      fs.writeFileSync(path.join(row.path, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+
+      const enriched = await projects.enrichProject(row, {
+        exists: true,
+        governanceState: 'ungoverned',
+        git: null,
+        config: null,
+        version: '9.9.9',
+        unreadable: null,
+        unreadableHint: null
+      });
+
+      assert.equal(enriched.version, '9.9.9',
+        'the version must be the child\'s answer, not one re-read here');
+    });
+
+    it('a project whose directory would not answer carries no version at all', async () => {
+      // The honest degrade. A directory that never replied has no known version,
+      // and the alternative — the detection chain's `0.0.0-dev` fallback — would
+      // render on the card as a fact the server never established.
+      projects.createProject({ name: 'facts-versionless' });
+      const row = store.projects.getByName('facts-versionless');
+
+      const enriched = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.enrichProject(row)
+      );
+
+      assert.equal(enriched.version, null);
+      assert.match(enriched.unreadableHint, /Full Disk Access/,
+        'and it still says why, so the null is attributable');
+    });
+
+    it('issues one scanner request at a time, so a deadline never times the queue', async () => {
+      // THE MUTATION THIS CATCHES: `Promise.all(projects.map(readProjectFacts))`.
+      // The child is single-threaded and each request now runs ~six execSync git
+      // spawns, but `dir-scanner.js` starts a request's timer when it is ISSUED,
+      // not when the child picks it up — so firing N at once put N deadlines on a
+      // serial queue. The tail spent its deadline waiting its turn, and expiring
+      // killed the SHARED child: healthy siblings came back aborted, one earned
+      // the Full Disk Access hint this module exists to prevent, and they entered
+      // the 30s→5min backoff. It scaled with project count, and no test here used
+      // more than two projects.
+      for (const n of ['seq-a', 'seq-b', 'seq-c', 'seq-d']) projects.createProject({ name: n });
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      await withScanner(
+        () => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          // Resolve on a later turn, so an overlapping issue is observable at all.
+          return new Promise((resolve) => setImmediate(() => {
+            inFlight--;
+            resolve({ exists: true, governanceState: 'ungoverned' });
+          }));
+        },
+        () => projects.listProjects()
+      );
+
+      assert.ok(maxInFlight > 0, 'the fixture must actually have reached the scanner');
+      assert.equal(maxInFlight, 1,
+        'the poll must not have two directory reads outstanding against a serial child');
+    });
+
+    it('translates every failure shape into the code #885 branches on', async () => {
+      // THE MUTATION THIS CATCHES: deleting any of the three lines that produce
+      // `unreadableCode`. It shipped as a documented contract field — the one
+      // `api-contract.md` tells consumers to branch on instead of parsing prose —
+      // with no assertion anywhere, which is the third time in this issue that a
+      // fix for a review finding arrived without a guard. The child-side check
+      // asserts the raw `code`, which never crosses `readProjectFacts`, so the
+      // translation itself was the untested part.
+      projects.createProject({ name: 'facts-codes' });
+      const row = store.projects.getByName('facts-codes');
+
+      /**
+       * Enrich this one project with a scanner that answers `answer`.
+       * @param {Function} answer - Stand-in reply or rejection.
+       * @returns {Promise<object>} The enriched record.
+       */
+      const enrichWith = (answer) => withScanner(answer, () => projects.enrichProject(row));
+
+      const timedOut = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('timed out after 5000ms'), { tcTimedOut: true })));
+      assert.equal(timedOut.unreadableCode, 'SCAN_TIMEOUT');
+      assert.match(timedOut.unreadableHint, /Full Disk Access/);
+
+      const cached = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('not answering'), { tcTimedOut: true, tcCached: true })));
+      assert.equal(cached.unreadableCode, 'SCAN_CACHED',
+        'a remembered refusal is distinguishable from a fresh one');
+
+      const aborted = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('killed for another path'), { tcAborted: true })));
+      assert.equal(aborted.unreadableCode, 'SCAN_ABORTED');
+      assert.equal(aborted.unreadableHint, null,
+        'collateral earns no remedy — its own directory may be fine');
+
+      const failed = await enrichWith(() => Promise.reject(
+        Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' })));
+      assert.equal(failed.unreadableCode, 'SCAN_FAILED');
+
+      // The child's own refusal: it answers rather than rejecting, and its raw
+      // `code` must be TRANSLATED onto the caller's field rather than forwarded
+      // as a second vocabulary.
+      const refused = await enrichWith(() => Promise.resolve({
+        exists: true, governanceState: 'not-applicable', git: null, config: null,
+        unreadable: 'the directory is there but this server may not read it (permission denied)',
+        code: 'EACCES'
+      }));
+      assert.equal(refused.unreadableCode, 'EACCES');
+      assert.match(refused.unreadable, /permission denied/);
+
+      const healthy = await enrichWith(() => Promise.resolve(
+        { exists: true, governanceState: 'ungoverned', git: null, config: null }));
+      assert.equal(healthy.unreadableCode, null, 'and a healthy project carries no code');
+    });
+
+    it('getProjectRow answers from the database without touching the scanner', async () => {
+      // R-11 from Chunk 01's review. Eight routes — the four continuity readers,
+      // both upload routes, delete and session launch — use a project lookup only
+      // as a 404 guard plus `path`. Enriching them meant a cross-process round
+      // trip to answer a question they never ask.
+      projects.createProject({ name: 'facts-rowonly' });
+
+      let reached = false;
+      const row = await withScanner(
+        () => { reached = true; return Promise.resolve({ exists: true, governanceState: 'ungoverned' }); },
+        () => projects.getProjectRow('facts-rowonly')
+      );
+
+      assert.ok(row, 'the row must still be returned');
+      assert.equal(row.name, 'facts-rowonly');
+      assert.ok(row.path, 'and must carry the path those callers need');
+      // THE MUTATION THIS CATCHES: routing getProjectRow back through
+      // enrichProject "for consistency". That is a whole process spawned to
+      // answer a question with a database row.
+      assert.equal(reached, false, 'and no scanner request may be made for it');
+      assert.equal(row.governanceState, undefined,
+        'a row is deliberately not an enriched record — a caller needing that wants getProject');
+    });
+
+    it('returns null for a project that does not exist, like getProject', async () => {
+      assert.equal(projects.getProjectRow('no-such-project-anywhere'), null);
+    });
+
+    it('a read cancelled for a SIBLING\'s hang is not blamed on its own directory', async () => {
+      // THE MUTATION THIS CATCHES: collapsing the catch back to one branch, so
+      // every failure earns the Full Disk Access remedy. `tcAborted` means this
+      // request died because the supervisor killed the child to reclaim a thread
+      // some OTHER path blocked — this directory may be perfectly healthy, and
+      // telling the operator to change permissions because of it is precisely
+      // the misdiagnosis the whole scanner exists to remove. R-16 of #884's first
+      // review shipped exactly this collapse, because nothing tested the branch.
+      projects.createProject({ name: 'facts-collateral' });
+
+      const list = await withScanner(
+        (kind, op, payload) => (payload.dir.endsWith('facts-collateral')
+          ? Promise.reject(Object.assign(
+            new Error('the scanner process was killed after another request stopped responding'),
+            { tcAborted: true }))
+          : Promise.resolve({ exists: true, governanceState: 'ungoverned' })),
+        () => projects.listProjects()
+      );
+
+      const collateral = list.find((p) => p.name === 'facts-collateral');
+      assert.ok(collateral, 'the project must still be listed');
+      assert.ok(collateral.unreadable, 'and must say it could not be read');
+      assert.equal(collateral.unreadableHint, null,
+        'but must NOT be given the Full Disk Access remedy — its own path may be fine');
+      // Asserted on the REASON, not just the absent hint: the hint is already
+      // null for a collateral abort whichever branch runs, because it is gated on
+      // tcTimedOut/tcCached. So an assertion about the hint alone passes with the
+      // branch deleted, which is a guard that guards nothing. What actually
+      // differs is what this says happened.
+      assert.match(collateral.unreadable, /cancelled/,
+        'a collateral abort must read as cancelled, not as a directory that would not answer');
+      assert.doesNotMatch(collateral.unreadable, /did not answer/,
+        'because its own directory was never asked and may be perfectly healthy');
+    });
+
+    it('does not WARN about a healthy directory that was only collateral', async () => {
+      // The other half, and the operator-visible one. A collateral abort logging
+      // at WARN puts "Could not read a project directory" in the log naming a
+      // path that is fine — the same misdiagnosis in the log that the tcTimedOut
+      // hint avoids in the UI. The kill that caused it is already logged once, by
+      // the supervisor, naming the path that actually hung.
+      const logger = require('../lib/logger');
+      projects.createProject({ name: 'facts-quiet' });
+
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
+      try {
+        await withScanner(
+          (kind, op, payload) => (payload.dir.endsWith('facts-quiet')
+            ? Promise.reject(Object.assign(new Error('killed'), { tcAborted: true }))
+            : Promise.resolve({ exists: true, governanceState: 'ungoverned' })),
+          () => projects.listProjects()
+        );
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+
+      assert.doesNotMatch(chunks.join(''), /facts-quiet/,
+        'a directory that was never actually read must not be named in a warning');
+    });
+
+    it('enrichProject reads the facts itself when a caller does not supply them', async () => {
+      // THE MUTATION THIS CATCHES: defaulting the `facts` parameter to a
+      // plausible-looking literal. An earlier draft defaulted it to the shape a
+      // missing directory produces; the eight call sites that pass nothing then
+      // reported every project as having no governance, and nothing failed. An
+      // omitted argument must make this function do the read — slower, never
+      // silently wrong.
+      projects.createProject({ name: 'facts-unsupplied' });
+      const row = store.projects.getByName('facts-unsupplied');
+
+      let asked = false;
+      const enriched = await withScanner(
+        (kind, op, payload) => {
+          if (payload.dir === row.path) asked = true;
+          return Promise.resolve({ exists: true, governanceState: 'governed-vendored' });
+        },
+        () => projects.enrichProject(row)
+      );
+
+      assert.ok(asked, 'enrichProject must gather facts when none were passed in');
+      assert.equal(enriched.governanceState, 'governed-vendored');
+    });
   });
 
   describe('validateName', () => {
@@ -218,7 +631,7 @@ describe('projects', () => {
       });
 
       assert.ok(result.project);
-      const projConfig = store.projectConfig.load(result.project.path);
+      const projConfig = projectConfigModule.load(result.project.path);
       // Core rules should always be true
       assert.equal(projConfig.rules.core.changelogPerChange, true);
       assert.equal(projConfig.rules.core.jsdocAllFunctions, true);
@@ -294,7 +707,7 @@ describe('projects', () => {
         // and via the store-level test below.
         try { fs.mkdirSync(otherDir); } catch { return; }
         try {
-          const result = projects.attachProject('Attach-Case');
+          const result = await projects.attachProject('Attach-Case');
           assert.equal(result.project, null, 'attach must reject case-collision');
           assert.match(result.errors[0], /already registered/);
           assert.match(result.errors[0], /case-insensitive|attach-case/i,
@@ -308,7 +721,7 @@ describe('projects', () => {
 
   describe('getProject / listProjects', () => {
     it('getProject returns enriched project', async () => {
-      const project = projects.getProject('new-project');
+      const project = await projects.getProject('new-project');
       assert.ok(project);
       assert.equal(project.name, 'new-project');
       assert.ok(project.hasOwnProperty('engine'));
@@ -319,18 +732,18 @@ describe('projects', () => {
     });
 
     it('getProject returns null for unknown', async () => {
-      assert.equal(projects.getProject('nonexistent'), null);
+      assert.equal(await projects.getProject('nonexistent'), null);
     });
 
     it('listProjects returns array of enriched projects', async () => {
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(Array.isArray(list));
       assert.ok(list.length > 0);
       assert.ok(list[0].hasOwnProperty('engine'));
     });
 
     it('listProjects filters by tag', async () => {
-      const list = projects.listProjects({ tag: 'node' });
+      const list = await projects.listProjects({ tag: 'node' });
       for (const p of list) {
         assert.ok(p.tags.includes('node'));
       }
@@ -365,21 +778,21 @@ describe('projects', () => {
 
     it('surfaces ungoverned for a Claude project with no governance installed', async () => {
       makeProject('gov-drift');
-      assert.equal(projects.getProject('gov-drift').governanceState, 'ungoverned');
+      assert.equal((await projects.getProject('gov-drift')).governanceState, 'ungoverned');
     });
 
     it('surfaces governed-plugin once the V2 plugin ref is present', async () => {
       makeProject('gov-plugin', { settings: { enabledPlugins: { 'prawduct@prawduct': true } } });
-      assert.equal(projects.getProject('gov-plugin').governanceState, 'governed-plugin');
+      assert.equal((await projects.getProject('gov-plugin')).governanceState, 'governed-plugin');
     });
 
     it('surfaces not-applicable for a non-Claude project', async () => {
       makeProject('gov-na', { engine: 'gemini' });
-      assert.equal(projects.getProject('gov-na').governanceState, 'not-applicable');
+      assert.equal((await projects.getProject('gov-na')).governanceState, 'not-applicable');
     });
 
     it('every listProjects entry carries a governanceState field', async () => {
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(list.length > 0);
       for (const p of list) {
         assert.ok(p.hasOwnProperty('governanceState'),
@@ -441,7 +854,7 @@ describe('projects', () => {
       assert.equal(proj.engineId, 'codex');
 
       const projPath = path.join(projectsDir, 'db-engine-wins');
-      const projConfig = store.projectConfig.load(projPath);
+      const projConfig = projectConfigModule.load(projPath);
       delete projConfig.engine; // legacy project.json with no engine key
       store.projectConfig.save(projPath, projConfig);
 
@@ -494,13 +907,13 @@ describe('projects', () => {
 
   describe('updateProject', () => {
     it('updates tags', async () => {
-      const result = projects.updateProject('new-project', { tags: ['updated'] });
+      const result = await projects.updateProject('new-project', { tags: ['updated'] });
       assert.ok(result.project);
       assert.deepEqual(result.project.tags, ['updated']);
     });
 
     it('rejects core rule disabling', async () => {
-      const result = projects.updateProject('new-project', {
+      const result = await projects.updateProject('new-project', {
         rules: { core: { changelogPerChange: false } }
       });
       assert.equal(result.project, null);
@@ -508,108 +921,108 @@ describe('projects', () => {
     });
 
     it('updates extension rules', async () => {
-      const result = projects.updateProject('new-project', {
+      const result = await projects.updateProject('new-project', {
         rules: { extensions: { identitySentry: true } }
       });
       assert.ok(result.project);
-      const projConfig = store.projectConfig.load(result.project.path);
+      const projConfig = projectConfigModule.load(result.project.path);
       assert.equal(projConfig.rules.extensions.identitySentry, true);
     });
 
     it('returns error for unknown project', async () => {
-      const result = projects.updateProject('nonexistent', { tags: [] });
+      const result = await projects.updateProject('nonexistent', { tags: [] });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('not found'));
     });
 
     it('updates quick commands', async () => {
       const cmds = [{ label: 'test', command: 'echo test' }];
-      const result = projects.updateProject('new-project', { quickCommands: cmds });
+      const result = await projects.updateProject('new-project', { quickCommands: cmds });
       assert.ok(result.project);
-      const projConfig = store.projectConfig.load(result.project.path);
+      const projConfig = projectConfigModule.load(result.project.path);
       assert.deepEqual(projConfig.quickCommands, cmds);
     });
 
     // CC-6 (#381): per-project wrap-section selection.
     it('persists a valid wrapSections selection + enriches it', async () => {
-      const result = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Next action', 'Freshness'] });
+      const result = await projects.updateProject('new-project', { wrapSections: ['Where we are', 'Next action', 'Freshness'] });
       assert.ok(result.project);
       assert.deepEqual(result.project.wrapSections, ['Where we are', 'Next action', 'Freshness']);
-      const projConfig = store.projectConfig.load(result.project.path);
+      const projConfig = projectConfigModule.load(result.project.path);
       assert.deepEqual(projConfig.wrapSections, ['Where we are', 'Next action', 'Freshness']);
     });
 
     it('clears the wrapSections override when set to null (deep default)', async () => {
-      projects.updateProject('new-project', { wrapSections: ['Freshness'] });
-      const result = projects.updateProject('new-project', { wrapSections: null });
+      await projects.updateProject('new-project', { wrapSections: ['Freshness'] });
+      const result = await projects.updateProject('new-project', { wrapSections: null });
       assert.ok(result.project);
       assert.equal(result.project.wrapSections, null);
-      const projConfig = store.projectConfig.load(result.project.path);
+      const projConfig = projectConfigModule.load(result.project.path);
       assert.equal(projConfig.wrapSections, null);
     });
 
     it('rejects wrapSections that is not an array or contains unknown names', async () => {
-      const notArray = projects.updateProject('new-project', { wrapSections: 'Freshness' });
+      const notArray = await projects.updateProject('new-project', { wrapSections: 'Freshness' });
       assert.equal(notArray.project, null);
       assert.ok(notArray.errors[0].includes('wrapSections'));
 
-      const bogus = projects.updateProject('new-project', { wrapSections: ['Where we are', 'Bogus'] });
+      const bogus = await projects.updateProject('new-project', { wrapSections: ['Where we are', 'Bogus'] });
       assert.equal(bogus.project, null);
       assert.ok(bogus.errors[0].includes('wrapSections'));
     });
 
     // MED-2K9P Chunk 02: per-project Medusa session-comms auto-enable.
     it('defaults medusaEnabled to false on enrich', async () => {
-      const result = projects.updateProject('new-project', { tags: ['x'] });
+      const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
       assert.equal(result.project.medusaEnabled, false);
     });
 
     it('persists medusaEnabled and round-trips it through enrich', async () => {
-      const on = projects.updateProject('new-project', { medusaEnabled: true });
+      const on = await projects.updateProject('new-project', { medusaEnabled: true });
       assert.ok(on.project);
       assert.equal(on.project.medusaEnabled, true);
-      assert.equal(store.projectConfig.load(on.project.path).medusaEnabled, true);
+      assert.equal(projectConfigModule.load(on.project.path).medusaEnabled, true);
 
-      const off = projects.updateProject('new-project', { medusaEnabled: false });
+      const off = await projects.updateProject('new-project', { medusaEnabled: false });
       assert.equal(off.project.medusaEnabled, false);
-      assert.equal(store.projectConfig.load(off.project.path).medusaEnabled, false);
+      assert.equal(projectConfigModule.load(off.project.path).medusaEnabled, false);
     });
 
     it('rejects a non-boolean medusaEnabled without mutating state', async () => {
-      projects.updateProject('new-project', { medusaEnabled: true });
-      const bad = projects.updateProject('new-project', { medusaEnabled: 'yes' });
+      await projects.updateProject('new-project', { medusaEnabled: true });
+      const bad = await projects.updateProject('new-project', { medusaEnabled: 'yes' });
       assert.equal(bad.project, null);
       assert.ok(bad.errors[0].includes('medusaEnabled'));
       // Prior true value is untouched by the rejected update.
-      assert.equal(store.projectConfig.load(store.projects.getByName('new-project').path).medusaEnabled, true);
+      assert.equal(projectConfigModule.load(store.projects.getByName('new-project').path).medusaEnabled, true);
     });
 
     // MED-2K9P v2 T2: per-project idle-gated wake opt-in (same shape as medusaEnabled).
     it('defaults medusaWake to false on enrich', async () => {
-      const result = projects.updateProject('new-project', { tags: ['x'] });
+      const result = await projects.updateProject('new-project', { tags: ['x'] });
       assert.ok(result.project);
       assert.equal(result.project.medusaWake, false);
     });
 
     it('persists medusaWake and round-trips it through enrich', async () => {
-      const on = projects.updateProject('new-project', { medusaWake: true });
+      const on = await projects.updateProject('new-project', { medusaWake: true });
       assert.ok(on.project);
       assert.equal(on.project.medusaWake, true);
-      assert.equal(store.projectConfig.load(on.project.path).medusaWake, true);
+      assert.equal(projectConfigModule.load(on.project.path).medusaWake, true);
 
-      const off = projects.updateProject('new-project', { medusaWake: false });
+      const off = await projects.updateProject('new-project', { medusaWake: false });
       assert.equal(off.project.medusaWake, false);
-      assert.equal(store.projectConfig.load(off.project.path).medusaWake, false);
+      assert.equal(projectConfigModule.load(off.project.path).medusaWake, false);
     });
 
     it('rejects a non-boolean medusaWake without mutating state', async () => {
-      projects.updateProject('new-project', { medusaWake: true });
-      const bad = projects.updateProject('new-project', { medusaWake: 'yes' });
+      await projects.updateProject('new-project', { medusaWake: true });
+      const bad = await projects.updateProject('new-project', { medusaWake: 'yes' });
       assert.equal(bad.project, null);
       assert.ok(bad.errors[0].includes('medusaWake'));
       // Prior true value is untouched by the rejected update.
-      assert.equal(store.projectConfig.load(store.projects.getByName('new-project').path).medusaWake, true);
+      assert.equal(projectConfigModule.load(store.projects.getByName('new-project').path).medusaWake, true);
     });
 
     // #428: per-project active-plan pick (the drawer plan-picker → activePlan).
@@ -622,24 +1035,24 @@ describe('projects', () => {
       });
 
       it('persists a valid activePlan filename to project.json', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const result = await projects.updateProject('new-project', { activePlan: 'chosen.md' });
         assert.ok(result.project);
-        const cfg = store.projectConfig.load(result.project.path);
+        const cfg = projectConfigModule.load(result.project.path);
         assert.equal(cfg.activePlan, 'chosen.md');
       });
 
       it('round-trips: priming-roll._readActivePlan reads back the persisted pick', async () => {
         const primingRoll = require('../lib/wrap-steps/priming-roll');
-        projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        await projects.updateProject('new-project', { activePlan: 'chosen.md' });
         const projPath = path.join(projectsDir, 'new-project');
         assert.equal(primingRoll._readActivePlan(projPath), 'chosen.md');
       });
 
       it('clears activePlan when set to null', async () => {
-        projects.updateProject('new-project', { activePlan: 'chosen.md' });
-        const result = projects.updateProject('new-project', { activePlan: null });
+        await projects.updateProject('new-project', { activePlan: 'chosen.md' });
+        const result = await projects.updateProject('new-project', { activePlan: null });
         assert.ok(result.project);
-        const cfg = store.projectConfig.load(result.project.path);
+        const cfg = projectConfigModule.load(result.project.path);
         assert.equal(cfg.activePlan, undefined, 'null must delete the key, not store null');
       });
 
@@ -652,44 +1065,44 @@ describe('projects', () => {
         fs.mkdirSync(tcPlans, { recursive: true });
         fs.writeFileSync(path.join(tcPlans, 'current.md'), '### Chunk 1: A\n');
         try {
-          const result = projects.updateProject('new-project', { activePlan: 'current.md' });
+          const result = await projects.updateProject('new-project', { activePlan: 'current.md' });
           assert.ok(result.project, `expected accept, got: ${JSON.stringify(result.errors)}`);
-          const cfg = store.projectConfig.load(result.project.path);
+          const cfg = projectConfigModule.load(result.project.path);
           assert.equal(cfg.activePlan, 'current.md');
-          projects.updateProject('new-project', { activePlan: null });
+          await projects.updateProject('new-project', { activePlan: null });
         } finally {
           fs.rmSync(tcPlans, { recursive: true, force: true });
         }
       });
 
       it('rejects a filename that does not exist under the resolved plans directory', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 'ghost.md' });
+        const result = await projects.updateProject('new-project', { activePlan: 'ghost.md' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /activePlan .* not found/);
       });
 
       it('rejects a non-.md filename even if the file exists', async () => {
         fs.writeFileSync(path.join(planDir, 'notes.txt'), 'x');
-        const result = projects.updateProject('new-project', { activePlan: 'notes.txt' });
+        const result = await projects.updateProject('new-project', { activePlan: 'notes.txt' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /not found/);
       });
 
       it('rejects a path-bearing activePlan (traversal-safe)', async () => {
-        const result = projects.updateProject('new-project', { activePlan: '../../etc/passwd' });
+        const result = await projects.updateProject('new-project', { activePlan: '../../etc/passwd' });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /bare plan filename/);
       });
 
       it('rejects a non-string activePlan', async () => {
-        const result = projects.updateProject('new-project', { activePlan: 42 });
+        const result = await projects.updateProject('new-project', { activePlan: 42 });
         assert.equal(result.project, null);
         assert.match(result.errors[0], /activePlan must be a string/);
       });
     });
 
-    describe('rename — case-insensitive collision handling (#221, sibling to #188)', () => {
-      it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', (t) => {
+    describe('rename — case-insensitive collision handling (#221, sibling to #188)', async () => {
+      it('allows a case-only self-rename at the DB-validator level (foo-1 → Foo-1)', async (t) => {
         // Set up a discrete project so other tests' state doesn't interfere.
         projects.createProject({ name: 'self-rename-src' });
 
@@ -707,7 +1120,7 @@ describe('projects', () => {
           return;
         }
 
-        const result = projects.updateProject('self-rename-src', { name: 'Self-Rename-Src' });
+        const result = await projects.updateProject('self-rename-src', { name: 'Self-Rename-Src' });
         assert.ok(result.project, 'case-only self-rename must be allowed by the validator');
         assert.equal(result.errors.length, 0);
         assert.equal(result.project.name, 'Self-Rename-Src',
@@ -718,7 +1131,7 @@ describe('projects', () => {
         projects.createProject({ name: 'collision-dest' });
         projects.createProject({ name: 'rename-src' });
 
-        const result = projects.updateProject('rename-src', { name: 'Collision-Dest' });
+        const result = await projects.updateProject('rename-src', { name: 'Collision-Dest' });
         assert.equal(result.project, null, 'cross-rename to a case-collision must be rejected');
         assert.ok(result.errors.length > 0);
         assert.match(result.errors[0], /collision-dest/, 'error cites the OTHER project');
@@ -730,7 +1143,7 @@ describe('projects', () => {
         projects.createProject({ name: 'exact-rename-target' });
         projects.createProject({ name: 'rename-source-2' });
 
-        const result = projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
+        const result = await projects.updateProject('rename-source-2', { name: 'exact-rename-target' });
         assert.equal(result.project, null);
         assert.equal(result.errors[0], 'Project "exact-rename-target" already exists',
           'exact-case collision keeps the legacy error format — no spurious case-insensitive suffix');
@@ -1435,7 +1848,7 @@ describe('projects', () => {
       const attachDir = path.join(projectsDir, 'attachable');
       fs.mkdirSync(attachDir, { recursive: true });
 
-      const result = projects.attachProject('attachable');
+      const result = await projects.attachProject('attachable');
       assert.ok(result.project);
       assert.equal(result.project.name, 'attachable');
 
@@ -1453,7 +1866,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(attachDir, '.tangleclaw', 'project.json'),
         JSON.stringify({ engine: 'codex' }));
 
-      const result = projects.attachProject('has-config');
+      const result = await projects.attachProject('has-config');
       assert.ok(result.project);
       // Should use engine from existing config
       const dbProject = store.projects.getByName('has-config');
@@ -1461,19 +1874,19 @@ describe('projects', () => {
     });
 
     it('rejects already registered project', async () => {
-      const result = projects.attachProject('new-project');
+      const result = await projects.attachProject('new-project');
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('already registered'));
     });
 
     it('rejects non-existent directory', async () => {
-      const result = projects.attachProject('does-not-exist-xyz');
+      const result = await projects.attachProject('does-not-exist-xyz');
       assert.equal(result.project, null);
       assert.ok(result.errors[0].includes('not found'));
     });
 
     it('rejects invalid name', async () => {
-      const result = projects.attachProject('bad name!');
+      const result = await projects.attachProject('bad name!');
       assert.equal(result.project, null);
       assert.ok(result.errors.length > 0);
     });
@@ -1484,7 +1897,7 @@ describe('projects', () => {
       const result = projects.archiveProject('attachable');
       assert.ok(result.success);
       // Should not appear in default list
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(!list.some(p => p.name === 'attachable'));
     });
 
@@ -1521,7 +1934,7 @@ describe('projects', () => {
       const result = projects.unarchiveProject('attachable');
       assert.ok(result.success);
       // Should appear in default list again
-      const list = projects.listProjects();
+      const list = await projects.listProjects();
       assert.ok(list.some(p => p.name === 'attachable'));
     });
 
@@ -1568,7 +1981,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.5.0' }));
 
       const registered = store.projects.create({ name: 'ver-test-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.5.0');
     });
 
@@ -1577,7 +1990,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
 
       const registered = store.projects.create({ name: 'ver-test-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1587,7 +2000,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ name: 'test' }));
 
       const registered = store.projects.create({ name: 'ver-test-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1597,7 +2010,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), 'not json{{{');
 
       const registered = store.projects.create({ name: 'ver-test-4', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1612,7 +2025,7 @@ describe('projects', () => {
       );
 
       const registered = store.projects.create({ name: 'ver-cache-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '9.9.9-rc1');
     });
 
@@ -1635,7 +2048,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0-from-packagejson' }));
 
       const registered = store.projects.create({ name: 'ver-cache-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0-from-changelog');
     });
 
@@ -1650,7 +2063,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '5.5.5' }));
 
       const registered = store.projects.create({ name: 'ver-cache-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '5.5.5');
     });
 
@@ -1663,7 +2076,7 @@ describe('projects', () => {
       );
 
       const registered = store.projects.create({ name: 'ver-cl-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
 
@@ -1674,7 +2087,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '0.1.0' }));
 
       const registered = store.projects.create({ name: 'ver-cl-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '0.1.0');
     });
 
@@ -1686,7 +2099,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-cl-3', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '2.0.0');
     });
 
@@ -1696,7 +2109,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '3.12.7' }));
 
       const registered = store.projects.create({ name: 'ver-vj-1', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.12.7');
     });
 
@@ -1707,7 +2120,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-vj-2', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '3.0.0');
     });
 
@@ -1716,7 +2129,7 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
 
       const registered = store.projects.create({ name: 'ver-none', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, null);
     });
 
@@ -1812,7 +2225,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '1.0.0' }));
 
       const registered = store.projects.create({ name: 'ver-vj-num', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       // Should fall through to package.json since version.json had non-string
       assert.equal(enriched.version, '1.0.0');
     });
@@ -1852,7 +2265,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '2.2.2' }));
 
       const registered = store.projects.create({ name: 'ver-cache-ws', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       // Cache file should be rejected as empty → fall through to package.json
       assert.equal(enriched.version, '2.2.2');
     });
@@ -1874,7 +2287,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'package.json'), JSON.stringify({ version: '4.4.4' }));
 
       const registered = store.projects.create({ name: 'ver-layer4', path: projPath, engineId: 'claude-code' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.version, '4.4.4');
     });
   });
@@ -2056,9 +2469,9 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.0.0' }));
       fs.writeFileSync(path.join(projPath, 'VERSION.json'), JSON.stringify({ version: '9.9.9' }));
 
-      const savedLoad = store.projectConfig.load;
+      const savedLoad = projectConfigModule.load;
       try {
-        store.projectConfig.load = () => ({ versionFilePath: 'VERSION.json' });
+        projectConfigModule.load = () => ({ versionFilePath: 'VERSION.json' });
 
         // Outranks both probe rungs, and labels itself with the real file.
         assert.deepEqual(projects._detectLiveVersion(projPath),
@@ -2070,7 +2483,7 @@ describe('projects', () => {
         assert.deepEqual(projects._detectLiveVersion(projPath),
           { version: '3.0.0', source: 'CHANGELOG.md' });
       } finally {
-        store.projectConfig.load = savedLoad;
+        projectConfigModule.load = savedLoad;
       }
     });
 
@@ -2079,20 +2492,20 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       fs.writeFileSync(path.join(projPath, 'version.json'), JSON.stringify({ version: '2.0.0' }));
 
-      const savedLoad = store.projectConfig.load;
+      const savedLoad = projectConfigModule.load;
       try {
         // Points at a file that does not exist — detection degrades (the wrap
         // step refuses instead; that asymmetry is deliberate and documented).
-        store.projectConfig.load = () => ({ versionFilePath: 'nope.json' });
+        projectConfigModule.load = () => ({ versionFilePath: 'nope.json' });
         assert.deepEqual(projects._detectLiveVersion(projPath),
           { version: '2.0.0', source: 'version.json' });
 
         // And an escaping path is ignored rather than read.
-        store.projectConfig.load = () => ({ versionFilePath: '../../etc/passwd.json' });
+        projectConfigModule.load = () => ({ versionFilePath: '../../etc/passwd.json' });
         assert.deepEqual(projects._detectLiveVersion(projPath),
           { version: '2.0.0', source: 'version.json' });
       } finally {
-        store.projectConfig.load = savedLoad;
+        projectConfigModule.load = savedLoad;
       }
     });
   });
@@ -2115,7 +2528,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-default');
       fs.mkdirSync(projPath, { recursive: true });
       const registered = store.projects.create({ name: 'sp-default', path: projPath, engineId: 'claude' });
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.silentPrime, true);
     });
 
@@ -2123,10 +2536,10 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-on');
       fs.mkdirSync(projPath, { recursive: true });
       const registered = store.projects.create({ name: 'sp-on', path: projPath, engineId: 'claude' });
-      const projConfig = store.projectConfig.load(projPath);
+      const projConfig = projectConfigModule.load(projPath);
       projConfig.silentPrime = true;
       store.projectConfig.save(projPath, projConfig);
-      const enriched = projects.enrichProject(registered);
+      const enriched = await projects.enrichProject(registered);
       assert.equal(enriched.silentPrime, true);
     });
 
@@ -2134,10 +2547,10 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-update-on');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-update-on', path: projPath, engineId: 'claude' });
-      const result = projects.updateProject('sp-update-on', { silentPrime: true });
+      const result = await projects.updateProject('sp-update-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
-      const persisted = store.projectConfig.load(projPath);
+      const persisted = projectConfigModule.load(projPath);
       assert.equal(persisted.silentPrime, true);
     });
 
@@ -2146,14 +2559,14 @@ describe('projects', () => {
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-update-off', path: projPath, engineId: 'claude' });
       // Pre-seed to true so we can confirm the false update reaches disk
-      const seed = store.projectConfig.load(projPath);
+      const seed = projectConfigModule.load(projPath);
       seed.silentPrime = true;
       store.projectConfig.save(projPath, seed);
 
-      const result = projects.updateProject('sp-update-off', { silentPrime: false });
+      const result = await projects.updateProject('sp-update-off', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
-      assert.equal(store.projectConfig.load(projPath).silentPrime, false);
+      assert.equal(projectConfigModule.load(projPath).silentPrime, false);
     });
 
     it('updateProject rejects silentPrime=true when engine lacks the capability', async () => {
@@ -2162,7 +2575,7 @@ describe('projects', () => {
       // 'codex' / 'gemini' / 'aider' do not advertise supportsSilentPrime; using a definitely-missing id
       // is even safer for this assertion.
       store.projects.create({ name: 'sp-update-bad', path: projPath, engine: 'no-such-engine' });
-      const result = projects.updateProject('sp-update-bad', { silentPrime: true });
+      const result = await projects.updateProject('sp-update-bad', { silentPrime: true });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('silentprime'));
       // No project.json was written by the rejected PATCH. (Pre-#129, this
@@ -2177,7 +2590,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-update-nonbool');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-update-nonbool', path: projPath, engineId: 'claude' });
-      const result = projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
+      const result = await projects.updateProject('sp-update-nonbool', { silentPrime: 'yes' });
       assert.equal(result.project, null);
       assert.ok(result.errors[0].toLowerCase().includes('boolean'));
     });
@@ -2186,7 +2599,7 @@ describe('projects', () => {
       const projPath = path.join(primeDir, 'sp-clear-bad-engine');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-clear-bad-engine', path: projPath, engine: 'no-such-engine' });
-      const result = projects.updateProject('sp-clear-bad-engine', { silentPrime: false });
+      const result = await projects.updateProject('sp-clear-bad-engine', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
     });
@@ -2201,12 +2614,12 @@ describe('projects', () => {
       store.projects.create({ name: 'sp-engine-race', path: projPath, engine: 'claude' });
 
       // Snapshot pre-PATCH disk state
-      const beforeProjConfig = store.projectConfig.load(projPath);
+      const beforeProjConfig = projectConfigModule.load(projPath);
       assert.equal(beforeProjConfig.engine || null, null, 'baseline: engine field empty (lazy-set on first session)');
       const beforeRow = store.projects.getByName('sp-engine-race');
 
       // Attempt the bad PATCH: switch to an engine without the capability AND enable silentPrime.
-      const result = projects.updateProject('sp-engine-race', {
+      const result = await projects.updateProject('sp-engine-race', {
         engine: 'no-such-engine',
         silentPrime: true
       });
@@ -2233,7 +2646,7 @@ describe('projects', () => {
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.json yet');
 
-      const result = projects.updateProject('sp-sync-on', { silentPrime: true });
+      const result = await projects.updateProject('sp-sync-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
 
@@ -2255,12 +2668,12 @@ describe('projects', () => {
       store.projects.create({ name: 'sp-sync-off', path: projPath, engineId: 'claude' });
 
       // Seed silentPrime=true via PATCH so the baseline matches the on-disk shape PATCH would produce.
-      projects.updateProject('sp-sync-off', { silentPrime: true });
+      await projects.updateProject('sp-sync-off', { silentPrime: true });
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: hook should be present after silentPrime=true');
 
-      const result = projects.updateProject('sp-sync-off', { silentPrime: false });
+      const result = await projects.updateProject('sp-sync-off', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
 
@@ -2278,7 +2691,7 @@ describe('projects', () => {
       store.projects.create({ name: 'sp-prime-cleanup', path: projPath, engineId: 'claude' });
 
       // Pre-seed silentPrime=true and write a stale prime file directly.
-      const seed = store.projectConfig.load(projPath);
+      const seed = projectConfigModule.load(projPath);
       seed.silentPrime = true;
       store.projectConfig.save(projPath, seed);
       const tcDir = path.join(projPath, '.tangleclaw');
@@ -2287,7 +2700,7 @@ describe('projects', () => {
       fs.writeFileSync(primeFile, '# stale prime from a previous session\n');
       assert.equal(fs.existsSync(primeFile), true, 'baseline: stale prime file is on disk');
 
-      const result = projects.updateProject('sp-prime-cleanup', { silentPrime: false });
+      const result = await projects.updateProject('sp-prime-cleanup', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(fs.existsSync(primeFile), false, 'stale prime file should be removed by PATCH');
     });
@@ -2301,7 +2714,7 @@ describe('projects', () => {
       // Seed silentPrime=true via PATCH so the SessionStart hook is materialized
       // as the canonical pre-flip state — same shape an existing install would
       // have on disk before the engine change.
-      projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
+      await projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
       const settingsFile = path.join(projPath, '.claude', 'settings.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: SessionStart hook present after silentPrime=true');
@@ -2314,7 +2727,7 @@ describe('projects', () => {
       // Flip engine away from claude WITHOUT touching silentPrime — exactly the
       // scenario from #140's repro. (antigravity here; the original gemini
       // fixture engine was retired in #457.)
-      const result = projects.updateProject('sp-engine-flip-orphan', { engine: 'antigravity' });
+      const result = await projects.updateProject('sp-engine-flip-orphan', { engine: 'antigravity' });
       assert.deepEqual(result.errors, []);
       assert.equal(store.projects.getByName('sp-engine-flip-orphan').engineId, 'antigravity');
 
@@ -2340,7 +2753,7 @@ describe('projects', () => {
       // capability so a PATCH would reject, but real projects can land in this
       // state via a prior claude → gemini flip that left silentPrime=true on
       // projConfig (the second half of the #140 repro).
-      const seed = store.projectConfig.load(projPath);
+      const seed = projectConfigModule.load(projPath);
       seed.engine = 'gemini';
       seed.silentPrime = true;
       store.projectConfig.save(projPath, seed);
@@ -2350,7 +2763,7 @@ describe('projects', () => {
 
       // Flip onto claude. CHANGELOG claims the hook is materialized immediately
       // rather than waiting for the next launchSession.
-      const result = projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
+      const result = await projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
       assert.deepEqual(result.errors, []);
 
       assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.json should be written by syncEngineHooks');
@@ -2367,7 +2780,7 @@ describe('projects', () => {
       const primeFile = path.join(projPath, '.tangleclaw', 'session-prime.md');
       assert.equal(fs.existsSync(primeFile), false, 'baseline: no prime file');
 
-      const result = projects.updateProject('sp-prime-absent', { silentPrime: false });
+      const result = await projects.updateProject('sp-prime-absent', { silentPrime: false });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, false);
       assert.equal(fs.existsSync(primeFile), false, 'still absent — _removePrimeFile is non-throwing on missing');

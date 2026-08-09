@@ -84,6 +84,72 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     assert.ok(fs.existsSync(path.join(project.path, '.tangleclaw', 'critic-runs.json')));
   });
 
+  it('reads governance interactively, because an action is something the operator pressed', async () => {
+    // THE MUTATION THIS CATCHES: `{ interactive: false }` at the readProjectFacts
+    // call in runAction. The gate's OUTCOME is already covered above, so a broken
+    // read goes red there — but sending this read down the polled path stays
+    // green while reintroducing the defect #884's first review caught: an
+    // operator who has just granted Full Disk Access and pressed the button is
+    // answered from a five-minute cached refusal, and their click rides a child
+    // a hung dashboard poll can kill. Same defect class as that one, at the
+    // second call site — which is the one that gets missed.
+    const dirScanner = require('../lib/dir-scanner');
+    makeProject('disp-interactive');
+
+    const seen = [];
+    const realReq = dirScanner.request;
+    const realInteractive = dirScanner.interactiveRequest;
+    dirScanner.request = (op, payload, opts) => {
+      seen.push({ kind: 'polled', opts });
+      return realReq(op, payload, opts);
+    };
+    dirScanner.interactiveRequest = (op, payload, opts) => {
+      seen.push({ kind: 'interactive', opts });
+      return realInteractive(op, payload, opts);
+    };
+    try {
+      await actions.runAction('disp-interactive', 'invoke-critic');
+    } finally {
+      dirScanner.request = realReq;
+      dirScanner.interactiveRequest = realInteractive;
+    }
+
+    assert.ok(seen.length > 0, 'the dispatcher must read the project directory through the scanner');
+    assert.ok(seen.every((r) => r.kind === 'interactive'),
+      'an operator-pressed action must not read on the dashboard poll\'s scanner');
+    assert.ok(seen.every((r) => r.opts.pathKey === undefined),
+      'and must not be answered from the poll\'s per-path failure backoff');
+  });
+
+  it('says the directory could not be read, rather than that the action does not apply', async () => {
+    // THE MUTATION THIS CATCHES: dropping the `facts.unreadable` branch and
+    // falling straight through to the availability gate. A project whose
+    // directory the server could not read then reports UNAVAILABLE — "action not
+    // available for this project" — which tells the operator their governance
+    // says no when the truth is that nobody looked. That is the misdiagnosis
+    // lib/project-facts.js exists to prevent, arriving through the one path that
+    // already had the real reason in hand.
+    const dirScanner = require('../lib/dir-scanner');
+    makeProject('disp-unreadable');
+
+    const realInteractive = dirScanner.interactiveRequest;
+    dirScanner.interactiveRequest = () => Promise.reject(
+      Object.assign(new Error('timed out after 5000ms'), { tcTimedOut: true })
+    );
+    let result;
+    try {
+      result = await actions.runAction('disp-unreadable', 'invoke-critic');
+    } finally {
+      dirScanner.interactiveRequest = realInteractive;
+    }
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PROJECT_UNREADABLE',
+      'a directory that could not be read is not a governance refusal');
+    assert.match(result.error, /Full Disk Access/,
+      'and the remedy already in hand must reach the operator');
+  });
+
   it('rejects an action the project governance state does not support', async () => {
     makeProject('disp-minimal', false); // no plugin reference → ungoverned
     const result = await actions.runAction('disp-minimal', 'invoke-critic');
@@ -97,7 +163,12 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
     for (const governed of [true, false]) {
       const name = `disp-symmetry-${governed}`;
       const project = makeProject(name, governed);
-      const offered = actions.availableActions(project).some((a) => a.command === 'invoke-critic');
+      // Both sides must read ONE predicate from ONE source. Passing the state
+      // here is what makes that literal: the dispatcher derives it from the
+      // scanner and this asserts the same function agrees given the same input.
+      const engines = require('../lib/engines');
+      const state = engines.governanceState(project.path, { engineId: project.engineId });
+      const offered = actions.availableActions(project, state).some((a) => a.command === 'invoke-critic');
       assert.equal(offered, governed, `governed=${governed}: button visibility follows governance`);
       const result = await actions.runAction(name, 'invoke-critic');
       assert.equal(result.ok !== false, offered,

@@ -348,33 +348,33 @@ describe('per-project wrap step overrides', () => {
 
   
   describe('the settings API round-trip', () => {
-    it('persists a valid map and reports it back on the project', () => {
+    it('persists a valid map and reports it back on the project', async () => {
       const map = { 'project-map': { enabled: false } };
-      const res = projects.updateProject('fixture-test', { wrapStepOverrides: map });
+      const res = await projects.updateProject('fixture-test', { wrapStepOverrides: map });
       assert.deepEqual(res.errors || [], []);
       assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides, map);
-      assert.deepEqual(projects.getProject('fixture-test').wrapStepOverrides, map);
+      assert.deepEqual((await projects.getProject('fixture-test')).wrapStepOverrides, map);
     });
 
-    it('clears every override when handed an empty map', () => {
-      projects.updateProject('fixture-test', { wrapStepOverrides: {} });
+    it('clears every override when handed an empty map', async () => {
+      await projects.updateProject('fixture-test', { wrapStepOverrides: {} });
       assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides, {});
-      assert.deepEqual(projects.getProject('fixture-test').wrapStepOverrides, {});
+      assert.deepEqual((await projects.getProject('fixture-test')).wrapStepOverrides, {});
     });
 
-    it('rejects a non-overridable field without writing anything', () => {
-      projects.updateProject('fixture-test', { wrapStepOverrides: { 'project-map': { enabled: false } } });
-      const res = projects.updateProject('fixture-test', {
+    it('rejects a non-overridable field without writing anything', async () => {
+      await projects.updateProject('fixture-test', { wrapStepOverrides: { 'project-map': { enabled: false } } });
+      const res = await projects.updateProject('fixture-test', {
         wrapStepOverrides: { 'changelog-update': { verifyChanged: [] } }
       });
       assert.ok(res.errors && res.errors.length > 0);
       assert.match(res.errors[0], /verifyChanged/);
       assert.deepEqual(store.projectConfig.load(fixturePath).wrapStepOverrides,
         { 'project-map': { enabled: false } }, 'a rejected save must not mutate state');
-      projects.updateProject('fixture-test', { wrapStepOverrides: {} });
+      await projects.updateProject('fixture-test', { wrapStepOverrides: {} });
     });
 
-    it('reports an empty map for a project that has never configured one', () => {
+    it('reports an empty map for a project that has never configured one', async () => {
       // A project a sibling test has already cleared to `{}` would pass this
       // for the wrong reason — and only while the tests keep their order. This
       // one is created here and never written to.
@@ -383,7 +383,7 @@ describe('per-project wrap step overrides', () => {
       store.projects.create({ name: 'never-configured', path: virginPath });
       assert.ok(!fs.existsSync(path.join(virginPath, '.tangleclaw', 'project.json')),
         'precondition: nothing may have written this project a config');
-      assert.deepEqual(projects.getProject('never-configured').wrapStepOverrides, {});
+      assert.deepEqual((await projects.getProject('never-configured')).wrapStepOverrides, {});
     });
   });
 

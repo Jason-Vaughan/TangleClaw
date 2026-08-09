@@ -235,8 +235,8 @@ describe('OpenClaw engine integration', () => {
       });
     });
 
-    it('should resolve OpenClaw engine name from connection', () => {
-      const project = projects.getProject('oc-enrich-test');
+    it('should resolve OpenClaw engine name from connection', async () => {
+      const project = await projects.getProject('oc-enrich-test');
       assert.ok(project, 'Project should exist');
       assert.ok(project.engine, 'Should have engine info');
       assert.equal(project.engine.id, `openclaw:${connId}`);
@@ -244,8 +244,8 @@ describe('OpenClaw engine integration', () => {
       assert.equal(project.engine.available, true);
     });
 
-    it('should include capabilities in enriched engine', () => {
-      const project = projects.getProject('oc-enrich-test');
+    it('should include capabilities in enriched engine', async () => {
+      const project = await projects.getProject('oc-enrich-test');
       assert.ok(project.engine.capabilities, 'Should have capabilities');
       assert.equal(project.engine.capabilities.supportsPrimePrompt, false);
     });
