@@ -517,7 +517,8 @@ All notable changes to TangleClaw are documented in this file.
   **A directory that refuses is no longer reported as one that is gone.** `EACCES`/`EPERM` used
   to collapse into "not there", so a project on a volume the server may not traverse rendered as
   deleted. It now reports as present-and-unreadable with a reason, and the enriched record
-  carries `unreadableCode` (`SCAN_TIMEOUT` / `SCAN_ABORTED` / `SCAN_FAILED` / `EACCES`) so #885
+  carries `unreadableCode` (`SCAN_TIMEOUT` / `SCAN_CACHED` / `SCAN_ABORTED` / `SCAN_FAILED` /
+  `EACCES`) so #885
   branches on a code rather than parsing prose. `runAction` uses the same reason: a project whose
   directory could not be read now answers `PROJECT_UNREADABLE` with the remedy, instead of
   `UNAVAILABLE` — which told the operator their governance said no when the truth was that nobody
