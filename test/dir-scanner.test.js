@@ -847,3 +847,74 @@ describe('lib/dir-scanner-child — serialisation helpers', () => {
       { message: 'just a string', code: undefined, tcTruncated: undefined });
   });
 });
+
+describe('dir-scanner — the child\'s diagnostics reach the server\'s log (#884)', () => {
+  const { setConsoleStream, setLevel, getLevel } = require('../lib/logger');
+  const STDERR_CHILD = path.join(__dirname, '_dir-scanner-stderr-child.js');
+
+  /**
+   * Run `fn` with the logger's output captured, at the given level.
+   *
+   * The logger writes to a pinned stream when one is set, which is the only
+   * seam that observes what an operator would actually see — asserting on the
+   * child's stderr instead would re-test the half `dir-scanner-child.test.js`
+   * already covers and miss the supervisor entirely.
+   *
+   * @param {string} level - Level to run at, restored afterwards.
+   * @param {Function} fn - Async body.
+   * @returns {Promise<string>} Everything the logger wrote.
+   */
+  async function captured(level, fn) {
+    let out = '';
+    const previous = getLevel();
+    setConsoleStream({ write: (s) => { out += s; } });
+    setLevel(level);
+    try {
+      await fn();
+    } finally {
+      setLevel(previous);
+      setConsoleStream(null);
+    }
+    return out;
+  }
+
+  test('re-emits complete lines, joining one the pipe split in half', async () => {
+    // THE MUTATION THIS CATCHES: deleting the supervisor's re-emission loop.
+    // The child-side guard passes without it — the warning still leaves the
+    // child — while reproducing exactly the defect that loop exists to fix: a
+    // warning that reaches no sink an operator reads. That gap is why this
+    // test is at the supervisor level and reads the LOG, not the pipe.
+    const scanner = dirScanner.createScanner({ childPath: STDERR_CHILD, timeoutMs: 8000 });
+    try {
+      const out = await captured('debug', () => scanner.request('talk', {}, { what: 'talking' }));
+
+      assert.match(out, /cache write failed/, 'a child warning must reach the server log');
+      assert.match(out, /split across two chunks/,
+        'a line the pipe split must be joined before it is emitted, not emitted as halves');
+      assert.ok(!/split $/m.test(out), 'and the first half must never be emitted on its own');
+      assert.match(out, /Something the runtime printed by itself/,
+        'output in no known format is the crash detail worth keeping — it must not be dropped');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+
+  test('preserves the child\'s level, so `logLevel: warn` does not drop its warnings', async () => {
+    // THE MUTATION THIS CATCHES: re-emitting everything at `log.info`. That
+    // reads as harmless — the lines are all there at the default level — and
+    // silently reinstates the whole defect for anyone running the server at
+    // `warn`, which is a supported setting. The failure is invisible until you
+    // change a config nobody thinks to test.
+    const scanner = dirScanner.createScanner({ childPath: STDERR_CHILD, timeoutMs: 8000 });
+    try {
+      const out = await captured('warn', () => scanner.request('talk', {}, { what: 'talking' }));
+
+      assert.match(out, /cache write failed/,
+        'a WARN from the child must survive a server running at warn');
+      assert.ok(!/routine detail/.test(out),
+        'and its DEBUG must not — the level is read from the line, not assumed');
+    } finally {
+      await scanner.shutdown();
+    }
+  });
+});
