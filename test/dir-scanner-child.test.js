@@ -450,6 +450,46 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
     );
   });
 
+  test('a warning from inside the child reaches stderr instead of a discarded stdout', async () => {
+    // THE MUTATION THIS CATCHES: dropping `setConsoleStream(process.stderr)` from
+    // the child's entry block. The logger sends warn to `process.stdout`, and the
+    // supervisor forks this child with stdout `'ignore'` — so without the pin,
+    // every warning this process emits goes to /dev/null and the code still
+    // "works". That is invisible from in-process tests, which own a real stdout.
+    //
+    // Forked for real rather than required, because `require.main === module` is
+    // exactly the condition under test.
+    const { fork } = require('node:child_process');
+    const root = scratch('facts-childwarn');
+    fs.mkdirSync(path.join(root, '.tangleclaw'), { recursive: true });
+    // A configured version file that is not there — one of the diagnostics this
+    // process now owns, and one an operator has to be able to see.
+    fs.writeFileSync(path.join(root, '.tangleclaw', 'project.json'),
+      JSON.stringify({ versionFilePath: 'ABSENT.json' }));
+
+    const child = fork(path.join(__dirname, '..', 'lib', 'dir-scanner-child.js'), [], {
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'], // the supervisor's exact stdio
+      serialization: 'json'
+    });
+    try {
+      let stderr = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (c) => { stderr += c; });
+
+      await new Promise((resolve) => {
+        child.on('message', resolve);
+        child.send({ id: 1, op: 'projectFacts', payload: { dir: root, engineId: 'claude' } });
+      });
+      // The reply races the stderr flush; they are different channels.
+      await new Promise((r) => setTimeout(r, 250));
+
+      assert.match(stderr, /configured version file unreadable/,
+        'the child\'s warning must leave the process, or nothing an operator reads will ever carry it');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
   test('the child still never imports the server database, now that it detects versions too', () => {
     // THE MUTATION THIS CATCHES: reaching version detection through
     // `require('./projects')`, which owns the public names for these readers and

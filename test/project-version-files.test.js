@@ -185,6 +185,52 @@ describe('project-version-files', () => {
       );
     });
 
+    it('clears staging files stranded by a kill, without touching the cache or a stranger', () => {
+      // THE MUTATION THIS CATCHES: dropping the sweep. Staging is what makes the
+      // write atomic, and its cost is that a process killed between the write and
+      // the rename leaves the staging file behind — for a fleet where one bad
+      // directory keeps killing the shared child, that accumulates in the
+      // HEALTHY projects whose writes died as collateral. Nothing else would
+      // notice: the cache stays correct and the strays are invisible to every
+      // reader, so this grows silently for the life of the install.
+      const tc = path.join(dir, '.tangleclaw');
+      fs.mkdirSync(tc, { recursive: true });
+      const stranded = path.join(tc, '.project-version.txt.99999.deadbeef.tmp');
+      const innocent = path.join(tc, 'project.json');
+      fs.writeFileSync(stranded, 'version: 0.0.1\n');
+      fs.writeFileSync(innocent, '{}');
+      // Backdated, because age is what tells an abandoned file from a live one —
+      // see the sibling test below for the half of this that must NOT be swept.
+      const old = new Date(Date.now() - 10 * 60 * 1000);
+      fs.utimesSync(stranded, old, old);
+
+      assert.equal(versionFiles.writeVersionCacheFile(dir, '3.0.0', 'version.json'), true);
+
+      assert.equal(fs.existsSync(stranded), false, 'the stranded staging file is cleared');
+      assert.equal(fs.existsSync(innocent), true,
+        'and nothing else in .tangleclaw/ is — the sweep matches its own prefix, not the directory');
+      assert.equal(versionFiles.readVersionCacheFile(dir), '3.0.0');
+    });
+
+    it('leaves a concurrent writer\'s fresh staging file alone', () => {
+      // THE MUTATION THIS CATCHES: sweeping on the name pattern alone, with no
+      // age check. Two processes legitimately write this cache — the scanner
+      // child on a poll, the server at session launch and wrap — so a staging
+      // file found mid-sweep may belong to a writer that is about to rename it.
+      // Deleting it makes that writer's rename fail for no reason, and the
+      // symptom is a warn on a healthy project with nothing wrong at the path.
+      // Undetectable from the swept side: this writer still succeeds either way.
+      const tc = path.join(dir, '.tangleclaw');
+      fs.mkdirSync(tc, { recursive: true });
+      const live = path.join(tc, '.project-version.txt.12345.cafebabe.tmp');
+      fs.writeFileSync(live, 'version: 8.8.8\n');
+
+      assert.equal(versionFiles.writeVersionCacheFile(dir, '3.0.0', 'version.json'), true);
+
+      assert.equal(fs.existsSync(live), true,
+        'a staging file written moments ago belongs to a live writer, not to the sweep');
+    });
+
     it('returns false rather than throwing when the project directory is not writable', () => {
       if (process.getuid && process.getuid() === 0) return; // root bypasses the check
       fs.chmodSync(dir, 0o500);

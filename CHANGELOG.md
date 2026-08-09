@@ -494,6 +494,12 @@ All notable changes to TangleClaw are documented in this file.
   within a directory on POSIX; the temp name carries the pid, because the server also writes
   this file at session launch and wrap.
 
+  Staging moves the failure from a corrupt cache to a stray file rather than eliminating it, so
+  each successful write clears strays older than a minute. The age threshold is the load-bearing
+  part: two processes legitimately write this cache, and sweeping on the name alone would delete
+  a staging file another writer was about to rename — turning a healthy write into a warning
+  about a project with nothing wrong at its path.
+
   A project whose directory would not answer now reports **no** version rather than one read
   behind the server's back — `null`, never the detection chain's `0.0.0-dev` fallback, which
   would render on the card as a fact the server never established.
