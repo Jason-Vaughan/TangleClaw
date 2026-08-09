@@ -538,6 +538,42 @@ describe('wrap-step test (#139 Chunk 4)', () => {
       'test remediation must mention the skip-tests override');
   });
 
+  it('names a timeout as a timeout instead of as a failing suite', async () => {
+    // The whole point of #894. Before the fix a killed command arrived here as
+    // exitCode 1 / error null — indistinguishable from a suite that ran and
+    // failed — so the operator was handed "fix the failing test(s) shown above"
+    // for tests that had never produced a result.
+    writeConfig({ testCommand: 'npm test' });
+    testStep._internal.execShell = async () => ({
+      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 600000ms', timedOut: true
+    });
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.output.exitCode, 124);
+    assert.ok(result.blockers.some((b) => /timed out/i.test(b)),
+      'the blocker must name the timeout');
+    assert.ok(!result.blockers.some((b) => b.startsWith('Tests failed')),
+      'nothing failed — saying so sends the operator after a failure that never happened');
+    assert.doesNotMatch(result.output.remediation, /fix the failing test/i);
+    assert.match(result.output.remediation, /did not finish|hangs/i);
+  });
+
+  it('keeps the failing-suite remediation for an ordinary non-zero exit', async () => {
+    // The other half of the same predicate: correcting the timeout path must not
+    // reclassify a genuine failure as a hang.
+    writeConfig({ testCommand: 'npm test' });
+    testStep._internal.execShell = async () => ({
+      exitCode: 1, stdout: '', stderr: '1 failing\n', error: null, timedOut: false
+    });
+    const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.blockers[0].includes('Tests failed (exit 1)'));
+    assert.match(result.output.remediation, /fix the failing test/i);
+  });
+
   it('honors allowOverride+skipTests by reporting skipped with override flag', async () => {
     writeConfig({ testCommand: 'npm test' });
     let execCalled = false;

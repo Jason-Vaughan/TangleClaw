@@ -3788,6 +3788,50 @@ route this fixed the other half of. The family is 32 synchronous reads in `lib/p
 
 **Classification:** fix
 
+## 2026-08-09: the timeout branches actually fire, so a hang stops reading as a failure (#894)
+
+<!-- prawduct: type=fix | chunks=01 | scope=fix-894-timeout-detection | status=shipped -->
+
+**Why:** #894 was filed naming one dead branch in `lib/tmux.js`. A sweep found **three**, dead for
+**two different reasons**, and the second is materially worse than the one that was filed.
+
+| site | API | error on timeout | its check | fired? |
+|---|---|---|---|---|
+| `lib/tmux.js` | `execSync` | `killed: undefined`, `code: 'ETIMEDOUT'` | `err.killed` | never |
+| `lib/wrap-steps/test.js` | async `exec` | `killed: true`, `code: null` | `err.code === undefined && err.killed` | never |
+| `lib/wrap-steps/lint.js` | async `exec` | same | same | never |
+
+`execSync` puts `killed` on `spawnSync`'s *result*, never on the error it *throws*. Async `exec`
+does set it — but its `code` is `null`, not `undefined`, so the compound check died on its first
+clause. Two wrong models of one API family, both compiling, both reading correctly, neither ever
+true. Every shape here was probed against a live process before a line changed.
+
+**The wrap-step consequence was the serious one.** A test command that hung and was killed at ten
+minutes fell through to `exitCode: 1, error: null` — indistinguishable from a suite that ran and
+failed. The operator was then handed `Tests failed (exit 1)` and *"Run the suite locally, fix the
+failing test(s) shown above"*, for tests that had never produced a result. That is the same shape as
+#891: the product naming a cause that did not happen, and charging a debugging session for it.
+Correcting the exit code alone would have shipped a right number under wrong advice, so a timed-out
+step now gets its own blocker and its own remediation, which says plainly that nothing failed.
+
+**The predicate now lives in one place.** `lib/git.js` had a fourth copy, written for #891 — a
+fourth hand-rolled version is how this family produced three wrong answers, so `lib/exec-timeout.js`
+owns it and all four call sites consume it. Its `ETIMEDOUT` clause is deliberately redundant with
+the `SIGTERM` fallback and the module says so: deleting it breaks no test, and that overlap is
+recorded rather than left for an auditor to mistake for an untested branch.
+
+**One adjacent instance of the same class went with it.** `error: err.code === undefined ? … : null`
+also never fired for a non-numeric code, so a suite chatty enough to exceed the 10 MiB buffer
+reported a bare `exit 1` with no error at all. Now `typeof err.code !== 'number'`, and the operator
+sees *"stdout maxBuffer length exceeded"*.
+
+**Guards driven by real stalling executables, not stubbed errors** — the #891 rule applied
+deliberately, since this entire issue is three hand-written models of an error shape being wrong. A
+stalling `tmux` on PATH, a real `sleep` under a 300ms cap through the production `defaultExecShell`,
+a real buffer overflow. Both historical bugs were replanted and both go red.
+
+**Classification:** fix
+
 ## 2026-08-09: git's total work is bounded once, so the scan deadline can only expire on a path that never answers (#891)
 
 <!-- prawduct: type=fix | chunks=01 | scope=fix-891-git-budget | status=shipped -->

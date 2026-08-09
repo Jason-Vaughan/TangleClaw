@@ -463,6 +463,23 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wrap step that hangs no longer reports itself as a failing test suite (#894).** If your test
+  command hung and was stopped at the ten-minute limit, the wrap said *"Tests failed (exit 1)"* and
+  told you to *"fix the failing test(s) shown above"*. There were none — nothing had finished. The
+  advice sent you looking for a failure that never happened.
+
+  A stopped command now says so: its own blocker, its own exit code, and remediation that points at
+  where the command hangs — a watch mode left on, a prompt waiting for input, a suite that genuinely
+  needs longer — and states plainly that nothing failed. An ordinary failing suite is unaffected and
+  still reads exactly as before.
+
+  Same fix for the lint step. And a test suite noisy enough to overflow the 10 MiB output buffer now
+  tells you that is what happened, instead of failing with no explanation.
+
+  Underneath, three separate checks for "did our own timeout kill this?" were all dead code — none
+  had ever run once, for two different reasons. They now share one implementation, and the
+  `tmux command timed out` diagnostic fires for the first time since it was written.
+
 - **A big or slow repository is no longer killed and blamed on Full Disk Access (#891).** Reading one
   project's git state costs seven `git` invocations, and each was capped separately at five seconds —
   behind a single five-second deadline that kills the process doing the work. The arithmetic never
