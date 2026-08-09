@@ -97,7 +97,38 @@ describe('API endpoints', () => {
       assert.equal(status, 200);
       assert.ok(data.config.bindState, 'the PATCH response must carry it as well');
     });
+  });
 
+  // The wizard warns an operator BEFORE they point the product at a directory it
+  // may not be able to read (#859). Which directories those are is a fact about
+  // the machine TangleClaw runs on, and the browser cannot answer it: the browser
+  // may be a phone, where `navigator.platform` would report iOS about a Mac and
+  // the one warning that matters would never appear. So the server ships it,
+  // exactly as it ships `bindState` above.
+  describe('protectedRoots on the config API (#859)', () => {
+    it('GET /api/config carries the roots this machine protects', async () => {
+      const { status, data } = await request(server, 'GET', '/api/config');
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(data.protectedRoots),
+        'always an array, so the client never special-cases a missing field');
+
+      if (process.platform === 'darwin') {
+        // Both forms: the `~` an operator types and the absolute path it
+        // resolves to. Shipping only one leaves the other silently unmatched.
+        assert.ok(data.protectedRoots.includes('~/Documents'));
+        assert.ok(data.protectedRoots.includes('~/Desktop'));
+        assert.ok(data.protectedRoots.includes('~/Downloads'));
+        assert.ok(data.protectedRoots.some(r => r.startsWith('/') && r.endsWith('/Documents')),
+          'the absolute form must be there too');
+      } else {
+        assert.deepEqual(data.protectedRoots, [],
+          'no other platform has this behaviour, and a caution that fires where it '
+          + 'does not apply is one people learn to ignore');
+      }
+    });
+  });
+
+  describe('bindState edge cases (#710)', () => {
     it('reports wide + unchosen for an install that predates the setting', async () => {
       // The population this whole mechanism exists for. If the API reports
       // `closed` here, the settings modal draws a shut door over an open one.

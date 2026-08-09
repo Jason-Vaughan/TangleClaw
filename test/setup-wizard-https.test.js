@@ -282,13 +282,57 @@ describe('Setup wizard — HTTPS step (frontend)', () => {
       assert.match(body.innerHTML, /mkcert not installed/);
     });
 
-    it('treats a failed https-check as mkcert-unavailable', async () => {
+    it('records a failed https-check as UNKNOWN, not as mkcert-absent', async () => {
+      // This assertion used to read `mkcertAvailable === false`, which was the
+      // defect rather than the contract: a probe that did not answer is not a
+      // machine without mkcert, and the screen said "mkcert not installed" to
+      // operators who had it. Same shape as #861 — an unknown state falling
+      // through to a definite one. The safe fallbacks it drove are unchanged:
+      // the mkcert mode is still not preselected and still cannot be chosen.
       const ctx = loadSetup({ apiMutate: async () => null });
       const body = ctx.document.getElementById('setupBody');
       await ctx.renderHttpsSetup(body);
       assert.equal(ctx.wizard.httpsCheckLoaded, true);
-      assert.equal(ctx.wizard.mkcertAvailable, false);
+      assert.equal(ctx.wizard.mkcertAvailable, null,
+        'unknown must stay distinguishable from a confirmed absence');
       assert.equal(ctx.wizard.httpsMode, 'manual');
+    });
+
+    it('says it could not check, rather than claiming mkcert is missing', async () => {
+      const ctx = loadSetup({ apiMutate: async () => null });
+      const body = ctx.document.getElementById('setupBody');
+      await ctx.renderHttpsSetup(body);
+      assert.match(body.innerHTML, /could not check for mkcert/);
+      assert.doesNotMatch(body.innerHTML, /mkcert not installed/,
+        'telling someone who has mkcert that they do not is the defect');
+      // No install command here: we do not know that installing is the fix, and
+      // "run this" is the wrong advice for a machine that already has it.
+      assert.doesNotMatch(body.innerHTML, /brew install mkcert/);
+      assert.match(body.innerHTML, /wizardRecheckMkcert\(\)/, 'but there is a way to retry');
+    });
+
+    it('offers the install command when mkcert is genuinely absent', async () => {
+      const ctx = loadSetup({
+        apiMutate: async () => ({ mkcert: { available: false } })
+      });
+      const body = ctx.document.getElementById('setupBody');
+      await ctx.renderHttpsSetup(body);
+      assert.equal(ctx.wizard.mkcertAvailable, false);
+      assert.match(body.innerHTML, /mkcert not installed/);
+      assert.match(body.innerHTML, /brew install mkcert &amp;&amp; mkcert -install/);
+      assert.match(body.innerHTML, /wizardRecheckMkcert\(\)/);
+    });
+
+    it('leaves Skip available — a missing mkcert is not a blocked install', async () => {
+      // Unlike the engine gate. TangleClaw works over plain HTTP on localhost
+      // and the login gate is a separate mechanism, so this costs trusted
+      // certificates, not a working install.
+      const ctx = loadSetup({
+        apiMutate: async () => ({ mkcert: { available: false } })
+      });
+      const body = ctx.document.getElementById('setupBody');
+      await ctx.renderHttpsSetup(body);
+      assert.match(body.innerHTML, /value="skip"/, 'the way past must still be there');
     });
   });
 

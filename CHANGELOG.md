@@ -6,6 +6,104 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
+  wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing
+  creates `Projects`, and nothing in TangleClaw did either. So the first action of a brand-new
+  install (accept the default, press Next) answered *"Directory does not exist"* and stopped, with
+  no action available anywhere in the product: leave, make a folder in Finder, come back.
+
+  The error now carries a **Create it** button, and creating it continues straight into the scan the
+  operator was already trying to run rather than making them press Next again.
+
+  **Measured on the same guest:** a missing `~/Documents/Projects` answers `400 DIR_MISSING`
+  immediately, Create it returns `200`, and — the part that was not obvious — scanning the folder
+  TangleClaw just created then works, where scanning a pre-existing one times out. macOS grants a
+  process access to what it creates, so this does not swap one dead end for another.
+
+  The offer appears only for a folder that is genuinely absent. A folder that exists but cannot be
+  read — the TCC case — does not get a Create button, because creating it is not the fix and the
+  button would do nothing but confuse.
+
+  New route `POST /api/setup/create-dir`. It is reachable before any credential exists, because
+  first-run setup has none, so its constraint **is** the security boundary rather than a convenience:
+  the path must resolve inside the operator's home directory, and only the final segment is created,
+  so it can add `~/Documents/Projects` and cannot walk out to `/etc` or lay down a tree at a path
+  nobody checked. `path.resolve` collapses `..` before the check, so traversal is normalised away
+  rather than pattern-matched.
+
+- **mkcert: "we could not check" no longer renders as "not installed".** When the HTTPS probe failed
+  for any reason, the wizard recorded `mkcertAvailable = false` and drew the badge *"mkcert not
+  installed"* — telling an operator who has mkcert, flatly, that they do not. That is an unknown
+  state falling through to a definite one, the same shape as #861 one step further along the same
+  wizard.
+
+  Unknown is now its own state and says so, with a Check again button. A genuine absence gets the
+  install command, a Copy button and a link to mkcert's own instructions. Deliberately
+  **non-blocking**, unlike the engine gate: TangleClaw works over plain HTTP on localhost and the
+  login gate is a separate mechanism, so a missing mkcert costs trusted certificates, not a working
+  install — Skip stays available.
+
+  TangleClaw does not run the install. `brew install` can prompt and `mkcert -install` needs sudo to
+  touch the trust store; a launchd service has no terminal to answer either, which is why privileged
+  steps live in the human-run installer.
+
+- **Setup will not finish with no AI engine installed.** TangleClaw's whole job is running an AI
+  coding CLI for you. An install that completed without one handed the operator a finished-looking
+  dashboard that could launch nothing — and they found out at the first Launch button, with nothing
+  on screen explaining it.
+
+  The engine step now **parks** instead of waving you through: it names each supported engine, gives
+  the exact install command with a Copy button and a link to that vendor's own instructions, and
+  offers **Check again** in place of Next. Install one in a terminal, press the button, and setup
+  continues.
+
+  **Both routes that can finish setup refuse it**, not just the button — `POST /api/setup/complete`
+  and the Skip path's `PATCH /api/config { setupComplete: true }`, through one shared predicate.
+  That pairing has diverged here before (#710), where a new rule landed on one and the other kept
+  the old one, leaving a door beside the gate. First-run only: an install that finished long ago and
+  later lost its engine is a different problem, and refusing to save its settings would strand it.
+
+  **It refuses what it can confirm, not what it failed to find.** Detection reads your login PATH,
+  and TangleClaw runs under launchd where that PATH is not visible by default (#346) — so a hard
+  refusal keyed on "found nothing" would lock out someone whose engine is installed and whose shell
+  simply would not answer, behind a Check again button that keeps saying no because the *check* is
+  broken. Where it could not look, the step says so and offers **Continue anyway**. Being wrong in
+  that direction costs a dashboard that cannot launch, which you see immediately; being wrong the
+  other way costs an install with no way out at all.
+
+  **TangleClaw does not install the engine for you.** It runs as a background service with no
+  terminal, so it cannot answer a password prompt — the same reason every privileged step lives in
+  the human-run installer. It tells you exactly what to run instead.
+
+  "Check again" re-reads your login PATH rather than reusing what the server resolved at boot: an
+  installer that edits your shell profile changes the PATH itself, not only what sits on it.
+
+  **Measured on a clean guest with no engine installed:** `POST /api/setup/complete` and the Skip
+  path both answer `400 ENGINE_REQUIRED`, and `setupComplete` stays `false` — neither door closes
+  setup.
+
+- **Setup now warns you about a protected projects directory before you choose it, not after it
+  fails (#859).** The wizard pre-fills `~/Documents/Projects`, and on macOS that is a directory a
+  background service cannot read without Full Disk Access — so the product was recommending the
+  one folder most likely to break it, with no caveat. Step 2 now shows a caution as soon as the
+  path sits under `~/Documents`, `~/Desktop` or `~/Downloads`, naming the folder and both
+  remedies, and it follows what you type rather than only what was pre-filled.
+
+  It is a caution, not a block: plenty of installs have granted Full Disk Access and work fine
+  there, and only the scan can tell. But the cheapest fix — type a different folder — is available
+  only while the operator is still looking at the field. After that, help arrives after the
+  choice.
+
+  **Which directories are protected comes from the server**, in the `GET /api/config` response
+  alongside `bindState`, for the same reason that one moved: the browser cannot answer it. The
+  browser may be a phone, where `navigator.platform` reports iOS about a Mac and the warning would
+  never appear for the person who needs it. Off macOS the list is empty and nothing is shown —
+  `~/Documents` means nothing on Linux, and a caution that fires where it does not apply is one
+  people learn to ignore everywhere.
+
+  The installer has warned about this since the first #859 fix; that notice is terminal output at
+  install time, and this is the same fact at the moment the decision is actually made.
+
 - **The dashboard is now reachable from another device on your network — which is what the login
   gate was for (#863).** A default caddy install generated exactly one Caddy site, `localhost`, so
   every other address (the machine's own name, its LAN IP) failed the TLS handshake before a password
@@ -107,6 +205,31 @@ All notable changes to TangleClaw are documented in this file.
   a password by design.
 
 ### Changed
+
+- **The first-run messages about a protected projects folder now speak one language.** The scan-
+  failure message was the only user-facing string in the product that said *"TCC-protected"* — an
+  acronym nobody outside Apple's developer docs knows, surfacing at the one moment a stranded
+  operator has least patience for a new term. The two other surfaces describing the same condition
+  (the wizard's pre-choice caution and the truncated-walk error) already said *"protected folder"*
+  and *"a directory node cannot read"*, so the plain wording was already the house style; this was
+  the outlier. It now reads *"On macOS that is what a protected folder does when node has no Full
+  Disk Access."*, split into sentences instead of a single clause chained by a semicolon and two
+  dashes.
+
+  The wizard's caution also now names the protected directories the same way the other two do —
+  `~/Documents, ~/Desktop and ~/Downloads` rather than the bare `Documents, Desktop and Downloads`,
+  which left it ambiguous which `Documents` was meant.
+
+  Wording only: no route, gate, or detection behaviour changed, and the assertions covering these
+  messages match on `Full Disk Access`, `~/Documents` and `did not respond`, all of which survive.
+
+  Those three assertions pass against the **old** wording too — they pin the facts the message must
+  carry, not its register — so the edit itself was unpinned and a revert to the acronym would have
+  left every test green. A `doesNotMatch(hint, /TCC/)` guard now holds the line, verified by
+  reverting the string and watching it fail. The guard is scoped to what the browser shows an
+  operator: `deploy/install.sh` still prints "TCC-protected folder" in its terminal output on
+  purpose, because someone running a shell installer by hand has a different tolerance for the term
+  than someone stranded in a setup wizard. Comments and JSDoc stay free to be precise.
 
 - **Caddy access logging is now documented as deliberately NOT generator-owned, and a cutover onto a
   hand-added `log` block will end it (#846, #821).** The generator emits no `log { … }` under any
@@ -339,6 +462,261 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **An unreadable projects folder is now cheap, not merely survivable.** (#883, chunk 3.) With
+  chunks 1–2 the dashboard's ten-second poll still cost a five-second stall and a killed scanner
+  process *on every tick, forever* — and a process blocked in the kernel may never leave the
+  process table, so that was roughly six unreapable processes a minute for as long as a browser
+  tab stayed open. A path that does not answer is now remembered and refused immediately, so the
+  cost is one attempt per backoff interval (30s, doubling to a 5-minute ceiling) instead of one
+  per poll.
+
+  **A directory that starts working recovers on its own** — no restart, no button. That is the
+  half of a failure cache that is easy to get wrong, and this project has the bug on record: a
+  memoization that cached *failures* permanently because only the success case was thought
+  through. So the rule here is narrow on purpose — **only "it did not answer" is remembered.**
+  Anything else is an *answer*: a success clears the memory, and so does an ordinary error.
+  `ENOENT` in particular must never stick, because the wizard's Create button exists to turn it
+  into a directory and the scan straight afterwards has to see the folder that was just made.
+  Work killed as collateral for a *sibling* request is recorded neither way — it says nothing
+  about its own path, and treating it as evidence would let one bad directory either blame or
+  absolve a healthy one.
+
+  **The backoff is opt-in, and only the polled route takes it.** The wizard's Scan and Create
+  buttons deliberately do not: someone who has just granted Full Disk Access and pressed the
+  button again is entitled to a real answer, not a remembered one, and the cost of leaving them
+  out is bounded by how fast a person can click. Repeated refusals log at debug rather than warn,
+  so one broken directory no longer buries its own diagnosis under six identical warnings a
+  minute; a genuinely new failure, and each escalation of the backoff, still warn with the
+  consecutive count.
+
+- **A projects folder that never answers no longer costs the server its ability to read ANY
+  file.** (#883, chunk 2 — the fix reaching the routes.) `GET /api/projects`,
+  `POST /api/setup/scan` and `POST /api/setup/create-dir` now do their filesystem work in the
+  scanner child added in chunk 1, so a directory that hangs costs a disposable process instead of
+  one of the four libuv threadpool threads the whole server shares. Before this, four hung scans
+  left the server unable to touch the filesystem at all, on any path, permanently — while
+  `/api/health` still answered `200` and every later failure was misreported as a Full Disk Access
+  problem, sending operators to change a permission that was never at fault.
+
+  **Proven through the real route, not at the unit level:** `test/api-projects.test.js` issues
+  `UV_THREADPOOL_SIZE + 1` hung scans at one running server, then times an ordinary `readdir` on
+  an unrelated path. Verified by mutation — putting the hang back in the server process makes that
+  readdir never complete, which is the defect exactly.
+
+  A second win comes free: `git.getInfo` shells out with `execSync` from *inside* the walk, and a
+  synchronous call cannot be interrupted by any deadline. That is now in the child too, so a
+  directory whose `git` calls stall no longer blocks the server's event loop either. Its
+  two-minute cache moves with it, so a child killed for a hang starts cold — a few repeated `git`
+  calls after a kill, in exchange for never blocking the server.
+
+  **Known and NOT fixed by this, stated plainly:** `enrichProject` still calls
+  `fs.existsSync(project.path)` synchronously for every registered project on that same route, and
+  `engines.governanceState` reads more files under it. A *registered* project whose directory is
+  TCC-protected therefore still blocks the event loop, exactly as #859 described. The comment on
+  `listAllProjects` used to say the registered list "cannot be affected by a stuck filesystem";
+  that was overstated and now says otherwise. Tracked as **#884**, scoped to the whole family — 32
+  synchronous reads on operator-chosen paths in `lib/projects.js` plus 7 in `lib/uploads.js` —
+  rather than to this call site, because the last time this family was fixed one site at a time the
+  sweep missed the one that wedged a clean-room install.
+
+- **The installer's TCC check now folds case too.** `tcc_protected_path` in `deploy/install.sh`
+  matched `$HOME/Documents/` with literal capitals, so a config carrying `~/documents/Projects`
+  reported "safe" and the preflight said nothing — the same quiet-wrong-answer failure the
+  tilde-expansion guard beside it already exists to prevent. The wizard learned this first; this is
+  the sibling call site.
+
+- **Engine detection now looks where you actually installed it (#346).** TangleClaw's server runs
+  under launchd, whose `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else — while every
+  common way to install an engine CLI (npm `-g`, nvm, volta, Homebrew, pipx) puts it somewhere that
+  list does not contain. So `which claude` failed in the server's environment and the engine was
+  reported "not installed" to someone who runs it by name every day.
+
+  Measured on this machine, with the server's own `PATH`: the old probe found **none** of the four
+  installed engines; the new one finds all four. It resolves the operator's login PATH once per
+  probe cycle and merges it with the server's — **merged, never replaced**, so nothing findable
+  before can stop being findable, and a login shell that fails or hangs leaves detection exactly
+  where it already was.
+
+  It asks an *interactive* login shell, deliberately: `zsh` reads `.zshrc` only for interactive
+  shells, and `.zshrc` is where most PATH edits live. With `-lc` alone this fix still missed the
+  engine installed under `~/.npm-global/bin`. Because an interactive shell also greets you — version
+  notices, prompt frameworks — the PATH is read from between explicit markers rather than from
+  whatever the shell happened to print.
+
+  Detection targets are now required to be plain command names before being interpolated into a
+  shell command. Engine profiles are operator-authored through the API, and a binary's name does not
+  contain a semicolon.
+
+  This was cosmetic until now. Setup refuses to finish with no engine installed, which turns a wrong
+  "not installed" into a door the operator cannot open — so it is fixed first.
+
+- **The first-run wizard no longer kills the server on a stock Mac (#859).** Step 2 of setup
+  scans the directory you point it at, and the value it pre-fills is `~/Documents/Projects` —
+  TCC-protected on macOS. A launchd-spawned node without Full Disk Access does not get `EPERM`
+  there: the `open()` never returns. Because that scan ran synchronously inside the request
+  callback, the blocked syscall stopped the event loop, and one click took down **every route in
+  the process** — no error, no log line, no recovery, with launchd still reporting the service
+  healthy. It needed a `launchctl kickstart`. Measured on a clean macOS guest, same server, back
+  to back: an ordinary directory returned `200` and left `/api/health` answering `200`; the
+  default directory never answered and the server was gone.
+
+  This is the same defect already fixed for `GET /api/projects`, at a call site that fix missed —
+  and the more dangerous of the two, because it fires before the operator has a working install
+  to go back to, and on the default configuration rather than an unlucky one.
+
+  `POST /api/setup/scan` now delegates to `projects.scanDirectoryForProjects`, which runs the
+  whole walk — `stat`, `readdir` and the per-directory marker checks — through `fs.promises` on
+  libuv's threadpool under a single 5-second deadline covering the entire scan, not each call
+  within it. A path that never answers now costs one threadpool slot and one request instead of
+  the server.
+
+  **That slot is never given back, and four of them is the whole pool (#883).** Measured on the
+  clean guest after this branch: scans 1-3 of a protected path leave an ordinary directory
+  answering `200` in 0.03s; the **fourth** leaves it failing at the 5s deadline, and it never
+  recovers. `UV_THREADPOOL_SIZE` is unset, so the default is 4, and the cliff lands exactly there.
+  So this reduces the wedge from one request to four — it does not remove it. Worse, the failure
+  is invisible (`/api/health`, `/api/config` and `/api/engines` all keep answering `200`) and it
+  misattributes: `tcTimedOut` is the only signal, so once the pool is gone **every** directory is
+  reported as Full-Disk-Access-protected, sending the operator to change a permission that was
+  never the problem. Reclaiming a thread blocked in the kernel needs the process holding it to
+  die, so the real fix is running the walk in a child process that the deadline kills. Tracked in
+  #883; this branch is held in draft for it.
+
+  **The deadline also stops the walk, not just the request.** A promise cannot be cancelled, so
+  answering at the deadline leaves the walk running — still issuing calls into a path already
+  known not to answer, each holding one of libuv's four default threadpool slots until a kernel
+  that never returns returns. Four retries and every async filesystem call in the process is
+  queued behind them, which is the same wedge by a slower road. The walk now re-checks the
+  deadline between entries and abandons itself, and the twelve manifest probes per directory
+  short-circuit on the first hit again rather than firing concurrently.
+
+  **The same fix, swept to its sibling.** `listAllProjects` — the route the dashboard loads, and
+  the one this issue was originally filed against — had a bounded `readdir` followed by an
+  *unbounded* `fs.existsSync` per subdirectory over the same protected tree. Bounding the
+  directory read and then probing its children synchronously is not a bounded scan. That loop now
+  uses the same async probe and the same walk deadline.
+
+  **Running out of time shortens the list; it does not empty it.** The dashboard's walk stops at
+  the deadline and returns what it found, logging that the list is short — a discovery walk that
+  ran out of budget has still discovered everything it reached, and per-entry cost here is
+  dominated by a synchronous `git.getInfo` (up to seven `execSync` calls per directory, cached two
+  minutes), so a cold-cache load over a few dozen unregistered folders would otherwise have shown
+  **none** of them with a log line as the only trace. The walk's own deadline fires 250ms before
+  the request deadline that races it, so the specific answer wins the tie instead of the generic
+  one — same instant, and the race would reject first and throw the partial away.
+
+  **The wizard's scan reports instead of shortening**, because the operator is about to tick boxes
+  from that list and a silently half-empty one reads as "those directories are not there". It also
+  distinguishes the two failures: a walk that was being answered too slowly says how far it got
+  and names a large directory or slow disk first, with Full Disk Access offered last as a
+  possibility. Only a read that never answered at all gets told to grant Full Disk Access —
+  telling a healthy machine to change a privacy setting sends the operator to fix something that
+  was never wrong.
+
+  **One residual, stated plainly:** `git.getInfo` still shells out with `execSync`, and lib/git's
+  5-second cap is per command while reading a repo takes several. A directory whose git calls all
+  stall can block the loop for longer than this scan's own deadline, which cannot fire while a
+  synchronous call is running. It is bounded, unlike the read this fixes, but it is not free —
+  the per-entry deadline check is what keeps one slow directory from being followed by a hundred
+  more.
+
+  **And it says what to do about it.** There is nothing to degrade to here — the operator asked
+  about one specific directory — so the failure is reported rather than silently shortened, and a
+  deadline failure carries the remedy: grant Full Disk Access, or choose a directory outside
+  `~/Documents`, `~/Desktop` and `~/Downloads`. The wizard now renders the server's message
+  instead of its own "Directory not found or not accessible", which was actively misleading for
+  this failure — the directory *is* there, and the operator can open it in Finder.
+
+  **Confirmed on the machine the bug lives on**, not only in tests: on a clean macOS 26.3 guest
+  where node has no Full Disk Access, scanning an ordinary directory returns `200` and scanning
+  `~/Documents/Projects` returns `400` in five seconds with the remedy — and `/api/health` and
+  `/api/config` both still answer `200` afterwards. That request used to take the whole server
+  down.
+
+  The regression test asserts the property that matters rather than the response alone: a 200ms
+  timer set while the scan is outstanding must still fire on time. It stubs the synchronous
+  readdir as well as the async one, so reverting the route to `fs.readdirSync` turns the test red
+  instead of leaving it green.
+
+- **Whether you are protected is now decided in one place, and an unknown state fails safe
+  (#861).** The wizard's terminal screens decided "is anything enforcing a login?" by comparing
+  `ingress.protection` against a literal list of states — once in `server.js` and twice in
+  `public/setup.js`. The server produced the value and the browser re-derived its *meaning*,
+  which is two sources of truth for a security decision.
+
+  **The direction of the test was the real defect.** Those lists enumerated the states meaning
+  "not protected", so a state they had never heard of matched none of them and fell through to
+  the branch that **dismisses** the warning. Add a sixth `protection` value later and the wizard
+  would quietly stop telling an operator that nothing is enforcing their login, landing them on a
+  dashboard indistinguishable from a protected one. Nothing would fail; a screen would simply
+  stop appearing.
+
+  The server now derives the answer once — in `deriveProtectionFlags`, beside where the value is
+  produced — and ships `confirmedProtection` and `credentialStored`. The browser branches on
+  those and no longer reads the enum at all. The predicate is stated as an **allowlist**: only
+  the single state in which TangleClaw positively observed a gate counts as confirmed, so an
+  unrecognised value is *not confirmed* and the operator is told — and an unclassified value is
+  logged, so the fail-safe path is not silent. The two flags are orthogonal facts ("is a gate
+  enforced" and "does a credential exist"); "saved but not confirmed" is their combination. Which
+  states produce which screen is deliberately unchanged — this moves who decides, not what is
+  decided.
+
+- **Setup-wizard changes reach browsers that have used TangleClaw before (#861).** `setup.js` is
+  loaded as a plain `<script src>`, which is not a navigate request, so it fell to the service
+  worker's cache-first branch with no carve-out: a browser with an active worker kept serving
+  whatever copy it fetched first, and any change to the wizard — including the one above — stayed
+  invisible until `CACHE_NAME` moved. That is the same stale-serve pattern already carved out for
+  `session.js` and `ui.js`. It is now network-first. Deliberately *not* a `CACHE_NAME` bump: that
+  tears down and reinstalls the worker for every browser, which behind the login gate is what
+  produced the repeating credential prompt in #710.
+
+- **A project merely NAMED "Medusa" is no longer mistaken for the switchboard checkout (#873).**
+  Reported from a third-party install, and structurally unreproducible here: on this machine a
+  project named Medusa *is* the switchboard repository, so the resolver's assumption was invisible.
+  `_medusaProjectPath()` selected `store.projects.getByNameCaseInsensitive('medusa')` and handed the
+  path straight to `readContract()` without ever asking whether that project was the Medusa
+  repository. The reporter had an ordinary website project registered under that name, so every
+  opted-in session launched carrying `### Medusa consumer contract — UNAVAILABLE` naming *their*
+  project's `docs/CONSUMER-CONTRACT.md` — TangleClaw diagnosing an unrelated project as a broken
+  Medusa install.
+
+  A display name is whatever the operator typed. It can locate a candidate; it cannot establish
+  identity. The name-match now only *finds* a candidate, and a **usable** consumer contract is what
+  corroborates it — present, this is a checkout; absent, it is a different project that happens to
+  share a name, and TangleClaw says so instead of naming it. The honest-absence message now reads
+  "no local Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH`, so an operator whose
+  checkout is registered under another name has a stated way out rather than a path to a project
+  they never connected to Medusa.
+
+  "Usable" is deliberately the *same* test the reader applies — readable and non-blank — via a new
+  `medusa.hasContract()`. Corroborating on mere existence would admit a project holding an empty or
+  unreadable `docs/CONSUMER-CONTRACT.md`, which the read then rejects: the same bug in miniature,
+  with the prime naming a project TangleClaw had just declined to trust.
+
+  Resolution is also **lazy**. The checkout resolver reads the project store and logs when it
+  rejects a candidate, so it is now passed as a thunk that `readContract` calls only if the override
+  did not answer. Otherwise an operator who took the remedy this feature itself recommends would
+  still get a warning naming their project on every launch that succeeded.
+
+  **The narrower bug was the visible one; the wider one was silent.** Because `readContract()`
+  already failed closed on a missing file, the reporter got a wrong *diagnosis* rather than a wrong
+  *contract*. Had their project happened to contain `docs/CONSUMER-CONTRACT.md`, that arbitrary
+  document would have been injected into every opted-in prime as the protocol contract. Requiring
+  corroboration closes both.
+
+  Identity is corroborated by the artifact rather than by a git remote deliberately: a remote check
+  misses forks and remote-less clones, and the contract doc is the thing actually being resolved.
+  A single `contractPathIn()` in `lib/medusa.js` derives the doc's location, and `hasContract()`
+  vets through it, so the location vetted and the location read cannot drift apart.
+
+  The name-match path had **no test coverage at all** — every existing test reaches the contract
+  through the `MEDUSA_CONTRACT_PATH` seam, which is why this shipped. It is now exercised directly,
+  and each direction is pinned by its own mutation, each killing a different test: removing the
+  corroboration reddens the unrelated-project test, rejecting every candidate reddens the
+  genuine-checkout test (so the fix cannot degrade into simply disabling discovery), corroborating on
+  existence alone reddens the blank-contract tests, and resolving the checkout eagerly reddens the
+  override-short-circuit test.
 
 - **A wrap that pushes its branch but never opens the PR now leaves a durable record (#867).** The
   outcome of the auto-PR close-loop reached exactly one place: a log line. When the PR failed to
@@ -773,6 +1151,95 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Security
 
+- **The ingress cutover log no longer records your login's password hash, and no longer grows
+  without end (#821).** `~/.tangleclaw/logs/ingress-cutover.log` was opened with a raw append-mode
+  descriptor outside the logger that owns rotation, so it had no size cap, no rotation and no
+  pruning — and by the code's own admission it could capture a credential hash, because
+  `caddy validate` quotes the offending Caddyfile line back and for this project that line is
+  `basic_auth <user> <hash>`. Caddy renamed `basicauth` to `basic_auth` in 2.8, so a version skew
+  alone is enough to make the credential line itself the one that fails to parse.
+
+  **Redaction is the control for the secret; rotation is the control for growth.** They are not
+  interchangeable, and it is worth being exact because the obvious reading gets it backwards: a size
+  cap would not have bounded the credential's lifetime at all. This log gets kilobytes per run and an
+  install performs a handful of cutovers ever, so it would sit forever below any sane threshold,
+  never rotate, and keep the hash for the life of the machine. Only removing the hash removes the
+  hash.
+
+  So the hash is now redacted **at its source** — `caddy.validateCaddyfile` scrubs its own error
+  before returning it. That one string fanned out to three sinks: the cutover log, the cutover
+  result file, and the server log. Only the third was redacting, which is precisely the evidence
+  that per-caller redaction is the leaky shape. The cutover additionally scrubs what it writes to
+  its result file and its stderr — prophylactically, since no path today builds such a message,
+  so that a future thrower near the credential cannot reopen this without knowing to.
+  The username is deliberately kept — it is what makes a failure diagnosable, and it is already
+  reported at the HTTP boundary.
+
+  Separately, the log now rotates at 1 MB keeping one previous generation — deliberately far below
+  the server log's 10 MB, since a threshold sized for a continuously-appended service log would
+  never be reached here and would bound nothing. Rotation happens **only immediately before the log
+  is opened for a new run**, never during one: the descriptor becomes a detached child's stdout and
+  stderr, so renaming mid-run would leave that child writing to a detached inode — the same trap
+  `logger.js` documents for the long-running server. A log that cannot be rotated is appended to
+  anyway; housekeeping must never cost an operator their ingress. The existing `0600` mode stays,
+  because it is the control that does not depend on every future writer remembering to redact —
+  and a rotated generation is now tightened too, since `rename` preserves mode and would otherwise
+  carry a pre-existing loose log's `0644` into the archive.
+
+  **Both controls are prospective, and an already-written log is not cleaned up.** If this machine
+  ran a cutover that hit the validate-failure path before this release, its existing log can still
+  hold a hash — rotation will not remove it either, because a log under the threshold never
+  rotates. TangleClaw does not silently truncate the operator's only record of what setup did.
+  `deploy/INGRESS.md` carries a one-line check and the remedy; in short, the file is narration
+  rather than state, nothing reads it back, and `rm ~/.tangleclaw/logs/ingress-cutover.log*` is
+  safe.
+
+- **A browser request body must be declared `application/json` — closing the CSRF class that made
+  the form attack a CORS *simple* request (#860).** `parseBody` JSON-parses any body whatever its
+  `Content-Type`, and the three encodings a `<form>` can send (`text/plain`,
+  `application/x-www-form-urlencoded`, `multipart/form-data`) are exactly the three that need no
+  preflight. So a page on another site could post a form to
+  `POST /api/auth/credential` — a route that authorizes on "arrived over loopback", reasoning that a
+  live gate means Caddy already authenticated the caller. In caddy mode TangleClaw still binds an
+  ungated `127.0.0.1` listener the operator's own browser reaches directly, so that reasoning never
+  covered browser traffic. The attacker cannot read the reply, which does not matter for a write:
+  the admin credential is already changed.
+
+  Requiring `application/json` forces a preflight the server never answers affirmatively, and a form
+  cannot send that type at all. **It also closes the `same-site` residual** the `Sec-Fetch-Site`
+  guard deliberately allows — a sibling-subdomain attacker — without refusing `same-site` outright,
+  which would break a legitimate multi-subdomain deployment.
+
+  **This was deferred from v5 as a breaking change to the agent-facing API, and it is not one.** The
+  check applies only to *browser-shaped* requests — those carrying `Sec-Fetch-Site` or `Origin`.
+  `curl`, scripts and the agent API send neither, so the guide's PortHub and shared-docs examples,
+  which show a JSON body and no header, keep working exactly as written. A browser cannot suppress
+  `Sec-Fetch-Site` from script, so the attack always carries the marker that brings it into scope.
+
+  **Confined to TangleClaw's own API, and that is not a detail.** The guard runs ahead of route
+  matching, so unscoped it would also govern `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*` —
+  reverse proxies whose browser client is not ours. `public/openclaw-view.js` iframes
+  `/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside our page:
+  any of its fetches using the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+  idiom — no explicit header, which the browser labels `text/plain;charset=UTF-8` — would take a 415
+  before reaching the gateway, and multipart attachment paths would break the same way. Imposing a
+  media-type contract on a third party's client through a proxy is not ours to do. Those prefixes
+  keep the cross-site and served-`Host` guards, exactly what they had before, so this is a narrower
+  new rule rather than a regression.
+
+  **Bodyless writes are unaffected, deliberately.** The dashboard sends genuine ones —
+  `medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` all go through `api()` with no body and no
+  `Content-Type` — and refusing them would break the operator's own UI to close nothing, since a
+  request with no body carries no forged payload. The remaining exposure is a bodyless *same-site*
+  write to a route that acts without one; `Sec-Fetch-Site` still refuses the cross-site case, which
+  is the one an arbitrary page can mount. Recorded in `security-model.md` rather than implied.
+
+  The security model's CSRF acceptance is **re-argued, not re-cited**. Its stated premise was "no
+  cookies, no tokens, no session state in the browser" — precisely what shipping browser-cached HTTP
+  Basic by default invalidates. CSRF is now in scope, with the three guards and their residuals
+  written down.
+
+
 - **A state-changing request or terminal socket must now arrive under a name this install
   actually serves — closing the DNS-rebinding path around both v5 cross-site guards (#864).**
   Those guards decide "is this cross-site?" *relative to the request itself*: `Sec-Fetch-Site` is
@@ -1129,6 +1596,68 @@ All notable changes to TangleClaw are documented in this file.
   nothing until a pattern that must hit does.**
 
 ### Internal
+
+- **A killable scanner process, so a hung directory can no longer take the server's filesystem with
+  it.** (#883, chunk 1 — the mechanism only; nothing routes through it yet, so no behavior changes
+  in this entry.) A read of a TCC-protected macOS path does not fail, it never returns, and
+  `fs.promises` performs it on libuv's threadpool — four threads, shared by every async filesystem
+  call in the process. A deadline can abandon the promise but cannot cancel the syscall, so each
+  hung read costs a thread permanently. Four of them and the server can no longer touch the
+  filesystem **at all, on any path**, while `/api/health` still answers `200`.
+
+  New `lib/dir-scanner.js` supervises a forked `lib/dir-scanner-child.js`: filesystem work happens
+  in a process that can be killed, and the deadline kills it, which is the only way to reclaim a
+  thread blocked in the kernel. `worker_threads` cannot substitute — workers share the process-wide
+  pool and `terminate()` does not interrupt a blocked syscall. The child is long-lived rather than
+  forked per scan because the dashboard polls `GET /api/projects` every ten seconds for as long as a
+  tab is open, and a process spawn per poll is a permanent cost paid against a rare failure.
+
+  Collateral requests — work travelling in a child killed for a *sibling's* deadline — reject as
+  `tcAborted`, deliberately **not** `tcTimedOut`. Only `tcTimedOut` earns the Full Disk Access hint,
+  and their paths may be perfectly healthy; labelling them timed-out would reproduce the exact
+  misdiagnosis this work exists to remove.
+
+  **The regression test reproduces the defect rather than describing it.** A companion process
+  issues `UV_THREADPOOL_SIZE + 1` blocking reads through the deadline-race shape that shipped
+  before this change (`projects._withTimeout`, deleted by chunk 2 below along with its last
+  caller, so the demo carries a verbatim copy rather than keeping dead code alive to be a
+  fixture), then
+  times an ordinary `readdir` on an unrelated path: every call rejects on schedule and the readdir
+  never completes again — that assertion is the bug, executable. The same workload through the
+  scanner leaves the parent's `readdir` at ~35ms. Isolated in its own process because a test that
+  destroys its own threadpool would take the rest of the file with it; measured along the way,
+  such a process cannot even finish `process.exit(0)`, so it is SIGKILLed.
+
+  **What the test does not prove, stated plainly:** a real hung `readdir` is not reproducible in CI.
+  A FIFO — the one portable way to block a filesystem call — answers `readdir` with `ENOTDIR`
+  immediately (measured); only `open`/`readFile` blocks on one. The hang is therefore produced with
+  the operation that does block, in a fixture child standing in for the real one. That covers the
+  supervisor's contract against a genuinely blocked syscall holding a genuine pool thread, and
+  nothing specific to `readdir`.
+
+- **Seven tests stopped asking the host a question the code should answer.** The new
+  no-engine refusal on `POST /api/setup/complete` broke `test/api-setup-https.test.js`, which had
+  never needed an engine before: the bundled profiles detect real CLIs, so the suite passed on a
+  developer's Mac and returned `400 ENGINE_REQUIRED` on a CI runner with none installed. The shared
+  `test/_engine-fixture.js` exists for precisely this and had been applied to the four suites
+  measured when the gate landed; this fifth one was missed, because a test that still passes does
+  not ask to be looked at. It is the only remaining file of the nine referencing that route that
+  issues a real request against a real server. Proven on a host that *does* have engines by removing
+  every bundled profile and confirming the fixture alone satisfies the gate — and that removing the
+  fixture too makes it refuse.
+
+- **Three notes from the independent PR review, cleared.** A dead `if (found.length > 0)` in the
+  wizard's engine re-check guarded a block the early return above it already made unreachable, so
+  the condition was always true; and `_probeShellPath` (`lib/engines.js`) and `createProjectsDir`
+  (`lib/projects.js`) both declared `@returns` as the *resolved* value while returning a promise —
+  JSDoc a caller could follow into a dropped `await`. No behavior change.
+
+- **`FEATURES.md`: two auto-stub graduations reconciled.** Two branches described the same newly
+  indexed files independently, and each got something wrong — one claimed `test/tmux.test.js`
+  covers status-bar re-stamping (it covers construction, not re-stamping) and that
+  `test/session-ownership.test.js` covers the owner column's migration (it does not); the other
+  omitted `redactHashes`, which is real and tested. Every disputed claim was rechecked against the
+  code and the surviving entry is the union of what both got right.
 
 - **`CLAUDE.md` is no longer tracked — it is machine state, not repo content.** This repo's own
   `CLAUDE.md` is plugin-governed (Prawduct hand-maintains it; TangleClaw deliberately never
@@ -1616,6 +2145,17 @@ All notable changes to TangleClaw are documented in this file.
   username withheld once `setupComplete` flips, caddy reported unavailable-with-a-reason on an
   empty PATH (and the Caddyfile still classified correctly when the binary is gone), and proof
   that probing neither creates nor modifies a Caddyfile.
+
+- **Six review rounds' worth of hardening behind the first-run work (#859, #346).** Logged for the
+  audit trail rather than because an operator would notice it: the engine-list route re-probes the
+  login shell at most once per cache generation instead of once per request (keyed on *attempted*,
+  not *succeeded* — a shell that never answers never latches the second flag, so the population most
+  likely to be sitting on that screen was paying two shell starts per page load); the plan's chunk
+  headings were renamed to the form record-lint can actually walk, so deliverable checks report a
+  number instead of `null`; and three tests were rewritten because they could not fail on the
+  regressions they named — two bounded on elapsed time against a stub that returns instantly, one
+  asserting a flag the previous line had already set. Six `detectEngine` tests deleted by a scripted
+  edit that swallowed the block between two `describe` boundaries were restored verbatim.
 
 ## [4.38.0] - 2026-07-28
 

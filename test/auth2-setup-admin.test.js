@@ -17,6 +17,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
 const { writeCaddyStub } = require('./_caddy-stub');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -68,6 +69,10 @@ describe('forced first-run admin credential', () => {
     process.env.PATH = stubDir + path.delimiter + (origPath || '');
 
     store._setBasePath(tmpDir);
+    // Setup refuses to finish with no engine installed, and the bundled
+    // profiles detect real CLIs — so without this the result depends on
+    // what the host has, passing on a dev Mac and failing on CI.
+    installAlwaysAvailableEngine(tmpDir);
     store.init();
 
     server = createServer();

@@ -314,7 +314,14 @@ function writeCutoverResult(resultFile, result) {
       ok: Boolean(result.ok),
       code: result.code,
       target: result.target,
-      error: result.error || null,
+      // Redacted on the way OUT, not trusted to arrive clean (#821). This file
+      // persists at 0600 and is read back by the server and the wizard, so it is
+      // a second at-rest home for whatever text a failure carried. The source
+      // that can hold a hash — `caddy validate` output — is redacted in
+      // `caddy.validateCaddyfile`, but `finish` is also reached with a plain
+      // Error message from the Caddyfile generator, and that path has no such
+      // guarantee. One pass here covers every code that routes through `finish`.
+      error: caddy.redactHashes(result.error) || null,
       healthUrl: result.healthUrl || null,
       healthOk: typeof result.healthOk === 'boolean' ? result.healthOk : null,
       // Distinct from `error` ON PURPOSE. `finish` derives both `ok` and the exit
@@ -324,7 +331,7 @@ function writeCutoverResult(resultFile, result) {
       // health result is a separate fact from whether the cutover succeeded, and
       // this key exists so it can be reported without inverting the outcome.
       // This builder names every key explicitly: anything absent here is dropped.
-      healthError: result.healthError || null,
+      healthError: caddy.redactHashes(result.healthError) || null,
       finishedAt: new Date().toISOString()
     })}\n`, { mode: 0o600 });
     return true;
@@ -620,8 +627,15 @@ function main() {
   let plan;
   try {
     plan = planCutover(target, ctx);
-  } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's refusals and its generator's validation errors both arrive as Error; reported verbatim below, never swallowed
-    process.stderr.write(`ERROR: ${err.message}\n`);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- planCutover's refusals and its generator's validation errors both arrive as Error; reported below, never swallowed
+    // This script's stderr IS the cutover log — the parent hands it the log fd
+    // as the child's stdio — so anything written here lands in a file that
+    // persists (#821). No generator path today builds a message containing the
+    // hash, so this is prophylactic rather than a fix for a known carrier: it
+    // covers any future thrower in `planCutover`'s tree, which is where the
+    // credential is handled, without that author having to know this write ends
+    // up in a durable file. Cheap, and the alternative is finding out later.
+    process.stderr.write(`ERROR: ${caddy.redactHashes(err.message)}\n`);
     // Only the tagged refusal is `ungate-refused`. Everything else the generator
     // raises is a plain build failure, and must not be reported as a credential
     // problem — the two have completely different operator remedies.

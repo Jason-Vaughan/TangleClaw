@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -817,51 +817,111 @@ describe('projects', () => {
   // launchd still reporting the process alive. The dashboard loads this route, so
   // it was the first thing a new operator hit.
   describe('listAllProjects — a directory that never answers must not take the server down (#859)', () => {
-    const fsp2 = require('node:fs').promises;
+    const dirScanner = require('../lib/dir-scanner');
 
-    it('returns the registered projects instead of hanging forever', async () => {
-      // Simulate the real failure precisely: readdir that never settles. A
-      // rejecting stub would NOT reproduce it — the bug is a call that neither
-      // resolves nor rejects, which is why it was invisible to every error path.
-      const realReaddir = fsp2.readdir;
-      fsp2.readdir = () => new Promise(() => {});
+    /**
+     * Run `fn` with the scanner replaced, then restore it.
+     *
+     * The hang used to be injected by stubbing `fsp.readdir` in this process.
+     * Since #883 the walk happens in a child process, where a stub in this one
+     * cannot reach it — so the seam moved to the scanner call itself. What is
+     * being pinned here is unchanged: how `listAllProjects` DEGRADES when the
+     * scan does not come back. Whether the scanner really kills a hung child is
+     * `test/dir-scanner.test.js`'s job, and it is asserted against a genuinely
+     * blocked syscall there rather than a stub.
+     *
+     * @param {Function} fakeRequest - Stand-in for dirScanner.request.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fakeRequest, fn) {
+      const real = dirScanner.request;
+      dirScanner.request = fakeRequest;
       try {
-        const started = Date.now();
-        const list = await projects.listAllProjects();
-        const elapsed = Date.now() - started;
-        assert.ok(Array.isArray(list), 'must still answer with a list');
-        // Bounded tightly against the 5s deadline. A loose ceiling would pass
-        // even if the deadline stopped working and something else happened to
-        // end the wait.
-        assert.ok(elapsed >= 4500 && elapsed < 9000,
-          `must answer at the deadline, not before or long after (took ${elapsed}ms)`);
-        // Registered projects come from the database and are unaffected by a
-        // stuck filesystem; only discovery of unregistered folders is lost.
-        for (const p of list) {
-          assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
-        }
+        return await fn();
       } finally {
-        fsp2.readdir = realReaddir;
+        dirScanner.request = real;
+      }
+    }
+
+    /**
+     * The rejection a scan produces when the path never answered.
+     * @returns {Error}
+     */
+    function timedOut() {
+      return Object.assign(new Error('timed out after 5000ms reading /nowhere'),
+        { tcTimedOut: true });
+    }
+
+    it('returns the registered projects instead of failing the request', async () => {
+      const list = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.listAllProjects()
+      );
+      assert.ok(Array.isArray(list), 'must still answer with a list');
+      // Registered projects come from the database and are unaffected by a
+      // stuck filesystem; only discovery of unregistered folders is lost.
+      assert.ok(list.length > 0, 'the fixture must actually have registered projects to degrade to');
+      for (const p of list) {
+        assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
       }
     });
 
-    it('marks a deadline failure so the caller can name Full Disk Access', async () => {
-      // The hint is the whole operator-facing value of the degradation: without
-      // it the dashboard just shows fewer projects and nobody learns why. It is
-      // keyed on `tcTimedOut`, which distinguishes "this path never answered"
-      // from an ordinary filesystem error — so THAT is what gets pinned, on the
-      // real helper rather than on a mock. Delete the flag and this goes red.
-      const started = Date.now();
-      await assert.rejects(
-        () => projects._withTimeout(new Promise(() => {}), 60, 'reading /nowhere'),
-        (err) => {
-          assert.equal(err.tcTimedOut, true,
-            'a timeout must be distinguishable from a filesystem error');
-          assert.match(err.message, /timed out after 60ms reading \/nowhere/);
-          return true;
-        }
+    it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
+      // The two bounds are not redundant and their order is the whole point: the
+      // child stops itself first and hands back what it found, leaving the
+      // supervisor's kill as the backstop for a walk that never returns at all.
+      // Equal values let the kill win the tie, which throws away a partial answer
+      // and reports a responsive directory as unresponsive.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = { payload, opts }; return Promise.reject(timedOut()); },
+        () => projects.listAllProjects()
       );
-      assert.ok(Date.now() - started >= 55, 'must actually wait for the deadline');
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
+        `the walk budget (${seen.payload.budgetMs}ms) must be under the request deadline `
+        + `(${seen.opts.timeoutMs}ms)`);
+    });
+
+    it('opts the POLLED route into the failure backoff', async () => {
+      // This route is polled every ten seconds for as long as a dashboard tab is
+      // open. Without opting in, an unreadable projects directory costs a killed
+      // child on every tick forever — and a child blocked in the kernel may never
+      // leave the process table. Drop the pathKey and that returns silently:
+      // everything still works, it just costs a process every ten seconds.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = opts; return Promise.reject(timedOut()); },
+        () => projects.listAllProjects()
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.equal(seen.pathKey, projects.resolveProjectsDir(store.config.load().projectsDir),
+        'the backoff must be keyed on the directory actually read');
+    });
+
+    it('logs a remembered refusal quietly, so one bad directory is not a log flood', async () => {
+      // Same condition, same degradation — but the scanner already warned when it
+      // really failed, and warns again on each escalation. Repeating that per poll
+      // would bury those lines behind six identical ones a minute.
+      const logger = require('../lib/logger');
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
+      try {
+        const cached = Object.assign(new Error('remembered'),
+          { tcTimedOut: true, tcCached: true });
+        await withScanner(() => Promise.reject(cached), () => projects.listAllProjects());
+        assert.equal(chunks.join(''), '', 'a remembered refusal must not warn again');
+
+        // ...but a NEW failure still must, or a stuck directory goes unreported.
+        await withScanner(() => Promise.reject(timedOut()), () => projects.listAllProjects());
+        assert.match(chunks.join(''), /Full Disk Access/);
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
     });
 
     it('names Full Disk Access and the safe directories when the path never answered', () => {
@@ -876,6 +936,19 @@ describe('projects', () => {
       assert.match(hint, /did not respond/, 'must say what was observed, not just what to do');
     });
 
+    it('says it without the acronym', () => {
+      // The three assertions above all pass against the older wording too, which
+      // said "a TCC-protected path": they pin the FACTS the message must carry,
+      // and nothing pinned the register. This is the one message a stranded
+      // non-expert reads, and it is the worst moment to meet a new term — the
+      // other two surfaces naming this condition already say "protected folder"
+      // and "a directory node cannot read". Without this line, reverting to the
+      // acronym leaves every test green.
+      const timedOut = Object.assign(new Error('timed out'), { tcTimedOut: true });
+      assert.doesNotMatch(projects._scanFailureHint(timedOut), /TCC/,
+        'operator-facing text must not carry the acronym; the comments may');
+    });
+
     it('actually PUTS the hint in the log when a scan times out', () => {
       // _scanFailureHint is pinned above, but pinning a helper says nothing
       // about whether anyone calls it: delete `hint: _scanFailureHint(err)` from
@@ -886,15 +959,16 @@ describe('projects', () => {
       const prevLevel = logger.getLevel();
       logger.setLevel('warn');
       logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
-      const fsp4 = require('node:fs').promises;
-      const realReaddir = fsp4.readdir;
-      fsp4.readdir = () => Promise.reject(Object.assign(new Error('timed out'), { tcTimedOut: true }));
+      const real = dirScanner.request;
+      dirScanner.request = () => Promise.reject(
+        Object.assign(new Error('timed out'), { tcTimedOut: true })
+      );
       return projects.listAllProjects().then(() => {
         const out = chunks.join('');
         assert.match(out, /Full Disk Access/,
           'the remedy must reach the log, not just exist in a helper');
       }).finally(() => {
-        fsp4.readdir = realReaddir;
+        dirScanner.request = real;
         logger.setConsoleStream(null);
         logger.setLevel(prevLevel);
       });
@@ -908,17 +982,412 @@ describe('projects', () => {
       assert.equal(projects._scanFailureHint(null), undefined);
     });
 
-    it('resolves normally when the work beats the deadline', async () => {
-      assert.equal(await projects._withTimeout(Promise.resolve('ok'), 5000, 'x'), 'ok');
-    });
+    // `_withTimeout`'s own two unit tests (the deadline fires and carries
+    // `tcTimedOut`; it resolves when the work wins) are gone with the helper.
+    // #883 moved every operator-path read into the scanner child, leaving the
+    // helper with no production caller, and keeping dead code alive to be a
+    // fixture misrepresents the module. Both contracts are asserted against the
+    // code that now owns them, in test/dir-scanner.test.js — and against a real
+    // blocked syscall rather than a never-settling stub.
 
     it('still answers when the directory read fails outright', async () => {
-      const realReaddir = fsp2.readdir;
-      fsp2.readdir = () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' }));
+      const list = await withScanner(
+        () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' })),
+        () => projects.listAllProjects()
+      );
+      assert.ok(Array.isArray(list));
+    });
+
+    it('keeps the directories it found when the walk runs out of time', async () => {
+      // Bringing the per-entry loop under the deadline introduced an
+      // all-or-nothing failure the old shape did not have: throw mid-loop and
+      // the caller degrades to the registered projects, discarding everything
+      // already discovered. This route backs the dashboard, and per-entry cost
+      // is dominated by a synchronous git.getInfo (up to seven execSync calls
+      // per directory, cached two minutes) — so a cold-cache load over a few
+      // dozen unregistered folders would show NONE of them, with a log line as
+      // the only trace. A discovery walk that ran out of budget still
+      // discovered what it got to.
+      //
+      // The walk now truncates inside the scanner child, so THAT half is pinned
+      // in test/dir-scanner-child.test.js. What remains this file's job — and it
+      // is the half that regressed before — is that `listAllProjects` RENDERS a
+      // truncated result instead of treating it as a failure. Mutation: make the
+      // truncated branch degrade to the registered list and `found` goes to zero.
+      const partial = [
+        { id: null, name: 'walked-1', path: '/x/walked-1', registered: false, git: null },
+        { id: null, name: 'walked-2', path: '/x/walked-2', registered: false, git: null }
+      ];
+      const all = await withScanner(
+        () => Promise.resolve({ unregistered: partial, truncated: true }),
+        () => projects.listAllProjects()
+      );
+      const found = all.filter(p => p.registered === false);
+      assert.deepEqual(found.map(p => p.name).sort(), ['walked-1', 'walked-2'],
+        'the directories walked before the deadline must survive, not be discarded');
+    });
+
+    it('says the list is SHORT rather than letting a truncated walk look complete', async () => {
+      // A silently-short list reads as "those directories are not there". The
+      // log line is the only place that distinction exists, so it is wiring
+      // worth pinning: delete the `truncated` branch and this goes red while
+      // the test above still passes.
+      const logger = require('../lib/logger');
+      const chunks = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (c) => { chunks.push(String(c)); return true; } });
       try {
-        assert.ok(Array.isArray(await projects.listAllProjects()));
+        await withScanner(
+          () => Promise.resolve({ unregistered: [], truncated: true }),
+          () => projects.listAllProjects()
+        );
+        assert.match(chunks.join(''), /SHORT, not empty/);
       } finally {
-        fsp2.readdir = realReaddir;
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+    });
+
+    it('reports an unregistered directory\'s TangleClaw config, end to end', async () => {
+      // Pins the ANSWER, because the answer is what two successive rewrites of
+      // the mechanism underneath it must not change: this field was a synchronous
+      // `fs.existsSync`, then an awaited `fsp.access`, and is now an `access` in
+      // the scanner child, and nothing else asserts it for this function.
+      //
+      // Deliberately end-to-end against real directories through the real
+      // scanner — no stub anywhere — so it also proves the walk's result actually
+      // survives the process hop with this field intact.
+      fs.mkdirSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
+      fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
+
+      const all = await projects.listAllProjects();
+      const withConfig = all.find(p => p.name === 'has-tc-config');
+      const without = all.find(p => p.name === 'no-tc-config');
+      assert.ok(withConfig && without, 'both unregistered directories must be listed');
+      assert.equal(withConfig.hasTangleclawConfig, true);
+      assert.equal(without.hasTangleclawConfig, false);
+    });
+  });
+
+  // The same wedge, the OTHER call site. The projects list was fixed; the
+  // first-run wizard's directory scan kept reading the operator's directory
+  // synchronously, so a fresh macOS install on the pre-filled default
+  // (~/Documents/Projects) still lost the whole server at wizard step 2 —
+  // before the operator had any working install to go back to. Reproduced on a
+  // clean macOS guest: an ordinary directory scanned 200 and left the server
+  // healthy; ~/Documents/Projects never answered and the process needed a
+  // launchctl kickstart.
+  // `~/Documents/Projects` is the shipped default and the value the wizard
+  // pre-fills — and a stock macOS install does not have it. macOS creates
+  // Documents; nothing creates Projects, and nothing in TangleClaw did either.
+  // So the first action of a brand-new install answered "Directory does not
+  // exist" and offered nothing to do about it.
+  describe('createProjectsDir — the offer that ends the dead end', () => {
+    let home;
+    let savedHome;
+
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-home-'));
+      process.env.HOME = home;
+    });
+
+    afterEach(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    it('creates the folder the operator was pointed at', async () => {
+      const target = path.join(home, 'Projects');
+      const result = await projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, true);
+      assert.ok(fs.statSync(target).isDirectory());
+    });
+
+    it('expands ~ the same way the scan does', async () => {
+      // The wizard sends back exactly what it displayed, and what it displays is
+      // `~/Documents/Projects`. Handled anywhere but here and the button would
+      // create a folder literally named "~".
+      fs.mkdirSync(path.join(home, 'Documents'));
+      const result = await projects.createProjectsDir('~/Documents/Projects');
+      assert.equal(result.ok, true);
+      assert.ok(fs.statSync(path.join(home, 'Documents', 'Projects')).isDirectory());
+      assert.equal(fs.existsSync(path.join(process.cwd(), '~')), false,
+        'a literal ~ directory must never appear');
+    });
+
+    it('is happy when it is already there', async () => {
+      // Two clicks, or a folder made in Finder while this screen was open.
+      const target = path.join(home, 'Projects');
+      fs.mkdirSync(target);
+      const result = await projects.createProjectsDir(target);
+      assert.equal(result.ok, true);
+      assert.equal(result.created, false, 'it reports that it made nothing');
+    });
+
+    it('refuses to create anything outside the home directory', async () => {
+      // This route runs during first-run setup, BEFORE any credential exists,
+      // so it cannot be protected by one — the constraint is the boundary. It
+      // must never become a general-purpose mkdir.
+      const result = await projects.createProjectsDir('/tmp/tc-should-never-exist');
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.equal(fs.existsSync('/tmp/tc-should-never-exist'), false);
+    });
+
+    it('refuses a traversal that climbs back out of home', async () => {
+      // `path.resolve` collapses `..` before the check, so this is normalised
+      // away rather than pattern-matched — which is why a path that LOOKS like
+      // it is under home cannot smuggle its way out.
+      const result = await projects.createProjectsDir(path.join(home, '..', '..', 'tc-escape'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /home directory/);
+    });
+
+    it('refuses to create the home directory itself', async () => {
+      const result = await projects.createProjectsDir(home);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+    });
+
+    it('creates one level, not a tree nobody asked for', async () => {
+      // "You pointed at ~/Documents/Projects and it wasn't there" is one level.
+      // Five is building something at a path nobody checked.
+      const result = await projects.createProjectsDir(path.join(home, 'a', 'b', 'c'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /folder above it/);
+      assert.equal(fs.existsSync(path.join(home, 'a')), false);
+    });
+
+    it('reports an interrupted create as interrupted, never as a bad directory', async () => {
+      // The SECOND of the two doors this fix opened, and it shipped without this
+      // test while the scan side had one. Collateral means a concurrent request
+      // in the same scanner stopped responding and the process had to be killed —
+      // this create never ran, so it says nothing about the folder. Handing the
+      // operator the Full Disk Access hint for a path that was never touched is
+      // the misdiagnosis #883 exists to remove. Delete the tcAborted branch in
+      // createProjectsDir and this goes red; without it, the suite stayed green.
+      const dirScanner = require('../lib/dir-scanner');
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = () => Promise.reject(Object.assign(
+        new Error('directory scan abandoned: the scanner process was killed'),
+        { tcAborted: true }
+      ));
+      try {
+        const result = await projects.createProjectsDir(path.join(home, 'Projects'));
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'CREATE_INTERRUPTED', 'its own code, not CREATE_FAILED');
+        assert.doesNotMatch(result.error, /Full Disk Access/,
+          'a folder that was never touched must not be blamed');
+        assert.match(result.error, /Nothing was created/,
+          'and the operator must be told the retry is safe');
+        assert.match(result.error, /try again/);
+      } finally {
+        dirScanner.interactiveRequest = real;
+      }
+    });
+
+    it('runs on the scanner the background poll cannot kill underneath it', async () => {
+      // Same separation the scan route has. Patching only the background entry
+      // point proves it: if create still used it, the stub would be reached and
+      // the folder would not appear.
+      const dirScanner = require('../lib/dir-scanner');
+      const realBackground = dirScanner.request;
+      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      try {
+        const result = await projects.createProjectsDir(path.join(home, 'Projects'));
+        assert.equal(result.ok, true, 'create must be independent of the polled route');
+        assert.equal(result.created, true);
+      } finally {
+        dirScanner.request = realBackground;
+      }
+    });
+  });
+
+  describe('scanDirectoryForProjects — the wizard scan must answer, not hang', () => {
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * Run `fn` with the scanner replaced, then restore it.
+     *
+     * Same seam, and same reason, as the `listAllProjects` block above: since
+     * #883 the read happens in a child process, so a `fsp` stub in this one
+     * cannot reach it. These tests pin how the WIZARD reports a scan that did
+     * not come back; that the scanner really kills a hung child is asserted
+     * against a genuinely blocked syscall in test/dir-scanner.test.js.
+     *
+     * @param {Function} fakeRequest - Stand-in for dirScanner.request.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withScanner(fakeRequest, fn) {
+      // `interactiveRequest`, not `request`: this route runs on the scanner
+      // reserved for work an operator pressed a button for, so that a hung
+      // background poll cannot kill the child out from under it.
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = fakeRequest;
+      try {
+        return await fn();
+      } finally {
+        dirScanner.interactiveRequest = real;
+      }
+    }
+
+    it('reports the failure instead of pretending the directory was empty', async () => {
+      // The dangerous wrong answer here is not an error, it is `ok: true` with
+      // an empty list — the operator ticks nothing, imports nothing, and
+      // concludes they have no projects.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(new Error('timed out after 5000ms'),
+          { tcTimedOut: true })),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SCAN_FAILED');
+    });
+
+    it('names Full Disk Access in the error the operator will read', async () => {
+      // The wizard renders this string verbatim. Without the remedy in it, the
+      // operator sees a directory they can open in Finder being refused for no
+      // stated reason — the state this whole change exists to prevent.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(new Error('timed out after 5000ms'),
+          { tcTimedOut: true })),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.code, 'SCAN_FAILED');
+      assert.match(result.error, /Full Disk Access/);
+      assert.match(result.error, /~\/Documents/);
+    });
+
+    it('words a TRUNCATED walk differently, and does not blame Full Disk Access', async () => {
+      // A walk that ran out of budget is the one failure a perfectly healthy
+      // machine produces — a very large directory, a slow disk. Offering Full
+      // Disk Access as the remedy sends the operator to change a setting that
+      // was never the problem. The flag has to survive the process hop for this
+      // sentence to be reachable at all.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(
+          new Error('checked 12 of 200 subdirectories in 4750ms and gave up'),
+          { tcTruncated: true }
+        )),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.code, 'SCAN_FAILED');
+      assert.match(result.error, /checked 12 of 200 subdirectories/,
+        'must say how far it got, so the operator can tell slow from blocked');
+      assert.doesNotMatch(result.error, /Full Disk Access — grant it/,
+        'a slow directory must not be diagnosed as a protected one');
+    });
+
+    it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = { payload, opts }; return Promise.resolve({ projects: [] }); },
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.ok(seen.payload.budgetMs < seen.opts.timeoutMs,
+        'the child must give up before the supervisor kills it, so a slow walk can report');
+    });
+
+    it('uses a scanner the background poll cannot kill underneath it', async () => {
+      // One shared child made every caller collateral for every other: a hung
+      // ten-second poll of the projects directory times out, the supervisor kills
+      // the child to reclaim its thread, and an operator's scan of a completely
+      // HEALTHY folder dies alongside it. Patching only the background entry
+      // point proves the separation — if this route still used it, the stub would
+      // be reached and the scan would fail.
+      const realBackground = dirScanner.request;
+      dirScanner.request = () => Promise.reject(new Error('the poll must not be consulted here'));
+      try {
+        const result = await projects.scanDirectoryForProjects(projectsDir);
+        assert.equal(result.ok, true, 'the wizard scan must be independent of the polled route');
+      } finally {
+        dirScanner.request = realBackground;
+      }
+    });
+
+    it('reports an interrupted scan as interrupted, never as a bad directory', async () => {
+      // Collateral says NOTHING about the folder the operator chose. Reporting it
+      // through the Full Disk Access hint would tell someone to change a system
+      // permission because an unrelated directory hung — the misdiagnosis this
+      // whole issue exists to remove, arriving by another door.
+      const result = await withScanner(
+        () => Promise.reject(Object.assign(
+          new Error('directory scan abandoned: the scanner process was killed'),
+          { tcAborted: true }
+        )),
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'SCAN_INTERRUPTED', 'its own code, not SCAN_FAILED');
+      assert.doesNotMatch(result.error, /Full Disk Access/,
+        'a folder that was never read must not be blamed');
+      assert.match(result.error, /try again/, 'and the operator must be told what to do');
+    });
+
+    it('does NOT opt an operator-pressed button into the failure backoff', async () => {
+      // The polled route opts in; this one must not. Someone who has just granted
+      // Full Disk Access and pressed Scan again is entitled to a real answer — a
+      // remembered refusal would tell them their fix did not work, which is a
+      // worse version of the misdiagnosis this whole issue is about. The cost of
+      // leaving it out is bounded by how fast a person can click.
+      let seen;
+      await withScanner(
+        (op, payload, opts) => { seen = opts; return Promise.resolve({ projects: [] }); },
+        () => projects.scanDirectoryForProjects(projectsDir)
+      );
+      assert.ok(seen, 'the fixture must actually reach the scanner');
+      assert.equal(seen.pathKey, undefined);
+    });
+
+    it('reports a missing directory under its OWN code, not a generic bad request', async () => {
+      // The browser offers to CREATE this one, and it used to decide which
+      // failure it was by regex-matching the message — so rewording a sentence
+      // silently removed the button. The condition travels as a value now.
+      const result = await projects.scanDirectoryForProjects(path.join(tmpDir, 'no-such-dir'));
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'DIR_MISSING');
+      assert.match(result.error, /does not exist/);
+    });
+
+    it('reports a file path as a bad request', async () => {
+      const filePath = path.join(tmpDir, 'not-a-dir.txt');
+      fs.writeFileSync(filePath, 'x');
+      const result = await projects.scanDirectoryForProjects(filePath);
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'BAD_REQUEST');
+      assert.match(result.error, /not a directory/);
+    });
+
+    it('classifies real directories end to end, through the real scanner', async () => {
+      // The classification RULES are pinned in test/dir-scanner-child.test.js,
+      // where `fs` can be stubbed. This is the same question asked with no stub
+      // anywhere — real directories, real child process — so the two together
+      // catch both a wrong rule and a correct rule whose answer does not survive
+      // the hop. Deliberate duplication at two levels, not an oversight.
+      const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
+      fs.mkdirSync(path.join(scanRoot, 'with-marker'));
+      fs.writeFileSync(path.join(scanRoot, 'with-marker', 'go.mod'), 'module example.com/x\n');
+      fs.mkdirSync(path.join(scanRoot, 'bare'));
+      fs.mkdirSync(path.join(scanRoot, '.hidden'));
+      fs.writeFileSync(path.join(scanRoot, 'loose-file.txt'), 'x');
+      try {
+        const result = await projects.scanDirectoryForProjects(scanRoot);
+        assert.equal(result.ok, true);
+        const names = result.projects.map(p => p.name).sort();
+        assert.deepEqual(names, ['bare', 'with-marker'],
+          'hidden directories and loose files are not candidate projects');
+        assert.equal(result.projects.find(p => p.name === 'with-marker').detected, true);
+        assert.equal(result.projects.find(p => p.name === 'bare').detected, false);
+      } finally {
+        fs.rmSync(scanRoot, { recursive: true, force: true });
       }
     });
   });

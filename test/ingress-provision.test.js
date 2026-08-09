@@ -168,6 +168,99 @@ describe('decideProvisioning', () => {
   });
 });
 
+// #861 — this judgement used to be re-made by comparing `ingress.protection`
+// against a literal list in three places, once in server.js and twice in
+// public/setup.js, so the browser was a second source of truth for a security
+// decision. It now lives here once, and these tests are what make the
+// fail-safe property a contract rather than an intention.
+describe('deriveProtectionFlags (#861)', () => {
+  const derive = provision.deriveProtectionFlags;
+
+  it('confirms protection ONLY for the state where a gate was actually observed', () => {
+    assert.equal(derive('existing').confirmedProtection, true);
+    for (const state of ['none', 'pending', 'unchanged', 'existing-unverified']) {
+      assert.equal(derive(state).confirmedProtection, false,
+        `${state} means no gate was observed, so it must never read as confirmed`);
+    }
+  });
+
+  it('an UNKNOWN protection state fails safe — the operator is told, not dismissed', () => {
+    // The whole reason the predicate was inverted. The old form enumerated the
+    // states meaning "not protected", so a value it had never heard of matched
+    // none of them and fell through to the branch that DISMISSES the warning:
+    // adding a sixth state would have silently stopped telling an operator that
+    // nothing was enforcing a login. This is the assertion that stops that
+    // returning — it must hold for any value, not just the five known today.
+    for (const unknown of ['adopted-pending-reload', 'partially-enforced', '', null, undefined]) {
+      assert.equal(derive(unknown).confirmedProtection, false,
+        `an unrecognised state (${String(unknown)}) must never read as confirmed protection`);
+    }
+  });
+
+  it('reports whether a credential EXISTS, independently of whether it is enforced', () => {
+    // Selects the WORDING of the unprotected screen — "your login is saved but
+    // not confirmed" vs "there is no login" — but it is named for a fact and so
+    // must report that fact everywhere, including the confirmed state. A public
+    // field on a security surface answering `false` while a credential IS stored
+    // is a trap, even if today's only reader never looks there.
+    assert.equal(derive('unchanged').credentialStored, true);
+    assert.equal(derive('existing-unverified').credentialStored, true);
+    assert.equal(derive('existing').credentialStored, true,
+      'a gate that was observed obviously has a credential behind it');
+    assert.equal(derive('none').credentialStored, false);
+    assert.equal(derive('pending').credentialStored, false);
+  });
+
+  it('never reports an unknown state as holding a stored credential either', () => {
+    assert.equal(derive('some-future-state').credentialStored, false);
+  });
+
+  it('the flags are orthogonal — neither implies the other', () => {
+    // The combination is the consumer's job. Asserting exclusivity here would
+    // re-encode "stored means unconfirmed", which is the conflation this pair
+    // exists to take apart.
+    assert.deepEqual(derive('existing'), { confirmedProtection: true, credentialStored: true });
+    assert.deepEqual(derive('unchanged'), { confirmedProtection: false, credentialStored: true });
+    assert.deepEqual(derive('none'), { confirmedProtection: false, credentialStored: false });
+  });
+
+  it('says so when it meets a state it cannot classify', () => {
+    // The fail-safe path is correct but SILENT: an unmapped value reads as "not
+    // confirmed", the operator gets the warning screen, and nobody ever learns a
+    // state was added without being classified here. The log line is the only
+    // signal that the map has drifted, so it is pinned like any other behaviour.
+    const logger = require('../lib/logger');
+    const captured = [];
+    const prevLevel = logger.getLevel();
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (s) => captured.push(s) });
+    try {
+      derive('a-state-nobody-mapped');
+      derive('existing');
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel(prevLevel);
+    }
+    const joined = captured.join('');
+    assert.match(joined, /Unclassified ingress protection state/);
+    assert.match(joined, /a-state-nobody-mapped/, 'the offending value is named, or it is undiagnosable');
+    assert.equal(/existing/.test(joined.replace(/a-state-nobody-mapped/g, '')), false,
+      'a state it DOES understand must not be logged — a warning that always fires is noise');
+  });
+
+  it('"saved but not confirmed" is the COMBINATION, and only the unconfirmed states match it', () => {
+    const savedButUnconfirmed = (s) => {
+      const f = derive(s);
+      return f.credentialStored && !f.confirmedProtection;
+    };
+    assert.equal(savedButUnconfirmed('unchanged'), true);
+    assert.equal(savedButUnconfirmed('existing-unverified'), true);
+    assert.equal(savedButUnconfirmed('existing'), false, 'a confirmed gate is not merely saved');
+    assert.equal(savedButUnconfirmed('none'), false);
+    assert.equal(savedButUnconfirmed('a-future-state'), false);
+  });
+});
+
 describe('cutover result file', () => {
   let tmpBase;
   let prevBase;
@@ -356,11 +449,13 @@ describe('spawnCutover', () => {
   });
 
   it('opens the cutover log 0600, like the result file it sits beside', () => {
-    // The child's stderr lands here verbatim, and on the validate-failed path that
-    // text is `caddy validate` output quoting a `basic_auth <user> <hash>` line —
-    // so this file can hold a credential hash without anything deliberately
-    // writing one to it. The result file, same rationale, has been 0600 all along;
-    // this one took the default until now.
+    // The child's stderr lands here verbatim, and on the validate-failed path
+    // that text is `caddy validate` output quoting a `basic_auth <user> <hash>`
+    // line. #821 stopped the hash itself from reaching this file, but 0600 is
+    // the control that does not depend on every future writer remembering to
+    // redact — and the username is deliberately still written here. The result
+    // file, same rationale, has been 0600 all along; this one took the default
+    // until now.
     const logPath = requireSandboxed(provision.cutoverLogPath());
     fs.rmSync(logPath, { force: true });
     provision.spawnCutover({
@@ -388,6 +483,143 @@ describe('spawnCutover', () => {
     });
     assert.equal(fs.statSync(logPath).mode & 0o777, 0o600,
       'an existing loose log must be tightened, not left as found');
+  });
+
+  // #821 — the log was opened append-only with no lifecycle at all: no cap, no
+  // rotation, no pruning, unlike the caddy access log beside it.
+  describe('cutover log retention (#821)', () => {
+    /**
+     * Write a log larger than the rotation cap.
+     * @param {string} p - Log path.
+     * @returns {string} The same path.
+     */
+    function writeOversizedLog(p) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, 'x'.repeat(provision.CUTOVER_LOG_MAX_BYTES + 1), { mode: 0o600 });
+      return p;
+    }
+
+    it('leaves a log under the cap exactly where it is', () => {
+      // The common case by far: a cutover writes kilobytes. Rotating here would
+      // churn the operator's only narration of what setup did.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      fs.writeFileSync(logPath, 'a short run\n', { mode: 0o600 });
+
+      assert.equal(provision.rotateCutoverLogIfNeeded(logPath), false);
+      assert.equal(fs.readFileSync(logPath, 'utf8'), 'a short run\n');
+      assert.equal(fs.existsSync(`${logPath}.1`), false, 'nothing should have been rotated');
+    });
+
+    it('rotates a log past the cap, clearing the live path for a fresh one', () => {
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.rmSync(`${logPath}.1`, { force: true });
+      writeOversizedLog(logPath);
+
+      assert.equal(provision.rotateCutoverLogIfNeeded(logPath), true);
+      assert.equal(fs.existsSync(logPath), false,
+        'the live path must be free so the next open starts a new file');
+      assert.equal(fs.statSync(`${logPath}.1`).size, provision.CUTOVER_LOG_MAX_BYTES + 1);
+    });
+
+    it('retires the oldest generation rather than keeping every one forever', () => {
+      // Rotation only bounds growth if generations are finite. With two, the
+      // previous .1 is displaced and its content is gone — which is the only
+      // thing here that ever actually retires old text.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      fs.writeFileSync(`${logPath}.1`, 'the oldest run\n', { mode: 0o600 });
+      writeOversizedLog(logPath);
+
+      provision.rotateCutoverLogIfNeeded(logPath);
+
+      assert.equal(fs.readFileSync(`${logPath}.1`, 'utf8').startsWith('x'), true,
+        'the displaced current log becomes .1');
+      assert.equal(fs.existsSync(`${logPath}.${provision.CUTOVER_LOG_MAX_FILES}`), false,
+        'generations must not grow past the cap');
+    });
+
+    it('a rotated generation keeps 0600 — it holds the same text the live one did', () => {
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.rmSync(`${logPath}.1`, { force: true });
+      writeOversizedLog(logPath);
+      provision.rotateCutoverLogIfNeeded(logPath);
+      assert.equal(fs.statSync(`${logPath}.1`).mode & 0o777, 0o600);
+    });
+
+    it('tightens a LEGACY loose log on rotation instead of preserving its mode', () => {
+      // `rename` preserves mode, and rotation runs before the openSync/fchmod
+      // pair that tightens the live log — so an install predating that tightening
+      // would carry its 0644 straight into the generation and keep it there,
+      // holding exactly the text the live log was tightened for.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.rmSync(`${logPath}.1`, { force: true });
+      writeOversizedLog(logPath);
+      fs.chmodSync(logPath, 0o644);
+      assert.equal(fs.statSync(logPath).mode & 0o777, 0o644, 'precondition: the legacy log is loose');
+
+      provision.rotateCutoverLogIfNeeded(logPath);
+
+      assert.equal(fs.statSync(`${logPath}.1`).mode & 0o777, 0o600,
+        'the rotated generation must be tightened, not left at the mode it was renamed with');
+    });
+
+    it('spawnCutover rotates BEFORE opening, never under a running child', () => {
+      // The timing is the design: the fd becomes a detached child's stdout and
+      // stderr, so renaming the file mid-run would leave that child writing to a
+      // detached inode. Between runs nobody holds it.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      fs.rmSync(`${logPath}.1`, { force: true });
+      writeOversizedLog(logPath);
+
+      provision.spawnCutover({
+        resultFile: path.join(os.tmpdir(), 'tc-rot.json'),
+        spawnFn: () => ({ pid: 9, unref() {} })
+      });
+
+      assert.equal(fs.statSync(logPath).size, 0, 'the run appends to a fresh log');
+      assert.equal(fs.statSync(logPath).mode & 0o777, 0o600, 'and the fresh log is still 0600');
+      assert.equal(fs.existsSync(`${logPath}.1`), true, 'the previous content is kept as one generation');
+    });
+
+    it('still runs the cutover, and still logs, when rotation itself fails', () => {
+      // Housekeeping must never cost the operator their ingress. An unrotatable
+      // log degrades to appending, it does not abort the run.
+      //
+      // Reaching the failure branch is the hard part, and the obvious fixture
+      // does not: putting a DIRECTORY at the log path makes `statSync().size`
+      // ~64-128 bytes, so the size check returns early and rotation's catch never
+      // runs — the test then passes on `spawnCutover`'s pre-existing openSync
+      // handler instead, and would pass with the catch deleted. So: an oversized
+      // REAL log (clears the size check) whose destination generation is a
+      // non-empty directory, which is what makes `renameSync` throw.
+      const logPath = requireSandboxed(provision.cutoverLogPath());
+      const blocked = `${logPath}.1`;
+      fs.rmSync(blocked, { recursive: true, force: true });
+      writeOversizedLog(logPath);
+      fs.mkdirSync(blocked, { recursive: true });
+      fs.writeFileSync(path.join(blocked, 'occupied'), 'not empty, so rename cannot replace it');
+      try {
+        assert.equal(provision.rotateCutoverLogIfNeeded(logPath), false,
+          'rotation reports failure rather than throwing');
+
+        let opts = null;
+        const res = provision.spawnCutover({
+          resultFile: path.join(os.tmpdir(), 'tc-rot2.json'),
+          spawnFn: (_c, _a, o) => { opts = o; return { pid: 10, unref() {} }; }
+        });
+
+        assert.equal(res.ok, true, 'the cutover proceeds despite an unrotatable log');
+        // The arm that actually distinguishes swallowing from not: without the
+        // catch, the throw escapes into spawnCutover's own try, `logFd` stays
+        // 'ignore', and the child's output is discarded — losing the one
+        // diagnostic that matters when things are already going wrong.
+        assert.equal(typeof opts.stdio[1], 'number',
+          'the run must still get a real log descriptor, not fall back to discarding output');
+      } finally {
+        fs.rmSync(blocked, { recursive: true, force: true });
+      }
+    });
   });
 
   it('defaults to the caddy target and the shared result path', () => {

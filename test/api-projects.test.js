@@ -282,4 +282,78 @@ describe('api-projects', () => {
       assert.ok(data.ok);
     });
   });
+
+  describe('GET /api/projects — a directory that never answers must not wedge the server (#883)', () => {
+    const dirScanner = require('../lib/dir-scanner');
+    const fsp = require('node:fs').promises;
+    const { execFileSync } = require('node:child_process');
+
+    it('survives more hung scans than the threadpool has threads', async () => {
+      // THE WHOLE POINT, asserted through the real route rather than at the unit
+      // level. Before #883 this route answered every request on time and lost a
+      // libuv threadpool thread each time — four of them and the server could no
+      // longer touch the filesystem AT ALL, on any path, while /api/health kept
+      // returning 200. Every earlier test and every VRF row used a fresh process,
+      // which is exactly how that survived six Critic rounds and 5,700 tests.
+      //
+      // The hang is produced by a fixture child blocking on a reader-less FIFO —
+      // a real blocked syscall holding a real pool thread. A real `readdir` hang
+      // needs TCC and cannot be reproduced on a CI runner (a FIFO answers
+      // `readdir` with ENOTDIR in 0ms), so what this proves is the property that
+      // matters here: hung scans, however induced, no longer cost THIS process
+      // anything.
+      const fifoDir = fs.mkdtempSync(path.join(tmpDir, 'fifo-'));
+      const hungScanner = dirScanner.createScanner({
+        childPath: path.join(__dirname, '_dir-scanner-hang-child.js'),
+        timeoutMs: 300,
+        exitGraceMs: 0
+      });
+
+      const poolSize = Number(process.env.UV_THREADPOOL_SIZE) || 4;
+      const attempts = poolSize + 1;
+      const real = dirScanner.request;
+      let n = 0;
+      dirScanner.request = () => {
+        const fifo = path.join(fifoDir, `pipe-${n++}`);
+        execFileSync('mkfifo', [fifo]);
+        return hungScanner.request('hang', { fifo });
+      };
+
+      try {
+        for (let i = 0; i < attempts; i++) {
+          const { status, data } = await request('GET', '/api/projects');
+          // Degraded, not failed: registered projects come from SQLite and are
+          // unaffected, so the dashboard still renders.
+          assert.equal(status, 200, `request ${i + 1} of ${attempts} must still be answered`);
+          assert.ok(Array.isArray(data.projects), 'must answer with a list, not an error');
+        }
+        assert.equal(n, attempts, 'the fixture must actually have reached the scanner each time');
+
+        // The assertion #883 is about, and the reason it is RACED rather than
+        // awaited: with the pool destroyed this readdir never resolves at all, so
+        // awaiting it would hang the suite instead of failing it. Timers do not
+        // use the threadpool, which is what makes the stuck case observable.
+        // Verified by mutation — putting the hang back in this process makes this
+        // line report, where a bare await simply never returned.
+        const started = Date.now();
+        const outcome = await Promise.race([
+          fsp.readdir(tmpDir).then(() => 'ok', () => 'ok'),
+          new Promise((resolve) => setTimeout(() => resolve('stuck'), 2000))
+        ]);
+        assert.equal(outcome, 'ok',
+          `the server's own filesystem must still work after ${attempts} hung scans — `
+          + 'an ordinary readdir on an unrelated path never completed, which is #883 exactly');
+        assert.ok(Date.now() - started < 2000, 'and it must be prompt, not merely eventual');
+
+        // And the route is genuinely healthy again, not merely returning cached
+        // work: a normal request still answers once the scanner is restored.
+        dirScanner.request = real;
+        const { status } = await request('GET', '/api/projects');
+        assert.equal(status, 200);
+      } finally {
+        dirScanner.request = real;
+        await hungScanner.shutdown();
+      }
+    });
+  });
 });

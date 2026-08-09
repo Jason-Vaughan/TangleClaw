@@ -26,9 +26,339 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-07: first run stops dead-ending — the wedge, the PATH, and three screens with no way forward (#859, #346)
+
+<!-- prawduct: type=fix | scope=first-run-859 | status=shipped -->
+
+**Why:** #859 opened this — a single `GET /api/projects` could kill the server permanently — but
+tracing the first-run path from a stranger's point of view found three more places the wizard
+stopped with no action available anywhere in the product. The requirement ratified for this work:
+**the wizard must never leave someone at a step with nothing they can do inside the product**, and
+where TangleClaw cannot fix a thing itself it says exactly what to run and re-checks on demand.
+
+**The wedge (#859).** `listAllProjects` and `POST /api/setup/scan` both ran a synchronous `readdir`
+on the event loop. Over a TCC-protected path — which the shipped default `~/Documents/Projects`
+**is** on a stock Mac — `open()` never returns, so one request took every other route down while
+launchd still reported the process healthy. The scan now runs off the main thread under a deadline
+covering the **whole walk**, not just its first call, and the dashboard's walk was swept to match:
+it truncates rather than emptying, so a slow directory costs the tail of the list instead of all
+of it.
+
+**Detection (#346).** Engine detection read launchd's PATH, not the operator's, so an installed
+Gemini CLI reported "not installed". It now resolves the login PATH through an interactive login
+shell, once at boot and off the request path, and reports `detectionCertain` so the wizard can tell
+"we looked and it is absent" apart from "we could not look".
+
+**Three dead ends closed.** Setup will not complete with no AI engine installed — the engine step
+parks with per-engine install commands, Copy buttons, vendor docs links and **Check again** in
+place of Next, and *both* completion routes refuse through one shared predicate, because that
+pairing has diverged here before (#710). A missing projects folder now offers to create itself via
+`POST /api/setup/create-dir`, constrained to inside `$HOME` with only the final segment created.
+And mkcert's "we could not check" stopped rendering as "not installed" — an unknown falling through
+to a definite, the same shape as #861 one step further along the wizard.
+
+**Known incomplete — #883, and the reason this is in draft.** The deadline abandons the walk but
+cannot cancel the syscall already blocked in the kernel, so each hung scan permanently leaks one of
+libuv's four default threadpool slots. Measured on the guest: scans 1-3 leave an ordinary directory
+answering `200` in 0.03s, the **fourth** leaves it timing out, and it never recovers. That reduces
+the wedge from one request to four rather than removing it, and the residue is nastier than a loud
+failure — nothing surfaces it, and every directory is then blamed on Full Disk Access, which is
+false. Found by an operator reviewing the wizard who said "it is not working" and was right; the
+on-screen message sent the investigation the wrong way, which is the strongest argument for fixing
+the misattribution alongside the leak.
+
+**Measured, not inferred.** None of this reproduces on the development machine, which has Full Disk
+Access and four engines installed. It was verified on a throwaway macOS guest that is a fresh Mac.
+Each row below was measured against a **freshly restarted process**, which is why none of them
+caught #883 — the leak needs four hung scans in one process, and no row issued a fourth:
+the request that used to kill the server answers `400` in 5s with a remedy and leaves `/api/health`
+and `/api/config` both at `200`; both completion routes return `400 ENGINE_REQUIRED`; `create-dir`
+is refused outside `$HOME`; and — the result that was not obvious — **scanning a folder TangleClaw
+just created succeeds where scanning a pre-existing one times out**, because macOS grants a process
+access to what it creates. Full table in `.prawduct/operator-verification.md`.
+
+**Wording.** The scan-failure message no longer says "TCC-protected", the only user-facing acronym
+in the product, and the wizard's caution names `~/Documents, ~/Desktop and ~/Downloads` the way its
+two sibling messages already did. The three existing assertions pass against the old wording too —
+they pin the facts, not the register — so a `doesNotMatch(hint, /TCC/)` guard now holds it, verified
+by reverting the string and watching it fail. `deploy/install.sh` deliberately keeps the term: a
+person hand-running a shell installer has a different tolerance for it than someone stranded in a
+wizard.
+
+**Not done here, deliberately:** the shipped default `projectsDir` should move off `~/Documents`
+entirely, which would make the caution rare rather than something every new Mac meets on its own
+default. Filed as **#880** — the verification above was measured against the current default, and
+changing it at the finish line would invalidate that evidence for a change deserving its own.
+
+**Also in this branch:** the tracked change-log's own merge-conflict markers, committed to `main` by
+`c8a91ab` and left unresolved across three sessions, are resolved here — both sides were distinct
+entries (#861 and #821) in an append-only log, so both are kept and only the markers are gone.
+Nothing detected them, which is filed separately.
+
+
+## 2026-08-06: one derivation of "are we protected", stated so an unknown state fails safe (#861)
+
+<!-- prawduct: type=fix | scope=ingress-861 | status=shipped -->
+
+**Why:** last open item on the v5 gate. Raised by the cumulative Critic on the v5 bundle (R-9),
+filed rather than fixed. `ingress.protection` was produced by the server and its *meaning*
+re-derived by comparing against a literal list in three places — `server.js` (the warning push) and
+`public/setup.js` twice (screen routing, screen wording). Two sources of truth for a security
+decision, in front-end code, which is the same drift `lib/caddy.js` already refused for
+`safeToWrite`.
+
+**The substance is the direction of the predicate, not the de-duplication.** The lists enumerated
+the states meaning "NOT protected", so an unrecognised sixth value matched none and fell through to
+the branch that DISMISSES the warning — a newly-added state would silently stop telling an operator
+nothing is enforcing their login. Nothing fails; a screen stops appearing. Restating it as an
+allowlist of the ONE state where a gate was positively observed makes an unknown value fail safe.
+
+**What:** `deriveProtectionFlags(protection)` in `lib/ingress-provision.js` — exported, returning
+`{confirmedProtection, credentialStored}` (not pure: it logs a state it cannot classify, see
+below). `server.js` `Object.assign`s it onto `ingress`
+after the arm chain, and the warning push now reads `!confirmedProtection && !provisioning`
+(`provisioning` is set in the same block as `pending` and is its only producer — checked, not
+assumed). `public/setup.js` branches on the two booleans and **no longer reads the enum at all**:
+the only remaining `protection ===` in non-test code is the line inside the named function.
+
+**Deliberately behaviour-preserving on the screens.** `credentialStored` ended up a WIDER set than
+the pair the browser used to test (see the review block below), but the extra value is unreachable
+by the only consumer, so the screens are identical. These are the least-verified screens in the release (#802), so the commit
+that moves WHO decides must not also move WHAT is decided.
+
+**Extracted to a module rather than left inline, for a reason the tests surfaced.** ~25 browser
+fixtures had to start carrying the new contract; had the derivation stayed inline in a route
+handler, the tests would have had to re-implement it, recreating the third source of truth this
+removes. As an exported pure function it is unit-testable on its own — which is what turns the
+fail-safe property into a contract instead of an intention.
+
+**Delivery defect found while doing it, and fixed here because otherwise this change does not
+ship.** `public/setup.js` is loaded from `index.html` as a plain `<script src>` — not a navigate
+request — so it fell to `sw.js`'s cache-first branch with no `NETWORK_FIRST_PATHS` carve-out. A
+browser with an active service worker keeps serving the copy it first fetched, so every past and
+future wizard change was invisible to returning operators until `CACHE_NAME` moved. Now
+network-first. **Not** a `CACHE_NAME` bump: that tears down and reinstalls the worker for every
+browser, which behind the basic_auth gate is what produced the repeating credential prompt in #710.
+
+**Tests (+12), counted from the diff rather than estimated:** `test/ingress-provision.test.js`
+**+7** — `confirmed` only for the observed-gate state; an UNKNOWN state fails safe across six values
+incl. `null`/`undefined`/`''`; `credentialStored` reports the fact it is named for (including on the
+confirmed state); an unknown state is never reported as holding a credential; the two flags are
+orthogonal rather than exclusive; "saved but not confirmed" is their COMBINATION; and an
+unclassifiable state is logged (while a recognised one stays quiet).
+`test/setup-wizard-login-gate.test.js` **+3** — an unheard-of state does not dismiss; the browser
+obeys a server answer that CONTRADICTS the enum, which is what proves the second source of truth is
+gone; `setup.js` is network-first. `test/setup-provisioning.test.js` **+2** — the verdict log on the
+confirmed arm and on an unconfirmed one (plus flag assertions added to three existing cases).
+
+**Five mutations, each killing a different test.** The load-bearing one reverts the allowlist to the
+old denylist form: it agrees on all five known states and differs ONLY on an unknown one, and it
+reddens the fail-safe test specifically. Also: `credentialStored` forced false; the server not
+shipping the flags; the browser re-reading the enum; and `setup.js` dropped from
+`NETWORK_FIRST_PATHS` — that last one initially reddened NOTHING, which is how the sw.js change was
+caught as unpinned before review rather than during it. Full suite **5616 pass / 0 fail / 1 skip**.
+
+**Carried from the cumulative review (0 blocking, 10 warning, 6 note — all decided in one pass):**
+- **R-1/R-6 — I had the call-site count BACKWARDS**, and it shipped in four places (`server.js`
+  comment, the JSDoc, the test header, and `CHANGELOG.md`). The denylist was in `server.js` ONCE and
+  in `public/setup.js` TWICE — verified against `origin/main`, not taken on the reviewer's word. The
+  inversion mattered beyond pedantry: the browser held the majority of them, which is what made this
+  a re-deciding problem rather than a re-reading one.
+- **R-2/R-10/R-13 — `PROTECTION_CONFIRMED` was exported with no consumer.** Publishing the sentinel
+  invites exactly the fourth `protection === …` site this change exists to remove. Unexported.
+- **R-8 — the wire field lied in one state.** `credentialStored` was narrowed to "stored AND
+  unconfirmed", so `protection: 'existing'` shipped `false` while a credential was plainly stored.
+  Rather than rename it, the field now means what it says and is `true` there too: the two flags are
+  ORTHOGONAL facts and "saved but not confirmed" is their combination. Behaviour is unchanged (the
+  browser only reads it when protection is unconfirmed), but a public field on a security surface
+  must not answer `false` to a question whose answer is yes. The exclusivity test that encoded the
+  old wart was replaced by one asserting orthogonality plus one asserting the combination.
+- **R-14 — the fail-safe path was silent.** An unmapped value read as "not confirmed" and nobody
+  learned the map had drifted. It now logs, and the log is pinned (removing it reddens a test) —
+  including that a state it DOES understand stays quiet, since a warning that always fires is noise.
+- **R-7/R-12 — `api-contract.md` omitted the only fields a client may branch on.** Added, with the
+  orthogonality and the fail-safe direction stated.
+- **R-3 — the producing half was asserted on one arm only.** Added end-to-end assertions for
+  `pending` and `existing`.
+- **R-9 module header ("two things" → three), R-11 ephemeral `this chunk` reference in product
+  code** — both fixed.
+- **Accepted:** R-4 (figure accurate), R-5 (#802 descoped by the issue's own sequencing), R-15/R-16
+  (informational).
+
+**Observability, added in the review pass and pinned like any other behaviour.** Two log lines:
+`deriveProtectionFlags` warns on a state it cannot classify (otherwise the fail-safe path is
+indistinguishable from a correctly-classified one), and `POST /api/setup/complete` records its
+verdict on **every** arm. The second matters because every other log on that endpoint fires on a
+cutover or a failure, so a confirmed install left no server-side trace at all and "it says it is
+protected" was unanswerable. Logging both arms is also what makes an ABSENT line mean "the request
+never got here" rather than "everything was fine". Both are pinned by tests that go red when the
+line is removed — the verdict log was itself caught unpinned by the review, one commit after the
+same rule had been applied to the other one.
+
+**Not done here, on purpose:** #802's end-to-end verification. The issue prescribes doing both in
+one pass, and this is the half a machine can do — the screens still need a real no-caddy install
+and a browser.
+## 2026-08-06: the cutover log stops holding a credential hash, and stops growing (#821)
+
+<!-- prawduct: type=fix | scope=ingress-821 | status=shipped -->
+
+**Why:** v5 gate item, raised by the Critic on #819 (rev-20260731T232030Z-279745ce R-18) and filed
+rather than fixed there. `~/.tangleclaw/logs/ingress-cutover.log` is opened with a raw
+`fs.openSync(logPath,'a',0o600)` outside the logger that owns rotation — no cap, no rotation, no
+pruning — and `caddy validate` quotes the offending Caddyfile line, which for this project is
+`basic_auth <user> <hash>`. Caddy renamed `basicauth`→`basic_auth` in 2.8, so a version skew alone
+makes the credential line the one that fails to parse. v5 is the release that makes a credential
+mandatory, so it multiplies how many installs carry one of these files.
+
+**The framing correction that drove the design.** The issue offers "route through the rotating
+logger OR give it a size/age cap" as the fix, with redaction as a conditional extra. That is
+backwards for the stated concern, which is *retention of a secret*: this log takes kilobytes per
+run and an install performs a handful of cutovers ever, so it never reaches any sane threshold,
+never rotates, and keeps the hash for the life of the machine. **A size cap bounds growth and
+bounds the secret's lifetime not at all.** Redaction is therefore load-bearing, not the optional
+half — both were implemented, with the division of labour written down where each lives.
+
+**What (redaction, at the source):** `caddy.validateCaddyfile` now returns `redactHashes(detail)`.
+That single error string fans out to **three** sinks — the cutover log (via the child's stderr), the
+cutover result file (via `finish`), and the server log — and only the third was redacting, which is
+itself the evidence that per-caller redaction is the leaky shape (`feedback_verify_mechanism_uniformity`:
+one call site is not the family). Existing `caddy.redactHashes(...)` call sites are untouched;
+it is idempotent and defence in depth on a credential is worth a duplicate pass. `writeCutoverResult`
+scrubs `error`/`healthError` on the way out, and the script's catch-all stderr write scrubs
+`err.message`, because `finish` is also reached from the Caddyfile generator whose rejection can name
+the credential it rejected. The **username is deliberately preserved** — it is what makes the failure
+diagnosable and is already reported at the HTTP boundary.
+
+**What (rotation, for growth):** `rotateCutoverLogIfNeeded()` in `lib/ingress-provision.js`, 1 MB cap
+and one previous generation (vs the server log's 10 MB / 3 — a service-log threshold would never fire
+here). Called **only immediately before the log is opened**, never during a run: the fd becomes a
+detached child's stdout+stderr, so renaming mid-run leaves that child writing to a detached inode —
+the trap `logger.js` documents as "the owner of the log owns its rotation". Best-effort by design; an
+unrotatable log is appended to anyway, because housekeeping must not cost the operator their ingress.
+`0600` stays: it is the control that does not depend on every future writer remembering to redact.
+
+**Tests (+12):** `test/caddy.test.js` +1 (a Caddyfile whose *credential line* is the offending one,
+so the validator's own output carries the hash — the real #821 vector end-to-end);
+`test/ingress-provision.test.js` +7 (under-cap left alone, over-cap rotated with the live path
+cleared, oldest generation retired, rotated generation still 0600, a legacy loose log tightened on
+rotation, `spawnCutover` rotates before opening, cutover survives and still logs when rotation
+fails); `test/ingress-cutover.test.js` +4 (result-file `error` and `healthError` scrubbed, ordinary
+text untouched, and a source-pin on the fatal stderr write).
+
+**The fixture was the risk, and is guarded.** The local caddy stub emitted a FIXED error string and
+never quoted the offending line — so a redaction test written against it would have passed without
+redacting anything (`feedback_measure_against_the_real_shape`). The stub now quotes the line the way
+real caddy does, and the test carries an explicit assertion that the error actually contains the
+credential line, so losing that fidelity fails loudly instead of silently. Verified: reverting the
+stub's quoting reddens the test on *that* guard, naming the fixture.
+
+**Mutations, each killing a different test:** validateCaddyfile stops redacting → the redaction test;
+rotation call removed → `spawnCutover rotates BEFORE opening`; size check removed → `leaves a log
+under the cap`; stub stops quoting → the fixture guard. Full suite **5606 pass / 0 fail / 1 skip** on
+node v22.22.3, matching CI's `node --test 'test/*.test.js'` on node 22; recorded as machine evidence.
+
+**Carried from the cumulative review (1 blocking, 10 warning, 7 note — all decided in one pass):**
+- **BLOCKING R-1 — two of the three redaction sites were unpinned.** Deleting the result-file or
+  stderr redaction left the suite green. Fixed with 4 tests: `error` and `healthError` scrubbed
+  behaviourally, ordinary text proven untouched, and the fatal stderr write pinned by **source
+  assertion** — it lives in `main`, which no test may call, because running it performs a real
+  cutover on the developer's own box (the very thing `spawnCutover`'s interlock exists to prevent).
+  Source-pinning follows the existing precedent in `test/setup-provisioning.test.js`.
+- **R-2/R-10/R-15 (three reviewers, independently) — my rotation-failure test could not go red.**
+  A *directory* at the log path makes `statSync().size` ~64–128 B, so the size check returned early
+  and rotation's catch never ran; the test passed on `spawnCutover`'s pre-existing `openSync`
+  handler and would have passed with the catch deleted. Now an oversized real log whose destination
+  generation is a non-empty directory, so `renameSync` genuinely throws, and the assertion is
+  `stdio[1]` being a real descriptor — the arm that distinguishes swallowing from escaping. This is
+  the second vacuous-fixture near-miss on this branch; both were caught by the guard, not by luck.
+- **R-4/R-16 — nothing addressed a hash already on disk.** Both controls are prospective and a
+  sub-threshold log never rotates, so an existing log keeps its hash forever. `CHANGELOG.md` said
+  "can no longer hold", which over-claimed; it now says "no longer records" and states the limit,
+  and `deploy/INGRESS.md` carries a check + remedy. Related: rotation runs before the
+  `openSync(0600)`/`fchmod` pair and `rename` preserves mode, so a legacy 0644 log was carried into
+  the archive at 0644 — the rotated generation is now chmod'd too (test + mutation).
+- **R-3/R-7/R-8/R-14 — three durable records still asserted #821 was live.**
+  `observability-strategy.md` (ratified Direction), `boundary-patterns.md` (the contract-surface
+  file the Critic protocol sends every reviewer to), and `deploy/INGRESS.md` all updated. The
+  Direction gained the rule the fix actually establishes: **a producer of text that can embed a
+  secret owns the redaction; a reporter may add a pass but must never be the only one** (R-12).
+  `deploy/INGRESS.md`'s #846 decision had this hazard as its stated reason — the premise is now
+  recorded as expired, the decision left standing on its remaining (narrower) support, and whether
+  to revisit #846 flagged as the operator's call rather than taken as a side effect of this fix.
+- **R-6 — the stderr rationale overstated the carrier.** No generator path emits the hash today;
+  the comment now says the write is prophylactic and why that is still worth it.
+- **R-5/R-13 — test counts were one high** (+8 claimed, +12 actual across three files). Corrected.
+- **Accepted, not fixed:** R-11 (the shift loop duplicates `logger._rotateIfNeeded`) — divergent fd
+  ownership is exactly why this cannot call into the logger, and a shared helper for nine lines
+  would couple two lifecycles that must stay independent. R-17/R-18 informational.
+
+**Note:** built during a GitHub Actions major outage, so the required `test` context could not report.
+
+## 2026-08-06: a project's NAME stops establishing that it is the Medusa checkout (#873)
+
+<!-- prawduct: type=fix | scope=medusa-873 | status=shipped -->
+
+**Why:** filed by a third-party installer (`GURULifeline`) — the class of report this machine
+structurally cannot reproduce, because here a project named Medusa genuinely *is* the switchboard
+repository, so the resolver's assumption never surfaced. `_medusaProjectPath()` took
+`store.projects.getByNameCaseInsensitive('medusa')` and passed `.path` to `medusa.readContract()`
+with no identity check. The reporter had an ordinary website project registered under that name, so
+every opted-in launch injected `### Medusa consumer contract — UNAVAILABLE` naming *their*
+project's `docs/CONSUMER-CONTRACT.md`, i.e. TangleClaw reporting an unrelated project as a broken
+Medusa install.
+
+Worth separating the two failures, because the visible one is the smaller: `readContract()` already
+fails closed on ENOENT, so the reporter got a wrong **diagnosis**, not a wrong contract. The silent
+one is that a project which happened to hold `docs/CONSUMER-CONTRACT.md` would have had that
+arbitrary document injected into every opted-in prime as the protocol contract. Corroboration
+closes both; the issue's own "expected behavior" only named the first.
+
+**What:** a display name is operator-chosen, so it can *locate* a candidate and cannot *establish*
+identity. `_medusaProjectPath()` (`lib/sessions.js`) now accepts the name-matched candidate only if
+`medusa.hasContract()` corroborates it, logging a WARN naming the rejected path when it does not,
+and returning null so the caller never speaks about it. The honest-absence note now reads "no local
+Medusa checkout identified" and names `MEDUSA_CONTRACT_PATH` — an operator whose checkout is
+registered under a different name gets a stated way out instead of a path they never connected to
+Medusa. `contractPathIn()` is the single derivation of the doc's location, so the location vetted
+and the location read cannot drift.
+
+**Carried from the cumulative review (0 blocking; both items raised INDEPENDENTLY by two
+reviewers, which is why they were fixed rather than accepted):**
+- *Corroboration matched the reader.* `hasContract()` applies the same readable-and-non-blank test
+  `readContract()` accepts on. Existence alone would admit an empty or unreadable contract that the
+  read then rejects — the #873 shape in miniature, the prime naming a project just declined.
+- *Resolution made lazy.* `_medusaProjectPath` is passed to `readContract()` as a **thunk**, called
+  only if `MEDUSA_CONTRACT_PATH` did not resolve. Eager evaluation meant the store lookup and the
+  rejection WARN fired even on a launch the override had already answered — so an operator who took
+  the remedy this very fix recommends kept getting a per-launch warning naming their project.
+
+**Decision — artifact, not git remote.** The issue suggested validating "a known remote/marker".
+Remote-sniffing was rejected: it misses forks and remote-less clones, costs a git read per launch,
+and adds failure modes, while the contract doc is the artifact actually being resolved. The residual
+is an unrelated project named Medusa that *also* carries a non-blank `docs/CONSUMER-CONTRACT.md` —
+in which case the injected document is at least a consumer contract, and `MEDUSA_CONTRACT_PATH`
+overrides it.
+
+**Tests:** the name-match path had **zero** coverage — every prior test reaches the contract through
+the `MEDUSA_CONTRACT_PATH` seam, which is precisely why this shipped. `+4` in
+`test/sessions.test.js` (unrelated same-named project not selected and not named in the prime; a
+corroborated checkout still resolves and injects; a BLANK contract corroborates nothing; the env
+override still outranks a corroborated checkout) and `+6` in `test/api-medusa.test.js`
+(`hasContract` matrix incl. blank + null-safety; the override short-circuits the thunk; the thunk is
+reached when the override is absent). Four mutations, each killing a *different* test: guard forced
+false → unrelated-project test; guard forced true → genuine-checkout test; corroboration reduced to
+`existsSync` → both blank-contract tests; checkout resolved eagerly → override-short-circuit test.
+Full suite **5604 pass / 0 fail / 1 skip** on node v22.22.3, matching CI's
+`node --test 'test/*.test.js'` on node 22, and recorded as machine evidence via
+`prawduct-hook test-evidence record` (the review's one WARNING was that this tree had none).
+
+**Note:** landed while GitHub Actions was in a **major outage**, so the required `test` context could
+not report. Verified locally with CI's exact command and runtime; the PR still waits on the gate.
+
+
 ## 2026-08-04: one unreadable folder can no longer take down the server (#859)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 `listAllProjects` ran `fs.readdirSync` on the event loop over the operator-chosen projects
 directory, and the shipped default (`~/Documents/Projects`) is TCC-protected on macOS. A launchd
@@ -51,7 +381,7 @@ each call separately bounded. It can make this route slow; it can no longer stop
 
 ## 2026-08-04: cross-site guards extended to WebSockets, and Caddyfile inputs shape-checked (#860, #864)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 **Why:** the cumulative review's reachable findings, plus the delta review that followed it. Recorded
 here because the previous entry's own lesson was that CHANGELOG-only updates leave every derived
@@ -90,7 +420,7 @@ eliminate.
 
 ## 2026-08-04: the dashboard answers to the machine's own name, and cert regeneration stops shrinking (#863, #862, #859, #846)
 
-<!-- prawduct: type=fix | scope=v5-acceptance-863 | status= -->
+<!-- prawduct: type=fix | scope=v5-acceptance-863 | status=shipped -->
 
 **Why:** four issues' worth of shipped v5 behaviour reached `CHANGELOG.md` and never reached this
 file, so every view that derives from these tags — Status, `release-notes.md`, `scope_rollups` —
@@ -129,7 +459,7 @@ which was true of the running service and false of the file it reloads from.
 
 ## 2026-08-01: the upstream half of the install-reference check is parsed, not scraped (#807, #816)
 
-<!-- prawduct: type=fix | scope=plugin-ref-807 | status= -->
+<!-- prawduct: type=fix | scope=plugin-ref-807 | status=shipped -->
 
 **Why:** the 2026-07-31 entry below records the cross-check as shipped state, and that half of it was
 weaker than the entry implies. Entries are append-only, so this supersedes rather than edits it.
@@ -3361,5 +3691,99 @@ guarding Finish but not Skip is the half-swept-family defect again.
 including the one that makes it close. Rewritten against a real store: reachable-and-first-run is
 exempt, the loopback default is not, it closes on `setupComplete`, and Skip is covered. Each is
 mutation-verified, including reverting to the exact two-axis form that was the blocking defect.
+
+**Classification:** fix
+
+## 2026-08-04: A browser body must be declared JSON, and CSRF is back in scope (#860)
+
+<!-- prawduct: type=fix | scope=auth-6-secure-by-default | status=shipped -->
+
+**Why:** `parseBody` JSON-parses any body whatever its `Content-Type`, which is what made the form
+attack a CORS *simple* request — the three encodings a `<form>` can send are exactly the three
+needing no preflight, and none is `application/json`. Target is `POST /api/auth/credential`, which
+authorizes on "arrived over loopback"; in caddy mode TC still binds an ungated `127.0.0.1` listener
+the operator's own browser reaches directly, so that reasoning never covered browser traffic.
+
+**The deferral reason dissolved rather than being accepted.** #860 was held out of v5 because
+enforcing `Content-Type` breaks the documented agent-facing API. It only does if enforced on every
+caller. Scoped to *browser-shaped* requests — carrying `Sec-Fetch-Site` or `Origin` — it closes the
+whole class while `curl`, scripts and the agent API stay untouched, so the guide needs no change. A
+browser cannot suppress `Sec-Fetch-Site` from script, so the attack always carries the marker that
+scopes it in. Same shape as #864's Host check.
+
+That also resolves the issue's part 2 for free: refusing `same-site` was on the table to close the
+sibling-subdomain attacker, but a same-site form still cannot send `application/json` — so this
+closes it without the breakage refusing `same-site` would cause to multi-subdomain deployments.
+
+**Verified before designing, and it changed the design.** The dashboard sends genuine bodyless
+writes (`medusa/toggle`, `medusa/read`, `wrap-sentinel/ack` via `api()` with no body and no
+`Content-Type`). Requiring the header on every browser write would have broken the operator's own UI
+to close nothing — a request with no body carries no forged payload. Keyed on a body being present
+instead. Grepping `public/` for this was the step that caught it; assuming would have shipped it.
+
+**Part 3 was a ratification, not code.** `security-model.md`'s CSRF acceptance rested on "no
+cookies, no tokens, no session state in the browser" — exactly what shipping browser-cached HTTP
+Basic invalidates. CSRF is now IN SCOPE, with all three guards recorded and, more importantly, their
+**residuals** written down rather than implied: `same-site` is still allowed at guard 1, and a
+bodyless same-site write to a route that acts without a body is not covered.
+
+**Mutation-verified on the arms not touched**, which is the failure this branch's predecessor
+repeated four times: removing the guard reddens six tests; dropping `hasBody` reddens the dashboard
+test; dropping the browser scoping reddens the agent-API test *and* a #864 test.
+
+**Classification:** fix
+
+**Critic round 1 (rev-20260804T094546Z-e54bf7ca, 0 blocking / 2 warnings) — the important catch was
+a break in code this repo does not own.** The guard runs ahead of route matching, so it also
+governed `/terminal/*`, `/openclaw/*` and `/openclaw-direct/*`. `public/openclaw-view.js` iframes
+`/openclaw-direct/:connId/chat` **same-origin**, so OpenClaw's gateway UI runs inside TC's page and
+its fetches are browser-shaped: the ordinary `fetch(url, {method:'POST', body: JSON.stringify(x)})`
+idiom is labelled `text/plain` by the browser and would have taken a 415 before reaching the
+gateway. Grepping `public/` — the step that correctly caught the bodyless-write case — structurally
+cannot see a third party's client. Now confined to `/api/`; those prefixes keep guards 1 and 2,
+which is what they had before, and the residual is recorded.
+
+Also corrected: the cross-site guard's comment still said Content-Type enforcement and the CSRF
+re-ratification were "tracked separately". Both shipped in this commit, 25 lines below it.
+
+## 2026-08-07: A hung directory can no longer take the server's filesystem with it (#883)
+
+<!-- prawduct: type=fix | chunks=1,2,3 | scope=883-threadpool-leak | status=shipped -->
+
+**Why:** the #859 fix bounded the RESPONSE, not the OPERATION. `fs.promises` performs a read on
+libuv's threadpool — four threads shared by the whole process — and a deadline abandons the promise
+without cancelling the syscall, so every hung read cost a thread permanently. On a TCC-protected
+macOS path the read never returns at all, so four of them left the server unable to touch the
+filesystem **on any path, permanently**, while `/api/health` kept answering `200`. Worse than the
+outage was the diagnosis: with the pool gone every operation timed out, and `tcTimedOut` was the
+only signal, so the product told operators that healthy directories were protected and sent them to
+grant Full Disk Access for a problem that had nothing to do with permissions.
+
+Only killing the process that owns a thread blocked in the kernel reclaims it. `worker_threads`
+cannot substitute — workers share the process-wide pool and `terminate()` does not interrupt a
+blocked syscall. So the walks moved into a forked child the deadline kills (`lib/dir-scanner.js`,
+`lib/dir-scanner-child.js`), the three operator-path entry points in `lib/projects.js` route through
+it, and a per-path failure backoff bounds what a permanently-broken directory costs.
+
+**Chunk 1** — the supervisor. **Chunk 2** — `listAllProjects`, `scanDirectoryForProjects` and
+`createProjectsDir` behind it; `git.getInfo`'s `execSync` moved with the walk, taking a second
+event-loop hazard off the server. **Chunk 3** — the backoff: 30s doubling to a five-minute ceiling,
+opt-in, taken only by the polled route.
+
+**The rejection vocabulary is the load-bearing design.** `tcTimedOut` means "this path did not
+answer" and nothing else, because it is the sole input to the Full Disk Access advice. Collateral
+work gets `tcAborted`, a walk that ran out of budget gets `tcTruncated`, and a filesystem that
+replied gets its errno. Every one of those used to arrive wearing `tcTimedOut`.
+
+**Mutation-verified**, and one mutation mattered more than the rest: deleting the collateral guard
+left the suite green, because the test covered only one of that guard's two failure directions —
+it asserted collateral must not MARK a path bad, while the deletion's real effect was ERASING an
+existing backoff and silently dropping the rate bound. Second test written, mutation re-run, red.
+
+**Known and NOT fixed, recorded rather than implied:** `enrichProject` still calls
+`fs.existsSync(project.path)` synchronously for every registered project on `GET /api/projects`, so
+a *registered* project on a protected path still blocks the event loop — the #859 wedge, on the
+route this fixed the other half of. The family is 32 synchronous reads in `lib/projects.js` plus 7 in
+`lib/uploads.js`; it needs its own issue — filed as #884.
 
 **Classification:** fix

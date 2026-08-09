@@ -10,6 +10,10 @@
   },
   "coAuthorFormat": null,
   "commands": [],
+  "install": {
+    "command": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    "docsUrl": "https://antigravity.google/docs/cli/install"
+  },
   "detection": {
     "strategy": "which",
     "target": "agy"

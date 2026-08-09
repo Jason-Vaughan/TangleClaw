@@ -184,6 +184,31 @@ describe('API Contract Validation', () => {
         assert.equal(typeof engine.interactionModel, 'string');
       }
     });
+
+    it('carries detectionCertain — the field the setup gate\'s release valve reads', async () => {
+      // The producer end of a three-link chain: this route emits it,
+      // landing.js maps it into state, and the wizard reads that to decide
+      // whether "Continue anyway" appears. Only the last link had a test, so
+      // deleting this field left the frontend tests green and walled an
+      // operator into the engine step — the exact person the valve is for.
+      const res = await request('/api/engines');
+      assert.equal(res.status, 200);
+      assert.equal(typeof res.data.detectionCertain, 'boolean',
+        'a missing field reads as `!== false`, i.e. certain, which is the unsafe default');
+    });
+
+    it('exposes install info so the wizard can say how to get an engine', async () => {
+      const res = await request('/api/engines');
+      for (const engine of res.data.engines) {
+        assert.ok(engine.install === null || typeof engine.install === 'object',
+          'null on profiles that declare none — never undefined');
+      }
+      const bundled = res.data.engines.find((e) => e.id === 'claude');
+      if (bundled) {
+        assert.equal(typeof bundled.install.command, 'string');
+        assert.match(bundled.install.docsUrl, /^https:\/\//);
+      }
+    });
   });
 
   describe('GET /api/engines/:id — contract shape', () => {

@@ -14,6 +14,10 @@
     { "label": "Drop File", "input": "/drop", "description": "Remove file from context" },
     { "label": "Undo", "input": "/undo", "description": "Undo last change" }
   ],
+  "install": {
+    "command": "python -m pip install aider-install && aider-install",
+    "docsUrl": "https://aider.chat/docs/install.html"
+  },
   "detection": {
     "strategy": "which",
     "target": "aider"

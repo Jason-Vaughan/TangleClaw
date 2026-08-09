@@ -10,6 +10,7 @@ const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
 const { installCaddyStub } = require('./_caddy-stub');
+const { installAlwaysAvailableEngine } = require('./_engine-fixture');
 
 setLevel('error');
 
@@ -72,6 +73,10 @@ describe('Setup Wizard', () => {
     fs.mkdirSync(projectsDir);
 
     store._setBasePath(tmpDir);
+    // Setup refuses to finish with no engine installed, and the bundled
+    // profiles detect real CLIs — so without this the result depends on
+    // what the host has, passing on a dev Mac and failing on CI.
+    installAlwaysAvailableEngine(tmpDir);
     store.init();
 
     server = createServer();
@@ -149,9 +154,255 @@ describe('Setup Wizard', () => {
     });
   });
 
+  // TangleClaw's whole job is launching AI coding sessions. An install that
+  // finishes with no engine is a dashboard that can launch nothing — the
+  // operator reaches a finished-looking product and discovers the hole at the
+  // first Launch button, with nothing on screen explaining it.
+  describe('setup cannot finish with no engine installed', () => {
+    // Resolved lazily: `tmpDir` is assigned in `before`, which runs after this
+    // describe body is evaluated.
+    const engineProfile = () => path.join(tmpDir, 'engines', 'test-engine.json');
+
+    /**
+     * Run `fn` on an install where nothing is detected as installed.
+     *
+     * EVERY profile has to go, not just the fixture: the bundled ones are
+     * seeded into this store too, and they detect real CLIs — so on a machine
+     * with Claude Code installed, removing only the fixture still leaves an
+     * engine available and the gate correctly does not fire. Emptying the
+     * directory makes the case reproduce the same way on any host.
+     */
+    async function withNoEngines(fn) {
+      const dir = path.join(tmpDir, 'engines');
+      const stash = path.join(tmpDir, 'engines-stashed');
+      fs.renameSync(dir, stash);
+      fs.mkdirSync(dir);
+      const config = store.config.load();
+      const savedComplete = config.setupComplete;
+      config.setupComplete = false;
+      store.config.save(config);
+      try {
+        await fn();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.renameSync(stash, dir);
+        const restore = store.config.load();
+        restore.setupComplete = savedComplete;
+        store.config.save(restore);
+      }
+    }
+
+    it('refuses POST /api/setup/complete, naming what to do about it', async () => {
+      await withNoEngines(async () => {
+        const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
+        assert.equal(status, 400);
+        assert.equal(data.code, 'ENGINE_REQUIRED');
+        assert.match(data.error, /Install one/, 'must say what to do, not only what is wrong');
+        assert.equal(store.config.load().setupComplete, false,
+          'a refused completion must not have half-finished setup');
+      });
+    });
+
+    it('refuses the Skip path too — the button is not the rule', async () => {
+      // #710 lived exactly here: /api/setup/complete got a new predicate and
+      // PATCH /api/config { setupComplete: true } kept the old one, so Skip was
+      // a door beside the gate. A rule enforced on one of these two is not
+      // enforced.
+      await withNoEngines(async () => {
+        const { status, data } = await request(server, 'PATCH', '/api/config',
+          { setupComplete: true });
+        assert.equal(status, 400);
+        assert.equal(data.code, 'ENGINE_REQUIRED');
+        assert.equal(store.config.load().setupComplete, false);
+      });
+    });
+
+    it('lets setup finish once an engine is there', async () => {
+      // The other half of the gate: it has to OPEN. A refusal that never lifts
+      // is the trap this whole slice exists to avoid.
+      const config = store.config.load();
+      config.setupComplete = false;
+      config.authEnabled = true;
+      config.basicAuthUser = 'admin';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0';
+      store.config.save(config);
+
+      const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+      assert.equal(status, 200);
+      assert.equal(data.config.setupComplete, true);
+    });
+
+    it('does not refuse an already-finished install whose engine went away', async () => {
+      // Uninstalling an engine later is a different problem, and refusing to
+      // save settings over it would strand a working install.
+      const enginePath = engineProfile();
+      const saved = fs.readFileSync(enginePath, 'utf8');
+      fs.unlinkSync(enginePath);
+      const config = store.config.load();
+      config.setupComplete = true;
+      store.config.save(config);
+      try {
+        const { status } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+        assert.equal(status, 200, 'a finished install must stay settable');
+      } finally {
+        fs.writeFileSync(enginePath, saved);
+      }
+    });
+  });
+
+  // The engine list is what the wizard's park screen renders, and the branch
+  // below is the one no other test enters: every suite that hits this route runs
+  // on a machine where an engine IS available, so "nothing found, and we have
+  // not looked properly yet" was new behavior with no coverage.
+  describe('GET /api/engines — the re-probe branch', () => {
+    const engines = require('../lib/engines');
+
+    /**
+     * Run `fn` with no engine profiles and a stub login shell that COUNTS its
+     * invocations.
+     *
+     * Counting, not timing: a shell that fails instantly makes a re-probe just
+     * as fast as no probe at all, so an elapsed-time bound passes whether the
+     * regression is present or not. And stubbed in every case, so none of these
+     * spawn the host's real login shell — this file is careful about host
+     * dependence everywhere else (the Caddy stub, the engine fixture).
+     *
+     * @param {(tally: () => number) => Promise<void>} fn - Receives a function
+     *   returning how many times the shell has been started.
+     */
+    async function withNoEnginesAndStubShell(fn) {
+      const dir = path.join(tmpDir, 'engines');
+      const stash = path.join(tmpDir, 'engines-stashed-probe');
+      const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shell-'));
+      const tallyFile = path.join(shellDir, 'invocations');
+      const stubShell = path.join(shellDir, 'shell');
+      fs.writeFileSync(stubShell, '#!/bin/bash\necho x >> ' + tallyFile + '\nexit 1\n');
+      fs.chmodSync(stubShell, 0o755);
+      const savedShell = process.env.SHELL;
+
+      process.env.SHELL = stubShell;
+      fs.renameSync(dir, stash);
+      fs.mkdirSync(dir);
+      engines.resetDetectionCache();
+      const tally = () => (fs.existsSync(tallyFile)
+        ? fs.readFileSync(tallyFile, 'utf8').trim().split('\n').filter(Boolean).length
+        : 0);
+      try {
+        await fn(tally);
+      } finally {
+        // Inside the finally, all of it: an assertion failure must not leak a
+        // deliberately-broken SHELL into every later test in this file, turning
+        // one red into a cascade.
+        process.env.SHELL = savedShell;
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.renameSync(stash, dir);
+        fs.rmSync(shellDir, { recursive: true, force: true });
+        engines.resetDetectionCache();
+      }
+    }
+
+    it('resolves the login PATH before reporting that it could not tell', async () => {
+      // Unprobed + nothing available is the boot race: answering straight away
+      // would report "we could not look" when the truth is "we have not looked
+      // yet", which is the unknown-vs-known conflation this release removes.
+      await withNoEnginesAndStubShell(async (tally) => {
+        assert.equal(engines.detectionProbeAttempted(), false, 'starts unprobed');
+
+        const { status, data } = await request(server, 'GET', '/api/engines');
+        assert.equal(status, 200);
+        assert.equal(engines.detectionProbeAttempted(), true,
+          'the route must resolve the PATH rather than shrug');
+        assert.ok(tally() > 0, 'and it really did start a shell to do it');
+        assert.equal(data.detectionCertain, false,
+          'the stub shell cannot answer, so it reports honestly that it could not tell');
+      });
+    });
+
+    it('does not re-probe on every request when the shell cannot answer', async () => {
+      // The population this branch targets — no engine detected, shell that
+      // will not answer — is exactly the one sitting on the engine step
+      // pressing buttons. Keyed on "did a probe SUCCEED" it would pay two shell
+      // starts on every list load, forever. Mutation: key the route back on
+      // detectionWasProbed and the tally grows on the second request.
+      await withNoEnginesAndStubShell(async (tally) => {
+        await request(server, 'GET', '/api/engines');
+        assert.equal(engines.detectionWasProbed(), false, 'the shell did not answer');
+        assert.equal(engines.detectionProbeAttempted(), true, 'but we did try');
+        const afterFirst = tally();
+        assert.ok(afterFirst > 0, 'the first request really did start a shell');
+
+        await request(server, 'GET', '/api/engines');
+        assert.equal(tally(), afterFirst,
+          'a second list must not start another shell (' + afterFirst + ' then ' + tally() + ')');
+      });
+    });
+
+    it('re-probes when the operator explicitly asks — that is what Check again is', async () => {
+      // Distinct from the case above: the guard must not become "never look
+      // again". Asserted on the tally GROWING, because the attempted flag is
+      // already true by then and would pass with the refresh handler deleted.
+      await withNoEnginesAndStubShell(async (tally) => {
+        await request(server, 'GET', '/api/engines');
+        const afterFirst = tally();
+
+        const { status } = await request(server, 'GET', '/api/engines?refresh=1');
+        assert.equal(status, 200);
+        assert.ok(tally() > afterFirst,
+          'an explicit re-check must actually re-check (' + afterFirst + ' then ' + tally() + ')');
+      });
+    });
+  });
+
+  describe('POST /api/setup/create-dir', () => {
+    let savedHome;
+    let fakeHome;
+
+    before(() => {
+      savedHome = process.env.HOME;
+      fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-home-'));
+      process.env.HOME = fakeHome;
+    });
+
+    after(() => {
+      process.env.HOME = savedHome;
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    });
+
+    it('creates the folder and reports the resolved path', async () => {
+      const { status, data } = await request(server, 'POST', '/api/setup/create-dir',
+        { directory: path.join(fakeHome, 'Projects') });
+      assert.equal(status, 200);
+      assert.equal(data.created, true);
+      assert.ok(fs.statSync(data.path).isDirectory());
+    });
+
+    it('refuses a path outside the home directory', async () => {
+      // The route is reachable before any credential exists — first-run setup
+      // has none — so this refusal IS the security boundary, not a convenience.
+      const { status, data } = await request(server, 'POST', '/api/setup/create-dir',
+        { directory: '/tmp/tc-route-should-never-exist' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.equal(fs.existsSync('/tmp/tc-route-should-never-exist'), false);
+    });
+
+    it('requires a directory', async () => {
+      const { status } = await request(server, 'POST', '/api/setup/create-dir', { directory: '  ' });
+      assert.equal(status, 400);
+    });
+  });
+
   describe('POST /api/setup/scan', () => {
     it('should return 400 when directory is missing', async () => {
       const { status, data } = await request(server, 'POST', '/api/setup/scan', {});
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+    });
+
+    it('should return 400 for a blank directory rather than scanning the server itself', async () => {
+      // path.resolve('') is the server's own working directory, so a blank
+      // value is not "no value" — it is a scan of the install.
+      const { status, data } = await request(server, 'POST', '/api/setup/scan', { directory: '   ' });
       assert.equal(status, 400);
       assert.equal(data.code, 'BAD_REQUEST');
     });
@@ -237,6 +488,60 @@ describe('Setup Wizard', () => {
       const goFound = data.projects.find(p => p.name === 'test-go-project');
       assert.ok(goFound, 'Should find the Go project');
       assert.equal(goFound.detected, true, 'go.mod should trigger detection');
+    });
+
+    // #859, second call site. On a stock macOS install the directory this route
+    // scans is ~/Documents/Projects, which TCC blocks for a launchd-spawned
+    // node with no Full Disk Access — and it blocks by never completing the
+    // open(), not by returning EPERM. Read synchronously that stopped the event
+    // loop, so one click on wizard step 2 killed every route in the process,
+    // permanently, with launchd still reporting it healthy.
+    it('keeps the event loop free and answers when the directory never responds', async () => {
+      const blocked = path.join(tmpDir, 'blocked-projects');
+      fs.mkdirSync(blocked, { recursive: true });
+      const fifo = path.join(blocked, 'pipe');
+      require('node:child_process').execFileSync('mkfifo', [fifo]);
+
+      // NO STUB. The read this route performs happens in the scanner child since
+      // #883, so a stubbed `fs` in this process could not reach it — and a test
+      // whose fixture cannot reach its subject passes forever. Instead the child
+      // is made to block for real, on a reader-less FIFO, which occupies a
+      // genuine libuv thread in a genuine blocked syscall. That is a stronger
+      // fixture than the one it replaces: the loop-free assertion below is now
+      // measured against work that really is stuck rather than a promise that
+      // simply never settles.
+      const dirScanner = require('../lib/dir-scanner');
+      const hungScanner = dirScanner.createScanner({
+        childPath: path.join(__dirname, '_dir-scanner-hang-child.js'),
+        timeoutMs: 1500,
+        exitGraceMs: 0
+      });
+      // The wizard's scan runs on the interactive scanner, kept separate from the
+      // dashboard poll so a hung projects directory cannot kill this one's child.
+      const real = dirScanner.interactiveRequest;
+      dirScanner.interactiveRequest = () => hungScanner.request('hang', { fifo });
+
+      try {
+        const scan = request(server, 'POST', '/api/setup/scan', { directory: blocked });
+
+        // A timer that fires on schedule is proof the loop stayed free while
+        // the scan was outstanding — the property the whole fix is about, and
+        // one no assertion about the response alone can establish.
+        const timerSet = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const drift = Date.now() - timerSet;
+        assert.ok(drift < 1500,
+          `the scan must not block the event loop (200ms timer took ${drift}ms)`);
+
+        const { status, data } = await scan;
+        assert.equal(status, 400, 'the request must be answered, not left hanging');
+        assert.equal(data.code, 'SCAN_FAILED');
+        assert.match(data.error, /Full Disk Access/,
+          'the operator must be told the remedy, not just that it failed');
+      } finally {
+        dirScanner.interactiveRequest = real;
+        await hungScanner.shutdown();
+      }
     });
 
       });
