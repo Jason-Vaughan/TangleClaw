@@ -27,11 +27,14 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const git = require('../lib/git');
+const { setConsoleStream, setLevel, getLevel } = require('../lib/logger');
 const { PROJECT_FACTS_TIMEOUT_MS } = require('../lib/project-facts');
 
 const REPO_ROOT = path.join(__dirname, '..');
 /** Long enough that a cap always wins the race, never the sleep. */
 const STALL_SECONDS = 30;
+/** Restored after the one test that turns the log level down. */
+const priorLogLevel = getLevel();
 
 /** Directory holding the fake `git`, prepended to PATH while a test runs. */
 let fakeBinDir = null;
@@ -177,6 +180,31 @@ describe('git info budget (#891)', () => {
       const first = git.getInfo(REPO_ROOT);
       const second = git.getInfo(REPO_ROOT);
       assert.equal(first, second);
+    });
+  });
+
+  describe('a persistently slow repository is reported once, not once per poll', () => {
+    it('warns the first time and drops to debug for the same directory', () => {
+      // A partial is deliberately not cached, so a repository that stays slow
+      // re-reads on every ten-second poll. Warning each time would emit this
+      // several times a minute and bury the warning it is meant to be — the
+      // same call `lib/project-facts.js` makes for a remembered refusal.
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        shadowGit(['status']);
+        git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
+        git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
+
+        const budgetLines = lines.filter((l) => l.includes('ran out of budget'));
+        assert.equal(budgetLines.length, 2, 'both reads must reach the log — neither is silent');
+        assert.match(budgetLines[0], /WARN/);
+        assert.match(budgetLines[1], /DEBUG/);
+      } finally {
+        setConsoleStream(null);
+        setLevel(priorLogLevel);
+      }
     });
   });
 
