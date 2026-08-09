@@ -1597,6 +1597,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Build plan for #884, and a correction to what #884 says is broken.** The issue scopes the
+  remaining event-loop hazard as "32 `existsSync` sites". Reading `enrichProject`
+  (`lib/projects.js`) rather than the issue shows it performs **five** distinct synchronous
+  filesystem operations per registered project per ten-second poll, and only one is an
+  `existsSync`: `git.getInfo` shells out through `execSync` (`lib/git.js`), `_detectProjectVersion`
+  and `store.projectConfig.load` are `readFileSync` chains, and `engines.governanceState` is called
+  twice — once here and once via `actions.availableActions` (`lib/actions.js`). **This matters
+  because the project's own learning tells future sweeps to grep
+  `readdirSync|existsSync|statSync`, and that grep matches none of the other four.** The plan
+  therefore moves every per-project read into the `#883` scanner child rather than the existence
+  checks, which makes it correct whether or not macOS TCC blocks at `stat` — a question this
+  machine cannot answer, because a shell that has Full Disk Access returns instantly on every
+  protected path and proves nothing about the failing case.
+
+  Cheap where it was expected to be expensive: `listAllProjects` is already `async` and its only
+  caller already awaits it, so `enrichProject` and `listProjects` can go async without touching a
+  route signature. Plan at `.prawduct/artifacts/build-plan-884-sync-reads.md`, three chunks, with
+  Chunk 02 marked as the honest stopping point if the work has to be cut short.
+
+  Reconciling the plan against its governing norms also turned up a description that stopped
+  tracking: `architecture.md`'s degradation norm claims a missing project directory already
+  surfaces as a per-card error badge, while #885 exists because it does not. The norm is right and
+  the plan conforms; the retroactivity evidence overstated what was checked — the same failure that
+  artifact's observability sibling already recorded against itself. Correcting it belongs to #885,
+  where the claim becomes true.
+
 - **A killable scanner process, so a hung directory can no longer take the server's filesystem with
   it.** (#883, chunk 1 — the mechanism only; nothing routes through it yet, so no behavior changes
   in this entry.) A read of a TCC-protected macOS path does not fail, it never returns, and
