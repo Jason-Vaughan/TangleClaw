@@ -26,7 +26,7 @@
  * actually killing a real process.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { execSync } = require('node:child_process');
 const os = require('node:os');
@@ -246,6 +246,238 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
     } finally {
       changelogCoverage._internal.execSync = savedExec;
       changelogCoverage._internal.loadProjectConfig = savedCfg;
+    }
+  });
+});
+
+describe('features-toc names a stopped probe rather than a fact (#897)', () => {
+  const featuresToc = require('../lib/wrap-steps/features-toc');
+  const store = require('../lib/store');
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  let tmpDir;
+  let projectPath;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-897-features-toc-'));
+    projectPath = path.join(tmpDir, 'proj');
+    fs.mkdirSync(projectPath, { recursive: true });
+    fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n');
+  });
+
+  after(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  /**
+   * Run the handler with the project config and `execSync` both scripted.
+   *
+   * @param {object} projConfig - What `store.projectConfig.load` returns.
+   * @param {(command:string) => Buffer} exec - The scripted `execSync`.
+   * @returns {Promise<object>} The step result.
+   */
+  async function runWith(projConfig, exec) {
+    const savedExec = featuresToc._internal.execSync;
+    const savedLoad = store.projectConfig.load;
+    try {
+      store.projectConfig.load = () => projConfig;
+      featuresToc._internal.execSync = exec;
+      return await featuresToc.run({
+        project: { name: 'p', path: projectPath },
+        step: { id: 'features-toc' },
+        staged: {}
+      });
+    } finally {
+      featuresToc._internal.execSync = savedExec;
+      store.projectConfig.load = savedLoad;
+    }
+  }
+
+  it('a killed `git diff` is not reported as a diff that failed', async () => {
+    const r = await runWith({ featureIndexEnabled: true, lastWrapSha: null }, (command) => {
+      if (String(command).startsWith('git diff')) throw realTimeoutError();
+      return Buffer.from('');
+    });
+
+    assert.equal(r.status, 'skipped');
+    assert.match(r.output.reason, /was stopped/);
+    assert.doesNotMatch(r.output.reason, /git diff failed/,
+      'the old wording said "failed" about a command that never answered');
+    assert.match(r.output.reason, /unknown/);
+  });
+
+  it('an ordinary `git diff` failure keeps its original wording', async () => {
+    const r = await runWith({ featureIndexEnabled: true, lastWrapSha: null }, (command) => {
+      if (String(command).startsWith('git diff')) {
+        const err = new Error('Command failed: git diff');
+        err.status = 128;
+        throw err;
+      }
+      return Buffer.from('');
+    });
+
+    assert.match(r.output.reason, /git diff failed/);
+  });
+
+  it('a killed range probe does not claim the repo has no main or master', async () => {
+    const r = await runWith(
+      { featureIndexEnabled: true, lastWrapSha: null },
+      () => { throw realTimeoutError(); }
+    );
+
+    assert.equal(r.status, 'skipped');
+    assert.match(r.output.reason, /stopped before answering/);
+    assert.doesNotMatch(r.output.reason, /no main\/master base branch/);
+  });
+
+  it('a genuinely trunk-less repo keeps its original skip reason', async () => {
+    const r = await runWith({ featureIndexEnabled: true, lastWrapSha: null }, () => {
+      const err = new Error('Command failed');
+      err.status = 1;
+      throw err;
+    });
+
+    assert.match(r.output.reason, /no main\/master base branch/);
+  });
+
+  it('a resolved-but-WIDENED range says so — the case with the highest cost', async () => {
+    // The costliest stopped-probe case does NOT reach the no-range branch: a
+    // killed `merge-base --is-ancestor` still resolves a range (the trunk
+    // fallback), so the step reports an entirely ordinary outcome computed over
+    // a range that was silently widened.
+    const SHA = 'abcdef1234567';
+    const r = await runWith({ featureIndexEnabled: true, lastWrapSha: SHA }, (command) => {
+      const cmd = String(command);
+      if (cmd.includes('merge-base --is-ancestor')) throw realTimeoutError();
+      // Everything else resolves; the diff is empty.
+      return Buffer.from('');
+    });
+
+    assert.equal(r.status, 'skipped');
+    assert.match(r.output.reason, /no files touched in main\.\.\.HEAD/,
+      'the fallback range is still used — that part is correct');
+    assert.match(r.output.reason, /stopped before answering/,
+      '"no files touched" must not read as a fact about the session');
+    assert.match(r.output.reason, /unknown answer/);
+  });
+
+  it('an undegraded empty range keeps the plain wording', async () => {
+    const SHA = 'abcdef1234567';
+    const r = await runWith(
+      { featureIndexEnabled: true, lastWrapSha: SHA },
+      () => Buffer.from('')
+    );
+
+    assert.match(r.output.reason, /^no files touched in abcdef1234567\.\.HEAD$/,
+      'no caveat when every probe answered');
+  });
+});
+
+describe('a widened range reaches the operator who is blocked by it (#897)', () => {
+  const aiContent = require('../lib/wrap-steps/ai-content');
+
+  it('changelog-coverage flags an uncovered verdict computed over a guessed range', () => {
+    const savedExec = changelogCoverage._internal.execSync;
+    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    try {
+      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.execSync = (command) => {
+        const cmd = String(command);
+        if (cmd.includes('merge-base --is-ancestor')) throw realTimeoutError();
+        if (cmd.startsWith('git log')) {
+          // One judged commit that never touched the changelog.
+          return Buffer.from('\x1eabc123\x1fp1\x1fAdd a thing\nlib/thing.js\n');
+        }
+        return Buffer.from('');
+      };
+
+      const r = changelogCoverage.evaluate('/tmp', ['CHANGELOG.md'], []);
+
+      assert.equal(r.verdict, changelogCoverage.VERDICTS.UNCOVERED);
+      assert.match(r.reason, /stopped before answering/,
+        'the commit list may reach past this session and the operator must be told');
+      assert.match(r.reason, /may reach further back than this session/);
+    } finally {
+      changelogCoverage._internal.execSync = savedExec;
+      changelogCoverage._internal.loadProjectConfig = savedCfg;
+    }
+  });
+
+  it('an uncovered verdict over a confirmed range carries no caveat', () => {
+    const savedExec = changelogCoverage._internal.execSync;
+    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    try {
+      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.execSync = (command) => {
+        if (String(command).startsWith('git log')) {
+          return Buffer.from('\x1eabc123\x1fp1\x1fAdd a thing\nlib/thing.js\n');
+        }
+        return Buffer.from('');
+      };
+
+      const r = changelogCoverage.evaluate('/tmp', ['CHANGELOG.md'], []);
+
+      assert.equal(r.verdict, changelogCoverage.VERDICTS.UNCOVERED);
+      assert.equal(r.reason, null, 'nothing to caveat when every probe answered');
+    } finally {
+      changelogCoverage._internal.execSync = savedExec;
+      changelogCoverage._internal.loadProjectConfig = savedCfg;
+    }
+  });
+
+  it('the ai-content gate renders the caveat into the block the operator reads', () => {
+    // Without this the field would be one more unconsumed payload key — the
+    // exact anti-pattern this branch cites when deleting lint's `output.timedOut`.
+    const saved = aiContent._internal.changelogCoverage;
+    try {
+      aiContent._internal.changelogCoverage = () => ({
+        verdict: 'uncovered',
+        uncovered: [{ sha: 'abc1234def', subject: 'Add a thing' }],
+        uncommittedWork: [],
+        checkedCount: 1,
+        range: 'main..HEAD',
+        reason: '1 git probe(s) were stopped before answering (git merge-base --is-ancestor abc HEAD), so this range is a fallback taken on an unknown answer and may reach further back than this session'
+      });
+
+      // Driven through the real gate rather than the private predicate: the
+      // snapshot is unchanged, which is exactly the condition that routes an
+      // ai-content step into the coverage predicate on a live wrap.
+      const block = aiContent._verifyChangedGate(
+        '/tmp',
+        { id: 'changelog-update', verifySatisfiedBy: 'changelog-coverage' },
+        { 'CHANGELOG.md': null }
+      );
+
+      assert.ok(block, 'the block still stands — the changelog was not maintained');
+      assert.match(block.remediation, /stopped before answering/);
+      assert.match(block.remediation, /belong to this session before writing entries/);
+    } finally {
+      aiContent._internal.changelogCoverage = saved;
+    }
+  });
+
+  it('an ordinary uncovered block is unchanged', () => {
+    const saved = aiContent._internal.changelogCoverage;
+    try {
+      aiContent._internal.changelogCoverage = () => ({
+        verdict: 'uncovered',
+        uncovered: [{ sha: 'abc1234def', subject: 'Add a thing' }],
+        uncommittedWork: [],
+        checkedCount: 1,
+        range: 'main..HEAD',
+        reason: null
+      });
+
+      const block = aiContent._verifyChangedGate(
+        '/tmp',
+        { id: 'changelog-update', verifySatisfiedBy: 'changelog-coverage' },
+        { 'CHANGELOG.md': null }
+      );
+
+      assert.ok(block);
+      assert.doesNotMatch(block.remediation, /Note:/,
+        'no caveat when the range was confirmed');
+    } finally {
+      aiContent._internal.changelogCoverage = saved;
     }
   });
 });

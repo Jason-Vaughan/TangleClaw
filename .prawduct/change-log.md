@@ -26,6 +26,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-10: a killed wrap command stops reading as a failed one, on the steps that actually run (#897)
+
+<!-- prawduct: type=fix | scope=killed-vs-failed-897 | chunks=A,B,C | status=shipped -->
+
+**Why:** #894 fixed this distinction in `test` and `lint` — two handlers the shipped fourteen-step
+pipeline never runs. #897 is the reachable half. Seven sites (not the eight the issue names —
+`version-bump.js` spawns no child process at all, and the written reason is now in its header) had
+their own copy of a child-process wrapper, and every copy flattened a command we killed at our own
+timeout into `exit 1` with empty output — byte-identical to a command that ran and refused.
+
+**What changed:** all five async wrappers delegate to `lib/wrap-steps/_exec-shell.js`, which grows an
+argv-style `execFileArgs` beside the shell-form `execShell`. Every site that surfaces a failure
+branches on `timedOut`, and where a kill leaves ambiguous state — a commit that may have landed, a
+push that may have been received, a PR request that may have reached GitHub — the remediation names
+the check that resolves it instead of asserting an outcome. The three synchronous sites distinguish a
+killed probe from a real negative answer, so a stopped `merge-base --is-ancestor` no longer silently
+widens the session range and a stopped `git log` no longer blocks a compliant wrap with
+"CHANGELOG.md is unchanged" from a predicate that never ran.
+
+**What the review caught:** two blocking findings, both self-inflicted by the fix. A brand-new false
+operator string on the very path built to remove them ("your working tree is exactly as you left it"
+— staged writes land before that probe), and a mutation-check claim that did not hold: eleven
+mutations had been run, which is not eleven branches covered. Twenty branches now carry a guard, each
+mutated away and confirmed red. Two design findings, each raised independently by more than one
+reviewer, were fixed in the same pass: `commit.js`'s branch probe was the one site where a kill
+changed BEHAVIOUR — a killed `git rev-parse --abbrev-ref HEAD` switched off the #264 auto-branch
+guard and committed straight to `main` — and `resolveSessionRange().stopped` had no production
+reader, which is the same unconsumed-field anti-pattern this branch cites when deleting `lint.js`'s
+`output.timedOut`.
+
+**Also:** the wrap-step child-process contract is now written into `boundary-patterns.md`, because
+seven hand-rolled copies is how this defect class was born twice.
+
+**Classification:** fix
+
+
 ## 2026-08-07: first run stops dead-ending — the wedge, the PATH, and three screens with no way forward (#859, #346)
 
 <!-- prawduct: type=fix | scope=first-run-859 | status=shipped -->

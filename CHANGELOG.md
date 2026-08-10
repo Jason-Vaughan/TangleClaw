@@ -511,6 +511,24 @@ All notable changes to TangleClaw are documented in this file.
   unchanged — falling back is still right when you cannot know — but it is now recorded rather than
   indistinguishable from a real negative answer, in the step output and in the server log.
 
+- **A wrap can no longer commit straight to `main` because a git probe hung (#897).** The same
+  defect, at the one place it changed what the wrap *did* rather than what it said.
+
+  The commit step reads your current branch to decide whether to auto-create a `wrap/…` branch
+  instead of committing to a protected one. When that read was killed at its timeout, the branch came
+  back empty — which the step took to mean "not on a protected branch", switched the guard off, and
+  committed directly to `main`. Silently, and with nothing in the log. That guard exists because
+  exactly that happened once before.
+
+  An unanswered branch probe now halts the wrap and says why, instead of guessing. Nothing is staged
+  and nothing is committed. If you genuinely want to commit wherever HEAD is, the direct-to-main
+  option in the wrap drawer still bypasses it, as before.
+
+- **When a stopped probe widens the range a wrap judges you on, it now says so (#897).** A killed
+  ancestry check falls back to comparing against the whole trunk, which can reach back past your
+  session — so the changelog block would list commits that shipped weeks ago and ask you to write
+  entries for them. That block now carries the caveat, and the Feature Index skip reason does too.
+
   Also in this sweep: a non-blocking lint step that was killed now leaves a line in the server log
   (previously the one configuration that deliberately does not stop the wrap was also the only one
   leaving no trace it was killed), and a comment in `lint.js` describing which `blocker` values fall
