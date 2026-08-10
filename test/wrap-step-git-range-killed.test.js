@@ -481,3 +481,69 @@ describe('a widened range reaches the operator who is blocked by it (#897)', () 
     }
   });
 });
+
+describe('the degraded-range caveat goes only where the range was used (#897)', () => {
+  // The caveat exists because a widened range can put commits from OTHER
+  // sessions into the list an operator is told to write entries for. The
+  // uncommitted-work verdict has no such list: it is read from the working tree,
+  // `uncovered` is empty and `checkedCount` is 0, so the range played no part.
+  // Attaching the caveat there tells the operator to check whether a set of FILE
+  // PATHS belongs to their session, which is not a question, and invites
+  // tick-through of a correct block.
+
+  it('an uncommitted-work verdict carries no caveat even when a probe was stopped', () => {
+    const savedExec = changelogCoverage._internal.execSync;
+    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    try {
+      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.execSync = (command) => {
+        const cmd = String(command);
+        if (cmd.includes('merge-base --is-ancestor')) throw realTimeoutError();
+        if (cmd.startsWith('git log')) return Buffer.from('');
+        // Dirty source work, no changelog edit → the uncommitted-work verdict.
+        if (cmd.startsWith('git diff --name-only --relative HEAD')) return Buffer.from('lib/thing.js\n');
+        return Buffer.from('');
+      };
+
+      const r = changelogCoverage.evaluate('/tmp', ['CHANGELOG.md'], []);
+
+      assert.equal(r.verdict, changelogCoverage.VERDICTS.UNCOVERED);
+      assert.deepEqual(r.uncommittedWork, ['lib/thing.js'],
+        'this is the working-tree form of the verdict');
+      assert.equal(r.checkedCount, 0, 'no commits were judged, so no range was used');
+      assert.equal(r.reason, null,
+        'a verdict the range did not produce must not carry a range caveat');
+    } finally {
+      changelogCoverage._internal.execSync = savedExec;
+      changelogCoverage._internal.loadProjectConfig = savedCfg;
+    }
+  });
+
+  it('the ai-content gate renders no commit-checking advice onto a file-path block', () => {
+    const aiContent = require('../lib/wrap-steps/ai-content');
+    const saved = aiContent._internal.changelogCoverage;
+    try {
+      aiContent._internal.changelogCoverage = () => ({
+        verdict: 'uncovered',
+        uncovered: [],
+        uncommittedWork: ['lib/thing.js'],
+        checkedCount: 0,
+        range: 'main..HEAD',
+        reason: null
+      });
+
+      const block = aiContent._verifyChangedGate(
+        '/tmp',
+        { id: 'changelog-update', verifySatisfiedBy: 'changelog-coverage' },
+        { 'CHANGELOG.md': null }
+      );
+
+      assert.ok(block);
+      assert.match(block.remediation, /lib\/thing\.js/);
+      assert.doesNotMatch(block.remediation, /listed commits/,
+        'the rows here are file paths, not commits');
+    } finally {
+      aiContent._internal.changelogCoverage = saved;
+    }
+  });
+});

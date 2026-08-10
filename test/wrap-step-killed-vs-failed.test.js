@@ -665,3 +665,79 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
     });
   });
 });
+
+describe('the resolution pass must not introduce its own false report (#897)', () => {
+  /** An exec result for a command that RAN and succeeded. */
+  const ok = (stdout = '') => ({
+    exitCode: 0, stdout, stderr: '', error: null, timedOut: false
+  });
+
+  it('a killed final checkout does not destroy the auto-PR result that already succeeded', async () => {
+    // `_autoPrCloseLoop`'s last step is a courtesy checkout back to the original
+    // branch, reached only AFTER push + `gh pr create` + `gh pr merge --auto`
+    // have all succeeded. Anything that throws here is caught by the call site,
+    // which synthesises `pushed:false, prUrl:null, autoMergeArmed:false` and
+    // tells the operator to push a branch that is already pushed and open a PR
+    // that is already open — and nulls the prUrl in the activity_log row that
+    // exists so stranded wraps can be found by query. A `log.warn` reaching for
+    // a variable bound in a different function did exactly that.
+    const realKill = await execFileArgs('sleep', ['30'], {
+      cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS, maxBufferBytes: 1024
+    });
+    const saved = commitStep._internal.exec;
+    try {
+      commitStep._internal.exec = async (file, args) => {
+        const cmd = `${file} ${args.join(' ')}`;
+        if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+        if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('main\n');
+        if (cmd.startsWith('gh pr create')) return ok('https://github.com/o/r/pull/7\n');
+        // The courtesy checkout — and ONLY it — is killed.
+        if (cmd.startsWith('git checkout ') && !cmd.startsWith('git checkout -b')) return realKill;
+        return ok('deadbee\n');
+      };
+
+      const result = await commitStep.run({
+        project: { name: 'p', path: os.tmpdir() },
+        step: { id: 'commit' },
+        staged: {},
+        options: {}
+      });
+
+      const ap = result.output.autoPr;
+      assert.equal(ap.pushed, true, 'the push succeeded and must still be reported as such');
+      assert.equal(ap.prUrl, 'https://github.com/o/r/pull/7',
+        'the PR url must survive — the activity_log row is how a stranded wrap is found');
+      assert.equal(ap.autoMergeArmed, true, 'auto-merge was armed before this step ran');
+      assert.equal(ap.returnedToBranch, false, 'only the checkout is in doubt');
+      assert.ok(!ap.error || !/threw/.test(ap.error),
+        'a log line must not be able to convert a successful auto-PR into a thrown one');
+    } finally {
+      commitStep._internal.exec = saved;
+    }
+  });
+
+  it('continuity-write logs a stopped probe from _gitFacts too', async () => {
+    // The two `_gitFacts` sites funnel through the same helper as the two
+    // already covered, but "same helper" is an argument about the code, not a
+    // guard over these call sites.
+    const realKill = await execFileArgs('sleep', ['30'], {
+      cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS, maxBufferBytes: 1024
+    });
+    const lines = await captureWarnings(async () => {
+      const saved = continuityStep._internal.exec;
+      try {
+        continuityStep._internal.exec = async () => realKill;
+        const facts = await continuityStep._gitFacts(os.tmpdir());
+        assert.deepEqual(facts, { sha: '', branch: '' },
+          'the safe degrade is unchanged — renderIndex flags these unknown');
+      } finally {
+        continuityStep._internal.exec = saved;
+      }
+    });
+
+    assert.equal(
+      lines.filter((l) => /git probe was stopped/.test(l)).length, 2,
+      'both the sha and the branch probe were stopped and both must be recorded'
+    );
+  });
+});
