@@ -491,6 +491,32 @@ All notable changes to TangleClaw are documented in this file.
   resolves it instead of picking an outcome. The wording for a command that really did fail is
   unchanged.
 
+- **A killed git probe no longer silently changes what your wrap measures — or blocks on (#897).**
+  The same defect in the wrap's synchronous git calls, where it was quieter and in one case worse.
+
+  Every probe behind the session range answers its question by catching a non-zero exit, so a probe
+  stopped at its ten-second timeout was read as a confident *no*:
+
+  - a stopped `git merge-base --is-ancestor` read as *"the recorded wrap SHA is orphaned"* and
+    abandoned this session's range for the whole trunk divergence — sweeping in many sessions of
+    already-released work, with nothing anywhere saying why;
+  - a stopped `git rev-parse --verify main` read as *"this repo has no main or master"*, which the
+    Feature Index step then reported to the operator as a fact;
+  - a stopped `git log` made the changelog-coverage predicate return *unavailable*, and an
+    unavailable verdict falls back to the mutation check — so a wrap whose CHANGELOG **was**
+    maintained got blocked with *"CHANGELOG.md is unchanged"* by a check that never ran. This is the
+    one an operator hits on an ordinary wrap.
+
+  Each of these now says the probe was stopped and the answer is unknown. The fallback behaviour is
+  unchanged — falling back is still right when you cannot know — but it is now recorded rather than
+  indistinguishable from a real negative answer, in the step output and in the server log.
+
+  Also in this sweep: a non-blocking lint step that was killed now leaves a line in the server log
+  (previously the one configuration that deliberately does not stop the wrap was also the only one
+  leaving no trace it was killed), and a comment in `lint.js` describing which `blocker` values fall
+  through to the informational branch has been corrected — only strict `false` does; every other
+  value blocks.
+
 - **Three checks for "did our own timeout kill this?" were dead code — none had ever run once
   (#894).** They failed for two different reasons: `execSync` puts `killed` on a different object
   than the error it throws, and async `exec` does set it but reports a `code` the check compared
