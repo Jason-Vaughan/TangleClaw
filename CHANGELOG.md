@@ -463,6 +463,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap steps you actually run no longer report a hung command as a failed one (#897).** #894
+  fixed that distinction in `test` and `lint` — two handlers the shipped fourteen-step pipeline
+  never runs. The steps fixed here run on every wrap: `open-pr-check`, `commit`, `continuity-write`
+  and `apply-pr-resolutions`.
+
+  A command TangleClaw kills at its own timeout prints nothing and reports no exit code, so every
+  one of these arrived as a plain `exit 1` with empty output — byte-identical to a command that ran
+  and refused. What an operator was then told:
+
+  - a `git commit` stopped at sixty seconds: *"The commit was rejected — most often by a pre-commit
+    hook. Read the hook output above."* There is no hook output, and — because a slow pre-commit
+    hook is the likeliest way to reach that timeout, and such a hook can finish after TangleClaw
+    stops waiting — **the commit may have landed**. It now says the outcome is unknown and to check
+    `git log -1` before doing anything else.
+  - a `gh pr merge --auto` stopped mid-request: *"auto-merge could not be armed"*, asserting an
+    outcome nobody observed. The request may have reached GitHub. It now says so, and points at the
+    PR before suggesting a manual merge.
+  - a `gh pr list` stopped mid-request rendered as a bare `exit 1`, which reads as gh not being
+    authenticated. It now names the stop and says the PR list is unknown, not empty.
+  - a stopped `git remote get-url origin` reported *"no origin remote"*, and a stopped
+    `gh --version` reported *"gh CLI not available"* — both sending the operator to fix something
+    they already have.
+
+  Where a kill leaves genuinely ambiguous state — the commit, the push, the PR creation, the
+  auto-merge, and a partially-staged `git add -A` — the remediation now names the check that
+  resolves it instead of picking an outcome. The wording for a command that really did fail is
+  unchanged.
+
 - **Three checks for "did our own timeout kill this?" were dead code — none had ever run once
   (#894).** They failed for two different reasons: `execSync` puts `killed` on a different object
   than the error it throws, and async `exec` does set it but reports a `code` the check compared
