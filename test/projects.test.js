@@ -750,6 +750,159 @@ describe('projects', () => {
     });
   });
 
+  // Session liveness used to cost one `tmux has-session` per project, run with
+  // `execSync` on the event loop with a 5s cap EACH, on the route the dashboard
+  // polls every ten seconds — so a fleet's worst case scaled with its size for an
+  // answer identical for every project asking (#890). These pin the count, which
+  // is the claim; wall-clock would pass with the defect intact, because a healthy
+  // `tmux has-session` costs a few milliseconds and the defect is that it happens
+  // N times.
+  describe('session liveness costs one tmux invocation per list (#890)', () => {
+    const tmuxModule = require('../lib/tmux');
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * Run `fn` with tmux's snapshot factory counted and its exec stubbed, and
+     * with the scanner answering healthily so no real child is forked.
+     *
+     * The REAL factory is wrapped rather than replaced, so laziness and
+     * single-flight are exercised as shipped — a hand-written stand-in would
+     * assert the test author's model of the snapshot instead of the snapshot.
+     *
+     * @param {string} stdout - What `tmux list-sessions` replies with.
+     * @param {Function} fn - Test body, called with the counters.
+     * @returns {Promise<any>}
+     */
+    async function withCountedTmux(stdout, fn) {
+      const realFactory = tmuxModule.createSessionNameSnapshot;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      const counts = { snapshots: 0, invocations: 0 };
+      tmuxModule.createSessionNameSnapshot = (options = {}) => {
+        counts.snapshots++;
+        return realFactory({
+          ...options,
+          execFn: (_file, _args, _opts, cb) => {
+            counts.invocations++;
+            setImmediate(() => cb(null, stdout));
+          }
+        });
+      };
+      const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+      dirScanner.request = healthy;
+      dirScanner.interactiveRequest = healthy;
+      try {
+        return await fn(counts);
+      } finally {
+        tmuxModule.createSessionNameSnapshot = realFactory;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    /**
+     * Register a project with a live session, and return both.
+     * @param {string} name - Project name.
+     * @returns {{ project: object, session: object }}
+     */
+    function projectWithSession(name) {
+      projects.createProject({ name });
+      const project = store.projects.getByName(name);
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: `tc-${name}`,
+        primePrompt: ''
+      });
+      return { project, session };
+    }
+
+    it('asks tmux ONCE for a fleet where every project has a session', async () => {
+      const made = ['spawn-count-a', 'spawn-count-b', 'spawn-count-c'].map(projectWithSession);
+      // Three, not two: the count has to distinguish "one for the list" from
+      // "one per project", and with two projects a stray off-by-one reads the same.
+      const stdout = `${made.map((m) => m.session.tmuxSession).join('\n')}\n`;
+      try {
+        const { counts, list } = await withCountedTmux(stdout, async (counts) => {
+          const list = await projects.listProjects();
+          return { counts, list };
+        });
+
+        // THE MUTATION THIS CATCHES: reverting to `tmux.hasSession` per project,
+        // or building the snapshot inside `enrichProject` rather than once in
+        // `listProjects`. Both still answer correctly — and both restore the
+        // per-project multiplication this exists to remove.
+        assert.equal(counts.invocations, 1,
+          'one tmux invocation must answer the whole list');
+        assert.equal(counts.snapshots, 1,
+          'and one snapshot must be built for the list, not one per project');
+
+        for (const { project } of made) {
+          const enriched = list.find((p) => p.id === project.id);
+          assert.ok(enriched.session && enriched.session.active === true,
+            `${project.name} must still be reported as having a live session`);
+        }
+      } finally {
+        for (const { session } of made) store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('asks tmux NOTHING for a project with no session at all', async () => {
+      projects.createProject({ name: 'spawn-count-idle' });
+      const project = store.projects.getByName('spawn-count-idle');
+      // THE MUTATION THIS CATCHES: resolving the snapshot eagerly, in
+      // `listProjects` or at the top of `enrichProject`. A fleet with nothing
+      // running would then pay a tmux invocation per poll to learn nothing —
+      // strictly worse than the per-project calls being replaced.
+      const counts = await withCountedTmux('', async (counts) => {
+        const enriched = await projects.enrichProject(store.projects.get(project.id));
+        assert.equal(enriched.session, null);
+        return counts;
+      });
+
+      assert.equal(counts.invocations, 0,
+        'nothing may be spawned to answer a question nobody asked');
+    });
+
+    it('enrichProject with no caller-supplied snapshot answers from its own', async () => {
+      // The `facts` precedent: an omitted argument makes this function do the
+      // work itself, so a call site that forgets is slower and never wrong. Eight
+      // single-project call sites rely on it.
+      const { project, session } = projectWithSession('spawn-count-solo');
+      try {
+        const { counts, enriched } = await withCountedTmux(`${session.tmuxSession}\n`,
+          async (counts) => ({
+            counts,
+            enriched: await projects.enrichProject(store.projects.get(project.id))
+          }));
+
+        assert.ok(enriched.session && enriched.session.active === true);
+        assert.equal(counts.invocations, 1, 'exactly one, the same as the call it replaced');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('matches the session name exactly — a longer live name is not a match', async () => {
+      const { project, session } = projectWithSession('spawn-count-exact');
+      try {
+        // tmux reports a DIFFERENT, longer session. `hasSession` promised exact
+        // matching and its callers depend on it; the snapshot must not soften it.
+        //
+        // THE MUTATION THIS CATCHES: answering with a `startsWith`/`includes`
+        // scan over the names instead of `Set.has`, which would report this
+        // project's dead session as live and hide a session that had crashed.
+        const enriched = await withCountedTmux(`${session.tmuxSession}-extra\n`,
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.equal(enriched.session, null,
+          'a session that is not in the live set is not live, near-miss or not');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('enrichProject — governanceState (#353)', () => {
     let govDir;
 

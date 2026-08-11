@@ -463,6 +463,25 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Asking whether your sessions are alive no longer costs one `tmux` call per project (#890).**
+  Enriching the project list ran `tmux has-session` once per project, synchronously on the event
+  loop, each with its own five-second cap — on the route the dashboard polls every ten seconds. The
+  answer is identical for every project asking, so the honest worst case scaled with the size of
+  your fleet for no reason: ten projects meant up to fifty seconds during which the server could not
+  answer anything at all, and #94/#144/#380 record this install's tmux server reaching exactly the
+  state that makes those calls slow.
+
+  One `tmux list-sessions` now answers the whole list, and it is awaited rather than blocking. It is
+  also lazy: a fleet with nothing running spawns nothing, so the quiet case did not get more
+  expensive to make the busy one cheaper.
+
+  `tmux.hasSession` is unchanged and still exact — its callers kill, adopt and type into the session
+  they are asking about, and for them a cached answer would be wrong in a way that destroys work.
+
+  Known and deliberately unchanged: a tmux server too wedged to answer still reports every session
+  as dead rather than as unknown, which is the same "unknown presented as a fact" #891 removed from
+  git reads. Filed as #900 rather than folded in here.
+
 - **The wrap steps you actually run no longer report a hung command as a failed one (#897).** #894
   fixed that distinction in `test` and `lint` — two handlers the shipped fourteen-step pipeline
   never runs. The steps fixed here run on every wrap: `open-pr-check`, `commit`, `continuity-write`
