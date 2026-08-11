@@ -518,6 +518,30 @@ describe('engines', () => {
       assert.equal(engines.detectEngine(profile).available, true);
     });
 
+    it('does NOT remember a spawn that really failed, driven by a real failed spawn', async () => {
+      // The companion to the fabricated-error test above, and the one that
+      // actually earns the claim. `lib/exec-timeout.js` records why: three
+      // hand-written versions of a child-process predicate in this repo were all
+      // dead, because each asserted its author's MODEL of the error shape rather
+      // than the shape. A stub cannot catch that; a real failure can.
+      //
+      // Executing a path that does not exist produces a genuine ENOENT — no
+      // process, so no numeric status — which is the same class as the EMFILE a
+      // machine out of process slots produces, and reachable without exhausting
+      // this one.
+      const { execFile } = require('node:child_process');
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+
+      const missingBinary = path.join(binDir, 'no-such-shell-at-all');
+      const cannotSpawn = (_file, _args, opts, cb) => execFile(missingBinary, [], opts, cb);
+      const result = await engines.detectEngineAsync(profile, { execFn: cannotSpawn });
+
+      assert.equal(result.available, false);
+      assert.equal(cache.size, 0,
+        'a spawn that genuinely never happened must not be remembered as an answer');
+    });
+
     it('tells a real non-zero exit apart from a failed spawn', () => {
       // The other side of the pair: a shell that RAN and exited non-zero reports
       // a numeric status, and that is an answer worth keeping. If the guard above
@@ -550,8 +574,10 @@ describe('engines', () => {
 
       engines.resetDetectionCache();
 
-      const quick = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.6; echo /b'], opts, cb);
-      const second = engines.detectEngineAsync(profile, { execFn: quick, timeout: 5000 });
+      // Outlasts the first deliberately, so the first one's cleanup runs while
+      // this is still registered — that ordering is the whole point.
+      const slower = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.6; echo /b'], opts, cb);
+      const second = engines.detectEngineAsync(profile, { execFn: slower, timeout: 5000 });
       const secondEntry = inflight.get(engines._internal.detectionKeyFor('which', 'tc-probe-bin'));
       assert.ok(secondEntry, 'the second caller registered its own probe');
 
@@ -561,6 +587,35 @@ describe('engines', () => {
 
       await second;
       await first;
+    });
+
+    it('the setup gate looks too — a remembered yes cannot hold the door open', async () => {
+      // `engineReadiness` is the third gate, behind the setup check and the
+      // wizard's engine step, and its own JSDoc says a "no" must not be stale
+      // "because it is the one that stops them". The cache arrived after that
+      // sentence was written, which is exactly how a rule gets applied to two of
+      // three call sites.
+      //
+      // The registered engine list is pinned to this fixture: unpinned, the real
+      // engines installed on the developer's machine answer first and the
+      // assertion means nothing on one box and something else on CI.
+      const realList = store.engines.list;
+      store.engines.list = () => [{ ...profile, name: 'Probe Engine', pickerHidden: false }];
+      try {
+        assert.equal(engines.detectEngine(profile).available, true, 'primed as installed');
+        removeBinary();
+
+        const readiness = await engines.engineReadiness();
+
+        // THE MUTATION THIS CATCHES: dropping `{ fresh: true }` from the first
+        // check. The cache still says the binary is there, so the gate opens for
+        // an engine that is gone — and every later failure happens somewhere
+        // less able to explain itself than the gate would have been.
+        assert.equal(readiness.installed, false,
+          'a gate must re-look, not replay a minute-old yes');
+      } finally {
+        store.engines.list = realList;
+      }
     });
 
     it('forgets everything when the operator presses Check again', async () => {

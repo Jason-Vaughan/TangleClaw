@@ -490,8 +490,10 @@ All notable changes to TangleClaw are documented in this file.
   **Launching still looks rather than remembers.** Starting a session and starting the Project
   Master both refuse when the engine's binary is not found, and a gate answering out of a
   minute-old cache would tell an operator who had just installed it that it is not there — with no
-  way to retry into a different answer. Those two paths probe every time; the cache is for the poll
-  that asks thirty-three times a minute, not for a button someone presses.
+  way to retry into a different answer. The setup gate that decides whether you have any engine at
+  all works the same way. Those paths probe every time; the cache is for the poll that asked once
+  per project — on a 33-project fleet, about two hundred times a minute — not for a button someone
+  presses.
 
 - **Asking whether your sessions are alive no longer costs one `tmux` call per project (#890).**
   Enriching the project list ran `tmux has-session` once per project, synchronously on the event
