@@ -26,6 +26,48 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-11: the project poll stops asking every project a question about the machine (#890)
+
+<!-- prawduct: type=fix | scope=enrichproject-spawns-890 | chunks=01,02 | status=shipped -->
+
+**Why:** `enrichProject` ran two subprocesses per project, synchronously on the event loop, on the
+route the dashboard polls every ten seconds — `command -v <engine>` (2s cap) and `tmux has-session`
+(5s cap). Both answer a question about the MACHINE, identical for every project asking, so the honest
+worst case was the project count times those caps while the server answered nothing at all. Measured
+on the live 33-project fleet: **41 synchronous spawns per poll → 0** (5 asynchronous: one per distinct
+engine, one tmux), with the enriched payload identical before and after. #884 named both call sites
+and left them explicitly, so this closes its 02b criterion rather than rounding it up.
+
+**What changed:** session liveness comes from one `tmux list-sessions` snapshot shared across the
+list — lazy, so an idle fleet still spawns nothing, and memoised on the in-flight PROMISE rather than
+the settled value, because the callers run under `Promise.all` and caching the result lets every one
+of them miss before the first reply lands. Engine detection is cached 60s, keyed on what was probed
+rather than which engine asked, single-flight, with an async form for the poll. Neither went through
+the scanner child: that child survives operator-chosen paths, and these needed deduplication, not
+isolation. `hasSession` is untouched and still exact — its callers kill, adopt and type into the
+session they ask about.
+
+**What the review caught:** four rounds. The blocking finding, and the defect worth remembering, is
+that a cache changes what every EXISTING caller is told, not just the slow one — `detectEngine` is a
+launch gate in `sessions.js`, `master.js` and `engineReadiness`, where a stale "not installed"
+refuses to start a session for an engine just installed, with no retry that helps. All three now
+probe fresh; the tmux half of this same branch already stated that rule. Reviewers also found a
+failed SPAWN being cached as the answer "not installed" — on a machine whose recorded failure mode is
+process exhaustion (#94/#144/#380), where every spawn fails at once, one fork failure would have
+blanked every engine for a minute. Three outcomes are now never remembered: a killed probe, a probe
+that never started, and anything predating a cache clear (including a probe already running when
+"Check again" was pressed).
+
+**Two of the three blocking findings were introduced by the fix for the previous round** — an
+orphaned JSDoc block and a rule applied to two of three call sites, both mechanical consequences of
+inserting code, invisible in the hunk and obvious in the finished file.
+
+**Also:** the mutation discipline caught something new. One fix shipped with NO guard — discovered
+because reverting it left the suite green. A behaviour change whose own reversal leaves the suite
+green is untested, and "the suite still passes" reads identically to "the suite covers this".
+Seventeen guards, seventeen reds. #900 filed for the wedged-tmux server that reports every session as
+dead rather than unknown, preserved deliberately here rather than changed in passing.
+
 ## 2026-08-10: a killed wrap command stops reading as a failed one, on the steps that actually run (#897)
 
 <!-- prawduct: type=fix | scope=killed-vs-failed-897 | chunks=A,B,C,D | status=shipped -->

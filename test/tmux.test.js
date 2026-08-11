@@ -34,6 +34,98 @@ describe('tmux — a timed-out command says so (#894)', () => {
   });
 });
 
+describe('tmux — one session listing serves a whole fleet (#890)', () => {
+  /**
+   * A stand-in for `execFile` that counts calls and replies with fixed output.
+   * @param {object} reply - `{ stdout }` to succeed with, or `{ err }` to fail.
+   * @returns {{ execFn: Function, calls: object[] }}
+   */
+  function stubExec(reply) {
+    const calls = [];
+    const execFn = (file, args, opts, cb) => {
+      calls.push({ file, args, opts });
+      setImmediate(() => cb(reply.err || null, reply.stdout || ''));
+    };
+    return { execFn, calls };
+  }
+
+  it('returns every live name, and asks tmux exactly once to learn them all', async () => {
+    const { execFn, calls } = stubExec({ stdout: 'alpha\nbeta\ngamma\n' });
+    const snap = tmux.createSessionNameSnapshot({ execFn });
+
+    assert.deepEqual([...(await snap.get())].sort(), ['alpha', 'beta', 'gamma']);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].file, 'tmux');
+  });
+
+  it('spawns nothing until someone asks', async () => {
+    const { execFn, calls } = stubExec({ stdout: 'alpha\n' });
+    tmux.createSessionNameSnapshot({ execFn });
+    // THE MUTATION THIS CATCHES: reading the list eagerly in the constructor. A
+    // fleet whose projects have no sessions would then pay a tmux invocation per
+    // poll to learn nothing — more expensive than the per-project calls this
+    // replaced, for exactly the operators with the least going on.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.length, 0);
+  });
+
+  it('answers concurrent askers from ONE invocation, not one each', async () => {
+    const { execFn, calls } = stubExec({ stdout: 'alpha\n' });
+    const snap = tmux.createSessionNameSnapshot({ execFn });
+
+    // THE MUTATION THIS CATCHES: memoising the settled Set instead of the
+    // in-flight promise. Enrichment runs under `Promise.all`, so every caller
+    // would miss the cache before the first reply landed and spawn its own tmux
+    // — the per-project multiplication back again, behind a cache that looks
+    // like it works when called sequentially.
+    const results = await Promise.all([snap.get(), snap.get(), snap.get()]);
+
+    assert.equal(calls.length, 1);
+    for (const set of results) assert.ok(set.has('alpha'));
+  });
+
+  it('keeps a name containing the old field delimiter intact', async () => {
+    // `listSessions` asks for four `|`-joined fields and splits on `|`. A tmux
+    // session someone else created whose name contains a `|` splits early there,
+    // yielding a TRUNCATED name — which could collide with a real project's
+    // session and report it live. One field has nothing to split on.
+    const { execFn, calls } = stubExec({ stdout: 'we|rd\n' });
+    const names = await tmux.createSessionNameSnapshot({ execFn }).get();
+
+    assert.ok(names.has('we|rd'), 'the whole name must survive');
+    assert.ok(!names.has('we'), 'and must not be truncated into another name');
+    assert.ok(!calls[0].args.some((a) => a.includes('|')),
+      'asking for one field is what makes that true — a joined format brings the split back');
+  });
+
+  it('reads an unanswerable tmux as no live sessions, without rejecting', async () => {
+    // What `hasSession` already returns per name when tmux will not answer. The
+    // caller enriching a fleet must not have its whole list fail because tmux is
+    // down — that is the ordinary state of a machine with no sessions.
+    const { execFn } = stubExec({ err: Object.assign(new Error('no server running'), { code: 1 }) });
+    assert.equal((await tmux.createSessionNameSnapshot({ execFn }).get()).size, 0);
+  });
+
+  it('resolves empty when the listing times out, rather than hanging the caller', async () => {
+    // Driven by a REAL stalling `tmux`, not a stub: the subject is a timeout, and
+    // a stub asserts the author's model of a timeout rather than the timeout
+    // (#891/#894 — three hand-written versions of this check were all dead).
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-snap-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const names = await tmux.createSessionNameSnapshot({ timeout: 300 }).get();
+      assert.equal(names.size, 0,
+        'a wedged tmux reads as no live sessions — the same answer hasSession already gave');
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('tmux', () => {
   describe('toSessionName', () => {
     it('should pass through valid names unchanged', () => {

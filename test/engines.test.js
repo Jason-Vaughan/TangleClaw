@@ -297,6 +297,368 @@ describe('engines', () => {
     });
   });
 
+  // Detection ran once per project on the ten-second poll — `command -v claude`
+  // asked separately for every project using Claude, synchronously on the event
+  // loop, to learn a fact about the MACHINE (#890). These pin that it is asked
+  // once instead, and — the part that is easy to get wrong — that the answers
+  // which must NOT be remembered still are not.
+  describe('detection is answered once, not once per asker (#890)', () => {
+    let binDir;
+    let savedPath;
+
+    /** The fixture engine profile, pointed at a binary this test controls. */
+    const profile = { id: 'tc-probe-engine', detection: { strategy: 'which', target: 'tc-probe-bin' } };
+
+    /** Put the fake binary back on disk. */
+    function installBinary() {
+      fs.writeFileSync(path.join(binDir, 'tc-probe-bin'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+
+    /** Take it away, so the NEXT real probe would answer differently. */
+    function removeBinary() {
+      fs.rmSync(path.join(binDir, 'tc-probe-bin'), { force: true });
+    }
+
+    beforeEach(() => {
+      binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-detect-'));
+      savedPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${savedPath}`;
+      installBinary();
+      // Drops the login-PATH cache too, so `_detectionPath()` falls through to
+      // the PATH set above rather than to whatever this machine's shell reports.
+      engines.resetDetectionCache();
+    });
+
+    afterEach(() => {
+      process.env.PATH = savedPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+      engines.resetDetectionCache();
+    });
+
+    it('answers a second asker without probing again', () => {
+      assert.equal(engines.detectEngine(profile).available, true);
+      // Changing the world under the cache is how "did it probe again?" is
+      // asked without intercepting the spawn: a re-probe would now say false.
+      removeBinary();
+
+      // THE MUTATION THIS CATCHES: dropping the cache read. Correct either way —
+      // and back to one subprocess per project per poll.
+      assert.equal(engines.detectEngine(profile).available, true,
+        'the second ask must be answered from the first, not from a new probe');
+    });
+
+    it('shares one probe between the async and the synchronous form', async () => {
+      assert.equal((await engines.detectEngineAsync(profile)).available, true);
+      removeBinary();
+      // THE MUTATION THIS CATCHES: giving the async variant its own cache. Two
+      // caches means two policies, and the one nobody looked at goes wrong
+      // quietly — `enrichProject` uses the async form, everything else the sync.
+      assert.equal(engines.detectEngine(profile).available, true,
+        'one cache, or the launch paths keep paying for what the poll just learned');
+    });
+
+    it('collapses concurrent cold-cache asks into a single probe', async () => {
+      const inflight = engines._internal.detectionInflight;
+      // Fired without awaiting, so this reads the state while they are running.
+      const asks = [
+        engines.detectEngineAsync(profile),
+        engines.detectEngineAsync(profile),
+        engines.detectEngineAsync(profile)
+      ];
+
+      // THE MUTATION THIS CATCHES: dropping the in-flight map and probing on
+      // every miss. Enrichment runs under `Promise.all`, so a cold cache would
+      // spawn once per project — the multiplication this whole change removes,
+      // behind a cache that passes every sequential test.
+      assert.equal(inflight.size, 1, 'three askers, one probe');
+
+      for (const result of await Promise.all(asks)) assert.equal(result.available, true);
+      assert.equal(inflight.size, 0, 'and the probe is not left in the map once it settles');
+    });
+
+    it('re-probes once the result is older than its TTL', () => {
+      assert.equal(engines.detectEngine(profile).available, true);
+      removeBinary();
+
+      // Age the real entry and let the real comparison decide, rather than
+      // asserting against a test-only helper.
+      for (const entry of engines._internal.detectionResults.values()) entry.at = 0;
+
+      // THE MUTATION THIS CATCHES: caching forever. An engine installed
+      // mid-session would stay invisible until the operator restarted the server
+      // or found the wizard's "Check again" — and the operator who just
+      // installed one is the least likely to know that button exists.
+      assert.equal(engines.detectEngine(profile).available, false,
+        'a stale answer must be re-asked, not served');
+    });
+
+    it('remembers a real "not installed", because that one IS an answer', () => {
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+      const missing = { id: 'tc-missing', detection: { strategy: 'which', target: '__tc_absent__' } };
+
+      assert.equal(engines.detectEngine(missing).available, false);
+      // The other half of the pair below: a non-zero exit from `command -v` is
+      // the finding "it is not on the PATH", so caching it is correct — the TTL
+      // is what keeps a later install from being hidden forever.
+      assert.equal(cache.size, 1, 'a real "not installed" is worth keeping for the TTL');
+    });
+
+    it('does NOT remember a probe its own timeout killed', async () => {
+      // "We could not look" is not the finding "not installed". Storing it would
+      // publish a guess as an answer for the next full minute, for an engine
+      // that may well be installed — the same false-fact #891 removed from git
+      // reads.
+      //
+      // Driven by a REAL process that outlives its cap, not a stubbed error
+      // object: this repo has written three hand-rolled timeout checks and all
+      // three were dead, because each asserted its author's model of the error
+      // shape rather than the shape a kill actually produces (#891, #894).
+      const { execFile } = require('node:child_process');
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+
+      const stalls = (_file, _args, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 30'], opts, cb);
+      const result = await engines.detectEngineAsync(profile, { execFn: stalls, timeout: 300 });
+
+      assert.equal(result.available, false, 'a probe we could not finish reports nothing found');
+      // THE MUTATION THIS CATCHES: treating the timeout as an ordinary failure
+      // and caching it — one line, and correct-looking, since both paths produce
+      // `available: false`. The difference only shows a minute later, when the
+      // engine that WAS installed is still reported missing.
+      assert.equal(cache.size, 0, 'but it must not be remembered as one');
+
+      // And the proof it was not remembered: the very next ask probes for real.
+      assert.equal(engines.detectEngine(profile).available, true);
+    });
+
+    it('a probe still running when the cache is dropped does not refill it', async () => {
+      // The case clearing a map cannot reach. A probe that STARTED under the old
+      // PATH can settle after Check again has cleared everything, and would then
+      // write the stale finding straight back into the fresh cache — so the
+      // operator presses the button, the cache empties, and a moment later the
+      // answer they pressed it to be rid of is back, now looking freshly probed.
+      const { execFile } = require('node:child_process');
+      const cache = engines._internal.detectionResults;
+
+      // A probe slow enough to still be running when the cache is dropped.
+      const slow = (_file, _args, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.4; echo /stale/path'], opts, cb);
+      const inFlight = engines.detectEngineAsync(profile, { execFn: slow, timeout: 5000 });
+
+      engines.resetDetectionCache();
+
+      const result = await inFlight;
+      // The caller that asked still gets its answer — it is only unfit to be
+      // handed to anyone else.
+      assert.equal(result.available, true);
+      // THE MUTATION THIS CATCHES: dropping the generation check in
+      // `_rememberDetection`. Every sequential test still passes; only a probe
+      // racing a clear tells the difference, and that race is exactly what the
+      // Check again button creates.
+      assert.equal(cache.size, 0,
+        'an answer probed before the drop must not survive it');
+    });
+
+    it('probes now when the caller asks for fresh, and still shares what it learns', () => {
+      assert.equal(engines.detectEngine(profile).available, true);
+      removeBinary();
+      assert.equal(engines.detectEngine(profile).available, true, 'cached, as the poll wants');
+
+      // THE MUTATION THIS CATCHES: letting the launch gates read the cache.
+      // `lib/sessions.js` and `lib/master.js` refuse to start a session when
+      // this says unavailable — so a stale `false` tells an operator who just
+      // installed the engine that it is not installed, and no amount of
+      // retrying the button helps until the TTL lapses.
+      assert.equal(engines.detectEngine(profile, { fresh: true }).available, false,
+        'a gate must look, not remember');
+
+      // And what it looked up replaces the stale entry, so the poll behind it
+      // is corrected too rather than each holding a different answer.
+      assert.equal(engines.detectEngine(profile).available, false);
+    });
+
+    it('honours fresh in the async form too, so the flag is never a silent no-op', async () => {
+      assert.equal((await engines.detectEngineAsync(profile)).available, true);
+      removeBinary();
+      assert.equal((await engines.detectEngineAsync(profile)).available, true, 'cached');
+
+      // THE MUTATION THIS CATCHES: supporting `fresh` on the sync path only.
+      // Both forms take the same options object, so a flag the async one quietly
+      // drops is worse than one it never accepted — the call site reads as
+      // asking for a fresh probe and gets a cached answer.
+      assert.equal((await engines.detectEngineAsync(profile, { fresh: true })).available, false);
+    });
+
+    it('does NOT remember a probe that never started', async () => {
+      // A spawn failure is not a finding. `EMFILE` / `EAGAIN` mean no process
+      // ran, so nothing looked for the binary — but the error arrives looking
+      // much like an ordinary non-zero exit, and treating it as one caches
+      // "not installed".
+      //
+      // This install's known failure mode is process exhaustion (#94/#144/#380,
+      // leaked `tmux attach` children filling the PTY pool), where EVERY spawn
+      // fails at once. Caching that would report every engine as uninstalled
+      // simultaneously, for a minute, on the machine least able to recover.
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+
+      // The shape Node produces when the fork fails: a STRING errno in `code`,
+      // and no numeric exit status, because there was no process to exit.
+      const cannotFork = (_file, _args, _opts, cb) => setImmediate(() => cb(
+        Object.assign(new Error('spawn EAGAIN'), { code: 'EAGAIN', errno: -35, syscall: 'spawn' })));
+
+      const result = await engines.detectEngineAsync(profile, { execFn: cannotFork });
+
+      assert.equal(result.available, false, 'nothing was established, so nothing is claimed');
+      // THE MUTATION THIS CATCHES: keeping the old `if (wasTimedOut) skip; else
+      // remember` split, which treats every non-timeout failure as an answer.
+      assert.equal(cache.size, 0, 'a probe that never ran must not be remembered');
+
+      // And the binary really is there — proof the cached "false" would have lied.
+      assert.equal(engines.detectEngine(profile).available, true);
+    });
+
+    it('does NOT remember a spawn that really failed, driven by a real failed spawn', async () => {
+      // The companion to the fabricated-error test above, and the one that
+      // actually earns the claim. `lib/exec-timeout.js` records why: three
+      // hand-written versions of a child-process predicate in this repo were all
+      // dead, because each asserted its author's MODEL of the error shape rather
+      // than the shape. A stub cannot catch that; a real failure can.
+      //
+      // Executing a path that does not exist produces a genuine ENOENT — no
+      // process, so no numeric status — which is the same class as the EMFILE a
+      // machine out of process slots produces, and reachable without exhausting
+      // this one.
+      const { execFile } = require('node:child_process');
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+
+      const missingBinary = path.join(binDir, 'no-such-shell-at-all');
+      const cannotSpawn = (_file, _args, opts, cb) => execFile(missingBinary, [], opts, cb);
+      const result = await engines.detectEngineAsync(profile, { execFn: cannotSpawn });
+
+      assert.equal(result.available, false);
+      assert.equal(cache.size, 0,
+        'a spawn that genuinely never happened must not be remembered as an answer');
+    });
+
+    it('tells a real non-zero exit apart from a failed spawn', () => {
+      // The other side of the pair: a shell that RAN and exited non-zero reports
+      // a numeric status, and that is an answer worth keeping. If the guard above
+      // were written as "never cache any failure", this would regress to probing
+      // on every poll for every engine the operator does not have installed.
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+      const missing = { id: 'tc-gone', detection: { strategy: 'which', target: '__tc_absent__' } };
+
+      assert.equal(engines.detectEngine(missing).available, false);
+      assert.equal(cache.size, 1, 'a shell that ran and said no is an answer');
+    });
+
+    it('a probe that finishes after a clear does not evict the probe that replaced it', async () => {
+      // `_clearDetectionResults` empties the in-flight map, so a later caller can
+      // install its own promise under the same key while the first is still
+      // running. When the first one lands, its cleanup must not delete the
+      // SECOND caller's entry.
+      //
+      // THE MUTATION THIS CATCHES: an unconditional
+      // `_detectionInflight.delete(key)` in the `finally`. The visible symptom is
+      // subtle — the map empties while a probe is still running, so the caller
+      // after it starts a third — which is why the assertion is on the map's
+      // identity rather than on the answers, which stay correct throughout.
+      const { execFile } = require('node:child_process');
+      const inflight = engines._internal.detectionInflight;
+
+      const slow = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.35; echo /a'], opts, cb);
+      const first = engines.detectEngineAsync(profile, { execFn: slow, timeout: 5000 });
+
+      engines.resetDetectionCache();
+
+      // Outlasts the first deliberately, so the first one's cleanup runs while
+      // this is still registered — that ordering is the whole point.
+      const slower = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.6; echo /b'], opts, cb);
+      const second = engines.detectEngineAsync(profile, { execFn: slower, timeout: 5000 });
+      const secondEntry = inflight.get(engines._internal.detectionKeyFor('which', 'tc-probe-bin'));
+      assert.ok(secondEntry, 'the second caller registered its own probe');
+
+      await first;
+      assert.equal(inflight.get(engines._internal.detectionKeyFor('which', 'tc-probe-bin')), secondEntry,
+        'the first probe finishing must leave the second one registered');
+
+      await second;
+      await first;
+    });
+
+    it('the setup gate looks too — a remembered yes cannot hold the door open', async () => {
+      // `engineReadiness` is the third gate, behind the setup check and the
+      // wizard's engine step, and its own JSDoc says a "no" must not be stale
+      // "because it is the one that stops them". The cache arrived after that
+      // sentence was written, which is exactly how a rule gets applied to two of
+      // three call sites.
+      //
+      // The registered engine list is pinned to this fixture: unpinned, the real
+      // engines installed on the developer's machine answer first and the
+      // assertion means nothing on one box and something else on CI.
+      const realList = store.engines.list;
+      store.engines.list = () => [{ ...profile, name: 'Probe Engine', pickerHidden: false }];
+      try {
+        assert.equal(engines.detectEngine(profile).available, true, 'primed as installed');
+        removeBinary();
+
+        const readiness = await engines.engineReadiness();
+
+        // THE MUTATION THIS CATCHES: dropping `{ fresh: true }` from the first
+        // check. The cache still says the binary is there, so the gate opens for
+        // an engine that is gone — and every later failure happens somewhere
+        // less able to explain itself than the gate would have been.
+        assert.equal(readiness.installed, false,
+          'a gate must re-look, not replay a minute-old yes');
+      } finally {
+        store.engines.list = realList;
+      }
+    });
+
+    it('honours fresh on the path strategy as well, on both call forms', async () => {
+      // The `path` strategy is not used by any shipped profile, which is exactly
+      // why it is the arm that gets forgotten — this branch has now applied a
+      // rule to a proper subset of its call sites three separate times.
+      const probeFile = path.join(binDir, 'engine-at-a-path');
+      fs.writeFileSync(probeFile, 'x');
+      const byPath = { id: 'tc-by-path', detection: { strategy: 'path', target: probeFile } };
+
+      assert.equal(engines.detectEngine(byPath).available, true);
+      fs.rmSync(probeFile);
+      assert.equal(engines.detectEngine(byPath).available, true, 'cached, as the poll wants');
+
+      // THE MUTATION THIS CATCHES: `case 'path': return _detectPath(id, target)`
+      // without forwarding options — on either form. An option a function accepts
+      // and silently drops reads at the call site as though it took effect.
+      assert.equal(engines.detectEngine(byPath, { fresh: true }).available, false,
+        'sync form must re-check the path');
+
+      fs.writeFileSync(probeFile, 'x');
+      assert.equal((await engines.detectEngineAsync(byPath)).available, false, 'cached again');
+      assert.equal((await engines.detectEngineAsync(byPath, { fresh: true })).available, true,
+        'async form must re-check it too');
+    });
+
+    it('forgets everything when the operator presses Check again', async () => {
+      assert.equal(engines.detectEngine(profile).available, true);
+      removeBinary();
+      assert.equal(engines.detectEngine(profile).available, true, 'still cached');
+
+      // THE MUTATION THIS CATCHES: hooking only `resetDetectionCache`.
+      // `GET /api/engines?refresh=1` — the Check again button — goes through
+      // `refreshDetectionPath`, which does NOT call it. Miss this and the one
+      // button whose entire purpose is "my engine IS installed" answers out of
+      // the stale cache that hid it.
+      await engines.refreshDetectionPath();
+
+      assert.equal(engines.detectEngine(profile).available, false,
+        'a re-resolved PATH must re-ask, not replay');
+    });
+  });
+
   describe('detectEngine', () => {
     it('should detect an available binary', () => {
       // "node" should be available

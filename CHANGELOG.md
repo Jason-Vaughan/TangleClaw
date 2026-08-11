@@ -463,6 +463,57 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Checking which engines are installed no longer costs one probe per project (#890).** Enriching
+  the project list ran `command -v claude` once per project, synchronously on the event loop, every
+  ten seconds — asking separately, for each project, a question about the *machine* whose answer is
+  the same for all of them. Ten projects on Claude Code meant ten identical probes per poll.
+
+  It is now asked once and remembered for a minute, and the poll awaits it instead of blocking.
+  Concurrent askers share a single probe rather than each starting their own, which is what makes
+  the first poll after startup cheap and not just the ones after it.
+
+  Three things are deliberately **not** cached, because none of them is an answer. A probe our own
+  timeout killed — that means we could not look, not that nothing is there. A probe that **could not
+  be started at all**, which is what happens when the machine is out of process slots; this install
+  reaches that state (#94/#144/#380), and every spawn fails at once when it does, so caching it would
+  report *every* engine as uninstalled simultaneously for a full minute, on the machine least able to
+  recover. And pressing **Check again** in the setup wizard drops everything remembered, so the one
+  button whose purpose is "my engine really is installed" cannot be answered out of the cache that hid
+  it — including by a probe that was already running when you pressed it.
+
+  A detection probe that times out or cannot start now says so in the log. Both of those branches
+  were previously silent, which is the same defect #894 fixed for tmux.
+
+  An engine you install while the server is running is picked up within a minute — no restart, and
+  no need to know the Check again button exists.
+
+  **Launching still looks rather than remembers.** Starting a session and starting the Project
+  Master both refuse when the engine's binary is not found, and a gate answering out of a
+  minute-old cache would tell an operator who had just installed it that it is not there — with no
+  way to retry into a different answer. The setup gate that decides whether you have any engine at
+  all works the same way. Those paths probe every time; the cache is for the poll that asked once
+  per project — on a 33-project fleet, about two hundred times a minute — not for a button someone
+  presses.
+
+- **Asking whether your sessions are alive no longer costs one `tmux` call per project (#890).**
+  Enriching the project list ran `tmux has-session` once per project, synchronously on the event
+  loop, each with its own five-second cap — on the route the dashboard polls every ten seconds. The
+  answer is identical for every project asking, so the honest worst case scaled with the size of
+  your fleet for no reason: ten projects meant up to fifty seconds during which the server could not
+  answer anything at all, and #94/#144/#380 record this install's tmux server reaching exactly the
+  state that makes those calls slow.
+
+  One `tmux list-sessions` now answers the whole list, and it is awaited rather than blocking. It is
+  also lazy: a fleet with nothing running spawns nothing, so the quiet case did not get more
+  expensive to make the busy one cheaper.
+
+  `tmux.hasSession` is unchanged and still exact — its callers kill, adopt and type into the session
+  they are asking about, and for them a cached answer would be wrong in a way that destroys work.
+
+  Known and deliberately unchanged: a tmux server too wedged to answer still reports every session
+  as dead rather than as unknown, which is the same "unknown presented as a fact" #891 removed from
+  git reads. Filed as #900 rather than folded in here.
+
 - **The wrap steps you actually run no longer report a hung command as a failed one (#897).** #894
   fixed that distinction in `test` and `lint` — two handlers the shipped fourteen-step pipeline
   never runs. The steps fixed here run on every wrap: `open-pr-check`, `commit`, `continuity-write`
