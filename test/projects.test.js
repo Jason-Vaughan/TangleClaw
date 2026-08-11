@@ -883,6 +883,31 @@ describe('projects', () => {
       }
     });
 
+    it('resolves engine availability without taking the blocking path', async () => {
+      // The synchronous `detectEngine` is booby-trapped: if enrichment still
+      // reaches it, the enrich fails loudly instead of passing while quietly
+      // blocking the event loop once per project per poll.
+      //
+      // THE MUTATION THIS CATCHES: reverting the call site to
+      // `engines.detectEngine(engineProfile)`. Correct output, identical
+      // payload, and the defect back — which is exactly why the guard has to be
+      // "which path did it take", not "was the answer right".
+      projects.createProject({ name: 'spawn-count-engine' });
+      const row = store.projects.getByName('spawn-count-engine');
+      const realSync = engines.detectEngine;
+      engines.detectEngine = () => {
+        throw new Error('enrichProject must not probe engines synchronously');
+      };
+      try {
+        const enriched = await withCountedTmux('',
+          () => projects.enrichProject(row));
+        assert.ok(enriched.engine, 'the engine block must still be populated');
+        assert.equal(typeof enriched.engine.available, 'boolean');
+      } finally {
+        engines.detectEngine = realSync;
+      }
+    });
+
     it('matches the session name exactly — a longer live name is not a match', async () => {
       const { project, session } = projectWithSession('spawn-count-exact');
       try {

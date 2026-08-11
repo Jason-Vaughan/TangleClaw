@@ -463,6 +463,24 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Checking which engines are installed no longer costs one probe per project (#890).** Enriching
+  the project list ran `command -v claude` once per project, synchronously on the event loop, every
+  ten seconds — asking separately, for each project, a question about the *machine* whose answer is
+  the same for all of them. Ten projects on Claude Code meant ten identical probes per poll.
+
+  It is now asked once and remembered for a minute, and the poll awaits it instead of blocking.
+  Concurrent askers share a single probe rather than each starting their own, which is what makes
+  the first poll after startup cheap and not just the ones after it.
+
+  Two things are deliberately **not** cached. A probe that our own timeout killed is not an answer —
+  it means we could not look — so it is never stored; storing it would report an engine you have
+  installed as missing for the next full minute. And pressing **Check again** in the setup wizard
+  drops everything remembered, so the one button whose purpose is "my engine really is installed"
+  cannot be answered out of the cache that hid it.
+
+  An engine you install while the server is running is picked up within a minute — no restart, and
+  no need to know the Check again button exists.
+
 - **Asking whether your sessions are alive no longer costs one `tmux` call per project (#890).**
   Enriching the project list ran `tmux has-session` once per project, synchronously on the event
   loop, each with its own five-second cap — on the route the dashboard polls every ten seconds. The
