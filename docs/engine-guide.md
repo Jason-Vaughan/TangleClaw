@@ -73,7 +73,9 @@ OpenClaw does **not** appear in the project engine dropdown (#459) — assigning
 
 ## Engine Detection
 
-TangleClaw checks if each engine is available by running `which <command>`. The landing page shows an availability badge on each engine option:
+TangleClaw checks if each engine is available by running `command -v <command>` on the PATH your
+login shell reports, not the narrower one the background service inherits. The landing page shows an
+availability badge on each engine option:
 
 - **Available** — the binary was found in PATH
 - **Not found** — the binary is not in PATH
@@ -154,8 +156,18 @@ The `configFormat` above is set to `null` because config file generation require
 
 | Strategy | Target | Description |
 |----------|--------|-------------|
-| `"which"` | binary name | Run `which <target>` to check PATH |
+| `"which"` | binary name | Run `command -v <target>` to check PATH |
+| `"path"` | absolute file path | Check whether that exact path exists |
 | `"custom"` | null | No auto-detection (persistent engines) |
+
+Results are cached for 60 seconds and shared by every caller asking about the
+same target, so a fleet of projects on one engine costs a single probe rather
+than one each. Two outcomes are never cached, because neither is an answer: a
+probe killed by its own 2-second cap, and a probe that could not be started at
+all (the machine was out of process slots). "Check again" in the setup wizard
+drops everything cached, and the paths that *gate* a launch — starting a session,
+starting the Project Master — probe fresh every time rather than reading the
+cache, so an engine you have just installed is never refused.
 
 ### Capabilities
 

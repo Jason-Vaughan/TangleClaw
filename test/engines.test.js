@@ -432,6 +432,137 @@ describe('engines', () => {
       assert.equal(engines.detectEngine(profile).available, true);
     });
 
+    it('a probe still running when the cache is dropped does not refill it', async () => {
+      // The case clearing a map cannot reach. A probe that STARTED under the old
+      // PATH can settle after Check again has cleared everything, and would then
+      // write the stale finding straight back into the fresh cache — so the
+      // operator presses the button, the cache empties, and a moment later the
+      // answer they pressed it to be rid of is back, now looking freshly probed.
+      const { execFile } = require('node:child_process');
+      const cache = engines._internal.detectionResults;
+
+      // A probe slow enough to still be running when the cache is dropped.
+      const slow = (_file, _args, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.4; echo /stale/path'], opts, cb);
+      const inFlight = engines.detectEngineAsync(profile, { execFn: slow, timeout: 5000 });
+
+      engines.resetDetectionCache();
+
+      const result = await inFlight;
+      // The caller that asked still gets its answer — it is only unfit to be
+      // handed to anyone else.
+      assert.equal(result.available, true);
+      // THE MUTATION THIS CATCHES: dropping the generation check in
+      // `_rememberDetection`. Every sequential test still passes; only a probe
+      // racing a clear tells the difference, and that race is exactly what the
+      // Check again button creates.
+      assert.equal(cache.size, 0,
+        'an answer probed before the drop must not survive it');
+    });
+
+    it('probes now when the caller asks for fresh, and still shares what it learns', () => {
+      assert.equal(engines.detectEngine(profile).available, true);
+      removeBinary();
+      assert.equal(engines.detectEngine(profile).available, true, 'cached, as the poll wants');
+
+      // THE MUTATION THIS CATCHES: letting the launch gates read the cache.
+      // `lib/sessions.js` and `lib/master.js` refuse to start a session when
+      // this says unavailable — so a stale `false` tells an operator who just
+      // installed the engine that it is not installed, and no amount of
+      // retrying the button helps until the TTL lapses.
+      assert.equal(engines.detectEngine(profile, { fresh: true }).available, false,
+        'a gate must look, not remember');
+
+      // And what it looked up replaces the stale entry, so the poll behind it
+      // is corrected too rather than each holding a different answer.
+      assert.equal(engines.detectEngine(profile).available, false);
+    });
+
+    it('honours fresh in the async form too, so the flag is never a silent no-op', async () => {
+      assert.equal((await engines.detectEngineAsync(profile)).available, true);
+      removeBinary();
+      assert.equal((await engines.detectEngineAsync(profile)).available, true, 'cached');
+
+      // THE MUTATION THIS CATCHES: supporting `fresh` on the sync path only.
+      // Both forms take the same options object, so a flag the async one quietly
+      // drops is worse than one it never accepted — the call site reads as
+      // asking for a fresh probe and gets a cached answer.
+      assert.equal((await engines.detectEngineAsync(profile, { fresh: true })).available, false);
+    });
+
+    it('does NOT remember a probe that never started', async () => {
+      // A spawn failure is not a finding. `EMFILE` / `EAGAIN` mean no process
+      // ran, so nothing looked for the binary — but the error arrives looking
+      // much like an ordinary non-zero exit, and treating it as one caches
+      // "not installed".
+      //
+      // This install's known failure mode is process exhaustion (#94/#144/#380,
+      // leaked `tmux attach` children filling the PTY pool), where EVERY spawn
+      // fails at once. Caching that would report every engine as uninstalled
+      // simultaneously, for a minute, on the machine least able to recover.
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+
+      // The shape Node produces when the fork fails: a STRING errno in `code`,
+      // and no numeric exit status, because there was no process to exit.
+      const cannotFork = (_file, _args, _opts, cb) => setImmediate(() => cb(
+        Object.assign(new Error('spawn EAGAIN'), { code: 'EAGAIN', errno: -35, syscall: 'spawn' })));
+
+      const result = await engines.detectEngineAsync(profile, { execFn: cannotFork });
+
+      assert.equal(result.available, false, 'nothing was established, so nothing is claimed');
+      // THE MUTATION THIS CATCHES: keeping the old `if (wasTimedOut) skip; else
+      // remember` split, which treats every non-timeout failure as an answer.
+      assert.equal(cache.size, 0, 'a probe that never ran must not be remembered');
+
+      // And the binary really is there — proof the cached "false" would have lied.
+      assert.equal(engines.detectEngine(profile).available, true);
+    });
+
+    it('tells a real non-zero exit apart from a failed spawn', () => {
+      // The other side of the pair: a shell that RAN and exited non-zero reports
+      // a numeric status, and that is an answer worth keeping. If the guard above
+      // were written as "never cache any failure", this would regress to probing
+      // on every poll for every engine the operator does not have installed.
+      const cache = engines._internal.detectionResults;
+      cache.clear();
+      const missing = { id: 'tc-gone', detection: { strategy: 'which', target: '__tc_absent__' } };
+
+      assert.equal(engines.detectEngine(missing).available, false);
+      assert.equal(cache.size, 1, 'a shell that ran and said no is an answer');
+    });
+
+    it('a probe that finishes after a clear does not evict the probe that replaced it', async () => {
+      // `_clearDetectionResults` empties the in-flight map, so a later caller can
+      // install its own promise under the same key while the first is still
+      // running. When the first one lands, its cleanup must not delete the
+      // SECOND caller's entry.
+      //
+      // THE MUTATION THIS CATCHES: an unconditional
+      // `_detectionInflight.delete(key)` in the `finally`. The visible symptom is
+      // subtle — the map empties while a probe is still running, so the caller
+      // after it starts a third — which is why the assertion is on the map's
+      // identity rather than on the answers, which stay correct throughout.
+      const { execFile } = require('node:child_process');
+      const inflight = engines._internal.detectionInflight;
+
+      const slow = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.35; echo /a'], opts, cb);
+      const first = engines.detectEngineAsync(profile, { execFn: slow, timeout: 5000 });
+
+      engines.resetDetectionCache();
+
+      const quick = (_f, _a, opts, cb) => execFile('/bin/sh', ['-c', 'sleep 0.6; echo /b'], opts, cb);
+      const second = engines.detectEngineAsync(profile, { execFn: quick, timeout: 5000 });
+      const secondEntry = inflight.get(engines._internal.detectionKeyFor('which', 'tc-probe-bin'));
+      assert.ok(secondEntry, 'the second caller registered its own probe');
+
+      await first;
+      assert.equal(inflight.get(engines._internal.detectionKeyFor('which', 'tc-probe-bin')), secondEntry,
+        'the first probe finishing must leave the second one registered');
+
+      await second;
+      await first;
+    });
+
     it('forgets everything when the operator presses Check again', async () => {
       assert.equal(engines.detectEngine(profile).available, true);
       removeBinary();
