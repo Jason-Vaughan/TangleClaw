@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-10: a killed wrap command stops reading as a failed one, on the steps that actually run (#897)
 
-<!-- prawduct: type=fix | scope=killed-vs-failed-897 | chunks=A,B,C | status=shipped -->
+<!-- prawduct: type=fix | scope=killed-vs-failed-897 | chunks=A,B,C,D | status=shipped -->
 
 **Why:** #894 fixed this distinction in `test` and `lint` — two handlers the shipped fourteen-step
 pipeline never runs. #897 is the reachable half. Seven sites (not the eight the issue names —
