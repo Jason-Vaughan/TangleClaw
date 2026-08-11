@@ -463,6 +463,78 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The wrap steps you actually run no longer report a hung command as a failed one (#897).** #894
+  fixed that distinction in `test` and `lint` — two handlers the shipped fourteen-step pipeline
+  never runs. The steps fixed here run on every wrap: `open-pr-check`, `commit`, `continuity-write`
+  and `apply-pr-resolutions`.
+
+  A command TangleClaw kills at its own timeout prints nothing and reports no exit code, so every
+  one of these arrived as a plain `exit 1` with empty output — byte-identical to a command that ran
+  and refused. What an operator was then told:
+
+  - a `git commit` stopped at sixty seconds: *"The commit was rejected — most often by a pre-commit
+    hook. Read the hook output above."* There is no hook output, and — because a slow pre-commit
+    hook is the likeliest way to reach that timeout, and such a hook can finish after TangleClaw
+    stops waiting — **the commit may have landed**. It now says the outcome is unknown and to check
+    `git log -1` before doing anything else.
+  - a `gh pr merge --auto` stopped mid-request: *"auto-merge could not be armed"*, asserting an
+    outcome nobody observed. The request may have reached GitHub. It now says so, and points at the
+    PR before suggesting a manual merge.
+  - a `gh pr list` stopped mid-request rendered as a bare `exit 1`, which reads as gh not being
+    authenticated. It now names the stop and says the PR list is unknown, not empty.
+  - a stopped `git remote get-url origin` reported *"no origin remote"*, and a stopped
+    `gh --version` reported *"gh CLI not available"* — both sending the operator to fix something
+    they already have.
+
+  Where a kill leaves genuinely ambiguous state — the commit, the push, the PR creation, the
+  auto-merge, and a partially-staged `git add -A` — the remediation now names the check that
+  resolves it instead of picking an outcome. The wording for a command that really did fail is
+  unchanged.
+
+- **A killed git probe no longer silently changes what your wrap measures — or blocks on (#897).**
+  The same defect in the wrap's synchronous git calls, where it was quieter and in one case worse.
+
+  Every probe behind the session range answers its question by catching a non-zero exit, so a probe
+  stopped at its ten-second timeout was read as a confident *no*:
+
+  - a stopped `git merge-base --is-ancestor` read as *"the recorded wrap SHA is orphaned"* and
+    abandoned this session's range for the whole trunk divergence — sweeping in many sessions of
+    already-released work, with nothing anywhere saying why;
+  - a stopped `git rev-parse --verify main` read as *"this repo has no main or master"*, which the
+    Feature Index step then reported to the operator as a fact;
+  - a stopped `git log` made the changelog-coverage predicate return *unavailable*, and an
+    unavailable verdict falls back to the mutation check — so a wrap whose CHANGELOG **was**
+    maintained got blocked with *"CHANGELOG.md is unchanged"* by a check that never ran. This is the
+    one an operator hits on an ordinary wrap.
+
+  Each of these now says the probe was stopped and the answer is unknown. The fallback behaviour is
+  unchanged — falling back is still right when you cannot know — but it is now recorded rather than
+  indistinguishable from a real negative answer, in the step output and in the server log.
+
+- **A wrap can no longer commit straight to `main` because a git probe hung (#897).** The same
+  defect, at the one place it changed what the wrap *did* rather than what it said.
+
+  The commit step reads your current branch to decide whether to auto-create a `wrap/…` branch
+  instead of committing to a protected one. When that read was killed at its timeout, the branch came
+  back empty — which the step took to mean "not on a protected branch", switched the guard off, and
+  committed directly to `main`. Silently, and with nothing in the log. That guard exists because
+  exactly that happened once before.
+
+  An unanswered branch probe now halts the wrap and says why, instead of guessing. Nothing is staged
+  and nothing is committed. If you genuinely want to commit wherever HEAD is, the direct-to-main
+  option in the wrap drawer still bypasses it, as before.
+
+- **When a stopped probe widens the range a wrap judges you on, it now says so (#897).** A killed
+  ancestry check falls back to comparing against the whole trunk, which can reach back past your
+  session — so the changelog block would list commits that shipped weeks ago and ask you to write
+  entries for them. That block now carries the caveat, and the Feature Index skip reason does too.
+
+  Also in this sweep: a non-blocking lint step that was killed now leaves a line in the server log
+  (previously the one configuration that deliberately does not stop the wrap was also the only one
+  leaving no trace it was killed), and a comment in `lint.js` describing which `blocker` values fall
+  through to the informational branch has been corrected — only strict `false` does; every other
+  value blocks.
+
 - **Three checks for "did our own timeout kill this?" were dead code — none had ever run once
   (#894).** They failed for two different reasons: `execSync` puts `killed` on a different object
   than the error it throws, and async `exec` does set it but reports a `code` the check compared

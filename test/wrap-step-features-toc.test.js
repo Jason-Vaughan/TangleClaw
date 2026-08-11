@@ -622,7 +622,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       featuresToc._internal.execSync = (cmd) => { calls.push(cmd); return Buffer.from(''); };
       try {
         const r = featuresToc._resolveSessionRange('/repo', SHA);
-        assert.deepEqual(r, { range: `${SHA}..HEAD`, kind: 'session', baseBranch: null });
+        assert.deepEqual(r, { range: `${SHA}..HEAD`, kind: 'session', baseBranch: null, stopped: [] });
         // It verified the SHA peels to a commit; no base-branch resolution needed.
         assert.ok(calls.some((c) => c.includes(`${SHA}^{commit}`)));
         assert.ok(!calls.some((c) => c.includes('rev-parse --verify --quiet main')));
@@ -639,7 +639,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       };
       try {
         const r = featuresToc._resolveSessionRange('/repo', null);
-        assert.deepEqual(r, { range: 'main...HEAD', kind: 'branch', baseBranch: 'main' });
+        assert.deepEqual(r, { range: 'main...HEAD', kind: 'branch', baseBranch: 'main', stopped: [] });
       } finally {
         featuresToc._internal.execSync = orig;
       }

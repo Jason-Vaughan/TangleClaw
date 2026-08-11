@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -440,6 +440,10 @@ describe('wrap-pipeline step stubs (#139 Chunk 3) — all kinds now real', () =>
 
 describe('wrap-step test (#139 Chunk 4)', () => {
   const testStep = require('../lib/wrap-steps/test');
+  // The literal `124` these timeout cases assert on is the runner's own
+  // constant. Importing it means a change to the convention updates the guards
+  // rather than silently leaving them asserting a number nothing produces.
+  const { TIMEOUT_EXIT_CODE } = require('../lib/wrap-steps/_exec-shell');
   let tmpDir;
   let projectPath;
   let originalExec;
@@ -545,13 +549,13 @@ describe('wrap-step test (#139 Chunk 4)', () => {
     // for tests that had never produced a result.
     writeConfig({ testCommand: 'npm test' });
     testStep._internal.execShell = async () => ({
-      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 600000ms', timedOut: true
+      exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: 'timed out after 600000ms', timedOut: true
     });
     const result = await testStep.run(buildContext({ id: 'test', blocker: true }));
 
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.equal(result.output.exitCode, 124);
+    assert.equal(result.output.exitCode, TIMEOUT_EXIT_CODE);
     assert.ok(result.blockers.some((b) => /timed out/i.test(b)),
       'the blocker must name the timeout');
     assert.ok(!result.blockers.some((b) => b.startsWith('Tests failed')),
@@ -609,6 +613,7 @@ describe('wrap-step test (#139 Chunk 4)', () => {
 
 describe('wrap-step lint (#139 Chunk 4)', () => {
   const lintStep = require('../lib/wrap-steps/lint');
+  const { TIMEOUT_EXIT_CODE } = require('../lib/wrap-steps/_exec-shell');
   let tmpDir;
   let projectPath;
   let originalExec;
@@ -742,13 +747,13 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     writeConfig({ lintCommand: 'eslint' });
     lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
     lintStep._internal.execShell = async () => ({
-      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+      exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
     });
     const result = await lintStep.run(buildContext({ id: 'lint', blocker: true }));
 
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.equal(result.output.exitCode, 124);
+    assert.equal(result.output.exitCode, TIMEOUT_EXIT_CODE);
     assert.ok(result.blockers.some((b) => /timed out/i.test(b)),
       'the blocker must name the timeout');
     assert.ok(!result.blockers.some((b) => /^Lint failed/.test(b)),
@@ -764,7 +769,7 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     writeConfig({ lintCommand: 'eslint' });
     lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
     lintStep._internal.execShell = async () => ({
-      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+      exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
     });
     const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
 
@@ -781,14 +786,47 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     writeConfig({ lintCommand: 'eslint' });
     lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
     lintStep._internal.execShell = async () => ({
-      exitCode: 124, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+      exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
     });
     const result = await lintStep.run(buildContext({ id: 'lint', blocker: false }));
 
     assert.equal(result.ok, true, 'blocker:false still must not block');
-    assert.equal(result.output.timedOut, true);
+    // Asserted on the fields the drawer renders, not on a bare `output.timedOut`
+    // flag: that flag had no production consumer at all, so a test reading it
+    // proved only that the handler set a field nobody displayed. `warning` and
+    // `remediation` are what `public/wrap-drawer.js#buildStepRow` reads, which
+    // makes this the assertion an operator's experience actually depends on.
+    assert.equal(result.output.warning, true);
+    assert.match(result.output.remediation, /did not finish/i);
     assert.match(result.output.warnings, /timed out/i,
       'an informational step that was killed must still say so');
+  });
+
+  it('with blocker:false, a timeout is written to the server log as well as the drawer', async () => {
+    // Both BLOCKING timeout paths log; this one did not. That made the single
+    // configuration that deliberately lets the wrap continue also the only one
+    // leaving no trace it was killed — the worse pairing of the two, because
+    // nobody is stopped to notice and the drawer row is gone by the next wrap.
+    writeConfig({ lintCommand: 'eslint' });
+    lintStep._internal.detectChangedFiles = async () => ['src/foo.js'];
+    lintStep._internal.execShell = async () => ({
+      exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: 'timed out after 300000ms', timedOut: true
+    });
+
+    // The suite runs at level `error`, so raise it and pin the stream to capture.
+    const lines = [];
+    const priorLevel = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (s) => lines.push(s) });
+    try {
+      await lintStep.run(buildContext({ id: 'lint', blocker: false }));
+    } finally {
+      setConsoleStream(null);
+      setLevel(priorLevel);
+    }
+
+    assert.ok(lines.some((l) => /Lint command timed out/.test(l)),
+      'a killed informational lint must leave a record in the server log');
   });
 
   it('shell-quotes file paths containing spaces and single quotes', async () => {
