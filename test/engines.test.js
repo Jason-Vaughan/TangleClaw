@@ -618,6 +618,30 @@ describe('engines', () => {
       }
     });
 
+    it('honours fresh on the path strategy as well, on both call forms', async () => {
+      // The `path` strategy is not used by any shipped profile, which is exactly
+      // why it is the arm that gets forgotten — this branch has now applied a
+      // rule to a proper subset of its call sites three separate times.
+      const probeFile = path.join(binDir, 'engine-at-a-path');
+      fs.writeFileSync(probeFile, 'x');
+      const byPath = { id: 'tc-by-path', detection: { strategy: 'path', target: probeFile } };
+
+      assert.equal(engines.detectEngine(byPath).available, true);
+      fs.rmSync(probeFile);
+      assert.equal(engines.detectEngine(byPath).available, true, 'cached, as the poll wants');
+
+      // THE MUTATION THIS CATCHES: `case 'path': return _detectPath(id, target)`
+      // without forwarding options — on either form. An option a function accepts
+      // and silently drops reads at the call site as though it took effect.
+      assert.equal(engines.detectEngine(byPath, { fresh: true }).available, false,
+        'sync form must re-check the path');
+
+      fs.writeFileSync(probeFile, 'x');
+      assert.equal((await engines.detectEngineAsync(byPath)).available, false, 'cached again');
+      assert.equal((await engines.detectEngineAsync(byPath, { fresh: true })).available, true,
+        'async form must re-check it too');
+    });
+
     it('forgets everything when the operator presses Check again', async () => {
       assert.equal(engines.detectEngine(profile).available, true);
       removeBinary();
