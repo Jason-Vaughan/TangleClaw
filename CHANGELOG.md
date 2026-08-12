@@ -2032,6 +2032,18 @@ All notable changes to TangleClaw are documented in this file.
   marker, replacing a `rev-parse HEAD` probe whose *failure* was treated as "no commits" — so a
   repository that failed it for any other reason is no longer reported as empty.
 
+  **A repository whose `status` fails still reports everything else it can.** Neither the last
+  commit nor the latest tag needs the index, so a repository with an unreadable one keeps its branch,
+  subject, age and tag, and loses only its clean/dirty state — which comes back as *unknown* rather
+  than as *clean*. The seven-invocation read answered those fields too, and collapsing them to
+  unknown would have told you less than before, not more.
+
+  **The log now says which of three things went wrong**, because they call for different responses:
+  we stopped the read (slow repository), git ran and refused to read the repository (needs
+  repairing), or git answered in a shape TangleClaw does not recognise. Every short read previously
+  emitted one identical line, so the only one you could act on was indistinguishable from the two you
+  could not.
+
 - **Build plan for #884, and a correction to what #884 says is broken.** The issue scopes the
   remaining event-loop hazard as "32 `existsSync` sites". Reading `enrichProject`
   (`lib/projects.js`) rather than the issue shows it performs **five** distinct synchronous

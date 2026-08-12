@@ -275,14 +275,17 @@ describe('git', () => {
     });
 
     it('names WHICH failure it hit, so the fixable one is distinguishable', () => {
-      // Every short read logged an identical line, so "this repository is slow"
-      // and "git refuses to read this repository" were the same event to an
-      // operator — and only the second is something they can act on.
+      // Every short read logged an identical line, so "we stopped looking" and
+      // "git refuses to read this repository" were the same event to an operator
+      // — and only the second is something they can act on.
       //
-      // THE MUTATION THIS CATCHES: dropping `cause`, or deriving it after the
-      // fact instead of capturing the remaining budget BEFORE the call. `step`
-      // records a skipped-for-budget field exactly as it records a git error, and
-      // the error dies in its catch, so afterwards the two are indistinguishable.
+      // THE MUTATION THIS CATCHES: dropping `cause` entirely. The harder half —
+      // that a `status` our own CAP killed is also reported as stopped rather
+      // than as broken — cannot be driven from here, because `budgetMs: 0` skips
+      // the step instead of killing it. That path is guarded in
+      // `test/git-budget.test.js` with a real stalling `git` under a budget
+      // production actually uses; a guard written only against `budgetMs: 0`
+      // passes against the inverted classifier this replaced.
       const { setConsoleStream, setLevel } = require('../lib/logger');
       const lines = [];
       setConsoleStream({ write: (s) => lines.push(s) });
@@ -302,7 +305,7 @@ describe('git', () => {
       const joined = lines.join('\n');
       assert.match(joined, /git-refused-to-read-repository/,
         'a repository git will not read must say so — it is the one an operator can fix');
-      assert.match(joined, /budget-exhausted/,
+      assert.match(joined, /read-timed-out/,
         'and a read that simply ran out of time must say that instead');
     });
 
@@ -374,13 +377,23 @@ describe('git', () => {
       // THE MUTATION THIS CATCHES: dropping the header check and letting the
       // parser fall through, which yields `dirty: false` and a branch of
       // `'unknown'` — the second of those says it is unknown, the first lies.
+      const { setConsoleStream, setLevel } = require('../lib/logger');
+      const logged = [];
+      setConsoleStream({ write: (s) => logged.push(s) });
+      setLevel('debug');
       const dir = repo('nostatus', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
       const execFn = (command, cwd, timeout) => {
         if (command.includes('status')) return 'not a porcelain header at all';
         return git._exec(command, cwd, timeout);
       };
 
-      const info = git._fetchInfo(dir, { execFn });
+      let info;
+      try {
+        info = git._fetchInfo(dir, { execFn });
+      } finally {
+        setConsoleStream(null);
+        setLevel('info');
+      }
 
       assert.ok(info !== null, 'it is still a repository — status answered');
       assert.equal(info.dirty, null, 'unparsed output must never render as a clean tree');
@@ -388,6 +401,11 @@ describe('git', () => {
       // Branch is recovered by its own probe, exactly as on the status-failed
       // path — an output we could not parse costs the field only `status` owns.
       assert.equal(info.branch, 'main');
+      // And it is reported as its OWN cause: neither a repository git refused to
+      // read nor one we ran out of time on. Those three call for different
+      // responses, so a shared label would be no better than the single line they
+      // all used to share.
+      assert.match(logged.join('\n'), /git-status-unparsed/);
     });
 
     it('establishes nothing, and says so, when the budget is gone before it starts', () => {

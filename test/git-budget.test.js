@@ -44,13 +44,13 @@ let realPath = null;
 /**
  * Put a `git` that stalls on chosen subcommands at the front of PATH.
  *
- * It exits 0 with empty stdout otherwise, which is enough: these tests assert on
- * WHICH fields the budget establishes and how long the whole read takes, never
- * on git's output.
+ * A subcommand it does not stall exits 0, and `status` answers with a parseable
+ * `## main` — see the body for why an empty answer there silently disarmed every
+ * guard downstream of it.
  *
- * Patterns are shell globs matched against the WHOLE argument list, not just the
- * subcommand, because the two `rev-parse` calls have to be told apart: the
- * is-a-repo probe and the has-commits probe share `$1`.
+ * Patterns are shell globs matched against the WHOLE argument list rather than
+ * the subcommand alone, so calls sharing a `$1` can be told apart — `rev-parse`
+ * backs both the is-a-repo probe and the branch recovery beside it.
  *
  * @param {string[]|null} stallOn - Globs to stall on (`null` = every invocation).
  * @returns {void}
@@ -135,6 +135,38 @@ describe('git info budget (#891)', () => {
 
       assert.ok(info.incomplete.includes('dirty'),
         'a field whose spawn was killed by the cap must be named unestablished');
+    });
+
+    it('calls a repository we STOPPED slow, not broken', () => {
+      // The distinction an operator acts on. A `status` our own cap killed means
+      // a SLOW repository — #891's entire scenario — and the remedy is patience
+      // or a bigger budget. A `status` git ran and refused means a repository
+      // that needs repairing. They arrive identically: both are a throw.
+      //
+      // THE MUTATION THIS CATCHES: deriving the cause from the remaining budget
+      // instead of from `weStopped` at the throw. Every production caller passes
+      // a positive budget, so that version could only ever say "git refused" —
+      // and would send an operator to repair a healthy repository. A test using
+      // `budgetMs: 0` passes against that bug, because zero is the one input
+      // production never supplies; this one uses a real stalling `git` under a
+      // budget production actually uses.
+      const { setConsoleStream, setLevel } = require('../lib/logger');
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        shadowGit(['status*']);
+        git._fetchInfo(REPO_ROOT, { budgetMs: 1500 });
+      } finally {
+        setConsoleStream(null);
+        setLevel('info');
+      }
+
+      const joined = lines.join('\n');
+      assert.match(joined, /read-timed-out/,
+        'a status WE killed is a slow repository, and must be reported as one');
+      assert.doesNotMatch(joined, /git-refused-to-read-repository/,
+        'and must never be reported as a repository git refused to read');
     });
 
     it('marks BOTH fields of a killed two-field read, not just the one it names', () => {
