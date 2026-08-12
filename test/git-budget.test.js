@@ -86,7 +86,7 @@ describe('git info budget (#891)', () => {
   });
 
   describe('the budget bounds the whole read, not each spawn', () => {
-    it('stops near its budget instead of paying the per-call cap seven times', () => {
+    it('stops near its budget instead of paying the per-call cap once per spawn', () => {
       shadowGit(null);
       const startedAt = Date.now();
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 1000 });
@@ -126,23 +126,39 @@ describe('git info budget (#891)', () => {
         'a field whose spawn was killed by the cap must be named unestablished');
     });
 
-    it('marks everything downstream of a killed has-commits probe, not just the probe', () => {
-      // `git rev-parse HEAD` failing means "no commits" — a real answer, whose
-      // empty message/age/tag are the truth. The same call being KILLED means we
-      // never found out, and it fails identically. Only the step's `ok` separates
-      // them; inferring from the returned value silently let a killed probe pass
-      // for an empty repository, leaving lastCommitAge and latestTag reported as
-      // established when nothing had looked at them.
+    it('marks BOTH fields of a killed two-field read, not just the one it names', () => {
+      // THE CONTRACT THIS HAS ALWAYS PROTECTED, unchanged: a step the cap KILLED
+      // establishes nothing, and every field that step would have answered must
+      // be named — never left reporting its empty fallback as though something
+      // had looked.
       //
-      // Stalls on the has-commits probe alone — matched on the full argument list
-      // because it shares `$1` with the is-a-repo probe that must stay fast.
-      shadowGit(['rev-parse HEAD']);
+      // WHAT MOVED, and why this test was rewritten rather than deleted (#895):
+      // it used to stall `git rev-parse HEAD`, the separate has-commits probe.
+      // That probe is gone — has-commits is now read off `status`'s `## No
+      // commits yet on …` marker, which is free and cannot be killed on its own —
+      // so shadowing `rev-parse HEAD` now stalls a command nobody runs, and the
+      // test passed for a mechanism that no longer exists.
+      //
+      // The same hazard lives on the invocation that replaced it: `log -1
+      // --format=%s%n%cr` answers lastCommit AND lastCommitAge together, so a
+      // kill there must name both. Naming only the field the step is keyed under
+      // would leave the other reporting `''` as an established answer — the exact
+      // shape #891 removed.
+      //
+      // `latestTag` is deliberately NOT asserted here any more: `describe` is its
+      // own invocation and still runs, so it is genuinely established. Under the
+      // old shape it was unestablished only because the dead gate probe stopped
+      // it being attempted at all. That is a strictly more honest answer, not a
+      // weakened assertion.
+      shadowGit(['log*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
 
-      for (const field of ['lastCommit', 'lastCommitAge', 'latestTag']) {
+      for (const field of ['lastCommit', 'lastCommitAge']) {
         assert.ok(info.incomplete.includes(field),
-          `${field} sits downstream of a probe that was killed, so it was never established`);
+          `${field} was to be answered by a step that was killed, so it was never established`);
       }
+      assert.equal(info.lastCommit, '', 'and its value stays empty rather than half-parsed');
+      assert.equal(info.lastCommitAge, '');
     });
   });
 
