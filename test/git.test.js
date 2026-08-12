@@ -309,6 +309,41 @@ describe('git', () => {
         'and a read that simply ran out of time must say that instead');
     });
 
+    it('blames git, not the clock, when a later step is the one git refuses', () => {
+      // The same rule as the `status` classifier, applied one step down. Reaching
+      // `log` at all means there was budget when it started — which says nothing
+      // about whether the throw that followed was our cap or git refusing. The
+      // cause has to come from `weStopped` at the throw, here as well.
+      //
+      // THE MUTATION THIS CATCHES: deriving the down-path cause from position —
+      // "we got this far, so time must be what ran out" — which reports a
+      // repository git actively refused as merely slow, sending the operator to
+      // wait rather than to look.
+      const { setConsoleStream, setLevel } = require('../lib/logger');
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      const dir = repo('logrefuses', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
+      // `status` answers normally; `log` fails the way git fails, not the way a
+      // timeout does — no ETIMEDOUT, no SIGTERM.
+      const execFn = (command, cwd, timeout) => {
+        if (command.includes('log -1')) throw Object.assign(new Error('fatal: bad object'), { status: 128 });
+        return git._exec(command, cwd, timeout);
+      };
+      try {
+        git._fetchInfo(dir, { execFn });
+      } finally {
+        setConsoleStream(null);
+        setLevel('info');
+      }
+
+      const joined = lines.join('\n');
+      assert.match(joined, /git-refused-to-read-repository/,
+        'git refusing a later step is still git refusing');
+      assert.doesNotMatch(joined, /read-timed-out/,
+        'and must not be reported as a read we stopped');
+    });
+
     it('a directory that is genuinely not a repository still reads as null', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-plain-'));
       made.push(dir);
