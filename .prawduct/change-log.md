@@ -26,6 +26,44 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-12: one repository read costs three git invocations, not seven (#895)
+
+<!-- prawduct: type=fix | scope=git-spawn-collapse-895 | chunks=01 | status=shipped -->
+
+**Why:** `_fetchInfo` ran seven `git` invocations to answer five questions, and #891 has to bound all
+seven under one budget that must also fit inside the scanner child's deadline. Measured on this
+repository, warm, reading the same directory both ways: **7 invocations / 165.3ms → 3 / 75.2ms**,
+every field identical.
+
+**What changed:** `status --porcelain=v1 --branch` answers is-it-a-repo, which branch, and dirtiness
+in one call; `log -1 --format=%s%n%cr` answers subject and age in another; `describe` is unchanged.
+Has-commits is read POSITIVELY off `status`'s `No commits yet on` marker, replacing a `rev-parse
+HEAD` probe whose FAILURE meant "no commits" — so a repository that failed it for any other reason
+stops being reported as empty, and an unborn repository reads in ONE invocation instead of four while
+reporting its real branch name where `rev-parse --abbrev-ref HEAD` failed and yielded `unknown`.
+
+**The issue's own design was a bug, and the fixture that proves it is in the suite.** It proposed
+folding `rev-parse --is-inside-work-tree` into `status`. Measured: with `.git/index` unreadable,
+`status` exits 128 while `--is-inside-work-tree` still answers `true` — so inferring not-a-repository
+from a failed `status` returns null for a broken-but-real repo, and `dir-scanner-child.js` decides a
+directory IS a project from `gitInfo && gitInfo.branch`. The project would vanish from the dashboard
+rather than lose a badge. That probe stays the authority and is merely deferred to the failure path.
+Two other edge cases the issue asked to handle turned out not to exist — a branch name cannot contain
+`...`, and `%s` is always one line — so guards were removed rather than written.
+
+**What the review caught across four rounds**, all three instances of one shape — a rule applied to
+the call site that prompted it rather than to the rule's own scope. A failed `status` was discarding
+four fields the seven-invocation read still established (neither `log` nor `describe` reads the
+index). An unborn HEAD can track an upstream — `git clone` of an empty repository prints `## No
+commits yet on main...origin/main` — and the unborn path took that verbatim as the branch badge. And
+the `cause` field added to tell a slow repository from a broken one was **inverted in production**:
+derived from the remaining budget, which every real caller keeps positive, so a `status` our own cap
+killed was reported as one git refused to read. It is decided at the throw now, from `wasTimedOut`.
+
+**Also:** the guard for that last one had driven `budgetMs: 0` — the one input production never
+supplies — so it passed against the bug. The lesson is recorded: name the real caller that produces
+a fixture's input, or the guard measures nothing.
+
 ## 2026-08-11: the project poll stops asking every project a question about the machine (#890)
 
 <!-- prawduct: type=fix | scope=enrichproject-spawns-890 | chunks=01,02 | status=shipped -->
