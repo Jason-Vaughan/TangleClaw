@@ -60,10 +60,21 @@ function shadowGit(stallOn) {
   // Spaces escaped rather than quoted: a quoted case pattern is literal, and
   // these need to stay globs so `status*` matches its flags.
   const patterns = stallOn && stallOn.map((g) => g.replace(/ /g, '\\ ')).join('|');
-  const body = stallOn === null
+  const stall = stallOn === null
     ? `sleep ${STALL_SECONDS}\n`
     : `case "$*" in\n  ${patterns}) sleep ${STALL_SECONDS} ;;\nesac\n`;
-  fs.writeFileSync(path.join(fakeBinDir, 'git'), `#!/bin/sh\n${body}exit 0\n`, { mode: 0o755 });
+  // A `status` this fake does not stall must answer PARSEABLY, or every read
+  // stops at the first step and the later ones are never reached.
+  //
+  // This is not cosmetic. `_fetchInfo` now takes branch, dirtiness and
+  // has-commits from one `status`, and treats output it cannot parse as
+  // "established nothing" — so a fake that answered `status` with empty stdout
+  // made every downstream assertion pass off an early return, with the command
+  // under test never invoked. The `log*` guard below was exactly that shape:
+  // green, and measuring nothing. A stall guard has to reach the step it stalls.
+  const answer = 'case "$*" in\n  status*) echo "## main" ;;\nesac\n';
+  fs.writeFileSync(path.join(fakeBinDir, 'git'),
+    `#!/bin/sh\n${stall}${answer}exit 0\n`, { mode: 0o755 });
   realPath = process.env.PATH;
   process.env.PATH = `${fakeBinDir}:${realPath}`;
 }

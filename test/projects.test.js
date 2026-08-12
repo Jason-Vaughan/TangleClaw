@@ -1594,8 +1594,8 @@ describe('projects', () => {
       // all-or-nothing failure the old shape did not have: throw mid-loop and
       // the caller degrades to the registered projects, discarding everything
       // already discovered. This route backs the dashboard, and per-entry cost
-      // is dominated by a synchronous git.getInfo (up to seven execSync calls
-      // per directory, cached two minutes) — so a cold-cache load over a few
+      // is dominated by a synchronous git.getInfo (several execSync
+      // calls per directory, cached two minutes) — so a cold-cache load over a few
       // dozen unregistered folders would show NONE of them, with a log line as
       // the only trace. A discovery walk that ran out of budget still
       // discovered what it got to.

@@ -207,10 +207,103 @@ describe('git', () => {
       const info = git._fetchInfo(dir);
 
       assert.ok(info !== null, 'a repository we cannot read is still a repository');
-      assert.equal(info.branch, 'unknown');
       assert.equal(info.dirty, null, 'unknown dirtiness must never render as clean');
-      assert.ok(info.incomplete.includes('branch'), 'and it must say what it could not establish');
-      assert.ok(info.incomplete.includes('dirty'));
+      assert.ok(info.incomplete.includes('dirty'), 'and it must say what it could not establish');
+      // The branch is NOT asserted unknown here: `.git/index` is what `status`
+      // could not read, and naming the branch does not need the index, so the
+      // read recovers it. `incomplete` must therefore NOT claim it is missing —
+      // a field reported unestablished while carrying a real value is the same
+      // class of false statement as the reverse, and both mislead #885's badge.
+      assert.equal(info.branch, 'main');
+      assert.ok(!info.incomplete.includes('branch'),
+        'a field this read established must not be named unestablished');
+    });
+
+    it('names the branch of a CLONE of an empty repository, not the whole header', () => {
+      // The case the shape table missed: an unborn HEAD can still track an
+      // upstream. `git clone` of an empty repository prints
+      // `## No commits yet on main...origin/main`, and taking the remainder of
+      // that marker verbatim renders the entire string as the branch badge — for
+      // precisely the brand-new project whose branch name this change exists to
+      // report correctly.
+      //
+      // THE MUTATION THIS CATCHES: stripping the upstream on the normal path but
+      // not on the unborn-HEAD path. Both paths now go through one helper, so
+      // there is no second place for it to be forgotten.
+      const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-emptyremote-'));
+      made.push(remote);
+      execSync('git init --template= -q -b main --bare', { cwd: remote, stdio: 'pipe' });
+
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-emptyclone-'));
+      made.push(parent);
+      execSync(`git clone -q ${JSON.stringify(remote)} cloned`, { cwd: parent, stdio: 'pipe' });
+      const dir = path.join(parent, 'cloned');
+
+      const info = git._fetchInfo(dir);
+      assert.ok(info !== null);
+      assert.equal(info.branch, 'main',
+        `expected the branch alone, got ${JSON.stringify(info.branch)}`);
+      assert.equal(info.lastCommit, '');
+    });
+
+    it('still answers what it CAN when status fails on a real repository', () => {
+      // `.git/index` unreadable: `status` fails, but neither `log` nor `describe`
+      // reads the index, so the subject, the age and the tag are all still
+      // answerable — and the seven-invocation read did answer them. Collapsing
+      // them to unknown would tell the operator strictly less than before, which
+      // is the one thing this change promised not to do.
+      //
+      // THE MUTATION THIS CATCHES: early-returning an all-unknown reading as soon
+      // as `status` fails. Every assertion below flips at once.
+      const dir = repo('degraded', [
+        'echo a > a.txt', 'git add a.txt', 'git commit -qm "still readable"',
+        'git tag v9.9.9'
+      ]);
+      fs.chmodSync(path.join(dir, '.git', 'index'), 0o000);
+
+      const info = git._fetchInfo(dir);
+
+      assert.ok(info !== null, 'a repository we cannot status is still a repository');
+      assert.equal(info.branch, 'main', 'the branch is still answerable without the index');
+      assert.equal(info.lastCommit, 'still readable');
+      assert.ok(info.lastCommitAge.length > 0);
+      assert.equal(info.latestTag, 'v9.9.9');
+      // Only dirtiness is genuinely lost — `status` is its only source.
+      assert.equal(info.dirty, null, 'and it must never render as clean');
+      assert.deepEqual(info.incomplete, ['dirty'],
+        'exactly one field was unestablished, and it is named');
+    });
+
+    it('names WHICH failure it hit, so the fixable one is distinguishable', () => {
+      // Every short read logged an identical line, so "this repository is slow"
+      // and "git refuses to read this repository" were the same event to an
+      // operator — and only the second is something they can act on.
+      //
+      // THE MUTATION THIS CATCHES: dropping `cause`, or deriving it after the
+      // fact instead of capturing the remaining budget BEFORE the call. `step`
+      // records a skipped-for-budget field exactly as it records a git error, and
+      // the error dies in its catch, so afterwards the two are indistinguishable.
+      const { setConsoleStream, setLevel } = require('../lib/logger');
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        const broken = repo('cause-broken', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
+        fs.chmodSync(path.join(broken, '.git', 'index'), 0o000);
+        git._fetchInfo(broken);
+
+        const starved = repo('cause-starved', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
+        git._fetchInfo(starved, { budgetMs: 0 });
+      } finally {
+        setConsoleStream(null);
+        setLevel('info');
+      }
+
+      const joined = lines.join('\n');
+      assert.match(joined, /git-refused-to-read-repository/,
+        'a repository git will not read must say so — it is the one an operator can fix');
+      assert.match(joined, /budget-exhausted/,
+        'and a read that simply ran out of time must say that instead');
     });
 
     it('a directory that is genuinely not a repository still reads as null', () => {
@@ -268,6 +361,33 @@ describe('git', () => {
       assert.equal(info.lastCommit, '100% done');
       assert.match(info.lastCommitAge, /ago|second/,
         'the age must be the age, not the rest of the message');
+    });
+
+    it('reports nothing established when status answers in a shape it cannot read', () => {
+      // A `status` that succeeds but carries no `## ` header is not output from
+      // the command we asked for. The hazard is that it PARSES anyway: zero
+      // further lines counts as zero changed paths, so the read would report a
+      // repository as definitely CLEAN on the strength of output nothing
+      // understood — an unknown wearing a fact's clothes, which is the failure
+      // this module exists to prevent.
+      //
+      // THE MUTATION THIS CATCHES: dropping the header check and letting the
+      // parser fall through, which yields `dirty: false` and a branch of
+      // `'unknown'` — the second of those says it is unknown, the first lies.
+      const dir = repo('nostatus', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
+      const execFn = (command, cwd, timeout) => {
+        if (command.includes('status')) return 'not a porcelain header at all';
+        return git._exec(command, cwd, timeout);
+      };
+
+      const info = git._fetchInfo(dir, { execFn });
+
+      assert.ok(info !== null, 'it is still a repository — status answered');
+      assert.equal(info.dirty, null, 'unparsed output must never render as a clean tree');
+      assert.ok(info.incomplete.includes('dirty'), 'and it must name what it lost');
+      // Branch is recovered by its own probe, exactly as on the status-failed
+      // path — an output we could not parse costs the field only `status` owns.
+      assert.equal(info.branch, 'main');
     });
 
     it('establishes nothing, and says so, when the budget is gone before it starts', () => {
