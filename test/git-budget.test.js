@@ -104,8 +104,11 @@ describe('git info budget (#891)', () => {
       const elapsed = Date.now() - startedAt;
 
       assert.ok(info !== null, 'a repository whose git work stalls is still a repository');
-      // The assertion that matters is "nowhere near seven caps" (35s), not a
-      // precise number — a loaded CI box is allowed to be late.
+      // The assertion that matters is "nowhere near one cap per spawn", not a
+      // precise number — a loaded CI box is allowed to be late. Stated as the
+      // shape rather than as an arithmetic product, because the product moved
+      // when the read went from seven invocations to three and this comment did
+      // not notice.
       assert.ok(elapsed < 5000, `expected the read to stop near its budget, took ${elapsed}ms`);
     });
 
