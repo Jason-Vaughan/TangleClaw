@@ -549,6 +549,40 @@ describe('api-sessions', () => {
       const res = await request(server, 'POST', '/api/sessions/nonexistent', {});
       assert.equal(res.status, 404);
     });
+
+    it('answers 503, not 500, when tmux would not say whether a session is running', async () => {
+      // The refusal exists because a wedged tmux must not have a running session
+      // written off (#900) — but a refusal that reaches the browser as
+      // `500 INTERNAL_ERROR` tells the operator the opposite of the truth twice
+      // over: nothing internal failed, and nothing was changed.
+      //
+      // THE MUTATION THIS CATCHES: dropping the code branch in the route, so the
+      // refusal falls through to the prose matcher and out as a 500. It also
+      // pins the code path itself — classifying by substring means a reworded
+      // message silently changes the status.
+      const tmux = require('../lib/tmux');
+      const store2 = require('../lib/store');
+      const project = store2.projects.getByName('api-sess-test');
+      const session = store2.sessions.start({
+        projectId: project.id, engineId: 'claude', tmuxSession: 'tc-api-sess-wedge'
+      });
+      const realProbe = tmux.probeSession;
+      tmux.probeSession = () => ({ live: false, answered: false, cause: 'read-timed-out' });
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test', {});
+
+        assert.equal(res.status, 503);
+        assert.equal(res.body.code, 'LIVENESS_UNKNOWN');
+        assert.match(res.body.error, /could not determine/i);
+        assert.equal(store2.sessions.get(session.id).status, 'active',
+          'and the record it could not verify is still there');
+      } finally {
+        tmux.probeSession = realProbe;
+        if (store2.sessions.get(session.id).status === 'active') {
+          store2.sessions.kill(session.id, 'test cleanup');
+        }
+      }
+    });
   });
 
   describe('GET /api/activity', () => {

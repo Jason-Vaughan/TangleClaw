@@ -3150,6 +3150,16 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   }
 
   if (result.error) {
+    // A refusal that carries a CODE is classified by it. The prose matching below
+    // predates codes here and stays for the callers that still return only a
+    // sentence, but nothing new should join them: a status code that depends on
+    // the wording of a message changes when the message is improved.
+    if (result.code === 'LIVENESS_UNKNOWN') {
+      // 503, not 500: nothing internal failed. tmux — a dependency — did not
+      // answer, this call changed nothing, and trying again once the server is
+      // responsive is the remedy.
+      return errorResponse(res, 503, result.error, result.code);
+    }
     if (result.error.includes('already active')) {
       return errorResponse(res, 409, result.error, 'CONFLICT');
     }

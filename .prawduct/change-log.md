@@ -59,6 +59,37 @@ dropping `scan` on its way out — each applied and watched red before its guard
 guard exists because the field crossing the boundary is the claim: `scan` existing inside
 `listAllProjects` renders nothing.
 
+**What the review caught, and the pattern in it.** Three reviewers found the same defect
+independently from three different goals: `api-contract.md` said a remembered refusal
+"deliberately" carries no remedy while the code gives it one — and that document is what chunk 03's
+renderer would have been written from, so the error was one step from becoming behavior. The
+underlying rule is now stated rather than implied: **the code and the hint are separate decisions**.
+`SCAN_CACHED` means nothing is being retried right now AND the directory still is not answering, so
+it earns the remedy while staying distinguishable from a fresh timeout.
+
+Deriving one from the other is also what made the duplicate mapping dangerous: `lib/projects.js` and
+`lib/project-facts.js` each mapped the scanner's error flags to codes, with DIFFERENT precedence,
+agreeing only because the flags are set almost exclusively today. The one overlap that already
+exists — a cached refusal carries `tcTimedOut` too — is exactly where the orders disagreed. There is
+now one `failureCode` in `lib/dir-scanner.js`, which owns the flags, and its ordering is documented
+as a contract rather than left as an implementation detail.
+
+**The new launch refusal was reaching the browser as `500 INTERNAL_ERROR`** — the route classifies
+failures by matching substrings of the message, and a refusal written for honesty was being reported
+as a server fault that changed something. It carries a `code` now (`LIVENESS_UNKNOWN` → **503**),
+because a status that depends on the wording of a sentence changes when the sentence improves; the
+same lesson `scanDirectoryForProjects` recorded when a reworded message silently removed a button.
+It also logs, since a refusal visible only in one HTTP response leaves no trace of how often the
+wedge happens.
+
+**Two guards were measuring less than they claimed** and were rewritten: the laziness check asserted
+elapsed wall-clock against the stall it was detecting, so a busy machine and the defect looked
+identical — it counts spawns now; and the "no server running is an ANSWER" check used a hand-built
+error, where the whole subject is telling one real `execFile` failure shape from another. Driving it
+with a real executable exposed a second problem in the guard itself: at a 2000ms cap it passed alone
+and failed under a four-file parallel run, which is precisely the flake shape a guard about timeouts
+must not have.
+
 **Classification:** feature
 
 ## 2026-08-13: a liveness read that could not be established is unknown, not absent (#900)

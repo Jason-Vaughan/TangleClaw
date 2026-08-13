@@ -977,18 +977,28 @@ describe('projects', () => {
      * injected, by wrapping the real factory.
      *
      * @param {Function} fn - Test body.
+     * @param {{onSpawn?: Function}} [opts] - `onSpawn` is called for each tmux
+     *   invocation, so a caller can assert on the COUNT rather than on elapsed
+     *   time. The real runner still does the work; the hook only observes.
      * @returns {Promise<any>}
      */
-    async function withStalledTmux(fn) {
+    async function withStalledTmux(fn, opts = {}) {
       const realFactory = tmuxModule.createSessionNameSnapshot;
       const realReq = dirScanner.request;
       const realInteractive = dirScanner.interactiveRequest;
+      const realExecFile = require('node:child_process').execFile;
       const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stalled-tmux-'));
       fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
       const realPath = process.env.PATH;
       process.env.PATH = `${binDir}:${realPath}`;
-      tmuxModule.createSessionNameSnapshot = (options = {}) =>
-        realFactory({ ...options, timeout: 300 });
+      tmuxModule.createSessionNameSnapshot = (options = {}) => realFactory({
+        ...options,
+        timeout: 300,
+        execFn: (...args) => {
+          if (opts.onSpawn) opts.onSpawn();
+          return realExecFile(...args);
+        }
+      });
       const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
       dirScanner.request = healthy;
       dirScanner.interactiveRequest = healthy;
@@ -1091,11 +1101,17 @@ describe('projects', () => {
       // sessionless project, which is worse than the spawn it replaced.
       projects.createProject({ name: 'wedged-tmux-idle' });
       const row = store.projects.getByName('wedged-tmux-idle');
-      const started = Date.now();
-      const enriched = await withStalledTmux(() => projects.enrichProject(row));
+      // Counted, not timed. A wall-clock assertion against the 300ms stall is a
+      // race with the machine: it goes red for an eager read AND for a busy CI
+      // box, and the second reads as the first. The claim is "nothing was
+      // spawned", so count spawns.
+      let spawns = 0;
+      const enriched = await withStalledTmux(() => projects.enrichProject(row), {
+        onSpawn: () => { spawns++; }
+      });
 
       assert.equal(enriched.session, null);
-      assert.ok(Date.now() - started < 250,
+      assert.equal(spawns, 0,
         'nothing may be spawned — let alone waited on — for a question nobody asked');
     });
 
@@ -1697,6 +1713,28 @@ describe('projects', () => {
       assert.equal(scan.listed, null);
     });
 
+    it('says a collateral abort is not this directory refusing', async () => {
+      // The scan never ran: a sibling request in the same child stopped
+      // responding and the child had to be killed. It says NOTHING about this
+      // directory, so it must not be coded as a refusal and must not carry the
+      // permission remedy — telling someone to grant Full Disk Access for a
+      // folder that was never read is the misdiagnosis the whole scanner exists
+      // to remove. Retrying is genuinely likely to work: the next request forks
+      // a fresh child.
+      const aborted = Object.assign(
+        new Error('directory scan abandoned: the scanner was restarted for another path'),
+        { tcAborted: true }
+      );
+      const { scan } = await withScanner(
+        () => Promise.reject(aborted),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_ABORTED');
+      assert.equal(scan.hint, null);
+    });
+
     it('reports a projects directory that is not there at all', async () => {
       // Its own early return, and the one shape most easily left behind: a
       // missing directory is not a failure to read, so the code returns before
@@ -1715,20 +1753,33 @@ describe('projects', () => {
       assert.equal(scan.hint, null);
     });
 
-    it('names a remembered refusal as one, not as a fresh failure', async () => {
-      // The backoff is holding this directory off, so the list is short for a
-      // reason the operator can act on differently: nothing is being retried
-      // right now. Same shape, distinct code.
-      const cached = Object.assign(new Error('refused recently'), { tcCached: true });
+    it('names a remembered refusal as one, and still offers the remedy', async () => {
+      // The fixture carries BOTH flags because that is what the real producer
+      // sets: `dir-scanner.js` `_notAnswering` adds `tcCached` on top of
+      // `tcTimedOut`, and says why — the CONDITION is unchanged (the directory
+      // still is not responding, so the operator still needs the remedy) while
+      // the COST is not (no child, no five-second wait), which is what callers
+      // log differently. A fixture with `tcCached` alone would let this assert
+      // whatever the author expected instead of what a real backoff produces.
+      const cached = Object.assign(
+        new Error('/x did not answer the last 3 time(s) it was read; not trying again for 42s'),
+        { tcTimedOut: true, tcCached: true }
+      );
       const { scan } = await withScanner(
         () => Promise.reject(cached),
         () => projects.listAllProjects()
       );
 
       assert.equal(scan.complete, false);
-      assert.equal(scan.code, 'SCAN_CACHED');
-      assert.equal(scan.hint, null,
-        'a remembered refusal is not a permission diagnosis — only a live timeout earns that');
+      // The CODE is what separates this from a live timeout — a consumer that
+      // wants to say "not being retried right now" reads it here, not from the
+      // presence of a hint.
+      assert.equal(scan.code, 'SCAN_CACHED',
+        'ordering matters: a cached refusal carries tcTimedOut too, so a check that '
+        + 'tested tcTimedOut first would report every backoff as a fresh timeout');
+      assert.match(scan.hint, /Full Disk Access/,
+        'the directory is still not answering, so the remedy still applies — '
+        + '`lib/project-facts.js` gives the same answer for the same condition');
     });
 
     it('gives the scan a deadline SHORTER than the walk it asks for', async () => {

@@ -150,12 +150,36 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     // sessions — an answer, not a gap. Call it unknown and every stale `active`
     // row on a rebooted machine sits at unknown forever, never cleaned up,
     // which is the same defect as #900 pointed the other way.
-    const { execFn } = stubExec({ err: Object.assign(new Error('no server running'), { code: 1 }) });
-    const verdict = await tmux.createSessionNameSnapshot({ execFn }).get();
+    //
+    // A REAL executable exiting 1 with tmux's own message on stderr, not a
+    // hand-built error: this classifier's whole job is telling one `execFile`
+    // failure shape from another, and a stub asserts the author's model of the
+    // shape rather than the shape (#891/#894, three times).
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dead-tmux-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'),
+      '#!/bin/sh\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n',
+      { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      // A generous cap on purpose. The stub exits immediately, so this costs
+      // nothing on the happy path — but the whole point of the guard is that the
+      // verdict came from tmux REPLYING rather than from our timeout, and a tight
+      // cap makes that indistinguishable whenever the machine is busy enough to
+      // delay a fork. Seen: this failed under a four-file parallel run at 2000ms
+      // and passed alone, which is the flake shape a guard about timeouts must
+      // not have.
+      const verdict = await tmux.createSessionNameSnapshot({ timeout: 20000 }).get();
 
-    assert.equal(verdict.names.size, 0);
-    assert.equal(verdict.answered, true);
-    assert.equal(verdict.cause, null);
+      assert.equal(verdict.names.size, 0);
+      assert.equal(verdict.answered, true,
+        'tmux ran and told us there is nothing live — that is an answer');
+      assert.equal(verdict.cause, null);
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
   });
 
   it('reports that it could not establish anything when the listing times out (#900)', async () => {
