@@ -396,27 +396,37 @@ describe('degraded-read normalisation (#885)', () => {
     });
 
     it('no hint-less code reaches a card with a reason and no next step', () => {
-      // Driven from the WRITTEN CONTRACT's `unreadableCode` row, not from a
-      // list restated here and not from a source scrape — scraping every
-      // `code: '...'` in the child pulls in thrown-error codes like ENOTDIR that
-      // `failureCode` maps to SCAN_FAILED long before they could reach a card.
-      // Coupling to the contract means a code documented without a remedy fails
-      // here, which is the drift worth catching.
+      // Derived from the PRODUCERS, which are tracked files. An earlier version
+      // read the documented list out of `.prawduct/artifacts/api-contract.md` —
+      // and that directory is GITIGNORED, so the guard passed on the machine
+      // that wrote it and could never pass in CI. A fixture that depends on a
+      // file which merely happens to exist locally is not a fixture.
+      //
+      // Two producers, and only these two can put a value in `unreadableCode`:
+      //   - `dirScanner.failureCode`, called by `lib/project-facts.js`; and
+      //   - `lib/dir-scanner-child.js`'s refused-read reply, whose raw `code` is
+      //     forwarded verbatim by `readProjectFacts`.
+      // The child's OTHER literal codes (ENOTDIR, ENOSYS) are thrown errors that
+      // `failureCode` maps to SCAN_FAILED long before they could reach a card,
+      // which is why this does not scrape every `code:` in that file — doing so
+      // demanded a remedy for ENOTDIR, a value no card can ever display.
       //
       // `lib/project-facts.js` attaches the Full Disk Access hint exactly when
       // `tcTimedOut || tcCached`, so SCAN_TIMEOUT and SCAN_CACHED always arrive
-      // WITH one and need no fallback. The rest arrive hint-less and are the
-      // renderer's to answer.
-      const contract = fs.readFileSync(
-        path.resolve(__dirname, '..', '.prawduct', 'artifacts', 'api-contract.md'), 'utf8');
-      const row = contract.split('\n').find(
-        (l) => l.includes('`unreadableCode`') && l.includes('Machine-readable cause'));
-      assert.ok(row, 'api-contract.md must document unreadableCode');
-      const documented = [...row.matchAll(/`([A-Z_]{4,})`/g)].map((m) => m[1]);
-      assert.ok(documented.includes('EACCES'),
-        'EACCES must stay documented for this guard to mean anything');
+      // WITH one and need no fallback. The rest arrive hint-less.
+      const childSrc = fs.readFileSync(
+        path.resolve(__dirname, '..', 'lib', 'dir-scanner-child.js'), 'utf8');
+      assert.match(childSrc, /code: 'EACCES'/,
+        'the child must still forward EACCES for this guard to mean anything');
+      const reachable = [
+        dirScanner.failureCode({ tcCached: true, tcTimedOut: true }),
+        dirScanner.failureCode({ tcTimedOut: true }),
+        dirScanner.failureCode({ tcAborted: true }),
+        dirScanner.failureCode(new Error('x')),
+        'EACCES'
+      ];
       const alwaysHinted = new Set(['SCAN_TIMEOUT', 'SCAN_CACHED']);
-      for (const code of documented.filter((c) => !alwaysHinted.has(c))) {
+      for (const code of reachable.filter((c) => !alwaysHinted.has(c))) {
         const notice = unreadableNotice({
           name: 'p', unreadable: 'x', unreadableHint: null, unreadableCode: code
         });
