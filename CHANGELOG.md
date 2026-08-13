@@ -551,6 +551,30 @@ All notable changes to TangleClaw are documented in this file.
   This is the half that stops the payload from stating a fact nobody established; #885, above,
   is the half that draws it.
 
+- **A tmux server that will not answer can no longer end your wrap — or commit your repository
+  (#908).** Two paths decided a wrapping session was finished from a single question: *is the pane
+  there?* That question answers "no" both for a pane that has genuinely gone and for a tmux server
+  too wedged to reply, and the code could not tell the two apart. On the second, it wrote the wrap
+  as complete, tore down the session's listener, and ran a real `git commit` in your project — all
+  on a fact nobody had established. None of it came back when tmux recovered.
+
+  It now asks a question with three answers. A pane tmux *says* is gone still completes the wrap,
+  exactly as before. A pane tmux would not discuss leaves the wrap open, changes nothing, and — on
+  a launch — refuses with a message naming what could not be established rather than inventing a
+  reason.
+
+  **The recovery you already had still works, and making sure of that is why this is a restructure
+  rather than one extra check.** A stuck wrap is claimed on age after an hour, so a project can
+  never be bricked by one (#105). That recovery used to live *inside* the liveness question — so a
+  server that never answered skipped the recovery too, and simply declining would have traded a
+  false commit for a project stuck until tmux came back. Age is settled first now, because how long
+  a wrap has been running is something TangleClaw knows on its own: a wrap that began this morning
+  is an orphan whether or not tmux is willing to talk about it.
+
+  The deeper defect — that reading a session's status can finalize a wrap at all — is filed as
+  **#910** rather than fixed here, because changing *when* a wrap finalizes changes how the session
+  page detects completion, and that deserves its own verification.
+
 - **A brand-new project shows its real branch name instead of "unknown" (#895).** Reading a
   repository with no commits yet used `git rev-parse --abbrev-ref HEAD`, which fails outright over an
   unborn HEAD — so every freshly-created project reported its branch as `unknown` until its first

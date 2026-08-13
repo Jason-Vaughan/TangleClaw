@@ -4382,3 +4382,54 @@ every poll — the same flood shape as **#906**, which was scoped to the dashboa
 been widened to name both emitters.
 
 **Classification:** fix
+
+## 2026-08-13: a wrap that could not be observed is not completed, and does not commit (#908)
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+
+**The defect.** `autoCompleteWrap` writes the wrap complete, tears down the session's Medusa
+listener, and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository. Two
+sites reached it from `!tmux.hasSession(...)`, which answers false for a pane that is gone AND for a
+tmux server too wedged to reply. So a wedge could end a running wrap and commit a working tree on a
+fact nobody established, with no recovery when tmux returned. The session page polls
+`getSessionStatus` continuously *during* a wrap, so the poll most likely to meet the wedge is
+precisely the one running while a wrap is in flight.
+
+**Why this is a restructure and not one extra condition — the part worth keeping.** The obvious fix
+is "if the probe did not answer, decline". That reintroduces #105. The age-based stale-wrapping
+recovery — the thing that guarantees a wrapping row can never brick a project — was nested INSIDE
+the liveness branch, so a probe that never answered skipped the recovery too. Declining would have
+traded a false commit for a row stuck `wrapping` until tmux came back.
+
+**Age is now tested before liveness, and that ordering is the fix.** Age is evidence this process
+owns: a wrap that began three hours ago is an orphan whether or not tmux will discuss it. The four
+outcomes are now explicit — older than the threshold recovers on age without probing at all;
+younger splits on an ANSWERED probe into live (refuse, unchanged) and dead (complete, unchanged);
+and an unanswered probe changes nothing, refusing on the launch path with the same
+`LIVENESS_UNKNOWN` code chunk 01 introduced for the active-session case a few lines above.
+
+**The read path cannot refuse, so it reports.** `getSessionStatus` returns `wrapping: true` with
+`incomplete: ['live']` and the cause, rather than finalizing. `incomplete`/`cause` are present on
+the healthy wrapping answer too (empty and null), so a consumer reads the value instead of probing
+for the field.
+
+**Two harness defects, both caught by the guards rather than by review.**
+
+1. **The commit traps were inert.** Every guard booby-trapped `git.commit` so a regression would
+   fail loudly instead of writing history — but `_autoCommitIfDirty` returns early unless the
+   project path is a git repository, and the fixture directory is not one. `git.commit` was
+   therefore UNREACHABLE and every trap passed regardless of what the code did. Only the
+   positive-direction test ("an observed-dead wrap still commits") failed and exposed it. The
+   helper now stubs `isGitRepo` to arm the trap, and that positive assertion is retained
+   specifically to prove the trap can fire.
+2. **The launch path's answered-dead branch had no guard at all.** Widening the refusal from
+   `!probe.answered` to `!probe.live` survived the entire suite — a mutation that would refuse
+   every launch after a genuinely finished wrap, bricking the project for an hour. Found by
+   mutation, fixed by adding the missing test.
+
+**Two pre-existing tests were re-pointed, not relaxed.** `#91`'s wrapping test and `#105`'s
+recent-row test both stubbed `tmux.hasSession` to mean "alive"; the wrapping path now asks
+`probeSession`, so their stub no longer bit. Both now stub `probeSession` with an ANSWERED liveness
+of true — the same meaning, at the seam that moved. The `#105` suite also gained save/restore for
+`probeSession`, which it had not needed before.
+
+**Classification:** fix
