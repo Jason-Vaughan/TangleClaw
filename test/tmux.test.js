@@ -18,7 +18,7 @@ describe('tmux — a timed-out command says so (#894)', () => {
     // very model that was wrong.
     const os = require('node:os');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-'));
-    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
     try {
@@ -31,6 +31,49 @@ describe('tmux — a timed-out command says so (#894)', () => {
       process.env.PATH = realPath;
       fs.rmSync(binDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('tmux — one session probe, two questions (#900)', () => {
+  it('reports that tmux never answered, where hasSession can only say "not live"', () => {
+    // A REAL stalling `tmux`, for the reason the file's other timeout guards use
+    // one: the behaviour begins with recognising a killed process, and this repo
+    // has shipped three wrong hand-written models of that error shape
+    // (#891/#894). It also covers a step a stub would skip entirely — `_exec`
+    // REPLACES the timeout error with one of its own, so the flag it puts on
+    // that replacement is the only thing `probeSession` has left to read.
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-probe-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const probe = tmux.probeSession('anything', { timeout: 300 });
+
+      // THE MUTATION THIS CATCHES: reporting `answered: true` for a killed
+      // probe. Every caller that RECORDS a death — `getSessionStatus` marking a
+      // session crashed, `launchSession` clearing one — would then write a fact
+      // nobody established, and the record does not recover when tmux does.
+      assert.equal(probe.answered, false);
+      assert.equal(probe.live, false);
+      assert.equal(probe.cause, 'read-timed-out');
+
+      assert.equal(tmux.hasSession('anything', { timeout: 300 }), false,
+        'the boolean form keeps its conservative answer for callers about to act');
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a plain "no such session" as an answer', () => {
+    // tmux is really on PATH here and really replies. The negative has to stay a
+    // negative, or the fix above degenerates into "never conclude anything".
+    const probe = tmux.probeSession('tc-definitely-not-a-real-session-900');
+
+    assert.equal(probe.answered, true);
+    assert.equal(probe.live, false);
+    assert.equal(probe.cause, null);
   });
 });
 
@@ -127,7 +170,7 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     // operator most needs to see what is still up.
     const os = require('node:os');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-snap-'));
-    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
     try {

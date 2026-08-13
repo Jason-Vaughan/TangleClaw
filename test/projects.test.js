@@ -984,7 +984,7 @@ describe('projects', () => {
       const realReq = dirScanner.request;
       const realInteractive = dirScanner.interactiveRequest;
       const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stalled-tmux-'));
-      fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+      fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
       const realPath = process.env.PATH;
       process.env.PATH = `${binDir}:${realPath}`;
       tmuxModule.createSessionNameSnapshot = (options = {}) =>
@@ -1052,6 +1052,32 @@ describe('projects', () => {
         assert.equal(enriched.session.active, null);
         assert.equal(enriched.session.status, 'wrapping');
         assert.equal(enriched.session.cause, 'read-timed-out');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('still drops a wrapping session tmux positively said is gone', async () => {
+      // The wrapping branch's honest negative, which nothing else pins: widening
+      // its unknown test from `!verdict.answered` to `verdict` passes the whole
+      // suite otherwise, and a wrapping session tmux confirmed is dead would
+      // then publish `active: null` — an unknown invented out of a fact.
+      projects.createProject({ name: 'answered-dead-wrapping' });
+      const project = store.projects.getByName('answered-dead-wrapping');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-answered-dead-wrapping',
+        primePrompt: ''
+      });
+      store.sessions.setWrapping(session.id);
+      try {
+        // tmux answers, and names a different session: this pane is gone.
+        const enriched = await withAnsweringTmux('some-other-session\n',
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.equal(enriched.session, null,
+          'tmux answered — that is a fact, and it must not be softened to unknown');
       } finally {
         store.sessions.kill(session.id, 'test cleanup');
       }

@@ -57,6 +57,28 @@ unanswered branch deleted (red on the unknown-session guards); and the snapshot 
 spawn). The timeout is driven by a real stalling `tmux` on PATH rather than a stubbed error, because
 this repo has shipped three wrong hand-written models of that error shape (#891/#894).
 
+**What the cumulative review caught, and it was the more consequential half.** The plan carved
+`hasSession` out of scope on the grounds that its callers kill, adopt and type into a session, so a
+conservative `false` suits them. That carve-out did not fit two of them, which do not act on the
+answer but WRITE it: `getSessionStatus` marked a session `crashed` on a failed probe — so one poll
+from an open session page during a wedge persisted the lie, and unlike the display the row does not
+recover when tmux does — and `launchSession` cleared the same record before starting a second
+session over the first. `tmux.probeSession(name)` → `{live, answered, cause}` now serves both, with
+`hasSession` as its boolean face for the callers that really do act. The launch path refuses
+honestly instead: under a wedge that launch fails anyway, on the same server that would not answer.
+The remaining `hasSession` sites were swept and left, each with the reason recorded.
+
+That required flagging `_exec`'s timeout throw, which REPLACES the error `wasTimedOut` reads — so
+the distinction it exists to preserve was being destroyed one layer below the code that needs it.
+
+**Also from the review:** the CHANGELOG claimed the session "stays on the card", which `active: null`
+does not produce until #885 renders it; `api-contract.md` described the live payload as "tmux
+confirmed the pane" when a paneless webui session gets it without tmux being asked; and the wrapping
+branch's honest negative had no guard, so widening its unknown test would have passed the suite.
+Three further defects of the same family were filed rather than absorbed: #905 (`getMasterStatus`),
+#906 (a wedged tmux logs every ten seconds forever) and #907 (`idle`/`lastOutputAge` still report a
+plausible default when nothing was read).
+
 **Classification:** fix
 
 ## 2026-08-12: one repository read costs three git invocations, not seven (#895)

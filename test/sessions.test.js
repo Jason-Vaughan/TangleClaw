@@ -1502,6 +1502,105 @@ describe('sessions', () => {
     });
   });
 
+  // A status READ that writes. `hasSession` answers false both for a pane that
+  // is gone and for a tmux server too wedged to reply, and this path persisted
+  // that answer — so one poll from an open session page during a wedge marked a
+  // running session crashed, permanently: the row does not come back when tmux
+  // recovers (#900).
+  //
+  // The verdict is injected here because the subject is what the branch DOES
+  // with it. That the verdict itself is produced correctly — a killed probe
+  // reporting `answered: false` — is pinned in `test/tmux.test.js` against a
+  // real stalling `tmux` on PATH, which is the only place a stub would lie.
+  describe('a session whose liveness tmux could not report is not recorded as crashed (#900)', () => {
+    let sessions;
+    const tmux = require('../lib/tmux');
+    let projectId;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      const projDir = path.join(projectsDir, 'wedge-status');
+      fs.mkdirSync(projDir, { recursive: true });
+      projectId = store.projects.create({
+        name: 'wedge-status', path: projDir, engine: 'claude'
+      }).id;
+    });
+
+    /**
+     * Run `fn` with `tmux.probeSession` answering `verdict`.
+     * @param {object} verdict - `{live, answered, cause}`.
+     * @param {Function} fn - Test body.
+     * @returns {any}
+     */
+    function withProbe(verdict, fn) {
+      const real = tmux.probeSession;
+      tmux.probeSession = () => verdict;
+      try {
+        return fn();
+      } finally {
+        tmux.probeSession = real;
+      }
+    }
+
+    it('leaves the record alone when tmux did not answer', () => {
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-wedge-status'
+      });
+      try {
+        // THE MUTATION THIS CATCHES: marking crashed on `!live` alone — which is
+        // what `!tmux.hasSession(...)` meant here, and what shipped.
+        withProbe({ live: false, answered: false, cause: 'read-timed-out' },
+          () => sessions.getSessionStatus('wedge-status'));
+
+        assert.equal(store.sessions.get(session.id).status, 'active',
+          'a death nobody observed must not be written to the database');
+      } finally {
+        if (store.sessions.get(session.id).status === 'active') {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      }
+    });
+
+    it('still records a crash when tmux DID answer that the pane is gone', () => {
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-wedge-status-dead'
+      });
+      try {
+        // The other half, and the one that keeps the fix from being a blanket
+        // "never mark crashed": an observed death is still recorded, or a real
+        // crash would leave the session page waiting forever.
+        withProbe({ live: false, answered: true, cause: null },
+          () => sessions.getSessionStatus('wedge-status'));
+
+        assert.equal(store.sessions.get(session.id).status, 'crashed');
+      } finally {
+        if (store.sessions.get(session.id).status === 'active') {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      }
+    });
+
+    it('refuses to launch over a session it cannot see, rather than clearing it', () => {
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-wedge-status-launch'
+      });
+      try {
+        const result = withProbe({ live: false, answered: false, cause: 'read-timed-out' },
+          () => sessions.launchSession('wedge-status'));
+
+        assert.equal(result.session, null);
+        assert.match(result.error, /could not determine/i,
+          'the refusal has to say what it could not establish, not "already active"');
+        assert.equal(store.sessions.get(session.id).status, 'active',
+          'and it must not clear the record on its way out');
+      } finally {
+        if (store.sessions.get(session.id).status === 'active') {
+          store.sessions.kill(session.id, 'test cleanup');
+        }
+      }
+    });
+  });
+
   describe('getSessionStatus (no active session)', () => {
     let sessions;
     const tmux = require('../lib/tmux');

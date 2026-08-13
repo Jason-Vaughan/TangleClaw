@@ -470,9 +470,19 @@ All notable changes to TangleClaw are documented in this file.
   operator was shown "nothing is running" for a machine where everything was, in exactly the state
   (#94/#144/#380 — PTY exhaustion) where knowing what is still up matters most.
 
-  A liveness read that could not be established now says so. The session stays on the card with its
-  `active` reported as `null` rather than vanishing, which is the same answer `git` gives for a
-  field its read could not establish (#891): unknown is its own state, not the negative one.
+  A liveness read that could not be established now says so. The session comes back with `active`
+  reported as `null` instead of being dropped from the payload — the same answer `git` gives for a
+  field its read could not establish (#891): unknown is its own state, not the negative one. **The
+  dashboard does not draw the difference yet** — that is #885, and until it lands an unconfirmed
+  session still reads on the card exactly as an absent one.
+
+  What changes for you today is what gets **written down**. Two paths recorded a session's death on
+  the strength of a probe that had failed rather than answered. A status poll from an open session
+  page marked a running session `crashed` during a wedge — permanently, since the row does not
+  return when tmux recovers — and pressing Launch cleared the same record before starting a second
+  session over the first. Both now require tmux to have actually said the pane is gone. A launch
+  that cannot establish it says so and changes nothing, rather than mangling the record and then
+  failing anyway on the same unresponsive server.
 
   **Only a read our own timeout stopped counts as unknown**, and the asymmetry is deliberate. A tmux
   that *replied* — including the ordinary "no server running" of a machine with no sessions at all —
