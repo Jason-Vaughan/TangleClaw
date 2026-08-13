@@ -133,12 +133,18 @@ session over the first. `tmux.probeSession(name)` → `{live, answered, cause}` 
 `hasSession` as its boolean face for the callers that really do act. The launch path refuses
 honestly instead: under a wedge that launch fails anyway, on the same server that would not answer.
 The kill, send-keys, adopt and capture sites were swept and left — each acts on the pane
-immediately, so a failed probe costs a failed action, not a false record. **That sweep first
-under-enumerated the family, and the correction is the point:** two more sites reach
-`autoCompleteWrap` on a failed probe, which writes the wrap complete, tears down the listener
-and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository, on a fact
-nobody established. Filed as #908 rather than folded in, because declining to auto-complete
-interacts with #105's stuck-wrapping recovery and that needs guarding, not assuming.
+immediately, so a failed probe costs a failed action, not a false record. **That sweep
+under-enumerated the family THREE TIMES, and that is the finding, not any one site.** Each
+successive version concluded "the rest only act on the answer" and each was wrong, so the
+enumeration RULE now replaces the conclusion: ask whether a caller's `false` branch WRITES
+anything — a row, a ledger entry, a commit, a teardown — never what the call site appears to
+intend. Three do. Two reach `autoCompleteWrap`, which writes the wrap complete, tears down the
+listener and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository, on a
+fact nobody established. The third is `_deferEngineInit`'s prime-paste guard, which writes a
+durable `sessionRuleDeliveries` row reading `tmux session ended before the prime was pasted` for
+an ending nobody observed. All three are on #908 rather than folded in, because declining to
+auto-complete interacts with #105's stuck-wrapping recovery and the prime-paste case has a real
+choice behind it (paste anyway, or skip and record honestly) — both need guarding, not assuming.
 
 That required flagging `_exec`'s timeout throw, which REPLACES the error `wasTimedOut` reads — so
 the distinction it exists to preserve was being destroyed one layer below the code that needs it.

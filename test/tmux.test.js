@@ -157,8 +157,13 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     // shape rather than the shape (#891/#894, three times).
     const os = require('node:os');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dead-tmux-'));
+    // The shim leaves a marker, because `answered: true` is ALSO what a machine
+    // with no `tmux` at all produces — so without proof the shim executed, this
+    // guard cannot tell "tmux replied with exit 1" from "the fixture never ran",
+    // which is the vacuousness it was rewritten to escape.
+    const ran = path.join(binDir, 'ran');
     fs.writeFileSync(path.join(binDir, 'tmux'),
-      '#!/bin/sh\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n',
+      `#!/bin/sh\ntouch "${ran}"\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n`,
       { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
@@ -172,6 +177,8 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
       // not have.
       const verdict = await tmux.createSessionNameSnapshot({ timeout: 20000 }).get();
 
+      assert.ok(fs.existsSync(ran),
+        'the shim must actually have run — otherwise this asserts nothing about a tmux that replied');
       assert.equal(verdict.names.size, 0);
       assert.equal(verdict.answered, true,
         'tmux ran and told us there is nothing live — that is an answer');
