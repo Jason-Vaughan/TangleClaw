@@ -272,6 +272,26 @@ describe('git', () => {
       assert.equal(info.dirty, null, 'and it must never render as clean');
       assert.deepEqual(info.incomplete, ['dirty'],
         'exactly one field was unestablished, and it is named');
+      // WHY it went short travels with the reading, not only into the log. The
+      // dashboard could show that dirtiness was unknown but never that this
+      // repository is broken rather than merely slow — and only one of those is
+      // something an operator can act on (#885).
+      //
+      // THE MUTATION THIS CATCHES: computing `cause` for the log and not
+      // returning it, which is what shipped: the field existed, was correct, and
+      // reached nothing that renders.
+      assert.equal(info.cause, 'git-refused-to-read-repository');
+    });
+
+    it('carries no cause when nothing went short', () => {
+      // `'complete'` is an internal sentinel, and a consumer testing `cause` for
+      // truthiness must not be handed one when the read was fine.
+      const dir = repo('cause-none', ['echo a > a.txt', 'git add a.txt', 'git commit -qm s']);
+
+      const info = git._fetchInfo(dir);
+
+      assert.deepEqual(info.incomplete, []);
+      assert.equal(info.cause, null, 'null, not the string "complete"');
     });
 
     it('names WHICH failure it hit, so the fixable one is distinguishable', () => {

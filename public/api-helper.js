@@ -1007,6 +1007,300 @@
     return available.map((e) => e.id).sort()[0] || '';
   }
 
+  // ── Degraded reads: one internal shape for every "we could not establish it" ──
+  //
+  // The projects payload carries SIX representations of a read that did not
+  // answer, each shaped for its own question: `session.active: null` with
+  // `incomplete`/`cause`, `git.dirty: null` with `incomplete`/`cause`, a
+  // project's `unreadable`/`unreadableHint`/`unreadableCode` trio, and the
+  // list-level `scan` block. They differ in the payload because they answer
+  // different questions, and flattening them there would lose that.
+  //
+  // Here the job is the opposite. Everything below reduces to ONE record —
+  // `{known, why, remedy}` — so the dashboard speaks about a wedged tmux server
+  // and an unreadable folder in the same voice, and a seventh source added later
+  // joins in one place instead of growing a seventh render path.
+  //
+  // TWO RETURN CONVENTIONS, deliberately. `tcSessionRead` and `tcGitRead` always
+  // return a record, because their caller is already rendering that thing and
+  // only needs to know whether to qualify it. `tcScanNotice` and
+  // `tcUnreadableNotice` return NULL when nothing is wrong, because their caller
+  // renders nothing at all in that case — a notice row and a badge that do not
+  // exist. Hence `if (!read.known)` at two render sites and `if (notice)` at the
+  // other two. Sources that extend the record spread it rather than re-listing
+  // its fields, so a field added here reaches all four.
+
+  /**
+   * Build the one internal degraded-read record.
+   *
+   * A constructor rather than an object literal at each site, so the shape
+   * cannot drift between the four sources that produce it.
+   *
+   * @param {boolean} known - Whether the read established its answer.
+   * @param {string|null} [why] - One sentence for a human, or null when known.
+   * @param {string|null} [remedy] - What the operator can do, where anything
+   *   honest can be said. Null is a legitimate answer: a truncated walk has no
+   *   remedy because nothing is wrong.
+   * @returns {{known: boolean, why: string|null, remedy: string|null}}
+   */
+  function tcDegradedRead(known, why, remedy) {
+    return { known: !!known, why: why || null, remedy: remedy || null };
+  }
+
+  // Prose for the causes the SERVER does not already write a sentence for.
+  // `scan` and the per-project trio arrive with their own `reason`/`hint`
+  // authored at the failure site, which is more specific than anything a
+  // renderer could infer — those are used verbatim. Only session liveness and
+  // git carry a bare `cause` token, so only those are translated here.
+  // Null-prototype, here and in the three tables below: every one of them is
+  // keyed by a value that arrives in a JSON payload, and a plain object would
+  // answer `constructor` or `toString` with an inherited member — which then
+  // gets interpolated into a sentence an operator reads.
+  const TC_CAUSE_TEXT = Object.assign(Object.create(null), {
+    'read-timed-out': 'the read was stopped by TangleClaw after it stopped responding',
+    'git-refused-to-read-repository': 'git refused to read this repository',
+    'git-status-unparsed': 'git answered in a form TangleClaw could not read'
+  });
+
+  /**
+   * Turn a bare `cause` token into a sentence.
+   *
+   * Unknown tokens degrade to a generic sentence rather than being echoed raw:
+   * a token is an internal vocabulary item and reads as a defect when it
+   * reaches an operator. Returning null instead would be worse — it would drop
+   * the only signal that anything went short.
+   *
+   * @param {string|null} cause - `session.cause` or `git.cause`.
+   * @returns {string} A sentence, never empty.
+   */
+  function tcCauseText(cause) {
+    return TC_CAUSE_TEXT[cause] || 'the read did not complete';
+  }
+
+  // What each unestablished git field is, in words. `incomplete` carries the
+  // payload's own field names — `dirty`, `latestTag` — and printing those at an
+  // operator is the same defect as printing a cause token: it reads as a leak,
+  // and "dirty" in particular means nothing to someone who did not write it.
+  // Every name `lib/git.js` can push is covered here.
+  const TC_GIT_FIELD_TEXT = Object.assign(Object.create(null), {
+    dirty: 'whether there are uncommitted changes',
+    branch: 'the current branch',
+    lastCommit: 'the last commit',
+    lastCommitAge: 'how long ago the last commit was',
+    latestTag: 'the latest tag'
+  });
+
+  /**
+   * Name the unestablished git fields in words, as a readable list.
+   *
+   * An unrecognised field falls back to its raw name rather than being dropped:
+   * a field TangleClaw could not read must still be reported, and a new name
+   * appearing here is a prompt to add it above, not a reason to say nothing.
+   *
+   * @param {string[]} fields - `git.incomplete`.
+   * @returns {string} e.g. "whether there are uncommitted changes and the latest tag".
+   */
+  function tcGitFieldText(fields) {
+    const words = fields.map((f) => TC_GIT_FIELD_TEXT[f] || f);
+    if (words.length <= 1) return words[0] || 'part of this repository';
+    return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+  }
+
+  /**
+   * Capitalise a sentence for display.
+   *
+   * The server authors its hints to follow a label in a log line, so they begin
+   * lower-case. Rendered as a standalone remedy — the one sentence a stranded
+   * operator reads — that looks like a truncated message. Only the first letter
+   * is touched; the wording is the server's and stays exactly as written.
+   *
+   * @param {string|null} text - Sentence to present.
+   * @returns {string|null} The same text, first letter capitalised.
+   */
+  function tcSentence(text) {
+    if (!text) return null;
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  /**
+   * Classify a project's session liveness.
+   *
+   * Three outcomes where the card used to draw two. `active === null` is the
+   * unknown — it mirrors `git.dirty: null`, and it is falsy so every consumer
+   * that has not learned about this state behaves exactly as before.
+   *
+   * An ABSENT session row is `'none'`, not `'unknown'`: nothing was read and
+   * nothing failed, the project simply has no session. Collapsing that into
+   * unknown would mark every idle project on the dashboard as degraded.
+   *
+   * @param {object|null} project - An enriched project from `GET /api/projects`.
+   * @returns {'live'|'none'|'unknown'}
+   */
+  function tcSessionLiveness(project) {
+    const session = project && project.session;
+    if (!session) return 'none';
+    if (session.active === true) return 'live';
+    if (session.active === null) return 'unknown';
+    return 'none';
+  }
+
+  /**
+   * The degraded-read record for a project's session liveness.
+   *
+   * The remedy is specific to tmux and is NOT taken from any shared table: a
+   * `read-timed-out` here means the tmux server stopped answering (the PTY
+   * exhaustion this dashboard has hit repeatedly), which has nothing to do with
+   * the filesystem permission that the same token means for a directory scan.
+   * One vocabulary of causes, deliberately not one vocabulary of remedies.
+   *
+   * @param {object|null} project - An enriched project.
+   * @returns {{known: boolean, why: string|null, remedy: string|null}}
+   */
+  function tcSessionRead(project) {
+    if (tcSessionLiveness(project) !== 'unknown') return tcDegradedRead(true);
+    const session = project.session;
+    return tcDegradedRead(
+      false,
+      `Whether this session is still running could not be established — ${tcCauseText(session.cause)}.`,
+      'The tmux server is not answering. Once it responds this clears on its own; '
+        + '`tmux kill-server` clears a wedged one, ending every session on this machine.'
+    );
+  }
+
+  /**
+   * Classify a repository's dirty state.
+   *
+   * Returns null when there is no repository at all, so a plain directory never
+   * renders as an unknown. (The build plan named three values; the null is a
+   * deliberate addition — without it every non-repo card would grow a `?`.)
+   *
+   * @param {object|null} git - `project.git`, or null when not a repository.
+   * @returns {'clean'|'dirty'|'unknown'|null}
+   */
+  function tcGitDirtyState(git) {
+    if (!git) return null;
+    if (git.dirty === null || git.dirty === undefined) return 'unknown';
+    return git.dirty ? 'dirty' : 'clean';
+  }
+
+  /**
+   * The degraded-read record for a repository reading.
+   *
+   * Reports unknown when the read went short in ANY field, not only `dirty` —
+   * `incomplete` is the authoritative list and a branch or tag that could not be
+   * read is just as unestablished as a working-tree state.
+   *
+   * @param {object|null} git - `project.git`.
+   * @returns {{known: boolean, why: string|null, remedy: string|null}}
+   */
+  function tcGitRead(git) {
+    const incomplete = (git && Array.isArray(git.incomplete)) ? git.incomplete : [];
+    if (!git || incomplete.length === 0) return tcDegradedRead(true);
+    return tcDegradedRead(
+      false,
+      `Could not establish ${tcGitFieldText(incomplete)} — ${tcCauseText(git.cause)}.`,
+      git.cause === 'read-timed-out'
+        ? 'A large or slow repository can exceed the time TangleClaw allows one reading. '
+          + 'It retries on the next poll.'
+        : null
+    );
+  }
+
+  // What a renderer can honestly advise when the server supplied no hint.
+  // Deliberately sparse. The server attaches the Full Disk Access remedy only to
+  // the failure shape it fits, and inventing one for the rest would reintroduce
+  // exactly the misdiagnosis this whole area exists to remove — telling someone
+  // to change a permission for a directory that answered perfectly well.
+  const TC_CODE_REMEDY = Object.assign(Object.create(null), {
+    DIR_MISSING: 'Create the directory, or point TangleClaw at a different one in Settings.',
+    // The directory is there and this server may not read it. It is the one
+    // failure whose cause IS known and whose remedy is concrete, so leaving it
+    // without advice — while the vaguer catch-all below gets some — was exactly
+    // backwards. `lib/dir-scanner-child.js` reports it for a project's own
+    // directory and attaches no hint of its own.
+    EACCES: 'TangleClaw is not allowed to read this folder. Check its permissions, or grant '
+      + 'node Full Disk Access if it sits under ~/Documents, ~/Desktop or ~/Downloads.',
+    // The catch-all: ENOTDIR, EIO and anything else. Names no specific cause,
+    // because asserting one here would be a guess.
+    SCAN_FAILED: 'Check that the directory still exists and that TangleClaw can read it.'
+  });
+
+  // Codes whose meaning includes "and nothing is retrying it right now". Kept
+  // separate from the remedy above ON PURPOSE: a remembered refusal still earns
+  // the Full Disk Access advice the server attached, because the condition it
+  // describes is unchanged — the backoff is an additional fact, not a
+  // replacement for the remedy, and deriving either from the other is the defect
+  // three reviewers found independently.
+  const TC_CODE_NOT_RETRYING = Object.assign(Object.create(null), {
+    SCAN_CACHED: 'This is a remembered result — the directory is not being retried right now.'
+  });
+
+  /**
+   * The notice the ROOT panel shows when the projects list is short.
+   *
+   * Returns null when the list is complete, so the caller renders nothing
+   * without testing fields itself.
+   *
+   * `kind` separates the two opposite reasons a list can be short. A truncated
+   * walk is `'info'`: the directory answered fine and is merely bigger than one
+   * scan's budget, so drawing it as a fault — and especially attaching a
+   * permissions remedy to it — is the misdiagnosis this work exists to remove.
+   * Everything else is `'warn'`.
+   *
+   * @param {object|null} scan - The `scan` block from `GET /api/projects`.
+   * @returns {{known: false, why: string, remedy: string|null, kind: 'warn'|'info',
+   *   listed: number|null}|null} Null when the list is complete.
+   */
+  function tcScanNotice(scan) {
+    if (!scan || scan.complete !== false) return null;
+    const code = scan.code || null;
+    const notRetrying = TC_CODE_NOT_RETRYING[code] || null;
+    const why = [
+      scan.reason || 'The projects directory could not be fully read, so this list may be short.',
+      notRetrying
+    ].filter(Boolean).join(' ');
+    // Spread rather than re-listing the fields: a field added to the shared
+    // record must reach this source too, and copying `known`/`why`/`remedy` by
+    // hand is exactly how it would silently not.
+    return {
+      ...tcDegradedRead(false, why, tcSentence(scan.hint) || TC_CODE_REMEDY[code] || null),
+      kind: code === 'SCAN_TRUNCATED' ? 'info' : 'warn',
+      listed: Number.isFinite(scan.listed) ? scan.listed : null
+    };
+  }
+
+  /**
+   * The degraded-read record for a project whose own directory did not answer.
+   *
+   * Returns null for a readable project so the caller renders no badge.
+   *
+   * @param {object|null} project - An enriched project carrying the
+   *   `unreadable` / `unreadableHint` / `unreadableCode` trio.
+   * @returns {{known: false, why: string, remedy: string|null}|null}
+   */
+  function tcUnreadableNotice(project) {
+    if (!project || !project.unreadable) return null;
+    const code = project.unreadableCode || null;
+    const notRetrying = TC_CODE_NOT_RETRYING[code] || null;
+    const why = [
+      `This project's folder could not be read — ${project.unreadable}.`,
+      'Its git, engine and version detail are missing rather than absent.',
+      notRetrying
+    ].filter(Boolean).join(' ');
+    return tcDegradedRead(false, why,
+      tcSentence(project.unreadableHint) || TC_CODE_REMEDY[code] || null);
+  }
+
+  // Only the classifiers the render sites actually call are exported.
+  // `tcDegradedRead`, `tcCauseText`, `tcGitFieldText` and `tcSentence` are
+  // internal to the four below and reached by closure — exporting them would
+  // enlarge the global surface that every page carries for no consumer.
+  global.tcSessionLiveness = tcSessionLiveness;
+  global.tcSessionRead = tcSessionRead;
+  global.tcGitDirtyState = tcGitDirtyState;
+  global.tcGitRead = tcGitRead;
+  global.tcScanNotice = tcScanNotice;
+  global.tcUnreadableNotice = tcUnreadableNotice;
   global.tcBuildEngineOptions = tcBuildEngineOptions;
   global.tcResolvePickerEngine = tcResolvePickerEngine;
   global.tcEnableLocalSelectionOverride = tcEnableLocalSelectionOverride;

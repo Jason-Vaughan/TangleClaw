@@ -26,6 +26,139 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-13: the projects list says whether it is the whole list (#885 chunk 02)
+
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=02 | status=shipped -->
+
+**Why:** the list degraded honestly in the log and silently in the product. `listAllProjects`
+returned a bare array, so a directory that could not be read produced a well-formed `200` that was
+indistinguishable from having no unregistered folders — the half of #883's *"it is invisible and it
+lies"* still standing.
+
+**What changed:** `listAllProjects` returns `{ projects, scan }` and the route passes both through.
+`scan` is built by one helper for the healthy and degraded paths alike, so the two cannot drift into
+different shapes, and `complete` is DERIVED from whether a failure was given rather than passed
+alongside it — a caller cannot report a failure and a complete list at once. Six codes:
+`DIR_MISSING`, `SCAN_TIMEOUT`, `SCAN_CACHED`, `SCAN_ABORTED`, `SCAN_FAILED`, `SCAN_TRUNCATED`, reusing
+the vocabulary `lib/project-facts.js` already puts on a single project's `unreadableCode` rather than
+inventing a second taxonomy for the same conditions one scope up.
+
+**The truncated walk is the opposite failure and is treated as one.** It means the directory answered
+fine and simply has more folders than one scan can check — nothing is broken, nothing to remedy — so
+it carries no hint. Guarded by a mutation that routes it through `_scanFailureHint`, which produces
+the Full Disk Access misdiagnosis this whole area exists to remove.
+
+`git.getInfo` now returns the `cause` it already computed for its log, mapping the internal
+`'complete'` sentinel to `null` so a consumer testing for truthiness is not handed a cause when
+nothing went wrong. It reaches the payload unchanged — `dir-scanner-child.js` returns the whole
+object over IPC.
+
+**Verified by mutation:** truncation routed through the permission hint; the healthy `scan` returned
+on the failure path; `cause` computed and not returned (the state that shipped); and the route
+dropping `scan` on its way out — each applied and watched red before its guard was kept. The route
+guard exists because the field crossing the boundary is the claim: `scan` existing inside
+`listAllProjects` renders nothing.
+
+**What the review caught, and the pattern in it.** Three reviewers found the same defect
+independently from three different goals: `api-contract.md` said a remembered refusal
+"deliberately" carries no remedy while the code gives it one — and that document is what chunk 03's
+renderer would have been written from, so the error was one step from becoming behavior. The
+underlying rule is now stated rather than implied: **the code and the hint are separate decisions**.
+`SCAN_CACHED` means nothing is being retried right now AND the directory still is not answering, so
+it earns the remedy while staying distinguishable from a fresh timeout.
+
+Deriving one from the other is also what made the duplicate mapping dangerous: `lib/projects.js` and
+`lib/project-facts.js` each mapped the scanner's error flags to codes, with DIFFERENT precedence,
+agreeing only because the flags are set almost exclusively today. The one overlap that already
+exists — a cached refusal carries `tcTimedOut` too — is exactly where the orders disagreed. There is
+now one `failureCode` in `lib/dir-scanner.js`, which owns the flags, and its ordering is documented
+as a contract rather than left as an implementation detail.
+
+**The new launch refusal was reaching the browser as `500 INTERNAL_ERROR`** — the route classifies
+failures by matching substrings of the message, and a refusal written for honesty was being reported
+as a server fault that changed something. It carries a `code` now (`LIVENESS_UNKNOWN` → **503**),
+because a status that depends on the wording of a sentence changes when the sentence improves; the
+same lesson `scanDirectoryForProjects` recorded when a reworded message silently removed a button.
+It also logs, since a refusal visible only in one HTTP response leaves no trace of how often the
+wedge happens.
+
+**Two guards were measuring less than they claimed** and were rewritten: the laziness check asserted
+elapsed wall-clock against the stall it was detecting, so a busy machine and the defect looked
+identical — it counts spawns now; and the "no server running is an ANSWER" check used a hand-built
+error, where the whole subject is telling one real `execFile` failure shape from another. Driving it
+with a real executable exposed a second problem in the guard itself: at a 2000ms cap it passed alone
+and failed under a four-file parallel run, which is precisely the flake shape a guard about timeouts
+must not have.
+
+**Classification:** feature
+
+## 2026-08-13: a liveness read that could not be established is unknown, not absent (#900)
+
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=01 | status=shipped -->
+
+**Why:** session liveness had two outcomes and three real states — tmux confirmed the pane, tmux said
+the pane is gone, and tmux never replied. The third was folded into the second, so a wedged tmux
+server did not degrade the fleet view, it lied to it: every running session vanished and the operator
+was told nothing was running on a machine where everything was. #891 settled the rule for exactly
+this shape in `git.getInfo` (`dirty` became `null` rather than `false`); liveness never got it.
+
+**What changed:** `tmux._readSessionNames` resolves a verdict — `{ names, answered, cause }` — rather
+than a bare set, so a caller cannot read "this name is not in the set" without also being told
+whether tmux answered. `enrichProject` gained the third branch: an active or wrapping session the
+snapshot could not confirm is reported with `active: null`, `incomplete: ['active']` and the cause,
+instead of being dropped. `active` is falsy, so all seven existing consumers behave exactly as
+before; it is not `false`, so the renderer #885 adds can tell unknown from dead.
+
+**The line drawn, and why it is not "every failure is unknown".** Only a read stopped by our own
+timeout counts. A tmux that replied — the exit-1 `no server running` of a machine with no sessions,
+or a missing binary — told us something. Widening unknown to every error would invert the bug: after
+a reboot every stale `active` row would sit at unknown forever, uncleaned, on every machine where
+tmux is not running. `git` draws the same line with `weStopped`.
+
+**Verified by mutation, not by assertion count.** Four named mutations applied and each watched go
+red before the guard was kept: the timeout path claiming `answered: true` (the shipped behaviour,
+red in both suites); every error classified unknown (red on the "no server running" guard); the
+unanswered branch deleted (red on the unknown-session guards); and the snapshot resolved eagerly
+(red on both laziness guards, #890's and this chunk's — an eager read now costs a stall, not just a
+spawn). The timeout is driven by a real stalling `tmux` on PATH rather than a stubbed error, because
+this repo has shipped three wrong hand-written models of that error shape (#891/#894).
+
+**What the cumulative review caught, and it was the more consequential half.** The plan carved
+`hasSession` out of scope on the grounds that its callers kill, adopt and type into a session, so a
+conservative `false` suits them. That carve-out did not fit two of them, which do not act on the
+answer but WRITE it: `getSessionStatus` marked a session `crashed` on a failed probe — so one poll
+from an open session page during a wedge persisted the lie, and unlike the display the row does not
+recover when tmux does — and `launchSession` cleared the same record before starting a second
+session over the first. `tmux.probeSession(name)` → `{live, answered, cause}` now serves both, with
+`hasSession` as its boolean face for the callers that really do act. The launch path refuses
+honestly instead: under a wedge that launch fails anyway, on the same server that would not answer.
+The kill, send-keys, adopt and capture sites were swept and left — each acts on the pane
+immediately, so a failed probe costs a failed action, not a false record. **That sweep
+under-enumerated the family THREE TIMES, and that is the finding, not any one site.** Each
+successive version concluded "the rest only act on the answer" and each was wrong, so the
+enumeration RULE now replaces the conclusion: ask whether a caller's `false` branch WRITES
+anything — a row, a ledger entry, a commit, a teardown — never what the call site appears to
+intend. Three do. Two reach `autoCompleteWrap`, which writes the wrap complete, tears down the
+listener and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository, on a
+fact nobody established. The third is `_deferEngineInit`'s prime-paste guard, which writes a
+durable `sessionRuleDeliveries` row reading `tmux session ended before the prime was pasted` for
+an ending nobody observed. All three are on #908 rather than folded in, because declining to
+auto-complete interacts with #105's stuck-wrapping recovery and the prime-paste case has a real
+choice behind it (paste anyway, or skip and record honestly) — both need guarding, not assuming.
+
+That required flagging `_exec`'s timeout throw, which REPLACES the error `wasTimedOut` reads — so
+the distinction it exists to preserve was being destroyed one layer below the code that needs it.
+
+**Also from the review:** the CHANGELOG claimed the session "stays on the card", which `active: null`
+does not produce until #885 renders it; `api-contract.md` described the live payload as "tmux
+confirmed the pane" when a paneless webui session gets it without tmux being asked; and the wrapping
+branch's honest negative had no guard, so widening its unknown test would have passed the suite.
+Three further defects of the same family were filed rather than absorbed: #905 (`getMasterStatus`),
+#906 (a wedged tmux logs every ten seconds forever) and #907 (`idle`/`lastOutputAge` still report a
+plausible default when nothing was read).
+
+**Classification:** fix
+
 ## 2026-08-12: one repository read costs three git invocations, not seven (#895)
 
 <!-- prawduct: type=fix | scope=git-spawn-collapse-895 | chunks=01 | status=shipped -->
@@ -4124,5 +4257,241 @@ be made explicitly rather than passed over are made: the `execSync` pair above i
 `PROJECT_FACTS_TIMEOUT_MS` — 5s bounding roughly 35s of per-spawn-capped git work, so a large or
 cold repository is killed and handed a Full Disk Access remedy for a permission that was never the
 problem — is **#891**.
+
+**Classification:** fix
+
+## 2026-08-13: the dashboard stops stating facts it does not have (#885, #900)
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
+
+**What changed.** The payload had carried three outcomes per read — yes, no, and *we could not
+establish it* — since #891, #900 and #885's payload half. Nothing rendered the third, so the
+dashboard drew it as the second: a wedged tmux server made every running session disappear, an
+unreadable folder shortened the list silently, and a repository whose working tree could not be
+read was drawn as clean. Four seams now render, and a healthy dashboard is unchanged.
+
+**The design decision that mattered.** "Reduce six payload shapes to one `{known, why, remedy}`
+record" reads as an invitation to build one code→remedy table. That would be wrong, and the
+rendering is where it shows: `read-timed-out` means a **wedged tmux server** for a session and a
+**protected folder** for a directory scan. A shared table tells an operator to grant Full Disk
+Access because tmux hung — the exact misdiagnosis `_scanFailureHint` exists to prevent. So causes
+normalise and remedies do not: each source supplies its own, preferring the sentence the server
+authored at the failure site over anything a renderer could infer.
+
+**No `sw.js` change, and that is deliberate.** The standing rule is that a new `public/*.js` must
+join `STATIC_ASSETS` with a `CACHE_NAME` bump. The rule was avoided rather than followed, by
+putting the helpers in `api-helper.js` — already `NETWORK_FIRST_PATHS`, already loaded before
+`ui.js`. Two reasons: bumping `CACHE_NAME` on a feature branch behind the basic_auth gate is what
+locked the operator out of Chrome on 2026-07-28; and a cache-first pure-helper sibling of a
+network-first script is precisely the version skew the `wrap-drawer.js` comment documents.
+
+**Three defects found by RENDERING the output, not by testing it.** The guards were green and the
+prose was wrong: `incomplete` was printed raw, so the operator read *"Could not establish dirty"*;
+the amber attention border was applied to the truncated-scan case that the same chunk argues is not
+a fault; and `listed` was computed and never drawn. Each got a translation layer, a narrowed
+condition, and a render site respectively — and each has a mutation that turns it red.
+
+**Two guards were vacuous and were replaced with behaviour.** A source check on the ROOT count
+survived `countLabel = false`, because the string it looked for still existed in the dead branch.
+A check for `git-unknown` survived deleting the marker, because the class `badge-git-unknown`
+contains that substring. Pure renderers are now lifted out of `ui.js` and executed against real
+inputs. Separately, the mutation harness itself was wrong twice — it reported "did not apply" for
+patterns appearing in more than one renderer (perl replaces the first match) and silently failed to
+apply several mutations to shell-quoting errors. **A mutation that never applied must never be
+reported as caught**; the harness now compares occurrence counts and passes patterns through the
+environment.
+
+**Requirement recorded rather than absorbed:** `toggleCardDetail` reaches for the DOM, so its
+third state could only be pinned by source-matching — and that guard survived its own mutation.
+`renderSessionDetail` and `renderGitDetail` were extracted to make the behaviour testable. The
+extraction is the fix; the guard was the symptom.
+
+**Classification:** feature
+
+## 2026-08-13: an empty list is #885's worst case, not an exemption from it (#885, follow-up)
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
+
+Found by self-review while the cumulative Critic ran, in the chunk's own code. `renderProjects`
+early-returned on `state.projects.length === 0` **before** rendering the ROOT panel — so on a
+machine with nothing registered yet, whose projects directory could not be read, the dashboard
+answered *"No projects yet. Create your first project."* with no notice anywhere on the page.
+
+That is the defect the whole chunk exists to remove, in its most confident form: not a silently
+shorter list, but a definite and actionable instruction derived from a read that never succeeded.
+It survived the first pass because every guard was written against a populated dashboard.
+
+The ROOT panel now renders on every path — populated, empty, and filtered-to-nothing — and the
+empty state's wording is conditional on whether the scan actually completed. A genuinely empty
+machine still gets the original invitation, which is the case that made the early return look
+harmless.
+
+**The generalisable bit:** a rendering fix that only ever runs against a populated fixture leaves
+the empty and error paths exactly as they were, and those are the paths the fix is *for*.
+
+**Classification:** fix
+
+## 2026-08-13: Critic round on the render half — the surfaces that still stated a fact (#885)
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
+
+Cumulative review of `7aa3d64...2e57100`: 0 blocking, 14 warnings, 8 notes across three reviewers.
+Three findings were stale — they read the tree mid-mutation-run, when `api-helper.js` was
+transiently broken and the artifact edits were on disk but uncommitted. The rest were real, and
+two of them are the same defect this whole bundle exists to remove, on surfaces the plan's own
+list did not name:
+
+**The header contradicted the cards.** `renderSessionCount` still read `p.session && p.session.active`,
+so during the exact tmux wedge the cards were drawing `?` for, the most prominent number on the
+page said "0 active sessions". It counts the three outcomes separately now. The plan enumerated
+card, panel and detail — the header was not on the list, and "the plan did not say to" is not a
+reason for a surface to keep asserting a number nobody established.
+
+**The most fixable failure was the one with no advice.** `lib/dir-scanner-child.js` reports a
+project directory that is THERE but refused as `EACCES` with no hint of its own, and the renderer's
+fallback table covered only `DIR_MISSING` and `SCAN_FAILED` — so the one failure whose cause is
+known and whose remedy is concrete got a reason and no next step, while the vaguer catch-all got
+advice. Backwards, and the written contract's list of hint-less codes omitted `EACCES` too, so the
+next person extending it would not have noticed either.
+
+**Two cards in one list gave different answers to the same failure.** `lib/dir-scanner-child.js`
+builds its own `git` object for unregistered entries — a second producer of the same contract — and
+projected `{branch, dirty, incomplete}`, dropping `cause`. A registered project named the cause and
+offered the slow-repository remedy; an unregistered one fell back to "the read did not complete"
+with none.
+
+**The duplication fix was reintroduced one badge over.** `renderGitBadge` was extracted precisely
+because a copy in each card renderer let a fix land in only one — and the unreadable badge was then
+copy-pasted into both. Now `renderUnreadableBadge`, with `degradedTooltip` for the join that
+appeared four times.
+
+**One guard is structural on purpose, and it is the exception that proves the rule.** Spreading the
+shared record versus re-listing its fields produces byte-identical output today; the entire value is
+what happens when the record grows a field later. No input distinguishes them, so no behavioural
+test can exist — the property is structural, so the guard is. Every other guard in this round was
+falsified by mutating the code it covers.
+
+**A guard's own fixture was wrong twice, both caught by running it.** The "every code gets a remedy"
+sweep first demanded a fallback for `SCAN_CACHED`, which can never arrive without a hint
+(`lib/project-facts.js` attaches one whenever `tcTimedOut || tcCached`); then, scraping `code: '...'`
+out of the child's source, it demanded one for `ENOTDIR` — a THROWN error that `failureCode` maps to
+`SCAN_FAILED` long before it could reach a card. It is now driven from the written contract's
+`unreadableCode` row, so a code documented without a remedy fails it, and a code that cannot reach
+the renderer does not.
+
+Recorded rather than fixed: `public/setup.js` still draws `dirty: null` as clean in the first-run
+wizard (**#909**), and `getSessionStatus`'s kept record means a wedge now logs an ERROR+WARN pair
+every poll — the same flood shape as **#906**, which was scoped to the dashboard poll only and has
+been widened to name both emitters.
+
+**Classification:** fix
+
+## 2026-08-13: a wrap that could not be observed is not completed, and does not commit (#908)
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
+
+**The defect.** `autoCompleteWrap` writes the wrap complete, tears down the session's Medusa
+listener, and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository. Two
+sites reached it from `!tmux.hasSession(...)`, which answers false for a pane that is gone AND for a
+tmux server too wedged to reply. So a wedge could end a running wrap and commit a working tree on a
+fact nobody established, with no recovery when tmux returned. The session page polls
+`getSessionStatus` continuously *during* a wrap, so the poll most likely to meet the wedge is
+precisely the one running while a wrap is in flight.
+
+**Why this is a restructure and not one extra condition — the part worth keeping.** The obvious fix
+is "if the probe did not answer, decline". That reintroduces #105. The age-based stale-wrapping
+recovery — the thing that guarantees a wrapping row can never brick a project — was nested INSIDE
+the liveness branch, so a probe that never answered skipped the recovery too. Declining would have
+traded a false commit for a row stuck `wrapping` until tmux came back.
+
+**Age is now tested before liveness, and that ordering is the fix.** Age is evidence this process
+owns: a wrap that began three hours ago is an orphan whether or not tmux will discuss it. The four
+outcomes are now explicit — older than the threshold recovers on age without probing at all;
+younger splits on an ANSWERED probe into live (refuse, unchanged) and dead (complete, unchanged);
+and an unanswered probe changes nothing, refusing on the launch path with the same
+`LIVENESS_UNKNOWN` code chunk 01 introduced for the active-session case a few lines above.
+
+**The read path cannot refuse, so it reports.** `getSessionStatus` returns `wrapping: true` with
+`incomplete: ['live']` and the cause, rather than finalizing. `incomplete`/`cause` are present on
+the healthy wrapping answer too (empty and null), so a consumer reads the value instead of probing
+for the field.
+
+**Two harness defects, both caught by the guards rather than by review.**
+
+1. **The commit traps were inert.** Every guard booby-trapped `git.commit` so a regression would
+   fail loudly instead of writing history — but `_autoCommitIfDirty` returns early unless the
+   project path is a git repository, and the fixture directory is not one. `git.commit` was
+   therefore UNREACHABLE and every trap passed regardless of what the code did. Only the
+   positive-direction test ("an observed-dead wrap still commits") failed and exposed it. The
+   helper now stubs `isGitRepo` to arm the trap, and that positive assertion is retained
+   specifically to prove the trap can fire.
+2. **The launch path's answered-dead branch had no guard at all.** Widening the refusal from
+   `!probe.answered` to `!probe.live` survived the entire suite — a mutation that would refuse
+   every launch after a genuinely finished wrap, bricking the project for an hour. Found by
+   mutation, fixed by adding the missing test.
+
+**Two pre-existing tests were re-pointed, not relaxed.** `#91`'s wrapping test and `#105`'s
+recent-row test both stubbed `tmux.hasSession` to mean "alive"; the wrapping path now asks
+`probeSession`, so their stub no longer bit. Both now stub `probeSession` with an ANSWERED liveness
+of true — the same meaning, at the seam that moved. The `#105` suite also gained save/restore for
+`probeSession`, which it had not needed before.
+
+**Classification:** fix
+
+## 2026-08-13: the unknown wrap status reported idle as a fact (#908, self-review)
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
+
+Caught while deep-scrubbing the change above, before any review saw it. The new
+"could not observe the pane" branch of `getSessionStatus` returned `idle: false` and
+`incomplete: ['live']`.
+
+Both are wrong in the same way the change exists to prevent:
+
+- **`idle: false` is a plausible default** — in the one change whose subject is not shipping
+  plausible defaults. Worse than cosmetic: `public/session.js` reads `idle` as its wrap-completion
+  signal (`data.wrapping && data.idle`), so a definite "not idle" is a wrong answer to the question
+  the page is actually asking. It is now `null`, which is falsy — every existing consumer behaves
+  exactly as before, and both call sites are truthiness tests, so nothing changes behavior.
+- **`incomplete: ['live']` named a field the response does not return.** The convention
+  `session.active` and `git.dirty` established is that `incomplete` names the RETURNED fields that
+  could not be established. Reaching the pane is what produces `idle` and `lastOutputAge`, so those
+  two are what went unestablished; it is now `['idle', 'lastOutputAge']`. That the LIVENESS is
+  unknown is carried by a non-null `cause` on a wrapping answer.
+
+**Classification:** fix
+
+## 2026-08-13: Critic round on #908 — the outcome the reorder changed, and the census member that survived
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
+
+Cumulative review of `7aa3d64...f338a42`: 0 blocking, 8 warnings, 9 notes across three reviewers.
+Two findings mattered, and both are about something the first cut did NOT intend.
+
+**R-1 — the reorder silently changed an outcome that had nothing to do with the bug.** Hoisting the
+age test above the liveness test fixed the unanswered case, but it also turned "aged-out row whose
+pane tmux CONFIRMS is gone" from `autoCompleteWrap` into a plain kill — dropping the wrap summary,
+the Medusa teardown and the auto-commit, for a row where tmux had actually answered. The change-log
+called the young cases "unchanged" and never named this delta, and the #105 guard pinned the ORDER
+(`probed === 0`) rather than the outcome, so nothing caught it.
+
+The probe is now consulted on both paths, and the invariant is stated properly: **a probe may ADD
+an outcome, never withhold recovery.** An aged-out row with a confirmed-dead pane completes exactly
+as it always did; live or unestablished, it recovers on age. The guard was re-pointed from `probed
+=== 0` — an implementation detail that made a legitimate refinement look like a regression — to the
+outcome it actually cares about, and the restored behavior gained its own guard.
+
+**R-2/3/4/11/12 — the third census member.** All three reviewers found the same thing
+independently: #908's census names three sites, the first cut fixed two, and the third —
+`_deferEngineInit`'s prime-paste guard, writing a DURABLE ledger row saying `tmux session ended
+before the prime was pasted` on `!hasSession(...)` — survived with its survival recorded nowhere. A
+PR carrying `Fixes #908` would have closed the issue with a member still open, on a branch whose
+own recurring defect is a sweep stated more broadly than the search behind it. Now fixed: the skip
+still happens (the paste needs the server that just failed to answer), but the reason recorded is
+the one that was established.
+
+**Four pre-existing tests re-pointed, not relaxed** — two more in `test/sessions.test.js` and two in
+`test/session-rule-delivery.test.js`, all stubbing `tmux.hasSession` where the code now asks
+`probeSession`. Each stub keeps its original meaning: an ANSWERED liveness.
+
+**One unrelated flake observed, not caused here.** `test/dir-scanner.test.js`'s threadpool-leak
+guard (#883) failed once in a full parallel run and passed alone and on re-run. This branch touches
+no scanner code. It is the timing-sensitive shape the recorded learning warns about — a guard whose
+subject is a timeout must not have a tight cap, because a delayed fork under load is
+indistinguishable from the condition it exists to rule out.
 
 **Classification:** fix

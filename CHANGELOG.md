@@ -6,6 +6,64 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The projects list can now say it is incomplete, and why (#885).** When the projects directory
+  cannot be read, the list degrades to your registered projects and logs the reason. It always has —
+  the problem was that it did so **silently**: the browser got a well-formed list, and nothing
+  distinguished *"these are all your projects"* from *"these are the ones we could still see"*.
+  Unregistered folders simply were not there, which reads as having none.
+
+  `GET /api/projects` now answers with a `scan` block alongside the projects: which directory was
+  walked, whether the list is complete, a machine-readable code, one sentence for a human, and the
+  remedy where one fits. Six states are distinguished — the directory is not there at all, it did
+  not answer, it did not answer recently and is being backed off, the read was cancelled as
+  collateral for another directory's hang, it failed outright, or **it answered fine and simply has
+  more folders than one scan can check in time**.
+
+  That last one is the opposite failure and is deliberately not dressed as the same one: nothing is
+  broken, so it carries no remedy. Telling someone to grant Full Disk Access for a folder that
+  answered perfectly well is the misdiagnosis this whole area exists to remove.
+
+  A repository's git reading gained the same honesty: the reason a field could not be established
+  (`read-timed-out`, `git-refused-to-read-repository`, `git-status-unparsed`) now travels with the
+  reading instead of only reaching the log — so a repository that is *slow* stops being
+  indistinguishable from one that is *broken*, and only the second is something you can fix.
+
+  **The dashboard now draws all of it** — see the entry below.
+
+- **The dashboard stops stating facts it does not have (#885).** Every read behind the fleet view
+  has three outcomes — yes, no, and *we could not establish it* — and the dashboard drew the third
+  as the second. A wedged tmux server made every running session vanish; an unreadable folder made
+  projects vanish; a repository whose working tree could not be read was drawn as clean. Each of
+  those is a definite answer the server never gave.
+
+  Four seams now render:
+
+  - **The ROOT panel** gains a notice row whenever the list is short, carrying the reason and the
+    remedy as visible text rather than a tooltip — and the count stops saying *total*, because a
+    short list is not one. A directory that answered fine and is merely large is shown as
+    information, not a fault: different wording, different glyph, no remedy, and the panel does not
+    change colour.
+  - **A project whose own folder did not answer** gets a warning badge on its card, so the missing
+    git and engine detail has a stated reason instead of looking like a project that has none.
+  - **A session whose liveness could not be read** gets a distinct status dot carrying a glyph, not
+    a colour alone, and the card detail says *Unknown* with the cause instead of *No active
+    session*.
+  - **`git.dirty` that could not be established** renders as `?` rather than as the absence of the
+    dirty marker — which is exactly how a clean repository is drawn.
+
+  A remembered refusal now also says that nothing is being retried right now, *while keeping* its
+  remedy: the backoff is an additional fact, not a replacement for advice about a condition that
+  has not changed. And an ordinary read failure, which the server leaves without a remedy because
+  it cannot know the cause, gets one that names no cause.
+
+  Internal vocabulary stays internal: an operator is never shown `dirty` or `read-timed-out`.
+
+  The worst case of all is now covered too: a machine with nothing registered yet, whose projects
+  directory could not be read, used to answer **"No projects yet — create your first project."**
+  That is a definite, actionable and wrong claim, and it appeared with no notice at all because the
+  ROOT panel was skipped entirely on the empty path. It now says the list could not be built, and
+  points at the reason. A genuinely empty machine still gets the original invitation.
+
 - **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
   wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing
   creates `Projects`, and nothing in TangleClaw did either. So the first action of a brand-new
@@ -462,6 +520,60 @@ All notable changes to TangleClaw are documented in this file.
   `main`, which is why the structural half is keeping in-progress v5 work off `main` entirely.
 
 ### Fixed
+
+- **A tmux server that will not answer no longer reports every session as dead (#900).** Session
+  liveness had two outcomes and three real states: tmux confirmed the pane, tmux said the pane is
+  gone, and *tmux never replied*. The third was folded into the second, so a wedged tmux server did
+  not degrade the fleet view — it lied to it. Every running session silently disappeared, and the
+  operator was shown "nothing is running" for a machine where everything was, in exactly the state
+  (#94/#144/#380 — PTY exhaustion) where knowing what is still up matters most.
+
+  A liveness read that could not be established now says so. The session comes back with `active`
+  reported as `null` instead of being dropped from the payload — the same answer `git` gives for a
+  field its read could not establish (#891): unknown is its own state, not the negative one. The
+  dashboard draws that difference — a distinct status dot, an *Unknown* detail row, and an
+  "N unknown" clause in the header count — as described in the #885 entry above.
+
+  What changes for you today is what gets **written down**. Two paths recorded a session's death on
+  the strength of a probe that had failed rather than answered. A status poll from an open session
+  page marked a running session `crashed` during a wedge — permanently, since the row does not
+  return when tmux recovers — and pressing Launch cleared the same record before starting a second
+  session over the first. Both now require tmux to have actually said the pane is gone. A launch
+  that cannot establish it says so and changes nothing, rather than mangling the record and then
+  failing anyway on the same unresponsive server.
+
+  **Only a read our own timeout stopped counts as unknown**, and the asymmetry is deliberate. A tmux
+  that *replied* — including the ordinary "no server running" of a machine with no sessions at all —
+  told us something, and that something is that nothing is live. Widening unknown to every failure
+  would invert the bug rather than fix it: after a reboot, every stale session row would sit at
+  unknown forever on every machine where tmux simply is not running.
+
+  This is the half that stops the payload from stating a fact nobody established; #885, above,
+  is the half that draws it.
+
+- **A tmux server that will not answer can no longer end your wrap — or commit your repository
+  (#908).** Two paths decided a wrapping session was finished from a single question: *is the pane
+  there?* That question answers "no" both for a pane that has genuinely gone and for a tmux server
+  too wedged to reply, and the code could not tell the two apart. On the second, it wrote the wrap
+  as complete, tore down the session's listener, and ran a real `git commit` in your project — all
+  on a fact nobody had established. None of it came back when tmux recovered.
+
+  It now asks a question with three answers. A pane tmux *says* is gone still completes the wrap,
+  exactly as before. A pane tmux would not discuss leaves the wrap open, changes nothing, and — on
+  a launch — refuses with a message naming what could not be established rather than inventing a
+  reason.
+
+  **The recovery you already had still works, and making sure of that is why this is a restructure
+  rather than one extra check.** A stuck wrap is claimed on age after an hour, so a project can
+  never be bricked by one (#105). That recovery used to live *inside* the liveness question — so a
+  server that never answered skipped the recovery too, and simply declining would have traded a
+  false commit for a project stuck until tmux came back. Age is settled first now, because how long
+  a wrap has been running is something TangleClaw knows on its own: a wrap that began this morning
+  is an orphan whether or not tmux is willing to talk about it.
+
+  The deeper defect — that reading a session's status can finalize a wrap at all — is filed as
+  **#910** rather than fixed here, because changing *when* a wrap finalizes changes how the session
+  page detects completion, and that deserves its own verification.
 
 - **A brand-new project shows its real branch name instead of "unknown" (#895).** Reading a
   repository with no commits yet used `git rev-parse --abbrev-ref HEAD`, which fails outright over an

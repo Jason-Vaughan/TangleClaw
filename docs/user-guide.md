@@ -158,7 +158,9 @@ Global rules are stored at `~/.tangleclaw/global-rules.md`. On first load, this 
 
 ### Toolbar
 
-- **Session count**: Shows how many active sessions are running
+- **Session count**: Shows how many active sessions are running. If TangleClaw could not reach the
+  tmux server for some of them, it adds "· N unknown" rather than counting those as inactive — the
+  count never asserts a number it could not establish
 - **Filter**: Opens the search/filter panel
 - **+ New**: Opens the create project drawer
 
@@ -169,8 +171,15 @@ Projects are displayed as compact cards. Each card shows:
 - **Name** — the project directory name
 - **Version badge** — the project's current version (if available), shown as a subtle badge
 - **Engine badge** — which AI engine is selected (e.g., "Claude Code")
-- **Git info** — branch, dirty state, last commit age
-- **Session indicator** — a green breathing dot when a session is active
+- **Git info** — branch, dirty state, last commit age. A `?` after the branch name means the
+  working tree could not be read, which is **not** the same as clean — hover or tap the badge for
+  the reason
+- **Session indicator** — a green breathing dot when a session is active, nothing when there is no
+  session, and a `?` dot when TangleClaw could not reach tmux to find out. The three are
+  deliberately distinct: an unreadable state is never drawn as an absent one
+- **Unreadable badge** — a ⚠ marker when the project's own folder did not answer. Its git, engine
+  and version details are missing rather than absent, and the badge carries the reason and, where
+  there is one, the remedy
 - **Peek icon** — an eye icon to quickly peek at session output without entering the session wrapper
 - **Delete button** — a subtle "x" on the card (password required if configured)
 - **Launch** — tap the card or launch button to enter the session
@@ -195,7 +204,9 @@ Tap the delete button on a project card. If a `deletePassword` is configured, yo
 
 ### Attaching Existing Projects
 
-TangleClaw shows ALL directories in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
+TangleClaw shows every directory in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
+
+If the list is ever *short* — the folder could not be read, or it holds more directories than one scan can check in time — the ROOT panel says so, gives the reason and the remedy, and the count changes from "total" to "listed". A short list is never presented silently as a complete one.
 
 Tap **Attach** to register a directory as a TangleClaw project. This:
 - Reads any existing `.tangleclaw/project.json` for engine settings

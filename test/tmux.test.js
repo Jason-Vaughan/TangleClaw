@@ -18,7 +18,7 @@ describe('tmux — a timed-out command says so (#894)', () => {
     // very model that was wrong.
     const os = require('node:os');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-'));
-    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
     try {
@@ -31,6 +31,49 @@ describe('tmux — a timed-out command says so (#894)', () => {
       process.env.PATH = realPath;
       fs.rmSync(binDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('tmux — one session probe, two questions (#900)', () => {
+  it('reports that tmux never answered, where hasSession can only say "not live"', () => {
+    // A REAL stalling `tmux`, for the reason the file's other timeout guards use
+    // one: the behaviour begins with recognising a killed process, and this repo
+    // has shipped three wrong hand-written models of that error shape
+    // (#891/#894). It also covers a step a stub would skip entirely — `_exec`
+    // REPLACES the timeout error with one of its own, so the flag it puts on
+    // that replacement is the only thing `probeSession` has left to read.
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-probe-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const probe = tmux.probeSession('anything', { timeout: 300 });
+
+      // THE MUTATION THIS CATCHES: reporting `answered: true` for a killed
+      // probe. Every caller that RECORDS a death — `getSessionStatus` marking a
+      // session crashed, `launchSession` clearing one — would then write a fact
+      // nobody established, and the record does not recover when tmux does.
+      assert.equal(probe.answered, false);
+      assert.equal(probe.live, false);
+      assert.equal(probe.cause, 'read-timed-out');
+
+      assert.equal(tmux.hasSession('anything', { timeout: 300 }), false,
+        'the boolean form keeps its conservative answer for callers about to act');
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a plain "no such session" as an answer', () => {
+    // tmux is really on PATH here and really replies. The negative has to stay a
+    // negative, or the fix above degenerates into "never conclude anything".
+    const probe = tmux.probeSession('tc-definitely-not-a-real-session-900');
+
+    assert.equal(probe.answered, true);
+    assert.equal(probe.live, false);
+    assert.equal(probe.cause, null);
   });
 });
 
@@ -53,7 +96,10 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     const { execFn, calls } = stubExec({ stdout: 'alpha\nbeta\ngamma\n' });
     const snap = tmux.createSessionNameSnapshot({ execFn });
 
-    assert.deepEqual([...(await snap.get())].sort(), ['alpha', 'beta', 'gamma']);
+    const verdict = await snap.get();
+    assert.deepEqual([...verdict.names].sort(), ['alpha', 'beta', 'gamma']);
+    assert.equal(verdict.answered, true, 'tmux replied, so the set is the whole truth');
+    assert.equal(verdict.cause, null);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].file, 'tmux');
   });
@@ -81,7 +127,7 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     const results = await Promise.all([snap.get(), snap.get(), snap.get()]);
 
     assert.equal(calls.length, 1);
-    for (const set of results) assert.ok(set.has('alpha'));
+    for (const verdict of results) assert.ok(verdict.names.has('alpha'));
   });
 
   it('keeps a name containing the old field delimiter intact', async () => {
@@ -90,7 +136,7 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     // yielding a TRUNCATED name — which could collide with a real project's
     // session and report it live. One field has nothing to split on.
     const { execFn, calls } = stubExec({ stdout: 'we|rd\n' });
-    const names = await tmux.createSessionNameSnapshot({ execFn }).get();
+    const { names } = await tmux.createSessionNameSnapshot({ execFn }).get();
 
     assert.ok(names.has('we|rd'), 'the whole name must survive');
     assert.ok(!names.has('we'), 'and must not be truncated into another name');
@@ -98,27 +144,72 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
       'asking for one field is what makes that true — a joined format brings the split back');
   });
 
-  it('reads an unanswerable tmux as no live sessions, without rejecting', async () => {
-    // What `hasSession` already returns per name when tmux will not answer. The
-    // caller enriching a fleet must not have its whole list fail because tmux is
-    // down — that is the ordinary state of a machine with no sessions.
-    const { execFn } = stubExec({ err: Object.assign(new Error('no server running'), { code: 1 }) });
-    assert.equal((await tmux.createSessionNameSnapshot({ execFn }).get()).size, 0);
-  });
-
-  it('resolves empty when the listing times out, rather than hanging the caller', async () => {
-    // Driven by a REAL stalling `tmux`, not a stub: the subject is a timeout, and
-    // a stub asserts the author's model of a timeout rather than the timeout
-    // (#891/#894 — three hand-written versions of this check were all dead).
+  it('treats a tmux that replied "no server running" as an ANSWER of none live', async () => {
+    // THE MUTATION THIS CATCHES: widening "unknown" from a stop we caused to
+    // every failure. tmux not running is the ordinary state of a machine with no
+    // sessions — an answer, not a gap. Call it unknown and every stale `active`
+    // row on a rebooted machine sits at unknown forever, never cleaned up,
+    // which is the same defect as #900 pointed the other way.
+    //
+    // A REAL executable exiting 1 with tmux's own message on stderr, not a
+    // hand-built error: this classifier's whole job is telling one `execFile`
+    // failure shape from another, and a stub asserts the author's model of the
+    // shape rather than the shape (#891/#894, three times).
     const os = require('node:os');
-    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-snap-'));
-    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dead-tmux-'));
+    // The shim leaves a marker, because `answered: true` is ALSO what a machine
+    // with no `tmux` at all produces — so without proof the shim executed, this
+    // guard cannot tell "tmux replied with exit 1" from "the fixture never ran",
+    // which is the vacuousness it was rewritten to escape.
+    const ran = path.join(binDir, 'ran');
+    fs.writeFileSync(path.join(binDir, 'tmux'),
+      `#!/bin/sh\ntouch "${ran}"\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n`,
+      { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
     try {
-      const names = await tmux.createSessionNameSnapshot({ timeout: 300 }).get();
-      assert.equal(names.size, 0,
-        'a wedged tmux reads as no live sessions — the same answer hasSession already gave');
+      // A generous cap on purpose. The stub exits immediately, so this costs
+      // nothing on the happy path — but the whole point of the guard is that the
+      // verdict came from tmux REPLYING rather than from our timeout, and a tight
+      // cap makes that indistinguishable whenever the machine is busy enough to
+      // delay a fork. Seen: this failed under a four-file parallel run at 2000ms
+      // and passed alone, which is the flake shape a guard about timeouts must
+      // not have.
+      const verdict = await tmux.createSessionNameSnapshot({ timeout: 20000 }).get();
+
+      assert.ok(fs.existsSync(ran),
+        'the shim must actually have run — otherwise this asserts nothing about a tmux that replied');
+      assert.equal(verdict.names.size, 0);
+      assert.equal(verdict.answered, true,
+        'tmux ran and told us there is nothing live — that is an answer');
+      assert.equal(verdict.cause, null);
+    } finally {
+      process.env.PATH = realPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports that it could not establish anything when the listing times out (#900)', async () => {
+    // Driven by a REAL stalling `tmux`, not a stub: the subject is a timeout, and
+    // a stub asserts the author's model of a timeout rather than the timeout
+    // (#891/#894 — three hand-written versions of this check were all dead).
+    //
+    // THE MUTATION THIS CATCHES: resolving the empty set with `answered: true`,
+    // which is what this did before #900. A wedged tmux server then made every
+    // running session in the fleet report as not live — an unknown wearing a
+    // fact's clothes, on precisely the machine state (#94/#144/#380) where the
+    // operator most needs to see what is still up.
+    const os = require('node:os');
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-snap-'));
+    fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${realPath}`;
+    try {
+      const verdict = await tmux.createSessionNameSnapshot({ timeout: 300 }).get();
+      assert.equal(verdict.answered, false,
+        'a wedged tmux establishes nothing — the empty set must not read as "none live"');
+      assert.equal(verdict.cause, 'read-timed-out');
+      assert.equal(verdict.names.size, 0);
     } finally {
       process.env.PATH = realPath;
       fs.rmSync(binDir, { recursive: true, force: true });

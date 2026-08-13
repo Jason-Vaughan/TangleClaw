@@ -758,6 +758,19 @@ body {
   border-radius: 8px;
   font-weight: 600;
 }
+/* A project whose own folder did not answer (#885). Its git, engine and version
+   detail are MISSING rather than absent, so this badge explains why the card's
+   other badges are not there. Amber attention, same as the drift badge: the
+   project is fine, the reading of it is not. */
+.badge-unreadable {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
 /* Possible-secret indicator on an upload (#343, CC-4) — amber "attention," and
    flag-only: the file is never scrubbed or blocked, so this signals "look,"
    not "error." Shares the drift badge's amber palette for one visual language. */
@@ -1352,15 +1365,84 @@ body {
 }
 
 /* ── Root Panel ── */
+/* The panel is a column so a notice row can sit under the ROOT line; the line
+   itself keeps the row layout the panel used to have, so the healthy panel is
+   unchanged. */
 .root-panel {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 5px 12px;
   background: #060d14;
   border: 1px solid #1a3a5a;
   border-radius: var(--radius-btn);
   margin-bottom: 4px;
+}
+.root-panel-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* An incomplete list is "look at this," not a failure — the server is answering
+   and registered projects are unaffected. Shares the amber attention palette of
+   .badge-drift / .badge-secret so the dashboard has one visual language for it,
+   and takes a left rule rather than a fill so the panel stays readable.
+   Never dismissible: it describes the current poll and clears itself. */
+.root-panel-degraded {
+  border-color: #7a5418;
+}
+.root-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 8px;
+  border-radius: var(--radius-btn);
+  background: rgba(74, 52, 16, 0.5);
+  border-left: 3px solid #7a5418;
+}
+/* A truncated walk is the opposite failure: the directory answered fine and is
+   simply larger than one scan's budget. It is information, not attention, and
+   must not borrow the amber that means "something needs looking at". */
+.root-notice-info {
+  background: rgba(26, 58, 90, 0.5);
+  border-left-color: var(--root-accent);
+}
+.root-notice-glyph {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  color: #f0b860;
+}
+.root-notice-info .root-notice-glyph {
+  color: var(--root-accent);
+}
+.root-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.root-notice-text {
+  color: #f0b860;
+}
+.root-notice-info .root-notice-text {
+  color: var(--text-muted);
+}
+/* The remedy is the entire operator-facing value of degrading instead of
+   hanging, so it is shown outright rather than hidden behind a tooltip a phone
+   cannot hover. */
+.root-notice-remedy {
+  color: var(--text-muted);
+}
+.root-notice-listed {
+  color: var(--text-muted);
+}
+/* Sessions whose liveness could not be established, in the header count. Amber
+   attention rather than the active colour: they are not known to be running. */
+.count-unknown {
+  color: #f0b860;
 }
 .root-label {
   font-size: 9px;
@@ -1480,6 +1562,26 @@ body {
   background: transparent;
   border: 1px solid var(--text-muted);
 }
+/* Liveness that could not be established. Wider than the other dots because it
+   holds a glyph: an operator who cannot distinguish its hue must still be able
+   to tell "no session" from "we could not find out", so the state is never
+   carried by colour alone. Deliberately unanimated — the breathing dot means a
+   session is running, and this one does not claim that. */
+.status-dot.unknown {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  border: 1px solid #7a5418;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.status-dot-glyph {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: #f0b860;
+}
 @keyframes breathe-card {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -1566,6 +1668,18 @@ body {
   height: 5px;
   border-radius: 50%;
   background: var(--amber);
+}
+/* A working tree whose state could not be read. A glyph rather than the dirty
+   dot's absence, because absence already means clean — that is the reading this
+   marker exists to stop. */
+.git-unknown {
+  display: inline-block;
+  margin-left: 3px;
+  font-weight: 700;
+  color: #f0b860;
+}
+.badge-git-unknown {
+  border: 1px solid #7a5418;
 }
 
 /* ── Card Row Actions ── */
@@ -1694,6 +1808,26 @@ body {
 .detail-value {
   color: var(--text);
   text-align: right;
+}
+/* The detail rows are the one surface with room to name WHY a read went short,
+   so the cause is written out here rather than only marked. */
+.detail-unknown {
+  color: #f0b860;
+}
+.detail-remedy {
+  color: var(--text-muted);
+}
+.detail-row-warn .detail-label {
+  color: #f0b860;
+}
+/* A cause plus a remedy does not fit on one line on a 320px phone; let the
+   value wrap under its label instead of forcing the row wide. */
+.detail-row-warn {
+  align-items: flex-start;
+  gap: 10px;
+}
+.detail-row-warn .detail-value {
+  line-height: 1.45;
 }
 .detail-actions {
   display: flex;

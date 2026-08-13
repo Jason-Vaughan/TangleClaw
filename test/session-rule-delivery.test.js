@@ -472,6 +472,12 @@ describe('startup session-rule delivery (#595)', () => {
       const enginesModule = require('../lib/engines');
       let created = false;
       stub(tmux, 'hasSession', () => created);
+      // The prime-paste guard asks `probeSession` now, so that it can tell a
+      // pane that ENDED from a tmux that would not answer — the ledger row it
+      // writes is durable, and recording "the session ended" for a read that
+      // never happened is a fact nobody established (#908). Same meaning as the
+      // `hasSession` stub above: an ANSWERED liveness that follows `created`.
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
       stub(tmux, 'createSession', () => { created = true; return true; });
       stub(tmux, 'sendKeys', () => true);
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
@@ -509,11 +515,96 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('does not record "the session ended" when tmux never answered (#908)', (t) => {
+      // The third site on #908's census, and the one whose write OUTLIVES the
+      // condition. `!tmux.hasSession(...)` answered false both for a pane that
+      // ended and for a server too wedged to reply, and this branch writes a
+      // DURABLE ledger row saying the session ended — a fact nobody established,
+      // read later by someone asking whether the rules arrived.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      stub(tmux, 'hasSession', () => created);
+      // The wedge: the probe is killed by our own timeout and establishes nothing.
+      stub(tmux, 'probeSession', () => ({ live: false, answered: false, cause: 'read-timed-out' }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { throw new Error('must not paste into a pane we could not find'); });
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+
+      const launched = makeProject(`pasteunknown-${uid()}`);
+      store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        t.mock.timers.tick(60_000);
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1, 'the skip is still recorded — silence would be worse');
+        assert.equal(rows[0].delivered, false);
+        // THE MUTATION THIS CATCHES: writing the answered-branch sentence
+        // unconditionally, which is what `!hasSession(...)` did.
+        assert.doesNotMatch(rows[0].skipReason, /session ended/,
+          'a pane whose state was never established did not "end"');
+        assert.match(rows[0].skipReason, /could not establish|did not answer/i,
+          'and the ledger has to say what actually happened instead');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('still records "the session ended" when tmux ANSWERED that it had (#908)', (t) => {
+      // The other half — without it the fix could blanket-rename every skip.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => true);
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+
+      const launched = makeProject(`pasteended-${uid()}`);
+      store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
+      const projConfig = store.projectConfig.load(launched.path);
+      projConfig.silentPrime = false;
+      store.projectConfig.save(launched.path, projConfig);
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        t.mock.timers.tick(60_000);
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].delivered, false);
+        assert.match(rows[0].skipReason, /session ended/,
+          'an observed ending is still reported as one');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
     it('records a failed paste with the reason instead of silently losing it', (t) => {
       const tmux = require('../lib/tmux');
       const enginesModule = require('../lib/engines');
       let created = false;
       stub(tmux, 'hasSession', () => created);
+      // The prime-paste guard asks `probeSession` now, so that it can tell a
+      // pane that ENDED from a tmux that would not answer — the ledger row it
+      // writes is durable, and recording "the session ended" for a read that
+      // never happened is a fact nobody established (#908). Same meaning as the
+      // `hasSession` stub above: an ANSWERED liveness that follows `created`.
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
       stub(tmux, 'createSession', () => { created = true; return true; });
       stub(tmux, 'sendKeys', () => { throw new Error('pane is gone'); });
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));

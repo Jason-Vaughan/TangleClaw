@@ -928,6 +928,228 @@ describe('projects', () => {
     });
   });
 
+  // A tmux server that will not answer establishes NOTHING. Reporting its
+  // silence as "no session" is the defect: every running session disappears
+  // from the fleet view and the operator is told nothing is up on a machine
+  // where everything is (#900).
+  describe('a liveness read that could not be established is unknown, not absent (#900)', () => {
+    const tmuxModule = require('../lib/tmux');
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * Run `fn` with tmux answering `stdout` from a stub, and the scanner healthy.
+     *
+     * The counting sibling of this lives with the #890 guards; this one only
+     * needs the healthy answer, to show an unknown clearing once tmux replies.
+     *
+     * @param {string} stdout - What `tmux list-sessions` replies with.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withAnsweringTmux(stdout, fn) {
+      const realFactory = tmuxModule.createSessionNameSnapshot;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      tmuxModule.createSessionNameSnapshot = (options = {}) => realFactory({
+        ...options,
+        execFn: (_file, _args, _opts, cb) => setImmediate(() => cb(null, stdout))
+      });
+      const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+      dirScanner.request = healthy;
+      dirScanner.interactiveRequest = healthy;
+      try {
+        return await fn();
+      } finally {
+        tmuxModule.createSessionNameSnapshot = realFactory;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    /**
+     * Run `fn` against a REAL `tmux` on PATH that never answers, killed by the
+     * snapshot's own timeout.
+     *
+     * Deliberately not a stubbed callback error. The behaviour under test begins
+     * with recognising a killed process, and this repo has shipped three
+     * hand-written models of that error shape that were all wrong (#891/#894) —
+     * a stub would assert the model, not the mechanism. Only the timeout is
+     * injected, by wrapping the real factory.
+     *
+     * @param {Function} fn - Test body.
+     * @param {{onSpawn?: Function}} [opts] - `onSpawn` is called for each tmux
+     *   invocation, so a caller can assert on the COUNT rather than on elapsed
+     *   time. The real runner still does the work; the hook only observes.
+     * @returns {Promise<any>}
+     */
+    async function withStalledTmux(fn, opts = {}) {
+      const realFactory = tmuxModule.createSessionNameSnapshot;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      const realExecFile = require('node:child_process').execFile;
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stalled-tmux-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      tmuxModule.createSessionNameSnapshot = (options = {}) => realFactory({
+        ...options,
+        timeout: 300,
+        execFn: (...args) => {
+          if (opts.onSpawn) opts.onSpawn();
+          return realExecFile(...args);
+        }
+      });
+      const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+      dirScanner.request = healthy;
+      dirScanner.interactiveRequest = healthy;
+      try {
+        return await fn();
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+        tmuxModule.createSessionNameSnapshot = realFactory;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    it('reports an active session as unknown rather than dropping it', async () => {
+      projects.createProject({ name: 'wedged-tmux-active' });
+      const project = store.projects.getByName('wedged-tmux-active');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-wedged-tmux-active',
+        primePrompt: ''
+      });
+      try {
+        // THE MUTATION THIS CATCHES: dropping the unanswered branch, so an
+        // unreadable liveness falls through to `session: null` — which is what
+        // shipped before #900, and is indistinguishable on the dashboard from a
+        // session that really has died.
+        const enriched = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.ok(enriched.session, 'the session must not vanish because tmux went quiet');
+        assert.equal(enriched.session.active, null,
+          'null, not false: nothing was established, so there is no negative to report');
+        assert.deepEqual(enriched.session.incomplete, ['active']);
+        assert.equal(enriched.session.cause, 'read-timed-out');
+        assert.equal(enriched.session.tmuxSession, 'tc-wedged-tmux-active');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reports a wrapping session as unknown too', async () => {
+      projects.createProject({ name: 'wedged-tmux-wrapping' });
+      const project = store.projects.getByName('wedged-tmux-wrapping');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-wedged-tmux-wrapping',
+        primePrompt: ''
+      });
+      store.sessions.setWrapping(session.id);
+      try {
+        // The wrapping branch is asymmetric with the active one — a wrapping
+        // session with no tmux handle is NOT live — so it can lose the unknown
+        // state independently. This is the second half of the same guard.
+        const enriched = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.ok(enriched.session, 'a wrapping session must not vanish either');
+        assert.equal(enriched.session.active, null);
+        assert.equal(enriched.session.status, 'wrapping');
+        assert.equal(enriched.session.cause, 'read-timed-out');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('still drops a wrapping session tmux positively said is gone', async () => {
+      // The wrapping branch's honest negative, which nothing else pins: widening
+      // its unknown test from `!verdict.answered` to `verdict` passes the whole
+      // suite otherwise, and a wrapping session tmux confirmed is dead would
+      // then publish `active: null` — an unknown invented out of a fact.
+      projects.createProject({ name: 'answered-dead-wrapping' });
+      const project = store.projects.getByName('answered-dead-wrapping');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-answered-dead-wrapping',
+        primePrompt: ''
+      });
+      store.sessions.setWrapping(session.id);
+      try {
+        // tmux answers, and names a different session: this pane is gone.
+        const enriched = await withAnsweringTmux('some-other-session\n',
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.equal(enriched.session, null,
+          'tmux answered — that is a fact, and it must not be softened to unknown');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('leaves a project with no session row alone, and asks the wedged tmux nothing', async () => {
+      // The unknown state must not leak onto projects that never had a session:
+      // a machine with a wedged tmux and one running project must show one
+      // unknown, not a fleet of them. This also re-pins #890's laziness against
+      // the branch rewrite — an eager `get()` would now cost a 300ms stall per
+      // sessionless project, which is worse than the spawn it replaced.
+      projects.createProject({ name: 'wedged-tmux-idle' });
+      const row = store.projects.getByName('wedged-tmux-idle');
+      // Counted, not timed. A wall-clock assertion against the 300ms stall is a
+      // race with the machine: it goes red for an eager read AND for a busy CI
+      // box, and the second reads as the first. The claim is "nothing was
+      // spawned", so count spawns.
+      let spawns = 0;
+      const enriched = await withStalledTmux(() => projects.enrichProject(row), {
+        onSpawn: () => { spawns++; }
+      });
+
+      assert.equal(enriched.session, null);
+      assert.equal(spawns, 0,
+        'nothing may be spawned — let alone waited on — for a question nobody asked');
+    });
+
+    it('still reports a live session as live once tmux answers again', async () => {
+      // The recovery half. An unknown that sticks after the server comes back is
+      // the same lie in the other direction, and nothing else in this file
+      // exercises the transition.
+      const { project, session } = (() => {
+        projects.createProject({ name: 'wedged-tmux-recovers' });
+        const p = store.projects.getByName('wedged-tmux-recovers');
+        return {
+          project: p,
+          session: store.sessions.start({
+            projectId: p.id,
+            engineId: 'claude',
+            tmuxSession: 'tc-wedged-tmux-recovers',
+            primePrompt: ''
+          })
+        };
+      })();
+      try {
+        const stalled = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+        assert.equal(stalled.session.active, null);
+
+        const recovered = await withAnsweringTmux(`${session.tmuxSession}\n`,
+          () => projects.enrichProject(store.projects.get(project.id)));
+        assert.equal(recovered.session.active, true);
+        assert.deepEqual(recovered.session.incomplete, [],
+          'the healthy payload carries the fields too, empty — a field that appears '
+          + 'only on failure makes every consumer probe for it');
+        assert.equal(recovered.session.cause, null);
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('enrichProject — governanceState (#353)', () => {
     let govDir;
 
@@ -1445,7 +1667,7 @@ describe('projects', () => {
     }
 
     it('returns the registered projects instead of failing the request', async () => {
-      const list = await withScanner(
+      const { projects: list } = await withScanner(
         () => Promise.reject(timedOut()),
         () => projects.listAllProjects()
       );
@@ -1456,6 +1678,108 @@ describe('projects', () => {
       for (const p of list) {
         assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
       }
+    });
+
+    it('says the list is short, and why, instead of degrading silently (#885)', async () => {
+      // THE MUTATION THIS CATCHES: returning the healthy `scan` on the failure
+      // path — which is what a bare array amounted to. The browser got a 200 and
+      // a well-formed list, and nothing distinguished "these are all your
+      // projects" from "these are the ones we could still see".
+      const { scan } = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_TIMEOUT', 'consumers branch on the code, never on the prose');
+      assert.equal(scan.dir, projects.resolveProjectsDir(store.config.load().projectsDir));
+      assert.ok(scan.reason, 'and a human gets a sentence');
+      assert.match(scan.hint, /Full Disk Access/,
+        'a path that did not answer is the failure the remedy fits');
+    });
+
+    it('carries the healthy scan when nothing went wrong', async () => {
+      // The other half of the same guard: `complete: true` has to be reachable,
+      // or a renderer would warn on every poll of a perfectly healthy machine.
+      const { scan } = await withScanner(
+        () => Promise.resolve({ unregistered: [], truncated: false }),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, true);
+      assert.equal(scan.code, null);
+      assert.equal(scan.reason, null);
+      assert.equal(scan.hint, null);
+      assert.equal(scan.listed, null);
+    });
+
+    it('says a collateral abort is not this directory refusing', async () => {
+      // The scan never ran: a sibling request in the same child stopped
+      // responding and the child had to be killed. It says NOTHING about this
+      // directory, so it must not be coded as a refusal and must not carry the
+      // permission remedy — telling someone to grant Full Disk Access for a
+      // folder that was never read is the misdiagnosis the whole scanner exists
+      // to remove. Retrying is genuinely likely to work: the next request forks
+      // a fresh child.
+      const aborted = Object.assign(
+        new Error('directory scan abandoned: the scanner was restarted for another path'),
+        { tcAborted: true }
+      );
+      const { scan } = await withScanner(
+        () => Promise.reject(aborted),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_ABORTED');
+      assert.equal(scan.hint, null);
+    });
+
+    it('reports a projects directory that is not there at all', async () => {
+      // Its own early return, and the one shape most easily left behind: a
+      // missing directory is not a failure to read, so the code returns before
+      // the failure path entirely. THE MUTATION THIS CATCHES: keeping that
+      // return's bare list, which would show an operator whose configured
+      // directory does not exist a permanently short list with no explanation —
+      // and the remedy is creating or re-pointing it, not granting a permission.
+      const { scan } = await withScanner(
+        () => Promise.reject(Object.assign(new Error('no such directory'), { code: 'ENOENT' })),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'DIR_MISSING');
+      assert.match(scan.reason, /does not exist/);
+      assert.equal(scan.hint, null);
+    });
+
+    it('names a remembered refusal as one, and still offers the remedy', async () => {
+      // The fixture carries BOTH flags because that is what the real producer
+      // sets: `dir-scanner.js` `_notAnswering` adds `tcCached` on top of
+      // `tcTimedOut`, and says why — the CONDITION is unchanged (the directory
+      // still is not responding, so the operator still needs the remedy) while
+      // the COST is not (no child, no five-second wait), which is what callers
+      // log differently. A fixture with `tcCached` alone would let this assert
+      // whatever the author expected instead of what a real backoff produces.
+      const cached = Object.assign(
+        new Error('/x did not answer the last 3 time(s) it was read; not trying again for 42s'),
+        { tcTimedOut: true, tcCached: true }
+      );
+      const { scan } = await withScanner(
+        () => Promise.reject(cached),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      // The CODE is what separates this from a live timeout — a consumer that
+      // wants to say "not being retried right now" reads it here, not from the
+      // presence of a hint.
+      assert.equal(scan.code, 'SCAN_CACHED',
+        'ordering matters: a cached refusal carries tcTimedOut too, so a check that '
+        + 'tested tcTimedOut first would report every backoff as a fresh timeout');
+      assert.match(scan.hint, /Full Disk Access/,
+        'the directory is still not answering, so the remedy still applies — '
+        + '`lib/project-facts.js` gives the same answer for the same condition');
     });
 
     it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
@@ -1582,11 +1906,15 @@ describe('projects', () => {
     // blocked syscall rather than a never-settling stub.
 
     it('still answers when the directory read fails outright', async () => {
-      const list = await withScanner(
+      const { projects: list, scan } = await withScanner(
         () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' })),
         () => projects.listAllProjects()
       );
       assert.ok(Array.isArray(list));
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_FAILED');
+      assert.equal(scan.hint, null,
+        'a failure that is not a path refusing to answer gets no permission remedy');
     });
 
     it('keeps the directories it found when the walk runs out of time', async () => {
@@ -1609,13 +1937,23 @@ describe('projects', () => {
         { id: null, name: 'walked-1', path: '/x/walked-1', registered: false, git: null },
         { id: null, name: 'walked-2', path: '/x/walked-2', registered: false, git: null }
       ];
-      const all = await withScanner(
+      const { projects: all, scan } = await withScanner(
         () => Promise.resolve({ unregistered: partial, truncated: true }),
         () => projects.listAllProjects()
       );
       const found = all.filter(p => p.registered === false);
       assert.deepEqual(found.map(p => p.name).sort(), ['walked-1', 'walked-2'],
         'the directories walked before the deadline must survive, not be discarded');
+
+      // A truncated walk is the OPPOSITE failure and must not be described as the
+      // same one: the directory answered fine, there is just more of it than one
+      // scan can check. THE MUTATION THIS CATCHES: routing truncation through
+      // `_scanFailureHint`, which would tell an operator to grant Full Disk
+      // Access for a folder that has no permission problem at all.
+      assert.equal(scan.complete, false, 'short is not complete, even when nothing is broken');
+      assert.equal(scan.code, 'SCAN_TRUNCATED');
+      assert.equal(scan.hint, null, 'nothing to remedy — there is no fault here');
+      assert.equal(scan.listed, 2, 'and it says how much it did get through');
     });
 
     it('says the list is SHORT rather than letting a truncated walk look complete', async () => {
@@ -1653,7 +1991,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
       fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
 
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const withConfig = all.find(p => p.name === 'has-tc-config');
       const without = all.find(p => p.name === 'no-tc-config');
       assert.ok(withConfig && without, 'both unregistered directories must be listed');
@@ -1988,7 +2326,7 @@ describe('projects', () => {
       // Create an unregistered directory
       fs.mkdirSync(path.join(projectsDir, 'unregistered-proj'), { recursive: true });
 
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const registered = all.filter(p => p.registered === true);
       const unregistered = all.filter(p => p.registered === false);
 
@@ -1997,7 +2335,7 @@ describe('projects', () => {
     });
 
     it('unregistered projects have expected shape', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const unreg = all.find(p => p.name === 'unregistered-proj');
       assert.ok(unreg);
       assert.equal(unreg.registered, false);
@@ -2008,7 +2346,7 @@ describe('projects', () => {
     });
 
     it('results are sorted by name', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       for (let i = 1; i < all.length; i++) {
         assert.ok(all[i - 1].name.toLowerCase() <= all[i].name.toLowerCase(),
           `${all[i - 1].name} should be before ${all[i].name}`);
@@ -2016,7 +2354,7 @@ describe('projects', () => {
     });
 
     it('does not include hidden directories', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       assert.ok(!all.some(p => p.name.startsWith('.')));
     });
   });
@@ -2100,7 +2438,7 @@ describe('projects', () => {
     });
 
     it('archived projects excluded from listAllProjects unregistered scan', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       // attachable is archived — should not appear as unregistered
       const asUnreg = all.find(p => p.name === 'attachable' && p.registered === false);
       assert.equal(asUnreg, undefined);
