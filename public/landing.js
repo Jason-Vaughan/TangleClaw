@@ -7,6 +7,11 @@
 
 const state = {
   projects: [],
+  // Whether the projects list is the WHOLE list, and why not when it isn't.
+  // `GET /api/projects` always carries this; null only before the first load.
+  // Without it a directory that could not be read shows up as a shorter list
+  // and nothing else, which states a completeness the server never claimed.
+  projectsScan: null,
   engines: [],
   config: null,
   filterText: '',
@@ -1013,6 +1018,12 @@ async function loadProjects() {
   const data = await api('/api/projects?archived=true');
   if (!data) return;
   state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  // Kept as sent, including on the healthy path — a field that only appears on
+  // failure makes every reader probe for its existence instead of reading its
+  // value. `renderRootPanel` decides what to draw; this only stops the answer
+  // being discarded, which is what made a short list indistinguishable from a
+  // complete one.
+  state.projectsScan = data.scan || null;
   collectTags();
   renderProjects();
   renderSessionCount();

@@ -28,8 +28,35 @@ All notable changes to TangleClaw are documented in this file.
   reading instead of only reaching the log — so a repository that is *slow* stops being
   indistinguishable from one that is *broken*, and only the second is something you can fix.
 
-  **The dashboard does not draw any of this yet.** This is the data; the rendering is the next
-  chunk of #885.
+  **The dashboard now draws all of it** — see the entry below.
+
+- **The dashboard stops stating facts it does not have (#885).** Every read behind the fleet view
+  has three outcomes — yes, no, and *we could not establish it* — and the dashboard drew the third
+  as the second. A wedged tmux server made every running session vanish; an unreadable folder made
+  projects vanish; a repository whose working tree could not be read was drawn as clean. Each of
+  those is a definite answer the server never gave.
+
+  Four seams now render:
+
+  - **The ROOT panel** gains a notice row whenever the list is short, carrying the reason and the
+    remedy as visible text rather than a tooltip — and the count stops saying *total*, because a
+    short list is not one. A directory that answered fine and is merely large is shown as
+    information, not a fault: different wording, different glyph, no remedy, and the panel does not
+    change colour.
+  - **A project whose own folder did not answer** gets a warning badge on its card, so the missing
+    git and engine detail has a stated reason instead of looking like a project that has none.
+  - **A session whose liveness could not be read** gets a distinct status dot carrying a glyph, not
+    a colour alone, and the card detail says *Unknown* with the cause instead of *No active
+    session*.
+  - **`git.dirty` that could not be established** renders as `?` rather than as the absence of the
+    dirty marker — which is exactly how a clean repository is drawn.
+
+  A remembered refusal now also says that nothing is being retried right now, *while keeping* its
+  remedy: the backoff is an additional fact, not a replacement for advice about a condition that
+  has not changed. And an ordinary read failure, which the server leaves without a remedy because
+  it cannot know the cause, gets one that names no cause.
+
+  Internal vocabulary stays internal: an operator is never shown `dirty` or `read-timed-out`.
 
 - **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
   wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing

@@ -80,16 +80,103 @@ function renderProjects() {
   grid.innerHTML = rootHtml + filtered.map(renderCard).join('') + archivedHtml;
 }
 
+/**
+ * Render the ROOT directory panel, including the notice row that appears when
+ * the projects list is short.
+ *
+ * The count says "total" only when the scan actually completed. A directory
+ * that could not be read produces a shorter list, and calling that shorter
+ * number the total asserts a completeness the server explicitly did not claim —
+ * the silent half of #885.
+ *
+ * The notice is always present while the condition holds and carries no
+ * dismissal: it describes the CURRENT poll, so it must clear itself when the
+ * read recovers rather than be dismissed into a lie. That also keeps it free of
+ * any timer-driven lifecycle, which this project does not use.
+ *
+ * @returns {string} HTML for the panel, or '' when no projects directory is set.
+ */
 function renderRootPanel() {
   if (!state.config || !state.config.projectsDir) return '';
   const nonArchived = state.projects.filter(p => !p.archived);
   const totalCount = nonArchived.length;
   const registered = nonArchived.filter(p => p.registered !== false).length;
-  return `<div class="root-panel">
-    <span class="root-label">ROOT</span>
-    <span class="root-path">${esc(state.config.projectsDir)}</span>
-    <span class="root-count">${registered} registered / ${totalCount} total</span>
+
+  const notice = tcScanNotice(state.projectsScan);
+  const countLabel = notice
+    ? `${registered} registered / ${totalCount} listed`
+    : `${registered} registered / ${totalCount} total`;
+
+  let noticeHtml = '';
+  if (notice) {
+    // The glyph is paired with text, never carrying the meaning alone — the
+    // accessibility floor this project holds is that an error is never
+    // communicated by colour (or by a coloured glyph) on its own.
+    const glyph = notice.kind === 'info' ? '&#8505;' : '&#9888;';
+    const remedyHtml = notice.remedy
+      ? `<span class="root-notice-remedy">${esc(notice.remedy)}</span>`
+      : '';
+    // How far the walk got, when it reported that. Only a cut-off knows this,
+    // and it turns "the list is short" into something the operator can size.
+    const listedHtml = notice.listed !== null
+      ? `<span class="root-notice-listed">${notice.listed} unregistered folder${notice.listed === 1 ? '' : 's'} were checked before the cut-off.</span>`
+      : '';
+    noticeHtml = `<div class="root-notice root-notice-${notice.kind}" role="status">
+      <span class="root-notice-glyph" aria-hidden="true">${glyph}</span>
+      <span class="root-notice-body">
+        <span class="root-notice-text">${esc(notice.why)}</span>
+        ${listedHtml}
+        ${remedyHtml}
+      </span>
+    </div>`;
+  }
+
+  // The amber border means "something needs looking at". A truncated walk does
+  // not, so it gets the notice row without recolouring the whole panel.
+  const degradedClass = notice && notice.kind === 'warn' ? ' root-panel-degraded' : '';
+
+  return `<div class="root-panel${degradedClass}">
+    <div class="root-panel-line">
+      <span class="root-label">ROOT</span>
+      <span class="root-path">${esc(state.config.projectsDir)}</span>
+      <span class="root-count">${countLabel}</span>
+    </div>
+    ${noticeHtml}
   </div>`;
+}
+
+/**
+ * Render the git branch badge for a project card.
+ *
+ * Shared by the registered and unregistered cards. They each had their own copy
+ * of this markup, which is how a fix to one silently left the other reporting a
+ * repository it could not read as clean.
+ *
+ * A working tree whose state could not be established renders `?` rather than
+ * the dirty marker's absence. Absence of the marker means clean, and drawing an
+ * unestablished read that way is the defect #891 removed from the payload.
+ *
+ * @param {object} project - Project data carrying an optional `git`.
+ * @returns {string} HTML for the badge, or '' when not a repository.
+ */
+function renderGitBadge(project) {
+  const dirtyState = tcGitDirtyState(project.git);
+  if (dirtyState === null) return '';
+  const read = tcGitRead(project.git);
+  let marker = '';
+  if (dirtyState === 'dirty') {
+    marker = '<span class="git-dirty"></span>';
+  } else if (dirtyState === 'unknown') {
+    marker = '<span class="git-unknown" aria-hidden="true">?</span>';
+  }
+  // The tooltip is the only place the cause fits on a compact card; the `?`
+  // glyph is what makes the state visible without it, so meaning never rests on
+  // hover alone.
+  const title = read.known
+    ? ''
+    : ` title="${esc([read.why, read.remedy].filter(Boolean).join(' '))}"`;
+  const cls = dirtyState === 'unknown' ? 'badge badge-git badge-git-unknown' : 'badge badge-git';
+  return `<span class="${cls}"${title}>${esc(project.git.branch)}${marker}</span>`;
 }
 
 function renderCard(project) {
@@ -103,7 +190,14 @@ function renderCard(project) {
     return renderArchivedCard(project);
   }
 
+  // `hasSession` still drives every ACTION on this card, and still treats an
+  // unknown as not-live. That is deliberate: launching, peeking and killing all
+  // need a tmux server that answers, and the one that did not answer is the
+  // reason this state exists. Chunk 01 made `launchSession` refuse honestly in
+  // that case, so the button leads somewhere truthful. Only the DISPLAY below
+  // learns the third state.
   const hasSession = project.session && project.session.active;
+  const liveness = tcSessionLiveness(project);
   const sessionClass = hasSession ? ' has-session' : '';
   const n = esc(project.name);
 
@@ -111,9 +205,7 @@ function renderCard(project) {
     ? `<span class="badge badge-version">${esc(project.git.latestTag)}</span>`
     : '';
 
-  const gitBadge = project.git
-    ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
-    : '';
+  const gitBadge = renderGitBadge(project);
 
   const engineBadge = project.engine
     ? (() => {
@@ -152,15 +244,34 @@ function renderCard(project) {
     ? `<span class="badge badge-drift" title="Legacy governance: this project runs a vendored Prawduct hook rather than the V2 plugin. Open Info to migrate it.">&#9888; legacy governance</span>`
     : '';
 
-  const statusDot = hasSession
-    ? `<span class="status-dot active" title="Session active"></span>`
-    : `<span class="status-dot" title="No active session"></span>`;
+  // Three outcomes where there used to be two. The unknown carries a `?` glyph
+  // rather than only a colour, because an operator who cannot distinguish the
+  // dot's hue must still be able to tell a dead session from an unreadable one.
+  const sessionRead = tcSessionRead(project);
+  let statusDot;
+  if (liveness === 'live') {
+    statusDot = `<span class="status-dot active" title="Session active"></span>`;
+  } else if (liveness === 'unknown') {
+    statusDot = `<span class="status-dot unknown" title="${esc([sessionRead.why, sessionRead.remedy].filter(Boolean).join(' '))}">`
+      + `<span class="status-dot-glyph" aria-hidden="true">?</span></span>`;
+  } else {
+    statusDot = `<span class="status-dot" title="No active session"></span>`;
+  }
+
+  // A project whose own folder did not answer is listed WITHOUT its git, engine
+  // and version detail — so the card's other badges are absent for a reason the
+  // card would otherwise not give. This is that reason.
+  const unreadable = tcUnreadableNotice(project);
+  const unreadableBadge = unreadable
+    ? `<span class="badge badge-unreadable" title="${esc([unreadable.why, unreadable.remedy].filter(Boolean).join(' '))}">&#9888; unreadable</span>`
+    : '';
 
   return `<article class="project-card compact${sessionClass}" tabindex="0"
     onclick="toggleCardDetail('${n}')" onkeydown="if(event.key==='Enter')toggleCardDetail('${n}')">
     <div class="card-row">
       ${statusDot}
       <span class="card-name" title="${n}">${n}</span>
+      ${unreadableBadge}
       ${versionBadge}
       ${gitBadge}
       ${engineBadge}
@@ -183,14 +294,17 @@ function renderCard(project) {
 
 function renderUnregisteredCard(project) {
   const n = esc(project.name);
-  const gitBadge = project.git
-    ? `<span class="badge badge-git">${esc(project.git.branch)}${project.git.dirty ? '<span class="git-dirty"></span>' : ''}</span>`
+  const gitBadge = renderGitBadge(project);
+  const unreadable = tcUnreadableNotice(project);
+  const unreadableBadge = unreadable
+    ? `<span class="badge badge-unreadable" title="${esc([unreadable.why, unreadable.remedy].filter(Boolean).join(' '))}">&#9888; unreadable</span>`
     : '';
 
   return `<article class="project-card compact unregistered" tabindex="0">
     <div class="card-row">
       <span class="status-dot unregistered"></span>
       <span class="card-name card-name-muted" title="${n}">${n}</span>
+      ${unreadableBadge}
       ${gitBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-attach" onclick="event.stopPropagation(); attachProject('${n}')">Attach</button>
@@ -219,6 +333,53 @@ function renderArchivedCard(project) {
   </article>`;
 }
 
+/**
+ * The Session row's value in the card detail.
+ *
+ * Pure, and separate from `toggleCardDetail`, because that function reaches for
+ * the DOM and this is the part with three outcomes worth testing directly.
+ *
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the detail value.
+ */
+function renderSessionDetail(project) {
+  const liveness = tcSessionLiveness(project);
+  if (liveness === 'live') {
+    return `Active since ${esc(project.session.startedAt || '')}`;
+  }
+  if (liveness === 'none') return 'No active session';
+  // The detail row is the one surface with room to say WHY, so it names the
+  // cause rather than only marking it.
+  const read = tcSessionRead(project);
+  return `<span class="detail-unknown">Unknown</span> — ${esc(read.why)}`
+    + (read.remedy ? ` <span class="detail-remedy">${esc(read.remedy)}</span>` : '');
+}
+
+/**
+ * The Git row's value in the card detail.
+ *
+ * A working tree that could not be read is named as unknown rather than left to
+ * the reader's assumption — the bare branch name with no "(dirty)" is how a
+ * clean repository has always been drawn.
+ *
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the detail value.
+ */
+function renderGitDetail(project) {
+  const dirtyState = tcGitDirtyState(project.git);
+  if (dirtyState === null) return 'Not a git repo';
+  const suffix = dirtyState === 'dirty'
+    ? ' (dirty)'
+    : (dirtyState === 'unknown' ? ' (working tree unknown)' : '');
+  let info = `${esc(project.git.branch)}${suffix}`;
+  const read = tcGitRead(project.git);
+  if (!read.known) {
+    info += ` — <span class="detail-unknown">${esc(read.why)}</span>`
+      + (read.remedy ? ` <span class="detail-remedy">${esc(read.remedy)}</span>` : '');
+  }
+  return info;
+}
+
 function toggleCardDetail(name) {
   const cards = document.querySelectorAll('.project-card');
   for (const card of cards) {
@@ -241,16 +402,24 @@ function toggleCardDetail(name) {
     detail.className = 'card-detail';
 
     const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
-    const sessionInfo = project.session && project.session.active
-      ? `Active since ${esc(project.session.startedAt || '')}`
-      : 'No active session';
+
+    const sessionInfo = renderSessionDetail(project);
     const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
-    const gitInfo = project.git ? `${esc(project.git.branch)}${project.git.dirty ? ' (dirty)' : ''}` : 'Not a git repo';
+    const gitInfo = renderGitDetail(project);
+
+    const unreadable = tcUnreadableNotice(project);
+    const unreadableRow = unreadable
+      ? `<div class="detail-row detail-row-warn"><span class="detail-label">Folder</span>`
+        + `<span class="detail-value"><span class="detail-unknown">${esc(unreadable.why)}</span>`
+        + (unreadable.remedy ? ` <span class="detail-remedy">${esc(unreadable.remedy)}</span>` : '')
+        + `</span></div>`
+      : '';
     const groupsInfo = (project.groups || []).length > 0
       ? project.groups.map(g => `${esc(g.name)} (${g.docCount || 0} docs)`).join(', ')
       : 'None';
 
     detail.innerHTML = `
+      ${unreadableRow}
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>

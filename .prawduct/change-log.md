@@ -4259,3 +4259,51 @@ cold repository is killed and handed a Full Disk Access remedy for a permission 
 problem — is **#891**.
 
 **Classification:** fix
+
+## 2026-08-13: the dashboard stops stating facts it does not have (#885, #900)
+
+**What changed.** The payload had carried three outcomes per read — yes, no, and *we could not
+establish it* — since #891, #900 and #885's payload half. Nothing rendered the third, so the
+dashboard drew it as the second: a wedged tmux server made every running session disappear, an
+unreadable folder shortened the list silently, and a repository whose working tree could not be
+read was drawn as clean. Four seams now render, and a healthy dashboard is unchanged.
+
+**The design decision that mattered.** "Reduce six payload shapes to one `{known, why, remedy}`
+record" reads as an invitation to build one code→remedy table. That would be wrong, and the
+rendering is where it shows: `read-timed-out` means a **wedged tmux server** for a session and a
+**protected folder** for a directory scan. A shared table tells an operator to grant Full Disk
+Access because tmux hung — the exact misdiagnosis `_scanFailureHint` exists to prevent. So causes
+normalise and remedies do not: each source supplies its own, preferring the sentence the server
+authored at the failure site over anything a renderer could infer.
+
+**No `sw.js` change, and that is deliberate.** The standing rule is that a new `public/*.js` must
+join `STATIC_ASSETS` with a `CACHE_NAME` bump. The rule was avoided rather than followed, by
+putting the helpers in `api-helper.js` — already `NETWORK_FIRST_PATHS`, already loaded before
+`ui.js`. Two reasons: bumping `CACHE_NAME` on a feature branch behind the basic_auth gate is what
+locked the operator out of Chrome on 2026-07-28; and a cache-first pure-helper sibling of a
+network-first script is precisely the version skew the `wrap-drawer.js` comment documents.
+
+**Three defects found by RENDERING the output, not by testing it.** The guards were green and the
+prose was wrong: `incomplete` was printed raw, so the operator read *"Could not establish dirty"*;
+the amber attention border was applied to the truncated-scan case that the same chunk argues is not
+a fault; and `listed` was computed and never drawn. Each got a translation layer, a narrowed
+condition, and a render site respectively — and each has a mutation that turns it red.
+
+**Two guards were vacuous and were replaced with behaviour.** A source check on the ROOT count
+survived `countLabel = false`, because the string it looked for still existed in the dead branch.
+A check for `git-unknown` survived deleting the marker, because the class `badge-git-unknown`
+contains that substring. Pure renderers are now lifted out of `ui.js` and executed against real
+inputs. Separately, the mutation harness itself was wrong twice — it reported "did not apply" for
+patterns appearing in more than one renderer (perl replaces the first match) and silently failed to
+apply several mutations to shell-quoting errors. **A mutation that never applied must never be
+reported as caught**; the harness now compares occurrence counts and passes patterns through the
+environment.
+
+**Requirement recorded rather than absorbed:** `toggleCardDetail` reaches for the DOM, so its
+third state could only be pinned by source-matching — and that guard survived its own mutation.
+`renderSessionDetail` and `renderGitDetail` were extracted to make the behaviour testable. The
+extraction is the fix; the guard was the symptom.
+
+chunks=03 work=885-900-degraded-reads
+
+**Classification:** feature
