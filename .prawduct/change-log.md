@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-13: the projects list says whether it is the whole list (#885 chunk 02)
 
-<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=02 -->
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=02 | status=shipped -->
 
 **Why:** the list degraded honestly in the log and silently in the product. `listAllProjects`
 returned a bare array, so a directory that could not be read produced a well-formed `200` that was
@@ -94,7 +94,7 @@ must not have.
 
 ## 2026-08-13: a liveness read that could not be established is unknown, not absent (#900)
 
-<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=01 -->
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=01 | status=shipped -->
 
 **Why:** session liveness had two outcomes and three real states — tmux confirmed the pane, tmux said
 the pane is gone, and tmux never replied. The third was folded into the second, so a wedged tmux
@@ -4261,7 +4261,7 @@ problem — is **#891**.
 **Classification:** fix
 
 ## 2026-08-13: the dashboard stops stating facts it does not have (#885, #900)
-<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=03 -->
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
 
 **What changed.** The payload had carried three outcomes per read — yes, no, and *we could not
 establish it* — since #891, #900 and #885's payload half. Nothing rendered the third, so the
@@ -4308,7 +4308,7 @@ extraction is the fix; the guard was the symptom.
 **Classification:** feature
 
 ## 2026-08-13: an empty list is #885's worst case, not an exemption from it (#885, follow-up)
-<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 -->
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
 
 Found by self-review while the cumulative Critic ran, in the chunk's own code. `renderProjects`
 early-returned on `state.projects.length === 0` **before** rendering the ROOT panel — so on a
@@ -4330,7 +4330,7 @@ the empty and error paths exactly as they were, and those are the paths the fix 
 **Classification:** fix
 
 ## 2026-08-13: Critic round on the render half — the surfaces that still stated a fact (#885)
-<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 -->
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 | status=shipped -->
 
 Cumulative review of `7aa3d64...2e57100`: 0 blocking, 14 warnings, 8 notes across three reviewers.
 Three findings were stale — they read the tree mid-mutation-run, when `api-helper.js` was
@@ -4384,7 +4384,7 @@ been widened to name both emitters.
 **Classification:** fix
 
 ## 2026-08-13: a wrap that could not be observed is not completed, and does not commit (#908)
-<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
 
 **The defect.** `autoCompleteWrap` writes the wrap complete, tears down the session's Medusa
 listener, and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository. Two
@@ -4435,7 +4435,7 @@ of true — the same meaning, at the seam that moved. The `#105` suite also gain
 **Classification:** fix
 
 ## 2026-08-13: the unknown wrap status reported idle as a fact (#908, self-review)
-<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
 
 Caught while deep-scrubbing the change above, before any review saw it. The new
 "could not observe the pane" branch of `getSessionStatus` returned `idle: false` and
@@ -4457,7 +4457,7 @@ Both are wrong in the same way the change exists to prevent:
 **Classification:** fix
 
 ## 2026-08-13: Critic round on #908 — the outcome the reorder changed, and the census member that survived
-<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 | status=shipped -->
 
 Cumulative review of `7aa3d64...f338a42`: 0 blocking, 8 warnings, 9 notes across three reviewers.
 Two findings mattered, and both are about something the first cut did NOT intend.
