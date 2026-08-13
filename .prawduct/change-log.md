@@ -4261,6 +4261,7 @@ problem — is **#891**.
 **Classification:** fix
 
 ## 2026-08-13: the dashboard stops stating facts it does not have (#885, #900)
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=03 -->
 
 **What changed.** The payload had carried three outcomes per read — yes, no, and *we could not
 establish it* — since #891, #900 and #885's payload half. Nothing rendered the third, so the
@@ -4304,6 +4305,80 @@ third state could only be pinned by source-matching — and that guard survived 
 `renderSessionDetail` and `renderGitDetail` were extracted to make the behaviour testable. The
 extraction is the fix; the guard was the symptom.
 
-chunks=03 work=885-900-degraded-reads
-
 **Classification:** feature
+
+## 2026-08-13: an empty list is #885's worst case, not an exemption from it (#885, follow-up)
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 -->
+
+Found by self-review while the cumulative Critic ran, in the chunk's own code. `renderProjects`
+early-returned on `state.projects.length === 0` **before** rendering the ROOT panel — so on a
+machine with nothing registered yet, whose projects directory could not be read, the dashboard
+answered *"No projects yet. Create your first project."* with no notice anywhere on the page.
+
+That is the defect the whole chunk exists to remove, in its most confident form: not a silently
+shorter list, but a definite and actionable instruction derived from a read that never succeeded.
+It survived the first pass because every guard was written against a populated dashboard.
+
+The ROOT panel now renders on every path — populated, empty, and filtered-to-nothing — and the
+empty state's wording is conditional on whether the scan actually completed. A genuinely empty
+machine still gets the original invitation, which is the case that made the early return look
+harmless.
+
+**The generalisable bit:** a rendering fix that only ever runs against a populated fixture leaves
+the empty and error paths exactly as they were, and those are the paths the fix is *for*.
+
+**Classification:** fix
+
+## 2026-08-13: Critic round on the render half — the surfaces that still stated a fact (#885)
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=03 -->
+
+Cumulative review of `7aa3d64...2e57100`: 0 blocking, 14 warnings, 8 notes across three reviewers.
+Three findings were stale — they read the tree mid-mutation-run, when `api-helper.js` was
+transiently broken and the artifact edits were on disk but uncommitted. The rest were real, and
+two of them are the same defect this whole bundle exists to remove, on surfaces the plan's own
+list did not name:
+
+**The header contradicted the cards.** `renderSessionCount` still read `p.session && p.session.active`,
+so during the exact tmux wedge the cards were drawing `?` for, the most prominent number on the
+page said "0 active sessions". It counts the three outcomes separately now. The plan enumerated
+card, panel and detail — the header was not on the list, and "the plan did not say to" is not a
+reason for a surface to keep asserting a number nobody established.
+
+**The most fixable failure was the one with no advice.** `lib/dir-scanner-child.js` reports a
+project directory that is THERE but refused as `EACCES` with no hint of its own, and the renderer's
+fallback table covered only `DIR_MISSING` and `SCAN_FAILED` — so the one failure whose cause is
+known and whose remedy is concrete got a reason and no next step, while the vaguer catch-all got
+advice. Backwards, and the written contract's list of hint-less codes omitted `EACCES` too, so the
+next person extending it would not have noticed either.
+
+**Two cards in one list gave different answers to the same failure.** `lib/dir-scanner-child.js`
+builds its own `git` object for unregistered entries — a second producer of the same contract — and
+projected `{branch, dirty, incomplete}`, dropping `cause`. A registered project named the cause and
+offered the slow-repository remedy; an unregistered one fell back to "the read did not complete"
+with none.
+
+**The duplication fix was reintroduced one badge over.** `renderGitBadge` was extracted precisely
+because a copy in each card renderer let a fix land in only one — and the unreadable badge was then
+copy-pasted into both. Now `renderUnreadableBadge`, with `degradedTooltip` for the join that
+appeared four times.
+
+**One guard is structural on purpose, and it is the exception that proves the rule.** Spreading the
+shared record versus re-listing its fields produces byte-identical output today; the entire value is
+what happens when the record grows a field later. No input distinguishes them, so no behavioural
+test can exist — the property is structural, so the guard is. Every other guard in this round was
+falsified by mutating the code it covers.
+
+**A guard's own fixture was wrong twice, both caught by running it.** The "every code gets a remedy"
+sweep first demanded a fallback for `SCAN_CACHED`, which can never arrive without a hint
+(`lib/project-facts.js` attaches one whenever `tcTimedOut || tcCached`); then, scraping `code: '...'`
+out of the child's source, it demanded one for `ENOTDIR` — a THROWN error that `failureCode` maps to
+`SCAN_FAILED` long before it could reach a card. It is now driven from the written contract's
+`unreadableCode` row, so a code documented without a remedy fails it, and a code that cannot reach
+the renderer does not.
+
+Recorded rather than fixed: `public/setup.js` still draws `dirty: null` as clean in the first-run
+wizard (**#909**), and `getSessionStatus`'s kept record means a wedge now logs an ERROR+WARN pair
+every poll — the same flood shape as **#906**, which was scoped to the dashboard poll only and has
+been widened to name both emitters.
+
+**Classification:** fix

@@ -1439,6 +1439,11 @@ body {
 .root-notice-listed {
   color: var(--text-muted);
 }
+/* Sessions whose liveness could not be established, in the header count. Amber
+   attention rather than the active colour: they are not known to be running. */
+.count-unknown {
+  color: #f0b860;
+}
 .root-label {
   font-size: 9px;
   font-weight: 700;

@@ -247,6 +247,17 @@ describe('degraded-read normalisation (#885)', () => {
       }
     });
 
+    it('does not answer an inherited property for a hostile field name', () => {
+      // The lookup tables are keyed by payload values. A plain object answers
+      // `constructor` with a function, which then lands inside a sentence an
+      // operator reads. Mutation: drop the null prototype.
+      const record = gitRead({
+        branch: 'main', dirty: null, incomplete: ['constructor'], cause: 'toString'
+      });
+      assert.equal(typeof record.why, 'string');
+      assert.doesNotMatch(record.why, /function|\[object|native code/i);
+    });
+
     it('lists several short fields readably', () => {
       const record = gitRead({
         branch: '', dirty: null, incomplete: ['branch', 'dirty', 'latestTag'], cause: 'read-timed-out'
@@ -369,6 +380,68 @@ describe('degraded-read normalisation (#885)', () => {
       assert.match(notice.remedy, /Full Disk Access/);
     });
 
+    it('advises on EACCES — the failure whose remedy is most obvious', () => {
+      // `lib/dir-scanner-child.js` reports a project directory that is THERE but
+      // refused as `EACCES` with no hint of its own. Without a fallback the card
+      // named the fault and offered nothing, while the vaguer SCAN_FAILED one
+      // level up did get advice — exactly backwards.
+      const notice = unreadableNotice({
+        name: 'p',
+        unreadable: 'permission denied',
+        unreadableHint: null,
+        unreadableCode: 'EACCES'
+      });
+      assert.ok(notice.remedy, 'EACCES must not leave the operator with no next step');
+      assert.match(notice.remedy, /permission|Full Disk Access/i);
+    });
+
+    it('no hint-less code reaches a card with a reason and no next step', () => {
+      // Driven from the WRITTEN CONTRACT's `unreadableCode` row, not from a
+      // list restated here and not from a source scrape — scraping every
+      // `code: '...'` in the child pulls in thrown-error codes like ENOTDIR that
+      // `failureCode` maps to SCAN_FAILED long before they could reach a card.
+      // Coupling to the contract means a code documented without a remedy fails
+      // here, which is the drift worth catching.
+      //
+      // `lib/project-facts.js` attaches the Full Disk Access hint exactly when
+      // `tcTimedOut || tcCached`, so SCAN_TIMEOUT and SCAN_CACHED always arrive
+      // WITH one and need no fallback. The rest arrive hint-less and are the
+      // renderer's to answer.
+      const contract = fs.readFileSync(
+        path.resolve(__dirname, '..', '.prawduct', 'artifacts', 'api-contract.md'), 'utf8');
+      const row = contract.split('\n').find(
+        (l) => l.includes('`unreadableCode`') && l.includes('Machine-readable cause'));
+      assert.ok(row, 'api-contract.md must document unreadableCode');
+      const documented = [...row.matchAll(/`([A-Z_]{4,})`/g)].map((m) => m[1]);
+      assert.ok(documented.includes('EACCES'),
+        'EACCES must stay documented for this guard to mean anything');
+      const alwaysHinted = new Set(['SCAN_TIMEOUT', 'SCAN_CACHED']);
+      for (const code of documented.filter((c) => !alwaysHinted.has(c))) {
+        const notice = unreadableNotice({
+          name: 'p', unreadable: 'x', unreadableHint: null, unreadableCode: code
+        });
+        // SCAN_ABORTED is the one that legitimately has none — this path may be
+        // healthy, and advising a fix would blame the wrong folder.
+        if (code === 'SCAN_ABORTED') {
+          assert.equal(notice.remedy, null, 'a collateral abort must stay adviceless');
+        } else {
+          assert.ok(notice.remedy,
+            `${code} reaches a card with no remedy — add it to the fallback table`);
+        }
+      }
+    });
+
+    it('lets the server hint win over the renderer fallback', () => {
+      // The server authors its hint at the failure site and is more specific
+      // than anything the table could infer.
+      const notice = unreadableNotice({
+        name: 'p', unreadable: 'x',
+        unreadableHint: 'a very specific server remedy',
+        unreadableCode: 'EACCES'
+      });
+      assert.match(notice.remedy, /A very specific server remedy/);
+    });
+
     it('gives a collateral abort no remedy of its own', () => {
       // A read cancelled because ANOTHER directory was being given up on is not
       // a verdict on this one. The server attaches no hint deliberately, and
@@ -382,6 +455,79 @@ describe('degraded-read normalisation (#885)', () => {
       });
       assert.equal(notice.remedy, null);
     });
+  });
+});
+
+describe('the shared record is actually shared (#885)', () => {
+  // Structural on purpose, and the exception proves the rule about preferring
+  // behaviour: spreading the constructor and re-listing its fields produce
+  // byte-identical output TODAY. The entire value is what happens when the
+  // record grows a field later — a re-listing source silently would not get it.
+  // There is no input that distinguishes the two now, so no behavioural test
+  // can exist; the property being protected is structural, so the guard is too.
+  it('the sources that extend the record spread it rather than re-listing it', () => {
+    const helper = fs.readFileSync(
+      path.resolve(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+    for (const decl of ['function tcScanNotice(scan)', 'function tcUnreadableNotice(project)']) {
+      const body = functionBody(helper, decl);
+      assert.match(body, /\.\.\.tcDegradedRead\(|return tcDegradedRead\(/,
+        `${decl} must spread or return the shared constructor, not rebuild its fields`);
+      assert.doesNotMatch(body, /known:\s*false,\s*\n?\s*why:/,
+        `${decl} re-lists the record's fields — a field added to tcDegradedRead would not reach it`);
+    }
+  });
+
+  it('every source reports the same key set for the shared fields', () => {
+    const shared = ['known', 'why', 'remedy'];
+    const records = [
+      globalThis.tcSessionRead({
+        session: { active: null, incomplete: ['active'], cause: 'read-timed-out' }
+      }),
+      globalThis.tcGitRead({ branch: 'm', dirty: null, incomplete: ['dirty'], cause: 'read-timed-out' }),
+      globalThis.tcScanNotice({
+        dir: '/p', complete: false, code: 'SCAN_TIMEOUT', reason: 'x', hint: null, listed: null
+      }),
+      globalThis.tcUnreadableNotice({ name: 'p', unreadable: 'x', unreadableCode: 'EACCES' })
+    ];
+    for (const record of records) {
+      for (const key of shared) {
+        assert.ok(key in record, `every degraded-read record must carry "${key}"`);
+      }
+    }
+  });
+});
+
+describe('an unregistered card gets the same answer as a registered one (#885)', () => {
+  it('the walk projects every field the renderer reads', () => {
+    // `lib/dir-scanner-child.js` builds its OWN git object for unregistered
+    // entries rather than passing `getInfo`'s through, so it is a second
+    // producer of the same contract. It shipped without `cause`, which meant
+    // two cards in one list gave different answers to the same failure: the
+    // registered one named the cause and offered the slow-repository remedy,
+    // the unregistered one fell back to "the read did not complete" with none.
+    const childSrc = fs.readFileSync(
+      path.resolve(__dirname, '..', 'lib', 'dir-scanner-child.js'), 'utf8');
+    const projection = childSrc.slice(childSrc.indexOf('git: gitInfo'));
+    for (const field of ['branch', 'dirty', 'incomplete', 'cause']) {
+      assert.match(projection.slice(0, 400), new RegExp(`${field}:\\s*gitInfo\\.${field}`),
+        `the walk must project git.${field} — the dashboard reads it`);
+    }
+  });
+
+  it('both card kinds render an identical badge for an identical failure', () => {
+    // The behavioural half: same git object, same rendered badge. If a producer
+    // narrows the object for one card, this diverges.
+    const root = path.resolve(__dirname, '..');
+    const uiSrc = fs.readFileSync(path.join(root, 'public/ui.js'), 'utf8');
+    const badge = liftRenderer(uiSrc, 'function renderGitBadge(project)', 'renderGitBadge', {
+      esc,
+      degradedTooltip: liftRenderer(uiSrc, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
+      tcGitDirtyState: globalThis.tcGitDirtyState,
+      tcGitRead: globalThis.tcGitRead
+    });
+    const failing = { branch: 'main', dirty: null, incomplete: ['dirty'], cause: 'read-timed-out' };
+    assert.match(badge({ git: failing }), /retries on the next poll/,
+      'a projected git object carrying cause must earn the same remedy');
   });
 });
 
@@ -530,6 +676,107 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     assert.match(html, /The directory did not respond\. On macOS that is what a protected folder does\./);
   });
 
+  describe('the empty list, which is the worst case rather than an exemption', () => {
+    /**
+     * Run the real `renderProjects` against a project list and scan, capturing
+     * what it writes into the grid.
+     * @param {object[]} projects - `state.projects`.
+     * @param {object|null} scan - `state.projectsScan`.
+     * @returns {string} The grid's innerHTML.
+     */
+    function renderGrid(projects, scan, filtered) {
+      const grid = { innerHTML: '' };
+      liftRenderer(ui, 'function renderProjects()', 'renderProjects', {
+        document: { getElementById: () => grid },
+        filterProjects: () => (filtered === undefined ? projects : filtered),
+        renderCard: (p) => `<card>${p.name}</card>`,
+        renderRootPanel: () => '<ROOT-PANEL>',
+        state: { projects, projectsScan: scan },
+        tcScanNotice: globalThis.tcScanNotice
+      })();
+      return grid.innerHTML;
+    }
+
+    const SHORT = {
+      dir: '/p', complete: false, code: 'SCAN_TIMEOUT',
+      reason: 'Could not read the projects directory.', hint: null, listed: null
+    };
+    const COMPLETE = {
+      dir: '/p', complete: true, code: null, reason: null, hint: null, listed: null
+    };
+
+    it('does not claim "No projects yet" when the directory could not be read', () => {
+      // Mutation: drop the listIsShort branch. This is #885's worst case — a
+      // definite, actionable and wrong statement on a machine where nothing is
+      // registered and the scan failed.
+      const html = renderGrid([], SHORT);
+      assert.doesNotMatch(html, /No projects yet/);
+      assert.match(html, /could not be listed|could not be read/);
+    });
+
+    it('still invites a first project on a genuinely empty machine', () => {
+      const html = renderGrid([], COMPLETE);
+      assert.match(html, /No projects yet/);
+      assert.match(html, /Create your first project/);
+    });
+
+    it('renders the ROOT panel on every path, empty and filtered included', () => {
+      // Mutation: restore the early returns that skipped it. The notice would be
+      // invisible in exactly the cases that need it most.
+      assert.match(renderGrid([], SHORT), /<ROOT-PANEL>/, 'empty list');
+      assert.match(renderGrid([], COMPLETE), /<ROOT-PANEL>/, 'empty and healthy');
+      const filteredOut = renderGrid([{ name: 'a' }], SHORT, []);
+      assert.match(filteredOut, /<ROOT-PANEL>/, 'filtered to nothing');
+      assert.match(filteredOut, /No projects match your filter/);
+      // And the ordinary path still renders panel + cards.
+      const populated = renderGrid([{ name: 'a' }], COMPLETE);
+      assert.match(populated, /<ROOT-PANEL><card>a<\/card>/);
+    });
+  });
+
+  describe('the header session count', () => {
+    /**
+     * Run the real `renderSessionCount` over a project list.
+     * @param {object[]} projects - `state.projects`.
+     * @returns {string} The header's innerHTML.
+     */
+    function count(projects) {
+      const el = { innerHTML: '' };
+      liftRenderer(ui, 'function renderSessionCount()', 'renderSessionCount', {
+        document: { getElementById: () => el },
+        state: { projects },
+        tcSessionLiveness: globalThis.tcSessionLiveness
+      })();
+      return el.innerHTML;
+    }
+
+    const LIVE = { session: { active: true, incomplete: [], cause: null } };
+    const UNKNOWN = { session: { active: null, incomplete: ['active'], cause: 'read-timed-out' } };
+    const NONE = { session: null };
+
+    it('does not count an unknown session as not-active', () => {
+      // Mutation: count unknowns as inactive. The header then reads "0 active
+      // sessions" during the exact wedge the cards below are drawing `?` for —
+      // a definite number the server does not have, contradicting the cards it
+      // summarises, on the most prominent surface on the page.
+      const html = count([UNKNOWN, UNKNOWN, NONE]);
+      assert.match(html, /0<\/span> active sessions/);
+      assert.match(html, /2 unknown/, 'the unknowns must be surfaced, not absorbed');
+    });
+
+    it('counts live sessions and unknowns separately', () => {
+      assert.match(count([LIVE, LIVE, UNKNOWN]), /2<\/span> active sessions/);
+      assert.match(count([LIVE, LIVE, UNKNOWN]), /1 unknown/);
+    });
+
+    it('reads exactly as before on a healthy dashboard', () => {
+      // No unknowns must mean no extra clause at all.
+      const html = count([LIVE, NONE]);
+      assert.equal(html, '<span class="count-num">1</span> active session',
+        'a healthy header must be exactly what it always was');
+    });
+  });
+
   it('renderRootPanel consults the shared helper rather than re-deriving completeness', () => {
     const body = functionBody(ui, 'function renderRootPanel()');
     assert.ok(body.includes('tcScanNotice(state.projectsScan)'),
@@ -557,6 +804,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
     function badge(git) {
       const render = liftRenderer(ui, 'function renderGitBadge(project)', 'renderGitBadge', {
         esc,
+        degradedTooltip: liftRenderer(ui, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
         tcGitDirtyState: globalThis.tcGitDirtyState,
         tcGitRead: globalThis.tcGitRead
       });
@@ -602,13 +850,32 @@ describe('the dashboard actually consults the helpers (#885)', () => {
       'the unknown dot must carry a glyph — an error is never communicated by colour alone');
   });
 
-  it('an unreadable project is badged on both card kinds', () => {
+  it('both card kinds share ONE unreadable badge, with no private copy', () => {
+    // The badge was copy-pasted into both renderers — the same duplication
+    // `renderGitBadge` exists to remove, one badge over. Mutation: inline the
+    // markup into either renderer again.
     for (const decl of ['function renderCard(project)', 'function renderUnregisteredCard(project)']) {
       const body = functionBody(ui, decl);
-      assert.ok(body.includes('tcUnreadableNotice(project)'),
-        `${decl} must surface a folder that could not be read`);
-      assert.ok(body.includes('badge-unreadable'), `${decl} must render the badge`);
+      assert.ok(body.includes('renderUnreadableBadge(project)'),
+        `${decl} must use the shared badge`);
+      assert.doesNotMatch(body, /badge-unreadable/,
+        `${decl} must not carry its own copy of the markup`);
     }
+  });
+
+  it('the unreadable badge renders the reason and the remedy in its tooltip', () => {
+    const render = liftRenderer(ui, 'function renderUnreadableBadge(project)', 'renderUnreadableBadge', {
+      esc,
+      degradedTooltip: liftRenderer(ui, 'function degradedTooltip(record)', 'degradedTooltip', { esc }),
+      tcUnreadableNotice: globalThis.tcUnreadableNotice
+    });
+    assert.equal(render({ name: 'p', unreadable: null }), '', 'a readable folder gets no badge');
+    const html = render({
+      name: 'p', unreadable: 'permission denied', unreadableHint: null, unreadableCode: 'EACCES'
+    });
+    assert.match(html, /badge-unreadable/);
+    assert.match(html, /title="[^"]*permission denied/);
+    assert.match(html, /title="[^"]*(permissions|Full Disk Access)/);
   });
 
   describe('the card detail rows, run for real', () => {

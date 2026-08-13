@@ -1020,6 +1020,15 @@
   // `{known, why, remedy}` — so the dashboard speaks about a wedged tmux server
   // and an unreadable folder in the same voice, and a seventh source added later
   // joins in one place instead of growing a seventh render path.
+  //
+  // TWO RETURN CONVENTIONS, deliberately. `tcSessionRead` and `tcGitRead` always
+  // return a record, because their caller is already rendering that thing and
+  // only needs to know whether to qualify it. `tcScanNotice` and
+  // `tcUnreadableNotice` return NULL when nothing is wrong, because their caller
+  // renders nothing at all in that case — a notice row and a badge that do not
+  // exist. Hence `if (!read.known)` at two render sites and `if (notice)` at the
+  // other two. Sources that extend the record spread it rather than re-listing
+  // its fields, so a field added here reaches all four.
 
   /**
    * Build the one internal degraded-read record.
@@ -1043,11 +1052,15 @@
   // authored at the failure site, which is more specific than anything a
   // renderer could infer — those are used verbatim. Only session liveness and
   // git carry a bare `cause` token, so only those are translated here.
-  const TC_CAUSE_TEXT = {
+  // Null-prototype, here and in the three tables below: every one of them is
+  // keyed by a value that arrives in a JSON payload, and a plain object would
+  // answer `constructor` or `toString` with an inherited member — which then
+  // gets interpolated into a sentence an operator reads.
+  const TC_CAUSE_TEXT = Object.assign(Object.create(null), {
     'read-timed-out': 'the read was stopped by TangleClaw after it stopped responding',
     'git-refused-to-read-repository': 'git refused to read this repository',
     'git-status-unparsed': 'git answered in a form TangleClaw could not read'
-  };
+  });
 
   /**
    * Turn a bare `cause` token into a sentence.
@@ -1069,13 +1082,13 @@
   // operator is the same defect as printing a cause token: it reads as a leak,
   // and "dirty" in particular means nothing to someone who did not write it.
   // Every name `lib/git.js` can push is covered here.
-  const TC_GIT_FIELD_TEXT = {
+  const TC_GIT_FIELD_TEXT = Object.assign(Object.create(null), {
     dirty: 'whether there are uncommitted changes',
     branch: 'the current branch',
     lastCommit: 'the last commit',
     lastCommitAge: 'how long ago the last commit was',
     latestTag: 'the latest tag'
-  };
+  });
 
   /**
    * Name the unestablished git fields in words, as a readable list.
@@ -1198,12 +1211,19 @@
   // the failure shape it fits, and inventing one for the rest would reintroduce
   // exactly the misdiagnosis this whole area exists to remove — telling someone
   // to change a permission for a directory that answered perfectly well.
-  const TC_CODE_REMEDY = {
+  const TC_CODE_REMEDY = Object.assign(Object.create(null), {
     DIR_MISSING: 'Create the directory, or point TangleClaw at a different one in Settings.',
-    // Covers EACCES, ENOTDIR and every other ordinary error. Names no specific
-    // cause, because this code is the catch-all and asserting one would guess.
+    // The directory is there and this server may not read it. It is the one
+    // failure whose cause IS known and whose remedy is concrete, so leaving it
+    // without advice — while the vaguer catch-all below gets some — was exactly
+    // backwards. `lib/dir-scanner-child.js` reports it for a project's own
+    // directory and attaches no hint of its own.
+    EACCES: 'TangleClaw is not allowed to read this folder. Check its permissions, or grant '
+      + 'node Full Disk Access if it sits under ~/Documents, ~/Desktop or ~/Downloads.',
+    // The catch-all: ENOTDIR, EIO and anything else. Names no specific cause,
+    // because asserting one here would be a guess.
     SCAN_FAILED: 'Check that the directory still exists and that TangleClaw can read it.'
-  };
+  });
 
   // Codes whose meaning includes "and nothing is retrying it right now". Kept
   // separate from the remedy above ON PURPOSE: a remembered refusal still earns
@@ -1211,9 +1231,9 @@
   // describes is unchanged — the backoff is an additional fact, not a
   // replacement for the remedy, and deriving either from the other is the defect
   // three reviewers found independently.
-  const TC_CODE_NOT_RETRYING = {
+  const TC_CODE_NOT_RETRYING = Object.assign(Object.create(null), {
     SCAN_CACHED: 'This is a remembered result — the directory is not being retried right now.'
-  };
+  });
 
   /**
    * The notice the ROOT panel shows when the projects list is short.
@@ -1239,12 +1259,11 @@
       scan.reason || 'The projects directory could not be fully read, so this list may be short.',
       notRetrying
     ].filter(Boolean).join(' ');
-    const base = tcDegradedRead(false, why,
-      tcSentence(scan.hint) || TC_CODE_REMEDY[code] || null);
+    // Spread rather than re-listing the fields: a field added to the shared
+    // record must reach this source too, and copying `known`/`why`/`remedy` by
+    // hand is exactly how it would silently not.
     return {
-      known: false,
-      why: base.why,
-      remedy: base.remedy,
+      ...tcDegradedRead(false, why, tcSentence(scan.hint) || TC_CODE_REMEDY[code] || null),
       kind: code === 'SCAN_TRUNCATED' ? 'info' : 'warn',
       listed: Number.isFinite(scan.listed) ? scan.listed : null
     };
@@ -1268,15 +1287,14 @@
       'Its git, engine and version detail are missing rather than absent.',
       notRetrying
     ].filter(Boolean).join(' ');
-    const record = tcDegradedRead(false, why,
+    return tcDegradedRead(false, why,
       tcSentence(project.unreadableHint) || TC_CODE_REMEDY[code] || null);
-    return { known: false, why: record.why, remedy: record.remedy };
   }
 
-  global.tcDegradedRead = tcDegradedRead;
-  global.tcCauseText = tcCauseText;
-  global.tcGitFieldText = tcGitFieldText;
-  global.tcSentence = tcSentence;
+  // Only the classifiers the render sites actually call are exported.
+  // `tcDegradedRead`, `tcCauseText`, `tcGitFieldText` and `tcSentence` are
+  // internal to the four below and reached by closure — exporting them would
+  // enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionRead = tcSessionRead;
   global.tcGitDirtyState = tcGitDirtyState;

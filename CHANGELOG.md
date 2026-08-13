@@ -58,6 +58,12 @@ All notable changes to TangleClaw are documented in this file.
 
   Internal vocabulary stays internal: an operator is never shown `dirty` or `read-timed-out`.
 
+  The worst case of all is now covered too: a machine with nothing registered yet, whose projects
+  directory could not be read, used to answer **"No projects yet — create your first project."**
+  That is a definite, actionable and wrong claim, and it appeared with no notice at all because the
+  ROOT panel was skipped entirely on the empty path. It now says the list could not be built, and
+  points at the reason. A genuinely empty machine still gets the original invitation.
+
 - **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
   wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing
   creates `Projects`, and nothing in TangleClaw did either. So the first action of a brand-new
@@ -524,9 +530,9 @@ All notable changes to TangleClaw are documented in this file.
 
   A liveness read that could not be established now says so. The session comes back with `active`
   reported as `null` instead of being dropped from the payload — the same answer `git` gives for a
-  field its read could not establish (#891): unknown is its own state, not the negative one. **The
-  dashboard does not draw the difference yet** — that is #885, and until it lands an unconfirmed
-  session still reads on the card exactly as an absent one.
+  field its read could not establish (#891): unknown is its own state, not the negative one. The
+  dashboard draws that difference — a distinct status dot, an *Unknown* detail row, and an
+  "N unknown" clause in the header count — as described in the #885 entry above.
 
   What changes for you today is what gets **written down**. Two paths recorded a session's death on
   the strength of a probe that had failed rather than answered. A status poll from an open session
@@ -542,8 +548,8 @@ All notable changes to TangleClaw are documented in this file.
   would invert the bug rather than fix it: after a reboot, every stale session row would sit at
   unknown forever on every machine where tmux simply is not running.
 
-  Rendering the difference is #885; this is the half that stops the payload from stating a fact
-  nobody established.
+  This is the half that stops the payload from stating a fact nobody established; #885, above,
+  is the half that draws it.
 
 - **A brand-new project shows its real branch name instead of "unknown" (#895).** Reading a
   repository with no commits yet used `git rev-parse --abbrev-ref HEAD`, which fails outright over an
