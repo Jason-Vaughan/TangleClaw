@@ -463,6 +463,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A brand-new project shows its real branch name instead of "unknown" (#895).** Reading a
+  repository with no commits yet used `git rev-parse --abbrev-ref HEAD`, which fails outright over an
+  unborn HEAD — so every freshly-created project reported its branch as `unknown` until its first
+  commit. `git status` names the branch there quite happily, and that is where the branch now comes
+  from.
+
 - **Checking which engines are installed no longer costs one probe per project (#890).** Enriching
   the project list ran `command -v claude` once per project, synchronously on the event loop, every
   ten seconds — asking separately, for each project, a question about the *machine* whose answer is
@@ -2004,6 +2010,39 @@ All notable changes to TangleClaw are documented in this file.
   nothing until a pattern that must hit does.**
 
 ### Internal
+
+- **Reading one repository's state costs three `git` invocations instead of seven (#895).**
+  `git status --porcelain=v1 --branch` answers is-it-a-repo, which branch, and whether the tree is
+  dirty in one call; `git log -1 --format=%s%n%cr` answers the last commit's subject and age in
+  another. **Measured on this repository, warm: 7 invocations / 165ms → 3 invocations / 75ms**, with
+  every field identical either way.
+
+  It also halves the worst case #891 bounded — the shared budget now has three places to stall
+  instead of seven — and drops a repository with no commits from four invocations to one.
+
+  **The issue's literal "collapse to three" would have been a bug, and the fixture that proves it is
+  in the suite.** With `.git/index` unreadable, `git status` fails while
+  `git rev-parse --is-inside-work-tree` still answers `true` — so inferring "not a repository" from a
+  failed `status` would make a broken-but-real project *vanish from the dashboard* rather than lose a
+  badge. That probe therefore stays as the authority on repository-or-not, just deferred to the
+  failure path, where the healthy read never pays for it. The honest cost: a directory that is not a
+  repository now takes two invocations instead of one.
+
+  Whether a repository has any commits is also read positively, off `status`'s `No commits yet on`
+  marker, replacing a `rev-parse HEAD` probe whose *failure* was treated as "no commits" — so a
+  repository that failed it for any other reason is no longer reported as empty.
+
+  **A repository whose `status` fails still reports everything else it can.** Neither the last
+  commit nor the latest tag needs the index, so a repository with an unreadable one keeps its branch,
+  subject, age and tag, and loses only its clean/dirty state — which comes back as *unknown* rather
+  than as *clean*. The seven-invocation read answered those fields too, and collapsing them to
+  unknown would have told you less than before, not more.
+
+  **The log now says which of three things went wrong**, because they call for different responses:
+  we stopped the read (slow repository), git ran and refused to read the repository (needs
+  repairing), or git answered in a shape TangleClaw does not recognise. Every short read previously
+  emitted one identical line, so the only one you could act on was indistinguishable from the two you
+  could not.
 
 - **Build plan for #884, and a correction to what #884 says is broken.** The issue scopes the
   remaining event-loop hazard as "32 `existsSync` sites". Reading `enrichProject`

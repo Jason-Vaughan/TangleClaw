@@ -44,13 +44,13 @@ let realPath = null;
 /**
  * Put a `git` that stalls on chosen subcommands at the front of PATH.
  *
- * It exits 0 with empty stdout otherwise, which is enough: these tests assert on
- * WHICH fields the budget establishes and how long the whole read takes, never
- * on git's output.
+ * A subcommand it does not stall exits 0, and `status` answers with a parseable
+ * `## main` — see the body for why an empty answer there silently disarmed every
+ * guard downstream of it.
  *
- * Patterns are shell globs matched against the WHOLE argument list, not just the
- * subcommand, because the two `rev-parse` calls have to be told apart: the
- * is-a-repo probe and the has-commits probe share `$1`.
+ * Patterns are shell globs matched against the WHOLE argument list rather than
+ * the subcommand alone, so calls sharing a `$1` can be told apart — `rev-parse`
+ * backs both the is-a-repo probe and the branch recovery beside it.
  *
  * @param {string[]|null} stallOn - Globs to stall on (`null` = every invocation).
  * @returns {void}
@@ -60,10 +60,21 @@ function shadowGit(stallOn) {
   // Spaces escaped rather than quoted: a quoted case pattern is literal, and
   // these need to stay globs so `status*` matches its flags.
   const patterns = stallOn && stallOn.map((g) => g.replace(/ /g, '\\ ')).join('|');
-  const body = stallOn === null
+  const stall = stallOn === null
     ? `sleep ${STALL_SECONDS}\n`
     : `case "$*" in\n  ${patterns}) sleep ${STALL_SECONDS} ;;\nesac\n`;
-  fs.writeFileSync(path.join(fakeBinDir, 'git'), `#!/bin/sh\n${body}exit 0\n`, { mode: 0o755 });
+  // A `status` this fake does not stall must answer PARSEABLY, or every read
+  // stops at the first step and the later ones are never reached.
+  //
+  // This is not cosmetic. `_fetchInfo` now takes branch, dirtiness and
+  // has-commits from one `status`, and treats output it cannot parse as
+  // "established nothing" — so a fake that answered `status` with empty stdout
+  // made every downstream assertion pass off an early return, with the command
+  // under test never invoked. The `log*` guard below was exactly that shape:
+  // green, and measuring nothing. A stall guard has to reach the step it stalls.
+  const answer = 'case "$*" in\n  status*) echo "## main" ;;\nesac\n';
+  fs.writeFileSync(path.join(fakeBinDir, 'git'),
+    `#!/bin/sh\n${stall}${answer}exit 0\n`, { mode: 0o755 });
   realPath = process.env.PATH;
   process.env.PATH = `${fakeBinDir}:${realPath}`;
 }
@@ -86,15 +97,18 @@ describe('git info budget (#891)', () => {
   });
 
   describe('the budget bounds the whole read, not each spawn', () => {
-    it('stops near its budget instead of paying the per-call cap seven times', () => {
+    it('stops near its budget instead of paying the per-call cap once per spawn', () => {
       shadowGit(null);
       const startedAt = Date.now();
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 1000 });
       const elapsed = Date.now() - startedAt;
 
       assert.ok(info !== null, 'a repository whose git work stalls is still a repository');
-      // The assertion that matters is "nowhere near seven caps" (35s), not a
-      // precise number — a loaded CI box is allowed to be late.
+      // The assertion that matters is "nowhere near one cap per spawn", not a
+      // precise number — a loaded CI box is allowed to be late. Stated as the
+      // shape rather than as an arithmetic product, because the product moved
+      // when the read went from seven invocations to three and this comment did
+      // not notice.
       assert.ok(elapsed < 5000, `expected the read to stop near its budget, took ${elapsed}ms`);
     });
 
@@ -126,23 +140,71 @@ describe('git info budget (#891)', () => {
         'a field whose spawn was killed by the cap must be named unestablished');
     });
 
-    it('marks everything downstream of a killed has-commits probe, not just the probe', () => {
-      // `git rev-parse HEAD` failing means "no commits" — a real answer, whose
-      // empty message/age/tag are the truth. The same call being KILLED means we
-      // never found out, and it fails identically. Only the step's `ok` separates
-      // them; inferring from the returned value silently let a killed probe pass
-      // for an empty repository, leaving lastCommitAge and latestTag reported as
-      // established when nothing had looked at them.
+    it('calls a repository we STOPPED slow, not broken', () => {
+      // The distinction an operator acts on. A `status` our own cap killed means
+      // a SLOW repository — #891's entire scenario — and the remedy is patience
+      // or a bigger budget. A `status` git ran and refused means a repository
+      // that needs repairing. They arrive identically: both are a throw.
       //
-      // Stalls on the has-commits probe alone — matched on the full argument list
-      // because it shares `$1` with the is-a-repo probe that must stay fast.
-      shadowGit(['rev-parse HEAD']);
+      // THE MUTATION THIS CATCHES: deriving the cause from the remaining budget
+      // instead of from `weStopped` at the throw. Every production caller passes
+      // a positive budget, so that version could only ever say "git refused" —
+      // and would send an operator to repair a healthy repository. A test using
+      // `budgetMs: 0` passes against that bug, because zero is the one input
+      // production never supplies; this one uses a real stalling `git` under a
+      // budget production actually uses.
+      const { setConsoleStream, setLevel } = require('../lib/logger');
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        shadowGit(['status*']);
+        git._fetchInfo(REPO_ROOT, { budgetMs: 1500 });
+      } finally {
+        setConsoleStream(null);
+        setLevel('info');
+      }
+
+      const joined = lines.join('\n');
+      assert.match(joined, /read-timed-out/,
+        'a status WE killed is a slow repository, and must be reported as one');
+      assert.doesNotMatch(joined, /git-refused-to-read-repository/,
+        'and must never be reported as a repository git refused to read');
+    });
+
+    it('marks BOTH fields of a killed two-field read, not just the one it names', () => {
+      // THE CONTRACT THIS HAS ALWAYS PROTECTED, unchanged: a step the cap KILLED
+      // establishes nothing, and every field that step would have answered must
+      // be named — never left reporting its empty fallback as though something
+      // had looked.
+      //
+      // WHAT MOVED, and why this test was rewritten rather than deleted (#895):
+      // it used to stall `git rev-parse HEAD`, the separate has-commits probe.
+      // That probe is gone — has-commits is now read off `status`'s `## No
+      // commits yet on …` marker, which is free and cannot be killed on its own —
+      // so shadowing `rev-parse HEAD` now stalls a command nobody runs, and the
+      // test passed for a mechanism that no longer exists.
+      //
+      // The same hazard lives on the invocation that replaced it: `log -1
+      // --format=%s%n%cr` answers lastCommit AND lastCommitAge together, so a
+      // kill there must name both. Naming only the field the step is keyed under
+      // would leave the other reporting `''` as an established answer — the exact
+      // shape #891 removed.
+      //
+      // `latestTag` is deliberately NOT asserted here any more: `describe` is its
+      // own invocation and still runs, so it is genuinely established. Under the
+      // old shape it was unestablished only because the dead gate probe stopped
+      // it being attempted at all. That is a strictly more honest answer, not a
+      // weakened assertion.
+      shadowGit(['log*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
 
-      for (const field of ['lastCommit', 'lastCommitAge', 'latestTag']) {
+      for (const field of ['lastCommit', 'lastCommitAge']) {
         assert.ok(info.incomplete.includes(field),
-          `${field} sits downstream of a probe that was killed, so it was never established`);
+          `${field} was to be answered by a step that was killed, so it was never established`);
       }
+      assert.equal(info.lastCommit, '', 'and its value stays empty rather than half-parsed');
+      assert.equal(info.lastCommitAge, '');
     });
   });
 
