@@ -26,6 +26,41 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-13: the projects list says whether it is the whole list (#885 chunk 02)
+
+<!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=02 -->
+
+**Why:** the list degraded honestly in the log and silently in the product. `listAllProjects`
+returned a bare array, so a directory that could not be read produced a well-formed `200` that was
+indistinguishable from having no unregistered folders — the half of #883's *"it is invisible and it
+lies"* still standing.
+
+**What changed:** `listAllProjects` returns `{ projects, scan }` and the route passes both through.
+`scan` is built by one helper for the healthy and degraded paths alike, so the two cannot drift into
+different shapes, and `complete` is DERIVED from whether a failure was given rather than passed
+alongside it — a caller cannot report a failure and a complete list at once. Six codes:
+`DIR_MISSING`, `SCAN_TIMEOUT`, `SCAN_CACHED`, `SCAN_ABORTED`, `SCAN_FAILED`, `SCAN_TRUNCATED`, reusing
+the vocabulary `lib/project-facts.js` already puts on a single project's `unreadableCode` rather than
+inventing a second taxonomy for the same conditions one scope up.
+
+**The truncated walk is the opposite failure and is treated as one.** It means the directory answered
+fine and simply has more folders than one scan can check — nothing is broken, nothing to remedy — so
+it carries no hint. Guarded by a mutation that routes it through `_scanFailureHint`, which produces
+the Full Disk Access misdiagnosis this whole area exists to remove.
+
+`git.getInfo` now returns the `cause` it already computed for its log, mapping the internal
+`'complete'` sentinel to `null` so a consumer testing for truthiness is not handed a cause when
+nothing went wrong. It reaches the payload unchanged — `dir-scanner-child.js` returns the whole
+object over IPC.
+
+**Verified by mutation:** truncation routed through the permission hint; the healthy `scan` returned
+on the failure path; `cause` computed and not returned (the state that shipped); and the route
+dropping `scan` on its way out — each applied and watched red before its guard was kept. The route
+guard exists because the field crossing the boundary is the claim: `scan` existing inside
+`listAllProjects` renders nothing.
+
+**Classification:** feature
+
 ## 2026-08-13: a liveness read that could not be established is unknown, not absent (#900)
 
 <!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=01 -->

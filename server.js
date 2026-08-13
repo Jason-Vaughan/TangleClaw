@@ -2769,8 +2769,11 @@ route('GET', '/api/projects', async (req, res) => {
   if (query.tag) options.tag = query.tag;
   if (query.engine) options.engine = query.engine;
 
-  const list = await projects.listAllProjects(options);
-  jsonResponse(res, 200, { projects: list });
+  // `scan` travels with the list, because the list alone cannot say whether it is
+  // the whole list — a directory that would not answer degrades to the registered
+  // projects, and that used to look identical to having no others (#885).
+  const { projects: list, scan } = await projects.listAllProjects(options);
+  jsonResponse(res, 200, { projects: list, scan });
 });
 
 // POST /api/projects/attach — Attach an existing filesystem directory as a project

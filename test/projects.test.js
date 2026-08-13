@@ -1651,7 +1651,7 @@ describe('projects', () => {
     }
 
     it('returns the registered projects instead of failing the request', async () => {
-      const list = await withScanner(
+      const { projects: list } = await withScanner(
         () => Promise.reject(timedOut()),
         () => projects.listAllProjects()
       );
@@ -1662,6 +1662,73 @@ describe('projects', () => {
       for (const p of list) {
         assert.equal(p.registered, true, 'a degraded scan may only return registered projects');
       }
+    });
+
+    it('says the list is short, and why, instead of degrading silently (#885)', async () => {
+      // THE MUTATION THIS CATCHES: returning the healthy `scan` on the failure
+      // path — which is what a bare array amounted to. The browser got a 200 and
+      // a well-formed list, and nothing distinguished "these are all your
+      // projects" from "these are the ones we could still see".
+      const { scan } = await withScanner(
+        () => Promise.reject(timedOut()),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_TIMEOUT', 'consumers branch on the code, never on the prose');
+      assert.equal(scan.dir, projects.resolveProjectsDir(store.config.load().projectsDir));
+      assert.ok(scan.reason, 'and a human gets a sentence');
+      assert.match(scan.hint, /Full Disk Access/,
+        'a path that did not answer is the failure the remedy fits');
+    });
+
+    it('carries the healthy scan when nothing went wrong', async () => {
+      // The other half of the same guard: `complete: true` has to be reachable,
+      // or a renderer would warn on every poll of a perfectly healthy machine.
+      const { scan } = await withScanner(
+        () => Promise.resolve({ unregistered: [], truncated: false }),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, true);
+      assert.equal(scan.code, null);
+      assert.equal(scan.reason, null);
+      assert.equal(scan.hint, null);
+      assert.equal(scan.listed, null);
+    });
+
+    it('reports a projects directory that is not there at all', async () => {
+      // Its own early return, and the one shape most easily left behind: a
+      // missing directory is not a failure to read, so the code returns before
+      // the failure path entirely. THE MUTATION THIS CATCHES: keeping that
+      // return's bare list, which would show an operator whose configured
+      // directory does not exist a permanently short list with no explanation —
+      // and the remedy is creating or re-pointing it, not granting a permission.
+      const { scan } = await withScanner(
+        () => Promise.reject(Object.assign(new Error('no such directory'), { code: 'ENOENT' })),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'DIR_MISSING');
+      assert.match(scan.reason, /does not exist/);
+      assert.equal(scan.hint, null);
+    });
+
+    it('names a remembered refusal as one, not as a fresh failure', async () => {
+      // The backoff is holding this directory off, so the list is short for a
+      // reason the operator can act on differently: nothing is being retried
+      // right now. Same shape, distinct code.
+      const cached = Object.assign(new Error('refused recently'), { tcCached: true });
+      const { scan } = await withScanner(
+        () => Promise.reject(cached),
+        () => projects.listAllProjects()
+      );
+
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_CACHED');
+      assert.equal(scan.hint, null,
+        'a remembered refusal is not a permission diagnosis — only a live timeout earns that');
     });
 
     it('gives the scan a deadline SHORTER than the walk it asks for', async () => {
@@ -1788,11 +1855,15 @@ describe('projects', () => {
     // blocked syscall rather than a never-settling stub.
 
     it('still answers when the directory read fails outright', async () => {
-      const list = await withScanner(
+      const { projects: list, scan } = await withScanner(
         () => Promise.reject(Object.assign(new Error('boom'), { code: 'EACCES' })),
         () => projects.listAllProjects()
       );
       assert.ok(Array.isArray(list));
+      assert.equal(scan.complete, false);
+      assert.equal(scan.code, 'SCAN_FAILED');
+      assert.equal(scan.hint, null,
+        'a failure that is not a path refusing to answer gets no permission remedy');
     });
 
     it('keeps the directories it found when the walk runs out of time', async () => {
@@ -1815,13 +1886,23 @@ describe('projects', () => {
         { id: null, name: 'walked-1', path: '/x/walked-1', registered: false, git: null },
         { id: null, name: 'walked-2', path: '/x/walked-2', registered: false, git: null }
       ];
-      const all = await withScanner(
+      const { projects: all, scan } = await withScanner(
         () => Promise.resolve({ unregistered: partial, truncated: true }),
         () => projects.listAllProjects()
       );
       const found = all.filter(p => p.registered === false);
       assert.deepEqual(found.map(p => p.name).sort(), ['walked-1', 'walked-2'],
         'the directories walked before the deadline must survive, not be discarded');
+
+      // A truncated walk is the OPPOSITE failure and must not be described as the
+      // same one: the directory answered fine, there is just more of it than one
+      // scan can check. THE MUTATION THIS CATCHES: routing truncation through
+      // `_scanFailureHint`, which would tell an operator to grant Full Disk
+      // Access for a folder that has no permission problem at all.
+      assert.equal(scan.complete, false, 'short is not complete, even when nothing is broken');
+      assert.equal(scan.code, 'SCAN_TRUNCATED');
+      assert.equal(scan.hint, null, 'nothing to remedy — there is no fault here');
+      assert.equal(scan.listed, 2, 'and it says how much it did get through');
     });
 
     it('says the list is SHORT rather than letting a truncated walk look complete', async () => {
@@ -1859,7 +1940,7 @@ describe('projects', () => {
       fs.writeFileSync(path.join(projectsDir, 'has-tc-config', '.tangleclaw', 'project.json'), '{}');
       fs.mkdirSync(path.join(projectsDir, 'no-tc-config'), { recursive: true });
 
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const withConfig = all.find(p => p.name === 'has-tc-config');
       const without = all.find(p => p.name === 'no-tc-config');
       assert.ok(withConfig && without, 'both unregistered directories must be listed');
@@ -2194,7 +2275,7 @@ describe('projects', () => {
       // Create an unregistered directory
       fs.mkdirSync(path.join(projectsDir, 'unregistered-proj'), { recursive: true });
 
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const registered = all.filter(p => p.registered === true);
       const unregistered = all.filter(p => p.registered === false);
 
@@ -2203,7 +2284,7 @@ describe('projects', () => {
     });
 
     it('unregistered projects have expected shape', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       const unreg = all.find(p => p.name === 'unregistered-proj');
       assert.ok(unreg);
       assert.equal(unreg.registered, false);
@@ -2214,7 +2295,7 @@ describe('projects', () => {
     });
 
     it('results are sorted by name', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       for (let i = 1; i < all.length; i++) {
         assert.ok(all[i - 1].name.toLowerCase() <= all[i].name.toLowerCase(),
           `${all[i - 1].name} should be before ${all[i].name}`);
@@ -2222,7 +2303,7 @@ describe('projects', () => {
     });
 
     it('does not include hidden directories', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       assert.ok(!all.some(p => p.name.startsWith('.')));
     });
   });
@@ -2306,7 +2387,7 @@ describe('projects', () => {
     });
 
     it('archived projects excluded from listAllProjects unregistered scan', async () => {
-      const all = await projects.listAllProjects();
+      const all = (await projects.listAllProjects()).projects;
       // attachable is archived — should not appear as unregistered
       const asUnreg = all.find(p => p.name === 'attachable' && p.registered === false);
       assert.equal(asUnreg, undefined);

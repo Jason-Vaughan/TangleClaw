@@ -143,6 +143,22 @@ describe('api-projects', () => {
       assert.ok(project.hasOwnProperty('git'));
     });
 
+    it('says whether the list is the whole list (#885)', async () => {
+      // THE MUTATION THIS CATCHES: dropping `scan` from the route body. The list
+      // degrades to registered projects when the projects directory cannot be
+      // read, and a 200 with a well-formed array looks identical either way —
+      // which is the entire defect. The field has to cross the boundary, not
+      // just exist inside `listAllProjects`.
+      const { status, data } = await request('GET', '/api/projects');
+
+      assert.equal(status, 200);
+      assert.ok(data.scan, 'the response must carry the scan state');
+      assert.equal(typeof data.scan.complete, 'boolean');
+      assert.ok('code' in data.scan && 'reason' in data.scan && 'hint' in data.scan,
+        'always present, null when healthy — a consumer reads these, never probes for them');
+      assert.ok(data.scan.dir, 'and names the directory it is talking about');
+    });
+
     it('filters by tag', async () => {
       const { data } = await request('GET', '/api/projects?tag=test');
       assert.ok(data.projects.every((p) => p.tags.includes('test')));

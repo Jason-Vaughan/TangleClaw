@@ -6,6 +6,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The projects list can now say it is incomplete, and why (#885).** When the projects directory
+  cannot be read, the list degrades to your registered projects and logs the reason. It always has —
+  the problem was that it did so **silently**: the browser got a well-formed list, and nothing
+  distinguished *"these are all your projects"* from *"these are the ones we could still see"*.
+  Unregistered folders simply were not there, which reads as having none.
+
+  `GET /api/projects` now answers with a `scan` block alongside the projects: which directory was
+  walked, whether the list is complete, a machine-readable code, one sentence for a human, and the
+  remedy where one fits. Six states are distinguished — the directory is not there at all, it did
+  not answer, it did not answer recently and is being backed off, the read was cancelled as
+  collateral for another directory's hang, it failed outright, or **it answered fine and simply has
+  more folders than one scan can check in time**.
+
+  That last one is the opposite failure and is deliberately not dressed as the same one: nothing is
+  broken, so it carries no remedy. Telling someone to grant Full Disk Access for a folder that
+  answered perfectly well is the misdiagnosis this whole area exists to remove.
+
+  A repository's git reading gained the same honesty: the reason a field could not be established
+  (`read-timed-out`, `git-refused-to-read-repository`, `git-status-unparsed`) now travels with the
+  reading instead of only reaching the log — so a repository that is *slow* stops being
+  indistinguishable from one that is *broken*, and only the second is something you can fix.
+
+  **The dashboard does not draw any of this yet.** This is the data; the rendering is the next
+  chunk of #885.
+
 - **A missing projects folder now offers to create itself.** `~/Documents/Projects` is the path the
   wizard pre-fills, and a stock macOS install does not have it — macOS creates `Documents`, nothing
   creates `Projects`, and nothing in TangleClaw did either. So the first action of a brand-new
