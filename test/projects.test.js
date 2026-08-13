@@ -928,6 +928,186 @@ describe('projects', () => {
     });
   });
 
+  // A tmux server that will not answer establishes NOTHING. Reporting its
+  // silence as "no session" is the defect: every running session disappears
+  // from the fleet view and the operator is told nothing is up on a machine
+  // where everything is (#900).
+  describe('a liveness read that could not be established is unknown, not absent (#900)', () => {
+    const tmuxModule = require('../lib/tmux');
+    const dirScanner = require('../lib/dir-scanner');
+
+    /**
+     * Run `fn` with tmux answering `stdout` from a stub, and the scanner healthy.
+     *
+     * The counting sibling of this lives with the #890 guards; this one only
+     * needs the healthy answer, to show an unknown clearing once tmux replies.
+     *
+     * @param {string} stdout - What `tmux list-sessions` replies with.
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withAnsweringTmux(stdout, fn) {
+      const realFactory = tmuxModule.createSessionNameSnapshot;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      tmuxModule.createSessionNameSnapshot = (options = {}) => realFactory({
+        ...options,
+        execFn: (_file, _args, _opts, cb) => setImmediate(() => cb(null, stdout))
+      });
+      const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+      dirScanner.request = healthy;
+      dirScanner.interactiveRequest = healthy;
+      try {
+        return await fn();
+      } finally {
+        tmuxModule.createSessionNameSnapshot = realFactory;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    /**
+     * Run `fn` against a REAL `tmux` on PATH that never answers, killed by the
+     * snapshot's own timeout.
+     *
+     * Deliberately not a stubbed callback error. The behaviour under test begins
+     * with recognising a killed process, and this repo has shipped three
+     * hand-written models of that error shape that were all wrong (#891/#894) —
+     * a stub would assert the model, not the mechanism. Only the timeout is
+     * injected, by wrapping the real factory.
+     *
+     * @param {Function} fn - Test body.
+     * @returns {Promise<any>}
+     */
+    async function withStalledTmux(fn) {
+      const realFactory = tmuxModule.createSessionNameSnapshot;
+      const realReq = dirScanner.request;
+      const realInteractive = dirScanner.interactiveRequest;
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-stalled-tmux-'));
+      fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+      const realPath = process.env.PATH;
+      process.env.PATH = `${binDir}:${realPath}`;
+      tmuxModule.createSessionNameSnapshot = (options = {}) =>
+        realFactory({ ...options, timeout: 300 });
+      const healthy = () => Promise.resolve({ exists: true, governanceState: 'ungoverned' });
+      dirScanner.request = healthy;
+      dirScanner.interactiveRequest = healthy;
+      try {
+        return await fn();
+      } finally {
+        process.env.PATH = realPath;
+        fs.rmSync(binDir, { recursive: true, force: true });
+        tmuxModule.createSessionNameSnapshot = realFactory;
+        dirScanner.request = realReq;
+        dirScanner.interactiveRequest = realInteractive;
+      }
+    }
+
+    it('reports an active session as unknown rather than dropping it', async () => {
+      projects.createProject({ name: 'wedged-tmux-active' });
+      const project = store.projects.getByName('wedged-tmux-active');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-wedged-tmux-active',
+        primePrompt: ''
+      });
+      try {
+        // THE MUTATION THIS CATCHES: dropping the unanswered branch, so an
+        // unreadable liveness falls through to `session: null` — which is what
+        // shipped before #900, and is indistinguishable on the dashboard from a
+        // session that really has died.
+        const enriched = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.ok(enriched.session, 'the session must not vanish because tmux went quiet');
+        assert.equal(enriched.session.active, null,
+          'null, not false: nothing was established, so there is no negative to report');
+        assert.deepEqual(enriched.session.incomplete, ['active']);
+        assert.equal(enriched.session.cause, 'read-timed-out');
+        assert.equal(enriched.session.tmuxSession, 'tc-wedged-tmux-active');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('reports a wrapping session as unknown too', async () => {
+      projects.createProject({ name: 'wedged-tmux-wrapping' });
+      const project = store.projects.getByName('wedged-tmux-wrapping');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'tc-wedged-tmux-wrapping',
+        primePrompt: ''
+      });
+      store.sessions.setWrapping(session.id);
+      try {
+        // The wrapping branch is asymmetric with the active one — a wrapping
+        // session with no tmux handle is NOT live — so it can lose the unknown
+        // state independently. This is the second half of the same guard.
+        const enriched = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+
+        assert.ok(enriched.session, 'a wrapping session must not vanish either');
+        assert.equal(enriched.session.active, null);
+        assert.equal(enriched.session.status, 'wrapping');
+        assert.equal(enriched.session.cause, 'read-timed-out');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('leaves a project with no session row alone, and asks the wedged tmux nothing', async () => {
+      // The unknown state must not leak onto projects that never had a session:
+      // a machine with a wedged tmux and one running project must show one
+      // unknown, not a fleet of them. This also re-pins #890's laziness against
+      // the branch rewrite — an eager `get()` would now cost a 300ms stall per
+      // sessionless project, which is worse than the spawn it replaced.
+      projects.createProject({ name: 'wedged-tmux-idle' });
+      const row = store.projects.getByName('wedged-tmux-idle');
+      const started = Date.now();
+      const enriched = await withStalledTmux(() => projects.enrichProject(row));
+
+      assert.equal(enriched.session, null);
+      assert.ok(Date.now() - started < 250,
+        'nothing may be spawned — let alone waited on — for a question nobody asked');
+    });
+
+    it('still reports a live session as live once tmux answers again', async () => {
+      // The recovery half. An unknown that sticks after the server comes back is
+      // the same lie in the other direction, and nothing else in this file
+      // exercises the transition.
+      const { project, session } = (() => {
+        projects.createProject({ name: 'wedged-tmux-recovers' });
+        const p = store.projects.getByName('wedged-tmux-recovers');
+        return {
+          project: p,
+          session: store.sessions.start({
+            projectId: p.id,
+            engineId: 'claude',
+            tmuxSession: 'tc-wedged-tmux-recovers',
+            primePrompt: ''
+          })
+        };
+      })();
+      try {
+        const stalled = await withStalledTmux(
+          () => projects.enrichProject(store.projects.get(project.id)));
+        assert.equal(stalled.session.active, null);
+
+        const recovered = await withAnsweringTmux(`${session.tmuxSession}\n`,
+          () => projects.enrichProject(store.projects.get(project.id)));
+        assert.equal(recovered.session.active, true);
+        assert.deepEqual(recovered.session.incomplete, [],
+          'the healthy payload carries the fields too, empty — a field that appears '
+          + 'only on failure makes every consumer probe for it');
+        assert.equal(recovered.session.cause, null);
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+  });
+
   describe('enrichProject — governanceState (#353)', () => {
     let govDir;
 

@@ -463,6 +463,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A tmux server that will not answer no longer reports every session as dead (#900).** Session
+  liveness had two outcomes and three real states: tmux confirmed the pane, tmux said the pane is
+  gone, and *tmux never replied*. The third was folded into the second, so a wedged tmux server did
+  not degrade the fleet view — it lied to it. Every running session silently disappeared, and the
+  operator was shown "nothing is running" for a machine where everything was, in exactly the state
+  (#94/#144/#380 — PTY exhaustion) where knowing what is still up matters most.
+
+  A liveness read that could not be established now says so. The session stays on the card with its
+  `active` reported as `null` rather than vanishing, which is the same answer `git` gives for a
+  field its read could not establish (#891): unknown is its own state, not the negative one.
+
+  **Only a read our own timeout stopped counts as unknown**, and the asymmetry is deliberate. A tmux
+  that *replied* — including the ordinary "no server running" of a machine with no sessions at all —
+  told us something, and that something is that nothing is live. Widening unknown to every failure
+  would invert the bug rather than fix it: after a reboot, every stale session row would sit at
+  unknown forever on every machine where tmux simply is not running.
+
+  Rendering the difference is #885; this is the half that stops the payload from stating a fact
+  nobody established.
+
 - **A brand-new project shows its real branch name instead of "unknown" (#895).** Reading a
   repository with no commits yet used `git rev-parse --abbrev-ref HEAD`, which fails outright over an
   unborn HEAD — so every freshly-created project reported its branch as `unknown` until its first

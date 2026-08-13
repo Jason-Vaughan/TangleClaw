@@ -53,7 +53,10 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     const { execFn, calls } = stubExec({ stdout: 'alpha\nbeta\ngamma\n' });
     const snap = tmux.createSessionNameSnapshot({ execFn });
 
-    assert.deepEqual([...(await snap.get())].sort(), ['alpha', 'beta', 'gamma']);
+    const verdict = await snap.get();
+    assert.deepEqual([...verdict.names].sort(), ['alpha', 'beta', 'gamma']);
+    assert.equal(verdict.answered, true, 'tmux replied, so the set is the whole truth');
+    assert.equal(verdict.cause, null);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].file, 'tmux');
   });
@@ -81,7 +84,7 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     const results = await Promise.all([snap.get(), snap.get(), snap.get()]);
 
     assert.equal(calls.length, 1);
-    for (const set of results) assert.ok(set.has('alpha'));
+    for (const verdict of results) assert.ok(verdict.names.has('alpha'));
   });
 
   it('keeps a name containing the old field delimiter intact', async () => {
@@ -90,7 +93,7 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
     // yielding a TRUNCATED name — which could collide with a real project's
     // session and report it live. One field has nothing to split on.
     const { execFn, calls } = stubExec({ stdout: 'we|rd\n' });
-    const names = await tmux.createSessionNameSnapshot({ execFn }).get();
+    const { names } = await tmux.createSessionNameSnapshot({ execFn }).get();
 
     assert.ok(names.has('we|rd'), 'the whole name must survive');
     assert.ok(!names.has('we'), 'and must not be truncated into another name');
@@ -98,27 +101,41 @@ describe('tmux — one session listing serves a whole fleet (#890)', () => {
       'asking for one field is what makes that true — a joined format brings the split back');
   });
 
-  it('reads an unanswerable tmux as no live sessions, without rejecting', async () => {
-    // What `hasSession` already returns per name when tmux will not answer. The
-    // caller enriching a fleet must not have its whole list fail because tmux is
-    // down — that is the ordinary state of a machine with no sessions.
+  it('treats a tmux that replied "no server running" as an ANSWER of none live', async () => {
+    // THE MUTATION THIS CATCHES: widening "unknown" from a stop we caused to
+    // every failure. tmux not running is the ordinary state of a machine with no
+    // sessions — an answer, not a gap. Call it unknown and every stale `active`
+    // row on a rebooted machine sits at unknown forever, never cleaned up,
+    // which is the same defect as #900 pointed the other way.
     const { execFn } = stubExec({ err: Object.assign(new Error('no server running'), { code: 1 }) });
-    assert.equal((await tmux.createSessionNameSnapshot({ execFn }).get()).size, 0);
+    const verdict = await tmux.createSessionNameSnapshot({ execFn }).get();
+
+    assert.equal(verdict.names.size, 0);
+    assert.equal(verdict.answered, true);
+    assert.equal(verdict.cause, null);
   });
 
-  it('resolves empty when the listing times out, rather than hanging the caller', async () => {
+  it('reports that it could not establish anything when the listing times out (#900)', async () => {
     // Driven by a REAL stalling `tmux`, not a stub: the subject is a timeout, and
     // a stub asserts the author's model of a timeout rather than the timeout
     // (#891/#894 — three hand-written versions of this check were all dead).
+    //
+    // THE MUTATION THIS CATCHES: resolving the empty set with `answered: true`,
+    // which is what this did before #900. A wedged tmux server then made every
+    // running session in the fleet report as not live — an unknown wearing a
+    // fact's clothes, on precisely the machine state (#94/#144/#380) where the
+    // operator most needs to see what is still up.
     const os = require('node:os');
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-slow-tmux-snap-'));
     fs.writeFileSync(path.join(binDir, 'tmux'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
     const realPath = process.env.PATH;
     process.env.PATH = `${binDir}:${realPath}`;
     try {
-      const names = await tmux.createSessionNameSnapshot({ timeout: 300 }).get();
-      assert.equal(names.size, 0,
-        'a wedged tmux reads as no live sessions — the same answer hasSession already gave');
+      const verdict = await tmux.createSessionNameSnapshot({ timeout: 300 }).get();
+      assert.equal(verdict.answered, false,
+        'a wedged tmux establishes nothing — the empty set must not read as "none live"');
+      assert.equal(verdict.cause, 'read-timed-out');
+      assert.equal(verdict.names.size, 0);
     } finally {
       process.env.PATH = realPath;
       fs.rmSync(binDir, { recursive: true, force: true });

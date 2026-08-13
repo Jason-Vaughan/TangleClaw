@@ -26,6 +26,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-13: a liveness read that could not be established is unknown, not absent (#900)
+
+<!-- prawduct: type=fix | scope=degraded-reads-900-885 | chunks=01 -->
+
+**Why:** session liveness had two outcomes and three real states — tmux confirmed the pane, tmux said
+the pane is gone, and tmux never replied. The third was folded into the second, so a wedged tmux
+server did not degrade the fleet view, it lied to it: every running session vanished and the operator
+was told nothing was running on a machine where everything was. #891 settled the rule for exactly
+this shape in `git.getInfo` (`dirty` became `null` rather than `false`); liveness never got it.
+
+**What changed:** `tmux._readSessionNames` resolves a verdict — `{ names, answered, cause }` — rather
+than a bare set, so a caller cannot read "this name is not in the set" without also being told
+whether tmux answered. `enrichProject` gained the third branch: an active or wrapping session the
+snapshot could not confirm is reported with `active: null`, `incomplete: ['active']` and the cause,
+instead of being dropped. `active` is falsy, so all seven existing consumers behave exactly as
+before; it is not `false`, so the renderer #885 adds can tell unknown from dead.
+
+**The line drawn, and why it is not "every failure is unknown".** Only a read stopped by our own
+timeout counts. A tmux that replied — the exit-1 `no server running` of a machine with no sessions,
+or a missing binary — told us something. Widening unknown to every error would invert the bug: after
+a reboot every stale `active` row would sit at unknown forever, uncleaned, on every machine where
+tmux is not running. `git` draws the same line with `weStopped`.
+
+**Verified by mutation, not by assertion count.** Four named mutations applied and each watched go
+red before the guard was kept: the timeout path claiming `answered: true` (the shipped behaviour,
+red in both suites); every error classified unknown (red on the "no server running" guard); the
+unanswered branch deleted (red on the unknown-session guards); and the snapshot resolved eagerly
+(red on both laziness guards, #890's and this chunk's — an eager read now costs a stall, not just a
+spawn). The timeout is driven by a real stalling `tmux` on PATH rather than a stubbed error, because
+this repo has shipped three wrong hand-written models of that error shape (#891/#894).
+
+**Classification:** fix
+
 ## 2026-08-12: one repository read costs three git invocations, not seven (#895)
 
 <!-- prawduct: type=fix | scope=git-spawn-collapse-895 | chunks=01 | status=shipped -->
