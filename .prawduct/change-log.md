@@ -66,7 +66,13 @@ recover when tmux does — and `launchSession` cleared the same record before st
 session over the first. `tmux.probeSession(name)` → `{live, answered, cause}` now serves both, with
 `hasSession` as its boolean face for the callers that really do act. The launch path refuses
 honestly instead: under a wedge that launch fails anyway, on the same server that would not answer.
-The remaining `hasSession` sites were swept and left, each with the reason recorded.
+The kill, send-keys, adopt and capture sites were swept and left — each acts on the pane
+immediately, so a failed probe costs a failed action, not a false record. **That sweep first
+under-enumerated the family, and the correction is the point:** two more sites reach
+`autoCompleteWrap` on a failed probe, which writes the wrap complete, tears down the listener
+and calls `_autoCommitIfDirty` — a real `git commit` in the operator's repository, on a fact
+nobody established. Filed as #908 rather than folded in, because declining to auto-complete
+interacts with #105's stuck-wrapping recovery and that needs guarding, not assuming.
 
 That required flagging `_exec`'s timeout throw, which REPLACES the error `wasTimedOut` reads — so
 the distinction it exists to preserve was being destroyed one layer below the code that needs it.

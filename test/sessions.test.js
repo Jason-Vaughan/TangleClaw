@@ -1584,6 +1584,14 @@ describe('sessions', () => {
       const session = store.sessions.start({
         projectId, engineId: 'claude', tmuxSession: 'tc-wedge-status-launch'
       });
+      // Booby-trapped, because the failure mode of this guard is not a wrong
+      // assertion — it is a REAL `tmux new-session` starting a real agent that
+      // outlives the run (#902). Reaching this line means the refusal did not
+      // fire, and the test must say so loudly rather than launch.
+      const realCreate = tmux.createSession;
+      tmux.createSession = () => {
+        throw new Error('launchSession must refuse before creating a session');
+      };
       try {
         const result = withProbe({ live: false, answered: false, cause: 'read-timed-out' },
           () => sessions.launchSession('wedge-status'));
@@ -1594,6 +1602,7 @@ describe('sessions', () => {
         assert.equal(store.sessions.get(session.id).status, 'active',
           'and it must not clear the record on its way out');
       } finally {
+        tmux.createSession = realCreate;
         if (store.sessions.get(session.id).status === 'active') {
           store.sessions.kill(session.id, 'test cleanup');
         }
