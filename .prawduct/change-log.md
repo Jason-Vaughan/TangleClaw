@@ -4433,3 +4433,25 @@ of true — the same meaning, at the seam that moved. The `#105` suite also gain
 `probeSession`, which it had not needed before.
 
 **Classification:** fix
+
+## 2026-08-13: the unknown wrap status reported idle as a fact (#908, self-review)
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+
+Caught while deep-scrubbing the change above, before any review saw it. The new
+"could not observe the pane" branch of `getSessionStatus` returned `idle: false` and
+`incomplete: ['live']`.
+
+Both are wrong in the same way the change exists to prevent:
+
+- **`idle: false` is a plausible default** — in the one change whose subject is not shipping
+  plausible defaults. Worse than cosmetic: `public/session.js` reads `idle` as its wrap-completion
+  signal (`data.wrapping && data.idle`), so a definite "not idle" is a wrong answer to the question
+  the page is actually asking. It is now `null`, which is falsy — every existing consumer behaves
+  exactly as before, and both call sites are truthiness tests, so nothing changes behavior.
+- **`incomplete: ['live']` named a field the response does not return.** The convention
+  `session.active` and `git.dirty` established is that `incomplete` names the RETURNED fields that
+  could not be established. Reaching the pane is what produces `idle` and `lastOutputAge`, so those
+  two are what went unestablished; it is now `['idle', 'lastOutputAge']`. That the LIVENESS is
+  unknown is carried by a non-null `cause` on a wrapping answer.
+
+**Classification:** fix

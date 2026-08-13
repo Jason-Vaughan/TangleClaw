@@ -1725,8 +1725,15 @@ describe('sessions', () => {
 
         assert.equal(status.wrapping, true, 'the row says wrapping; the read must not overrule it');
         assert.notEqual(status.wrapCompleted, true);
-        assert.deepEqual(status.incomplete, ['live']);
+        assert.deepEqual(status.incomplete, ['idle', 'lastOutputAge'],
+          'the fields it could not establish are the ones it returns, named');
         assert.equal(status.cause, 'read-timed-out');
+        // `false` here would be a plausible default in the one change whose
+        // subject is not shipping plausible defaults — and the session page
+        // reads `idle` as its wrap-completion signal, so a definite "not idle"
+        // is a wrong answer to the question it is asking.
+        assert.equal(status.idle, null, 'idle is unknown, not false');
+        assert.equal(status.lastOutputAge, null);
         assert.equal(store.sessions.get(wrapping.id).status, 'wrapping');
       } finally {
         cleanup(wrapping.id);
