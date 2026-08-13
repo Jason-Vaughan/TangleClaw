@@ -4455,3 +4455,43 @@ Both are wrong in the same way the change exists to prevent:
   unknown is carried by a non-null `cause` on a wrapping answer.
 
 **Classification:** fix
+
+## 2026-08-13: Critic round on #908 — the outcome the reorder changed, and the census member that survived
+<!-- prawduct: type=fix | scope=wrap-liveness-908 | chunks=01 -->
+
+Cumulative review of `7aa3d64...f338a42`: 0 blocking, 8 warnings, 9 notes across three reviewers.
+Two findings mattered, and both are about something the first cut did NOT intend.
+
+**R-1 — the reorder silently changed an outcome that had nothing to do with the bug.** Hoisting the
+age test above the liveness test fixed the unanswered case, but it also turned "aged-out row whose
+pane tmux CONFIRMS is gone" from `autoCompleteWrap` into a plain kill — dropping the wrap summary,
+the Medusa teardown and the auto-commit, for a row where tmux had actually answered. The change-log
+called the young cases "unchanged" and never named this delta, and the #105 guard pinned the ORDER
+(`probed === 0`) rather than the outcome, so nothing caught it.
+
+The probe is now consulted on both paths, and the invariant is stated properly: **a probe may ADD
+an outcome, never withhold recovery.** An aged-out row with a confirmed-dead pane completes exactly
+as it always did; live or unestablished, it recovers on age. The guard was re-pointed from `probed
+=== 0` — an implementation detail that made a legitimate refinement look like a regression — to the
+outcome it actually cares about, and the restored behavior gained its own guard.
+
+**R-2/3/4/11/12 — the third census member.** All three reviewers found the same thing
+independently: #908's census names three sites, the first cut fixed two, and the third —
+`_deferEngineInit`'s prime-paste guard, writing a DURABLE ledger row saying `tmux session ended
+before the prime was pasted` on `!hasSession(...)` — survived with its survival recorded nowhere. A
+PR carrying `Fixes #908` would have closed the issue with a member still open, on a branch whose
+own recurring defect is a sweep stated more broadly than the search behind it. Now fixed: the skip
+still happens (the paste needs the server that just failed to answer), but the reason recorded is
+the one that was established.
+
+**Four pre-existing tests re-pointed, not relaxed** — two more in `test/sessions.test.js` and two in
+`test/session-rule-delivery.test.js`, all stubbing `tmux.hasSession` where the code now asks
+`probeSession`. Each stub keeps its original meaning: an ANSWERED liveness.
+
+**One unrelated flake observed, not caused here.** `test/dir-scanner.test.js`'s threadpool-leak
+guard (#883) failed once in a full parallel run and passed alone and on re-run. This branch touches
+no scanner code. It is the timing-sensitive shape the recorded learning warns about — a guard whose
+subject is a timeout must not have a tight cap, because a delayed fork under load is
+indistinguishable from the condition it exists to rule out.
+
+**Classification:** fix

@@ -195,7 +195,9 @@ Tap the delete button on a project card. If a `deletePassword` is configured, yo
 
 ### Attaching Existing Projects
 
-TangleClaw shows ALL directories in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
+TangleClaw shows every directory in your `projectsDir` on the landing page — not just registered ones. Unregistered directories appear with a muted style and an **Attach** button.
+
+If the list is ever *short* — the folder could not be read, or it holds more directories than one scan can check in time — the ROOT panel says so, gives the reason and the remedy, and the count changes from "total" to "listed". A short list is never presented silently as a complete one.
 
 Tap **Attach** to register a directory as a TangleClaw project. This:
 - Reads any existing `.tangleclaw/project.json` for engine settings

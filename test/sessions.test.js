@@ -1819,23 +1819,69 @@ describe('sessions', () => {
       const realKill = tmux.killSession;
       const realCreate = tmux.createSession;
       const realDetect = engines.detectEngine;
-      let probed = 0;
-      tmux.probeSession = () => { probed++; return { live: false, answered: false, cause: 'read-timed-out' }; };
+      tmux.probeSession = () => ({ live: false, answered: false, cause: 'read-timed-out' });
       tmux.killSession = () => {};
       tmux.createSession = () => true;
-      engines.detectEngine = () => ({ available: true, path: "/usr/bin/claude" });
+      engines.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
       try {
-        // MUTATION THIS CATCHES: putting the age check back inside a liveness
-        // branch. The row would stay `wrapping` forever on a wedged server.
+        // MUTATION THIS CATCHES: letting an unanswered probe withhold the age
+        // recovery. The row would stay `wrapping` forever on a wedged server —
+        // the exact brick #105 exists to prevent.
+        //
+        // The invariant is the OUTCOME, not whether a probe happened. An earlier
+        // version of this guard asserted the probe was never called, which
+        // pinned an implementation detail: the probe MAY be consulted here (it
+        // has to be, to preserve auto-complete for a confirmed-dead pane), it
+        // just may not be allowed to withhold recovery.
         sessions.launchSession('wedge-wrap');
 
         assert.equal(store.sessions.get(wrapping.id).status, 'killed',
           'an hours-old wrapping row is an orphan whether or not tmux will discuss it');
-        assert.equal(probed, 0,
-          'age settles it without a probe — asking first is what re-creates the brick');
       } finally {
         tmux.probeSession = realProbe;
         tmux.killSession = realKill;
+        tmux.createSession = realCreate;
+        engines.detectEngine = realDetect;
+        cleanup(wrapping.id);
+        const active = store.sessions.getActive(projectId);
+        if (active) store.sessions.kill(active.id, 'test cleanup');
+      }
+    });
+
+    it('an aged-out row whose pane tmux CONFIRMS is gone is completed, not killed', () => {
+      // The outcome the first cut of #908 changed by accident. Hoisting the age
+      // test above the liveness test silently turned "old + confirmed dead" from
+      // autoCompleteWrap into a plain kill — dropping the wrap summary, the
+      // Medusa teardown and the auto-commit, for a row where tmux had actually
+      // ANSWERED. Nothing about fixing the unanswered case justifies altering
+      // what happens when tmux did answer, so this pins the pre-existing outcome.
+      const wrapping = startWrapping('tc-wedge-wrap-old-dead');
+      store.getDb()
+        .prepare(`UPDATE sessions SET wrap_started_at = datetime('now', '-3 hours') WHERE id = ?`)
+        .run(wrapping.id);
+
+      const realProbe = tmux.probeSession;
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      const realCreate = tmux.createSession;
+      const realDetect = engines.detectEngine;
+      let committed = 0;
+      tmux.probeSession = () => ({ live: false, answered: true, cause: null });
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      tmux.createSession = () => true;
+      engines.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
+      try {
+        sessions.launchSession('wedge-wrap');
+
+        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped',
+          'tmux answered that the pane is gone, so the wrap is over and completing it is honest');
+        assert.equal(committed, 1,
+          'and the auto-commit that outcome has always carried still runs');
+      } finally {
+        tmux.probeSession = realProbe;
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
         tmux.createSession = realCreate;
         engines.detectEngine = realDetect;
         cleanup(wrapping.id);
@@ -3577,6 +3623,15 @@ describe('sessions', () => {
       store.sessions.setWrapping(stale.id);
       _backdateWrapStart(stale.id, 2); // wrap began 2h ago — well past threshold
       tmux.hasSession = (name) => name === 'stale-wrap-OLD' || name === 'stale-wrap';
+      // Re-pointed from `hasSession` (#908): the wrapping path asks
+      // `probeSession` now. Same meaning as before — this pane is ANSWERED live,
+      // which is the case this test has always been about. A confirmed-DEAD pane
+      // takes the auto-complete branch instead, which is pinned separately.
+      tmux.probeSession = (name) => ({
+        live: name === 'stale-wrap-OLD' || name === 'stale-wrap',
+        answered: true,
+        cause: null
+      });
 
       const result = sessions.launchSession('stale-wrap');
 
@@ -3649,6 +3704,12 @@ describe('sessions', () => {
       _clearWrapStart(legacy.id);
       _backdateStartedAt(legacy.id, 3); // started 3h ago
       tmux.hasSession = (name) => name === 'legacy-wrap-OLD' || name === 'stale-wrap';
+      // Re-pointed from `hasSession` (#908), same meaning: an ANSWERED live pane.
+      tmux.probeSession = (name) => ({
+        live: name === 'legacy-wrap-OLD' || name === 'stale-wrap',
+        answered: true,
+        cause: null
+      });
 
       const result = sessions.launchSession('stale-wrap');
 
