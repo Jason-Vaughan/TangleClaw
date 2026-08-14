@@ -6,6 +6,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A dead server now says so, instead of looping "Connection lost. Retrying…" forever behind a
+  cached shell (#709).** The service worker serves the app shell from cache with the backend
+  completely gone, so the dashboard rendered healthy-looking while nothing behind it answered — and
+  the retry toast claimed a transient blip identically after one failure and after two hundred,
+  collapsing every cause of "server is down" into one symptom naming none of them. After a bounded
+  run of consecutive failed reconnects the client now renders a real unreachable state: the origin
+  it is trying, the possibility that the page is a cached shell, and the two concrete host-side
+  checks (`launchctl list | grep tangleclaw`, `~/.tangleclaw/logs/server.err.log`). Background
+  retry continues underneath and recovery stays automatic the moment the server returns; the only
+  navigation out is the operator's own Retry button — no reload, no redirect, per the no-UI-timers
+  norm.
+
 - **First-run setup no longer attaches the TangleClaw clone itself as a managed project (#708).**
   The README's install steps put the clone wherever the operator happens to be — routinely the
   folder they then name as their projects directory — and the clone carries both detection markers,
