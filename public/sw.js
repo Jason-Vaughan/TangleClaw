@@ -115,6 +115,20 @@ function _swErrorResponse(err) {
   );
 }
 
+// A cache-served stand-in for a network-first request whose network leg FAILED.
+// The marker header is the whole point (#709): without it, a dead server hands
+// the page a healthy-looking 200 and the client counts it as CONNECTED —
+// rendering stale data as live and never escalating to the unreachable state.
+// `api-helper.js` treats the marker as "the server did not answer". Navigations
+// keep the cached shell usable either way; this only makes the failure legible.
+function _withCacheFallbackMarker(cached) {
+  const headers = new Headers(cached.headers);
+  headers.set('X-TC-Cache-Fallback', '1');
+  return cached.body !== undefined
+    ? new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers })
+    : cached;
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const isGet = event.request.method === 'GET';
@@ -142,7 +156,9 @@ self.addEventListener('fetch', (event) => {
         // else (and a GET cache miss) returns a real 503 so the failure is
         // legible instead of the opaque "Returned response is null" (#380).
         if (isGet) {
-          return caches.match(event.request).then((cached) => cached || _swErrorResponse(err));
+          return caches.match(event.request).then(
+            (cached) => (cached ? _withCacheFallbackMarker(cached) : _swErrorResponse(err))
+          );
         }
         return _swErrorResponse(err);
       })

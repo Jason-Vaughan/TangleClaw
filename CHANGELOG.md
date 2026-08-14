@@ -6,6 +6,26 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A dead server now says so, instead of looping "Connection lost. Retrying…" forever behind a
+  cached shell (#709).** The service worker serves the app shell from cache with the backend
+  completely gone, so the dashboard rendered healthy-looking while nothing behind it answered — and
+  the retry toast claimed a transient blip identically after one failure and after two hundred,
+  collapsing every cause of "server is down" into one symptom naming none of them. After a bounded
+  run of consecutive failed reconnects the client now renders a real unreachable state: the origin
+  it is trying, the possibility that the page is a cached shell, and the two concrete host-side
+  checks (`launchctl list | grep tangleclaw`, `~/.tangleclaw/logs/server.err.log`). Background
+  retry continues underneath and recovery stays automatic the moment the server returns; the only
+  navigation out is the operator's own Retry button — no reload, no redirect, per the no-UI-timers
+  norm.
+
+  The honesty extends into the service-worker layer, where the lie originated: on a SW-controlled
+  page a dead server never rejects an `/api` fetch — the worker resolved it as either a cached 200
+  (which the client counted as *connected*, rendering stale data as a healthy dashboard) or a
+  synthetic 503 nothing consumed. The worker now marks cache-served stand-ins with
+  `X-TC-Cache-Fallback`, and the shared API helper treats that marker and the synthetic 503 as what
+  they are — the server did not answer — so stale cache is never handed to renderers as live data
+  and the unreachable state is reachable in exactly the scenario that was reported.
+
 - **First-run setup no longer attaches the TangleClaw clone itself as a managed project (#708).**
   The README's install steps put the clone wherever the operator happens to be — routinely the
   folder they then name as their projects directory — and the clone carries both detection markers,

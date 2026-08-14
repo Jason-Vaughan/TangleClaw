@@ -28,8 +28,25 @@
     async function api(url, fetchOpts) {
       try {
         const res = await fetch(url, fetchOpts);
+        // On a service-worker-controlled page a dead server never rejects this
+        // fetch (#709): sw.js resolves it as either a cache-served stand-in
+        // (marked with this header) or a synthetic 503. Both mean THE SERVER
+        // DID NOT ANSWER — a cached 200 here is stale data, and counting it as
+        // connected rendered a dead backend as a healthy dashboard.
+        if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) {
+          setConnected(false);
+          api.lastError = 'Connection lost.';
+          api.lastErrorCode = null;
+          return null;
+        }
         const data = await res.json();
         if (!res.ok) {
+          if (res.status === 503 && data.error === 'network-unreachable') {
+            setConnected(false);
+            api.lastError = 'Connection lost.';
+            api.lastErrorCode = null;
+            return null;
+          }
           api.lastError = data.error || `HTTP ${res.status}`;
           api.lastErrorCode = data.code || null;
           console.error(`API ${url}: ${api.lastError}${api.lastErrorCode ? ` (${api.lastErrorCode})` : ''}`);

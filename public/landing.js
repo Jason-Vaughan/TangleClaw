@@ -62,6 +62,85 @@ const apiMutate = window.tcCreateApiMutate(api);
 
 let reconnectTimer = null;
 
+// #709 — consecutive reconnect attempts that still found the server gone.
+// The service worker serves the app shell from cache with the server
+// completely dead, so this page can render healthy-looking while nothing
+// behind it answers. The toast alone claimed "Retrying…" identically after
+// one failure and after two hundred; past this ceiling the claim of a
+// transient blip becomes dishonest and the real unreachable state takes over.
+// Retrying continues underneath it — recovery stays automatic — the ceiling
+// only changes what the operator is TOLD.
+let reconnectFailures = 0;
+const UNREACHABLE_AFTER = 4;
+
+/**
+ * One background reconnect attempt, and the honesty ceiling.
+ *
+ * `loadProjects` flips `state.connected` back through `setConnected(true)` on
+ * success, which resets the counter and dismisses the unreachable state. While
+ * the server stays gone, count — and once the ceiling passes, stop calling it
+ * a blip.
+ *
+ * @returns {Promise<void>}
+ */
+async function attemptReconnect() {
+  await loadProjects();
+  if (state.connected) return;
+  reconnectFailures++;
+  if (reconnectFailures >= UNREACHABLE_AFTER) renderUnreachableState();
+}
+
+/**
+ * Replace the ambiguous retry toast with a state that says what is actually
+ * known: the server at this page's own origin has stopped answering, this
+ * page may be a cached shell, and here is where to look on the host machine.
+ * The overlay is created on first need — a healthy install never carries it.
+ *
+ * Explicitly NOT a reload or redirect: the no-UI-timers norm (#98, #268)
+ * applies, so the only navigation out of this state is the operator's.
+ */
+function renderUnreachableState() {
+  const toast = document.getElementById('toast');
+  if (toast) toast.classList.remove('visible');
+  let el = document.getElementById('unreachableState');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'unreachableState';
+    el.className = 'unreachable-state';
+    el.setAttribute('role', 'alert');
+    el.innerHTML = `
+      <div class="unreachable-card">
+        <h2>TangleClaw isn't responding</h2>
+        <p>The server at <strong>${esc(location.origin)}</strong> has stopped answering.
+        This page may have loaded from the browser's offline cache, so what it shows can be
+        stale. It will reconnect by itself the moment the server is back.</p>
+        <p>On the machine that runs TangleClaw, check whether the service is up and what it
+        last logged:</p>
+        <pre>launchctl list | grep tangleclaw
+tail -50 ~/.tangleclaw/logs/server.err.log</pre>
+        <button class="btn btn-primary" onclick="retryConnectionNow()">Retry now</button>
+      </div>`;
+    document.body.appendChild(el);
+  }
+  el.classList.add('visible');
+}
+
+/** Dismiss the unreachable state (the server answered again). */
+function hideUnreachableState() {
+  const el = document.getElementById('unreachableState');
+  if (el) el.classList.remove('visible');
+}
+
+/**
+ * The explicit retry the unreachable state offers. The background loop keeps
+ * running regardless; this exists so the operator has an action that answers
+ * NOW, not in up to five seconds.
+ * @returns {Promise<void>}
+ */
+async function retryConnectionNow() {
+  await attemptReconnect();
+}
+
 function setConnected(connected) {
   if (state.connected === connected) return;
   state.connected = connected;
@@ -75,12 +154,14 @@ function setConnected(connected) {
         if (!reconnectTimer) return;
         reconnectTimer = setTimeout(async () => {
           if (!reconnectTimer) return;
-          await loadProjects();
+          await attemptReconnect();
           reconnectLoop();
         }, 5000);
       })();
     }
   } else {
+    reconnectFailures = 0;
+    hideUnreachableState();
     toast.textContent = 'Reconnected';
     toast.className = 'toast toast-ok visible';
     if (reconnectTimer) {
