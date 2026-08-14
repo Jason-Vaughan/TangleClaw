@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-08-13
+
 ### Added
 
 - **The projects list can now say it is incomplete, and why (#885).** When the projects directory
