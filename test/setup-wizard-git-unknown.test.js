@@ -151,6 +151,13 @@ describe('Setup wizard — unestablished working tree renders as unknown (#909)'
         incomplete: ['dirty'], cause: 'read-timed-out'
       }
     },
+    {
+      // Contract-violating shape: classifies unknown (dirty null) while
+      // `incomplete` names nothing, so `tcGitRead` reports a healthy read.
+      // The marker must still draw; the degraded tooltip must not.
+      name: 'odd-repo', path: '/tmp/projects/odd-repo', detected: true,
+      git: { branch: 'main', dirty: null, latestTag: null, incomplete: [] }
+    },
     { name: 'plain-folder', path: '/tmp/projects/plain-folder', detected: false, git: null }
   ];
 
@@ -177,6 +184,13 @@ describe('Setup wizard — unestablished working tree renders as unknown (#909)'
     const clean = entryBlock(html, 'clean-repo');
     assert.match(clean, /main/);
     assert.doesNotMatch(clean, /\(dirty\)/);
+  });
+
+  it('draws the marker without a tooltip when unknown carries no incomplete', () => {
+    const odd = entryBlock(renderList(entries), 'odd-repo');
+    assert.match(odd, /git-unknown/, 'unknown still earns the marker');
+    assert.doesNotMatch(odd, /title=/,
+      'a read tcGitRead calls healthy must not render an empty degraded tooltip');
   });
 
   it('renders a non-repository with an empty meta and no marker', () => {
