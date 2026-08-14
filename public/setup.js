@@ -590,7 +590,11 @@ function renderDetectProjects(body) {
     if (dirtyState === null) return '<span class="setup-project-meta"></span>';
     if (dirtyState === 'unknown') {
       const read = tcGitRead(git);
-      return `<span class="setup-project-meta" title="${degradedTooltip(read)}">`
+      // Same rule as the dashboard's renderGitBadge: the title only when the
+      // read is actually degraded, so a shape that classifies unknown without
+      // an `incomplete` never renders an empty tooltip.
+      const title = read.known ? '' : ` title="${degradedTooltip(read)}"`;
+      return `<span class="setup-project-meta"${title}>`
         + `${esc(git.branch)}<span class="git-unknown" aria-hidden="true">?</span></span>`;
     }
     return `<span class="setup-project-meta">${esc(git.branch)}${dirtyState === 'dirty' ? ' (dirty)' : ''}</span>`;
