@@ -266,6 +266,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **Installing now clones `v5.0.0` instead of `v4.38.0`, and the "don't install from `main`" notice
+  is gone.** That notice existed because `main` carried this release's half-finished authentication
+  and network-binding work, which was not something to hand a new installer partway through. That
+  work is this release, so the warning has served its purpose and the Quick Start points at the
+  current tag again.
+
+  Also corrected while there: the feature list claimed "3,600+ tests". Recounted from the suite at
+  the time of writing rather than carried forward — it had drifted by roughly two thousand.
+
 - **The first-run messages about a protected projects folder now speak one language.** The scan-
   failure message was the only user-facing string in the product that said *"TCC-protected"* — an
   acronym nobody outside Apple's developer docs knows, surfacing at the one moment a stranded
