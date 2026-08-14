@@ -18,6 +18,14 @@ All notable changes to TangleClaw are documented in this file.
   navigation out is the operator's own Retry button — no reload, no redirect, per the no-UI-timers
   norm.
 
+  The honesty extends into the service-worker layer, where the lie originated: on a SW-controlled
+  page a dead server never rejects an `/api` fetch — the worker resolved it as either a cached 200
+  (which the client counted as *connected*, rendering stale data as a healthy dashboard) or a
+  synthetic 503 nothing consumed. The worker now marks cache-served stand-ins with
+  `X-TC-Cache-Fallback`, and the shared API helper treats that marker and the synthetic 503 as what
+  they are — the server did not answer — so stale cache is never handed to renderers as live data
+  and the unreachable state is reachable in exactly the scenario that was reported.
+
 - **First-run setup no longer attaches the TangleClaw clone itself as a managed project (#708).**
   The README's install steps put the clone wherever the operator happens to be — routinely the
   folder they then name as their projects directory — and the clone carries both detection markers,
