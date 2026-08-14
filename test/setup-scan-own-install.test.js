@@ -12,9 +12,12 @@
  * per-project config into the clone, which then dirties it and can strand the
  * self-updater behind its own dirty-tree guard.
  *
- * The filter is server-side, by realpath identity against the checkout this
- * server runs from — never by name, so a clone of TangleClaw somewhere else
- * (developing TangleClaw with TangleClaw) remains attachable.
+ * Mechanism under test, split the way the code splits it: the scanner CHILD
+ * computes realpath identity under its kill budget and marks entries
+ * `isOwnInstall` (a synchronous per-entry probe in the parent is the event-loop
+ * shape that wedged this route on a TCC-protected directory, #859); the parent
+ * route compares data only and drops marked entries. Identity, never name — a
+ * clone of TangleClaw elsewhere stays attachable.
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -25,6 +28,7 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const store = require('../lib/store');
 const dirScanner = require('../lib/dir-scanner');
+const { HANDLERS } = require('../lib/dir-scanner-child');
 const projects = require('../lib/projects');
 
 // What lib/projects computes for itself: the checkout this process runs from.
@@ -46,8 +50,8 @@ describe('setup scan excludes the running install (#708)', () => {
 
   /**
    * Run `fn` with `dirScanner.interactiveRequest` replaced, then restore it.
-   * Same seam as test/projects.test.js — the real read happens in a child
-   * process, so the filter under test lives in the parent, after this call.
+   * Same seam as test/projects.test.js — the route's own contribution (the
+   * data-only filter and nothing else) is what this isolates.
    *
    * @param {Function} fakeRequest - Stand-in for interactiveRequest.
    * @param {Function} fn - Test body.
@@ -63,44 +67,60 @@ describe('setup scan excludes the running install (#708)', () => {
     }
   }
 
-  it('drops the entry that resolves to this checkout, and only that one', async () => {
-    // The shape `scanEntries` emits: entries named for their directory, path
-    // joined under the scanned dir. One of them IS this checkout.
+  it('passes the install identity to the child and drops what the child marked', async () => {
+    let sentArgs = null;
     const result = await withScanner(
-      async () => ({
-        projects: [
-          { name: 'their-app', path: path.join(os.tmpdir(), 'their-app'),
-            detected: true, git: { branch: 'main', dirty: false, incomplete: [] } },
-          { name: path.basename(REPO_ROOT), path: REPO_ROOT,
-            detected: true, git: { branch: 'main', dirty: false, incomplete: [] } }
-        ]
-      }),
+      async (_op, args) => {
+        sentArgs = args;
+        return {
+          projects: [
+            { name: 'their-app', path: '/tmp/their-app', detected: true, isOwnInstall: false },
+            { name: 'TangleClaw', path: REPO_ROOT, detected: true, isOwnInstall: true }
+          ]
+        };
+      },
       () => projects.scanDirectoryForProjects(os.tmpdir())
     );
 
     assert.equal(result.ok, true);
+    assert.equal(fs.realpathSync(sentArgs.ownInstallRealPath), REPO_ROOT,
+      'the route must tell the child which checkout is "us"');
     assert.deepEqual(result.projects.map((p) => p.name), ['their-app'],
-      'the running checkout must not offer itself; everything else stays');
+      'a marked entry must not be offered; everything else stays');
   });
 
-  it('reaches the checkout through a symlinked path too', async () => {
-    // Identity, not spelling: a path that resolves to this checkout is still
-    // this checkout. The scanner child hands the parent whatever the operator
-    // typed led to.
-    const link = path.join(tmpDir, 'tc-link');
-    fs.symlinkSync(REPO_ROOT, link);
-    const result = await withScanner(
-      async () => ({ projects: [{ name: 'tc-link', path: link, detected: true, git: null }] }),
-      () => projects.scanDirectoryForProjects(tmpDir)
-    );
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.projects, [], 'a symlinked route to the install is the install');
+  it('child marks the running checkout by identity, even through a symlinked route', async () => {
+    // The child probes realpath under its own budget. Reach the repo's parent
+    // through a symlink so every entry path is spelled differently from its
+    // resolved identity — the mark must land on resolution, not spelling.
+    const link = path.join(tmpDir, 'route');
+    fs.symlinkSync(path.dirname(REPO_ROOT), link);
+
+    const { projects: entries } = await HANDLERS.scanEntries({
+      dir: link, budgetMs: 30000, ownInstallRealPath: REPO_ROOT
+    });
+
+    const me = entries.find((e) => e.name === path.basename(REPO_ROOT));
+    assert.ok(me, 'the checkout must appear in the raw child listing');
+    assert.equal(me.isOwnInstall, true, 'the child must mark the running checkout');
+    for (const other of entries.filter((e) => e !== me)) {
+      assert.equal(other.isOwnInstall, false, `${other.name} must not be marked`);
+    }
   });
 
-  it('keeps a REAL clone of TangleClaw living elsewhere (real scanner child)', async () => {
+  it('child marks nothing when no identity was provided', async () => {
+    const { projects: entries } = await HANDLERS.scanEntries({
+      dir: path.dirname(REPO_ROOT), budgetMs: 30000
+    });
+    for (const e of entries) {
+      assert.equal(e.isOwnInstall, false,
+        'an omitted ownInstallRealPath must mark nothing, not everything');
+    }
+  });
+
+  it('keeps a REAL clone of TangleClaw living elsewhere (full chain)', async () => {
     // Attaching TangleClaw deliberately must stay possible: only the RUNNING
     // checkout is excluded, never a repository that happens to be TangleClaw.
-    // This one runs the genuine scanner child over a real directory.
     const cloneParent = path.join(tmpDir, 'projects');
     fs.mkdirSync(cloneParent, { recursive: true });
     execFileSync('git', ['clone', '--quiet', '--depth', '1',
@@ -113,7 +133,7 @@ describe('setup scan excludes the running install (#708)', () => {
       'a clone elsewhere is not the running install and must be offered');
   });
 
-  it('never offers the running checkout when scanning its parent (real scanner child)', async () => {
+  it('never offers the running checkout when scanning its parent (full chain)', async () => {
     // The reported install shape verbatim: the operator names the directory
     // their clone sits in. Whatever else that directory holds, the running
     // checkout itself must be absent from the answer.
