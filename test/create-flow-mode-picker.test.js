@@ -68,7 +68,11 @@ function makeElement() {
 
 describe('create flow routes through the launch gate (#401)', () => {
   it('submitCreate hands off to launchProject and performs no raw launch', async () => {
-    const calls = { launchProject: [], fetch: [], loadProjects: 0 };
+    // One shared sequence array: the ORDER is load-bearing, not just the
+    // counts. launchProject reads the refreshed state.projects to honor the
+    // per-project picker opt-out — launch-before-refresh would silently skip
+    // it while a count-only assertion stayed green.
+    const seq = [];
     const elements = new Map();
     const sandbox = {
       console, setTimeout: () => 0, clearTimeout() {},
@@ -80,12 +84,12 @@ describe('create flow routes through the launch gate (#401)', () => {
       },
       apiMutate: async () => ({ ok: true }),
       api: Object.assign(async () => null, { lastError: null }),
-      loadProjects: async () => { calls.loadProjects++; },
-      launchProject: async (name) => { calls.launchProject.push(name); },
+      loadProjects: async () => { seq.push('loadProjects'); },
+      launchProject: async (name) => { seq.push(`launchProject:${name}`); },
       closeCreateModal: () => {},
-      navigateToSession: (name) => { calls.fetch.push(`NAVIGATE:${name}`); },
+      navigateToSession: (name) => { seq.push(`NAVIGATE:${name}`); },
       fetch: async (url, opts) => {
-        calls.fetch.push(`${(opts && opts.method) || 'GET'} ${url}`);
+        seq.push(`${(opts && opts.method) || 'GET'} ${url}`);
         return { ok: true, json: async () => ({}) };
       }
     };
@@ -100,13 +104,9 @@ describe('create flow routes through the launch gate (#401)', () => {
 
     await sandbox.submitCreate();
 
-    assert.deepEqual(calls.launchProject, ['proj-x'],
-      'the create flow must launch through the gate, once, for the new project');
-    assert.equal(calls.loadProjects, 1,
-      'the project list must refresh before launching so the gate can find it');
-    const rawLaunches = calls.fetch.filter((c) => /^POST \/api\/sessions\//.test(c));
-    assert.deepEqual(rawLaunches, [],
-      'no raw session POST may bypass the picker gate from the create flow');
+    assert.deepEqual(seq, ['loadProjects', 'launchProject:proj-x'],
+      'exactly one refresh THEN one gated launch — no raw session POST, no '
+      + 'navigation around the gate, and never launch before the list refresh');
   });
 
   it('launchProject opens the picker for the real bundled claude profile', async () => {
