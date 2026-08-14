@@ -1924,6 +1924,40 @@ body {
 }
 .empty-state p { font-size: 14px; margin-bottom: 20px; }
 
+/* ── Unreachable State (#709) ──
+   Sits above everything except nothing: when the backend is gone, no control
+   underneath can work, so covering them is honest rather than rude. Hidden by
+   default; landing.js toggles .visible past the reconnect-failure ceiling. */
+.unreachable-state {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.75);
+}
+.unreachable-state.visible { display: flex; }
+.unreachable-card {
+  max-width: 520px;
+  padding: 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+}
+.unreachable-card h2 { margin-bottom: 10px; color: var(--amber); }
+.unreachable-card p { font-size: 14px; margin-bottom: 12px; color: var(--text); }
+.unreachable-card pre {
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+}
+
 /* ── Connection Toast ── */
 .toast {
   position: fixed;
