@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The first-run wizard no longer draws a working tree it could not read as clean (#909).** The
+  candidate list rendered the scanner's three-valued `dirty` with a two-way branch, so a repository
+  whose working-tree state was never established — a slow read, a refused read — drew exactly like a
+  clean one: absence of the `(dirty)` suffix is how CLEAN is drawn, so the unknown was reported as
+  its opposite, on the first screen a new installer sees. The wizard now reuses the dashboard's
+  normalisation (`tcGitDirtyState` / `tcGitRead`) and speaks the same visual language: a `?` marker
+  with a tooltip naming why the read went short and what clears it. This closes the surface #885
+  recorded as deliberately out of scope when it removed the same defect from the dashboard.
+
 ## [5.0.0] - 2026-08-13
 
 ### Added

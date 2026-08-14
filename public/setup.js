@@ -573,6 +573,34 @@ function renderDetectProjects(body) {
   }
 
   /**
+   * The git meta span for one scanned entry: branch plus working-tree state.
+   *
+   * `dirty` is three-valued — a null means the scanner could not establish the
+   * working-tree state, and absence of the `(dirty)` suffix is how a CLEAN tree
+   * is drawn, so rendering null like false reports the repository as its
+   * opposite. Same normalisation and `?` marker as the dashboard's
+   * `renderGitBadge`, so both surfaces speak one visual language; the tooltip
+   * carries the why/remedy because the glyph alone names no cause.
+   *
+   * @param {object|null} git - The entry's `git`, or null when not a repository.
+   * @returns {string} HTML for the meta span (empty span when not a repository).
+   */
+  function buildGitMeta(git) {
+    const dirtyState = tcGitDirtyState(git);
+    if (dirtyState === null) return '<span class="setup-project-meta"></span>';
+    if (dirtyState === 'unknown') {
+      const read = tcGitRead(git);
+      // Same rule as the dashboard's renderGitBadge: the title only when the
+      // read is actually degraded, so a shape that classifies unknown without
+      // an `incomplete` never renders an empty tooltip.
+      const title = read.known ? '' : ` title="${degradedTooltip(read)}"`;
+      return `<span class="setup-project-meta"${title}>`
+        + `${esc(git.branch)}<span class="git-unknown" aria-hidden="true">?</span></span>`;
+    }
+    return `<span class="setup-project-meta">${esc(git.branch)}${dirtyState === 'dirty' ? ' (dirty)' : ''}</span>`;
+  }
+
+  /**
    * Build a checkbox list HTML for an array of scanned projects.
    * @param {object[]} items - Scanned project entries
    * @returns {string} HTML string
@@ -581,7 +609,6 @@ function renderDetectProjects(body) {
     let html = '';
     for (const p of items) {
       const checked = wizard.selectedProjects.has(p.name) ? 'checked' : '';
-      const gitLabel = p.git ? `${p.git.branch}${p.git.dirty ? ' (dirty)' : ''}` : '';
 
       html += `
         <label class="setup-project-item">
@@ -589,7 +616,7 @@ function renderDetectProjects(body) {
                  onchange="wizardToggleProject('${esc(p.name)}', this.checked)">
           <div class="setup-project-info">
             <span class="setup-project-name">${esc(p.name)}</span>
-            <span class="setup-project-meta">${esc(gitLabel)}</span>
+            ${buildGitMeta(p.git)}
           </div>
         </label>`;
     }
