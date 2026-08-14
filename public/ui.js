@@ -2172,21 +2172,16 @@ async function submitCreate() {
   closeCreateModal();
   await loadProjects();
 
-  // Auto-launch session so the user lands in an active terminal
-  try {
-    const launchRes = await fetch(`/api/sessions/${encodeURIComponent(createData.name)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    if (launchRes.ok) {
-      navigateToSession(createData.name, { launched: true });
-      return;
-    }
-  } catch (e) {
-    // Fall through — navigate without launch
-  }
-  navigateToSession(createData.name, { launched: false });
+  // One launch path, one gate (#401). This used to auto-launch with a raw
+  // POST, which silently bypassed launchProject's mode-picker gate — and on a
+  // fresh install, creating a project is the FIRST launch anyone performs, so
+  // the picker never appeared at all and the session started with no chosen
+  // mode. Routing through launchProject gives the create flow exactly what
+  // the card's Open button gives: the picker when the engine offers a choice,
+  // the project's own opt-out when configured, and navigation into the live
+  // terminal on success. On a failed launch the operator keeps the dashboard
+  // and its error toast instead of landing on a dead session page.
+  await launchProject(createData.name);
 }
 
 // ── Import Banner ──

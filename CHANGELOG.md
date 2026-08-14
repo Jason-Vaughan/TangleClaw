@@ -6,6 +6,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **Creating a project now offers the launch-mode picker instead of silently launching with no
+  mode (#401).** The create flow auto-launched the new project with a raw session POST, bypassing
+  the picker gate that the card's Open button goes through — and on a fresh install, creating a
+  project is the first launch anyone performs, so the picker never appeared at all. The create flow
+  now routes through the same gate: the mode picker when the engine offers a choice, the
+  per-project opt-out when configured, and the live terminal on success. A failed launch keeps the
+  operator on the dashboard with the error toast instead of a dead session page. (The issue's
+  original hypothesis — a fresh-install profile seeding gap — was wrong; bundled profiles have
+  carried the full mode set since #251.)
+
 - **A dead server now says so, instead of looping "Connection lost. Retrying…" forever behind a
   cached shell (#709).** The service worker serves the app shell from cache with the backend
   completely gone, so the dashboard rendered healthy-looking while nothing behind it answered — and
