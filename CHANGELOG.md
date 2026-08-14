@@ -6,6 +6,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **First-run setup no longer attaches the TangleClaw clone itself as a managed project (#708).**
+  The README's install steps put the clone wherever the operator happens to be — routinely the
+  folder they then name as their projects directory — and the clone carries both detection markers,
+  so the wizard pre-checked it and setup ended with the tool presented as the operator's first
+  project, writing per-project config into the clone (which dirties it, and a dirty clone is exactly
+  what strands the self-updater behind its own guard). The scan now excludes the checkout the server
+  runs from, filtered server-side by realpath identity — never by name, so a clone of TangleClaw
+  living elsewhere remains attachable, and attaching the running checkout deliberately through the
+  normal attach flow still works. With the clone excluded, an otherwise-empty projects directory
+  finishes setup onto the dashboard's existing "No projects yet — Create Project" empty state.
+
 - **The first-run wizard no longer draws a working tree it could not read as clean (#909).** The
   candidate list rendered the scanner's three-valued `dirty` with a two-way branch, so a repository
   whose working-tree state was never established — a slow read, a refused read — drew exactly like a
