@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-08-15
+
 ### Added
 
 - **Self-update now reports what the checkout alone cannot deliver (#711, chunk 1 of 4).** The
