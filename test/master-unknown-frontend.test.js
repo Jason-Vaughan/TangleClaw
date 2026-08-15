@@ -152,6 +152,78 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     assert.equal(els.masterDot._classes.has('live'), false);
   });
 
+  it('does not paint the panel red when the ENSURE refused on an unknown liveness', async () => {
+    // THE MUTATION THIS CATCHES: leaving `setMasterStatus('down', ...)` on the
+    // ensure failure path. `ensureMasterSession` now refuses rather than
+    // starting a second master over one it cannot see, and that refusal comes
+    // back as an error — so the panel's own error branch would have painted the
+    // master DOWN on exactly the condition the server just said it could not
+    // establish. The defect this change removes, re-entered one layer along.
+    const els = {
+      masterDot: makeElement('masterDot'),
+      masterPanelDot: makeElement('masterPanelDot'),
+      masterStatusText: makeElement('masterStatusText'),
+      masterRetryBtn: makeElement('masterRetryBtn')
+    };
+    const sandbox = {
+      console,
+      document: { getElementById: (id) => els[id] || null },
+      state: { masterEnsuring: false },
+      attachMasterFrame() { throw new Error('must not attach a frame for a master it cannot see'); }
+    };
+    const api = async () => null;
+    api.lastError = 'Could not determine whether the Project Master is already running — tmux did not answer.';
+    api.lastErrorCode = 'MASTER_LIVENESS_UNKNOWN';
+    sandbox.api = api;
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+
+    await vm.runInContext([
+      liftFunction(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
+      liftFunction(UI_SRC, 'async function ensureMasterAttached()'),
+      'ensureMasterAttached();'
+    ].join('\n'), sandbox);
+
+    assert.equal(els.masterDot._classes.has('down'), false,
+      'a liveness nobody established must not be painted as a definite down');
+    assert.match(els.masterStatusText.textContent, /tmux did not answer/,
+      'and the real reason has to reach the operator');
+    assert.equal(els.masterRetryBtn._classes.has('hidden'), false, 'Retry stays available');
+  });
+
+  it('still paints down when the ensure genuinely failed', async () => {
+    // The other half: a real start failure is still a red dot. Without this the
+    // fix above could degrade into "never show down", which loses the signal
+    // that an engine is missing or a launch command is broken.
+    const els = {
+      masterDot: makeElement('masterDot'),
+      masterPanelDot: makeElement('masterPanelDot'),
+      masterStatusText: makeElement('masterStatusText'),
+      masterRetryBtn: makeElement('masterRetryBtn')
+    };
+    const sandbox = {
+      console,
+      document: { getElementById: (id) => els[id] || null },
+      state: { masterEnsuring: false },
+      attachMasterFrame() {}
+    };
+    const api = async () => null;
+    api.lastError = 'Engine "claude" not available (binary not found)';
+    api.lastErrorCode = 'MASTER_ENSURE_FAILED';
+    sandbox.api = api;
+    sandbox.window = sandbox;
+    vm.createContext(sandbox);
+
+    await vm.runInContext([
+      liftFunction(UI_SRC, 'function setMasterStatus(status, text, showRetry)'),
+      liftFunction(UI_SRC, 'async function ensureMasterAttached()'),
+      'ensureMasterAttached();'
+    ].join('\n'), sandbox);
+
+    assert.equal(els.masterDot._classes.has('down'), true,
+      'a genuine start failure is a definite down, and must still read as one');
+  });
+
   it('does nothing at all when the status call itself failed', async () => {
     // A null payload is the api helper reporting a failed request, not the
     // server reporting an unknown — reading `.exists` off it would throw and

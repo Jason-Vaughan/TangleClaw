@@ -81,7 +81,24 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
       const attachIdx = fn.indexOf('attachMasterDrawerFrame()');
       assert.ok(failIdx > -1, 'ensure checks the api() null-on-error contract');
       assert.ok(attachIdx > failIdx, 'attach happens only after the failure guard');
-      assert.match(fn, /setMasterDrawerStatus\('down'/);
+      // See the same change on the dashboard's pane: an ensure refused because
+      // tmux never answered is an unknown, not a down master.
+      assert.match(fn, /setMasterDrawerStatus\(unknown \? '' : 'down'/);
+    });
+
+    it('renders an unestablished liveness the same way the dashboard does', () => {
+      // The cross-surface invariant, and the reason it is a test rather than a
+      // convention: the dashboard pill and the session badge drifted into
+      // different answers about the same release, and #931 cost a whole release
+      // to merge them back. These two ensure paths are separate functions in
+      // separate files answering one question, so the only thing keeping them
+      // together is a guard that fails when one moves without the other.
+      const uiSrc = fs.readFileSync(
+        path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+      for (const [name, src] of [['session.js', js], ['ui.js', uiSrc]]) {
+        assert.match(src, /api\.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN'/,
+          `${name} must branch on the code, not on the wording of the message`);
+      }
     });
 
     it('failure surfaces the real server message and a retry affordance', () => {

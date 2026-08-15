@@ -59,6 +59,13 @@ All notable changes to TangleClaw are documented in this file.
   already refuses to launch over a session it cannot see, on the same grounds; this is that rule
   on the master's own path.
 
+  That refusal carries its own error code (`MASTER_LIVENESS_UNKNOWN`) rather than only a message,
+  because both surfaces have to render it differently from a failed start — an ensure that
+  *declined to run* is an unknown, and painting it red would state the exact fact the server just
+  said it could not establish. Both the dashboard panel and the session page's master drawer
+  branch on that code, and a guard fails if either one drifts: two surfaces answering one question
+  differently is what #931 spent a release merging back together.
+
 ### Fixed
 
 - **A wedged tmux no longer writes the same error line every ten seconds, forever (#906).** The

@@ -3398,7 +3398,14 @@ async function ensureMasterAttached() {
   const result = await api('/api/master/ensure', { method: 'POST' });
   state.masterEnsuring = false;
   if (!result) {
-    setMasterStatus('down', api.lastError || 'Failed to start the master session', true);
+    // A refusal because tmux never answered is an UNKNOWN, not a down master —
+    // the ensure did not fail, it declined to run rather than start a second
+    // master over one it could not see. Painting it red would state exactly the
+    // fact the server said it could not establish, which is the defect this
+    // whole change removes, re-entered by the panel's own error path.
+    const unknown = api.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN';
+    setMasterStatus(unknown ? '' : 'down',
+      api.lastError || 'Failed to start the master session', true);
     return;
   }
   setMasterStatus('live', result.created ? 'Master session started' : 'Master session live');

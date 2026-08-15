@@ -373,6 +373,25 @@ describe('ensureMasterSession refuses to start a second master over one it canno
       'the refusal must say what it could not establish, not report a failed start');
     assert.equal(t.calls.length, 0,
       'and it must not have tried — a created session here is a SECOND master over a live one');
+    // THE MUTATION THIS CATCHES: returning only a message. The route maps this
+    // field to its own error code, and without it the panel falls back to the
+    // generic failure code and paints the master DOWN — a definite claim about
+    // the exact thing this refusal says could not be established.
+    assert.deepEqual(r.incomplete, ['exists'],
+      'the refusal has to be machine-distinguishable from a failed start, not just worded differently');
+    assert.equal(r.cause, 'read-timed-out');
+  });
+
+  it('routes an unestablished liveness to its own error code, not the generic failure', () => {
+    // The mapping is one line in server.js and it is the seam between "the
+    // server knows this is an unknown" and "the panel renders it as one".
+    // Structural pin: the route is not unit-launchable, and the repo pins boot
+    // and route wiring this way elsewhere.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(src, /MASTER_LIVENESS_UNKNOWN/,
+      'the distinct code must exist, or the client cannot branch on it');
+    assert.match(src, /\(result\.incomplete \|\| \[\]\)\.includes\('exists'\)/,
+      'and it must be selected from the refusal\'s own field rather than by matching its wording');
   });
 
   it('still starts one when tmux answered that nothing is running', () => {

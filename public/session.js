@@ -1946,7 +1946,14 @@ async function ensureMasterDrawerAttached() {
   const result = await api('/api/master/ensure', { method: 'POST' });
   sessionState.masterEnsuring = false;
   if (!result) {
-    setMasterDrawerStatus('down', api.lastError || 'Failed to start the master session', true);
+    // Same rule as the dashboard's panel, and it has to be the same rule: two
+    // surfaces answering the same question differently is the drift #931 spent
+    // a release removing. A refusal because tmux never answered is an UNKNOWN —
+    // the ensure declined to run rather than start a second master over one it
+    // could not see — so it must not be painted as a definite down.
+    const unknown = api.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN';
+    setMasterDrawerStatus(unknown ? '' : 'down',
+      api.lastError || 'Failed to start the master session', true);
     return;
   }
   setMasterDrawerStatus('live', result.created ? 'Master session started' : 'Master session live');
