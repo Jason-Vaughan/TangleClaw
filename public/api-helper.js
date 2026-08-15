@@ -1305,6 +1305,34 @@
   }
 
   /**
+   * The degraded-read record for the Project Master's liveness.
+   *
+   * A fifth source rather than a fifth render path, which is the whole point of
+   * this module: the master row and a project card meet the SAME wedge, and
+   * before this the card named a cause and a remedy while the master row two
+   * elements away named neither.
+   *
+   * The remedy is tmux's, so it is the same sentence `tcSessionRead` supplies
+   * and for the same reason — one vocabulary of causes, deliberately not one
+   * vocabulary of remedies. It is repeated rather than hoisted because the two
+   * are only equal today by coincidence of both being tmux; a master that moved
+   * behind a different transport would need its own, and a shared constant
+   * would make that a refactor instead of an edit.
+   *
+   * @param {object|null} status - `GET /api/master/status`, or null if it failed.
+   * @returns {{known: boolean, why: string|null, remedy: string|null}}
+   */
+  function tcMasterRead(status) {
+    if (!status || status.exists !== null) return tcDegradedRead(true);
+    return tcDegradedRead(
+      false,
+      `Whether the Project Master is running could not be established — ${tcCauseText(status.cause)}.`,
+      'The tmux server is not answering. Once it responds this clears on its own; '
+        + '`tmux kill-server` clears a wedged one, ending every session on this machine.'
+    );
+  }
+
+  /**
    * Classify a repository's dirty state.
    *
    * Returns null when there is no repository at all, so a plain directory never
@@ -1434,6 +1462,7 @@
   // enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionRead = tcSessionRead;
+  global.tcMasterRead = tcMasterRead;
   global.tcGitDirtyState = tcGitDirtyState;
   global.tcGitRead = tcGitRead;
   global.tcScanNotice = tcScanNotice;

@@ -3398,7 +3398,14 @@ async function ensureMasterAttached() {
   const result = await api('/api/master/ensure', { method: 'POST' });
   state.masterEnsuring = false;
   if (!result) {
-    setMasterStatus('down', api.lastError || 'Failed to start the master session', true);
+    // A refusal because tmux never answered is an UNKNOWN, not a down master —
+    // the ensure did not fail, it declined to run rather than start a second
+    // master over one it could not see. Painting it red would state exactly the
+    // fact the server said it could not establish, which is the defect this
+    // whole change removes, re-entered by the panel's own error path.
+    const unknown = api.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN';
+    setMasterStatus(unknown ? '' : 'down',
+      api.lastError || 'Failed to start the master session', true);
     return;
   }
   setMasterStatus('live', result.created ? 'Master session started' : 'Master session live');
@@ -3428,7 +3435,32 @@ function attachMasterFrame() {
  */
 async function refreshMasterDot() {
   const status = await api('/api/master/status');
-  if (status && status.exists) setMasterStatus('live');
+  if (!status) return;
+  if (status.exists) {
+    setMasterStatus('live');
+    return;
+  }
+  // `exists: null` is tmux declining to answer, not the master being down, and
+  // the two used to be the same silence: the dot stayed neutral and the row
+  // still read "Checking…", so a wedged tmux was indistinguishable from a master
+  // nobody had started. Opening the panel then fired an ensure that failed on
+  // the same unresponsive server and reported "Failed to start" — blaming the
+  // start for a condition that predates it.
+  //
+  // Said in words rather than as a fourth dot colour: the dot is a two-pixel
+  // affordance already carrying three meanings, and "we could not look" is not
+  // a degree of down.
+  //
+  // Rendered through the shared degraded-read vocabulary rather than a sentence
+  // written here, because a project card on this same page already names the
+  // cause AND the remedy for this exact wedge — a master row that named neither,
+  // two elements away, would be the same condition explained two ways. That
+  // module exists so a new source joins in one place instead of growing another
+  // render path.
+  if (status.exists === null) {
+    const read = window.tcMasterRead(status);
+    setMasterStatus('', [read.why, read.remedy].filter(Boolean).join(' '), true);
+  }
 }
 
 // ── Master settings modal ──

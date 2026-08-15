@@ -4,6 +4,115 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **A session whose pane could not be reached no longer reports as busy (#907).** The active
+  branch of `GET /api/sessions/:project/status` returned `idle: false, lastOutputAge: 0` whenever
+  the liveness probe did not answer. That pair is the reading for *a pane that just produced
+  output*, so it did not merely lose information — it pointed the wrong way, saying the session
+  was busy when the truth was that nobody could see it. The session page reads `idle` as its
+  wrap-completion signal, so a definite "not idle" was a wrong answer to the exact question the
+  page was asking. Both fields are now `null` with `incomplete` naming them and `cause` saying
+  why, which is the treatment #908 already applied one branch over, on the wrapping row this one
+  was carved out of. `active` still reports `true`: the record does say a session is running, and
+  this route may not write a death it did not observe.
+
+- **An untracked session no longer vanishes when tmux will not answer.** When there is no database
+  row, this route asks tmux directly — and it asked with `hasSession`, whose `false` means both
+  "no such pane" and "tmux is wedged", after which the code states a definite absence. So a wedge
+  erased an untracked-but-running session from the route entirely. It now reports `active: null`
+  with `incomplete: ['active']`. No issue named this branch; it surfaced while fixing the two that
+  did, and is the same defect one step further down.
+
+  On that branch `idle` and `lastOutputAge` are now **always** unestablished, even when tmux
+  answers perfectly: it has no session row to date from and never calls `detectIdle`, so it never
+  measured either, and was reporting the fresh-output reading on the strength of nothing at all.
+
+  Every `null` in all of this is falsy, so a consumer written before these states existed behaves
+  exactly as it did before — **with one exception, which two independent reviewers caught and
+  which is the most important fix in this release.** The session page acted on a falsy `active`
+  by ending the session: stopping the poll, disabling Wrap/Kill/Command, showing the ended bar and
+  starting a redirect. So `active: null` during a wedge would have made the page declare an end the
+  server had explicitly refused to declare — and because it stops polling, it could never have
+  recovered when tmux came back. It now branches on `active === false`.
+
+  The distinction is worth stating because it is the trap in the whole pattern: falsy-is-safe holds
+  for a signal whose job is to fire on a certainty (`idle` — falsy means no chime, i.e. inertia)
+  and **inverts** for a signal whose absence triggers an action (`active` — falsy means *do the
+  irreversible thing*). Adding a tri-state to a payload is safe; assuming every consumer of it is,
+  is not.
+
+  Beyond that, the `idle` surface is deliberately unchanged: the chime and the wrap-idle modal
+  already behave correctly on an unknown, and inventing a badge would be a surface the operator has
+  not seen. What is new is a guard on the invariant that makes the falsiness safe — the server
+  never emits a truthy `idle` beside an `incomplete` that names it — so the correctness stops
+  resting on an accident of truthiness.
+
+  The unknown-untracked answer also keeps its `lastSession` summary. That comes from the database,
+  which a wedged tmux cannot affect, so a branch whose purpose is *report only what was
+  established* must not discard something that was — the same error pointing the other way.
+
+- **The Project Master can now report that its state is unknown, instead of reporting it as down
+  (#905).** `getMasterStatus` answered `exists: tmux.hasSession(...)`, and `hasSession` returns
+  `false` both for a master that is not running and for a tmux server too wedged to reply — so the
+  one machine state where an operator most needs to know what is still up was the state that
+  reported the master as absent. `exists` is now tri-state (`true` / `false` / `null`), with
+  `incomplete` naming what could not be established and `cause` saying why, matching the
+  convention `session.active` and `git.dirty` already follow. `incomplete` is `[]` on the healthy
+  path rather than absent, so a consumer reads its value instead of probing for its existence.
+
+  The panel says it in words rather than as a fourth dot colour — the dot is a two-pixel affordance
+  already carrying three meanings, and "we could not look" is not a degree of down. Before this, a
+  wedge rendered as nothing at all: the dot stayed neutral and the row still read "Checking…",
+  indistinguishable from a master nobody had started.
+
+  Those words come from the **shared degraded-read vocabulary**, not a sentence written at the
+  master row. A project card on the same page, meeting the same wedge, already named both a cause
+  and a remedy ("The tmux server is not answering… `tmux kill-server` clears a wedged one"), and
+  the first version of this change had the master row two elements away naming neither — it
+  emitted a `cause` field that nothing read. `public/api-helper.js` exists so that a new source
+  joins in one place instead of growing another render path, and `architecture.md` records that as
+  a direction, so the bespoke sentence was a departure from a norm rather than a style choice. The
+  master is now a fifth source (`tcMasterRead`) alongside session liveness, git, scan and
+  unreadable-directory reads.
+
+  **`POST /api/master/ensure` now refuses rather than starting a second master over one it cannot
+  see.** That path also branched on `hasSession`, and it *acts* on the answer — `false` means
+  "start one" — so a wedge aimed a `tmux new-session` at a master that was already running, and
+  reported the resulting failure as "Failed to start the master session", blaming the start for a
+  condition that predates it. It now reports what it could not establish. `lib/sessions.js`
+  already refuses to launch over a session it cannot see, on the same grounds; this is that rule
+  on the master's own path.
+
+  That refusal carries its own error code (`MASTER_LIVENESS_UNKNOWN`) rather than only a message,
+  because both surfaces have to render it differently from a failed start — an ensure that
+  *declined to run* is an unknown, and painting it red would state the exact fact the server just
+  said it could not establish. Both the dashboard panel and the session page's master drawer
+  branch on that code, and a guard fails if either one drifts: two surfaces answering one question
+  differently is what #931 spent a release merging back together.
+
+### Fixed
+
+- **A wedged tmux no longer writes the same error line every ten seconds, forever (#906).** The
+  session listing runs once per `GET /api/projects`, and the dashboard polls that route every ten
+  seconds for as long as a tab is open — so a tmux server too wedged to answer produced an error
+  line every ten seconds, indefinitely, and the same shape appeared on the session page's
+  liveness poll. The cost was not noise: the wedge (#94/#144/#380) is exactly when an operator
+  goes reading the log, and the diagnostic they needed was buried under its own repetitions. Both
+  sites now report loud once, drop to `debug` while the condition persists, and go loud again
+  when it recurs after a recovery. That last part is the half a plain warn-once gets wrong — a
+  second wedge an hour later is a new incident, not a continuation of one already acknowledged,
+  and suppressing it forever would have replaced a flood with a silence.
+
+  Keyed by the condition rather than by the call, and the key differs by what is being asked:
+  there is one tmux server, so the listing has one key however many polls meet it, while the
+  session probe keys per session — one unreachable pane must not silence the first report about
+  a different one. `lib/git.js` solved this first for incomplete git reads; the rule is now a
+  shared mechanism (`lib/condition-log.js`) rather than a third near-copy of it. git.js keeps its
+  own: that set is cleared by the git cache's lifecycle rather than by a successful read, so the
+  two re-arm on different events, and unifying them would change git's behavior to close a
+  duplication nobody is being hurt by.
+
 ## [5.2.0] - 2026-08-15
 
 ### Changed

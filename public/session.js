@@ -1766,7 +1766,18 @@ async function pollStatus() {
     }
   }
 
-  if (!data.active && !data.wrapping && !sessionState.ended) {
+  // `data.active === false`, NOT `!data.active`. The route now answers `null`
+  // when tmux would not say whether a session is running, and `handleSessionEnded`
+  // is terminal: it stops polling, disables Wrap/Kill/Command, shows the ended
+  // bar and starts a redirect. Treating the unknown as falsy would make the page
+  // declare an end the server explicitly refused to declare — and because it
+  // stops polling, it could not recover when tmux came back.
+  //
+  // This is the one place the "null is falsy, so consumers behave as before"
+  // argument INVERTS. For `idle`, behaving as before means inertia: no chime.
+  // For `active`, it means taking a definite, irreversible, operator-visible
+  // action on a read that established nothing.
+  if (data.active === false && !data.wrapping && !sessionState.ended) {
     // Grace period after fresh launch — tmux may not be queryable yet
     if (sessionState.launchGraceRemaining > 0) {
       sessionState.launchGraceRemaining--;
@@ -1778,7 +1789,15 @@ async function pollStatus() {
     sessionState.launchGraceRemaining = 0;
   }
 
-  // Idle detection for chime — ding once per idle transition
+  // Idle detection for chime — ding once per idle transition.
+  //
+  // `data.idle` is TRI-STATE: true, false, or null when the pane could not be
+  // reached and nothing was measured (`incomplete` names it). Null must not
+  // ding and must not count, which it does not — but only because null is
+  // falsy, and a truthiness accident is not a decision. Stated here, and pinned
+  // by a guard, because the failure it prevents is silent: a chime for a
+  // session nobody could see would be the surface asserting a reading the
+  // server explicitly declined to make.
   if (data.active && data.idle) {
     sessionState.idleCount++;
     if (sessionState.idleCount >= 2 && sessionState.chimeEnabled && !sessionState.chimePlayedForIdle) {
@@ -1938,7 +1957,14 @@ async function ensureMasterDrawerAttached() {
   const result = await api('/api/master/ensure', { method: 'POST' });
   sessionState.masterEnsuring = false;
   if (!result) {
-    setMasterDrawerStatus('down', api.lastError || 'Failed to start the master session', true);
+    // Same rule as the dashboard's panel, and it has to be the same rule: two
+    // surfaces answering the same question differently is the drift #931 spent
+    // a release removing. A refusal because tmux never answered is an UNKNOWN —
+    // the ensure declined to run rather than start a second master over one it
+    // could not see — so it must not be painted as a definite down.
+    const unknown = api.lastErrorCode === 'MASTER_LIVENESS_UNKNOWN';
+    setMasterDrawerStatus(unknown ? '' : 'down',
+      api.lastError || 'Failed to start the master session', true);
     return;
   }
   setMasterDrawerStatus('live', result.created ? 'Master session started' : 'Master session live');

@@ -1610,6 +1610,131 @@ describe('sessions', () => {
     });
   });
 
+  // The session page polls this route continuously, so the "could not
+  // establish" line above is emitted at the POLL's cadence rather than the
+  // condition's — the same flood the tmux listing produced, one surface over.
+  // The mechanism is shared (`lib/condition-log.js`); what is specific here is
+  // the key, and getting the key wrong is how the fix breaks quietly.
+  describe('an unreachable pane reports at the condition\'s cadence, not the poll\'s', () => {
+    let sessions;
+    const tmux = require('../lib/tmux');
+    const { setConsoleStream, setLevel } = require('../lib/logger');
+    let projectId;
+
+    before(() => {
+      sessions = require('../lib/sessions');
+      const projDir = path.join(projectsDir, 'cadence-status');
+      fs.mkdirSync(projDir, { recursive: true });
+      projectId = store.projects.create({
+        name: 'cadence-status', path: projDir, engine: 'claude'
+      }).id;
+    });
+
+    /**
+     * Poll `getSessionStatus` with a fixed probe verdict, capturing the log.
+     * @param {object[]} verdicts - One verdict per poll, applied in order.
+     * @returns {string[]} Captured log lines.
+     */
+    function poll(verdicts) {
+      const realProbe = tmux.probeSession;
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        for (const v of verdicts) {
+          tmux.probeSession = () => v;
+          sessions.getSessionStatus('cadence-status');
+        }
+      } finally {
+        tmux.probeSession = realProbe;
+        setConsoleStream(null);
+        setLevel('info');
+      }
+      return lines;
+    }
+
+    const UNREACHABLE = { live: false, answered: false, cause: 'read-timed-out' };
+    const ALIVE = { live: true, answered: true, cause: null };
+    const MSG = /Could not establish whether this session is still live/;
+
+    /**
+     * Count captured lines at a level whose message matches.
+     * @param {string[]} lines - Captured output.
+     * @param {string} level - `WARN` or `DEBUG`.
+     * @returns {number}
+     */
+    const count = (lines, level) =>
+      lines.filter((l) => l.includes(`[${level}]`) && MSG.test(l)).length;
+
+    it('warns once for a pane that stays unreachable across polls', () => {
+      // THE MUTATION THIS CATCHES: reporting on every poll, which is what
+      // shipped — an open session page turned one wedged pane into a warning
+      // every few seconds for as long as the tab was open.
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-cadence-a'
+      });
+      try {
+        const lines = poll([UNREACHABLE, UNREACHABLE, UNREACHABLE]);
+        assert.equal(count(lines, 'WARN'), 1, 'one condition, one warning');
+        assert.equal(count(lines, 'DEBUG'), 2, 'the repeats stay as evidence');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('warns again after the pane answers and then goes quiet a second time', () => {
+      // THE MUTATION THIS CATCHES: re-arming only on the reachable branch, or
+      // not at all. A pane that recovers and wedges again is a new incident.
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-cadence-b'
+      });
+      try {
+        const lines = poll([UNREACHABLE, ALIVE, UNREACHABLE]);
+        assert.equal(count(lines, 'WARN'), 2,
+          'two silences separated by an answer are two incidents');
+      } finally {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
+    });
+
+    it('does not let one unreachable pane silence the first report about another', () => {
+      // THE MUTATION THIS CATCHES: keying the condition globally (one tmux
+      // server, one key) instead of per session. That key is right for the
+      // LISTING, which asks one question about the server, and wrong here,
+      // where each poll asks about a specific pane — a global key would report
+      // the first wedged pane and then say nothing about any other, which is
+      // worse than the flood it replaced because it hides a real second fault.
+      const a = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tc-cadence-c'
+      });
+      const projDir2 = path.join(projectsDir, 'cadence-status-2');
+      fs.mkdirSync(projDir2, { recursive: true });
+      const project2 = store.projects.create({
+        name: 'cadence-status-2', path: projDir2, engine: 'claude'
+      });
+      const b = store.sessions.start({
+        projectId: project2.id, engineId: 'claude', tmuxSession: 'tc-cadence-d'
+      });
+      const realProbe = tmux.probeSession;
+      const lines = [];
+      setConsoleStream({ write: (s) => lines.push(s) });
+      setLevel('debug');
+      try {
+        tmux.probeSession = () => UNREACHABLE;
+        sessions.getSessionStatus('cadence-status');
+        sessions.getSessionStatus('cadence-status-2');
+      } finally {
+        tmux.probeSession = realProbe;
+        setConsoleStream(null);
+        setLevel('info');
+        store.sessions.kill(a.id, 'test cleanup');
+        store.sessions.kill(b.id, 'test cleanup');
+      }
+      assert.equal(count(lines, 'WARN'), 2,
+        'two panes nobody can reach are two conditions, and each is news once');
+    });
+  });
+
   // The same defect one state along: a WRAPPING row. `autoCompleteWrap` writes
   // the wrap complete, tears down the Medusa listener, and commits the
   // operator's repository — so a tmux server too wedged to answer could end a
@@ -1929,9 +2054,16 @@ describe('sessions', () => {
     });
 
     it('returns active+untracked when tmux session exists but DB has no active record', () => {
-      // Mock tmux.hasSession to return true for prime-test
-      const originalHasSession = tmux.hasSession;
-      tmux.hasSession = (name) => name === 'prime-test';
+      // Stubs `probeSession`, which is the seam this branch reads now — it moved
+      // off `hasSession` because that boolean answers false both for a pane that
+      // is gone and for a tmux too wedged to reply, and the code below this
+      // branch states an absence. Stubbing the old name would leave the REAL
+      // probe running: the assertions would then be measuring this machine's
+      // tmux rather than the branch, and would pass or fail by accident.
+      const originalProbe = tmux.probeSession;
+      tmux.probeSession = (name) => ({
+        live: name === 'prime-test', answered: true, cause: null
+      });
       try {
         // prime-test has a wrapped (not active) DB session, but tmux says it exists
         const status = sessions.getSessionStatus('prime-test');
@@ -1941,7 +2073,7 @@ describe('sessions', () => {
         assert.equal(status.tmuxSession, 'prime-test');
         assert.equal(status.engine, null);
       } finally {
-        tmux.hasSession = originalHasSession;
+        tmux.probeSession = originalProbe;
       }
     });
   });

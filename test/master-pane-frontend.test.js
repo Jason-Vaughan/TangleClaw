@@ -77,7 +77,13 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       const attachIdx = fn.indexOf('attachMasterFrame()');
       assert.ok(failIdx > -1, 'ensure checks the api() null-on-error contract');
       assert.ok(attachIdx > failIdx, 'attach happens only after the failure guard');
-      assert.match(fn, /setMasterStatus\('down'/);
+      // `'down'` is no longer the unconditional argument: a refusal because tmux
+      // never answered is an unknown, not a down master, and painting it red
+      // would state the exact fact the server said it could not establish. The
+      // down path still exists and is now proven by EXECUTION in
+      // `test/master-unknown-frontend.test.js` ("still paints down when the
+      // ensure genuinely failed"), which is a stronger claim than this slice.
+      assert.match(fn, /setMasterStatus\(unknown \? '' : 'down'/);
     });
 
     it('failure surfaces the real server message and a retry affordance', () => {

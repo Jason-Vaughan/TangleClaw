@@ -605,7 +605,14 @@ route('GET', '/api/master/status', (_req, res) => {
 route('POST', '/api/master/ensure', (_req, res) => {
   const result = master.ensureMasterSession();
   if (result.error) {
-    return errorResponse(res, 500, result.error, 'MASTER_ENSURE_FAILED');
+    // A refusal because tmux never answered is not a failed start, and the panel
+    // must not paint it as one — "down" would be a definite claim about the very
+    // thing that could not be established. Its own code, so the client branches
+    // on a code rather than on the wording of the message.
+    const code = (result.incomplete || []).includes('exists')
+      ? 'MASTER_LIVENESS_UNKNOWN'
+      : 'MASTER_ENSURE_FAILED';
+    return errorResponse(res, 500, result.error, code);
   }
   jsonResponse(res, 200, result);
 });
