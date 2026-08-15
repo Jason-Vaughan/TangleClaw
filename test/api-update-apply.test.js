@@ -14,15 +14,15 @@ const applier = require('../lib/update-applier');
  * parsed JSON body, driving the real applier through its `_internal` seam.
  * @returns {{ status: number, body: object }}
  */
-function callRoute() {
+function callRoute(body = null) {
   const matched = server.matchRoute('POST', '/api/update/apply');
   assert.ok(matched, 'POST /api/update/apply should be registered');
   const cap = {};
   const res = {
     writeHead: (status) => { cap.status = status; },
-    end: (body) => { cap.body = body ? JSON.parse(body) : null; }
+    end: (out) => { cap.body = out ? JSON.parse(out) : null; }
   };
-  matched.handler({}, res, matched.params, null);
+  matched.handler({}, res, matched.params, body);
   return cap;
 }
 
@@ -58,6 +58,24 @@ describe('POST /api/update/apply (UB #228/#229)', () => {
     assert.equal(body.toRef, 'v9.9.9');
     assert.equal(body.fromSha, 'old');
     assert.equal(body.toSha, 'new');
+  });
+
+  it('the route discard gate is a strict boolean — a truthy string changes nothing (#711)', () => {
+    applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
+    const calls = [];
+    applier._internal.git = (args) => {
+      const key = args.join(' ');
+      calls.push(key);
+      if (key === 'rev-parse HEAD') return 'old\n';
+      if (key === 'status --porcelain') return '?? .tangleclaw/\n';
+      throw new Error(`unexpected git: ${key}`);
+    };
+    const { status, body } = callRoute({ discardDirty: 'yes' });
+    assert.equal(status, 409, 'a truthy string must refuse like no flag at all');
+    assert.equal(body.code, 'dirty-tree');
+    assert.deepEqual(body.dirty, { discardable: ['.tangleclaw/'], realWork: [] },
+      'the refusal payload must reach the wire');
+    assert.equal(calls.some((c) => c.startsWith('clean')), false, 'and nothing is discarded');
   });
 
   it('returns 409 with a stable code on a refused guard (dirty tree)', () => {

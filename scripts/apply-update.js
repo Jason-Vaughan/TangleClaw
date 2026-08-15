@@ -56,10 +56,17 @@ const store = require('../lib/store');
  *
  * @param {{applyUpdate: function}} [applier] - Update applier (tests)
  * @param {{write: function}} [out] - Output stream (tests)
+ * @param {string[]} [argv] - CLI args (tests). `--discard-tc-files` opts into
+ *   discarding TangleClaw-written files that block the update — honored by the
+ *   applier only when NO real work is dirty, so the flag can never cost an
+ *   operator their edits. It is the flagged, deliberate form of the dashboard's
+ *   confirm dialog; agents must not pass it without the operator's say-so.
  * @returns {number} Process exit code — 0 applied, 1 refused or failed.
  */
-function main(applier = updateApplier, out = process.stdout) {
-  const result = applier.applyUpdate();
+function main(applier = updateApplier, out = process.stdout, argv = process.argv.slice(2)) {
+  const result = applier.applyUpdate({
+    discardDirty: argv.includes('--discard-tc-files')
+  });
   out.write(`${JSON.stringify(result, null, 2)}\n`);
   return result.ok ? 0 : 1;
 }

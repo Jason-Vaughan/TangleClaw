@@ -39,6 +39,20 @@ describe('UB self-update pill (#228/#229)', () => {
     });
   });
 
+  describe('dirty-tree escape surfaces (#711 chunk 03)', () => {
+    it('offers the discard confirm only on an all-TC dirty tree, and names files on refusal', () => {
+      const start = js.indexOf('async function applyUpdateAndRestart');
+      const body = js.slice(start, js.indexOf('async function', start + 10));
+      assert.match(body, /realWork\.length === 0 && d\.discardable\.length > 0/,
+        'the confirm path must require zero real-work paths');
+      assert.match(body, /discardDirty: true/,
+        'accepting the confirm must re-apply with the explicit opt-in');
+      assert.match(body, /window\.confirm/, 'discarding is a confirmed choice, never automatic');
+      assert.match(body, /realWork\.map/,
+        'a real-work refusal must NAME the files instead of generic advice');
+    });
+  });
+
   describe('button render + wiring', () => {
     it('renders an "Update & restart" button in the pill', () => {
       assert.match(js, /class="update-pill-apply" id="updateApplyBtn"/);

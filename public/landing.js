@@ -917,6 +917,51 @@ async function applyUpdateAndRestart(data) {
     window.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
     return;
   }
+
+  // A dirty tree blocked only by TangleClaw's own files (#711 chunk 03): the
+  // structured refusal names them, and the operator can discard-and-update in
+  // one confirmed step. One real-work path anywhere keeps the hard refusal —
+  // then the honest move is showing WHICH files, so "commit or stash" stops
+  // being advice about invisible things. `api()` returns null for a 409, so
+  // the refusal body arrives through the `api.lastBody` side channel — the
+  // first version read `applyResp.dirty` and was dead code (Critic R-1).
+  const refusal = applyResp || (api.lastErrorCode === 'dirty-tree' ? api.lastBody : null);
+  if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
+    const d = refusal.dirty;
+    if (d.realWork.length === 0 && d.discardable.length > 0) {
+      const proceedDiscard = window.confirm(
+        'The update is blocked only by files TangleClaw itself wrote:\n\n'
+        + d.discardable.map((f) => `  ${f}`).join('\n')
+        + '\n\nDiscard these files and update? Nothing of yours is in this list — '
+        + 'anything TangleClaw could not prove it wrote would have blocked instead.'
+      );
+      if (proceedDiscard) {
+        try {
+          applyResp = await apiMutate('/api/update/apply', 'POST', { discardDirty: true });
+        } catch (err) {
+          state.restartInFlight = false;
+          setBtn('Update & restart', false);
+          window.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
+          return;
+        }
+      }
+    } else if (d.realWork.length > 0) {
+      state.restartInFlight = false;
+      setBtn('Update & restart', false);
+      window.alert(
+        'Update not applied: the checkout has local changes that might be someone\'s work, '
+        + 'so nothing was touched.\n\nIn the way:\n'
+        + d.realWork.map((f) => `  ${f}`).join('\n')
+        + (d.discardable.length
+          ? '\n\nAlso present (TangleClaw-written, discardable once the above are resolved):\n'
+            + d.discardable.map((f) => `  ${f}`).join('\n')
+          : '')
+        + '\n\nCommit or stash them in the install directory, then update again.'
+      );
+      return;
+    }
+  }
+
   if (!applyResp || !applyResp.ok) {
     state.restartInFlight = false;
     setBtn('Update & restart', false);

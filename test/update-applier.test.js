@@ -193,6 +193,120 @@ describe('update-applier (UB #228/#229)', () => {
     });
   });
 
+  describe('applyUpdate dirty-tree escape (#711 chunk 03)', () => {
+    /**
+     * Git stub whose `status --porcelain` answer changes after a discard ran,
+     * recording every call. Undeclared calls throw, same as gitStub.
+     * @param {object} opts - { statuses: string[], extra: object }
+     * @returns {{ fn: Function, calls: string[] }}
+     */
+    function statefulStub({ statuses, extra = {} }) {
+      const calls = [];
+      let statusIdx = 0;
+      const table = { ...HAPPY, ...extra };
+      const fn = (args) => {
+        const key = args.join(' ');
+        calls.push(key);
+        if (key === 'status --porcelain') {
+          const v = statuses[Math.min(statusIdx, statuses.length - 1)];
+          statusIdx++;
+          return v;
+        }
+        if (key.startsWith('checkout -- ') || key.startsWith('clean -fd -- ')) return '';
+        if (!(key in table)) throw new Error(`unexpected git call: ${key}`);
+        const v = table[key];
+        if (v instanceof Error) throw v;
+        return v;
+      };
+      return { fn, calls };
+    }
+
+    it('a mixed dirty tree refuses with both lists and touches nothing', () => {
+      const { fn, calls } = statefulStub({
+        statuses: [' M lib/projects.js\n?? .tangleclaw/\n'] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'dirty-tree');
+      assert.deepEqual(r.dirty, {
+        discardable: ['.tangleclaw/'], realWork: ['lib/projects.js'] });
+      assert.equal(calls.some((c) => c.startsWith('checkout --') || c.startsWith('clean')), false,
+        'one real-work path anywhere means NOTHING is discarded, flag or no flag');
+    });
+
+    it('the settings hook file is discardable, and the refusal says how', () => {
+      const { fn } = statefulStub({ statuses: [' M .claude/settings.json\n'] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'dirty-tree');
+      assert.deepEqual(r.dirty, { discardable: ['.claude/settings.json'], realWork: [] });
+      assert.match(r.error, /discard option/,
+        'an all-TC refusal must tell the operator the way out exists');
+    });
+
+    it('the rest of .claude/ is the operator\'s, and generated-looking files are not TC\'s', () => {
+      // The ratified line is .tangleclaw/* plus exactly .claude/settings.json.
+      // settings.local.json is the operator\'s; a modified CLAUDE.md is not
+      // provably TC\'s even when TC once generated it — a later hand edit
+      // must never be discarded under "nothing of yours is in this list".
+      const d = applier._classifyDirty(' M .claude/settings.local.json\n M CLAUDE.md\n');
+      assert.deepEqual(d.discardable, []);
+      assert.deepEqual(d.realWork, ['.claude/settings.local.json', 'CLAUDE.md']);
+    });
+
+    it('discardDirty on an all-TC tree discards precisely and proceeds', () => {
+      const { fn, calls } = statefulStub({
+        statuses: [' M .claude/settings.json\n?? .tangleclaw/\n', ''] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, true, 'the update must proceed once the tree is provably clean');
+      assert.equal(r.toRef, 'v9.9.9');
+      assert.ok(calls.includes('checkout -- .claude/settings.json'),
+        'tracked TC files are restored from HEAD');
+      assert.ok(calls.includes('clean -fd -- .tangleclaw/'),
+        'untracked TC files are deleted, scoped by path');
+      assert.ok(calls.filter((c) => c === 'status --porcelain').length >= 2,
+        'the discard must re-prove cleanliness before anything moves');
+    });
+
+    it('the discard opt-in is a strict boolean, not truthiness', () => {
+      const { fn, calls } = statefulStub({ statuses: ['?? .tangleclaw/\n'] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate({ discardDirty: 'yes' });
+      assert.equal(r.ok, false, 'a truthy string must not authorize a discard');
+      assert.equal(r.code, 'dirty-tree');
+      assert.equal(calls.some((c) => c.startsWith('clean')), false);
+    });
+
+    it('without the flag, an all-TC tree still refuses', () => {
+      const { fn, calls } = statefulStub({ statuses: [' M .claude/settings.json\n'] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, false);
+      assert.equal(calls.some((c) => c.startsWith('checkout --')), false,
+        'the discard is opt-in per request, never a default');
+    });
+
+    it('fails closed on renames and quoted paths', () => {
+      const porcelain = 'R  old.js -> new.js\n?? "we ird.txt"\n';
+      const d = applier._classifyDirty(porcelain);
+      assert.equal(d.discardable.length, 0);
+      assert.equal(d.realWork.length, 2,
+        'anything the parser cannot read with certainty is real work');
+    });
+
+    it('refuses when the discard does not actually produce a clean tree', () => {
+      const { fn } = statefulStub({
+        statuses: ['?? .tangleclaw/\n', '?? .tangleclaw/\n'] });
+      applier._internal.git = fn;
+      const r = applier.applyUpdate({ discardDirty: true });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'dirty-tree');
+      assert.match(r.error, /did not produce a clean tree/);
+    });
+  });
+
   describe('_headState', () => {
     it('updatable on main', () => {
       applier._internal.git = gitStub({ 'rev-parse --abbrev-ref HEAD': 'main\n' });

@@ -251,6 +251,20 @@ describe('injected update prompt (#730)', () => {
     assert.match(prompt, /STOP/);
   });
 
+  it("passes --discard-tc-files through as the applier's discardDirty opt-in", () => {
+    // The flagged, deliberate form of the dashboard's confirm dialog (#711
+    // chunk 03). The applier only honors it when no real work is dirty, but
+    // the WIRE must carry the operator's choice faithfully in both directions.
+    let seen = 'unset';
+    const out = { write() {} };
+    main({ applyUpdate: (opts) => { seen = opts && opts.discardDirty; return { ok: true }; } },
+      out, ['--discard-tc-files']);
+    assert.equal(seen, true, 'the flag must reach the applier');
+    main({ applyUpdate: (opts) => { seen = opts && opts.discardDirty; return { ok: true }; } },
+      out, []);
+    assert.equal(seen, false, 'no flag, no discard — never a default');
+  });
+
   it('names every applier code the agent could have to report', () => {
     // Derived from the applier's own source, not a hand-copied list — the first
     // version of this test pinned five codes and silently blessed the omission
