@@ -3428,7 +3428,24 @@ function attachMasterFrame() {
  */
 async function refreshMasterDot() {
   const status = await api('/api/master/status');
-  if (status && status.exists) setMasterStatus('live');
+  if (!status) return;
+  if (status.exists) {
+    setMasterStatus('live');
+    return;
+  }
+  // `exists: null` is tmux declining to answer, not the master being down, and
+  // the two used to be the same silence: the dot stayed neutral and the row
+  // still read "Checking…", so a wedged tmux was indistinguishable from a master
+  // nobody had started. Opening the panel then fired an ensure that failed on
+  // the same unresponsive server and reported "Failed to start" — blaming the
+  // start for a condition that predates it.
+  //
+  // Said in words rather than as a fourth dot colour: the dot is a two-pixel
+  // affordance already carrying three meanings, and "we could not look" is not
+  // a degree of down. The row has words for exactly this.
+  if (status.exists === null) {
+    setMasterStatus('', 'Could not reach tmux — the master’s state is unknown', true);
+  }
 }
 
 // ── Master settings modal ──

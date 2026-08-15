@@ -40,13 +40,40 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Fake tmux with programmable liveness; records createSession calls. */
-function fakeTmux({ alive = false } = {}) {
+/**
+ * Fake tmux with programmable liveness; records createSession calls.
+ *
+ * `hasSession` is DERIVED from `probeSession` here exactly as it is in
+ * `lib/tmux.js`, rather than being a second independent switch. A stub that let
+ * the two disagree could report a combination the real module cannot produce,
+ * and the whole subject of these tests is what the caller does with the
+ * distinction between them.
+ *
+ * @param {object} [opts] - Options.
+ * @param {boolean} [opts.alive] - Whether the session is live.
+ * @param {boolean} [opts.answered] - Whether tmux replied at all. `false` is
+ *   the wedged server (#94/#144/#380) — the state that reports every session
+ *   as gone unless a caller asks for the third outcome.
+ * @param {Function} [opts.createSession] - Override the creation behaviour
+ *   (return false, throw) without hand-rolling a stub that would be free to
+ *   omit `probeSession` and drift from the real module's shape.
+ * @returns {object} A tmux-shaped stub.
+ */
+function fakeTmux({ alive = false, answered = true, createSession } = {}) {
   const calls = [];
+  const probeSession = () => ({
+    live: answered ? alive : false,
+    answered,
+    cause: answered ? null : 'read-timed-out'
+  });
   return {
     calls,
-    hasSession: () => alive,
-    createSession: (name, opts) => { calls.push({ name, opts }); return true; }
+    probeSession,
+    hasSession: () => probeSession().live,
+    createSession: (name, opts) => {
+      calls.push({ name, opts });
+      return createSession ? createSession(name, opts) : true;
+    }
   };
 }
 
@@ -238,12 +265,12 @@ describe('ensureMasterSession', () => {
 
   it('surfaces tmux failures as typed errors — create-false and thrown', () => {
     const engines = availableEngines;
-    const refusing = { hasSession: () => false, createSession: () => false };
+    const refusing = fakeTmux({ alive: false, createSession: () => false });
     const r1 = master.ensureMasterSession({ home, tmuxLib: refusing, enginesLib: engines });
     assert.equal(r1.created, false);
     assert.match(r1.error, /Failed to create tmux session/);
 
-    const throwing = { hasSession: () => false, createSession: () => { throw new Error('boom'); } };
+    const throwing = fakeTmux({ alive: false, createSession: () => { throw new Error('boom'); } });
     const r2 = master.ensureMasterSession({ home: home + '-t', tmuxLib: throwing, enginesLib: engines });
     assert.equal(r2.created, false);
     assert.match(r2.error, /tmux error: boom/);
@@ -295,6 +322,69 @@ describe('getMasterStatus', () => {
     assert.equal(s.scope, 'all');
     assert.equal(s.autoStart, false);
     assert.equal(s.enforcement, 'structural');
+  });
+
+  // A wedged tmux answers nothing, and `hasSession` flattened that into
+  // `false` — so the one machine state where an operator most needs to know
+  // whether the master is up was the one state that reported it as down
+  // (#905). Same defect #900 removed from the fleet view and #891 from
+  // `git.dirty`; this was the surface they left alone.
+  it('reports the master\'s state as UNKNOWN when tmux did not answer', () => {
+    // THE MUTATION THIS CATCHES: `exists: probe.live` instead of the answered
+    // ternary — which is `hasSession` again, and reports a running master as
+    // absent for as long as the wedge lasts.
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true, answered: false }) });
+
+    assert.equal(status.exists, null,
+      'a liveness nobody could establish must not be reported as an absence');
+    assert.deepEqual(status.incomplete, ['exists'],
+      'and it has to be NAMED, or a consumer cannot tell null from a missing field');
+    assert.equal(status.cause, 'read-timed-out');
+  });
+
+  it('names nothing incomplete on the healthy path, and still carries the field', () => {
+    // THE MUTATION THIS CATCHES: emitting `incomplete` only on failure. A field
+    // that appears only when something is wrong makes every consumer probe for
+    // its existence instead of reading its value — the argument
+    // `lib/sessions.js` already makes for its own wrapping payload.
+    for (const alive of [true, false]) {
+      const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive }) });
+      assert.deepEqual(status.incomplete, [], `incomplete must be [] when alive=${alive}`);
+      assert.equal(status.cause, null);
+      assert.equal(status.exists, alive, 'an ANSWERED negative is still a real false');
+    }
+  });
+});
+
+describe('ensureMasterSession refuses to start a second master over one it cannot see', () => {
+  it('declines, and does not create a session, when tmux did not answer', () => {
+    // THE MUTATION THIS CATCHES: keeping `t.hasSession(...)` as the guard.
+    // False then means BOTH "not running" and "tmux is wedged", and this caller
+    // acts on false by starting one — so a wedge aimed a `tmux new-session` at
+    // a master that was already running. `lib/sessions.js` refuses on the same
+    // grounds for project sessions; this is that rule on the master's path.
+    const t = fakeTmux({ alive: true, answered: false });
+    const home = path.join(tmpDir, 'master-wedge');
+
+    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+
+    assert.equal(r.created, false);
+    assert.match(r.error, /could not determine/i,
+      'the refusal must say what it could not establish, not report a failed start');
+    assert.equal(t.calls.length, 0,
+      'and it must not have tried — a created session here is a SECOND master over a live one');
+  });
+
+  it('still starts one when tmux answered that nothing is running', () => {
+    // The other half, keeping the refusal from becoming a blanket "never start":
+    // an answered negative is a real negative, and the master must still launch.
+    const t = fakeTmux({ alive: false, answered: true });
+    const home = path.join(tmpDir, 'master-answered-absent');
+
+    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+
+    assert.equal(r.error, undefined, 'an answered absence is not an error');
+    assert.equal(t.calls.length, 1, 'it has to actually start the master');
   });
 });
 

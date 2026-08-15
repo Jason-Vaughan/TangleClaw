@@ -4,6 +4,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Project Master can now report that its state is unknown, instead of reporting it as down
+  (#905).** `getMasterStatus` answered `exists: tmux.hasSession(...)`, and `hasSession` returns
+  `false` both for a master that is not running and for a tmux server too wedged to reply — so the
+  one machine state where an operator most needs to know what is still up was the state that
+  reported the master as absent. `exists` is now tri-state (`true` / `false` / `null`), with
+  `incomplete` naming what could not be established and `cause` saying why, matching the
+  convention `session.active` and `git.dirty` already follow. `incomplete` is `[]` on the healthy
+  path rather than absent, so a consumer reads its value instead of probing for its existence.
+
+  The panel says it in words — "Could not reach tmux — the master's state is unknown", with Retry
+  available — rather than as a fourth dot colour: the dot is a two-pixel affordance already
+  carrying three meanings, and "we could not look" is not a degree of down. Before this, a wedge
+  rendered as nothing at all: the dot stayed neutral and the row still read "Checking…", which is
+  indistinguishable from a master nobody had started.
+
+  **`POST /api/master/ensure` now refuses rather than starting a second master over one it cannot
+  see.** That path also branched on `hasSession`, and it *acts* on the answer — `false` means
+  "start one" — so a wedge aimed a `tmux new-session` at a master that was already running, and
+  reported the resulting failure as "Failed to start the master session", blaming the start for a
+  condition that predates it. It now reports what it could not establish. `lib/sessions.js`
+  already refuses to launch over a session it cannot see, on the same grounds; this is that rule
+  on the master's own path.
+
 ### Fixed
 
 - **A wedged tmux no longer writes the same error line every ten seconds, forever (#906).** The
