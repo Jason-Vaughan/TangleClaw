@@ -4,6 +4,22 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Self-update now provisions dependencies, and says what it cannot provision (#711, chunk 1 of
+  4).** The update moved code and nothing else: a release that bumped a dependency ran new code
+  against old `node_modules` and died at require-time after the restart, with no visible connection
+  to the update the operator just clicked. `POST /api/update/apply` (and `scripts/apply-update.js`,
+  the same code) now runs `npm ci --omit=dev` when — and only when — `package-lock.json` changed
+  between the two releases, and reports changed deploy assets (launchd plists, `tmux.conf`,
+  `install.sh`) in a `provisioning` block instead of silently leaving stale services. Assets are
+  deliberately never auto-applied: re-running install steps from the server walks into the
+  Full-Disk-Access silent hang, so the dashboard names the files and the manual step before
+  restarting, while the operator is still watching. A failed dependency install is its own honest
+  outcome — `provision-failed`, server not restarted, one-line recovery in the message (automatic
+  rollback is the plan's next chunk). The injected AI-update prompt knows the new code and the
+  provisioning block too.
+
 ### Fixed
 
 - **A backend outage behind the Caddy ingress now registers as a disconnection (#924).** The gate

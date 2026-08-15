@@ -925,6 +925,22 @@ async function applyUpdateAndRestart(data) {
     return;
   }
 
+  // Deploy assets changed with this release (#711): the update deliberately
+  // does not touch launchd plists or tmux.conf itself (re-running install
+  // steps from the server walks into the Full-Disk-Access silent hang), so
+  // the one honest move is to say so BEFORE the restart, while the operator
+  // is watching. The alert blocks until acknowledged; the restart then
+  // proceeds — the new code runs either way, only the assets need a human.
+  const prov = applyResp.provisioning;
+  if (prov && prov.assetsChanged && prov.assetsChanged.length > 0) {
+    window.alert(
+      'This release also changed deploy assets that the update does not apply by itself:\n\n'
+      + prov.assetsChanged.map((f) => `  ${f}`).join('\n')
+      + '\n\nAfter the restart, re-run the matching deploy steps on the server machine '
+      + '(see deploy/install.sh) so the running services pick them up.'
+    );
+  }
+
   // 2. Capture the baseline startedAt, then restart onto the new code.
   setBtn('Restarting…', true);
   const appliedLabel = applyResp.toRef || `v${data.latestVersion}`;
