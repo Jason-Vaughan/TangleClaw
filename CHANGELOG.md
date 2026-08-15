@@ -6,6 +6,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A backend outage behind the Caddy ingress now registers as a disconnection (#924).** The gate
+  answers for a dead upstream with a 502/503/504, so the outage was never a failed fetch and the
+  client filed it under "some request errored" — no toast, no unreachable card, a dashboard that
+  looked connected while the server was gone (operator-observed during the #709 live smoke). The
+  shared API helper now classifies gateway 5xxs with a non-JSON body as "the server did not
+  answer", so the #709 escalation works identically direct and proxied. The JSON discriminator
+  keeps the server's own meaningful 5xxs — the health check's 503, the tmux-dependency 503, the
+  Medusa-hub 502, all `{error, code}` JSON — surfacing as route errors, never as outages.
+
 - **Creating a project now offers the launch-mode picker instead of silently launching with no
   mode (#401).** The create flow auto-launched the new project with a raw session POST, bypassing
   the picker gate that the card's Open button goes through — and on a fresh install, creating a

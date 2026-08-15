@@ -39,6 +39,20 @@
           api.lastErrorCode = null;
           return null;
         }
+        // Behind an ingress the backend's death is not a failed fetch either
+        // (#924): Caddy answers FOR the dead upstream with a 502/503/504 whose
+        // body is empty or HTML. The JSON test is the discriminator that keeps
+        // the server's own meaningful 5xxs — health 503, tmux-dependency 503,
+        // Medusa-hub 502, all `{error, code}` JSON — surfacing as route errors
+        // rather than outages. A gateway page is not the server speaking.
+        if ((res.status === 502 || res.status === 503 || res.status === 504)
+            && !(((res.headers && res.headers.get && res.headers.get('content-type')) || '')
+              .includes('json'))) {
+          setConnected(false);
+          api.lastError = 'Connection lost.';
+          api.lastErrorCode = null;
+          return null;
+        }
         const data = await res.json();
         if (!res.ok) {
           if (res.status === 503 && data.error === 'network-unreachable') {
