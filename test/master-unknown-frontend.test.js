@@ -25,6 +25,26 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+const API_HELPER_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+
+/**
+ * Load the real `public/api-helper.js` and return its exported globals.
+ *
+ * The module is an IIFE that assigns onto a global object, so it is loaded the
+ * way a page loads it rather than reimplemented — the point of these guards is
+ * that the master renders through the SHARED vocabulary, and a stubbed
+ * `tcMasterRead` would prove the opposite of what is being claimed.
+ *
+ * @returns {object} The globals the helper exports.
+ */
+function loadApiHelper() {
+  const g = { window: undefined, document: undefined, fetch: () => {}, console };
+  g.window = g;
+  vm.createContext(g);
+  vm.runInContext(API_HELPER_SRC, g);
+  return g;
+}
 
 /**
  * Slice a top-level function (declaration + body) out of source text by
@@ -89,7 +109,11 @@ async function render(payload) {
     document: { getElementById: (id) => els[id] || null },
     // Mirrors the real helper's contract: resolves the parsed body, or null on
     // failure with the reason on `api.lastError`.
-    api: async () => payload
+    api: async () => payload,
+    // The REAL classifier, not a stub. What is being asserted is that the master
+    // row speaks the shared degraded-read vocabulary, and a stub would make that
+    // claim unfalsifiable.
+    tcMasterRead: loadApiHelper().tcMasterRead
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -115,11 +139,41 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
 
     assert.notEqual(els.masterStatusText.textContent, 'Checking…',
       'a state nobody could establish must not leave the placeholder standing');
-    assert.match(els.masterStatusText.textContent, /could not reach tmux/i);
-    assert.match(els.masterStatusText.textContent, /unknown/i,
-      'and it has to name the state as unknown, not as down');
+    assert.match(els.masterStatusText.textContent, /could not be established/i,
+      'and it has to name the state as unestablished, not as down');
     assert.equal(els.masterRetryBtn._classes.has('hidden'), false,
       'an unknown is worth re-asking about, so Retry has to be reachable');
+  });
+
+  it('speaks the shared degraded-read vocabulary — cause AND remedy, like a project card', async () => {
+    // Critic R-9/R-21. `cause` crossed the payload boundary and was consumed by
+    // nothing: the row hand-wrote one fixed sentence with no cause and no
+    // remedy, while a project card on the SAME page, meeting the SAME wedge,
+    // named both. `public/api-helper.js` exists so a new source joins in one
+    // place rather than growing another render path, and `architecture.md`'s
+    // Direction records that as a norm — so the bespoke sentence was a norm
+    // departure, not a style choice.
+    //
+    // THE MUTATION THIS CATCHES: rendering a literal string here instead of
+    // going through `tcMasterRead` — the remedy disappears, and so does any
+    // future cause the shared table learns to translate.
+    const { els } = await render({ exists: null, incomplete: ['exists'], cause: 'read-timed-out' });
+    const text = els.masterStatusText.textContent;
+
+    assert.match(text, /stopped by TangleClaw after it stopped responding/,
+      'the CAUSE has to be translated, not dropped — it is in the payload and nothing read it');
+    assert.match(text, /tmux kill-server/,
+      'and the operator needs the REMEDY the sibling surface already gives them');
+  });
+
+  it('translates an unfamiliar cause rather than echoing a raw token at the operator', async () => {
+    // The shared table degrades unknown tokens to a generic sentence. Pinned
+    // here because the master row is a new consumer of that behaviour, and the
+    // failure mode is a payload token leaking into prose someone reads.
+    const { els } = await render({ exists: null, incomplete: ['exists'], cause: 'some-new-token' });
+    assert.doesNotMatch(els.masterStatusText.textContent, /some-new-token/,
+      'a raw cause token in operator-facing prose reads as a leak');
+    assert.match(els.masterStatusText.textContent, /did not complete/);
   });
 
   it('does not paint the master live or down on an unknown', async () => {

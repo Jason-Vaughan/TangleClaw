@@ -749,7 +749,21 @@ describe('master API routes over HTTP', () => {
   it('GET /api/master/status returns the tmux-truth shape', async () => {
     const { status, data } = await request('GET', '/api/master/status');
     assert.equal(status, 200);
-    assert.equal(typeof data.exists, 'boolean');
+    // Tri-state, not boolean. This assertion used to read `typeof data.exists
+    // === 'boolean'`, which passes on this machine only because tmux answers
+    // here — it would have rejected the very state the payload now exists to
+    // carry, and it is the one test that hits the real caller shape
+    // (`getMasterStatus()` with no options, exactly as `server.js` calls it).
+    assert.ok(data.exists === true || data.exists === false || data.exists === null,
+      `exists must be true | false | null, got ${JSON.stringify(data.exists)}`);
+    assert.ok(Array.isArray(data.incomplete),
+      'incomplete is present on every answer, so consumers read it rather than probe for it');
+    assert.ok('cause' in data);
+    // The two must agree: naming `exists` as unestablished is exactly what null
+    // means, and either one without the other is a payload that contradicts
+    // itself.
+    assert.equal(data.exists === null, data.incomplete.includes('exists'),
+      'exists === null and incomplete naming it are the same claim, and must not disagree');
     assert.equal(data.tmuxSession, 'tangleclaw-master');
   });
 

@@ -1766,7 +1766,18 @@ async function pollStatus() {
     }
   }
 
-  if (!data.active && !data.wrapping && !sessionState.ended) {
+  // `data.active === false`, NOT `!data.active`. The route now answers `null`
+  // when tmux would not say whether a session is running, and `handleSessionEnded`
+  // is terminal: it stops polling, disables Wrap/Kill/Command, shows the ended
+  // bar and starts a redirect. Treating the unknown as falsy would make the page
+  // declare an end the server explicitly refused to declare — and because it
+  // stops polling, it could not recover when tmux came back.
+  //
+  // This is the one place the "null is falsy, so consumers behave as before"
+  // argument INVERTS. For `idle`, behaving as before means inertia: no chime.
+  // For `active`, it means taking a definite, irreversible, operator-visible
+  // action on a read that established nothing.
+  if (data.active === false && !data.wrapping && !sessionState.ended) {
     // Grace period after fresh launch — tmux may not be queryable yet
     if (sessionState.launchGraceRemaining > 0) {
       sessionState.launchGraceRemaining--;

@@ -3449,9 +3449,17 @@ async function refreshMasterDot() {
   //
   // Said in words rather than as a fourth dot colour: the dot is a two-pixel
   // affordance already carrying three meanings, and "we could not look" is not
-  // a degree of down. The row has words for exactly this.
+  // a degree of down.
+  //
+  // Rendered through the shared degraded-read vocabulary rather than a sentence
+  // written here, because a project card on this same page already names the
+  // cause AND the remedy for this exact wedge — a master row that named neither,
+  // two elements away, would be the same condition explained two ways. That
+  // module exists so a new source joins in one place instead of growing another
+  // render path.
   if (status.exists === null) {
-    setMasterStatus('', 'Could not reach tmux — the master’s state is unknown', true);
+    const read = window.tcMasterRead(status);
+    setMasterStatus('', [read.why, read.remedy].filter(Boolean).join(' '), true);
   }
 }
 

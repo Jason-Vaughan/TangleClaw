@@ -257,6 +257,68 @@ describe('every answer this route gives carries the incomplete contract', () => 
   });
 });
 
+describe('the session page must not declare an end the server refused to declare', () => {
+  // Critic R-2/R-20, reached independently by two reviewers. `handleSessionEnded`
+  // is terminal — it stops polling, disables Wrap/Kill/Command, shows the ended
+  // bar and starts a redirect — and the page reached it through `!data.active`.
+  // With the untracked branch now answering `active: null` during a wedge, the
+  // page would assert the session had ended and, because it stops polling, could
+  // never recover when tmux came back.
+  //
+  // This is the one place "null is falsy, so consumers behave as before"
+  // INVERTS. For `idle`, behaving as before is inertia. For `active`, it is a
+  // definite, irreversible, operator-visible action on a read that established
+  // nothing — which is the defect this whole bundle removes, reached through
+  // the consumer instead of the payload.
+  const SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+
+  it('ends the session only on an ANSWERED absence', () => {
+    // THE MUTATION THIS CATCHES: `if (!data.active && ...)`, which is what
+    // shipped before this fix and what every earlier version of the page did.
+    assert.match(SRC, /if \(data\.active === false && !data\.wrapping && !sessionState\.ended\)/,
+      'a falsy check here turns an unestablished liveness into a terminal end');
+    assert.doesNotMatch(SRC, /if \(!data\.active && !data\.wrapping/,
+      'the falsy form must be gone, not merely shadowed by a second branch');
+  });
+
+  it('and the server really does emit the null this guards against', () => {
+    // The pairing that makes the guard above mean something: a pin on the page
+    // proves nothing if the payload can never carry the value it pins. This is
+    // the caller-shape check the plan names — the branch is reached the way the
+    // route reaches it, not through a hand-built fixture.
+    const status = withProbe(UNREACHABLE,
+      () => sessions.getSessionStatus('unknown-status'));
+    assert.equal(status.active, null,
+      'the page guard is dead code unless this branch really answers null');
+  });
+
+  it('keeps the last-session summary, which tmux could not have affected', () => {
+    // Critic R-18. `lastSession` is a database read; a wedged tmux cannot touch
+    // it, and the fall-through this branch replaced did return it. A branch
+    // whose purpose is "report only what was established" must not discard
+    // something that WAS — that is the same error pointing the other way.
+    const s = store.sessions.start({
+      projectId, engineId: 'claude', tmuxSession: 'tc-lastsession-probe'
+    });
+    store.sessions.kill(s.id, 'ended for this fixture');
+
+    const status = withProbe(UNREACHABLE,
+      () => sessions.getSessionStatus('unknown-status'));
+
+    assert.equal(status.active, null, 'precondition: the unknown-untracked branch');
+    // Compared against what the store itself answers rather than against the
+    // row this test happened to create: `getLatest` picks by its own ordering,
+    // and the claim being made here is "the database read survives", not "this
+    // fixture's id comes back".
+    const expected = store.sessions.getLatest(projectId);
+    assert.ok(expected, 'precondition: the store has an ended session to report');
+    assert.ok(status.lastSession,
+      'the database answered, so its answer must survive a tmux that did not');
+    assert.equal(status.lastSession.sessionId, expected.id);
+  });
+});
+
 describe('the invariant the session page depends on', () => {
   // The chime and the wrap-idle modal both branch on `data.idle` being truthy,
   // and both are consequential — one dings, the other opens the modal that

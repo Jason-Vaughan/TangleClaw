@@ -29,12 +29,28 @@ All notable changes to TangleClaw are documented in this file.
   measured either, and was reporting the fresh-output reading on the strength of nothing at all.
 
   Every `null` in all of this is falsy, so a consumer written before these states existed behaves
-  exactly as it did before. The session page is deliberately unchanged: its two consequential
-  readers of `idle` — the chime and the wrap-idle modal — already do the right thing on an
-  unknown, and inventing a new badge for it would be a surface the operator has not seen. What is
-  new is a guard on the invariant that makes that safe (the server never emits a truthy `idle`
-  beside an `incomplete` that names it), so the correctness stops resting on an accident of
-  truthiness.
+  exactly as it did before — **with one exception, which two independent reviewers caught and
+  which is the most important fix in this release.** The session page acted on a falsy `active`
+  by ending the session: stopping the poll, disabling Wrap/Kill/Command, showing the ended bar and
+  starting a redirect. So `active: null` during a wedge would have made the page declare an end the
+  server had explicitly refused to declare — and because it stops polling, it could never have
+  recovered when tmux came back. It now branches on `active === false`.
+
+  The distinction is worth stating because it is the trap in the whole pattern: falsy-is-safe holds
+  for a signal whose job is to fire on a certainty (`idle` — falsy means no chime, i.e. inertia)
+  and **inverts** for a signal whose absence triggers an action (`active` — falsy means *do the
+  irreversible thing*). Adding a tri-state to a payload is safe; assuming every consumer of it is,
+  is not.
+
+  Beyond that, the `idle` surface is deliberately unchanged: the chime and the wrap-idle modal
+  already behave correctly on an unknown, and inventing a badge would be a surface the operator has
+  not seen. What is new is a guard on the invariant that makes the falsiness safe — the server
+  never emits a truthy `idle` beside an `incomplete` that names it — so the correctness stops
+  resting on an accident of truthiness.
+
+  The unknown-untracked answer also keeps its `lastSession` summary. That comes from the database,
+  which a wedged tmux cannot affect, so a branch whose purpose is *report only what was
+  established* must not discard something that was — the same error pointing the other way.
 
 - **The Project Master can now report that its state is unknown, instead of reporting it as down
   (#905).** `getMasterStatus` answered `exists: tmux.hasSession(...)`, and `hasSession` returns
@@ -45,11 +61,20 @@ All notable changes to TangleClaw are documented in this file.
   convention `session.active` and `git.dirty` already follow. `incomplete` is `[]` on the healthy
   path rather than absent, so a consumer reads its value instead of probing for its existence.
 
-  The panel says it in words — "Could not reach tmux — the master's state is unknown", with Retry
-  available — rather than as a fourth dot colour: the dot is a two-pixel affordance already
-  carrying three meanings, and "we could not look" is not a degree of down. Before this, a wedge
-  rendered as nothing at all: the dot stayed neutral and the row still read "Checking…", which is
+  The panel says it in words rather than as a fourth dot colour — the dot is a two-pixel affordance
+  already carrying three meanings, and "we could not look" is not a degree of down. Before this, a
+  wedge rendered as nothing at all: the dot stayed neutral and the row still read "Checking…",
   indistinguishable from a master nobody had started.
+
+  Those words come from the **shared degraded-read vocabulary**, not a sentence written at the
+  master row. A project card on the same page, meeting the same wedge, already named both a cause
+  and a remedy ("The tmux server is not answering… `tmux kill-server` clears a wedged one"), and
+  the first version of this change had the master row two elements away naming neither — it
+  emitted a `cause` field that nothing read. `public/api-helper.js` exists so that a new source
+  joins in one place instead of growing another render path, and `architecture.md` records that as
+  a direction, so the bespoke sentence was a departure from a norm rather than a style choice. The
+  master is now a fifth source (`tcMasterRead`) alongside session liveness, git, scan and
+  unreadable-directory reads.
 
   **`POST /api/master/ensure` now refuses rather than starting a second master over one it cannot
   see.** That path also branched on `hasSession`, and it *acts* on the answer — `false` means
