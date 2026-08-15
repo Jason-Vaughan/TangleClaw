@@ -626,7 +626,7 @@ async function loadUpdateStatus() {
  * #183) — never hardcoded, so a renamed/relocated checkout stays correct.
  *
  * The update itself is delegated to `scripts/apply-update.js`, the CLI face of
- * the same guarded applier the dashboard's "Update & restart" button calls.
+ * the same guarded applier the beacon's "Update now" button calls.
  * This prompt used to hand the agent raw git (`git pull origin main`), which
  * bypassed every guard the button honors: it merged main into whatever branch
  * happened to be checked out, shipped unreleased commits to an operator who

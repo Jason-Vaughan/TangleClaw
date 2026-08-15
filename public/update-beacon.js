@@ -63,10 +63,16 @@
     const doc = deps.doc;
     const api = deps.api;
     const apiMutate = deps.apiMutate;
-    // No defaults, deliberately. A page that forgets these would get a beacon
-    // whose apply is no longer idempotent — the exact property the injected
-    // latch exists to preserve — and nothing would say so. A TypeError at
-    // construction is the honest failure.
+    // Required, and checked HERE rather than defaulted. A page that forgets
+    // them would get a beacon whose apply is no longer idempotent — the exact
+    // property the injected latch exists to preserve — and nothing would say
+    // so. Without this assert the failure would land at the first render
+    // instead: the moment an update appears, which is the worst time and the
+    // hardest to reproduce.
+    if (typeof deps.getInFlight !== 'function' || typeof deps.setInFlight !== 'function') {
+      throw new TypeError('tcCreateUpdateBeacon: getInFlight and setInFlight are required — '
+        + 'the beacon does not own the restart latch, it reads the page\'s');
+    }
     const getInFlight = deps.getInFlight;
     const setInFlight = deps.setInFlight;
     const restart = deps.restart;
@@ -322,8 +328,9 @@
       if (!anchorEl() && !warnedMissingAnchor) {
         warnedMissingAnchor = true;
         console.warn(
-          `update beacon: no #${deps.anchorId} in this page — an available `
-          + 'update cannot be shown. The logo wrapper was probably renamed or removed.'
+          `update beacon: no #${deps.anchorId} in this page, so an update could `
+          + 'not be shown if one were available. The logo wrapper was probably '
+          + 'renamed or removed.'
         );
       }
 

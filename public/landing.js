@@ -249,7 +249,7 @@ async function loadServerInfo() {
   // with no signal that would ever correct it.
   renderRunningVersion(data.runningVersion);
 
-  // A new `startedAt` means a different process is answering. The update pill
+  // A new `startedAt` means a different process is answering. The update beacon
   // is derived from the old one and can now be advertising an update that has
   // already been applied, so re-ask instead of leaving it up.
   if (data.startedAt) {
@@ -400,7 +400,7 @@ function renderVersionCheckHint(data) {
 /**
  * Make the header version an explicit "check for updates now" control.
  *
- * The update pill only exists when an update exists, so before this there was
+ * The update announcement only exists when an update exists, so before this there was
  * no way to tell a measured "you are current" from a check that never ran — the
  * absence of a pill was unfalsifiable from the UI, and an operator who suspected
  * a release existed had nothing to press. The version label is the natural home:

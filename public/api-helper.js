@@ -982,7 +982,8 @@
    * not on the same page: the dashboard's stale-server restart (#235) and the
    * update beacon's apply-and-restart (#229), which the session page also runs
    * since #931 put one beacon on both surfaces. A copy per caller is how the
-   * update pill and the session badge drifted apart in the first place.
+   * update pill and the session badge drifted apart before #931 replaced
+   * them with one beacon.
    *
    * @param {object} deps
    * @param {Function} deps.api - The page's `api()` from `tcCreateApi`.

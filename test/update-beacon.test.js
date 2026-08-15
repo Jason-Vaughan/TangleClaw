@@ -664,6 +664,25 @@ describe('#931 the beacon does not assume its anchor exists', () => {
     // of the page's wiring down with it.
   });
 
+  it('refuses to be built without the page\'s restart latch', () => {
+    const ctx = loadBeacon();
+    for (const missing of ['getInFlight', 'setInFlight']) {
+      assert.throws(() => vm.runInContext(`
+        tcCreateUpdateBeacon({
+          doc: document, anchorId: 'updateBeacon',
+          api, apiMutate: tcCreateApiMutate(api),
+          restart: tcCreateRestartFlow({ api, apiMutate: tcCreateApiMutate(api), win: window }),
+          ${missing === 'getInFlight' ? '' : 'getInFlight: () => false,'}
+          ${missing === 'setInFlight' ? '' : 'setInFlight: () => {},'}
+        });
+      `, ctx), /getInFlight and setInFlight are required/, `missing ${missing} must throw`);
+    }
+    // THE MUTATION THIS CATCHES: restoring the no-op defaults, or moving the
+    // check out of the factory. Without it the failure lands at the first
+    // render instead — the moment an update appears, which is the worst time
+    // to discover a page wired its own latch away and the hardest to reproduce.
+  });
+
   it('but it SAYS SO — once — instead of failing silently (Critic R-16)', () => {
     const ctx = loadBeacon();
     vm.runInContext(`

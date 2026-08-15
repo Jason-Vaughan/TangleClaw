@@ -113,13 +113,20 @@ All notable changes to TangleClaw are documented in this file.
   page that forgets them fails loudly instead of quietly getting a beacon whose apply is no longer
   idempotent.
 
+- **The beacon refuses to be built without the page's restart latch (#931).** Dropping the
+  accessors' no-op defaults was meant to make a forgetful page fail loudly; without a check in the
+  factory the throw landed at the first render instead — the moment an update appears, which is the
+  worst time and the hardest to reproduce. The factory now asserts, and the comment claiming so is
+  true.
+
 - **Docs caught up with the surface (#931).** `README.md`, `docs/release-process.md` and
   `docs/user-guide.md` described the pill, its per-version dismiss, and the old **Update & restart**
   label as current. `docs/adr/0010-one-update-mechanism.md` and the completed `ub-self-update-action`
   plan keep their historical wording under a note saying the decision stands and the surfaces do
   not. The `sw.js` learning from 2026-06-17 — "register it in `STATIC_ASSETS` AND bump
   `CACHE_NAME`" — was narrowed in place: its remedy is the move #710 forbids, and network-first is
-  the route for a new asset.
+  the route for a new asset. A last sweep took "update pill" and "Update & restart" out of eight
+  code comments across `public/` and `lib/` that the first pass did not name.
 
 - **The beacon's stylesheet is one file linked by both pages (#931).** The dashboard and the
   session page have separate stylesheets, and a copy of the beacon's rules in each would be the
