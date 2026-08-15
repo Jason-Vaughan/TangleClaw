@@ -925,6 +925,30 @@ async function applyUpdateAndRestart(data) {
     return;
   }
 
+  // Provisioning this update cannot do for you (#711): deploy assets are
+  // never applied from the server (re-running install steps walks into the
+  // Full-Disk-Access silent hang), and a dependency manifest appearing means
+  // the release reversed the zero-npm-dep norm — the updater reports it, it
+  // does not become an npm executor. The one honest move is to say so BEFORE
+  // the restart, while the operator is watching. The alert blocks until
+  // acknowledged; the restart then proceeds.
+  const prov = applyResp.provisioning;
+  if (prov && prov.action === 'manual') {
+    const lines = [];
+    if (prov.assetsChanged && prov.assetsChanged.length > 0) {
+      lines.push('Deploy assets changed — after the restart, re-run the matching deploy steps '
+        + 'on the server machine (see deploy/install.sh):');
+      for (const f of prov.assetsChanged) lines.push(`  ${f}`);
+    }
+    if (prov.manifestChanged) {
+      lines.push('This release introduced or changed a dependency manifest (package.json). '
+        + 'TangleClaw does not run npm for you — install dependencies manually in the repo '
+        + 'before relying on the new version.');
+    }
+    window.alert('This release needs manual steps the update does not perform itself:\n\n'
+      + lines.join('\n'));
+  }
+
   // 2. Capture the baseline startedAt, then restart onto the new code.
   setBtn('Restarting…', true);
   const appliedLabel = applyResp.toRef || `v${data.latestVersion}`;

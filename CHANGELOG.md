@@ -4,6 +4,22 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Self-update now reports what the checkout alone cannot deliver (#711, chunk 1 of 4).** The
+  update moved source and said nothing else: a release that changed deploy assets (launchd plists,
+  `tmux.conf`, `install.sh`) left the running services on the old definitions indefinitely, with no
+  hint anything was owed. `POST /api/update/apply` (and `scripts/apply-update.js`, the same code)
+  now diffs the two releases and returns a `provisioning` report: changed deploy assets, and —
+  forward guard — a dependency manifest appearing or changing. TangleClaw is zero-npm-dep by
+  ratified norm, so the manifest branch cannot trigger today; it exists so that an
+  already-installed copy applying a future norm-reversing release is TOLD its runtime now needs an
+  install step. Everything is detect-and-report, nothing is executed: applying deploy assets from
+  the server walks into the Full-Disk-Access silent hang, and running npm from the updater is
+  exactly the supply-chain exposure the git-over-packaged ruling exists to avoid. The dashboard
+  names any manual steps before the restart, while the operator is watching, and the injected
+  AI-update prompt teaches agents to relay the report rather than act on it.
+
 ### Fixed
 
 - **A backend outage behind the Caddy ingress now registers as a disconnection (#924).** The gate

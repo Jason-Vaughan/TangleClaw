@@ -34,6 +34,9 @@ const HAPPY = {
   'fetch --tags origin': '',
   'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\nsha2\trefs/tags/v1.0.0\n',
   'checkout v9.9.9': '',
+  // #711: the provisioning step diffs the two shas. The stub table returns
+  // the same sha for both rev-parse calls, so this is the key it produces.
+  'diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000': '',
 };
 
 describe('update-applier (UB #228/#229)', () => {
@@ -116,6 +119,7 @@ describe('update-applier (UB #228/#229)', () => {
           revParseCount++;
           return revParseCount === 1 ? 'aaaaaaa111\n' : 'bbbbbbb222\n';
         }
+        if (args.join(' ') === 'diff --name-only aaaaaaa111 bbbbbbb222') return '';
         return base(args);
       };
       const r = applier.applyUpdate();
@@ -137,6 +141,55 @@ describe('update-applier (UB #228/#229)', () => {
       const r = applier.applyUpdate();
       assert.equal(r.ok, true);
       assert.equal(r.toRef, 'v9.9.9');
+    });
+  });
+
+  describe('applyUpdate provisioning report (#711 chunk 01)', () => {
+    // DETECT AND REPORT, never execute. TangleClaw is zero-npm-dep by ratified
+    // norm (dependency-manifest.md), so the manifest branch is the forward
+    // guard for a release that reverses that norm upstream — the updater tells
+    // the operator, it does not become an npm executor (the git-over-packaged
+    // ruling cited npm supply-chain exposure as a reason to keep npm out of
+    // this path).
+
+    it('reports a quiet release as needing nothing', () => {
+      applier._internal.git = gitStub({ ...HAPPY,
+        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'lib/projects.js\npublic/landing.js\n' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.provisioning,
+        { manifestChanged: false, assetsChanged: [], action: null });
+    });
+
+    it('reports a dependency manifest appearing, and runs nothing for it', () => {
+      applier._internal.git = gitStub({ ...HAPPY,
+        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package.json\npackage-lock.json\nlib/projects.js\n' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true, 'reporting is advisory — the checkout itself landed');
+      assert.equal(r.provisioning.manifestChanged, true);
+      assert.equal(r.provisioning.action, 'manual');
+      // gitStub throws on any undeclared call and no npm seam exists: had the
+      // applier tried to execute an install, this test could not have passed.
+    });
+
+    it('reports changed deploy assets for the human, never applies them', () => {
+      applier._internal.git = gitStub({ ...HAPPY,
+        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'deploy/com.tangleclaw.server.plist\ndeploy/tmux.conf\nserver.js\n' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.provisioning.assetsChanged,
+        ['deploy/com.tangleclaw.server.plist', 'deploy/tmux.conf']);
+      assert.equal(r.provisioning.action, 'manual');
+    });
+
+    it('manifest and assets together: both reported, one manual flag', () => {
+      applier._internal.git = gitStub({ ...HAPPY,
+        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package-lock.json\ndeploy/install.sh\n' });
+      const r = applier.applyUpdate();
+      assert.equal(r.ok, true);
+      assert.equal(r.provisioning.manifestChanged, true);
+      assert.deepEqual(r.provisioning.assetsChanged, ['deploy/install.sh']);
+      assert.equal(r.provisioning.action, 'manual');
     });
   });
 

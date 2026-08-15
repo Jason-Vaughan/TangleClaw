@@ -24,6 +24,21 @@ describe('UB self-update pill (#228/#229)', () => {
     css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
   });
 
+  describe('provisioning surfaces (#711 chunk 01)', () => {
+    it('names changed deploy assets to the operator BEFORE the restart', () => {
+      const body = js.slice(js.indexOf('async function applyUpdateAndRestart'),
+        js.indexOf('async function', js.indexOf('async function applyUpdateAndRestart') + 10));
+      const assetsAt = body.indexOf('assetsChanged');
+      const restartAt = body.indexOf("setBtn('Restarting");
+      assert.ok(assetsAt !== -1, 'the apply flow must read provisioning.assetsChanged');
+      assert.ok(restartAt !== -1, 'the restart step must still exist');
+      assert.ok(assetsAt < restartAt,
+        'the assets message must come before the restart — after it nobody is watching');
+      assert.match(body, /deploy\/install\.sh/,
+        'the message must point at where the deploy steps live');
+    });
+  });
+
   describe('button render + wiring', () => {
     it('renders an "Update & restart" button in the pill', () => {
       assert.match(js, /class="update-pill-apply" id="updateApplyBtn"/);
